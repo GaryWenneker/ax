@@ -12,11 +12,17 @@ pub fn format_memories_inject_block(matches: &[MemoryMatch], max_chars: usize) -
         "<ax_memories note=\"Durable project memories. Prompt matches come first; newest memories fill the rest so the vault is available on the next turn.\">\n",
     );
     for m in matches {
+        let raw = m.memory.body.trim();
+        let quoted = if crate::provenance::trust_level_for(&m.memory.source, &m.memory.kind)
+            == "untrusted"
+        {
+            format!("> {raw}")
+        } else {
+            raw.to_string()
+        };
         let mut entry = format!(
             "### [{}] {}\n\n{}\n\n",
-            m.memory.kind,
-            m.memory.title,
-            m.memory.body.trim()
+            m.memory.kind, m.memory.title, quoted
         );
         if !m.memory.files.is_empty() {
             entry.push_str(&format!("Files: {}\n\n", m.memory.files.join(", ")));
@@ -80,6 +86,7 @@ mod tests {
                 tier: "t2".into(),
             },
             score: 1.0,
+            why: None,
         }
     }
 

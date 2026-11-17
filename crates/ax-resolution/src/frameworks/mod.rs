@@ -1,19 +1,19 @@
 //! Framework-specific post-extract passes.
 
 pub mod angular;
-pub mod extract;
 pub mod cargo_workspace;
-mod express;
-pub mod go;
-pub mod flask;
 pub mod django;
+mod express;
+pub mod extract;
+pub mod flask;
+pub mod go;
 pub mod laravel;
 pub mod nestjs;
 pub mod react;
 pub mod rust;
-pub mod vue;
-pub mod svelte;
 pub mod spring;
+pub mod svelte;
+pub mod vue;
 
 use std::path::Path;
 
@@ -37,10 +37,28 @@ impl FrameworkRegistry {
     pub fn new() -> Self {
         Self {
             frameworks: vec![
-                "astro", "cargo-workspace", "csharp", "drupal", "expo-modules",
-                "express", "fabric", "go", "goframe", "java", "laravel", "nestjs",
-                "play", "python", "react", "react-native", "ruby", "rust", "svelte",
-                "swift", "swift-objc", "vue",
+                "astro",
+                "cargo-workspace",
+                "csharp",
+                "drupal",
+                "expo-modules",
+                "express",
+                "fabric",
+                "go",
+                "goframe",
+                "java",
+                "laravel",
+                "nestjs",
+                "play",
+                "python",
+                "react",
+                "react-native",
+                "ruby",
+                "rust",
+                "svelte",
+                "swift",
+                "swift-objc",
+                "vue",
             ],
         }
     }
@@ -74,7 +92,20 @@ impl FrameworkRegistry {
         let svelte_active = svelte::detect(project_root, &file_paths);
         let spring_active = spring::detect(project_root, &file_paths);
         let angular_active = angular::detect(project_root);
-        if !express_active && !react_active && !nestjs_active && !go_active && !rust_active && !laravel_active && !django_active && !flask_active && !fastapi_active && !vue_active && !svelte_active && !spring_active && !angular_active {
+        if !express_active
+            && !react_active
+            && !nestjs_active
+            && !go_active
+            && !rust_active
+            && !laravel_active
+            && !django_active
+            && !flask_active
+            && !fastapi_active
+            && !vue_active
+            && !svelte_active
+            && !spring_active
+            && !angular_active
+        {
             return Ok(());
         }
 
@@ -99,10 +130,16 @@ impl FrameworkRegistry {
                 merge_extract(&mut extracted, django::extract_file(&file.path, &content));
             }
             if flask_active && file.path.ends_with(".py") {
-                merge_extract(&mut extracted, flask::flask_extract_file(&file.path, &content));
+                merge_extract(
+                    &mut extracted,
+                    flask::flask_extract_file(&file.path, &content),
+                );
             }
             if fastapi_active && file.path.ends_with(".py") {
-                merge_extract(&mut extracted, flask::fastapi_extract_file(&file.path, &content));
+                merge_extract(
+                    &mut extracted,
+                    flask::fastapi_extract_file(&file.path, &content),
+                );
             }
             if laravel_active && file.path.ends_with(".php") {
                 merge_extract(&mut extracted, laravel::extract_file(&file.path, &content));
@@ -110,13 +147,14 @@ impl FrameworkRegistry {
             if vue_active {
                 merge_extract(&mut extracted, vue::extract_file(&file.path, &content));
             }
-            
+
             if spring_active
-                && (file.path.ends_with(".java") || file.path.ends_with(".kt")
+                && (file.path.ends_with(".java")
+                    || file.path.ends_with(".kt")
                     || spring::is_spring_config_path(&file.path))
-                {
-                    merge_extract(&mut extracted, spring::extract_file(&file.path, &content));
-                }
+            {
+                merge_extract(&mut extracted, spring::extract_file(&file.path, &content));
+            }
             if angular_active && file.path.ends_with(".ts") {
                 merge_extract(&mut extracted, angular::extract_file(&file.path, &content));
             }
@@ -132,7 +170,10 @@ impl FrameworkRegistry {
                 }
             }
 
-            if extracted.nodes.is_empty() && extracted.references.is_empty() && extracted.edges.is_empty() {
+            if extracted.nodes.is_empty()
+                && extracted.references.is_empty()
+                && extracted.edges.is_empty()
+            {
                 continue;
             }
             apply_extract(queries, &file.path, extracted).await?;
@@ -173,6 +214,8 @@ async fn apply_extract(
         queries.upsert_edge(&edge).await?;
     }
     queries.upsert_edges(&extracted.edges).await?;
-    queries.insert_unresolved_refs(&extracted.references).await?;
+    queries
+        .insert_unresolved_refs(&extracted.references)
+        .await?;
     Ok(())
 }

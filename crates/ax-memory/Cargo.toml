@@ -1,25 +1,24 @@
 [package]
 name = "ax-memory"
-version = "8.4.6"
+version = "10.0.0"
 edition = "2021"
 
 [features]
 default = []
-onnx = ["ort", "dirs"]
 
 [dependencies]
 ax-utils = { workspace = true }
+ax-db = { workspace = true }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 sqlx = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 blake3 = { workspace = true }
+zstd = { workspace = true }
+rust-stemmers = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
-ort = { version = "2.0.0-rc.12", optional = true, default-features = true }
-dirs = { workspace = true, optional = true }
 
 [dev-dependencies]
-ax-db = { workspace = true }
 tempfile = "3"

@@ -33,7 +33,13 @@ impl LanguageExtractor for GoExtractor {
         append_lang_call_refs(
             &mut result,
             tree,
-            &RefCtx { source, file_path: path, language: Language::Go, file_id: &file_id, spans: &spans },
+            &RefCtx {
+                source,
+                file_path: path,
+                language: Language::Go,
+                file_id: &file_id,
+                spans: &spans,
+            },
             &["call_expression"],
         );
         emit_same_file_call_edges(&mut result, path);

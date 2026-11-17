@@ -209,12 +209,12 @@ pub fn http_text(url: &str) -> Result<String, String> {
 pub fn http_bytes(url: &str) -> Result<Vec<u8>, String> {
     let target = vetted_download(url)?;
     let client = reqwest::blocking::Client::builder()
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            match vetted_download(attempt.url().as_str()) {
+        .redirect(reqwest::redirect::Policy::custom(
+            |attempt| match vetted_download(attempt.url().as_str()) {
                 Ok(_) => attempt.follow(),
                 Err(error) => attempt.error(std::io::Error::other(error)),
-            }
-        }))
+            },
+        ))
         .build()
         .map_err(|e| e.to_string())?;
     let response = client.get(target).send().map_err(|e| e.to_string())?;
@@ -252,10 +252,7 @@ fn vetted_download(url: &str) -> Result<reqwest::Url, String> {
     }
     let port = parsed.port_or_known_default().unwrap_or(443);
     let mut resolved = false;
-    for addr in (host, port)
-        .to_socket_addrs()
-        .map_err(|e| e.to_string())?
-    {
+    for addr in (host, port).to_socket_addrs().map_err(|e| e.to_string())? {
         resolved = true;
         if private_ip(addr.ip()) {
             return Err("skill downloads cannot target a private address".into());

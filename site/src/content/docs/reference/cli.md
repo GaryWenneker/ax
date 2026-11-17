@@ -206,7 +206,7 @@ ax watch --quiet
 
 ### `ax status [path]`
 
-Index statistics: node/edge/file counts, **document inventory by extension** (markdown, office, PDF, other opaque types), unresolved refs, pending sync, and last indexed time.
+Index statistics: node/edge/file counts, **document inventory by extension** (markdown, office, PDF, other opaque types), unresolved refs, pending sync, and last indexed time. When `.ax/integrity.json` records a database incident, the text and `--json` include it and name `ax db repair`. The project daemon runs a quick check once a day, and again after a crash. A broken full-text index, cue index, or vector map is rebuilt then. Stored rows, including a dangling edge, wait for `ax db repair`. The incident file is written when something remains. A recorded incident also skips the background file watcher until a later check passes.
 
 | Argument / flag | Type | Description |
 |---|---|---|
@@ -524,7 +524,9 @@ Store a durable project memory (decision, fix, convention). Flags similar existi
 | `--file` | string (repeat) | Related file path |
 | `--trigger` | string (repeat) | Exact cue name. Same as `ax_remember` `triggers` |
 | `--confirm` | string | Confirm a candidate memory by id. Same as `ax_remember` `action=confirm` |
-| `--json` | flag | JSON output |
+| `--purge` | string | Purge a memory by id (row, cues, links, vectors, tombstone). Same as `ax_remember` `action=purge` |
+| `--when` | string | Prospective trigger (`file:glob` \| `symbol:name` \| `error:pat` \| `command:pat`). Stored as a `when:` tag |
+| `--json` | flag | JSON output, including `suggested_triggers` on a saved memory |
 
 ```bash
 ax remember "We use tiktoken o200k_base for token counts" --kind decision --tag tokenizer
@@ -533,14 +535,14 @@ ax remember "Sonar proxy strips Content-Encoding after decompression" --kind bug
 
 ### `ax recall [query]`
 
-Exact cue, id, or free-text search. `--cue` and `--id` see every tier, including a demoted turn. `--depth archive` searches only the archive and is not what preflight injects.
+Exact cue, id, or free-text search. `--cue` and `--id` see every tier, including a demoted turn. `--depth archive` searches only the archive and is not what preflight injects. `--depth backup` searches zstd/JSONL snapshots under `.ax/backups/memory/` (also not injected).
 
 | Argument / flag | Type | Default | Description |
 |---|---|---|---|
 | `query` | optional | — | Free-text query. Same as `ax_recall` `query` |
 | `--cue` | string | — | Exact trigger, title, or tag. Same as `ax_recall` `cue` |
 | `--id` | string | — | Full body and its cues. Same as `ax_recall` `id` |
-| `--depth` | `hot` \| `archive` | `hot` | `archive` searches the permanent tier. Same as `ax_recall` `depth` |
+| `--depth` | `hot` \| `archive` \| `backup` | `hot` | `archive` searches the permanent tier. `backup` searches memory snapshots. Same as `ax_recall` `depth` |
 | `--limit` | number | `5` | Max results (≤50) |
 | `--json` | flag | — | JSON output (`matches`, `cues`) |
 
@@ -549,6 +551,7 @@ ax recall --cue reinstall-all
 ax recall "why tiktoken"
 ax recall --id mem-123 --json
 ax recall "old graph change" --depth archive
+ax recall "purged phrase" --depth backup
 ```
 
 ### `ax history [query]`
@@ -731,6 +734,23 @@ CLI-only or full host diagnostics (covers the MCP `ax_diagnostics` surface).
 ax doctor --mode cli
 ax doctor --mode all --json
 ```
+
+`ax doctor` also runs a quick integrity check of `.ax/ax.db` and names `ax db repair` when that check finds a problem. When an older MCP build is registered, it names that process and says to restart the MCP server in Cursor. It does not stop the server.
+
+### `ax db`
+
+Check and repair the project database (`.ax/ax.db`), the usage database, and the global database.
+
+```bash
+ax db check
+ax db check --db all --json
+ax db repair --dry-run
+ax db repair
+```
+
+`ax db check` exits non-zero when it finds a problem. `ax db repair` writes a `VACUUM INTO` snapshot into `.ax/backups/db/` before it changes a readable database. A file that cannot be vacuumed is copied as bytes, including its write-ahead log. Repair rebuilds indexes and full-text search, removes cues, links, edges, file contents, and unresolved refs that point at a missing parent, extracts again any project file that still has a node on a dangling edge, checkpoints the write-ahead log, and applies migrations that have not run. An embedding that is not 1024 bytes is reported and left for a later re-embed. It does not delete a memory to make a check pass. A file that is not a database is copied aside and left in place.
+
+`--stop-writers` stops the project daemon and retries. A file that is still locked is left unchanged. The lock finding names the process id and command when `lsof` can see who has the file open. It does not stop MCP or `ax web`.
 
 ### Guard mapping (`ax_guard`)
 
@@ -1225,6 +1245,34 @@ Remove offload configuration.
 ```bash
 ax offload clear
 ```
+
+---
+
+## Neural
+
+### `ax neural`
+
+Neural Intelligence is required. Project `ax.json` cannot turn it off. Memory embeddings stay `hash-v1`. The default binary does not link an ML runtime. Context ranking, prediction, and graph suggestions run in process and do not call a language model. CLI JSON matches the `ax_neural_*` MCP tools, and the flags use the same fields. `--path` and the current directory resolve to the nearest project with `.ax/ax.db`, the same root the MCP server uses.
+
+```bash
+ax neural status
+ax neural explain
+ax neural benchmark
+ax neural evaluate
+ax neural feedback run-42 parser success --skill-id parse-errors --context-id memory:parser-lines
+ax neural graph
+ax neural export --out neural-feedback.json
+```
+
+- `status` shows measured numbers when the project database answers: feedback rows, the token delta from dropped duplicate blocks, rank latency per preflight, the last evaluated precision, and promoted models. A number that was not measured is reported as unavailable.
+- `benchmark` scores the fused hash-v1 recall pipeline on the built-in coding fixture in a temporary database. It reports hits per question family and the measured query latency. It does not open `.ax/ax.db` and it does not download a model.
+- `evaluate` holds out each coding-fixture question in turn, predicts its memories from the rest, and stores precision, false-positive rate, and coverage for `status`.
+- `feedback` takes `--context-id`, `--skill-id`, and `--rule-id` (repeat each for more), plus `--retry-count`, `--input-tokens`, and `--output-tokens`. It is refused unless `neural.learning.feedback_collection` is true.
+- `graph` reads this project's edges and successful feedback and stores suggestions labeled `predicted`. It never writes edges. `--edges '<json array>'` previews suggestions for the edges you pass and stores nothing. It returns nothing while `neural.graph.enabled` is false.
+- `rank <query> --blocks '<json array>'` ranks blocks the way preflight does.
+- `register <model-id> <version> <checksum>` takes `--model-type`, `--dataset-version`, `--platforms`, and `--metrics '<json object>'`. Registering does not promote.
+- `promote` is refused unless you pass `--explicit`, `--beats-baseline`, and `--regressions-clear`.
+- `export --out <file>` writes feedback rows for an offline trainer. It leaves out the project path, execution ids, and secret-shaped rows. It has no MCP tool and sends nothing.
 
 ---
 

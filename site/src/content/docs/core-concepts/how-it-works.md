@@ -53,6 +53,6 @@ The archive is permanent and is never injected. It holds demoted turns, git comm
 
 A turn or a commit that states a decision becomes a candidate. Preflight skips it until a second source agrees or you confirm it. The original episode stays. A near-duplicate is linked, not deleted. Embeddings stay on this machine. Two embedding models are never compared, and sync rewrites rows after a model change.
 
-MCP and the CLI call one function. `ax remember --trigger` is `triggers`. `ax recall --cue` is `cue`. `ax recall --depth archive` is `depth=archive`. `ax remember --confirm` is `action=confirm`.
+MCP and the CLI call one function. `ax remember --trigger` is `triggers`. `ax recall --cue` is `cue`. `ax recall --depth archive` is `depth=archive`. `ax remember --confirm` is `action=confirm`. A saved memory returns `suggested_triggers` on both surfaces.
 
 See [Memory](/guides/memory/).

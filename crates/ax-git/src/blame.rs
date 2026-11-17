@@ -34,7 +34,9 @@ pub fn blame_authors(
         return Ok(Vec::new());
     }
 
-    Ok(parse_porcelain_blame(&String::from_utf8_lossy(&output.stdout)))
+    Ok(parse_porcelain_blame(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
 }
 
 pub fn aggregate_authors(lines: &[BlameLine]) -> HashMap<String, u32> {

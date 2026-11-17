@@ -1,6 +1,6 @@
 //! Reverse BFS from changed symbols to test nodes.
 
-use std::collections::{HashSet};
+use std::collections::HashSet;
 
 use ax_db::queries::QueryBuilder;
 use ax_graph::GraphTraverser;
@@ -66,7 +66,11 @@ pub async fn find_impacted_tests(
     let mut tests = Vec::new();
     for id in &test_ids {
         if let Some(node) = queries.get_node_by_id(id).await? {
-            if opts.filter.as_ref().is_some_and(|g| !g.is_match(&node.file_path)) {
+            if opts
+                .filter
+                .as_ref()
+                .is_some_and(|g| !g.is_match(&node.file_path))
+            {
                 continue;
             }
             tests.push(ImpactedTest {
@@ -124,7 +128,11 @@ fn runner_hint_for(node: &ax_types::Node) -> String {
     let path = &node.file_path;
     if path.ends_with(".rs") {
         format!("cargo test {} -- --exact", node.name)
-    } else if path.ends_with(".ts") || path.ends_with(".tsx") || path.ends_with(".js") || path.ends_with(".jsx") {
+    } else if path.ends_with(".ts")
+        || path.ends_with(".tsx")
+        || path.ends_with(".js")
+        || path.ends_with(".jsx")
+    {
         // Prefer jest when the path looks like a Jest suite; otherwise Vitest.
         if path.contains("__tests__") || path.contains(".test.") || path.contains(".spec.") {
             format!("npx jest -t {}", node.name)

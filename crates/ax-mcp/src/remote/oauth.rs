@@ -254,7 +254,7 @@ async fn register(State(p): State<Provider>, Json(body): Json<Value>) -> Respons
         Err(e) => error(&e),
     }
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct Authorization {
     client_id: String,
     redirect_uri: String,
@@ -591,6 +591,45 @@ mod tests {
         );
         p.store.decide("project", &expired, "remove").await.unwrap();
         assert!(p.store.requests("project").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn authorize_rejects_forged_state_and_invalid_pkce() {
+        let p = provider().await;
+        let client = p.store.native_client().await.unwrap();
+        let base = Authorization {
+            client_id: client,
+            redirect_uri: "http://127.0.0.1:8765/callback".into(),
+            response_type: "code".into(),
+            state: "legit-state".into(),
+            code_challenge: URL_SAFE_NO_PAD.encode([0; 32]),
+            code_challenge_method: "S256".into(),
+            scope: CONTEXT_SCOPE.into(),
+            resource: p.store.origin.clone(),
+        };
+        for (label, q) in [
+            ("empty state", {
+                let mut q = base.clone();
+                q.state = String::new();
+                q
+            }),
+            ("oversized state", {
+                let mut q = base.clone();
+                q.state = "x".repeat(2049);
+                q
+            }),
+            ("invalid challenge length", {
+                let mut q = base.clone();
+                q.code_challenge = "short".into();
+                q
+            }),
+        ] {
+            assert_eq!(
+                authorize(State(p.clone()), Query(q)).await.status(),
+                StatusCode::BAD_REQUEST,
+                "{label}"
+            );
+        }
     }
 
     #[tokio::test]

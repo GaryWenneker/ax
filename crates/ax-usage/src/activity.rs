@@ -165,7 +165,6 @@ struct ActivityRow {
 
 #[derive(Debug, Clone, Default)]
 pub struct ActivityRecord {
-
     pub idempotency_key: String,
     pub source: Option<ActivitySource>,
     pub agent: Option<String>,
@@ -181,6 +180,32 @@ pub struct ActivityRecord {
     pub commit_ids: Vec<String>,
     pub token_metrics: TokenMetrics,
     pub error: Option<String>,
+}
+
+fn id_is_blank(value: &Option<String>) -> bool {
+    value.as_deref().unwrap_or("").trim().is_empty()
+}
+
+fn current_turn_ids(root: &Path) -> Option<(String, String)> {
+    let text = std::fs::read_to_string(root.join(".ax").join("turns").join("current.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let session = value.get("session_id")?.as_str()?.trim();
+    let turn = value.get("turn_id")?.as_str()?.trim();
+    if session.is_empty() || turn.is_empty() {
+        return None;
+    }
+    Some((session.to_string(), turn.to_string()))
+}
+
+fn fill_current_turn(root: &Path, record: &mut ActivityRecord) {
+    if !id_is_blank(&record.session_id) || !id_is_blank(&record.turn_id) {
+        return;
+    }
+    let Some((session, turn)) = current_turn_ids(root) else {
+        return;
+    };
+    record.session_id = Some(session);
+    record.turn_id = Some(turn);
 }
 
 fn now_ms() -> i64 {
@@ -282,6 +307,7 @@ pub async fn record_activity(
         record.summary = record.operation.clone();
     }
     let summary = redact_summary(&record.summary);
+    fill_current_turn(root, &mut record);
     let event = ActivityEvent {
         schema_version: ACTIVITY_SCHEMA_VERSION,
         event_id: mint_event_id(),
@@ -522,12 +548,7 @@ pub async fn record_cli_command(
     duration_ms: Option<i64>,
     summary: &str,
 ) -> Result<ActivityEvent, String> {
-    let key = format!(
-        "cli:{}:{}:{}",
-        command,
-        session_id.unwrap_or("-"),
-        now_ms()
-    );
+    let key = format!("cli:{}:{}:{}", command, session_id.unwrap_or("-"), now_ms());
     record_activity(
         root,
         ActivityRecord {
@@ -640,6 +661,59 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(listed.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_blank_activity_takes_the_current_turn_and_a_named_one_keeps_its_session() {
+        let (root, _guard) = tmp_root().await;
+        let missing = record_activity(
+            &root,
+            ActivityRecord {
+                idempotency_key: "missing".into(),
+                operation: "graph.explore".into(),
+                summary: "no file".into(),
+                ..ActivityRecord::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(missing.session_id, None);
+        assert_eq!(missing.turn_id, None);
+
+        std::fs::create_dir_all(root.join(".ax/turns")).unwrap();
+        std::fs::write(
+            root.join(".ax/turns/current.json"),
+            r#"{"session_id":"conv-1","turn_id":"gen-1"}"#,
+        )
+        .unwrap();
+        let filled = record_activity(
+            &root,
+            ActivityRecord {
+                idempotency_key: "blank".into(),
+                operation: "graph.explore".into(),
+                summary: "looked".into(),
+                ..ActivityRecord::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(filled.session_id.as_deref(), Some("conv-1"));
+        assert_eq!(filled.turn_id.as_deref(), Some("gen-1"));
+
+        let kept = record_activity(
+            &root,
+            ActivityRecord {
+                idempotency_key: "kept".into(),
+                operation: "graph.explore".into(),
+                summary: "kept".into(),
+                session_id: Some("kept".into()),
+                ..ActivityRecord::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(kept.session_id.as_deref(), Some("kept"));
+        assert_eq!(kept.turn_id, None);
     }
 
     #[tokio::test]

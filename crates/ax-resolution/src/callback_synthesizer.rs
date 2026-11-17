@@ -76,10 +76,7 @@ impl CallbackSynthesizer {
                 if name.is_empty() {
                     continue;
                 }
-                let line = content[..cap.get(0).unwrap().start()]
-                    .matches('\n')
-                    .count() as i32
-                    + 1;
+                let line = content[..cap.get(0).unwrap().start()].matches('\n').count() as i32 + 1;
                 handlers
                     .entry(event.to_string())
                     .or_default()
@@ -102,10 +99,8 @@ impl CallbackSynthesizer {
                 if handlers_for.is_none() || handlers_for.unwrap().is_empty() {
                     continue;
                 }
-                let emit_line = content[..cap.get(0).unwrap().start()]
-                    .matches('\n')
-                    .count() as i32
-                    + 1;
+                let emit_line =
+                    content[..cap.get(0).unwrap().start()].matches('\n').count() as i32 + 1;
                 let dispatcher = enclosing_fn(&nodes, emit_line);
                 if dispatcher.is_none() {
                     continue;
@@ -132,7 +127,8 @@ impl CallbackSynthesizer {
                 }
             }
         }
-        self.synthesize_jsx_render(project_root, queries, scope).await?;
+        self.synthesize_jsx_render(project_root, queries, scope)
+            .await?;
         Ok(())
     }
 
@@ -165,10 +161,7 @@ impl CallbackSynthesizer {
             }
 
             let nodes = queries.get_nodes_by_file(&file.path).await?;
-            let parents: Vec<&Node> = nodes
-                .iter()
-                .filter(|n| is_jsx_parent(n))
-                .collect();
+            let parents: Vec<&Node> = nodes.iter().filter(|n| is_jsx_parent(n)).collect();
             if parents.is_empty() {
                 continue;
             }
@@ -189,9 +182,12 @@ impl CallbackSynthesizer {
                         continue;
                     }
                     let child_nodes = queries.get_nodes_by_name(name).await.unwrap_or_default();
-                    let child = child_nodes
-                        .iter()
-                        .find(|n| matches!(n.kind, NodeKind::Component | NodeKind::Function | NodeKind::Class));
+                    let child = child_nodes.iter().find(|n| {
+                        matches!(
+                            n.kind,
+                            NodeKind::Component | NodeKind::Function | NodeKind::Class
+                        )
+                    });
                     if child.is_none() || child.unwrap().id == parent.id {
                         continue;
                     }
@@ -221,7 +217,10 @@ impl CallbackSynthesizer {
 }
 
 fn is_jsx_parent(n: &Node) -> bool {
-    matches!(n.kind, NodeKind::Function | NodeKind::Method | NodeKind::Component)
+    matches!(
+        n.kind,
+        NodeKind::Function | NodeKind::Method | NodeKind::Component
+    )
 }
 
 fn slice_lines(content: &str, start_line: i32, end_line: i32) -> String {

@@ -215,19 +215,28 @@ mod tests {
 
     #[test]
     fn numbered_slice_numbers_from_start_line() {
-        let content = (1..=10).map(|i| format!("line{i}")).collect::<Vec<_>>().join("\n");
+        let content = (1..=10)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let out = numbered_slice(&content, 3, 5, 40, 4000, '\t');
         assert_eq!(out, "3\tline3\n4\tline4\n5\tline5");
     }
 
     #[test]
     fn numbered_slice_reports_line_truncation() {
-        let content = (1..=20).map(|i| format!("line{i}")).collect::<Vec<_>>().join("\n");
+        let content = (1..=20)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let out = numbered_slice(&content, 1, 20, 3, 4000, '\t');
         assert!(out.contains("1\tline1"));
         assert!(out.contains("truncated to 3 lines"));
         assert!(!out.contains("line4"), "must stop at the line cap");
-        assert!(out.contains("ax_node"), "marker must point back to the graph: {out}");
+        assert!(
+            out.contains("ax_node"),
+            "marker must point back to the graph: {out}"
+        );
     }
 
     #[test]
@@ -235,7 +244,10 @@ mod tests {
         let content = "x".repeat(500);
         let out = numbered_slice(&content, 1, 1, 40, 50, '\t');
         assert!(out.contains("truncated to 50 chars"), "{out}");
-        assert!(out.contains("ax_node"), "marker must point back to the graph: {out}");
+        assert!(
+            out.contains("ax_node"),
+            "marker must point back to the graph: {out}"
+        );
     }
 
     /// Byte-slicing a multibyte character used to panic; the boundary walk must
@@ -262,7 +274,10 @@ mod tests {
     /// Line numbers are i32; a negative must clamp, not wrap to a huge index.
     #[test]
     fn negative_line_numbers_do_not_panic() {
-        assert_eq!(numbered_slice("a\nb\nc", -5, 2, 40, 4000, '\t'), "1\ta\n2\tb");
+        assert_eq!(
+            numbered_slice("a\nb\nc", -5, 2, 40, 4000, '\t'),
+            "1\ta\n2\tb"
+        );
         assert_eq!(numbered_slice("a\nb\nc", -5, -1, 40, 4000, '\t'), "");
         assert_eq!(slice_lines("a\nb\nc", -3, -2, 4000), "");
     }
@@ -420,9 +435,13 @@ mod tests {
                             n, expected_no,
                             "'{name}' {start}..{end}: numbers must run consecutively"
                         );
-                        assert!(n >= 1 && n <= file_lines.len(), "'{name}': number {n} out of range");
+                        assert!(
+                            n >= 1 && n <= file_lines.len(),
+                            "'{name}': number {n} out of range"
+                        );
                         assert_eq!(
-                            text, file_lines[n - 1],
+                            text,
+                            file_lines[n - 1],
                             "'{name}': line {n} does not match the file"
                         );
                         expected_no += 1;
@@ -444,7 +463,10 @@ mod tests {
                             numbered <= max_lines,
                             "'{name}' {start}..{end}: {numbered} lines over a cap of {max_lines}"
                         );
-                        let notes = out.lines().filter(|l| l.starts_with("...(truncated")).count();
+                        let notes = out
+                            .lines()
+                            .filter(|l| l.starts_with("...(truncated"))
+                            .count();
                         assert!(notes <= 1, "'{name}': {notes} truncation notes");
                     }
                 }

@@ -365,6 +365,10 @@ impl ToolHandler {
             "ax_cache_status" => cache_status_tool(params).await,
             "ax_insights" => insights(ax, params).await,
             "ax_report" => report(ax, params).await,
+            name if name.starts_with("ax_neural_") => {
+                ax_neural::dispatch::handle(ax.project_root(), name, &params, Some(ax.db_pool()))
+                    .await
+            }
             _ => Err(format!("unknown tool: {}", name)),
         }
     }
@@ -446,7 +450,12 @@ async fn status(ax: &mut Ax) -> Result<Value, String> {
         "stats": stats,
         "lastIndexedAt": last,
         "pendingFiles": pending,
+        "integrity": ax_core::database_incident_value(ax.project_root()),
     });
+    if let Some(note) = ax_core::database_incident_notice(ax.project_root()) {
+        let text = out["text"].as_str().unwrap_or("");
+        out["text"] = serde_json::Value::String(format!("{text}{note}"));
+    }
     if ax.policy_exists() {
         let policy = ax.policy_status().await.map_err(|e| e.to_string())?;
         out["policy"] = serde_json::to_value(policy).unwrap_or(Value::Null);
@@ -825,6 +834,9 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
             policy_inject.push_str(&audits);
         }
     }
+    if let Some(note) = ax_core::database_incident_notice(ax.project_root()) {
+        policy_inject.push_str(&note);
+    }
     let mut policy_blocks = Vec::new();
     for r in result
         .rules
@@ -929,6 +941,36 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
                 memories.len(),
                 block.len()
             ));
+        }
+        let archive_hits = ax_memory::search(
+            ax.db_pool(),
+            &ax_memory::SearchRequest {
+                query: prompt.clone(),
+                cue: None,
+                id: None,
+                depth: ax_memory::Depth::Archive,
+                files: files.clone(),
+                limit: 5,
+            },
+        )
+        .await
+        .unwrap_or_default();
+        if !archive_hits.is_empty() {
+            let cues: Vec<String> = archive_hits
+                .iter()
+                .take(3)
+                .map(|m| m.memory.title.clone())
+                .collect();
+            let line = format!(
+                "archive: {} related, cues: {}",
+                archive_hits.len(),
+                cues.join("; ")
+            );
+            optional_blocks.push(ax_usage::ContextBlock {
+                id: "metamemory".into(),
+                class: ax_usage::ContextClass::Optional,
+                text: format!("<ax_metamemory>{line}</ax_metamemory>"),
+            });
         }
     } else {
         crate::verbose::push_line("enrich memories none");
@@ -1176,7 +1218,11 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
             Err(err) => ice_error = Some(err.to_string()),
         }
     }
-    let budget = ax_usage::load_settings(Some(ax.project_root())).context_budget_tokens;
+    let settings = ax_usage::load_settings(Some(ax.project_root()));
+    let budget = settings.context_budget_tokens;
+    let reserve = settings
+        .context_memory_tokens
+        .unwrap_or(ax_usage::MEMORY_RESERVE_TOKENS);
     let mut blocks = vec![ax_usage::ContextBlock {
         id: "required".into(),
         class: ax_usage::ContextClass::HardRequired,
@@ -1248,6 +1294,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         "memories": memories,
         "indexStats": index_stats,
         "pendingFiles": pending,
+        "integrity": ax_core::database_incident_value(ax.project_root()),
         "sourceContext": ice_context.as_ref().map(|c| serde_json::json!({
             "status": c.status,
             "selectionVersion": c.selection_version,
@@ -1267,21 +1314,41 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
             obj.insert("policyError".to_string(), Value::String(err));
         }
     }
-    out = crate::context_budget::finish(out, &blocks, budget)?;
-    let included: Vec<_> = out["contextBudget"]["included"]
+    if let Some(block) =
+        crate::neural_tool::predicted_block(ax.project_root(), ax.db_pool(), &prompt).await
+    {
+        blocks.push(block);
+    }
+    let ranked = crate::neural_tool::maybe_reorder(ax.project_root(), &prompt, &mut blocks);
+    out = match &ranked {
+        Some(outcome) => crate::context_budget::finish_with_neural(
+            out,
+            &blocks,
+            budget,
+            reserve,
+            &outcome.budget,
+        )?,
+        None => crate::context_budget::finish_with_memory_reserve(out, &blocks, budget, reserve)?,
+    };
+    if let Some(outcome) = &ranked {
+        crate::neural_tool::record_totals(ax.db_pool(), ax.project_root(), outcome).await;
+    }
+    let included: Vec<String> = out["contextBudget"]["included"]
         .as_array()
         .into_iter()
         .flatten()
         .filter_map(Value::as_str)
+        .map(str::to_string)
         .collect();
+    let kept = |id: &str| included.iter().any(|item| item == id);
     delivered.retain(|(key, _)| match key.as_str() {
-        "block:index" => included.contains(&"block:index"),
-        k if k.starts_with("reuse:") => included.contains(&"reuse"),
+        "block:index" => kept("block:index"),
+        k if k.starts_with("reuse:") => kept("reuse"),
         k if k.starts_with("source:") => {
             let block = k.trim_start_matches("source:");
-            !policy_blocks_id(block, &blocks) || included.contains(&block)
+            !policy_blocks_id(block, &blocks) || kept(block)
         }
-        k if policy_blocks_id(k, &blocks) => included.contains(&k),
+        k if policy_blocks_id(k, &blocks) => kept(k),
         _ => true,
     });
     if !delivered.is_empty() {
@@ -1406,6 +1473,35 @@ async fn remember(ax: &mut Ax, params: Value) -> Result<Value, String> {
             .map_err(|e| e.to_string())?;
         return Ok(json!({ "ok": confirmed, "id": id, "confirmed": confirmed }));
     }
+    if params.get("action").and_then(Value::as_str) == Some("useful")
+        || params.get("action").and_then(Value::as_str) == Some("wrong")
+    {
+        let useful = params.get("action").and_then(Value::as_str) == Some("useful");
+        let id = params
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "id required for useful/wrong".to_string())?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let ok = ax_memory::record_feedback(ax.db_pool(), id, useful, now)
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(
+            json!({ "ok": ok, "id": id, "action": if useful { "useful" } else { "wrong" } }),
+        );
+    }
+    if params.get("action").and_then(Value::as_str) == Some("purge") {
+        let id = params
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or("id required")?;
+        let purged = ax_memory::purge_memory(ax.db_pool(), id)
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(json!({ "ok": purged, "id": id, "purged": purged }));
+    }
     let body = params
         .get("body")
         .or_else(|| params.get("text"))
@@ -1427,6 +1523,7 @@ async fn remember(ax: &mut Ax, params: Value) -> Result<Value, String> {
         files: string_array(params.get("files")),
         source: Some("mcp".into()),
     };
+    ax_memory::assert_scope(ax.project_root(), &input.files).map_err(|e| e.to_string())?;
     let triggers = string_array(params.get("triggers"));
     let row = ax_memory::remember_with_triggers(ax.db_pool(), input, &triggers)
         .await
@@ -1440,6 +1537,7 @@ async fn remember(ax: &mut Ax, params: Value) -> Result<Value, String> {
     )
     .await
     .unwrap_or_default();
+    let suggestions = ax_memory::suggested_triggers(&row.title, &row.files, &row.body, &triggers);
     let instruction = if similar.is_empty() {
         "Memory saved. It will surface in future ax_preflight and ax_recall calls when relevant."
             .to_string()
@@ -1452,6 +1550,7 @@ async fn remember(ax: &mut Ax, params: Value) -> Result<Value, String> {
         "title": row.title,
         "kind": row.kind,
         "similar": similar,
+        "suggested_triggers": suggestions,
         "instruction": instruction,
     }))
 }
@@ -1485,7 +1584,11 @@ async fn recall(ax: &mut Ax, params: Value) -> Result<Value, String> {
     {
         return Err("query, cue, or id required".into());
     }
-    let matches = ax_memory::search(ax.db_pool(), &request)
+    let mut matches = ax_memory::search(ax.db_pool(), &request)
+        .await
+        .map_err(|e| e.to_string())?;
+    let filter = memory_filter_from_params(&params);
+    ax_memory::apply_memory_filter(ax.db_pool(), &mut matches, &filter)
         .await
         .map_err(|e| e.to_string())?;
     let cues = match request.id.as_deref().filter(|id| !id.is_empty()) {
@@ -1901,7 +2004,19 @@ async fn guard(ax: &mut Ax, params: Value) -> Result<Value, String> {
             .guard_operation(&path, op, content.as_deref())
             .await
             .map_err(|e| e.to_string())?;
-        return Ok(json!(result));
+        let mut value = serde_json::to_value(&result).map_err(|e| e.to_string())?;
+        if let Ok((memories, _)) = ax_memory::list(ax.db_pool(), 200, 0).await {
+            let hits: Vec<_> = memories
+                .into_iter()
+                .filter(|m| !ax_memory::prospective_tags_for_path(&m.tags, path_str).is_empty())
+                .take(2)
+                .map(|m| json!({ "id": m.id, "title": m.title, "kind": m.kind }))
+                .collect();
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("memories".into(), json!(hits));
+            }
+        }
+        return Ok(value);
     }
     let mut all_allowed = true;
     let mut violations = Vec::new();
@@ -2014,6 +2129,39 @@ async fn diagnostics(ax: &mut Ax, params: Value) -> Result<Value, String> {
         }
     }
 
+    let mut lessons = Vec::new();
+    let error_text: String = entries
+        .iter()
+        .filter(|d| d.severity == "error")
+        .map(|d| d.message.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !error_text.trim().is_empty() {
+        if let Ok(hits) = ax_memory::recall_filtered(
+            ax.db_pool(),
+            &error_text,
+            3,
+            &ax_memory::MemoryFilter {
+                kind: Some("lesson".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        {
+            if !hits.is_empty() {
+                lines.push("\n## Seen before (lessons)".to_string());
+                for hit in &hits {
+                    lines.push(format!("- {} — {}", hit.memory.id, hit.memory.title));
+                    lessons.push(json!({
+                        "id": hit.memory.id,
+                        "title": hit.memory.title,
+                        "score": hit.score,
+                    }));
+                }
+            }
+        }
+    }
+
     Ok(json!({
         "text": lines.join("\n"),
         "errorCount": error_count,
@@ -2021,6 +2169,7 @@ async fn diagnostics(ax: &mut Ax, params: Value) -> Result<Value, String> {
         "files": paths,
         "guardedPaths": guarded_paths,
         "affectedTests": affected,
+        "lessons": lessons,
     }))
 }
 
@@ -2179,6 +2328,31 @@ fn string_array(v: Option<&Value>) -> Vec<String> {
             .collect(),
         Some(Value::String(s)) => vec![s.clone()],
         _ => vec![],
+    }
+}
+
+fn memory_filter_from_params(params: &Value) -> ax_memory::MemoryFilter {
+    let text = |key: &str| {
+        params
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    ax_memory::MemoryFilter {
+        session: text("session"),
+        turn: text("turn"),
+        keyword: text("keyword"),
+        trigger: text("trigger"),
+        file: text("file"),
+        symbol: text("symbol"),
+        kind: text("kind"),
+        since: params.get("since").and_then(Value::as_i64),
+        until: params
+            .get("as_of")
+            .and_then(Value::as_i64)
+            .or_else(|| params.get("until").and_then(Value::as_i64)),
     }
 }
 
@@ -2626,7 +2800,7 @@ fn extra_tools() -> Vec<Value> {
                     "kind": { "type": "string", "enum": ["decision", "bug_fix", "architecture", "convention", "note"] },
                     "tags": { "type": "array", "items": { "type": "string" } },
                     "files": { "type": "array", "items": { "type": "string" }, "description": "Related project-relative file paths" },
-                    "triggers": { "type": "array", "items": { "type": "string" }, "description": "Exact cue names. CLI: --trigger NAME" },
+                    "triggers": { "type": "array", "items": { "type": "string" }, "description": "Exact cue names. CLI: --trigger NAME. The reply includes suggested_triggers; those names are not stored unless you pass them." },
                     "action": { "type": "string", "enum": ["confirm"], "description": "confirm enables a candidate long-term memory. CLI: ax remember --confirm ID" },
                     "id": { "type": "string", "description": "Memory id to confirm" }
                 }
@@ -2677,7 +2851,7 @@ fn extra_tools() -> Vec<Value> {
                     "since": { "type": "string", "description": "YYYY-MM-DD" },
                     "limit": { "type": "number" },
                     "id": { "type": "string", "description": "Turn memory id from an earlier listing" },
-                    "depth": { "type": "string", "enum": ["hot", "archive"], "description": "archive searches the permanent engram tier. CLI: --depth archive" }
+                    "depth": { "type": "string", "enum": ["hot", "archive", "backup"], "description": "archive searches the permanent engram tier; backup searches zstd JSONL snapshots. CLI: --depth" }
                 }
             }
         }),
@@ -2705,11 +2879,131 @@ fn extra_tools() -> Vec<Value> {
                     "query": { "type": "string" },
                     "cue": { "type": "string", "description": "Exact trigger, title, or tag. CLI: --cue" },
                     "id": { "type": "string", "description": "Stable memory ID for a complete body and its cues. CLI: --id" },
-                    "depth": { "type": "string", "enum": ["hot", "archive"], "description": "hot skips the archive. archive is only the archive. CLI: --depth" },
+                    "depth": { "type": "string", "enum": ["hot", "archive", "backup"], "description": "hot skips the archive. archive is only the archive. backup searches snapshots. CLI: --depth" },
                     "limit": { "type": "number" },
                     "files": { "type": "array", "items": { "type": "string" }, "description": "Open files that boost a memory naming them" }
                 }
             }
+        }),
+        json!({
+            "name": "ax_neural_status",
+            "description": "Required Neural layer: ranks every preflight; ax.json cannot turn it off. Measured token delta, rank latency, precision, promoted models. Memory stays hash-v1. CLI: ax neural status",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "ax_neural_search",
+            "description": "Semantic search. No hits until a bake-off admits a model; hash-v1 recall is unchanged. CLI: ax neural search",
+            "inputSchema": { "type": "object", "properties": { "query": { "type": "string" } } }
+        }),
+        json!({
+            "name": "ax_neural_rank",
+            "description": "Rank context blocks as preflight does. Hard-required blocks stay first; repeated text is dropped. CLI: ax neural rank",
+            "inputSchema": { "type": "object", "properties": {
+                "query": { "type": "string" },
+                "blocks": { "type": "array", "items": { "type": "object", "properties": {
+                    "id": { "type": "string" },
+                    "class": { "type": "string", "enum": ["hard_required", "high_value", "optional"] },
+                    "text": { "type": "string" } } } } } }
+        }),
+        json!({
+            "name": "ax_neural_predict",
+            "description": "Skills, rules, memories, and files predicted for a task from this project's feedback. Labeled predicted; below minimum_confidence is dropped. CLI: ax neural predict",
+            "inputSchema": { "type": "object", "properties": { "task": { "type": "string" } } }
+        }),
+        json!({
+            "name": "ax_neural_explain",
+            "description": "Locked fusion weights, the zero semantic blend, and GNN status. CLI: ax neural explain",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "ax_neural_feedback",
+            "description": "Append one execution feedback row. Needs neural.learning.feedback_collection; secret-shaped text is refused. Success does not mark context useful. CLI: ax neural feedback",
+            "inputSchema": { "type": "object", "properties": {
+                "executionId": { "type": "string" }, "taskCategory": { "type": "string" },
+                "outcome": { "type": "string" },
+                "contextIds": { "type": "array", "items": { "type": "string" } },
+                "skillIds": { "type": "array", "items": { "type": "string" } },
+                "ruleIds": { "type": "array", "items": { "type": "string" } },
+                "retryCount": { "type": "integer" }, "inputTokens": { "type": "integer" },
+                "outputTokens": { "type": "integer" } },
+                "required": ["executionId", "taskCategory", "outcome"] }
+        }),
+        json!({
+            "name": "ax_neural_graph",
+            "description": "Suggest missing links from this project's edges and successful feedback, stored with provenance predicted. Never writes edges. Passed edges give a preview. CLI: ax neural graph",
+            "inputSchema": { "type": "object", "properties": {
+                "edges": { "type": "array", "items": { "type": "object", "properties": {
+                    "source": { "type": "string" }, "target": { "type": "string" } } } } } }
+        }),
+        json!({
+            "name": "ax_neural_model_list",
+            "description": "Registered Neural models. CLI: ax neural models",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "ax_neural_model_status",
+            "description": "Promoted checksum for a model id. CLI: ax neural model-status",
+            "inputSchema": { "type": "object", "properties": { "modelId": { "type": "string" } } }
+        }),
+        json!({
+            "name": "ax_neural_register",
+            "description": "Register a model artifact by checksum. Registering does not promote. CLI: ax neural register",
+            "inputSchema": { "type": "object", "properties": {
+                "modelId": { "type": "string" }, "version": { "type": "string" },
+                "checksum": { "type": "string" }, "modelType": { "type": "string" },
+                "datasetVersion": { "type": "string" }, "platforms": { "type": "string" },
+                "metrics": { "type": "object" } },
+                "required": ["modelId", "version", "checksum"] }
+        }),
+        json!({
+            "name": "ax_neural_benchmark",
+            "description": "Bake-off of the fused hash-v1 pipeline on the built-in coding fixture, in a temporary database. Per-family hits and measured latency. CLI: ax neural benchmark",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "ax_neural_benchmark_abc",
+            "description": "Phase 2 A/B/C retrieval metrics (BM25, Ax fusion, Neural lexical) on the built-in coding fixture. Temporary database; production ranking unchanged. CLI: ax neural benchmark-abc",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "ax_neural_embed_bakeoff",
+            "description": "Phase 3 embedding-runtime bake-off: measured hash/lexical/(blake3); ONNX/Candle reported not_built until linked and configured. CLI: ax neural embed-bakeoff",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "ax_neural_agent_eval",
+            "description": "Phase 6 fixture agent-eval: context P/R across Ax/Neural/prediction arms. Live LLM task success stays not_measured. CLI: ax neural agent-eval",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "ax_neural_learn",
+            "description": "Offline ranking-prior learning with train/validation split from project feedback. Never auto-promotes. CLI: ax neural learn",
+            "inputSchema": { "type": "object", "properties": {
+                "seed": { "type": "integer" },
+                "validationRatio": { "type": "number" },
+                "datasetVersion": { "type": "string" },
+                "modelVersion": { "type": "string" },
+                "rows": { "type": "array" } } }
+        }),
+        json!({
+            "name": "ax_neural_evaluate",
+            "description": "Leave-one-out evaluation of predictions on the built-in coding fixture. Stores precision and coverage for status. CLI: ax neural evaluate",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "ax_neural_share",
+            "description": "Share packet for neural.mode and the distribution keys. Never sent; raw feedback and source stay out. CLI: ax neural share",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "ax_neural_promote",
+            "description": "Explicit model promotion; needs explicit, beatsBaseline, and regressionsClear. Automatic promotion is refused. CLI: ax neural promote",
+            "inputSchema": { "type": "object", "properties": { "modelId": { "type": "string" }, "version": { "type": "string" }, "explicit": { "type": "boolean" }, "beatsBaseline": { "type": "boolean" }, "regressionsClear": { "type": "boolean" } }, "required": ["modelId", "version"] }
+        }),
+        json!({
+            "name": "ax_neural_rollback",
+            "description": "Select the previous promoted checksum. CLI: ax neural rollback",
+            "inputSchema": { "type": "object", "properties": { "modelId": { "type": "string" } }, "required": ["modelId"] }
         }),
     ]
 }
@@ -2861,6 +3155,81 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap().to_string())
             .collect()
+    }
+
+    fn neural_tools() -> Vec<Value> {
+        extra_tools()
+            .into_iter()
+            .filter(|tool| {
+                tool["name"]
+                    .as_str()
+                    .is_some_and(|name| name.starts_with("ax_neural_"))
+            })
+            .collect()
+    }
+
+    fn neural_tool(tools: &[Value], name: &str) -> Value {
+        tools
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .cloned()
+            .unwrap_or_else(|| panic!("{name} is not a tool"))
+    }
+
+    #[test]
+    fn neural_tool_descriptions_say_required() {
+        let tools = neural_tools();
+        let status = neural_tool(&tools, "ax_neural_status");
+        let text = status["description"].as_str().unwrap();
+        assert!(text.contains("Required"), "{text}");
+        assert!(!text.contains("Disabled unless"), "{text}");
+        for tool in &tools {
+            let text = tool["description"].as_str().unwrap();
+            assert!(!text.contains("Optional semantic"), "{text}");
+            assert!(text.contains("CLI: ax neural"), "{text}");
+        }
+    }
+
+    #[test]
+    fn neural_register_and_evaluate_are_tools_with_cli_field_names() {
+        let tools = neural_tools();
+        let register = neural_tool(&tools, "ax_neural_register");
+        for field in [
+            "modelId",
+            "version",
+            "checksum",
+            "modelType",
+            "datasetVersion",
+            "platforms",
+            "metrics",
+        ] {
+            assert!(
+                register["inputSchema"]["properties"].get(field).is_some(),
+                "register lacks {field}"
+            );
+        }
+        neural_tool(&tools, "ax_neural_evaluate");
+        let feedback = neural_tool(&tools, "ax_neural_feedback");
+        for field in [
+            "executionId",
+            "taskCategory",
+            "outcome",
+            "contextIds",
+            "skillIds",
+            "ruleIds",
+            "retryCount",
+            "inputTokens",
+            "outputTokens",
+        ] {
+            assert!(
+                feedback["inputSchema"]["properties"].get(field).is_some(),
+                "feedback lacks {field}"
+            );
+        }
+        assert!(
+            tools.iter().all(|tool| tool["name"] != "ax_neural_export"),
+            "the training export stays CLI-only"
+        );
     }
 
     #[tokio::test]

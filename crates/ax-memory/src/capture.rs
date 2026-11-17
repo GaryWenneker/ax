@@ -110,11 +110,11 @@ pub async fn capture_git_history(
             continue;
         }
         let id = format!("git-{}", &commit.hash[..commit.hash.len().min(12)]);
-        let body = if commit.body.is_empty() {
+        let body = crate::turns::redact_secrets(&if commit.body.is_empty() {
             commit.subject.clone()
         } else {
             format!("{}\n\n{}", commit.subject, commit.body)
-        };
+        });
         let embedding = crate::embed::embedding_to_blob(&crate::embed::embed_text(&format!(
             "{} {}",
             commit.subject, commit.body

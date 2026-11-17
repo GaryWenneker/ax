@@ -1,6 +1,6 @@
 [package]
 name = "ax-plugins"
-version = "8.4.6"
+version = "10.0.0"
 edition = "2021"
 description = "ax out-of-tree extractor plugins (process host + optional wasmtime)"
 

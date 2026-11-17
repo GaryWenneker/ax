@@ -86,6 +86,7 @@ export interface MemoryRow {
 
 export interface MemoryMatch extends MemoryRow {
   score: number;
+  why?: { signals: string[]; matched_terms: string[]; anchors: string[]; graph_path: string[] };
 }
 
 export interface GitCaptureResult {
@@ -417,6 +418,39 @@ export function fetchGraph(params: { limit?: number; recompute?: boolean; origin
 /** Nodes indexed after `sinceMs`, plus the edges that touch them. */
 export function fetchRecentGraph(sinceMs: number, limit = 200): Promise<GraphPayload> {
   return get<GraphPayload>(`/graph/recent?since=${Math.floor(sinceMs)}&limit=${limit}`);
+}
+
+/** Graph nodes whose version history was valid at `atMs`. */
+export function fetchGraphAsOf(atMs: number, limit = 600): Promise<GraphPayload> {
+  return get<GraphPayload>(`/graph/as-of?at=${Math.floor(atMs)}&limit=${limit}`);
+}
+
+export interface MemoryReviewInbox {
+  stale: string[];
+  foreign: string[];
+  candidates: string[];
+}
+
+export function fetchMemoryReview(): Promise<MemoryReviewInbox> {
+  return get<MemoryReviewInbox>('/memory/review');
+}
+
+export interface MemoryHealth {
+  schemaVersion: number;
+  memories: number;
+  staleOrOrphanAnchors: number;
+  lastBackup: string | null;
+  mechanisms: Record<string, boolean>;
+}
+
+export function fetchMemoryHealth(): Promise<MemoryHealth> {
+  return get<MemoryHealth>('/memory/health');
+}
+
+export function fetchMemoryRelated(
+  id: string,
+): Promise<{ related: { id: string; kind: string }[] }> {
+  return get(`/memory/${encodeURIComponent(id)}/related`);
 }
 
 export interface GraphStreamMeta {

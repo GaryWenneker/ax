@@ -34,11 +34,17 @@ impl LanguageExtractor for GenericExtractor {
             let spans = symbol_spans_from_result(&result);
             let file_id = file_node_id(path);
             append_lang_call_refs(
-            &mut result,
-            tree,
-            &RefCtx { source, file_path: path, language: lang, file_id: &file_id, spans: &spans },
-            self.spec.call_kinds,
-        );
+                &mut result,
+                tree,
+                &RefCtx {
+                    source,
+                    file_path: path,
+                    language: lang,
+                    file_id: &file_id,
+                    spans: &spans,
+                },
+                self.spec.call_kinds,
+            );
             emit_same_file_call_edges(&mut result, path);
         }
         result

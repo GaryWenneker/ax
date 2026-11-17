@@ -95,7 +95,12 @@ pub fn resolve_sonar_repo_names(workspace: &Path, config: &ShipConfig) -> Vec<St
         merged.dedup();
         merged
     };
-    let excluded: HashSet<&str> = config.sonar.exclude_repos.iter().map(|s| s.as_str()).collect();
+    let excluded: HashSet<&str> = config
+        .sonar
+        .exclude_repos
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
     if !excluded.is_empty() {
         names.retain(|name| !excluded.contains(name.as_str()));
     }
@@ -108,7 +113,13 @@ pub fn resolve_git_roots(workspace: &Path, config: &ShipConfig) -> Result<Vec<Pa
         return resolve_paths(workspace, &config.ship.git_roots);
     }
 
-    if let Some(single) = config.ship.git_root.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(single) = config
+        .ship
+        .git_root
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         return resolve_paths(workspace, &[single.to_string()]);
     }
 
@@ -136,7 +147,10 @@ pub fn resolve_git_root(workspace: &Path, config: &ShipConfig) -> Result<PathBuf
         .ok_or_else(|| "no git repositories configured".into())
 }
 
-pub fn resolve_git_root_from(workspace: &Path, configured: Option<&str>) -> Result<PathBuf, String> {
+pub fn resolve_git_root_from(
+    workspace: &Path,
+    configured: Option<&str>,
+) -> Result<PathBuf, String> {
     if let Some(single) = configured.map(str::trim).filter(|s| !s.is_empty()) {
         return resolve_paths(workspace, &[single.to_string()])?
             .into_iter()
@@ -179,10 +193,7 @@ pub fn resolve_repo_base_branch(
     default_base: &str,
     overrides: &HashMap<String, String>,
 ) -> String {
-    let repo_name = repo_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let repo_name = repo_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
     if let Some(branch) = overrides.get(repo_name).filter(|b| !b.trim().is_empty()) {
         return branch.trim().to_string();
@@ -195,10 +206,13 @@ pub fn resolve_repo_base_branch(
     }
 
     let head = ax_git::current_branch(repo_path).ok().flatten();
-    if head.as_deref().is_some_and(|h| h != "main" && h != "master")
-        && git_ref_exists(repo_path, "develop") {
-            return "develop".into();
-        }
+    if head
+        .as_deref()
+        .is_some_and(|h| h != "main" && h != "master")
+        && git_ref_exists(repo_path, "develop")
+    {
+        return "develop".into();
+    }
 
     if git_ref_exists(repo_path, default_base) {
         return default_base.to_string();
@@ -324,7 +338,6 @@ mod tests {
 
         let names = resolve_sonar_repo_names(ws, &config);
         assert_eq!(names, vec!["alpha"]);
-
     }
 
     #[test]
@@ -339,6 +352,5 @@ mod tests {
 
         let repos = discover_git_repos(ws);
         assert_eq!(repos, vec!["alpha", "beta"]);
-
     }
 }

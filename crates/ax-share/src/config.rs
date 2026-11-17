@@ -224,7 +224,10 @@ pub fn project_config_path(project_root: &Path) -> PathBuf {
 }
 
 /// Save share config to project `ax.json`.
-pub fn write_project_share_config(project_root: &Path, config: &ShareConfig) -> Result<PathBuf, String> {
+pub fn write_project_share_config(
+    project_root: &Path,
+    config: &ShareConfig,
+) -> Result<PathBuf, String> {
     let path = project_config_path(project_root);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -274,10 +277,22 @@ mod tests {
 
     #[test]
     fn import_mode_parse_and_as_str() {
-        assert_eq!(ShareImportMode::parse("review"), Some(ShareImportMode::Review));
-        assert_eq!(ShareImportMode::parse("merge"), Some(ShareImportMode::Merge));
-        assert_eq!(ShareImportMode::parse("force"), Some(ShareImportMode::Force));
-        assert_eq!(ShareImportMode::parse("overwrite"), Some(ShareImportMode::Force));
+        assert_eq!(
+            ShareImportMode::parse("review"),
+            Some(ShareImportMode::Review)
+        );
+        assert_eq!(
+            ShareImportMode::parse("merge"),
+            Some(ShareImportMode::Merge)
+        );
+        assert_eq!(
+            ShareImportMode::parse("force"),
+            Some(ShareImportMode::Force)
+        );
+        assert_eq!(
+            ShareImportMode::parse("overwrite"),
+            Some(ShareImportMode::Force)
+        );
         assert_eq!(ShareImportMode::parse("invalid"), None);
         assert_eq!(ShareImportMode::Review.as_str(), "review");
         assert_eq!(ShareImportMode::Merge.as_str(), "merge");
@@ -286,8 +301,14 @@ mod tests {
 
     #[test]
     fn share_provider_parse() {
-        assert_eq!(ShareProvider::parse("onedrive"), Some(ShareProvider::Onedrive));
-        assert_eq!(ShareProvider::parse("sharepoint"), Some(ShareProvider::Onedrive));
+        assert_eq!(
+            ShareProvider::parse("onedrive"),
+            Some(ShareProvider::Onedrive)
+        );
+        assert_eq!(
+            ShareProvider::parse("sharepoint"),
+            Some(ShareProvider::Onedrive)
+        );
         assert_eq!(ShareProvider::parse("github"), Some(ShareProvider::Github));
         assert_eq!(ShareProvider::parse("git"), Some(ShareProvider::Github));
         assert_eq!(ShareProvider::parse("dropbox"), None);
@@ -301,7 +322,13 @@ mod tests {
             &project_dir.path().join(CONFIG_FILENAME),
             serde_json::json!({ "provider": "onedrive", "onedrive": { "shareUrl": "  " } }),
         );
-        assert_eq!(load_from_project(project_dir.path()).onedrive.share_url.trim(), "");
+        assert_eq!(
+            load_from_project(project_dir.path())
+                .onedrive
+                .share_url
+                .trim(),
+            ""
+        );
     }
 
     #[test]
@@ -321,7 +348,10 @@ mod tests {
         assert_eq!(cfg.provider, ShareProvider::Onedrive);
         assert_eq!(cfg.import_mode, ShareImportMode::Merge);
         assert_eq!(cfg.auto_sync_minutes, 5);
-        assert_eq!(cfg.onedrive.share_url, "https://contoso.sharepoint.com/team");
+        assert_eq!(
+            cfg.onedrive.share_url,
+            "https://contoso.sharepoint.com/team"
+        );
     }
 
     #[test]
@@ -371,7 +401,10 @@ mod tests {
         assert_eq!(cfg.provider, ShareProvider::Onedrive);
         assert_eq!(cfg.import_mode, ShareImportMode::Merge);
         assert_eq!(cfg.auto_sync_minutes, 5);
-        assert_eq!(cfg.onedrive.share_url, "https://contoso.sharepoint.com/global");
+        assert_eq!(
+            cfg.onedrive.share_url,
+            "https://contoso.sharepoint.com/global"
+        );
         assert_eq!(cfg.github.repo_url, "https://github.com/acme/ax-policy.git");
         assert_eq!(cfg.github.branch, "develop");
     }
@@ -392,7 +425,10 @@ mod tests {
 
         let cfg = load_from_project(project_dir.path());
         assert_eq!(cfg.provider, ShareProvider::Github);
-        assert_eq!(cfg.github.repo_url, "https://github.com/team/policy-pack.git");
+        assert_eq!(
+            cfg.github.repo_url,
+            "https://github.com/team/policy-pack.git"
+        );
         assert_eq!(cfg.github.subpath, "packs/default");
     }
 

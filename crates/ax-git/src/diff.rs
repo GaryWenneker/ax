@@ -37,13 +37,13 @@ pub struct DiffResult {
 pub fn diff_vs_base(repo_path: &Path, base_ref: &str) -> Result<DiffResult, GitError> {
     let head_branch = current_branch(repo_path)?;
     let head_oid = git_output(repo_path, &["rev-parse", "HEAD"])?;
-    let base_oid = git_output(
-        repo_path,
-        &["rev-parse", &format!("{base_ref}^{{commit}}")],
-    )
-    .or_else(|_| git_output(repo_path, &["rev-parse", base_ref]))?;
+    let base_oid = git_output(repo_path, &["rev-parse", &format!("{base_ref}^{{commit}}")])
+        .or_else(|_| git_output(repo_path, &["rev-parse", base_ref]))?;
 
-    let names = git_output(repo_path, &["diff", "--name-status", &format!("{base_ref}...HEAD")])?;
+    let names = git_output(
+        repo_path,
+        &["diff", "--name-status", &format!("{base_ref}...HEAD")],
+    )?;
     let mut files = Vec::new();
     for line in names.lines() {
         if line.trim().is_empty() {
@@ -109,7 +109,9 @@ fn git_output(repo_path: &Path, args: &[&str]) -> Result<String, GitError> {
         .output()
         .map_err(|e| GitError::Other(e.to_string()))?;
     if !output.status.success() {
-        return Err(GitError::Other(String::from_utf8_lossy(&output.stderr).into()));
+        return Err(GitError::Other(
+            String::from_utf8_lossy(&output.stderr).into(),
+        ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }

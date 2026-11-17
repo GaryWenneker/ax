@@ -25,6 +25,7 @@ By default the server lists the **turn contract** plus the **whole graph read su
 | Turn contract | `ax_preflight`, `ax_policy_capture`, and (when policy exists) `ax_rules` / `ax_skill` / `ax_guard` |
 | Graph reads | `ax_explore`, `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_cycles`, `ax_api`, `ax_context`, `ax_session`, `ax_affected`, `ax_insights`, `ax_report`, `ax_status`, `ax_sync`, `ax_remember`, `ax_recall`, `ax_history`, `ax_expand`, `ax_stash`, `ax_cache_status` |
 | Pi economics | `ax_tool_economics`, `ax_optimization_advice`, `ax_cost` (estimates from the Pi adapter; `ax_context` and `ax_explore` are the existing graph tools) |
+| Neural (required) | `ax_neural_status`, `ax_neural_search`, `ax_neural_rank`, `ax_neural_predict`, `ax_neural_explain`, `ax_neural_model_list`, `ax_neural_model_status`, `ax_neural_benchmark`. CLI twins are `ax neural …`. Memory embeddings stay `hash-v1`. Context ranking, prediction, and graph suggestions run in process and do not call a language model. `neural.enabled: false` does not turn the layer off. Every preflight is ranked; `contextBudget.neural` lists the duplicates dropped and their tokens, and the budget counts it. With `neural.prediction.enabled`, preflight adds an optional `neural:predicted` block. |
 
 `ax_explore` remains the one call that usually answers a whole question: give it a natural-language question or a bag of symbol and file names and it returns the **verbatim, line-numbered source** of the relevant symbols grouped by file, plus call paths and a blast-radius summary. Reach for the narrower tools when you already know exactly what you want.
 
@@ -33,6 +34,8 @@ By default the server lists the **turn contract** plus the **whole graph read su
 The cost is a larger `tools/list` payload on every turn, which we accepted deliberately. A coherence test (`crates/ax-mcp/src/tool_filter.rs`) now fails the build if a rule names a tool that is neither advertised nor explicitly gated, so the catalog and the policy cannot drift apart again.
 
 `ax_files` stays unlisted on purpose: graph queries supersede it. It remains callable.
+
+`ax_neural_feedback`, `ax_neural_graph`, `ax_neural_share`, `ax_neural_register`, `ax_neural_evaluate`, `ax_neural_promote`, and `ax_neural_rollback` stay callable and unlisted. They write feedback, suggestions, evaluations, or model rows. Feedback is refused while `neural.learning.feedback_collection` is off, and graph returns nothing while `neural.graph.enabled` is off. The share packet is never sent; it lists models only with `neural.distribution.enabled` and outcome counts only with `share_learning_data`. Registering does not promote, and promotion still requires `explicit: true`. The training export has no MCP tool; it is `ax neural export --out <file>`.
 
 ## Opt-in tools
 
@@ -113,8 +116,8 @@ The [memory vault](/guides/memory/) adds three tools:
 
 | Tool | Purpose |
 |---|---|
-| `ax_remember` | Store a durable memory with `triggers` (CLI: `ax remember --trigger`). Confirm a candidate with `action=confirm` and `id` (CLI: `ax remember --confirm`). |
-| `ax_recall` | Exact `cue` before free-text `query` (CLI: `ax recall --cue`). `id` returns the body and its cues. `depth=archive` searches old memory and is not injected (CLI: `--depth archive`). |
+| `ax_remember` | Store a durable memory with `triggers` (CLI: `ax remember --trigger`). The reply includes `suggested_triggers`. Confirm a candidate with `action=confirm` and `id` (CLI: `ax remember --confirm`). |
+| `ax_recall` | Exact `cue` before free-text `query` (CLI: `ax recall --cue`). `id` returns the body and its cues. `depth=archive` searches old memory and is not injected (CLI: `--depth archive`). `depth=backup` searches `.ax/backups/memory/` snapshots and is not injected (CLI: `--depth backup`). |
 | `ax_history` | When did I change X. `depth=archive` includes demoted turns, graph diffs, and logs (CLI: `ax history --depth archive`). `id` returns one turn in full. |
 
 `ax_preflight` also adds an `<ax_turn_history>` block with up to 3 past agent turns related to the open files or the prompt, and an `<ax_history_hint>` when the prompt asks when something changed.

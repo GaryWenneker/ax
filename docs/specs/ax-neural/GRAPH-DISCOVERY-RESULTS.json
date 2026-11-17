@@ -1,0 +1,114 @@
+{
+  "arms": {
+    "graph_discovery": {
+      "abstained": 7.0,
+      "candidateRecall": 0.4075757575757576,
+      "falsePositiveAdditions": 160.0,
+      "kinds": {
+        "bug_localization": {
+          "mrr": 0.25,
+          "ndcg": 0.25,
+          "precisionAt3": 0.08333333333333333,
+          "recallAt3": 0.25,
+          "tasks": 4.0
+        },
+        "cross_file_call": {
+          "mrr": 0.09166666666666666,
+          "ndcg": 0.10179374870514799,
+          "precisionAt3": 0.1,
+          "recallAt3": 0.10833333333333332,
+          "tasks": 20.0
+        },
+        "indirect_dependency": {
+          "mrr": 0.03777777777777778,
+          "ndcg": 0.10264968074426367,
+          "precisionAt3": 0.0,
+          "recallAt3": 0.0,
+          "tasks": 15.0
+        },
+        "similar_unrelated": {
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "precisionAt3": 0.33333333333333326,
+          "recallAt3": 1.0,
+          "tasks": 15.0
+        },
+        "symbol_rename": {
+          "mrr": 0.0,
+          "ndcg": 0.0,
+          "precisionAt3": 0.0,
+          "recallAt3": 0.0,
+          "tasks": 1.0
+        }
+      },
+      "meanEndToEndMillis": 68.42857142857143,
+      "meanRetrievalMillis": 64.92063492063492,
+      "meanTraversalMillis": 3.507936507936508,
+      "mrr": 0.33454545454545453,
+      "ndcg": 0.35592036700485297,
+      "negativeAdditions": 0.0,
+      "negativeQueries": 8.0,
+      "precisionAt3": 0.1333333333333333,
+      "recallAt3": 0.33030303030303027,
+      "tasksWithGold": 55.0
+    },
+    "production": {
+      "abstained": 7.0,
+      "candidateRecall": 0.2727272727272727,
+      "falsePositiveAdditions": 0.0,
+      "kinds": {
+        "bug_localization": {
+          "mrr": 0.0,
+          "ndcg": 0.0,
+          "precisionAt3": 0.0,
+          "recallAt3": 0.0,
+          "tasks": 4.0
+        },
+        "cross_file_call": {
+          "mrr": 0.0,
+          "ndcg": 0.0,
+          "precisionAt3": 0.0,
+          "recallAt3": 0.0,
+          "tasks": 20.0
+        },
+        "indirect_dependency": {
+          "mrr": 0.0,
+          "ndcg": 0.0,
+          "precisionAt3": 0.0,
+          "recallAt3": 0.0,
+          "tasks": 15.0
+        },
+        "similar_unrelated": {
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "precisionAt3": 0.33333333333333326,
+          "recallAt3": 1.0,
+          "tasks": 15.0
+        },
+        "symbol_rename": {
+          "mrr": 0.0,
+          "ndcg": 0.0,
+          "precisionAt3": 0.0,
+          "recallAt3": 0.0,
+          "tasks": 1.0
+        }
+      },
+      "meanEndToEndMillis": 64.92063492063492,
+      "meanRetrievalMillis": 64.92063492063492,
+      "meanTraversalMillis": 0.0,
+      "mrr": 0.2727272727272727,
+      "ndcg": 0.2727272727272727,
+      "negativeAdditions": 0.0,
+      "negativeQueries": 8.0,
+      "precisionAt3": 0.0909090909090909,
+      "recallAt3": 0.2727272727272727,
+      "tasksWithGold": 55.0
+    }
+  },
+  "inputBlake3": "5ff5a69f4aa4d926c7c59c764d222a0017ebac7bc4b637803688fe006e5f77f6",
+  "promoted": true,
+  "protocol": "graph-discovery-independent-1",
+  "rssBytesAfter": 28688384,
+  "rssBytesBefore": 18268160,
+  "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60"
+}

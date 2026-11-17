@@ -185,7 +185,8 @@ const INSTALL_DISCOVERY_SKIP: &[&str] = &[
 pub fn discover_projects_for_init(root: &Path, max_depth: usize) -> Vec<PathBuf> {
     let mut out = Vec::new();
     if root.is_dir() {
-        visit_install_projects(root, 0, max_depth, &mut out);
+        let scan_root = install_scan_root(root);
+        visit_install_projects(root, &scan_root, 0, max_depth, &mut out);
     }
     out.sort();
     out.dedup();
@@ -199,9 +200,28 @@ fn install_project(dir: &Path) -> bool {
     is_initialized(dir)
 }
 
-fn visit_install_projects(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) {
+fn install_scan_root(root: &Path) -> PathBuf {
+    root.canonicalize().unwrap_or_else(|_| root.to_path_buf())
+}
+
+fn dir_within_install_scan(scan_root: &Path, path: &Path) -> bool {
+    let Ok(canonical) = path.canonicalize() else {
+        return false;
+    };
+    canonical.strip_prefix(scan_root).is_ok()
+}
+
+fn visit_install_projects(
+    dir: &Path,
+    scan_root: &Path,
+    depth: usize,
+    max_depth: usize,
+    out: &mut Vec<PathBuf>,
+) {
     if install_project(dir) {
-        out.push(dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf()));
+        if dir_within_install_scan(scan_root, dir) {
+            out.push(dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf()));
+        }
         return;
     }
     if depth >= max_depth {
@@ -217,12 +237,16 @@ fn visit_install_projects(dir: &Path, depth: usize, max_depth: usize, out: &mut 
         if !kind.is_dir() || kind.is_symlink() {
             continue;
         }
+        let child = entry.path();
+        if !dir_within_install_scan(scan_root, &child) {
+            continue;
+        }
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if name.starts_with('.') || INSTALL_DISCOVERY_SKIP.iter().any(|skip| *skip == name) {
             continue;
         }
-        visit_install_projects(&entry.path(), depth + 1, max_depth, out);
+        visit_install_projects(&child, scan_root, depth + 1, max_depth, out);
     }
 }
 
@@ -474,6 +498,25 @@ mod discover_tests {
         assert_eq!(names(&found), vec!["ready".to_string()]);
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(real);
+    }
+
+    #[test]
+    fn ignores_a_nested_symlink_that_escapes_the_scan_root() {
+        let root = scratch("nest-link");
+        let ready = root.join("ready");
+        fs::create_dir_all(ready.join(".ax")).unwrap();
+        fs::write(ready.join(".ax").join("ax.db"), b"x").unwrap();
+        let outside = scratch("nest-outside");
+        fs::create_dir_all(outside.join(".ax")).unwrap();
+        fs::write(outside.join(".ax").join("ax.db"), b"x").unwrap();
+        let wrapper = root.join("wrapper");
+        fs::create_dir_all(&wrapper).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, wrapper.join("escape")).unwrap();
+        let found = discover_projects_for_init(&root, 3);
+        assert_eq!(names(&found), vec!["ready".to_string()]);
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
     }
 
     #[test]

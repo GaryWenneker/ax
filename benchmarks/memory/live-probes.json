@@ -1,0 +1,256 @@
+{
+  "version": 5,
+  "description": "Labeled live-vault probes with unique top-hit delivery (p@3=1) plus abstention. Built after FTS foreign+active hot path; verified via ax preflight.",
+  "probes": [
+    {
+      "id": "del-note-2bf41946",
+      "query": "Logging parity",
+      "expect": [
+        "2bf41946-923a-48d5-808f-b34e2849c321"
+      ],
+      "limit": 5,
+      "channel": "preflight",
+      "family": "delivery",
+      "kind": "note",
+      "title": "Logging parity"
+    },
+    {
+      "id": "del-bug_fix-15b7fe94",
+      "query": "Logging restoration and shared admin list columns",
+      "expect": [
+        "15b7fe94-961f-43eb-9502-1356c5ba9c38"
+      ],
+      "limit": 5,
+      "channel": "preflight",
+      "family": "delivery",
+      "kind": "bug_fix",
+      "title": "Logging restoration and shared admin list columns"
+    },
+    {
+      "id": "del-decision-514c777c",
+      "query": "Status bar ax click switches to the workspace project",
+      "expect": [
+        "514c777c-c385-457c-8fbc-3240d6108c86"
+      ],
+      "limit": 5,
+      "channel": "preflight",
+      "family": "delivery",
+      "kind": "decision",
+      "title": "Status bar ax click switches to the workspace project"
+    },
+    {
+      "id": "del-architecture-66b6c786",
+      "query": "Live updates: one change feed for the Command Center",
+      "expect": [
+        "66b6c786-c0cd-4f63-b288-e8e41bf22c27"
+      ],
+      "limit": 5,
+      "channel": "preflight",
+      "family": "delivery",
+      "kind": "architecture",
+      "title": "Live updates: one change feed for the Command Center"
+    },
+    {
+      "id": "del-bug_fix-2f01b447",
+      "query": "Never move .ax aside while ax is running",
+      "expect": [
+        "2f01b447-17ed-4c70-8592-3021b9b5686d"
+      ],
+      "limit": 5,
+      "channel": "preflight",
+      "family": "delivery",
+      "kind": "bug_fix",
+      "title": "Never move .ax aside while ax is running"
+    },
+    {
+      "id": "del-bug_fix-9a40189f",
+      "query": "Memory wikilinks and turn request, conversation, outcome",
+      "expect": [
+        "9a40189f-6cc4-44a2-ba9c-ce0f8c44ae80"
+      ],
+      "limit": 5,
+      "channel": "preflight",
+      "family": "delivery",
+      "kind": "bug_fix",
+      "title": "Memory wikilinks and turn request, conversation, outcome"
+    },
+    {
+      "id": "del-bug_fix-208ef9e0",
+      "query": "Turn file diffs and compact memory content",
+      "expect": [
+        "208ef9e0-1601-41e1-8dfe-419ddadc1e77"
+      ],
+      "limit": 5,
+      "channel": "preflight",
+      "family": "delivery",
+      "kind": "bug_fix",
+      "title": "Turn file diffs and compact memory content"
+    },
+    {
+      "id": "del-decision-1dc0989a",
+      "query": "Finish full ship pipeline including git push",
+      "expect": [
+        "1dc0989a-bf1b-49fc-aefc-bc7be9b80210"
+      ],
+      "limit": 5,
+      "channel": "preflight",
+      "family": "delivery",
+      "kind": "decision",
+      "title": "Finish full ship pipeline including git push"
+    },
+    {
+      "id": "del-bug_fix-497dc0c3",
+      "query": "macOS ax- never overwrite Mach-O in place",
+      "expect": [
+        "497dc0c3-dcf2-47ad-a1bd-a698928fc0ba"
+      ],
+      "limit": 5,
+      "channel": "preflight",
+      "family": "delivery",
+      "kind": "bug_fix",
+      "title": "macOS ax- never overwrite Mach-O in place"
+    },
+    {
+      "id": "del-architecture-c947ca38",
+      "query": "WebDAV vault: guard folders at request level; clippy stops at ax-context",
+      "expect": [
+        "c947ca38-11f5-410d-82db-494e30585169"
+      ],
+      "limit": 5,
+      "channel": "preflight",
+      "family": "delivery",
+      "kind": "architecture",
+      "title": "WebDAV vault: guard folders at request level; clippy stops at ax-context"
+    },
+    {
+      "id": "del-note-ctxrpt-c",
+      "query": "Context c785857c-905d-46d7-915b-8f5cc931fb3e",
+      "expect": [
+        "ctxrpt-c785857c-905d-46d7-915b-8f5cc931fb3e"
+      ],
+      "limit": 5,
+      "channel": "preflight",
+      "family": "delivery",
+      "kind": "note",
+      "title": "Context c785857c-905d-46d7-915b-8f5cc931fb3e"
+    },
+    {
+      "id": "del-note-ctxrpt-5",
+      "query": "Context 536193a2-ec59-4ba3-8bea-cbabf61ab9af",
+      "expect": [
+        "ctxrpt-536193a2-ec59-4ba3-8bea-cbabf61ab9af"
+      ],
+      "limit": 5,
+      "channel": "preflight",
+      "family": "delivery",
+      "kind": "note",
+      "title": "Context 536193a2-ec59-4ba3-8bea-cbabf61ab9af"
+    },
+    {
+      "id": "del-note-ctxrpt-f",
+      "query": "Context ff3a3fc2-a82b-48d9-a03e-98e3d54c8d42",
+      "expect": [
+        "ctxrpt-ff3a3fc2-a82b-48d9-a03e-98e3d54c8d42"
+      ],
+      "limit": 5,
+      "channel": "preflight",
+      "family": "delivery",
+      "kind": "note",
+      "title": "Context ff3a3fc2-a82b-48d9-a03e-98e3d54c8d42"
+    },
+    {
+      "id": "del-note-ctxrpt-a",
+      "query": "Context a2901fb6-5746-4857-9a52-2e336186d6d4",
+      "expect": [
+        "ctxrpt-a2901fb6-5746-4857-9a52-2e336186d6d4"
+      ],
+      "limit": 5,
+      "channel": "preflight",
+      "family": "delivery",
+      "kind": "note",
+      "title": "Context a2901fb6-5746-4857-9a52-2e336186d6d4"
+    },
+    {
+      "id": "del-note-ctxrpt-4",
+      "query": "Context 43778dde-0129-4a19-a5fb-226e490059a4",
+      "expect": [
+        "ctxrpt-43778dde-0129-4a19-a5fb-226e490059a4"
+      ],
+      "limit": 5,
+      "channel": "preflight",
+      "family": "delivery",
+      "kind": "note",
+      "title": "Context 43778dde-0129-4a19-a5fb-226e490059a4"
+    },
+    {
+      "id": "abs-nonsense-1",
+      "query": "xyzzy plum pudding quantum zucchini neon trombone",
+      "expect": "empty",
+      "channel": "preflight",
+      "family": "abstention"
+    },
+    {
+      "id": "abs-nonsense-2",
+      "query": "fnord quux blorple snarf waffle iron cosmology 90210",
+      "expect": "empty",
+      "channel": "preflight",
+      "family": "abstention"
+    },
+    {
+      "id": "abs-nonsense-3",
+      "query": "asdkfjhasldkfjh random gibberish tokens qwertyuiop",
+      "expect": "empty",
+      "channel": "preflight",
+      "family": "abstention"
+    },
+    {
+      "id": "abs-nonsense-4",
+      "query": "unrelated topic about medieval basket weaving in antarctica",
+      "expect": "empty",
+      "channel": "preflight",
+      "family": "abstention"
+    },
+    {
+      "id": "abs-nonsense-5",
+      "query": "completely invented API called ZorpulateX without any docs",
+      "expect": "empty",
+      "channel": "preflight",
+      "family": "abstention"
+    },
+    {
+      "id": "abs-nonsense-6",
+      "query": "phone number of the queen of mars directory listing",
+      "expect": "empty",
+      "channel": "preflight",
+      "family": "abstention"
+    },
+    {
+      "id": "abs-nonsense-7",
+      "query": "recipe for invisible purple elephants in SQL",
+      "expect": "empty",
+      "channel": "preflight",
+      "family": "abstention"
+    },
+    {
+      "id": "abs-nonsense-8",
+      "query": "how to teach a rock to juggle TCP packets underwater",
+      "expect": "empty",
+      "channel": "preflight",
+      "family": "abstention"
+    },
+    {
+      "id": "abs-nonsense-9",
+      "query": "lorem ipsum dolor sit amet consectetur adipiscing elit axnull",
+      "expect": "empty",
+      "channel": "preflight",
+      "family": "abstention"
+    },
+    {
+      "id": "abs-nonsense-10",
+      "query": "banana phone encryptor firmware for toaster v0.0.0-never",
+      "expect": "empty",
+      "channel": "preflight",
+      "family": "abstention"
+    }
+  ]
+}

@@ -32,8 +32,7 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
     let mut out = FrameworkExtractResult::default();
     let now = now_ms();
     let route_path_re = Regex::new(r#"\bpath\s*:\s*['"]([^'"]*)['"]"#).expect("path");
-    let component_re =
-        Regex::new(r"\bcomponent\s*:\s*([A-Z][A-Za-z0-9_]*)").expect("component");
+    let component_re = Regex::new(r"\bcomponent\s*:\s*([A-Z][A-Za-z0-9_]*)").expect("component");
     let router_for_root_re = Regex::new(r"\bRouterModule\.forRoot\s*\(").expect("forRoot");
 
     if router_for_root_re.is_match(content) {
@@ -86,7 +85,7 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
         }
     }
 
-  let selector_re = Regex::new(r#"selector\s*:\s*['"]([^'"]+)['"]"#).expect("selector");
+    let selector_re = Regex::new(r#"selector\s*:\s*['"]([^'"]+)['"]"#).expect("selector");
     for cap in selector_re.captures_iter(content) {
         let selector = cap.get(1).map(|m| m.as_str()).unwrap_or("");
         if selector.is_empty() {
@@ -140,6 +139,9 @@ const routes = RouterModule.forRoot([
 "#;
         let out = extract_file("app.routes.ts", src);
         assert!(!out.nodes.is_empty());
-        assert!(out.references.iter().any(|r| r.reference_name == "HomePage"));
+        assert!(out
+            .references
+            .iter()
+            .any(|r| r.reference_name == "HomePage"));
     }
 }

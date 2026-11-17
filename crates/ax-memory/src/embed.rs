@@ -1,11 +1,26 @@
 //! Local text embeddings for hybrid recall.
 //!
-//! Default: feature hashing over word tokens and character trigrams into a
-//! fixed 256-dim vector (L2-normalized). With `--features onnx` and a model at
-//! `AX_ONNX_MODEL` or `~/.ax/models/all-MiniLM-L6-v2.onnx`, prefers ONNX dense
-//! embeddings (projected to 256-d for storage compatibility).
+//! Feature hashing over word tokens and character trigrams into a
+//! fixed 256-dim vector (L2-normalized). Every build uses this hash.
+//! The stored model name is `hash-v1`.
 
 pub const EMBED_DIM: usize = 256;
+
+/// Model name stored on every newly embedded row.
+pub const ACTIVE_MODEL: &str = "hash-v1";
+
+/// What Settings and `GET /api/memory/embed-status` report.
+pub struct EmbedStatus {
+    pub backend: &'static str,
+    pub model: &'static str,
+}
+
+pub fn embed_status() -> EmbedStatus {
+    EmbedStatus {
+        backend: "hash",
+        model: ACTIVE_MODEL,
+    }
+}
 
 /// Hybrid retrieval weights (vector / FTS / graph proximity).
 pub const WEIGHT_VECTOR: f64 = 0.5;
@@ -33,33 +48,19 @@ fn add_feature(vec: &mut [f32; EMBED_DIM], feature: &[u8], weight: f32) {
     vec[idx] += sign * weight;
 }
 
-/// Embedding plus the model id stored on the row. Recall never compares across ids.
+/// Embedding plus the model id stored on the row.
 pub fn embed_labeled(text: &str) -> (Vec<f32>, &'static str) {
-    if let Some(v) = crate::onnx::try_onnx_embed(text) {
-        if v.len() == EMBED_DIM {
-            return (v, "minilm-256");
-        }
-    }
-    (embed_text_hash(text), "hash-v1")
+    (embed_text_hash(text), ACTIVE_MODEL)
 }
 
 pub fn embed_text(text: &str) -> Vec<f32> {
     static LOGGED: std::sync::Once = std::sync::Once::new();
-    if let Some(v) = crate::onnx::try_onnx_embed(text) {
-        if v.len() == EMBED_DIM {
-            LOGGED.call_once(|| {
-                tracing::info!(backend = "onnx", "embed backend selected");
-            });
-            return v;
-        }
-    }
     LOGGED.call_once(|| {
-        let backend = if crate::onnx::onnx_model_configured() {
-            "onnx_unconfigured"
-        } else {
-            "hash"
-        };
-        tracing::info!(backend, "embed backend selected");
+        tracing::info!(
+            backend = "hash",
+            model = ACTIVE_MODEL,
+            "embed backend selected"
+        );
     });
     embed_text_hash(text)
 }
@@ -102,6 +103,15 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
 
 pub fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
     embedding.iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+
+pub fn embedding_blob_byte_len(dim: usize) -> usize {
+    dim * std::mem::size_of::<f32>()
+}
+
+/// Cheap shape check before decoding a neural_embedding BLOB.
+pub fn blob_matches_embedding_dim(blob: &[u8], dim: usize) -> bool {
+    blob.len() == embedding_blob_byte_len(dim)
 }
 
 pub fn blob_to_embedding(blob: &[u8]) -> Option<Vec<f32>> {
@@ -151,10 +161,30 @@ mod tests {
     }
 
     #[test]
+    fn the_only_embedding_model_is_hash_v1() {
+        let (vector, model) = embed_labeled("hash vectors in every build");
+        assert_eq!(model, "hash-v1");
+        assert_eq!(vector.len(), EMBED_DIM);
+        assert_eq!(embed_text("hash vectors in every build"), vector);
+        let status = embed_status();
+        assert_eq!(status.backend, "hash");
+        assert_eq!(status.model, "hash-v1");
+    }
+
+    #[test]
     fn blob_roundtrip() {
         let e = embed_text("some text");
         let blob = embedding_to_blob(&e);
         let back = blob_to_embedding(&blob).unwrap();
         assert_eq!(e, back);
+    }
+
+    #[test]
+    fn blob_dim_mismatch_skips_decode() {
+        let hash_blob = embedding_to_blob(&embed_text("neural perf"));
+        assert!(blob_matches_embedding_dim(&hash_blob, EMBED_DIM));
+        assert!(!blob_matches_embedding_dim(&hash_blob, 64));
+        let short = hash_blob[..64].to_vec();
+        assert!(!blob_matches_embedding_dim(&short, EMBED_DIM));
     }
 }

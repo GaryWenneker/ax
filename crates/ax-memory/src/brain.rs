@@ -9,12 +9,18 @@ use sqlx::SqlitePool;
 use ax_utils::errors::AxError;
 
 use crate::history::HistoryEntry;
-use crate::store::{self, db_err_pub};
+use crate::store::{self, db_err_at, db_err_pub};
 use crate::types::{MemoryMatch, MemoryRow, RememberInput};
 
 pub const TIER_EPISODIC: &str = "t1";
 pub const TIER_SEMANTIC: &str = "t2";
 pub const TIER_ARCHIVE: &str = "t3";
+
+/// A path segment that is compiler or package output, not project source.
+pub fn is_build_output_path(path: &str) -> bool {
+    path.split(['/', '\\'])
+        .any(|segment| matches!(segment, "target" | "target-dev" | "node_modules" | "dist"))
+}
 
 /// Tier for a memory kind. Git captures and folder docs stay in the archive.
 pub fn tier_for_kind(kind: &str) -> &'static str {
@@ -33,11 +39,13 @@ pub fn tier_for_kind(kind: &str) -> &'static str {
 }
 pub const STATUS_ACTIVE: &str = "active";
 pub const STATUS_CANDIDATE: &str = "candidate";
+pub const STATUS_REJECTED: &str = "rejected";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Depth {
     Hot,
     Archive,
+    Backup,
 }
 
 impl Depth {
@@ -45,7 +53,10 @@ impl Depth {
         match value {
             "" | "hot" => Ok(Self::Hot),
             "archive" => Ok(Self::Archive),
-            other => Err(format!("depth must be hot or archive, got {other}")),
+            "backup" => Ok(Self::Backup),
+            other => Err(format!(
+                "depth must be hot, archive, or backup, got {other}"
+            )),
         }
     }
 }
@@ -125,6 +136,193 @@ fn is_stop_cue(cue: &str) -> bool {
     )
 }
 
+/// Change verbs, node kinds, and primitive type names. Automatic cues skip
+/// these. An explicit trigger is stored even when the word is in this list.
+const NOISE_CUES: &[&str] = &[
+    "add",
+    "added",
+    "adding",
+    "any",
+    "array",
+    "bool",
+    "boolean",
+    "change",
+    "changed",
+    "changing",
+    "char",
+    "class",
+    "const",
+    "create",
+    "created",
+    "delete",
+    "deleted",
+    "deleting",
+    "enum",
+    "f32",
+    "f64",
+    "field",
+    "fix",
+    "fixed",
+    "float",
+    "fn",
+    "function",
+    "i32",
+    "i64",
+    "impl",
+    "int",
+    "integer",
+    "interface",
+    "method",
+    "modify",
+    "modified",
+    "modifying",
+    "module",
+    "number",
+    "object",
+    "parameter",
+    "refactor",
+    "refactored",
+    "remove",
+    "removed",
+    "removing",
+    "rename",
+    "renamed",
+    "renaming",
+    "str",
+    "string",
+    "struct",
+    "trait",
+    "type",
+    "u32",
+    "u64",
+    "update",
+    "updated",
+    "updating",
+    "usize",
+    "variable",
+    "void",
+];
+
+const AUTOMATIC_CUE_CAP: i64 = 32;
+
+fn is_noise_cue(cue: &str) -> bool {
+    NOISE_CUES.binary_search(&cue).is_ok()
+}
+
+const SUGGESTION_CAP: usize = 8;
+
+/// Words that are not useful trigger names. Sorted for binary search.
+const SUGGESTION_GLUE: &[&str] = &[
+    "about",
+    "after",
+    "also",
+    "asked",
+    "because",
+    "been",
+    "before",
+    "but",
+    "can",
+    "decided",
+    "did",
+    "does",
+    "from",
+    "had",
+    "has",
+    "have",
+    "into",
+    "just",
+    "keep",
+    "made",
+    "make",
+    "not",
+    "only",
+    "our",
+    "over",
+    "remember",
+    "remembers",
+    "should",
+    "stay",
+    "stays",
+    "than",
+    "that",
+    "then",
+    "this",
+    "used",
+    "user",
+    "using",
+    "were",
+    "when",
+    "will",
+    "would",
+    "your",
+];
+
+/// Path segments that are not anchors. Sorted for binary search.
+const ANCHOR_SKIP: &[&str] = &[
+    "crates",
+    "dist",
+    "lib",
+    "node_modules",
+    "src",
+    "target",
+    "target-dev",
+    "test",
+    "tests",
+];
+
+/// Cue names worth saving as explicit triggers. This function does not store them.
+pub fn suggested_triggers(
+    title: &str,
+    files: &[String],
+    prompt: &str,
+    already: &[String],
+) -> Vec<String> {
+    let taken: std::collections::HashSet<String> = already
+        .iter()
+        .filter_map(|raw| normalize_cue(raw))
+        .collect();
+    let mut out = Vec::new();
+    let mut push = |raw: &str| {
+        if out.len() >= SUGGESTION_CAP {
+            return;
+        }
+        let Some(cue) = normalize_cue(raw) else {
+            return;
+        };
+        let len = cue.chars().count();
+        if !(4..=40).contains(&len)
+            || is_stop_cue(&cue)
+            || is_noise_cue(&cue)
+            || SUGGESTION_GLUE.binary_search(&cue.as_str()).is_ok()
+            || taken.contains(&cue)
+            || out.iter().any(|item| item == &cue)
+        {
+            return;
+        }
+        out.push(cue);
+    };
+    for token in title.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-') {
+        push(token);
+    }
+    for file in files {
+        for segment in file.split(['/', '\\']) {
+            let name = segment
+                .rsplit_once('.')
+                .map(|(stem, _)| stem)
+                .unwrap_or(segment)
+                .to_lowercase();
+            if ANCHOR_SKIP.binary_search(&name.as_str()).is_ok() {
+                continue;
+            }
+            push(&name);
+        }
+    }
+    for token in prompt.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-') {
+        push(token);
+    }
+    out
+}
+
 fn automatic_cues(text: &str) -> Vec<String> {
     let mut cues = Vec::new();
     let mut push = |raw: &str| {
@@ -132,7 +330,7 @@ fn automatic_cues(text: &str) -> Vec<String> {
             return;
         };
         let len = cue.chars().count();
-        if (3..=80).contains(&len) && !is_stop_cue(&cue) {
+        if (3..=80).contains(&len) && !is_stop_cue(&cue) && !is_noise_cue(&cue) {
             cues.push(cue);
         }
     };
@@ -171,7 +369,7 @@ pub async fn register_cues(
         .bind(&memory.id)
         .execute(pool)
         .await
-        .map_err(db_err_pub)?;
+        .map_err(|e| db_err_pub(pool, e))?;
     let mut rows: Vec<(String, &str)> = Vec::new();
     for cue in automatic_cues(&memory.title) {
         rows.push((cue, "title"));
@@ -189,6 +387,9 @@ pub async fn register_cues(
         for cue in automatic_cues(base) {
             rows.push((cue, "file"));
         }
+        if memory.kind == "graph_diff" {
+            continue;
+        }
         for name in symbol_names(pool, file).await? {
             for cue in automatic_cues(&name) {
                 rows.push((cue, "symbol"));
@@ -200,6 +401,13 @@ pub async fn register_cues(
             rows.push((cue, "trigger"));
         }
     }
+    let overused = overused_automatic_cues(
+        pool,
+        Some(pool.connect_options().get_filename()),
+        &automatic_candidates(&rows),
+    )
+    .await?;
+    retain_fresh_automatic_cues(&mut rows, &overused);
     rows.sort_by(|a, b| {
         a.0.cmp(&b.0)
             .then(cue_source_rank(a.1).cmp(&cue_source_rank(b.1)))
@@ -214,9 +422,49 @@ pub async fn register_cues(
         .bind(source)
         .execute(pool)
         .await
-        .map_err(db_err_pub)?;
+        .map_err(|e| db_err_pub(pool, e))?;
     }
     Ok(())
+}
+
+fn automatic_candidates(rows: &[(String, &str)]) -> Vec<String> {
+    let mut cues: Vec<String> = rows
+        .iter()
+        .filter(|(_, source)| *source != "trigger")
+        .map(|(cue, _)| cue.clone())
+        .collect();
+    cues.sort();
+    cues.dedup();
+    cues
+}
+
+fn retain_fresh_automatic_cues(rows: &mut Vec<(String, &str)>, overused: &[String]) {
+    rows.retain(|(cue, source)| *source == "trigger" || !overused.iter().any(|item| item == cue));
+}
+
+async fn overused_automatic_cues<'e, E>(
+    executor: E,
+    db_path: Option<&Path>,
+    cues: &[String],
+) -> Result<Vec<String>, AxError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    if cues.is_empty() {
+        return Ok(Vec::new());
+    }
+    let json = serde_json::to_string(cues).unwrap_or_else(|_| "[]".into());
+    sqlx::query_scalar(
+        "SELECT cue FROM memory_cues
+         WHERE cue IN (SELECT value FROM json_each(?))
+         GROUP BY cue
+         HAVING COUNT(DISTINCT memory_id) >= ?",
+    )
+    .bind(json)
+    .bind(AUTOMATIC_CUE_CAP)
+    .fetch_all(executor)
+    .await
+    .map_err(|e| db_err_at(db_path, e))
 }
 
 /// A named trigger is the user's own word for a memory, so it outranks cues
@@ -231,15 +479,12 @@ fn cue_source_rank(source: &str) -> u8 {
     }
 }
 
-const CUE_SOURCE_RANK_SQL: &str = "CASE source WHEN 'trigger' THEN 0 WHEN 'tag' THEN 1 \
-     WHEN 'title' THEN 2 WHEN 'file' THEN 3 ELSE 4 END";
-
 pub async fn cues_for(pool: &SqlitePool, memory_id: &str) -> Result<Vec<String>, AxError> {
     sqlx::query_scalar("SELECT cue FROM memory_cues WHERE memory_id = ? ORDER BY cue")
         .bind(memory_id)
         .fetch_all(pool)
         .await
-        .map_err(db_err_pub)
+        .map_err(|e| db_err_pub(pool, e))
 }
 
 async fn lookup_cue(
@@ -257,7 +502,7 @@ async fn lookup_cue(
     .bind(limit as i64)
     .fetch_all(pool)
     .await
-    .map_err(db_err_pub)?;
+    .map_err(|e| db_err_pub(pool, e))?;
     let mut matches = Vec::new();
     for id in ids {
         if let Some(memory) = store::get(pool, &id).await? {
@@ -265,6 +510,7 @@ async fn lookup_cue(
                 matches.push(MemoryMatch {
                     memory,
                     score: 100.0,
+                    why: None,
                 });
             }
         }
@@ -283,12 +529,19 @@ pub async fn search(
         return Ok(store::get(pool, id)
             .await?
             .filter(|m| m.enabled)
-            .map(|memory| MemoryMatch { memory, score: 1.0 })
+            .map(|memory| MemoryMatch {
+                memory,
+                score: 1.0,
+                why: None,
+            })
             .into_iter()
             .collect());
     }
     if let Some(cue) = request.cue.as_deref().filter(|cue| !cue.is_empty()) {
         return lookup_cue(pool, cue, limit).await;
+    }
+    if request.depth == Depth::Backup {
+        return search_backups(pool, &request.query, limit).await;
     }
     let mut matches = store::recall_scoped(
         pool,
@@ -302,6 +555,88 @@ pub async fn search(
         matches = spread_archive(pool, matches, limit).await?;
     }
     Ok(matches)
+}
+
+async fn search_backups(
+    pool: &SqlitePool,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<MemoryMatch>, AxError> {
+    let path: Option<String> =
+        sqlx::query_scalar("SELECT file FROM pragma_database_list WHERE name = 'main'")
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| db_err_pub(pool, e))?;
+    let Some(db_path) = path.filter(|p| !p.is_empty()) else {
+        return Ok(Vec::new());
+    };
+    let Some(root) = std::path::Path::new(&db_path)
+        .parent()
+        .and_then(|p| p.parent())
+    else {
+        return Ok(Vec::new());
+    };
+    let dir = root.join(".ax").join("backups").join("memory");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Ok(Vec::new());
+    };
+    let q = query.to_ascii_lowercase();
+    let terms: Vec<&str> = q
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| t.len() >= 3)
+        .collect();
+    if terms.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut hits = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if ext != "zst" && ext != "jsonl" {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let plain = if ext == "zst" {
+            match zstd::decode_all(bytes.as_slice()) {
+                Ok(b) => b,
+                Err(_) => continue,
+            }
+        } else {
+            bytes
+        };
+        let Ok(text) = String::from_utf8(plain) else {
+            continue;
+        };
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let Ok(row) = serde_json::from_str::<crate::types::MemoryRow>(line) else {
+                continue;
+            };
+            let hay =
+                format!("{} {} {}", row.title, row.body, row.tags.join(" ")).to_ascii_lowercase();
+            if terms.iter().any(|t| hay.contains(t)) {
+                hits.push(MemoryMatch {
+                    memory: row,
+                    score: 1.0,
+                    why: Some(crate::fusion::WhyRecalled {
+                        signals: vec!["backup".into()],
+                        matched_terms: terms.iter().map(|s| (*s).to_string()).collect(),
+                        anchors: vec![],
+                        graph_path: vec![],
+                    }),
+                });
+                if hits.len() >= limit {
+                    return Ok(hits);
+                }
+            }
+        }
+    }
+    Ok(hits)
 }
 
 async fn spread_archive(
@@ -331,6 +666,7 @@ async fn spread_archive(
                     matches.push(MemoryMatch {
                         memory,
                         score: (score * 0.5).max(1.0),
+                        why: None,
                     });
                 }
             }
@@ -348,7 +684,7 @@ async fn link_neighbors(pool: &SqlitePool, id: &str) -> Result<Vec<String>, AxEr
     .bind(id)
     .fetch_all(pool)
     .await
-    .map_err(db_err_pub)
+    .map_err(|e| db_err_pub(pool, e))
 }
 
 async fn file_neighbors(pool: &SqlitePool, id: &str) -> Result<Vec<String>, AxError> {
@@ -356,7 +692,7 @@ async fn file_neighbors(pool: &SqlitePool, id: &str) -> Result<Vec<String>, AxEr
         .bind(id)
         .fetch_optional(pool)
         .await
-        .map_err(db_err_pub)?;
+        .map_err(|e| db_err_pub(pool, e))?;
     let files: Vec<String> =
         serde_json::from_str(&files_json.unwrap_or_else(|| "[]".into())).unwrap_or_default();
     let mut ids = Vec::new();
@@ -369,7 +705,7 @@ async fn file_neighbors(pool: &SqlitePool, id: &str) -> Result<Vec<String>, AxEr
         .bind(&file)
         .fetch_all(pool)
         .await
-        .map_err(db_err_pub)?;
+        .map_err(|e| db_err_pub(pool, e))?;
         ids.extend(rows);
     }
     Ok(ids)
@@ -386,7 +722,7 @@ async fn symbol_neighbors(pool: &SqlitePool, id: &str) -> Result<Vec<String>, Ax
     .bind(id)
     .fetch_all(pool)
     .await
-    .map_err(db_err_pub)
+    .map_err(|e| db_err_pub(pool, e))
 }
 
 pub async fn prompt_cues(
@@ -403,34 +739,77 @@ pub async fn prompt_cues(
         return Ok(Vec::new());
     }
     let json = serde_json::to_string(&tokens).unwrap_or_else(|_| "[]".into());
-    let ids: Vec<String> = sqlx::query_scalar(&format!(
-        "SELECT memory_id FROM memory_cues
-         WHERE cue IN (SELECT value FROM json_each(?))
-         GROUP BY memory_id
-         ORDER BY MIN({CUE_SOURCE_RANK_SQL}), MAX(LENGTH(cue)) DESC, memory_id
-         LIMIT ?"
-    ))
-    .bind(json)
-    .bind((limit.saturating_mul(4).max(limit)) as i64)
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT c.memory_id, c.source, c.cue FROM memory_cues c
+         JOIN memories m ON m.id = c.memory_id
+         WHERE c.cue IN (SELECT value FROM json_each(?))
+           AND m.enabled = 1
+           AND m.tier IN ('t1', 't2')
+           AND COALESCE(m.status, 'active') = 'active'
+           AND m.kind NOT IN ('turn', 'doc', 'graph_diff', 'activity')",
+    )
+    .bind(&json)
     .fetch_all(pool)
     .await
-    .map_err(db_err_pub)?;
+    .map_err(|e| db_err_pub(pool, e))?;
+    // Count only hot/active memories so a large archive cue table does not
+    // dominate document-frequency work on the preflight path.
+    let counts: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT c.cue, COUNT(DISTINCT c.memory_id) FROM memory_cues c
+         JOIN memories m ON m.id = c.memory_id
+         WHERE c.cue IN (SELECT value FROM json_each(?))
+           AND m.enabled = 1
+           AND m.tier IN ('t1', 't2')
+           AND COALESCE(m.status, 'active') = 'active'
+         GROUP BY c.cue",
+    )
+    .bind(&json)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| db_err_pub(pool, e))?;
+    let mut document_frequency = std::collections::BTreeMap::new();
+    for (cue, count) in counts {
+        document_frequency.insert(cue, count);
+    }
+    let mut best = std::collections::BTreeMap::<String, f64>::new();
+    for (id, source, cue) in rows {
+        let score = cue_match_score(&source, document_frequency.get(&cue).copied().unwrap_or(1));
+        best.entry(id)
+            .and_modify(|current| {
+                if score > *current {
+                    *current = score;
+                }
+            })
+            .or_insert(score);
+    }
+    let mut ranked: Vec<(String, f64)> = best.into_iter().collect();
+    ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+    ranked.truncate(limit);
     let mut hits = Vec::new();
-    let mut seen = std::collections::BTreeSet::new();
-    for id in ids {
-        if hits.len() >= limit || !seen.insert(id.clone()) {
-            continue;
-        }
+    for (id, score) in ranked {
         if let Some(memory) = store::get(pool, &id).await? {
             if memory.enabled && injectable(&memory) {
                 hits.push(MemoryMatch {
                     memory,
-                    score: 1_000.0,
+                    score,
+                    why: None,
                 });
             }
         }
     }
     Ok(hits)
+}
+
+fn cue_match_score(source: &str, document_frequency: i64) -> f64 {
+    let weight = match source {
+        "trigger" => 1_000_000.0,
+        "tag" => 100_000.0,
+        "title" => 10_000.0,
+        "file" => 1_000.0,
+        _ => 100.0,
+    };
+    // The cap keeps a rare title from outranking an explicit trigger.
+    weight / (1.0 + document_frequency.clamp(1, 9) as f64)
 }
 
 fn injectable(memory: &MemoryRow) -> bool {
@@ -439,17 +818,43 @@ fn injectable(memory: &MemoryRow) -> bool {
         && memory.kind != crate::folder_sync::DOC_KIND
         && memory.kind != "graph_diff"
         && memory.kind != "activity"
+        && memory.kind != "file_change"
+        && !memory.title.starts_with("Candidate:")
+}
+
+pub fn memory_is_foreign(source: &str, tags: &[String], files: &[String]) -> bool {
+    let source = source.trim().to_ascii_lowercase();
+    source == "foreign"
+        || source == "blossom"
+        || tags
+            .iter()
+            .any(|tag| tag.trim().eq_ignore_ascii_case("blossom"))
+        || files.iter().any(|path| {
+            path.split(['/', '\\'])
+                .any(|segment| segment.eq_ignore_ascii_case("blossom"))
+        })
 }
 
 pub async fn is_injectable(pool: &SqlitePool, id: &str) -> Result<bool, AxError> {
-    let row: Option<(String, String)> =
-        sqlx::query_as("SELECT tier, status FROM memories WHERE id = ? AND enabled = 1")
-            .bind(id)
-            .fetch_optional(pool)
-            .await
-            .map_err(db_err_pub)?;
+    let row: Option<(String, String, String, String)> = sqlx::query_as(
+        "SELECT tier, COALESCE(status, 'active'), kind, title
+         FROM memories WHERE id = ? AND enabled = 1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| db_err_pub(pool, e))?;
     Ok(row
-        .map(|(tier, status)| tier != TIER_ARCHIVE && status == STATUS_ACTIVE)
+        .map(|(tier, status, kind, title)| {
+            tier != TIER_ARCHIVE
+                && status == STATUS_ACTIVE
+                && kind != crate::turns::TURN_KIND
+                && kind != crate::folder_sync::DOC_KIND
+                && kind != "graph_diff"
+                && kind != "activity"
+                && kind != "file_change"
+                && !title.starts_with("Candidate:")
+        })
         .unwrap_or(false))
 }
 
@@ -468,7 +873,7 @@ pub async fn stamp_memory(
     .bind(id)
     .execute(pool)
     .await
-    .map_err(db_err_pub)?;
+    .map_err(|e| db_err_pub(pool, e))?;
     if tier == TIER_ARCHIVE {
         index_archive_vector(pool, id).await?;
     }
@@ -479,17 +884,17 @@ async fn ensure_vec_table(pool: &SqlitePool) -> Result<(), AxError> {
     sqlx::query("CREATE VIRTUAL TABLE IF NOT EXISTS memory_vec USING vec0(embedding float[256])")
         .execute(pool)
         .await
-        .map_err(db_err_pub)?;
+        .map_err(|e| db_err_pub(pool, e))?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS memory_vec_map (memory_id TEXT PRIMARY KEY, rowid INTEGER NOT NULL)",
     )
     .execute(pool)
     .await
-    .map_err(db_err_pub)?;
+    .map_err(|e| db_err_pub(pool, e))?;
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_memory_vec_map_rowid ON memory_vec_map(rowid)")
         .execute(pool)
         .await
-        .map_err(db_err_pub)?;
+        .map_err(|e| db_err_pub(pool, e))?;
     Ok(())
 }
 
@@ -505,7 +910,7 @@ pub async fn index_archive_vector(pool: &SqlitePool, id: &str) -> Result<(), AxE
     .bind(id)
     .fetch_optional(pool)
     .await
-    .map_err(db_err_pub)?;
+    .map_err(|e| db_err_pub(pool, e))?;
     let Some((blob, model)) = row else {
         return Ok(());
     };
@@ -519,19 +924,19 @@ pub async fn index_archive_vector(pool: &SqlitePool, id: &str) -> Result<(), AxE
             {
                 Ok(row) => row,
                 Err(error) if error.to_string().contains("no such table") => None,
-                Err(error) => return Err(db_err_pub(error)),
+                Err(error) => return Err(db_err_pub(pool, error)),
             };
         if let Some(rowid) = existing {
             sqlx::query("DELETE FROM memory_vec WHERE rowid = ?")
                 .bind(rowid)
                 .execute(pool)
                 .await
-                .map_err(db_err_pub)?;
+                .map_err(|e| db_err_pub(pool, e))?;
             sqlx::query("DELETE FROM memory_vec_map WHERE memory_id = ?")
                 .bind(id)
                 .execute(pool)
                 .await
-                .map_err(db_err_pub)?;
+                .map_err(|e| db_err_pub(pool, e))?;
         }
         return Ok(());
     }
@@ -543,29 +948,29 @@ pub async fn index_archive_vector(pool: &SqlitePool, id: &str) -> Result<(), AxE
     }
     ensure_vec_table(pool).await?;
     // last_insert_rowid() is per connection, so the insert and the read share one.
-    let mut conn = pool.acquire().await.map_err(db_err_pub)?;
+    let mut conn = pool.acquire().await.map_err(|e| db_err_pub(pool, e))?;
     let existing: Option<i64> =
         sqlx::query_scalar("SELECT rowid FROM memory_vec_map WHERE memory_id = ?")
             .bind(id)
             .fetch_optional(&mut *conn)
             .await
-            .map_err(db_err_pub)?;
+            .map_err(|e| db_err_pub(pool, e))?;
     if let Some(rowid) = existing {
         sqlx::query("DELETE FROM memory_vec WHERE rowid = ?")
             .bind(rowid)
             .execute(&mut *conn)
             .await
-            .map_err(db_err_pub)?;
+            .map_err(|e| db_err_pub(pool, e))?;
     }
     sqlx::query("INSERT INTO memory_vec(embedding) VALUES (?)")
         .bind(embedding_json(&vector))
         .execute(&mut *conn)
         .await
-        .map_err(db_err_pub)?;
+        .map_err(|e| db_err_pub(pool, e))?;
     let rowid: i64 = sqlx::query_scalar("SELECT last_insert_rowid()")
         .fetch_one(&mut *conn)
         .await
-        .map_err(db_err_pub)?;
+        .map_err(|e| db_err_pub(pool, e))?;
     sqlx::query(
         "INSERT INTO memory_vec_map (memory_id, rowid) VALUES (?, ?)
          ON CONFLICT(memory_id) DO UPDATE SET rowid = excluded.rowid",
@@ -574,7 +979,7 @@ pub async fn index_archive_vector(pool: &SqlitePool, id: &str) -> Result<(), AxE
     .bind(rowid)
     .execute(&mut *conn)
     .await
-    .map_err(db_err_pub)?;
+    .map_err(|e| db_err_pub(pool, e))?;
     Ok(())
 }
 
@@ -599,7 +1004,7 @@ pub async fn knn(pool: &SqlitePool, query: &str, limit: usize) -> Result<Vec<Str
             .bind(limit.max(1) as i64)
             .fetch_all(pool)
             .await
-            .map_err(db_err_pub)?;
+            .map_err(|e| db_err_pub(pool, e))?;
     let rowid_list = format!(
         "[{}]",
         rowids
@@ -613,7 +1018,7 @@ pub async fn knn(pool: &SqlitePool, query: &str, limit: usize) -> Result<Vec<Str
             .bind(rowid_list)
             .fetch_all(pool)
             .await
-            .map_err(db_err_pub)?
+            .map_err(|e| db_err_pub(pool, e))?
             .into_iter()
             .map(|(rowid, id, model, blob)| (rowid, (id, model, blob)))
             .collect();
@@ -637,7 +1042,7 @@ pub async fn demote_turn(pool: &SqlitePool, id: &str) -> Result<(), AxError> {
         .bind(crate::turns::TURN_KIND)
         .execute(pool)
         .await
-        .map_err(db_err_pub)?;
+        .map_err(|e| db_err_pub(pool, e))?;
     index_archive_vector(pool, id).await
 }
 
@@ -647,106 +1052,60 @@ pub async fn confirm_memory(pool: &SqlitePool, id: &str) -> Result<bool, AxError
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
     let result = sqlx::query(
-        "UPDATE memories SET status = ?, confidence = 1.0, updated_at = ? WHERE id = ? AND status = ?",
+        "UPDATE memories SET status = ?, confidence = 1.0, updated_at = ?
+         WHERE id = ? AND (status = ? OR (status = ? AND source = 'consolidation'))",
     )
     .bind(STATUS_ACTIVE)
     .bind(now)
     .bind(id)
     .bind(STATUS_CANDIDATE)
+    .bind(STATUS_REJECTED)
     .execute(pool)
     .await
-    .map_err(db_err_pub)?;
+    .map_err(|e| db_err_pub(pool, e))?;
+    sqlx::query(
+        "UPDATE memory_links SET kind = 'supersedes' WHERE from_id = ? AND kind = 'revoked_supersedes'",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .map_err(|e| db_err_pub(pool, e))?;
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn consolidate(pool: &SqlitePool) -> Result<usize, AxError> {
-    let rows: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT id, title, body FROM memories
-         WHERE enabled = 1
-           AND ((kind = ? AND tier = ?) OR kind = 'git')
-           AND (lower(body) LIKE '%because%' OR lower(body) LIKE '%decided%' OR lower(body) LIKE '%decision%')
-         ORDER BY updated_at DESC LIMIT 20",
-    )
-    .bind(crate::turns::TURN_KIND)
-    .bind(TIER_EPISODIC)
-    .fetch_all(pool)
-    .await
-    .map_err(db_err_pub)?;
-    let mut created = 0usize;
-    for (source_id, title, body) in rows {
-        let linked: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM memory_links WHERE to_id = ? AND kind = 'source'",
-        )
-        .bind(&source_id)
-        .fetch_one(pool)
-        .await
-        .map_err(db_err_pub)?;
-        if linked > 0 {
-            continue;
-        }
-        let row = store::remember(
-            pool,
-            RememberInput {
-                title: format!("Candidate: {title}"),
-                body: body.clone(),
-                kind: Some("decision".into()),
-                tags: vec!["consolidated".into()],
-                files: vec![],
-                source: Some("consolidation".into()),
-            },
-        )
-        .await?;
-        sqlx::query("UPDATE memories SET status = ? WHERE id = ?")
-            .bind(STATUS_CANDIDATE)
-            .bind(&row.id)
-            .execute(pool)
-            .await
-            .map_err(db_err_pub)?;
-        sqlx::query(
-            "INSERT OR IGNORE INTO memory_links (from_id, to_id, kind) VALUES (?, ?, 'source')",
-        )
-        .bind(&row.id)
-        .bind(&source_id)
-        .execute(pool)
-        .await
-        .map_err(db_err_pub)?;
-        let similar = store::find_similar(pool, &format!("{title} {body}"), Some(&row.id), 0.80, 3)
-            .await
-            .unwrap_or_default();
-        for other in &similar {
-            if other.memory.id == source_id {
-                continue;
-            }
-            sqlx::query(
-                "INSERT OR IGNORE INTO memory_links (from_id, to_id, kind) VALUES (?, ?, 'supersedes')",
-            )
-            .bind(&row.id)
-            .bind(&other.memory.id)
-            .execute(pool)
-            .await
-            .map_err(db_err_pub)?;
-            if other.memory.kind != crate::turns::TURN_KIND {
-                let _ = confirm_memory(pool, &row.id).await?;
-            }
-        }
-        created += 1;
-    }
-    Ok(created)
+pub async fn consolidate(_pool: &SqlitePool) -> Result<usize, AxError> {
+    // A turn or commit that contains "because" or "decided" is not a decision.
+    // Decisions are stored only when a person confirms one.
+    Ok(0)
 }
 
 type GraphSymbolRow = (String, String, String, String, Option<String>, i64, i64);
 
-pub async fn capture_graph_episodes(pool: &SqlitePool) -> Result<usize, AxError> {
+async fn connection_db_path(conn: &mut sqlx::SqliteConnection) -> Option<std::path::PathBuf> {
+    let file: Result<Option<String>, sqlx::Error> =
+        sqlx::query_scalar("SELECT file FROM pragma_database_list WHERE name = 'main'")
+            .fetch_optional(&mut *conn)
+            .await;
+    file.ok()
+        .flatten()
+        .filter(|text| !text.is_empty())
+        .map(std::path::PathBuf::from)
+}
+
+pub async fn capture_graph_episodes_on(
+    conn: &mut sqlx::SqliteConnection,
+) -> Result<usize, AxError> {
+    let db_path = connection_db_path(conn).await;
     let nodes: Vec<GraphSymbolRow> = sqlx::query_as(
         "SELECT id, name, kind, file_path, signature, start_line, end_line FROM nodes",
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
-    .map_err(db_err_pub)?;
+    .map_err(|e| db_err_at(db_path.as_deref(), e))?;
     let known: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_symbol_state")
-        .fetch_one(pool)
+        .fetch_one(&mut *conn)
         .await
-        .map_err(db_err_pub)?;
+        .map_err(|e| db_err_at(db_path.as_deref(), e))?;
     let mut written = 0usize;
     for (id, name, kind, file_path, signature, start, end) in nodes {
         let fingerprint = format!(
@@ -756,9 +1115,9 @@ pub async fn capture_graph_episodes(pool: &SqlitePool) -> Result<usize, AxError>
         let previous: Option<String> =
             sqlx::query_scalar("SELECT fingerprint FROM graph_symbol_state WHERE symbol_id = ?")
                 .bind(&id)
-                .fetch_optional(pool)
+                .fetch_optional(&mut *conn)
                 .await
-                .map_err(db_err_pub)?;
+                .map_err(|e| db_err_at(db_path.as_deref(), e))?;
         let change = match &previous {
             None if known == 0 => None,
             None => Some("added"),
@@ -766,8 +1125,19 @@ pub async fn capture_graph_episodes(pool: &SqlitePool) -> Result<usize, AxError>
             Some(_) => Some("changed"),
         };
         if let Some(change) = change {
-            write_graph_episode(pool, &id, change, &name, &kind, &file_path, &fingerprint).await?;
-            written += 1;
+            if !is_build_output_path(&file_path) {
+                write_graph_episode(
+                    &mut *conn,
+                    &id,
+                    change,
+                    &name,
+                    &kind,
+                    &file_path,
+                    &fingerprint,
+                )
+                .await?;
+                written += 1;
+            }
         }
         sqlx::query(
             "INSERT INTO graph_symbol_state (symbol_id, fingerprint) VALUES (?, ?)
@@ -775,9 +1145,9 @@ pub async fn capture_graph_episodes(pool: &SqlitePool) -> Result<usize, AxError>
         )
         .bind(&id)
         .bind(&fingerprint)
-        .execute(pool)
+        .execute(&mut *conn)
         .await
-        .map_err(db_err_pub)?;
+        .map_err(|e| db_err_at(db_path.as_deref(), e))?;
     }
     if known == 0 {
         return Ok(0);
@@ -786,27 +1156,62 @@ pub async fn capture_graph_episodes(pool: &SqlitePool) -> Result<usize, AxError>
         "SELECT symbol_id, fingerprint FROM graph_symbol_state
          WHERE symbol_id NOT IN (SELECT id FROM nodes)",
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
-    .map_err(db_err_pub)?;
+    .map_err(|e| db_err_at(db_path.as_deref(), e))?;
     for (id, fingerprint) in removed {
         let mut parts = fingerprint.split('|');
         let name = parts.next().unwrap_or(id.as_str()).to_string();
         let kind = parts.next().unwrap_or("symbol").to_string();
         let file_path = parts.next().unwrap_or("").to_string();
-        write_graph_episode(pool, &id, "removed", &name, &kind, &file_path, &fingerprint).await?;
+        if !is_build_output_path(&file_path) {
+            write_graph_episode(
+                &mut *conn,
+                &id,
+                "removed",
+                &name,
+                &kind,
+                &file_path,
+                &fingerprint,
+            )
+            .await?;
+            written += 1;
+        }
         sqlx::query("DELETE FROM graph_symbol_state WHERE symbol_id = ?")
             .bind(&id)
-            .execute(pool)
+            .execute(&mut *conn)
             .await
-            .map_err(db_err_pub)?;
-        written += 1;
+            .map_err(|e| db_err_at(db_path.as_deref(), e))?;
     }
     Ok(written)
 }
 
+pub async fn capture_graph_episodes(pool: &SqlitePool) -> Result<usize, AxError> {
+    // The vector table is created outside the transaction. sqlite-vec rejects that
+    // create inside an open write transaction.
+    ensure_vec_table(pool).await?;
+    let mut conn = pool.acquire().await.map_err(|e| db_err_pub(pool, e))?;
+    sqlx::query("BEGIN")
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| db_err_pub(pool, e))?;
+    match capture_graph_episodes_on(&mut conn).await {
+        Ok(written) => {
+            sqlx::query("COMMIT")
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| db_err_pub(pool, e))?;
+            Ok(written)
+        }
+        Err(err) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            Err(err)
+        }
+    }
+}
+
 async fn write_graph_episode(
-    pool: &SqlitePool,
+    conn: &mut sqlx::SqliteConnection,
     symbol_id: &str,
     change: &str,
     name: &str,
@@ -814,6 +1219,7 @@ async fn write_graph_episode(
     file_path: &str,
     fingerprint: &str,
 ) -> Result<(), AxError> {
+    let db_path = connection_db_path(conn).await;
     let base = format!(
         "graph-{}",
         stable_id(&format!("{symbol_id}|{change}|{fingerprint}"))
@@ -822,33 +1228,184 @@ async fn write_graph_episode(
         sqlx::query_scalar("SELECT COUNT(*) FROM memories WHERE id = ? OR id LIKE ?")
             .bind(&base)
             .bind(format!("{base}-%"))
-            .fetch_one(pool)
+            .fetch_one(&mut *conn)
             .await
-            .map_err(db_err_pub)?;
+            .map_err(|e| db_err_at(db_path.as_deref(), e))?;
     let memory_id = if earlier == 0 {
         base
     } else {
         format!("{base}-{}", earlier + 1)
     };
-    store::remember_with_id(
-        pool,
-        memory_id,
-        RememberInput {
-            title: format!("{change} {kind} {name}"),
-            body: format!(
-                "{change} symbol {name} ({kind}) in {file_path}. Fingerprint {fingerprint}."
-            ),
-            kind: Some("graph_diff".into()),
-            tags: vec![change.into(), name.into()],
-            files: if file_path.is_empty() {
-                vec![]
-            } else {
-                vec![file_path.into()]
-            },
-            source: Some("graph-sync".into()),
-        },
+    let title = format!("{change} {kind} {name}");
+    let body = crate::turns::redact_secrets(&format!(
+        "{change} symbol {name} ({kind}) in {file_path}. Fingerprint {fingerprint}."
+    ));
+    let tags = vec![change.to_string(), name.to_string()];
+    let files = if file_path.is_empty() {
+        Vec::new()
+    } else {
+        vec![file_path.to_string()]
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let (vector, model) =
+        crate::embed::embed_labeled(&format!("{title} {body} {}", tags.join(" ")));
+    let embedding = crate::embed::embedding_to_blob(&vector);
+    let tags_json = serde_json::to_string(&tags).unwrap_or_else(|_| "[]".into());
+    let files_json = serde_json::to_string(&files).unwrap_or_else(|_| "[]".into());
+    sqlx::query(
+        r#"INSERT INTO memories (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, embedding, enabled)
+           VALUES (?, 'graph_diff', ?, ?, ?, ?, 1.0, 'graph-sync', ?, ?, ?, 1)"#,
     )
-    .await?;
+    .bind(&memory_id)
+    .bind(&title)
+    .bind(&body)
+    .bind(&tags_json)
+    .bind(&files_json)
+    .bind(now)
+    .bind(now)
+    .bind(&embedding)
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| db_err_at(db_path.as_deref(), e))?;
+    sqlx::query(
+        "UPDATE memories SET tier = ?, embedding_model = ?, status = COALESCE(NULLIF(status, ''), 'active') WHERE id = ?",
+    )
+    .bind(tier_for_kind("graph_diff"))
+    .bind(model)
+    .bind(&memory_id)
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| db_err_at(db_path.as_deref(), e))?;
+    index_episode_vector(&mut *conn, &memory_id, &vector).await?;
+    let row = MemoryRow {
+        id: memory_id,
+        kind: "graph_diff".into(),
+        title,
+        body,
+        tags,
+        files,
+        confidence: 1.0,
+        source: "graph-sync".into(),
+        enabled: true,
+        created_at: now,
+        updated_at: now,
+        tier: tier_for_kind("graph_diff").into(),
+    };
+    register_cues_on(&mut *conn, &row).await?;
+    Ok(())
+}
+
+async fn index_episode_vector(
+    conn: &mut sqlx::SqliteConnection,
+    id: &str,
+    vector: &[f32],
+) -> Result<(), AxError> {
+    let db_path = connection_db_path(conn).await;
+    if vector.len() != crate::embed::EMBED_DIM {
+        return Ok(());
+    }
+    let existing: Option<i64> =
+        sqlx::query_scalar("SELECT rowid FROM memory_vec_map WHERE memory_id = ?")
+            .bind(id)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(|e| db_err_at(db_path.as_deref(), e))?;
+    if let Some(rowid) = existing {
+        sqlx::query("DELETE FROM memory_vec WHERE rowid = ?")
+            .bind(rowid)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| db_err_at(db_path.as_deref(), e))?;
+    }
+    sqlx::query("INSERT INTO memory_vec(embedding) VALUES (?)")
+        .bind(embedding_json(vector))
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| db_err_at(db_path.as_deref(), e))?;
+    let rowid: i64 = sqlx::query_scalar("SELECT last_insert_rowid()")
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|e| db_err_at(db_path.as_deref(), e))?;
+    sqlx::query(
+        "INSERT INTO memory_vec_map (memory_id, rowid) VALUES (?, ?)
+         ON CONFLICT(memory_id) DO UPDATE SET rowid = excluded.rowid",
+    )
+    .bind(id)
+    .bind(rowid)
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| db_err_at(db_path.as_deref(), e))?;
+    Ok(())
+}
+
+async fn register_cues_on(
+    conn: &mut sqlx::SqliteConnection,
+    memory: &MemoryRow,
+) -> Result<(), AxError> {
+    let db_path = connection_db_path(conn).await;
+    sqlx::query("DELETE FROM memory_cues WHERE memory_id = ?")
+        .bind(&memory.id)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| db_err_at(db_path.as_deref(), e))?;
+    let mut rows: Vec<(String, &str)> = Vec::new();
+    for cue in automatic_cues(&memory.title) {
+        rows.push((cue, "title"));
+    }
+    for tag in &memory.tags {
+        for cue in automatic_cues(tag) {
+            rows.push((cue, "tag"));
+        }
+    }
+    for file in &memory.files {
+        let base = Path::new(file)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or(file);
+        for cue in automatic_cues(base) {
+            rows.push((cue, "file"));
+        }
+        if memory.kind != "graph_diff" {
+            let names: Vec<String> = sqlx::query_scalar(
+                "SELECT DISTINCT name FROM nodes
+                 WHERE file_path = ? OR file_path LIKE '%/' || ? OR ? LIKE '%/' || file_path",
+            )
+            .bind(file)
+            .bind(file)
+            .bind(file)
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(|e| db_err_at(db_path.as_deref(), e))?;
+            for name in names {
+                for cue in automatic_cues(&name) {
+                    rows.push((cue, "symbol"));
+                }
+            }
+        }
+    }
+    let overused =
+        overused_automatic_cues(&mut *conn, db_path.as_deref(), &automatic_candidates(&rows))
+            .await?;
+    retain_fresh_automatic_cues(&mut rows, &overused);
+    rows.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then(cue_source_rank(a.1).cmp(&cue_source_rank(b.1)))
+    });
+    rows.dedup_by(|later, earlier| later.0 == earlier.0);
+    for (cue, source) in rows {
+        sqlx::query(
+            "INSERT OR IGNORE INTO memory_cues (cue, memory_id, weight, source) VALUES (?, ?, 1.0, ?)",
+        )
+        .bind(&cue)
+        .bind(&memory.id)
+        .bind(source)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| db_err_at(db_path.as_deref(), e))?;
+    }
     Ok(())
 }
 
@@ -858,7 +1415,7 @@ pub async fn capture_activity_engrams(pool: &SqlitePool) -> Result<usize, AxErro
     )
     .fetch_one(pool)
     .await
-    .map_err(db_err_pub)?;
+    .map_err(|e| db_err_pub(pool, e))?;
     if exists == 0 {
         return Ok(0);
     }
@@ -871,7 +1428,7 @@ pub async fn capture_activity_engrams(pool: &SqlitePool) -> Result<usize, AxErro
     )
     .fetch_all(pool)
     .await
-    .map_err(db_err_pub)?;
+    .map_err(|e| db_err_pub(pool, e))?;
     let mut written = 0usize;
     for (event_id, operation, summary, _at) in rows {
         if operation.contains("token") {
@@ -942,6 +1499,62 @@ fn stable_id(input: &str) -> String {
 
 /// Rewrites rows left on an older embedding model, then indexes archive rows
 /// that have no vector yet. Sync calls this after consolidation.
+/// Drop the archive vector index and build it again from stored embeddings.
+pub async fn rebuild_vector_index(pool: &SqlitePool) -> Result<usize, AxError> {
+    sqlx::query("DROP TABLE IF EXISTS memory_vec_map")
+        .execute(pool)
+        .await
+        .map_err(|e| db_err_pub(pool, e))?;
+    sqlx::query("DROP TABLE IF EXISTS memory_vec")
+        .execute(pool)
+        .await
+        .map_err(|e| db_err_pub(pool, e))?;
+    ensure_vec_table(pool).await?;
+    let (_, active) = crate::embed::embed_labeled("ax");
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM memories
+         WHERE tier = 't3' AND enabled = 1 AND embedding IS NOT NULL AND embedding_model = ?",
+    )
+    .bind(active)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| db_err_pub(pool, e))?;
+    for id in &ids {
+        index_archive_vector(pool, id).await?;
+    }
+    Ok(ids.len())
+}
+
+/// Rewrites every row that is not on the active hash model, in one call.
+/// Database open does not call this.
+pub async fn reembed_all_foreign(pool: &SqlitePool) -> Result<usize, AxError> {
+    let (_, active) = crate::embed::embed_labeled("ax");
+    let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(
+        "SELECT id, title, body, COALESCE(tags, '[]'), COALESCE(tier, 't2')
+         FROM memories WHERE COALESCE(embedding_model, '') != ?",
+    )
+    .bind(active)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| db_err_pub(pool, e))?;
+    let mut updated = 0usize;
+    for (id, title, body, tags, tier) in rows {
+        let (vector, model) = crate::embed::embed_labeled(&format!("{title} {body} {tags}"));
+        sqlx::query("UPDATE memories SET embedding = ?, embedding_model = ? WHERE id = ?")
+            .bind(crate::embed::embedding_to_blob(&vector))
+            .bind(model)
+            .bind(&id)
+            .execute(pool)
+            .await
+            .map_err(|e| db_err_pub(pool, e))?;
+        if tier == TIER_ARCHIVE {
+            index_archive_vector(pool, &id).await?;
+        }
+        updated += 1;
+    }
+    Ok(updated)
+}
+
 pub async fn reembed_stale(pool: &SqlitePool, limit: usize) -> Result<usize, AxError> {
     let limit = limit.max(1) as i64;
     let (_, active) = crate::embed::embed_labeled("ax");
@@ -953,7 +1566,7 @@ pub async fn reembed_stale(pool: &SqlitePool, limit: usize) -> Result<usize, AxE
     .bind(limit)
     .fetch_all(pool)
     .await
-    .map_err(db_err_pub)?;
+    .map_err(|e| db_err_pub(pool, e))?;
     let mut updated = 0usize;
     for (id, title, body, tags, tier) in rows {
         let (vector, model) = crate::embed::embed_labeled(&format!("{title} {body} {tags}"));
@@ -963,7 +1576,7 @@ pub async fn reembed_stale(pool: &SqlitePool, limit: usize) -> Result<usize, AxE
             .bind(&id)
             .execute(pool)
             .await
-            .map_err(db_err_pub)?;
+            .map_err(|e| db_err_pub(pool, e))?;
         if tier == TIER_ARCHIVE {
             index_archive_vector(pool, &id).await?;
         }
@@ -980,7 +1593,7 @@ pub async fn reembed_stale(pool: &SqlitePool, limit: usize) -> Result<usize, AxE
     .bind(limit)
     .fetch_all(pool)
     .await
-    .map_err(db_err_pub)?;
+    .map_err(|e| db_err_pub(pool, e))?;
     for id in missing {
         index_archive_vector(pool, &id).await?;
     }
@@ -997,7 +1610,7 @@ async fn symbol_names(pool: &SqlitePool, file: &str) -> Result<Vec<String>, AxEr
     .bind(file)
     .fetch_all(pool)
     .await
-    .map_err(db_err_pub)
+    .map_err(|e| db_err_pub(pool, e))
 }
 
 /// Memory ids whose cue set contains a symbol defined in one of the open files.
@@ -1023,7 +1636,7 @@ pub async fn memory_ids_for_symbols(
     .bind(json)
     .fetch_all(pool)
     .await
-    .map_err(db_err_pub)?;
+    .map_err(|e| db_err_pub(pool, e))?;
     Ok(ids.into_iter().collect())
 }
 

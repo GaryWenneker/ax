@@ -308,7 +308,8 @@ mod tests {
         let first = push_github(&config, pack_src.path(), None).expect("first push should succeed");
         assert_eq!(first, 1);
 
-        let second = push_github(&config, pack_src.path(), None).expect("second push should succeed");
+        let second =
+            push_github(&config, pack_src.path(), None).expect("second push should succeed");
         assert_eq!(second, 0);
     }
 

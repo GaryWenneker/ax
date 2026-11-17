@@ -546,10 +546,7 @@ pub fn stash_cli_result(tool: &str, structured: &Value, response_text: &str) {
 }
 
 fn take_cli_stash() -> Option<CliStash> {
-    CLI_STASH
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .take()
+    CLI_STASH.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
 
 /// Write one Savings row for a CLI command and wait for the insert.
@@ -565,7 +562,11 @@ pub async fn flush_cli_call(
     let (tool, structured, text) = if let Some(stashed) = stashed {
         (stashed.tool, stashed.structured, stashed.response_text)
     } else if let Some(twin) = cli_mcp_tool(command) {
-        (twin.to_string(), Value::Object(Default::default()), String::new())
+        (
+            twin.to_string(),
+            Value::Object(Default::default()),
+            String::new(),
+        )
     } else {
         return Ok(());
     };
@@ -2672,12 +2673,11 @@ mod tests {
         })
         .await
         .expect("mcp insert");
-        let mcp_transport: String = sqlx::query_scalar(
-            "SELECT transport FROM mcp_call_log WHERE tool = 'ax_node'",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("mcp row");
+        let mcp_transport: String =
+            sqlx::query_scalar("SELECT transport FROM mcp_call_log WHERE tool = 'ax_node'")
+                .fetch_one(&pool)
+                .await
+                .expect("mcp row");
         assert_eq!(mcp_transport, "mcp");
 
         let summary = query_savings_summary(&SavingsQuery {
@@ -2749,7 +2749,10 @@ mod tests {
             row.2, saved,
             "markdown file={file_tokens} response={response_tokens} saved={saved}"
         );
-        assert!(saved > 0, "file tokens {file_tokens}, response {response_tokens}");
+        assert!(
+            saved > 0,
+            "file tokens {file_tokens}, response {response_tokens}"
+        );
 
         std::env::remove_var("AX_USAGE_DB");
         let _ = std::fs::remove_file(&db);
@@ -2785,10 +2788,8 @@ mod tests {
     #[tokio::test]
     async fn savings_insert_reports_a_database_that_cannot_be_opened() {
         let _guard = USAGE_ENV_LOCK.lock().await;
-        let parent = std::env::temp_dir().join(format!(
-            "ax-usage-not-a-dir-{}",
-            std::process::id()
-        ));
+        let parent =
+            std::env::temp_dir().join(format!("ax-usage-not-a-dir-{}", std::process::id()));
         std::fs::write(&parent, b"not a directory").unwrap();
         let db = parent.join("usage.db");
         std::env::set_var("AX_USAGE_DB", &db);

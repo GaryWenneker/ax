@@ -92,27 +92,47 @@ pub async fn try_resolve_target(
     }
 
     if name.ends_with("Service") {
-        if let Some(n) = resolve_by_name_and_kind(queries, name, &[NodeKind::Class, NodeKind::Interface], SERVICE_DIRS).await {
+        if let Some(n) = resolve_by_name_and_kind(
+            queries,
+            name,
+            &[NodeKind::Class, NodeKind::Interface],
+            SERVICE_DIRS,
+        )
+        .await
+        {
             return Some((n, 0.85));
         }
     }
     if name.ends_with("Repository") {
-        if let Some(n) = resolve_by_name_and_kind(queries, name, &[NodeKind::Class, NodeKind::Interface], REPO_DIRS).await {
+        if let Some(n) = resolve_by_name_and_kind(
+            queries,
+            name,
+            &[NodeKind::Class, NodeKind::Interface],
+            REPO_DIRS,
+        )
+        .await
+        {
             return Some((n, 0.85));
         }
     }
     if name.ends_with("Controller") {
-        if let Some(n) = resolve_by_name_and_kind(queries, name, &[NodeKind::Class], CONTROLLER_DIRS).await {
+        if let Some(n) =
+            resolve_by_name_and_kind(queries, name, &[NodeKind::Class], CONTROLLER_DIRS).await
+        {
             return Some((n, 0.85));
         }
     }
     if name.ends_with("Component") || name.ends_with("Config") {
-        if let Some(n) = resolve_by_name_and_kind(queries, name, &[NodeKind::Class], COMPONENT_DIRS).await {
+        if let Some(n) =
+            resolve_by_name_and_kind(queries, name, &[NodeKind::Class], COMPONENT_DIRS).await
+        {
             return Some((n, 0.8));
         }
     }
     if is_pascal_entity(name) {
-        if let Some(n) = resolve_by_name_and_kind(queries, name, &[NodeKind::Class], ENTITY_DIRS).await {
+        if let Some(n) =
+            resolve_by_name_and_kind(queries, name, &[NodeKind::Class], ENTITY_DIRS).await
+        {
             return Some((n, 0.7));
         }
     }
@@ -130,7 +150,10 @@ async fn find_config_node(
         limit: Some(200),
         ..Default::default()
     };
-    let results = queries.search_nodes(canon_key, &opts).await.unwrap_or_default();
+    let results = queries
+        .search_nodes(canon_key, &opts)
+        .await
+        .unwrap_or_default();
     let mut matches: Vec<_> = results
         .into_iter()
         .map(|r| r.node)
@@ -168,7 +191,11 @@ fn extract_spring_config(file_path: &str, content: &str) -> FrameworkExtractResu
     let mut out = FrameworkExtractResult::default();
     let now = now_ms();
     let is_properties = file_path.ends_with(".properties");
-    let lang = if is_properties { Language::Properties } else { Language::Yaml };
+    let lang = if is_properties {
+        Language::Properties
+    } else {
+        Language::Yaml
+    };
 
     if is_properties {
         for (i, raw) in content.lines().enumerate() {
@@ -189,7 +216,11 @@ fn extract_spring_config(file_path: &str, content: &str) -> FrameworkExtractResu
     let mut stack: Vec<(usize, String)> = Vec::new();
     for (i, raw) in content.lines().enumerate() {
         let trimmed = raw.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed == "---" || trimmed.starts_with("- ") {
+        if trimmed.is_empty()
+            || trimmed.starts_with('#')
+            || trimmed == "---"
+            || trimmed.starts_with("- ")
+        {
             continue;
         }
         let indent = raw.len() - raw.trim_start().len();
@@ -208,7 +239,11 @@ fn extract_spring_config(file_path: &str, content: &str) -> FrameworkExtractResu
         let dotted = if stack.is_empty() {
             key.to_string()
         } else {
-            let prefix = stack.iter().map(|(_, k)| k.as_str()).collect::<Vec<_>>().join(".");
+            let prefix = stack
+                .iter()
+                .map(|(_, k)| k.as_str())
+                .collect::<Vec<_>>()
+                .join(".");
             format!("{prefix}.{key}")
         };
         if after.is_empty() || after.starts_with('#') {
@@ -371,8 +406,8 @@ fn extract_spring_value_bindings(
     now: i64,
     out: &mut FrameworkExtractResult,
 ) {
-    let value_re =
-        regex::Regex::new(r#"@Value\s*\(\s*["']\$\{([^}:]+)(?::[^}]*)?\}["']\s*\)"#).expect("value");
+    let value_re = regex::Regex::new(r#"@Value\s*\(\s*["']\$\{([^}:]+)(?::[^}]*)?\}["']\s*\)"#)
+        .expect("value");
     for cap in value_re.captures_iter(safe) {
         let key = cap.get(1).map(|m| m.as_str().trim()).unwrap_or("");
         if key.is_empty() {
@@ -416,10 +451,9 @@ fn extract_spring_value_bindings(
         });
     }
 
-    let cp_re = regex::Regex::new(
-        r#"@ConfigurationProperties\s*\(\s*(?:prefix\s*=\s*)?["']([^"']+)["']"#,
-    )
-    .expect("cp");
+    let cp_re =
+        regex::Regex::new(r#"@ConfigurationProperties\s*\(\s*(?:prefix\s*=\s*)?["']([^"']+)["']"#)
+            .expect("cp");
     for cap in cp_re.captures_iter(safe) {
         let prefix = cap.get(1).map(|m| m.as_str().trim()).unwrap_or("");
         if prefix.is_empty() {
@@ -487,11 +521,15 @@ fn join_http_path(prefix: &str, sub: &str) -> String {
 
 fn method_name_after(safe: &str, start: usize) -> Option<String> {
     let tail = safe.get(start..start + 600.min(safe.len().saturating_sub(start)))?;
-    let re =
-        regex::Regex::new(r"\bfun\s+(\w+)\s*\(|\b(?:public|private|protected)\s+[^;{=]*?\s+(\w+)\s*\(")
-            .expect("method");
-    re.captures(tail)
-        .and_then(|c| c.get(1).or_else(|| c.get(2)).map(|m| m.as_str().to_string()))
+    let re = regex::Regex::new(
+        r"\bfun\s+(\w+)\s*\(|\b(?:public|private|protected)\s+[^;{=]*?\s+(\w+)\s*\(",
+    )
+    .expect("method");
+    re.captures(tail).and_then(|c| {
+        c.get(1)
+            .or_else(|| c.get(2))
+            .map(|m| m.as_str().to_string())
+    })
 }
 
 fn canonical_config_key(key: &str) -> String {
@@ -514,7 +552,10 @@ async fn resolve_by_name_and_kind(
 ) -> Option<ax_types::Node> {
     let candidates = queries.get_nodes_by_name(name).await.unwrap_or_default();
     let kind_set: HashSet<_> = kinds.iter().copied().collect();
-    let filtered: Vec<_> = candidates.into_iter().filter(|n| kind_set.contains(&n.kind)).collect();
+    let filtered: Vec<_> = candidates
+        .into_iter()
+        .filter(|n| kind_set.contains(&n.kind))
+        .collect();
     if filtered.is_empty() {
         return None;
     }
@@ -531,7 +572,9 @@ async fn resolve_by_name_and_kind(
 fn is_pascal_entity(s: &str) -> bool {
     let mut chars = s.chars();
     let first = chars.next();
-    first.map(|c| c.is_uppercase() && c.is_alphabetic()).unwrap_or(false)
+    first
+        .map(|c| c.is_uppercase() && c.is_alphabetic())
+        .unwrap_or(false)
         && chars.all(|c| c.is_alphabetic())
 }
 
@@ -543,7 +586,10 @@ mod tests {
     fn get_mapping_route() {
         let src = "@RestController @RequestMapping(\"/api\") class C { @GetMapping(\"/users\") public void list() {} }";
         let r = extract_java_file("src/UserController.java", src);
-        assert!(r.nodes.iter().any(|n| n.name.contains("GET") && n.name.contains("/api/users")));
+        assert!(r
+            .nodes
+            .iter()
+            .any(|n| n.name.contains("GET") && n.name.contains("/api/users")));
     }
 
     #[test]
@@ -557,6 +603,9 @@ mod tests {
     fn value_binding_reference() {
         let src = "@Value(\"${app.cache.ttl}\") private int ttl;";
         let r = extract_java_file("Config.java", src);
-        assert!(r.references.iter().any(|ref_| ref_.reference_name == "app.cache.ttl"));
+        assert!(r
+            .references
+            .iter()
+            .any(|ref_| ref_.reference_name == "app.cache.ttl"));
     }
 }

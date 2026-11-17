@@ -35,7 +35,10 @@ pub async fn extend_with_foreign_policy(
         .iter()
         .filter_map(|v| match kind {
             PolicyKind::Rules => v.get("id").and_then(|x| x.as_str()).map(|s| s.to_string()),
-            PolicyKind::Skills => v.get("name").and_then(|x| x.as_str()).map(|s| s.to_string()),
+            PolicyKind::Skills => v
+                .get("name")
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string()),
         })
         .collect();
 
@@ -108,7 +111,10 @@ pub async fn list_skill_payloads(global: &SqlitePool) -> Result<Vec<(String, Val
             continue;
         }
         let value: Value = serde_json::from_str(&payload).unwrap_or_else(|_| json!({}));
-        out.push((item_id.clone(), flatten_list_item(value, PolicyKind::Skills, &item_id)));
+        out.push((
+            item_id.clone(),
+            flatten_list_item(value, PolicyKind::Skills, &item_id),
+        ));
     }
     Ok(out)
 }
@@ -124,6 +130,22 @@ pub async fn policy_item_exists(
         "SELECT 1 FROM {table} WHERE project_id = ? AND item_id = ? LIMIT 1"
     ))
     .bind(project_id)
+    .bind(item_id)
+    .fetch_optional(global)
+    .await?;
+    Ok(row.is_some())
+}
+
+/// Whether a company skill or rule row already exists for `item_id` under any machine project.
+pub async fn global_policy_item_exists(
+    global: &SqlitePool,
+    kind: PolicyKind,
+    item_id: &str,
+) -> Result<bool> {
+    let table = table_for(kind);
+    let row: Option<(i64,)> = sqlx::query_as(&format!(
+        "SELECT 1 FROM {table} WHERE item_id = ? LIMIT 1"
+    ))
     .bind(item_id)
     .fetch_optional(global)
     .await?;
@@ -157,12 +179,13 @@ pub async fn upsert_policy_item_from(
     // Reserve the writer before reading the previous payload: upgrading a deferred
     // WAL read transaction can fail immediately when another writer commits.
     let mut tx = global.begin_with("BEGIN IMMEDIATE").await?;
-    let current: Option<(String,)> =
-        sqlx::query_as(&format!("SELECT payload FROM {table} WHERE project_id = ? AND item_id = ?"))
-            .bind(project_id)
-            .bind(item_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let current: Option<(String,)> = sqlx::query_as(&format!(
+        "SELECT payload FROM {table} WHERE project_id = ? AND item_id = ?"
+    ))
+    .bind(project_id)
+    .bind(item_id)
+    .fetch_optional(&mut *tx)
+    .await?;
     sqlx::query(&format!(
         "INSERT INTO {table} (project_id, item_id, payload) VALUES (?, ?, ?)
          ON CONFLICT(project_id, item_id) DO UPDATE SET payload = excluded.payload, synced_at = CURRENT_TIMESTAMP"
@@ -218,12 +241,14 @@ async fn record_revision(
     .bind(now_ms())
     .execute(&mut *conn)
     .await?;
-    sqlx::query("DELETE FROM global_policy_revisions WHERE kind = ? AND item_id = ? AND version <= ?")
-        .bind(kind.revision_kind())
-        .bind(item_id)
-        .bind(next - GLOBAL_REVISION_CAP)
-        .execute(&mut *conn)
-        .await?;
+    sqlx::query(
+        "DELETE FROM global_policy_revisions WHERE kind = ? AND item_id = ? AND version <= ?",
+    )
+    .bind(kind.revision_kind())
+    .bind(item_id)
+    .bind(next - GLOBAL_REVISION_CAP)
+    .execute(&mut *conn)
+    .await?;
     Ok(next)
 }
 
@@ -235,7 +260,11 @@ fn now_ms() -> i64 {
 }
 
 /// Newest first.
-pub async fn list_revisions(global: &SqlitePool, kind: PolicyKind, item_id: &str) -> Result<Vec<GlobalRevision>> {
+pub async fn list_revisions(
+    global: &SqlitePool,
+    kind: PolicyKind,
+    item_id: &str,
+) -> Result<Vec<GlobalRevision>> {
     let rows: Vec<(i64, i64, String, String, i64)> = sqlx::query_as(
         "SELECT version, project_id, payload, source, created_at FROM global_policy_revisions
          WHERE kind = ? AND item_id = ? ORDER BY version DESC",
@@ -246,24 +275,31 @@ pub async fn list_revisions(global: &SqlitePool, kind: PolicyKind, item_id: &str
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(version, project_id, payload, source, created_at)| GlobalRevision {
-            version,
-            project_id,
-            payload: serde_json::from_str(&payload).unwrap_or(Value::Null),
-            source,
-            created_at,
-        })
+        .map(
+            |(version, project_id, payload, source, created_at)| GlobalRevision {
+                version,
+                project_id,
+                payload: serde_json::from_str(&payload).unwrap_or(Value::Null),
+                source,
+                created_at,
+            },
+        )
         .collect())
 }
 
 /// The version the next revision of this item will get.
-async fn max_version(conn: &mut sqlx::SqliteConnection, kind: PolicyKind, item_id: &str) -> Result<Option<i64>> {
-    let (max,): (Option<i64>,) =
-        sqlx::query_as("SELECT MAX(version) FROM global_policy_revisions WHERE kind = ? AND item_id = ?")
-            .bind(kind.revision_kind())
-            .bind(item_id)
-            .fetch_one(&mut *conn)
-            .await?;
+async fn max_version(
+    conn: &mut sqlx::SqliteConnection,
+    kind: PolicyKind,
+    item_id: &str,
+) -> Result<Option<i64>> {
+    let (max,): (Option<i64>,) = sqlx::query_as(
+        "SELECT MAX(version) FROM global_policy_revisions WHERE kind = ? AND item_id = ?",
+    )
+    .bind(kind.revision_kind())
+    .bind(item_id)
+    .fetch_one(&mut *conn)
+    .await?;
     Ok(max)
 }
 
@@ -275,16 +311,21 @@ pub async fn next_version(global: &SqlitePool, kind: PolicyKind, item_id: &str) 
         return Ok(max + 1);
     }
     let table = table_for(kind);
-    let stored: Option<(i64,)> = sqlx::query_as(&format!("SELECT 1 FROM {table} WHERE item_id = ? LIMIT 1"))
-        .bind(item_id)
-        .fetch_optional(&mut *conn)
-        .await?;
+    let stored: Option<(i64,)> =
+        sqlx::query_as(&format!("SELECT 1 FROM {table} WHERE item_id = ? LIMIT 1"))
+            .bind(item_id)
+            .fetch_optional(&mut *conn)
+            .await?;
     Ok(if stored.is_some() { 2 } else { 1 })
 }
 
 /// `mirror` rows whose name exists at the global level, as `(project_id, item_id)`.
 /// They are deleted when `delete` is set.
-pub async fn shadowed_mirrors(global: &SqlitePool, kind: PolicyKind, delete: bool) -> Result<Vec<(i64, String)>> {
+pub async fn shadowed_mirrors(
+    global: &SqlitePool,
+    kind: PolicyKind,
+    delete: bool,
+) -> Result<Vec<(i64, String)>> {
     let table = table_for(kind);
     let shadowed: Vec<(i64, String)> = sqlx::query_as(&format!(
         "SELECT project_id, item_id FROM {table} WHERE level = 'mirror'
@@ -294,11 +335,13 @@ pub async fn shadowed_mirrors(global: &SqlitePool, kind: PolicyKind, delete: boo
     .await?;
     if delete {
         for (pid, item_id) in &shadowed {
-            sqlx::query(&format!("DELETE FROM {table} WHERE project_id = ? AND item_id = ? AND level = 'mirror'"))
-                .bind(pid)
-                .bind(item_id)
-                .execute(global)
-                .await?;
+            sqlx::query(&format!(
+                "DELETE FROM {table} WHERE project_id = ? AND item_id = ? AND level = 'mirror'"
+            ))
+            .bind(pid)
+            .bind(item_id)
+            .execute(global)
+            .await?;
         }
     }
     Ok(shadowed)
@@ -312,6 +355,10 @@ pub async fn upsert_machine_skill(item_id: &str, payload: &Value) -> Result<()> 
         std::fs::create_dir_all(parent)?;
     }
     let pool = crate::open_and_init(&db_path).await?;
+    if global_policy_item_exists(&pool, PolicyKind::Skills, item_id).await? {
+        pool.close().await;
+        return Ok(());
+    }
     let home = ax_utils::paths::home_dir().ok_or_else(|| anyhow::anyhow!("HOME not set"))?;
     let project_id = ensure_project(&pool, &home.join(".ax")).await?;
     upsert_policy_item(&pool, project_id, PolicyKind::Skills, item_id, payload).await?;
@@ -355,21 +402,24 @@ pub async fn delete_policy_item_from(
 ) -> Result<bool> {
     let table = table_for(kind);
     let mut tx = global.begin().await?;
-    let current: Option<(String,)> =
-        sqlx::query_as(&format!("SELECT payload FROM {table} WHERE project_id = ? AND item_id = ?"))
-            .bind(project_id)
-            .bind(item_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let current: Option<(String,)> = sqlx::query_as(&format!(
+        "SELECT payload FROM {table} WHERE project_id = ? AND item_id = ?"
+    ))
+    .bind(project_id)
+    .bind(item_id)
+    .fetch_optional(&mut *tx)
+    .await?;
     let Some((payload,)) = current else {
         return Ok(false);
     };
     record_revision(&mut tx, kind, item_id, project_id, &payload, source).await?;
-    sqlx::query(&format!("DELETE FROM {table} WHERE project_id = ? AND item_id = ?"))
-        .bind(project_id)
-        .bind(item_id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(&format!(
+        "DELETE FROM {table} WHERE project_id = ? AND item_id = ?"
+    ))
+    .bind(project_id)
+    .bind(item_id)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(true)
 }
@@ -432,13 +482,21 @@ pub fn flatten_list_item(mut v: Value, kind: PolicyKind, item_id: &str) -> Value
     };
     match kind {
         PolicyKind::Rules => {
-            let missing = obj.get("id").and_then(|x| x.as_str()).unwrap_or("").is_empty();
+            let missing = obj
+                .get("id")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .is_empty();
             if missing {
                 obj.insert("id".into(), json!(item_id));
             }
         }
         PolicyKind::Skills => {
-            let missing = obj.get("name").and_then(|x| x.as_str()).unwrap_or("").is_empty();
+            let missing = obj
+                .get("name")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .is_empty();
             if missing {
                 obj.insert("name".into(), json!(item_id));
             }
@@ -447,13 +505,23 @@ pub fn flatten_list_item(mut v: Value, kind: PolicyKind, item_id: &str) -> Value
     // Always prefer a non-empty item_id over a still-missing list key.
     match kind {
         PolicyKind::Rules => {
-            if obj.get("id").and_then(|x| x.as_str()).unwrap_or("").is_empty() && !item_id.is_empty()
+            if obj
+                .get("id")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .is_empty()
+                && !item_id.is_empty()
             {
                 obj.insert("id".into(), json!(item_id));
             }
         }
         PolicyKind::Skills => {
-            if obj.get("name").and_then(|x| x.as_str()).unwrap_or("").is_empty() && !item_id.is_empty()
+            if obj
+                .get("name")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .is_empty()
+                && !item_id.is_empty()
             {
                 obj.insert("name".into(), json!(item_id));
             }

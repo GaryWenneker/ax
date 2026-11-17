@@ -74,6 +74,7 @@ Stack and infrastructure used by each tool — runtime, storage, parsing, transp
 | **Telemetry** | `telemetry/` + Cloudflare Worker | `ax-telemetry` crate + `telemetry-worker/` + `ax telemetry` CLI | ✅ |
 | **Self-update** | `upgrade/` module + `codegraph upgrade` | `ax upgrade` — GitHub releases + cargo install fallback | ✅ |
 | **LLM reasoning** | `reasoning/` optional module | `ax-reasoning` — BYO offload on explore (`ax offload`) | ✅ |
+| **Neural (required)** | none | `crates/ax-neural`. Stays on when `ax.json` omits it or sets `neural.enabled` to false. Ranks every preflight and reports dropped duplicate tokens in `contextBudget.neural`. Memory embeddings stay `hash-v1`. No CodeGraph counterpart. | ➕ ax-only |
 | **Marketing / site** | Vite site in `site/` | Astro/Starlight `site/` (ported from CG) | ✅ |
 
 ### Platform notes

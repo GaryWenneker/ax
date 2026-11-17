@@ -1,5 +1,5 @@
 use super::{
-    auth::{Principal, TokenVerifier, CONTEXT_SCOPE, WRITE_SCOPE},
+    auth::{bearer_token, Principal, TokenVerifier, CONTEXT_SCOPE, WRITE_SCOPE},
     config::{Project, RemoteConfig},
 };
 use crate::{engine::McpEngine, server::handle_request, transport::JsonRpcRequest};
@@ -117,11 +117,9 @@ fn control(state: &RemoteState, headers: &HeaderMap) -> bool {
     let Some(expected) = &state.control else {
         return false;
     };
-    let candidate = headers
-        .get("authorization")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.strip_prefix("Bearer "))
-        .unwrap_or("");
+    let Some(candidate) = bearer_token(headers) else {
+        return false;
+    };
     expected.len() == candidate.len() && bool::from(expected.as_bytes().ct_eq(candidate.as_bytes()))
 }
 async fn host_status(State(state): State<RemoteState>, headers: HeaderMap) -> Response {
@@ -226,10 +224,7 @@ async fn authorize(
             )));
         }
     }
-    let token = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
+    let token = bearer_token(headers)
         .ok_or_else(|| Box::new(challenge(state, StatusCode::UNAUTHORIZED, CONTEXT_SCOPE)))?;
     let client = if token.starts_with("axc_") {
         let db_path = ax_global_db::global_db_path().map_err(|_| {
@@ -821,7 +816,7 @@ pub async fn serve(
     let sync_tasks: Vec<_> = config
         .projects
         .iter()
-        .map(|project| ax_core::Ax::spawn_background_watch(project.root.clone()))
+        .map(|project| ax_core::Ax::spawn_background_watch_as(project.root.clone(), "mcp"))
         .collect();
     println!(
         "{}",

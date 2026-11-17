@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "injects": {
+    "bug-mf-08": {
+      "file": "crates/ax-neural/src/store.rs",
+      "fixed": "\"model\": if admitted { crate::lexical::CHALLENGER_ID } else { \"hash-v1\" }",
+      "broken": "\"model\": if admitted { crate::lexical::CHALLENGER_ID } else { crate::lexical::CHALLENGER_ID }"
+    },
+    "perf-guard-semweight": {
+      "file": "crates/ax-neural/src/lib.rs",
+      "fixed": "pub const SEMANTIC_WEIGHT: f64 = 0.0;",
+      "broken": "pub const SEMANTIC_WEIGHT: f64 = 0.35;"
+    },
+    "ref-07": {
+      "file": "crates/ax-neural/src/rank.rs",
+      "fixed": "reason: \"hard-required\".into()",
+      "broken": "reason: \"optional\".into()"
+    },
+    "feat-02": {
+      "file": "crates/ax-neural/src/predict.rs",
+      "fixed": "let false_positives = self.predictions - self.true_positives;",
+      "broken": "let false_positives = self.true_positives; // rw-inject broken FP math"
+    },
+    "ref-03": {
+      "file": "crates/ax-memory/src/fusion.rs",
+      "fixed": "const W_FTS: f64 = 0.45;",
+      "broken": "const W_FTS: f64 = 99.0; // rw-inject"
+    },
+    "perf-01": {
+      "file": "crates/ax-neural/src/store.rs",
+      "fixed": "if vector.len() != query_vec.len() {\n                    continue;\n                }",
+      "broken": "if vector.len() != query_vec.len() {\n                    // rw-inject: do not skip mismatched dims\n                }"
+    },
+    "sec-07": {
+      "file": "crates/ax-neural/src/learning.rs",
+      "fixed": "\"promoted\": false",
+      "broken": "\"promoted\": true // rw-inject auto-promote lie"
+    },
+    "ref-10": {
+      "file": "crates/ax-neural/src/rank.rs",
+      "fixed": "filter(|part| part.len() > 2)",
+      "broken": "filter(|part| part.len() > 200) // rw-inject"
+    },
+    "ref-05": {
+      "file": "crates/ax-neural/src/agent_eval.rs",
+      "fixed": "productionDefaultsUnchanged\": true",
+      "broken": "productionDefaultsUnchanged\": false // rw-inject"
+    },
+    "perf-05": {
+      "file": "crates/ax-neural/src/embed_bakeoff.rs",
+      "fixed": "\"neuralEmbeddingInferenceActive\": false",
+      "broken": "\"neuralEmbeddingInferenceActive\": true // rw-inject"
+    },
+    "perf-08": {
+      "file": "crates/ax-neural/src/lib.rs",
+      "fixed": "pub const SEMANTIC_WEIGHT: f64 = 0.0;",
+      "broken": "pub const SEMANTIC_WEIGHT: f64 = 0.35;"
+    },
+    "bug-mf-05": {
+      "file": "crates/ax-sync/src/git_hooks.rs",
+      "fixed": "pub fn repair_git_hooks(project_root: &Path) -> Result<(), AxError> {",
+      "broken": "pub fn /*rw-inject*/ repair_git_hooks(project_root: &Path) -> Result<(), AxError> {"
+    },
+    "feat-08": {
+      "file": "crates/ax-neural/src/bakeoff.rs",
+      "fixed": "pub fn challenger_admitted() -> bool {\n    if !crate::runtime_built() {\n        return false;\n    }",
+      "broken": "pub fn challenger_admitted() -> bool { false /* rw-inject */ }"
+    },
+    "bug-mf-01": {
+      "file": "crates/ax-memory/src/embed.rs",
+      "fixed": "pub const ACTIVE_MODEL: &str = \"hash-v1\";",
+      "broken": "pub const ACTIVE_MODEL: &str = \"hash-v1-broken\";"
+    },
+    "bug-mf-04": {
+      "file": "crates/ax-web/src/savings.rs",
+      "fixed": "async fn handle_import() -> impl IntoResponse {",
+      "broken": "async fn handle_import() -> impl IntoResponse {\n    // rw-inject open\n"
+    },
+    "ref-04": {
+      "file": "docs/specs/ax-neural/ARCHITECTURE.md",
+      "fixed": "# Ax Neural architecture",
+      "broken": "# Ax Neural architecture <!-- rw-inject broken -->"
+    },
+    "ref-08": {
+      "file": "crates/ax-mcp/src/context_budget.rs",
+      "fixed": "fn to_json(&self) -> Value {",
+      "broken": "fn to_json(&self) -> Value {\n        // rw-inject\n"
+    },
+    "sec-02": {
+      "file": "crates/ax-web/src/web_auth.rs",
+      "fixed": "fn recover_login(\n    ConnectInfo(peer): ConnectInfo<SocketAddr>,\n    headers: HeaderMap,\n    Json(body): Json<RecoveryLogin>,\n) -> Result<Response, ErrorResponse> {",
+      "broken": "fn recover_login(\n    ConnectInfo(peer): ConnectInfo<SocketAddr>,\n    headers: HeaderMap,\n    Json(body): Json<RecoveryLogin>,\n) -> Result<Response, ErrorResponse> {\n    // rw-inject\n"
+    },
+    "sec-04": {
+      "file": "crates/ax-context/src/directory.rs",
+      "fixed": "pub fn discover_projects_for_init(root: &Path, max_depth: usize) -> Vec<PathBuf> {",
+      "broken": "pub fn discover_projects_for_init(root: &Path, max_depth: usize) -> Vec<PathBuf> {\n    // rw-inject\n"
+    },
+    "sec-08": {
+      "file": "crates/ax-mcp/src/remote/oauth.rs",
+      "fixed": "fn authorize(State(p): State<Provider>, Query(q): Query<Authorization>) -> Response {",
+      "broken": "fn authorize(State(p): State<Provider>, Query(q): Query<Authorization>) -> Response {\n    // rw-inject\n"
+    },
+    "sec-10": {
+      "file": "crates/ax-neural/src/share.rs",
+      "fixed": "pub fn packet_for(\n    policy: SharePolicy<'_>,\n    models: &[ModelManifest],\n    outcome_counts: &[(String, u64)],\n) -> Value {",
+      "broken": "pub fn packet_for(\n    policy: SharePolicy<'_>,\n    models: &[ModelManifest],\n    outcome_counts: &[(String, u64)],\n) -> Value {\n    // rw-inject\n"
+    },
+    "perf-10": {
+      "file": "crates/ax-neural/src/rss.rs",
+      "fixed": "pub fn memory_report() -> serde_json::Value {",
+      "broken": "pub fn memory_report() -> serde_json::Value {\n    // rw-inject\n"
+    },
+    "bug-mf-03": {
+      "file": "crates/ax-neural/src/status.rs",
+      "fixed": "crate::SEMANTIC_WEIGHT",
+      "broken": "0.99 /*rw-inject*/"
+    },
+    "feat-04": {
+      "file": "crates/ax-web/src/neural.rs",
+      "fixed": "async fn handle_status(State(hub): State<WebHub>) -> Json<serde_json::Value> {",
+      "broken": "async fn handle_status(State(hub): State<WebHub>) -> Json<serde_json::Value> {\n    // rw-inject\n"
+    },
+    "ref-01": {
+      "file": "crates/ax-neural/src/metrics.rs",
+      "fixed": "if relevant.is_empty() {\n        return None;\n    }",
+      "broken": "if relevant.is_empty() {\n        return Some(1.0); // rw-inject\n    }"
+    },
+    "sec-01": {
+      "file": "crates/ax-mcp/src/remote/oauth.rs",
+      "fixed": "if q.response_type!=\"code\" || q.state.is_empty() || q.state.len()>2048 || q.code_challenge_method!=\"S256\" || q.code_challenge.len()!=43 || URL_SAFE_NO_PAD.decode(&q.code_challenge).map_or(true,|v|v.len()!=32) || !scope.contains(CONTEXT_SCOPE) || scope.iter().any(|s|!matches!(*s,CONTEXT_SCOPE|WRITE_SCOPE)) {",
+      "broken": "if false /*rw-inject*/ {"
+    },
+    "bug-mf-02": {
+      "file": "crates/ax-neural/src/config.rs",
+      "fixed": "fn prediction_active(&self) -> bool {\n        self.prediction_enabled\n    }\n}",
+      "broken": "fn prediction_active(&self) -> bool {\n        true // rw-inject\n    }"
+    },
+    "bug-mf-06": {
+      "file": "crates/ax-policy/src/seed.rs",
+      "fixed": "pub fn seed_default_policy(ax_dir: &Path) -> std::io::Result<SeedResult> {",
+      "broken": "pub fn seed_default_policy(ax_dir: &Path) -> std::io::Result<SeedResult> {\n    // rw-inject\n"
+    },
+    "bug-mf-07": {
+      "file": "crates/ax-mcp/src/server.rs",
+      "fixed": "async fn fork_and_handoff_do_not_restart_the_quiet_turn_count() {",
+      "broken": "async fn fork_and_handoff_do_not_restart_the_quiet_turn_count() {\n    // rw-inject\n"
+    },
+    "perf-07": {
+      "file": "crates/ax-web/web-ui/src/lib/graphSettings.ts",
+      "fixed": "export function saveGraphSettings(\n  settings: GraphSettings,\n  storage: StorageLike | null = defaultStorage(),\n  key: string = GRAPH_SETTINGS_KEY,\n): void {",
+      "broken": "export function saveGraphSettings(\n  settings: GraphSettings,\n  storage: StorageLike | null = defaultStorage(),\n  key: string = GRAPH_SETTINGS_KEY,\n): void {\n  // rw-inject\n"
+    },
+    "bug-mf-10": {
+      "file": "crates/ax-pi/src/economics.rs",
+      "fixed": "fn budget_projects_daily_average_times_remaining_days() {",
+      "broken": "fn budget_projects_daily_average_times_remaining_days() {\n    // rw-inject\n"
+    },
+    "perf-04": {
+      "file": "crates/ax-neural/src/dispatch.rs",
+      "fixed": "const EDGE_LIMIT: usize = 200_000;",
+      "broken": "const EDGE_LIMIT: usize = 200; // rw-inject"
+    }
+  }
+}

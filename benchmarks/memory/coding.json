@@ -1,0 +1,286 @@
+{
+  "memories": [
+    {
+      "key": "hash-vectors",
+      "title": "Hash vectors are the only embedding",
+      "body": "Why: every build must embed with hash-v1 so search sees one model.",
+      "kind": "decision",
+      "triggers": ["hash-v1"],
+      "files": [],
+      "source": "bench",
+      "insert": true
+    },
+    {
+      "key": "wal-old",
+      "title": "WAL checkpoint runs on every sync",
+      "body": "The old decision checkpoints the WAL during every index sync.",
+      "kind": "decision",
+      "triggers": ["wal-checkpoint"],
+      "files": [],
+      "source": "bench",
+      "insert": true
+    },
+    {
+      "key": "wal-new",
+      "title": "WAL checkpoint runs only when the log is quiet",
+      "body": "The current decision checkpoints the WAL only when the log has no frames.",
+      "kind": "decision",
+      "triggers": ["wal-checkpoint"],
+      "files": [],
+      "source": "bench",
+      "insert": true
+    },
+    {
+      "key": "stale-capture",
+      "title": "Graph capture lives in the core library",
+      "body": "capture_graph_episodes is defined in lib.rs.",
+      "kind": "note",
+      "triggers": [],
+      "files": ["src/old-capture.rs"],
+      "source": "bench",
+      "insert": true
+    },
+    {
+      "key": "renamed-symbol",
+      "title": "Turn persistence function",
+      "body": "save_turn writes one turn row.",
+      "kind": "note",
+      "triggers": [],
+      "files": ["src/turns.rs"],
+      "source": "bench",
+      "insert": true
+    },
+    {
+      "key": "asof-old",
+      "title": "Budget tokens were 2000",
+      "body": "On 2026-01-01 the memory budget was 2000 tokens.",
+      "kind": "decision",
+      "triggers": [],
+      "files": [],
+      "source": "bench",
+      "insert": true
+    },
+    {
+      "key": "asof-new",
+      "title": "Budget tokens are 3000",
+      "body": "On 2026-06-01 the memory budget is 3000 tokens.",
+      "kind": "decision",
+      "triggers": [],
+      "files": [],
+      "source": "bench",
+      "insert": true
+    },
+    {
+      "key": "boilerplate",
+      "title": "Copied user prompt",
+      "body": "continue the implementation and report the percentage when you stop",
+      "kind": "note",
+      "triggers": [],
+      "files": [],
+      "source": "prompt-copy",
+      "insert": true
+    },
+    {
+      "key": "foreign-note",
+      "title": "Blossom deploy path",
+      "body": "Blossom deploys from the blossom repository.",
+      "kind": "note",
+      "triggers": [],
+      "files": [],
+      "source": "blossom",
+      "insert": true
+    },
+    {
+      "key": "hop-writer",
+      "title": "Turn row writer",
+      "body": "save_turn writes the turn row.",
+      "kind": "note",
+      "triggers": [],
+      "files": [],
+      "source": "bench",
+      "insert": true
+    },
+    {
+      "key": "hop-hook",
+      "title": "Editor bridge entry",
+      "body": "beforeSubmitPrompt is registered in the editor bridge.",
+      "kind": "note",
+      "triggers": [],
+      "files": [],
+      "source": "bench",
+      "insert": true
+    },
+    {
+      "key": "archived",
+      "title": "Retention keeps archive searchable",
+      "body": "A demoted memory stays fetchable by its trigger and by a keyword.",
+      "kind": "decision",
+      "triggers": ["retention-archive"],
+      "files": [],
+      "source": "bench",
+      "age_days": 400,
+      "tier": "t3",
+      "insert": true
+    },
+    {
+      "key": "backup-only",
+      "title": "Backup only token",
+      "body": "backup-only-token lives only in a backup.",
+      "kind": "decision",
+      "triggers": ["backup-only-token"],
+      "files": [],
+      "source": "bench",
+      "insert": false
+    },
+    {
+      "key": "file-change",
+      "title": "Maintenance labels",
+      "body": "replaced the label SQLite maintenance with seven step names inside finalize_after_extract.",
+      "kind": "note",
+      "triggers": [],
+      "files": ["src/lib.rs"],
+      "source": "bench",
+      "insert": true
+    }
+  ],
+  "questions": [
+    {
+      "id": "named-trigger",
+      "family": "named_trigger",
+      "prompt": "hash-v1",
+      "channel": "cue",
+      "relevant": ["hash-vectors"]
+    },
+    {
+      "id": "decision-why",
+      "family": "decision_why",
+      "prompt": "why hash-v1",
+      "channel": "recall",
+      "relevant": ["hash-vectors"]
+    },
+    {
+      "id": "dutch-prompt",
+      "family": "dutch_to_english",
+      "prompt": "welke vectorvorm kiest de kluis",
+      "channel": "recall",
+      "relevant": ["hash-vectors"]
+    },
+    {
+      "id": "paraphrase",
+      "family": "paraphrase",
+      "prompt": "the representation chosen for similarity in all releases",
+      "channel": "recall",
+      "relevant": ["hash-vectors"]
+    },
+    {
+      "id": "knowledge-update",
+      "family": "knowledge_update",
+      "prompt": "when does the WAL checkpoint run",
+      "channel": "recall",
+      "relevant": ["wal-new"],
+      "latest": "wal-new"
+    },
+    {
+      "id": "stale-capture",
+      "family": "stale_after_code_change",
+      "prompt": "where does graph capture live",
+      "channel": "recall",
+      "relevant": [],
+      "forbidden": ["stale-capture"]
+    },
+    {
+      "id": "rename",
+      "family": "rename",
+      "prompt": "loadturn",
+      "channel": "recall",
+      "relevant": ["renamed-symbol"]
+    },
+    {
+      "id": "as-of",
+      "family": "as_of",
+      "prompt": "what was the memory budget as of 2026-01-01",
+      "channel": "recall",
+      "relevant": ["asof-old"]
+    },
+    {
+      "id": "abstention",
+      "family": "abstention",
+      "prompt": "purple quartz telescope",
+      "channel": "inject",
+      "relevant": []
+    },
+    {
+      "id": "delivery",
+      "family": "delivery_budget",
+      "prompt": "hash-v1",
+      "channel": "preflight",
+      "relevant": ["hash-vectors"]
+    },
+    {
+      "id": "boilerplate",
+      "family": "boilerplate_junk",
+      "prompt": "continue the implementation and report the percentage when you stop",
+      "channel": "inject",
+      "relevant": [],
+      "forbidden": ["boilerplate"]
+    },
+    {
+      "id": "foreign-project",
+      "family": "foreign_project",
+      "prompt": "where is the blossom deploy path",
+      "channel": "inject",
+      "relevant": [],
+      "forbidden": ["foreign-note"]
+    },
+    {
+      "id": "multi-hop",
+      "family": "multi_hop",
+      "prompt": "which hook writes a turn row",
+      "channel": "recall",
+      "relevant": ["hop-hook"]
+    },
+    {
+      "id": "archived-trigger",
+      "family": "archived_400_days",
+      "prompt": "retention-archive",
+      "channel": "cue",
+      "relevant": ["archived"]
+    },
+    {
+      "id": "archived-keyword",
+      "family": "archived_400_days",
+      "prompt": "demoted memory stays fetchable",
+      "channel": "archive",
+      "relevant": ["archived"]
+    },
+    {
+      "id": "backup-only",
+      "family": "backup_only",
+      "prompt": "backup-only-token",
+      "channel": "recall",
+      "relevant": ["backup-only"]
+    },
+    {
+      "id": "file-path",
+      "family": "file_change",
+      "prompt": "src/lib.rs",
+      "channel": "near",
+      "files": ["src/lib.rs"],
+      "relevant": ["file-change"]
+    },
+    {
+      "id": "file-symbol",
+      "family": "file_change",
+      "prompt": "finalize_after_extract",
+      "channel": "recall",
+      "relevant": ["file-change"]
+    },
+    {
+      "id": "file-keyword",
+      "family": "file_change",
+      "prompt": "seven step names",
+      "channel": "recall",
+      "relevant": ["file-change"]
+    }
+  ]
+}

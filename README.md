@@ -108,7 +108,7 @@ The site is the product guide. This README follows that map.
 
 ## Memory
 
-A name fetches the exact memory. The raw episode stays. Recall is bound to the code graph. It stays in local SQLite. MCP and the CLI do the same thing.
+A name fetches the exact memory. The raw episode stays. Recall is bound to the code graph (FTS + hash vectors, anchors, as-of). It stays in local SQLite. MCP and the CLI do the same thing.
 
 ```mermaid
 flowchart TD
@@ -167,9 +167,9 @@ flowchart LR
 
 Working notes stay in `ax session` (MCP: `ax_session`). They do not enter the vault. A durable decision is `ax remember --trigger NAME` (MCP: `triggers`). Fetch that name with `ax recall --cue` before exploring. An unknown name returns nothing. Free text is the fallback.
 
-Recent turns stay hot for 90 days, then move to the archive with the same id. Git commits, folder documents, graph diffs, and selected activity are written straight into that archive. Preflight injects at most three long-term titles and stops at 6000 characters. It never injects the archive. Old graph changes, logs, and turns are `ax recall --depth archive` and `ax history --depth archive`. That search takes one hop over a link, a shared file, or a shared symbol. An open file raises a long-term memory that names that file or a symbol in it.
+Recent turns stay hot for 90 days, then move to the archive with the same id. Git commits, folder documents, graph diffs, and selected activity are written straight into that archive. Preflight injects at most three long-term titles and stops at 6000 characters. It never injects the archive. Old graph changes, logs, and turns are `ax recall --depth archive` and `ax history --depth archive`. That search takes one hop over a link, a shared file, or a shared symbol. Snapshot search is `ax recall --depth backup` (MCP: `depth=backup`) over `.ax/backups/memory/` and is never injected. An open file raises a long-term memory that names that file or a symbol in it.
 
-A turn or a commit that states a decision becomes a candidate. Confirm it with `ax remember --confirm` (MCP: `action=confirm`). The old episode stays. A near-duplicate is linked, not deleted. Embeddings stay local, two models are never mixed, and sync rewrites rows after a model change.
+A turn or a commit that states a decision becomes a candidate. Confirm it with `ax remember --confirm` (MCP: `action=confirm`). The old episode stays. A near-duplicate is linked, not deleted. Embeddings stay local. Memory rows use one model, `hash-v1`, and two models are never mixed on that column. Sync rewrites rows after a model change. Neural (`ax neural`, MCP `ax_neural_*`) is required. `ax.json` cannot turn it off, and it does not download a model. Context ranking, prediction, and graph suggestions run in process and do not call a language model.
 
 The long guide is [Memory](https://getax.wenneker.io/guides/memory/).
 

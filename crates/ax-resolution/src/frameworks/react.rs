@@ -48,70 +48,73 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
     .expect("component regex");
     let element_jsx_re =
         Regex::new(r"\belement\s*=\s*\{\s*<\s*([A-Z][A-Za-z0-9_]*)").expect("element jsx regex");
-    let data_router_re =
-        Regex::new(r"\b(?:createBrowserRouter|createHashRouter|createMemoryRouter|createRoutesFromElements)\b")
-            .expect("data router gate");
+    let data_router_re = Regex::new(
+        r"\b(?:createBrowserRouter|createHashRouter|createMemoryRouter|createRoutesFromElements)\b",
+    )
+    .expect("data router gate");
     let obj_path_re = Regex::new(r#"\bpath\s*:\s*['"]([^'"]*)['"]"#).expect("obj path");
-    let data_element_re = Regex::new(r"\belement\s*:\s*<\s*([A-Z][A-Za-z0-9_]*)").expect("data element");
-    let data_component_re = Regex::new(r"\bComponent\s*:\s*([A-Z][A-Za-z0-9_]*)").expect("data component");
+    let data_element_re =
+        Regex::new(r"\belement\s*:\s*<\s*([A-Z][A-Za-z0-9_]*)").expect("data element");
+    let data_component_re =
+        Regex::new(r"\bComponent\s*:\s*([A-Z][A-Za-z0-9_]*)").expect("data component");
 
     if is_jsx {
         for m in tag_re.find_iter(content) {
-        let window = &content[m.start()..content.len().min(m.start() + 400)];
-        let path_match = path_re.captures(window);
-        if path_match.is_none() {
-            continue;
-        }
-        let route_path = path_match.unwrap().get(1).map(|p| p.as_str()).unwrap_or("");
-        let line = content[..m.start()].matches('\n').count() as i32 + 1;
-        let qualified = format!("{}::ROUTE:{}", file_path, route_path);
-        let route_id = stable_node_id(file_path, &qualified);
+            let window = &content[m.start()..content.len().min(m.start() + 400)];
+            let path_match = path_re.captures(window);
+            if path_match.is_none() {
+                continue;
+            }
+            let route_path = path_match.unwrap().get(1).map(|p| p.as_str()).unwrap_or("");
+            let line = content[..m.start()].matches('\n').count() as i32 + 1;
+            let qualified = format!("{}::ROUTE:{}", file_path, route_path);
+            let route_id = stable_node_id(file_path, &qualified);
 
-        out.nodes.push(Node {
-            id: route_id.clone(),
-            kind: NodeKind::Route,
-            name: format!("ROUTE {}", route_path),
-            qualified_name: qualified,
-            file_path: file_path.to_string(),
-            language: lang,
-            start_line: line,
-            end_line: line,
-            start_column: 0,
-            end_column: 0,
-            docstring: None,
-            signature: None,
-            visibility: None,
-            is_exported: None,
-            is_async: None,
-            is_static: None,
-            is_abstract: None,
-            decorators: None,
-            type_parameters: None,
-            return_type: None,
-            updated_at: now,
-        });
-
-        let comp_name = comp_re
-            .captures(window)
-            .and_then(|cm| cm.get(1).or_else(|| cm.get(2)).map(|c| c.as_str()))
-            .or_else(|| {
-                element_jsx_re
-                    .captures(window)
-                    .and_then(|cm| cm.get(1).map(|c| c.as_str()))
-            })
-            .unwrap_or("");
-        if !comp_name.is_empty() {
-            out.references.push(UnresolvedReference {
-                from_node_id: route_id,
-                reference_name: comp_name.to_string(),
-                reference_kind: ReferenceKind::References,
-                line,
-                column: 0,
-                file_path: Some(file_path.to_string()),
-                language: Some(lang),
-                candidates: None,
+            out.nodes.push(Node {
+                id: route_id.clone(),
+                kind: NodeKind::Route,
+                name: format!("ROUTE {}", route_path),
+                qualified_name: qualified,
+                file_path: file_path.to_string(),
+                language: lang,
+                start_line: line,
+                end_line: line,
+                start_column: 0,
+                end_column: 0,
+                docstring: None,
+                signature: None,
+                visibility: None,
+                is_exported: None,
+                is_async: None,
+                is_static: None,
+                is_abstract: None,
+                decorators: None,
+                type_parameters: None,
+                return_type: None,
+                updated_at: now,
             });
-        }
+
+            let comp_name = comp_re
+                .captures(window)
+                .and_then(|cm| cm.get(1).or_else(|| cm.get(2)).map(|c| c.as_str()))
+                .or_else(|| {
+                    element_jsx_re
+                        .captures(window)
+                        .and_then(|cm| cm.get(1).map(|c| c.as_str()))
+                })
+                .unwrap_or("");
+            if !comp_name.is_empty() {
+                out.references.push(UnresolvedReference {
+                    from_node_id: route_id,
+                    reference_name: comp_name.to_string(),
+                    reference_kind: ReferenceKind::References,
+                    line,
+                    column: 0,
+                    file_path: Some(file_path.to_string()),
+                    language: Some(lang),
+                    candidates: None,
+                });
+            }
         }
     }
 
@@ -232,7 +235,8 @@ fn file_path_to_route(file_path: &str) -> Option<String> {
 
     let pages_re = Regex::new(r"(?:^|/)pages/").expect("pages segment");
     if pages_re.is_match(&normalized) {
-        let mut route = Regex::new(r"^.*pages/").expect("pages prefix")
+        let mut route = Regex::new(r"^.*pages/")
+            .expect("pages prefix")
             .replace(&normalized, "/")
             .to_string();
         route = strip_index.replace(&route, "").to_string();
@@ -249,7 +253,8 @@ fn file_path_to_route(file_path: &str) -> Option<String> {
         if !normalized.contains("page.") {
             return None;
         }
-        let mut route = Regex::new(r"^.*app/").expect("app prefix")
+        let mut route = Regex::new(r"^.*app/")
+            .expect("app prefix")
             .replace(&normalized, "/")
             .to_string();
         let strip_page = Regex::new(r"/page\.(tsx?|jsx?)$").expect("strip page");
@@ -279,9 +284,28 @@ fn merge_deps(json: &serde_json::Value) -> std::collections::HashMap<String, ser
     out
 }
 const BUILT_IN_TYPES: &[&str] = &[
-    "Array", "Boolean", "Date", "Error", "Function", "JSON", "Math", "Number",
-    "Object", "Promise", "RegExp", "String", "Symbol", "Map", "Set", "WeakMap", "WeakSet",
-    "React", "Component", "Fragment", "Suspense", "StrictMode",
+    "Array",
+    "Boolean",
+    "Date",
+    "Error",
+    "Function",
+    "JSON",
+    "Math",
+    "Number",
+    "Object",
+    "Promise",
+    "RegExp",
+    "String",
+    "Symbol",
+    "Map",
+    "Set",
+    "WeakMap",
+    "WeakSet",
+    "React",
+    "Component",
+    "Fragment",
+    "Suspense",
+    "StrictMode",
 ];
 
 pub fn is_active_for_ref(ref_: &UnresolvedRef) -> bool {
@@ -292,11 +316,14 @@ pub async fn try_resolve_target(
     queries: &QueryBuilder,
     ref_: &UnresolvedRef,
 ) -> Option<(Node, f64)> {
-    if (ref_.language == Language::Typescript || ref_.file_path.ends_with(".tsx") || ref_.file_path.ends_with(".jsx"))
+    if (ref_.language == Language::Typescript
+        || ref_.file_path.ends_with(".tsx")
+        || ref_.file_path.ends_with(".jsx"))
         && is_pascal_case(&ref_.reference_name)
         && !BUILT_IN_TYPES.contains(&ref_.reference_name.as_str())
     {
-        if let Some(node) = resolve_component(queries, &ref_.reference_name, &ref_.file_path).await {
+        if let Some(node) = resolve_component(queries, &ref_.reference_name, &ref_.file_path).await
+        {
             return Some((node, 0.8));
         }
     }
@@ -316,15 +343,16 @@ pub async fn try_resolve_target(
     None
 }
 
-async fn resolve_component(
-    queries: &QueryBuilder,
-    name: &str,
-    from_file: &str,
-) -> Option<Node> {
+async fn resolve_component(queries: &QueryBuilder, name: &str, from_file: &str) -> Option<Node> {
     let nodes = queries.get_nodes_by_name(name).await.unwrap_or_default();
     let components: Vec<Node> = nodes
         .into_iter()
-        .filter(|n| matches!(n.kind, NodeKind::Component | NodeKind::Function | NodeKind::Class))
+        .filter(|n| {
+            matches!(
+                n.kind,
+                NodeKind::Component | NodeKind::Function | NodeKind::Class
+            )
+        })
         .collect();
     if components.is_empty() {
         return None;
@@ -341,8 +369,13 @@ async fn resolve_component(
     }
 
     const COMPONENT_DIRS: &[&str] = &[
-        "/components/", "/src/components/", "/app/components/",
-        "/pages/", "/src/pages/", "/views/", "/src/views/",
+        "/components/",
+        "/src/components/",
+        "/app/components/",
+        "/pages/",
+        "/src/pages/",
+        "/views/",
+        "/src/views/",
     ];
     let preferred: Vec<Node> = components
         .iter()
@@ -379,8 +412,10 @@ async fn resolve_hook(queries: &QueryBuilder, name: &str) -> Option<Node> {
 
 async fn resolve_context(queries: &QueryBuilder, name: &str) -> Option<Node> {
     let nodes = queries.get_nodes_by_name(name).await.unwrap_or_default();
-  if nodes.is_empty() {
-        let base = name.trim_end_matches("Context").trim_end_matches("Provider");
+    if nodes.is_empty() {
+        let base = name
+            .trim_end_matches("Context")
+            .trim_end_matches("Provider");
         if base != name {
             let base_nodes = queries.get_nodes_by_name(base).await.unwrap_or_default();
             if let Some(n) = base_nodes.first() {
@@ -390,8 +425,12 @@ async fn resolve_context(queries: &QueryBuilder, name: &str) -> Option<Node> {
         return None;
     }
     const CONTEXT_DIRS: &[&str] = &[
-        "/context/", "/contexts/", "/src/context/", "/src/contexts/",
-        "/providers/", "/src/providers/",
+        "/context/",
+        "/contexts/",
+        "/src/context/",
+        "/src/contexts/",
+        "/providers/",
+        "/src/providers/",
     ];
     let preferred: Vec<Node> = nodes
         .iter()
@@ -404,7 +443,9 @@ async fn resolve_context(queries: &QueryBuilder, name: &str) -> Option<Node> {
 fn is_pascal_case(name: &str) -> bool {
     let mut chars = name.chars();
     let first = chars.next();
-    first.map(|c| c.is_uppercase() && c.is_alphabetic()).unwrap_or(false)
+    first
+        .map(|c| c.is_uppercase() && c.is_alphabetic())
+        .unwrap_or(false)
         && chars.all(|c| c.is_alphanumeric())
 }
 

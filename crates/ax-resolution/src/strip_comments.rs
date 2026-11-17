@@ -16,7 +16,9 @@ pub fn strip_comments_for_regex(source: &str, language: ax_types::Language) -> S
     match language {
         ax_types::Language::Go | ax_types::Language::Rust => strip_rust_comments(source),
         ax_types::Language::Python => strip_py_comments(source),
-        ax_types::Language::Typescript | ax_types::Language::Javascript => strip_js_comments(source),
+        ax_types::Language::Typescript | ax_types::Language::Javascript => {
+            strip_js_comments(source)
+        }
         ax_types::Language::Php => strip_php_comments(source),
         ax_types::Language::Java | ax_types::Language::Kotlin => strip_java_comments(source),
         _ => source.to_string(),
@@ -25,7 +27,9 @@ pub fn strip_comments_for_regex(source: &str, language: ax_types::Language) -> S
 
 fn strip_rust_comments(source: &str) -> String {
     static RE: OnceLock<Regex> = OnceLock::new();
-    re(&RE, r"//.*?$|/\*[\s\S]*?\*/").replace_all(source, "").to_string()
+    re(&RE, r"//.*?$|/\*[\s\S]*?\*/")
+        .replace_all(source, "")
+        .to_string()
 }
 
 fn strip_py_comments(source: &str) -> String {

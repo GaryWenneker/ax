@@ -2,8 +2,8 @@
 
 pub mod ax_command;
 pub mod cli_catalog;
-pub mod cli_only;
 pub mod cli_install;
+pub mod cli_only;
 pub mod command_center;
 pub mod detect;
 pub mod hooks;
@@ -13,22 +13,23 @@ pub mod targets;
 
 use std::path::Path;
 
+pub use cli_catalog::CliInstallMethod;
 pub use cli_catalog::{
-    auth_command, build_child_env, catalog, catalog_entry, detect_cli_available,
-    headless_command, resolve_cli_spawn, CommandSpec, CliSpawn,
+    auth_command, build_child_env, catalog, catalog_entry, detect_cli_available, headless_command,
+    resolve_cli_spawn, CliSpawn, CommandSpec,
 };
 pub use cli_install::{
     cli_bin_name, cli_install_plan, cli_installable, ensure_agent_ready, install_cli,
-    install_cli_targets, is_cli_on_path, resolve_cli_path, CliInstallOutcome,
-    CliInstallPlan,
+    install_cli_targets, is_cli_on_path, resolve_cli_path, CliInstallOutcome, CliInstallPlan,
 };
-pub use cli_catalog::CliInstallMethod;
-pub use ide_choice::{ide_defaults, ide_groups, ides_to_remove, known_ides, pack_refresh_targets, parse_ide_choice};
-pub use report::{FileAction, InstallSummary, TargetReport};
 pub use cli_only::install_cli_only;
+pub use ide_choice::{
+    ide_defaults, ide_groups, ides_to_remove, known_ides, pack_refresh_targets, parse_ide_choice,
+};
+pub use report::{FileAction, InstallSummary, TargetReport};
 pub use targets::{
-    agent_status, catalog_with_status, display_name, install_targets, is_detected,
-    uninstall_all, uninstall_targets, AgentTargetStatus, TARGETS,
+    agent_status, catalog_with_status, display_name, install_targets, is_detected, uninstall_all,
+    uninstall_targets, AgentTargetStatus, TARGETS,
 };
 
 /// Ensure `~/.ax/config.json` exists with index/policy scaffolds.

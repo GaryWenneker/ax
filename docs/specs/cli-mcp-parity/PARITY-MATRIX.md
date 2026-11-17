@@ -47,6 +47,23 @@ Parity legend: **FULL** = same engine + CLI entry; **PARTIAL** = CLI exists but 
 | `ax_cost` | `ax costs` / `ax agent` | pi/cost | usage | — | **PARTIAL** | naming docs |
 | `ax_tool_economics` | `ax agent` | pi economics | agent_* | — | **PARTIAL** | document mapping |
 | `ax_optimization_advice` | `ax agent` | pi advice | agent_* | — | **PARTIAL** | document mapping |
+| `ax_neural_status` | `ax neural status` | `ax_neural::dispatch` | read `ax.json`; feedback count, rank totals, last evaluation, promoted models when the project db answers | — | **FULL** | same JSON fields; unmeasured numbers say unavailable |
+| `ax_neural_search` | `ax neural search` | `ax_neural::dispatch` | neural table only | — | **FULL** | empty until a bake-off admits a model |
+| `ax_neural_rank` | `ax neural rank --blocks` | `ax_neural::rank` | none | — | **FULL** | hard-required blocks stay; same block fields |
+| `ax_neural_predict` | `ax neural predict` | `ax_neural::predict` | feedback rows | — | **FULL** | label `predicted` |
+| `ax_neural_explain` | `ax neural explain` | fusion constants | none | — | **FULL** | semantic weight stays 0 |
+| `ax_neural_benchmark` | `ax neural benchmark` | built-in coding fixture, `score_coding` | temporary database; does not open `.ax/ax.db` | — | **FULL** | |
+| `ax_neural_evaluate` | `ax neural evaluate` | leave-one-out on the coding fixture | `neural_audit` row | — | **FULL** | |
+| `ax_neural_model_list` | `ax neural models` | registry | read | — | **FULL** | |
+| `ax_neural_model_status` | `ax neural model-status` | registry | read | — | **FULL** | |
+| `ax_neural_register` | `ax neural register` | registry | `neural_model` | — | **FULL** | same fields; does not promote |
+| `ax_neural_feedback` | `ax neural feedback` | append-only row | `neural_feedback` | — | **FULL** | same fields; refused while collection is off |
+| `ax_neural_graph` | `ax neural graph --edges` | project edges + feedback co-occurrence | suggestion rows, not edges | — | **FULL** | provenance `predicted`; passed edges are a preview |
+| `ax_neural_share` | `ax neural share` | packet builder | no raw feedback | — | **FULL** | local, no network; follows `neural.mode` and the distribution keys |
+| `ax_neural_promote` | `ax neural promote` | explicit promote | registry + audit | — | **FULL** | `--explicit` required |
+| `ax_neural_rollback` | `ax neural rollback` | previous checksum | registry + audit | — | **FULL** | |
+
+Both surfaces resolve the project to the nearest canonical directory with `.ax/ax.db`, so Neural rows written from the CLI and from MCP share one `project_id`.
 
 ## New CLI capabilities (not MCP tools, but required for CLI-only parity)
 
@@ -57,6 +74,7 @@ Parity legend: **FULL** = same engine + CLI entry; **PARTIAL** = CLI exists but 
 | CLI-only install | `ax install --mode cli-only` | installer | FULL |
 | CLI doctor | `ax doctor --mode cli` | diagnostics | FULL |
 | IDE hooks (optional) | existing `turn-hook` etc. | hooks | N/A (optional) |
+| Neural training export | `ax neural export --out <file>` | `ax_neural::store::training_export` | CLI only by design: no MCP tool, so agents cannot pull feedback rows |
 
 ## Observability parity (separate from functional)
 

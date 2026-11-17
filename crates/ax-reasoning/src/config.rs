@@ -90,8 +90,11 @@ pub fn write_offload_config(offload: Option<OffloadConfig>) -> Result<(), String
         root["offload"] = serde_json::to_value(cfg).map_err(|e| e.to_string())?;
     }
     fs::create_dir_all(config_dir()).map_err(|e| e.to_string())?;
-    fs::write(path, serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n")
-        .map_err(|e| e.to_string())?;
+    fs::write(
+        path,
+        serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n",
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -249,7 +252,8 @@ fn write_provider_catalog() -> Result<bool, String> {
         return Ok(false);
     }
 
-    root["offload_catalog"] = serde_json::to_value(provider_catalog_entries()).map_err(|e| e.to_string())?;
+    root["offload_catalog"] =
+        serde_json::to_value(provider_catalog_entries()).map_err(|e| e.to_string())?;
     fs::create_dir_all(config_dir()).map_err(|e| e.to_string())?;
     fs::write(
         path,
@@ -280,8 +284,14 @@ pub async fn seed_offload_on_init() -> Result<OffloadInitReport, String> {
                     id: p.id.to_string(),
                     name: p.name.to_string(),
                     url: p.url.to_string(),
-                    key_env: existing.key_env.clone().or_else(|| p.key_env.map(str::to_string)),
-                    model: existing.model.clone().or_else(|| p.default_model.map(str::to_string)),
+                    key_env: existing
+                        .key_env
+                        .clone()
+                        .or_else(|| p.key_env.map(str::to_string)),
+                    model: existing
+                        .model
+                        .clone()
+                        .or_else(|| p.default_model.map(str::to_string)),
                 })
         });
         return Ok(OffloadInitReport {
@@ -293,7 +303,8 @@ pub async fn seed_offload_on_init() -> Result<OffloadInitReport, String> {
     }
 
     let mut active = None;
-    let discovered_set: std::collections::HashSet<&str> = discovered.iter().map(|s| s.as_str()).collect();
+    let discovered_set: std::collections::HashSet<&str> =
+        discovered.iter().map(|s| s.as_str()).collect();
     for spec in OFFLOAD_PROVIDERS {
         if !discovered_set.contains(spec.id) {
             continue;

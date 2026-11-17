@@ -26,12 +26,14 @@ impl SearchPage {
             .add(egui::TextEdit::singleline(&mut self.q).hint_text("Search symbols…"))
             .changed()
             || (ui.button("Search").clicked()))
-            && self.q.trim() != self.last_q && !self.q.trim().is_empty() {
-                self.last_q = self.q.trim().to_string();
-                let c = ctx.client.clone();
-                let q = self.last_q.clone();
-                self.pending = Some(spawn_fetch(move || Ok(c.search(&q, 40)?.results)));
-            }
+            && self.q.trim() != self.last_q
+            && !self.q.trim().is_empty()
+        {
+            self.last_q = self.q.trim().to_string();
+            let c = ctx.client.clone();
+            let q = self.last_q.clone();
+            self.pending = Some(spawn_fetch(move || Ok(c.search(&q, 40)?.results)));
+        }
 
         if let Some(rx) = &self.pending {
             match rx.try_recv() {

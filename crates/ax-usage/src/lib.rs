@@ -11,35 +11,38 @@ mod cursor_state;
 mod domain_log;
 mod durable;
 mod log_brand;
-mod tool_trace;
 mod mcp_audit;
 mod mcp_verbose_log;
 mod period;
 mod pricing;
 mod pricing_fetch;
 mod pricing_sync;
+pub mod replication;
 mod reuse_cache;
 mod savings;
 mod store;
-pub mod replication;
 mod tokenizer;
+mod tool_trace;
 mod turn_lifecycle;
 mod working_context;
 
+pub use activity::{
+    event_to_json, list_activity, record_activity, record_cli_command, ActivityEvent,
+    ActivityRecord, ActivitySource, ActivityStatus, TokenMetrics, ACTIVITY_SCHEMA_VERSION,
+};
 pub use budget::{
     banner, cycle_stats, daily_plan, display_amount, format_money, global_config_path, level_for,
     load_settings, monthly_budget_usd, parse_mode, parse_settings, price_band, project_budget,
-    save_global_budget, save_project_context_budget, simulate, working_schedule, BudgetDecision, BudgetLevel, BudgetMode,
-    BudgetSectionPatch, BudgetSettings, BudgetSnapshot, Currency, CycleStats, DailyPlan, DaySpend,
-    PriceBand, Simulation,
+    save_global_budget, save_project_context_budget, simulate, working_schedule, BudgetDecision,
+    BudgetLevel, BudgetMode, BudgetSectionPatch, BudgetSettings, BudgetSnapshot, Currency,
+    CycleStats, DailyPlan, DaySpend, PriceBand, Simulation,
 };
 pub use cache_status::{
     cache_group_key, format_cache_status_lines, format_context_store_line, load_cache_status,
     CacheStatusSnapshot,
 };
 pub use context_cache::{
-    cache_threshold,
-    cache_enabled, cache_oversized_reply, cache_project_reply, expand_cached,
+    cache_enabled, cache_oversized_reply, cache_project_reply, cache_threshold, expand_cached,
     expand_project_cached, format_catalog, format_session_ledger, ingest_jsonl_oversized,
     note_session_event, project_scope, recent_catalog, recent_session_catalog, session_ledger,
     spawn_note_session_event, stash_project_text, stash_text, tool_chunks_from_jsonl, CacheOutcome,
@@ -48,7 +51,7 @@ pub use context_cache::{
 pub use context_plan::{
     compare_snapshots, cycle_efficiency, efficiency, optional_room, select_context,
     snapshot_from_parts, ContextBlock, ContextChange, ContextClass, ContextEfficiency,
-    ContextSnapshot, CycleEfficiency,
+    ContextSnapshot, CycleEfficiency, MEMORY_RESERVE_TOKENS,
 };
 pub use cost::{calculate, Cost, CostComponent, CostConfidence, CostUsage};
 pub use cost_report::{
@@ -66,18 +69,8 @@ pub use domain_log::{
     log_action, log_cli, log_domain_event, log_embed, log_lsp, log_memory, log_plugin, log_policy,
     log_share, log_ship, log_ship_ci, log_workspace,
 };
-pub use tool_trace::{log_tool_error, log_tool_inbound, log_tool_outbound, ToolTrace};
-pub use activity::{
-    event_to_json, list_activity, record_activity, record_cli_command, ActivityEvent,
-    ActivityRecord, ActivitySource, ActivityStatus, TokenMetrics, ACTIVITY_SCHEMA_VERSION,
-};
 pub use durable::{
     durable_apply, durable_project_apply, note_project_tool_if_open, note_tool_if_open,
-};
-pub use turn_lifecycle::{
-    turn_begin, turn_checkpoint, turn_event, turn_fail, turn_finish, turn_status,
-    SemanticMemoryInput, TurnEventInput, TurnFinishInput, TurnFinishReceipt, TurnSnapshot,
-    TurnState, TURN_SOURCE_CLI,
 };
 pub use log_brand::{format_ax_mcp_trace, format_ax_tagged, AX_LOG_ICON};
 pub use mcp_audit::{
@@ -86,11 +79,11 @@ pub use mcp_audit::{
     Finding, QualitySnapshot, ToolMix, DEFAULT_WINDOW_MINUTES,
 };
 pub use mcp_verbose_log::{
-    replicated_log_files, replicated_log_origin, label_log_line,
-    append_verbose_log, current_log_path, has_older_log_day, list_dated_log_files,
+    append_verbose_log, current_log_path, has_older_log_day, label_log_line, list_dated_log_files,
     mcp_verbose_log_path, migrate_legacy_log, nearest_dated_log_before, path_for_date,
     previous_calendar_day, read_log_for_day, read_merged_verbose_log, read_ship_timezone,
-    rotation_calendar_date, verbose_enabled, LEGACY_LOG_NAME,
+    replicated_log_files, replicated_log_origin, rotation_calendar_date, verbose_enabled,
+    LEGACY_LOG_NAME,
 };
 pub use period::{resolve_period, UsagePeriod};
 pub use pricing::{
@@ -124,6 +117,12 @@ pub use tokenizer::{
     count_file_tokens, count_tokens, token_cache_status, tokenize_text, tokenizer_available,
     truncate_utf8, TokenCacheStatus, TokenizeResult, FILE_TOKEN_CACHE_CAPACITY,
     TOKENIZE_MAX_INPUT_BYTES, TOKENIZE_MAX_TOKENS,
+};
+pub use tool_trace::{log_tool_error, log_tool_inbound, log_tool_outbound, ToolTrace};
+pub use turn_lifecycle::{
+    turn_begin, turn_checkpoint, turn_event, turn_fail, turn_finish, turn_status,
+    SemanticMemoryInput, TurnEventInput, TurnFinishInput, TurnFinishReceipt, TurnSnapshot,
+    TurnState, TURN_SOURCE_CLI,
 };
 pub use working_context::{
     fork_working_context, handoff_working_context, session_nudge, working_context_apply,

@@ -125,11 +125,7 @@ impl eframe::App for DesktopApp {
 
         egui::TopBottomPanel::top("titlebar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.heading(
-                    egui::RichText::new("ax")
-                        .color(theme::ACCENT)
-                        .strong(),
-                );
+                ui.heading(egui::RichText::new("ax").color(theme::ACCENT).strong());
                 ui.label(egui::RichText::new("/ graph + policy").weak());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if !self.version.is_empty() {

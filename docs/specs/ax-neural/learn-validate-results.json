@@ -1,0 +1,100 @@
+{
+  "afterCandidate": {
+    "mrr": 0.5,
+    "ndcgAt5": 0.6309297535714575,
+    "precisionAt3": 0.3333333333333333,
+    "questionsScored": 4,
+    "recallAt3": 1.0,
+    "samples": {
+      "mrr": 3,
+      "precisionAt3": 3,
+      "recallAt3": 3
+    }
+  },
+  "autoPromote": false,
+  "beforeWithoutFeedback": {
+    "mrr": 0.7142857142857143,
+    "ndcgAt5": 0.6666666666666666,
+    "precisionAt3": 0.2222222222222222,
+    "questionsScored": 4,
+    "recallAt3": 0.6666666666666666,
+    "samples": {
+      "mrr": 3,
+      "precisionAt3": 3,
+      "recallAt3": 3
+    }
+  },
+  "candidate": {
+    "claimsNeuralInference": false,
+    "metrics": {
+      "kind": "measured",
+      "signAgreement": null,
+      "validationScored": 0
+    },
+    "modelVersion": "rank-prior-candidate",
+    "weightCount": 6
+  },
+  "comparison": {
+    "after": {
+      "mrr": 0.5,
+      "ndcgAt5": 0.6309297535714575,
+      "precisionAt3": 0.3333333333333333,
+      "questionsScored": 4,
+      "recallAt3": 1.0,
+      "samples": {
+        "mrr": 3,
+        "precisionAt3": 3,
+        "recallAt3": 3
+      }
+    },
+    "before": {
+      "mrr": 0.7142857142857143,
+      "ndcgAt5": 0.6666666666666666,
+      "precisionAt3": 0.2222222222222222,
+      "questionsScored": 4,
+      "recallAt3": 0.6666666666666666,
+      "samples": {
+        "mrr": 3,
+        "precisionAt3": 3,
+        "recallAt3": 3
+      }
+    },
+    "deltaMrr": -0.2142857142857143,
+    "deltaPrecisionAt3": 0.1111111111111111,
+    "deltaRecallAt3": 0.33333333333333337
+  },
+  "evalInTrain": false,
+  "evalQuestionIds": [
+    "paraphrase",
+    "abstention",
+    "named-trigger",
+    "delivery"
+  ],
+  "kind": "measured",
+  "note": "Candidate not promoted. Production ranking unchanged.",
+  "productionDefaultsUnchanged": true,
+  "promoted": false,
+  "restart": {
+    "afterReload": {
+      "mrr": 0.5,
+      "ndcgAt5": 0.6309297535714575,
+      "precisionAt3": 0.3333333333333333,
+      "questionsScored": 4,
+      "recallAt3": 1.0,
+      "samples": {
+        "mrr": 3,
+        "precisionAt3": 3,
+        "recallAt3": 3
+      }
+    },
+    "kind": "measured",
+    "method": "retrain same seed + JSON serialize/reload (simulates Ax restart without live daemon)",
+    "rankingUnchangedAfterReload": true,
+    "weightsIdenticalAfterReload": true,
+    "weightsIdenticalAfterRetrain": true
+  },
+  "scope": "controlled before/after learning on coding fixture; locked families held out of train",
+  "semanticWeight": 0.0,
+  "spec": "docs/specs/ax-neural/SPEC-PHASE5-LEARN.md",
+  "trainSize": 12
+}

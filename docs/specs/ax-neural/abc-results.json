@@ -1,0 +1,139 @@
+{
+  "kind": "measured",
+  "spec": "docs/specs/ax-neural/SPEC-PHASE2-BENCHMARK.md",
+  "productionRankingUnchanged": true,
+  "semanticWeight": 0.0,
+  "arms": {
+    "A_ax_without_neural_ranking": {
+      "heldOut": {
+        "mrr": 0.625,
+        "ndcgAt10": 0.6359108127976215,
+        "ndcgAt5": 0.6359108127976215,
+        "precisionAt3": 0.4444444444444445,
+        "precisionAt5": 0.4222222222222222,
+        "questionsScored": 15,
+        "recallAt3": 0.6666666666666666,
+        "recallAt5": 0.6666666666666666,
+        "samples": {
+          "mrr": 12,
+          "precisionAt3": 12,
+          "recallAt3": 12
+        }
+      },
+      "locked": {
+        "mrr": 0.6666666666666666,
+        "ndcgAt10": 0.6666666666666666,
+        "ndcgAt5": 0.6666666666666666,
+        "precisionAt3": 0.6666666666666666,
+        "precisionAt5": 0.6666666666666666,
+        "questionsScored": 4,
+        "recallAt3": 0.6666666666666666,
+        "recallAt5": 0.6666666666666666,
+        "samples": {
+          "mrr": 3,
+          "precisionAt3": 3,
+          "recallAt3": 3
+        }
+      },
+      "method": "bm25 rankings from ax_memory::bench::score_coding (benchmark adapter)"
+    },
+    "B_ax_original_ranking": {
+      "heldOut": {
+        "mrr": 0.6666666666666666,
+        "ndcgAt10": 0.6666666666666666,
+        "ndcgAt5": 0.6666666666666666,
+        "precisionAt3": 0.5833333333333334,
+        "precisionAt5": 0.5833333333333334,
+        "questionsScored": 15,
+        "recallAt3": 0.6666666666666666,
+        "recallAt5": 0.6666666666666666,
+        "samples": {
+          "mrr": 12,
+          "precisionAt3": 12,
+          "recallAt3": 12
+        }
+      },
+      "locked": {
+        "mrr": 0.6666666666666666,
+        "ndcgAt10": 0.6666666666666666,
+        "ndcgAt5": 0.6666666666666666,
+        "precisionAt3": 0.6666666666666666,
+        "precisionAt5": 0.6666666666666666,
+        "questionsScored": 4,
+        "recallAt3": 0.6666666666666666,
+        "recallAt5": 0.6666666666666666,
+        "samples": {
+          "mrr": 3,
+          "precisionAt3": 3,
+          "recallAt3": 3
+        }
+      },
+      "method": "Ax locked fusion + hash-v1 (score_coding ax rankings)"
+    },
+    "C_ax_neural": {
+      "claimsNeuralInference": false,
+      "heldOut": {
+        "mrr": 0.5909090909090909,
+        "ndcgAt10": 0.5833333333333334,
+        "ndcgAt5": 0.5833333333333334,
+        "precisionAt3": 0.19444444444444442,
+        "precisionAt5": 0.11666666666666665,
+        "questionsScored": 15,
+        "recallAt3": 0.5833333333333334,
+        "recallAt5": 0.5833333333333334,
+        "samples": {
+          "mrr": 12,
+          "precisionAt3": 12,
+          "recallAt3": 12
+        }
+      },
+      "lexicalAdmitted": true,
+      "locked": {
+        "mrr": 1.0,
+        "ndcgAt10": 1.0,
+        "ndcgAt5": 1.0,
+        "precisionAt3": 0.3333333333333333,
+        "precisionAt5": 0.20000000000000004,
+        "questionsScored": 4,
+        "recallAt3": 1.0,
+        "recallAt5": 1.0,
+        "samples": {
+          "mrr": 3,
+          "precisionAt3": 3,
+          "recallAt3": 3
+        }
+      },
+      "method": "lexical-semantic-cpu ranking (bake-off admitted); not neural embedding inference"
+    }
+  },
+  "latency": {
+    "kind": "measured",
+    "lexicalRankMicrosMedian": 183.75,
+    "lexicalRankWallMillis": 3.8801669999999997,
+    "scoreCodingMillis": 53.066084
+  },
+  "memory": {
+    "kind": "measured",
+    "rssBytes": 34504704,
+    "rssMiB": 32.90625
+  },
+  "tokens": {
+    "kind": "not_measured",
+    "reason": "no LLM arm in this retrieval benchmark"
+  },
+  "lockedFamilies": [
+    "named_trigger",
+    "paraphrase",
+    "abstention",
+    "delivery_budget"
+  ],
+  "heldOutFamilyCount": 15,
+  "claimsNeuralInference": false,
+  "neuralStatus": {
+    "rankingActive": true,
+    "semanticActive": false,
+    "lexicalRetrieval": "active",
+    "neuralEmbeddingInference": "not_built",
+    "neuralRanking": "active"
+  }
+}

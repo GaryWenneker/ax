@@ -59,5 +59,8 @@ fn flush_global_sends_without_holding_the_telemetry_lock() {
 
     let queue = ax_telemetry::telemetry().lock().unwrap().queue_path();
     let remaining = std::fs::read_to_string(&queue).unwrap_or_default();
-    assert!(remaining.trim().is_empty(), "sent lines stay queued: {remaining}");
+    assert!(
+        remaining.trim().is_empty(),
+        "sent lines stay queued: {remaining}"
+    );
 }

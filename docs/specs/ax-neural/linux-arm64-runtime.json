@@ -1,0 +1,14 @@
+{
+  "kind": "measured",
+  "evidenceType": "runtime",
+  "target": "linux-arm64",
+  "host": "Linux localhost.localdomain 6.15.10-200.fc42.aarch64 #1 SMP PREEMPT_DYNAMIC Fri Aug 15 16:32:40 UTC 2025 aarch64 GNU/Linux",
+  "method": "cross-compile on macOS host (aarch64-unknown-linux-gnu + aarch64-linux-gnu-gcc), execute ELF test binary inside podman machine Fedora CoreOS guest via SSH",
+  "testsPassed": 124,
+  "testsFailed": 0,
+  "features": ["neural-runtime"],
+  "binary": "target-dev/aarch64-unknown-linux-gnu/debug/build/ax-neural/8819cb464fbac004/out/ax_neural-8819cb464fbac004",
+  "durationSeconds": 6.05,
+  "timestamp": "2026-11-16T11:51:00Z",
+  "note": "Not cargo check --target. Guest executed the Linux aarch64 ELF and reported test result: ok."
+}

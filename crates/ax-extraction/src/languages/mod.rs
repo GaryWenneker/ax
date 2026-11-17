@@ -4,9 +4,9 @@ mod common;
 mod csharp;
 mod generic;
 mod go;
-mod kotlin;
 mod java;
 mod javascript;
+mod kotlin;
 mod python;
 mod refs;
 mod rust;
@@ -40,6 +40,9 @@ pub fn all_extractors() -> HashMap<Language, Box<dyn LanguageExtractor>> {
     map
 }
 
-pub fn extractor_for_language(lang: Language, extractors: &HashMap<Language, Box<dyn LanguageExtractor>>) -> Option<&dyn LanguageExtractor> {
+pub fn extractor_for_language(
+    lang: Language,
+    extractors: &HashMap<Language, Box<dyn LanguageExtractor>>,
+) -> Option<&dyn LanguageExtractor> {
     extractors.get(&lang).map(|b| b.as_ref())
 }

@@ -15,6 +15,7 @@ members = [
     "crates/ax-telemetry",
     "crates/ax-usage",
     "crates/ax-reasoning",
+    "crates/ax-neural",
     "crates/ax-policy",
     "crates/ax-share",
     "crates/ax-smoke-tests",
@@ -49,6 +50,8 @@ petgraph = "0.8"
 leiden-rs = { version = "0.8", default-features = false }
 pulldown-cmark = { version = "0.12", default-features = false }
 blake3 = "1"
+zstd = "0.13"
+rust-stemmers = "1.2"
 rayon = "1"
 notify = "6"
 walkdir = "2"
@@ -76,6 +79,7 @@ ax-utils = { path = "crates/ax-utils" }
 ax-telemetry = { path = "crates/ax-telemetry" }
 ax-usage = { path = "crates/ax-usage" }
 ax-reasoning = { path = "crates/ax-reasoning" }
+ax-neural = { path = "crates/ax-neural" }
 ax-db = { path = "crates/ax-db" }
 ax-extraction = { path = "crates/ax-extraction" }
 ax-resolution = { path = "crates/ax-resolution" }

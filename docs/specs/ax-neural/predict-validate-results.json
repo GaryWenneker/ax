@@ -1,0 +1,84 @@
+{
+  "answered": 5,
+  "calibration": {
+    "buckets": [
+      {
+        "empiricalAccuracy": null,
+        "hi": 0.6,
+        "lo": 0.5,
+        "meanConfidence": null,
+        "n": 0
+      },
+      {
+        "empiricalAccuracy": null,
+        "hi": 0.7,
+        "lo": 0.6,
+        "meanConfidence": null,
+        "n": 0
+      },
+      {
+        "empiricalAccuracy": null,
+        "hi": 0.8,
+        "lo": 0.7,
+        "meanConfidence": null,
+        "n": 0
+      },
+      {
+        "empiricalAccuracy": null,
+        "hi": 0.9,
+        "lo": 0.8,
+        "meanConfidence": null,
+        "n": 0
+      },
+      {
+        "empiricalAccuracy": 1.0,
+        "hi": 1.0,
+        "lo": 0.9,
+        "meanConfidence": 0.95,
+        "n": 5
+      }
+    ],
+    "kind": "measured",
+    "method": "confidence buckets vs memory hit rate on leave-one-out",
+    "n": 5
+  },
+  "coverage": 0.3333333333333333,
+  "expected": 15,
+  "falsePositiveRate": 0.0,
+  "falsePositives": 0,
+  "kind": "measured",
+  "method": "leave-one-out",
+  "minimumConfidence": 0.75,
+  "precision": 1.0,
+  "predictions": 5,
+  "questions": 19,
+  "ranking": {
+    "kind": "measured",
+    "method": "memory prediction ranking on leave-one-out (P@3/P@5/R@3/MRR)",
+    "mrr": 0.3333333333333333,
+    "precisionAt3": 0.3333333333333333,
+    "precisionAt5": 0.3333333333333333,
+    "recallAt3": 0.3333333333333333,
+    "samples": {
+      "mrr": 15,
+      "precisionAt3": 15,
+      "precisionAt5": 15,
+      "recallAt3": 15
+    }
+  },
+  "roles": {
+    "counts": {
+      "predictedAndUsed": 5,
+      "predictedIds": 5,
+      "predictedNotInRetrievedTop5": 1,
+      "retrievedAndUsed": 11,
+      "retrievedIds": 95,
+      "usedIds": 15
+    },
+    "predicted": "leave-one-out memory predictions (label=predicted)",
+    "retrieved": "hash-v1 cosine top-5 for the same prompt",
+    "used": "fixture gold relevant memory keys (proxy for context actually needed)"
+  },
+  "source": "coding fixture, leave-one-out",
+  "truePositives": 5
+}

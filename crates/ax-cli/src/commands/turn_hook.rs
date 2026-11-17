@@ -262,12 +262,61 @@ pub(crate) fn turn_record(
 }
 
 /// Write the turn memory and prune expired ones. Returns the memory id when one exists.
+async fn finish_named_turn(root: &Path, conversation: &str, reply: Option<&str>) {
+    let Some((session, turn_id)) = current_ids(root) else {
+        return;
+    };
+    if session != conversation {
+        return;
+    }
+    let files = turn_record(root, conversation, reply)
+        .map(|record| record.files)
+        .unwrap_or_default();
+    let commits = read_snapshot(root, conversation)
+        .and_then(|snapshot| commits_since(root, snapshot.head.as_deref()))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|commit| commit.hash)
+        .collect();
+    let Ok(db) = ax_db::Database::open(&root.join(".ax").join("ax.db")).await else {
+        return;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let _ = ax_memory::save_file_changes(db.pool(), &files, &session, &turn_id, now).await;
+    let _ = ax_db::hook_turns::finish_hook_turn(
+        db.pool(),
+        &ax_db::hook_turns::HookTurnEnd {
+            turn_id,
+            outcome: reply.map(outcome_text),
+            files,
+            commits,
+        },
+    )
+    .await;
+    db.close().await;
+}
+
+fn current_ids(root: &Path) -> Option<(String, String)> {
+    let text = std::fs::read_to_string(root.join(".ax").join("turns").join("current.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let session = value.get("session_id")?.as_str()?.trim();
+    let turn = value.get("turn_id")?.as_str()?.trim();
+    if session.is_empty() || turn.is_empty() {
+        return None;
+    }
+    Some((session.to_string(), turn.to_string()))
+}
+
 pub(crate) async fn end_turn(
     root: &Path,
     conversation: &str,
     reply: Option<String>,
     now_ms: i64,
 ) -> Option<String> {
+    finish_named_turn(root, conversation, reply.as_deref()).await;
     if !per_turn_enabled(root) {
         return None;
     }
@@ -937,6 +986,80 @@ mod tests {
             .expect("pruned turns are backed up under .ax/backups")
             .collect();
         assert_eq!(backups.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn ending_the_named_turn_stores_the_redacted_outcome_and_the_file() {
+        let dir = repo();
+        let root = dir.path();
+        drop(ax_core::Ax::init(root).await.unwrap());
+        std::fs::create_dir_all(root.join(".ax/turns")).unwrap();
+        let db = ax_db::Database::open(&root.join(".ax/ax.db"))
+            .await
+            .unwrap();
+        for (session, id) in [("conv-1", "gen-1"), ("other", "gen-2")] {
+            ax_db::hook_turns::record_hook_turn(
+                db.pool(),
+                &ax_db::hook_turns::HookTurn {
+                    project_id: root.display().to_string(),
+                    session_id: session.into(),
+                    turn_id: id.into(),
+                    prompt: "fix".into(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        db.close().await;
+
+        std::fs::write(
+            root.join(".ax/turns/current.json"),
+            r#"{"session_id":"other","turn_id":"gen-2"}"#,
+        )
+        .unwrap();
+        start_turn(root, &input("Fix the cache bug", Some("g1"))).unwrap();
+        write(root, "src/a.rs", "fn a() { 1 }\n");
+        end_turn(
+            root,
+            "conv-1",
+            Some("use key sk-abcdefghijklmnopqrstuvwx now".into()),
+            NOW,
+        )
+        .await;
+        let db = ax_db::Database::open(&root.join(".ax/ax.db"))
+            .await
+            .unwrap();
+        let other: Option<String> =
+            sqlx::query_scalar("SELECT outcome FROM agent_turns WHERE id = 'gen-2'")
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        db.close().await;
+        assert_eq!(other, None);
+
+        std::fs::write(
+            root.join(".ax/turns/current.json"),
+            r#"{"session_id":"conv-1","turn_id":"gen-1"}"#,
+        )
+        .unwrap();
+        end_turn(
+            root,
+            "conv-1",
+            Some("use key sk-abcdefghijklmnopqrstuvwx now".into()),
+            NOW,
+        )
+        .await;
+        let db = ax_db::Database::open(&root.join(".ax/ax.db"))
+            .await
+            .unwrap();
+        let row: (String, String) =
+            sqlx::query_as("SELECT outcome, files FROM agent_turns WHERE id = 'gen-1'")
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        db.close().await;
+        assert_eq!(row.0, "use key [redacted] now");
+        assert!(row.1.contains("src/a.rs"), "{}", row.1);
     }
 
     fn reply_input(text: &str) -> HookInput {

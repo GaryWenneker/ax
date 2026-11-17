@@ -37,14 +37,41 @@ pub trait Probe {
 }
 
 /// Install names per app: (macOS bundle, Windows folder/exe, Linux binaries, Linux dirs).
-fn app_names(target: &str) -> Option<(&'static str, &'static str, &'static [&'static str], &'static [&'static str])> {
+fn app_names(
+    target: &str,
+) -> Option<(
+    &'static str,
+    &'static str,
+    &'static [&'static str],
+    &'static [&'static str],
+)> {
     Some(match target {
-        "cursor" => ("Cursor.app", "cursor/Cursor.exe", &["cursor"], &["/opt/Cursor", "/usr/share/cursor"]),
-        "vscode" => ("Visual Studio Code.app", "Microsoft VS Code/Code.exe", &["code"], &["/usr/share/code"]),
-        "windsurf" => ("Windsurf.app", "Windsurf/Windsurf.exe", &["windsurf"], &["/usr/share/windsurf"]),
+        "cursor" => (
+            "Cursor.app",
+            "cursor/Cursor.exe",
+            &["cursor"],
+            &["/opt/Cursor", "/usr/share/cursor"],
+        ),
+        "vscode" => (
+            "Visual Studio Code.app",
+            "Microsoft VS Code/Code.exe",
+            &["code"],
+            &["/usr/share/code"],
+        ),
+        "windsurf" => (
+            "Windsurf.app",
+            "Windsurf/Windsurf.exe",
+            &["windsurf"],
+            &["/usr/share/windsurf"],
+        ),
         "zed" => ("Zed.app", "Zed/Zed.exe", &["zed", "zeditor"], &[]),
         "kiro" => ("Kiro.app", "Kiro/Kiro.exe", &["kiro"], &["/usr/share/kiro"]),
-        "antigravity" => ("Antigravity.app", "Antigravity/Antigravity.exe", &["antigravity"], &[]),
+        "antigravity" => (
+            "Antigravity.app",
+            "Antigravity/Antigravity.exe",
+            &["antigravity"],
+            &[],
+        ),
         _ => return None,
     })
 }
@@ -62,15 +89,23 @@ pub fn app_installed(target: &str, os: Os, places: &Places, probe: &dyn Probe) -
         return false;
     };
     match os {
-        Os::Mac => [PathBuf::from("/Applications"), places.home.join("Applications")]
-            .iter()
-            .any(|root| probe.exists(&root.join(mac))),
+        Os::Mac => [
+            PathBuf::from("/Applications"),
+            places.home.join("Applications"),
+        ]
+        .iter()
+        .any(|root| probe.exists(&root.join(mac))),
         Os::Windows => {
-            let local = places.local_app_data.as_ref().map(|d| d.join("Programs").join(win));
+            let local = places
+                .local_app_data
+                .as_ref()
+                .map(|d| d.join("Programs").join(win));
             let global = places.program_files.as_ref().map(|d| d.join(win));
             local.iter().chain(global.iter()).any(|p| probe.exists(p))
         }
-        Os::Linux => bins.iter().any(|b| probe.on_path(b)) || dirs.iter().any(|d| probe.exists(Path::new(d))),
+        Os::Linux => {
+            bins.iter().any(|b| probe.on_path(b)) || dirs.iter().any(|d| probe.exists(Path::new(d)))
+        }
     }
 }
 
@@ -89,7 +124,11 @@ impl Probe for System {
     }
     fn dir_names(&self, dir: &Path) -> Vec<String> {
         std::fs::read_dir(dir)
-            .map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
             .unwrap_or_default()
     }
 }
@@ -140,11 +179,17 @@ mod tests {
     }
 
     fn with_path(p: &str) -> Fake {
-        Fake { paths: [PathBuf::from(p)].into(), ..Fake::default() }
+        Fake {
+            paths: [PathBuf::from(p)].into(),
+            ..Fake::default()
+        }
     }
 
     fn with_bin(b: &str) -> Fake {
-        Fake { bins: [b.to_string()].into(), ..Fake::default() }
+        Fake {
+            bins: [b.to_string()].into(),
+            ..Fake::default()
+        }
     }
 
     fn found(target: &str, os: Os, probe: &Fake) -> bool {
@@ -162,9 +207,18 @@ mod tests {
             ("antigravity", "Antigravity.app"),
         ];
         for (t, app) in cases {
-            assert!(found(t, Os::Mac, &with_path(&format!("/Applications/{app}"))), "{t}");
-            assert!(found(t, Os::Mac, &with_path(&format!("/h/Applications/{app}"))), "{t} user");
-            assert!(!found(t, Os::Mac, &with_path("/Applications/Other.app")), "{t} other");
+            assert!(
+                found(t, Os::Mac, &with_path(&format!("/Applications/{app}"))),
+                "{t}"
+            );
+            assert!(
+                found(t, Os::Mac, &with_path(&format!("/h/Applications/{app}"))),
+                "{t} user"
+            );
+            assert!(
+                !found(t, Os::Mac, &with_path("/Applications/Other.app")),
+                "{t} other"
+            );
         }
     }
 
@@ -215,13 +269,19 @@ mod tests {
     fn continue_needs_its_extension() {
         for ext_dir in ["/h/.vscode/extensions", "/h/.cursor/extensions"] {
             let mut fake = Fake::default();
-            fake.dirs.insert(PathBuf::from(ext_dir), vec!["continue.continue-1.2.3".into()]);
+            fake.dirs.insert(
+                PathBuf::from(ext_dir),
+                vec!["continue.continue-1.2.3".into()],
+            );
             for os in [Os::Mac, Os::Windows, Os::Linux] {
                 assert!(found("continue", os, &fake), "{ext_dir} {os:?}");
             }
         }
         let mut other = Fake::default();
-        other.dirs.insert(PathBuf::from("/h/.vscode/extensions"), vec!["ms-python.python-1".into()]);
+        other.dirs.insert(
+            PathBuf::from("/h/.vscode/extensions"),
+            vec!["ms-python.python-1".into()],
+        );
         assert!(!found("continue", Os::Mac, &other));
     }
 
@@ -229,8 +289,15 @@ mod tests {
     fn config_folders_alone_are_not_found() {
         let fake = Fake {
             paths: [
-                "/h/.cursor", "/h/.cursor/mcp.json", "/h/.codex", "/h/.kiro", "/h/.gemini",
-                "/h/.claude.json", "/h/.continue", "/h/.vscode", "/h/.codeium/windsurf",
+                "/h/.cursor",
+                "/h/.cursor/mcp.json",
+                "/h/.codex",
+                "/h/.kiro",
+                "/h/.gemini",
+                "/h/.claude.json",
+                "/h/.continue",
+                "/h/.vscode",
+                "/h/.codeium/windsurf",
             ]
             .iter()
             .map(PathBuf::from)

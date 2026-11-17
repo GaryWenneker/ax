@@ -11,14 +11,31 @@ use crate::types::UnresolvedRef;
 use super::extract::{is_js_family, now_ms, stable_node_id, FrameworkExtractResult};
 
 const SVELTE_RUNES: &[&str] = &[
-    "$state", "$state.raw", "$state.snapshot", "$derived", "$derived.by",
-    "$effect", "$effect.pre", "$effect.root", "$effect.tracking",
-    "$props", "$bindable", "$inspect", "$host",
+    "$state",
+    "$state.raw",
+    "$state.snapshot",
+    "$derived",
+    "$derived.by",
+    "$effect",
+    "$effect.pre",
+    "$effect.root",
+    "$effect.tracking",
+    "$props",
+    "$bindable",
+    "$inspect",
+    "$host",
 ];
 
 const SVELTEKIT_MODULE_PREFIXES: &[&str] = &[
-    "$app/navigation", "$app/stores", "$app/environment", "$app/forms", "$app/paths",
-    "$env/static/private", "$env/static/public", "$env/dynamic/private", "$env/dynamic/public",
+    "$app/navigation",
+    "$app/stores",
+    "$app/environment",
+    "$app/forms",
+    "$app/paths",
+    "$env/static/private",
+    "$env/static/public",
+    "$env/dynamic/private",
+    "$env/dynamic/public",
 ];
 
 fn sveltekit_route_files() -> HashMap<&'static str, &'static str> {
@@ -71,9 +88,13 @@ pub fn extract_file(file_path: &str, _content: &str) -> FrameworkExtractResult {
     let route_path = route_path.unwrap();
     let now = now_ms();
     let normalized = file_path.replace('\\', "/");
-    let lang = if normalized.ends_with(".svelte") { Language::Svelte }
-        else if is_js_family(file_path) { Language::Typescript }
-        else { Language::Unknown };
+    let lang = if normalized.ends_with(".svelte") {
+        Language::Svelte
+    } else if is_js_family(file_path) {
+        Language::Typescript
+    } else {
+        Language::Unknown
+    };
     let qualified = format!("{}::route:{}", file_path, route_path);
     out.nodes.push(Node {
         id: stable_node_id(file_path, &qualified),
@@ -82,16 +103,29 @@ pub fn extract_file(file_path: &str, _content: &str) -> FrameworkExtractResult {
         qualified_name: qualified,
         file_path: file_path.to_string(),
         language: lang,
-        start_line: 1, end_line: 1, start_column: 0, end_column: 0,
-        docstring: None, signature: None, visibility: None, is_exported: None,
-        is_async: None, is_static: None, is_abstract: None, decorators: None,
-        type_parameters: None, return_type: None, updated_at: now,
+        start_line: 1,
+        end_line: 1,
+        start_column: 0,
+        end_column: 0,
+        docstring: None,
+        signature: None,
+        visibility: None,
+        is_exported: None,
+        is_async: None,
+        is_static: None,
+        is_abstract: None,
+        decorators: None,
+        type_parameters: None,
+        return_type: None,
+        updated_at: now,
     });
     out
 }
 
 pub async fn try_resolve_target(
-    queries: &QueryBuilder, project_root: &Path, ref_: &UnresolvedRef,
+    queries: &QueryBuilder,
+    project_root: &Path,
+    ref_: &UnresolvedRef,
 ) -> Option<(ax_types::Node, f64)> {
     let name = &ref_.reference_name;
 
@@ -101,10 +135,14 @@ pub async fn try_resolve_target(
 
     if name.starts_with('$') && !name.starts_with("$$") {
         let store_name = name.trim_start_matches('$');
-        let candidates = queries.get_nodes_by_name(store_name).await.unwrap_or_default();
-        if let Some(n) = candidates.into_iter().find(|n| {
-            n.kind == NodeKind::Variable || n.kind == NodeKind::Constant
-        }) {
+        let candidates = queries
+            .get_nodes_by_name(store_name)
+            .await
+            .unwrap_or_default();
+        if let Some(n) = candidates
+            .into_iter()
+            .find(|n| n.kind == NodeKind::Variable || n.kind == NodeKind::Constant)
+        {
             return Some((n, 0.85));
         }
     }
@@ -115,7 +153,10 @@ pub async fn try_resolve_target(
                 return Some((node, 0.9));
             }
         }
-        if SVELTEKIT_MODULE_PREFIXES.iter().any(|p| name.starts_with(p)) {
+        if SVELTEKIT_MODULE_PREFIXES
+            .iter()
+            .any(|p| name.starts_with(p))
+        {
             return resolve_self_node(queries, ref_, 1.0).await;
         }
     }
@@ -130,7 +171,9 @@ pub async fn try_resolve_target(
 }
 
 async fn resolve_self_node(
-    queries: &QueryBuilder, ref_: &UnresolvedRef, conf: f64,
+    queries: &QueryBuilder,
+    ref_: &UnresolvedRef,
+    conf: f64,
 ) -> Option<(ax_types::Node, f64)> {
     if let Ok(nodes) = queries.get_nodes_by_file(&ref_.file_path).await {
         if let Some(n) = nodes.iter().find(|n| n.id == ref_.from_node_id) {
@@ -157,44 +200,68 @@ fn file_path_to_sveltekit_route(file_path: &str) -> Option<String> {
     route = catch_all.replace_all(&route, "*$1").to_string();
     route = optional.replace_all(&route, ":$1?").to_string();
     route = dynamic.replace_all(&route, ":$1").to_string();
-    if route == "/" { return Some("/".to_string()); }
+    if route == "/" {
+        return Some("/".to_string());
+    }
     route.trim_end_matches('/').to_string().into()
 }
 
 async fn resolve_lib_import(
-    project_root: &Path, queries: &QueryBuilder, reference_name: &str,
+    project_root: &Path,
+    queries: &QueryBuilder,
+    reference_name: &str,
 ) -> Option<ax_types::Node> {
-    if !reference_name.starts_with("$lib/") { return None; }
+    if !reference_name.starts_with("$lib/") {
+        return None;
+    }
     let lib_path = reference_name.replacen("$lib/", "src/lib/", 1);
     for ext in ["", ".ts", ".js", ".svelte", "/index.ts", "/index.js"] {
         let full_path = format!("{}{}", lib_path, ext);
-        if !project_root.join(&full_path).exists() { continue; }
+        if !project_root.join(&full_path).exists() {
+            continue;
+        }
         if let Ok(nodes) = queries.get_nodes_by_file(&full_path).await {
-            if let Some(n) = nodes.first() { return Some(n.clone()); }
+            if let Some(n) = nodes.first() {
+                return Some(n.clone());
+            }
         }
     }
     None
 }
 
 async fn resolve_component(
-    queries: &QueryBuilder, name: &str, from_file: &str,
+    queries: &QueryBuilder,
+    name: &str,
+    from_file: &str,
 ) -> Option<ax_types::Node> {
     let candidates = queries.get_nodes_by_name(name).await.unwrap_or_default();
-    let components: Vec<_> = candidates.into_iter()
+    let components: Vec<_> = candidates
+        .into_iter()
         .filter(|n| n.kind == NodeKind::Component)
         .collect();
-    if components.is_empty() { return None; }
+    if components.is_empty() {
+        return None;
+    }
     let from_dir = from_file.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
-    let same_dir: Vec<_> = components.iter().filter(|n| n.file_path.starts_with(from_dir)).collect();
-    if let Some(n) = same_dir.first() { return Some((*n).clone()); }
-    if components.len() == 1 { return Some(components[0].clone()); }
+    let same_dir: Vec<_> = components
+        .iter()
+        .filter(|n| n.file_path.starts_with(from_dir))
+        .collect();
+    if let Some(n) = same_dir.first() {
+        return Some((*n).clone());
+    }
+    if components.len() == 1 {
+        return Some(components[0].clone());
+    }
     None
 }
 
 fn is_pascal_case(s: &str) -> bool {
     let mut chars = s.chars();
     let first = chars.next();
-    first.map(|c| c.is_uppercase() && c.is_alphabetic()).unwrap_or(false)
+    first
+        .map(|c| c.is_uppercase() && c.is_alphabetic())
+        .unwrap_or(false)
         && chars.all(|c| c.is_alphanumeric())
 }
 

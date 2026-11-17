@@ -1,0 +1,30 @@
+[package]
+name = "ax-neural"
+version = "10.0.0"
+edition = "2021"
+description = "Required Ax Neural Intelligence. Stays on without ax.json. Does not link an ML runtime by default."
+
+[features]
+default = []
+## Pure-Rust CPU backend (ADR 003). Still no Candle/ONNX link.
+neural-runtime = []
+## Optional ONNX Runtime + HuggingFace tokenizer for local MiniLM (offline; model under ~/.ax/models).
+neural-ort = ["dep:ort", "dep:tokenizers", "neural-runtime"]
+
+[dependencies]
+ax-db = { workspace = true }
+ax-memory = { workspace = true }
+blake3 = { workspace = true }
+petgraph = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+## The bake-off scores the fixture in a temporary database, never in .ax/ax.db.
+tempfile = "3"
+uuid = { workspace = true }
+futures-util = { workspace = true }
+ort = { version = "2.0.0-rc.10", optional = true, default-features = false, features = ["download-binaries", "ndarray", "std", "tls-rustls"] }
+tokenizers = { version = "0.21", optional = true, default-features = false, features = ["onig"] }
+
+[dev-dependencies]
+tokio = { workspace = true }

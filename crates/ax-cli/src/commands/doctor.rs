@@ -84,6 +84,70 @@ pub async fn run(mode: DoctorMode, path: Option<String>, json: bool) -> Result<(
         }
     }
 
+    let project_db = root.join(".ax").join("ax.db");
+    if project_db.is_file() {
+        let (_, model) = ax_memory::embed::embed_labeled("ax");
+        let integrity = ax_db::integrity::check_database(
+            &project_db,
+            &ax_db::integrity::CheckOptions {
+                quick: true,
+                embedding_model: Some(model.to_string()),
+            },
+        )
+        .await;
+        if integrity.ok {
+            checks.push(check(
+                "database_integrity",
+                "operational",
+                "quick check passed".into(),
+                None,
+            ));
+        } else {
+            let detail = integrity
+                .findings
+                .iter()
+                .map(|finding| finding.code.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            checks.push(check(
+                "database_integrity",
+                "degraded",
+                detail,
+                Some("ax db repair".into()),
+            ));
+        }
+        if let Ok(db) = ax_db::Database::open(&project_db).await {
+            let mine = ax_db::builds::current_build_stamp(env!("CARGO_PKG_VERSION"));
+            match ax_db::builds::mcp_stamps(db.pool()).await {
+                Ok(rows) => {
+                    let lines = ax_db::builds::stale_mcp_lines(&mine, &rows);
+                    if lines.is_empty() {
+                        checks.push(check(
+                            "mcp_builds",
+                            "operational",
+                            "no older MCP build is registered".into(),
+                            None,
+                        ));
+                    } else {
+                        checks.push(check(
+                            "mcp_builds",
+                            "degraded",
+                            lines.join(" "),
+                            Some("Restart the MCP server in Cursor".into()),
+                        ));
+                    }
+                }
+                Err(error) => checks.push(check(
+                    "mcp_builds",
+                    "degraded",
+                    format!("could not read registered builds: {error}"),
+                    None,
+                )),
+            }
+            db.close().await;
+        }
+    }
+
     match ax_usage::load_cache_status(None).await.context_error {
         None => checks.push(check(
             "usage_db",

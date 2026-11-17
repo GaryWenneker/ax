@@ -68,7 +68,10 @@ struct GitlabTarget {
 }
 
 fn parse_target(repo_url: &str) -> Result<GitlabTarget, String> {
-    let trimmed = repo_url.trim().trim_end_matches(".git").trim_end_matches('/');
+    let trimmed = repo_url
+        .trim()
+        .trim_end_matches(".git")
+        .trim_end_matches('/');
     let url = reqwest::Url::parse(trimmed).map_err(|e| format!("invalid repo URL: {e}"))?;
     let scheme = url.scheme();
     if scheme != "http" && scheme != "https" {
@@ -183,7 +186,10 @@ async fn get_raw_file(
     Ok(resp.bytes().await.map_err(|e| e.to_string())?.to_vec())
 }
 
-pub async fn pull_gitlab_api(config: &GithubShareConfig, dest_root: &Path) -> Result<PullResult, String> {
+pub async fn pull_gitlab_api(
+    config: &GithubShareConfig,
+    dest_root: &Path,
+) -> Result<PullResult, String> {
     let url = config.repo_url.trim();
     if url.is_empty() {
         return Err("GitHub repo URL is not configured".into());
@@ -306,7 +312,9 @@ pub async fn push_gitlab_api(
     let remote_files = list_tree_recursive(&client, &target, token, sub, branch).await?;
     let mut remote_contents: HashMap<String, Vec<u8>> = HashMap::new();
     for remote_path in &remote_files {
-        let rel = remote_path.strip_prefix(&prefix).unwrap_or(remote_path.as_str());
+        let rel = remote_path
+            .strip_prefix(&prefix)
+            .unwrap_or(remote_path.as_str());
         if rel.starts_with("policy/shared/") || rel == "memory/shared.jsonl" {
             let content = get_raw_file(&client, &target, token, remote_path, branch).await?;
             remote_contents.insert(rel.to_string(), content);
@@ -326,7 +334,10 @@ pub async fn push_gitlab_api(
 
     let mut actions = Vec::new();
     for (rel, content) in &local_files {
-        let unchanged = remote_contents.get(rel).map(|r| r == content).unwrap_or(false);
+        let unchanged = remote_contents
+            .get(rel)
+            .map(|r| r == content)
+            .unwrap_or(false);
         if unchanged {
             continue;
         }
@@ -375,9 +386,7 @@ pub async fn push_gitlab_api(
         .await
         .map_err(|e| e.to_string())?;
     reject_sso_redirect(&commit_resp)?;
-    commit_resp
-        .error_for_status()
-        .map_err(|e| e.to_string())?;
+    commit_resp.error_for_status().map_err(|e| e.to_string())?;
 
     Ok(written)
 }
@@ -462,16 +471,22 @@ mod tests {
 
         // Push: remote starts empty.
         Mock::given(method("GET"))
-            .and(path(format!("/api/v4/projects/{project_id}/repository/tree")))
+            .and(path(format!(
+                "/api/v4/projects/{project_id}/repository/tree"
+            )))
             .and(header("PRIVATE-TOKEN", "test-token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
             .mount(&server)
             .await;
 
         Mock::given(method("POST"))
-            .and(path(format!("/api/v4/projects/{project_id}/repository/commits")))
+            .and(path(format!(
+                "/api/v4/projects/{project_id}/repository/commits"
+            )))
             .and(header("PRIVATE-TOKEN", "test-token"))
-            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"id": "abc123"})))
+            .respond_with(
+                ResponseTemplate::new(201).set_body_json(serde_json::json!({"id": "abc123"})),
+            )
             .mount(&server)
             .await;
 
@@ -490,7 +505,9 @@ mod tests {
         // Pull: remote now reports the file we just "pushed".
         server.reset().await;
         Mock::given(method("GET"))
-            .and(path(format!("/api/v4/projects/{project_id}/repository/tree")))
+            .and(path(format!(
+                "/api/v4/projects/{project_id}/repository/tree"
+            )))
             .and(header("PRIVATE-TOKEN", "test-token"))
             .and(query_param("page", "1"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
@@ -526,7 +543,9 @@ mod tests {
         let project_id = "acme%2Fcontoso-web";
 
         Mock::given(method("GET"))
-            .and(path(format!("/api/v4/projects/{project_id}/repository/tree")))
+            .and(path(format!(
+                "/api/v4/projects/{project_id}/repository/tree"
+            )))
             .respond_with(
                 ResponseTemplate::new(302)
                     .insert_header("Location", "https://auth.example.com/login?req=abc"),
@@ -550,7 +569,9 @@ mod tests {
         let project_id = "acme%2Fcontoso-web";
 
         Mock::given(method("GET"))
-            .and(path(format!("/api/v4/projects/{project_id}/repository/tree")))
+            .and(path(format!(
+                "/api/v4/projects/{project_id}/repository/tree"
+            )))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
                 {"id": "1", "type": "blob", "path": ".ax/policy/shared/manifest.json"}
             ])))

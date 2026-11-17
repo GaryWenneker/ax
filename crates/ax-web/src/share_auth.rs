@@ -1,7 +1,7 @@
 //! Optional share-token gate for `ax share` / LAN exposure.
 
 use axum::extract::Request;
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::middleware::Next;
 use axum::response::IntoResponse;
 use axum::response::Response;
@@ -98,12 +98,13 @@ pub(crate) async fn enforce_share_token(
         });
 
     let provided = header_token.or(cookie_token);
+    let secure = share_secure(req.headers());
     if let Some(location) = share_redirect_location(path, req.uri().query(), &expected) {
-        return share_cookie_redirect(&location, &expected);
+        return share_cookie_redirect(&location, &expected, secure);
     }
     if provided.as_deref() == Some(expected.as_str()) {
         let mut res = next.run(req).await;
-        if let Ok(val) = format!("ax_share={expected}; Path=/; HttpOnly; SameSite=Lax").parse() {
+        if let Ok(val) = share_cookie(&expected, secure).parse() {
             res.headers_mut().append(header::SET_COOKIE, val);
         }
         return res;
@@ -154,14 +155,29 @@ fn share_redirect_location(path: &str, query: Option<&str>, expected: &str) -> O
     }
 }
 
-fn share_cookie_redirect(location: &str, expected: &str) -> Response {
+fn share_secure(headers: &HeaderMap) -> bool {
+    headers
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|proto| proto.eq_ignore_ascii_case("https"))
+}
+
+/// Share-gate cookie: `HttpOnly`, `SameSite=Lax`, and `Secure` when the edge is HTTPS.
+fn share_cookie(token: &str, secure: bool) -> String {
+    format!(
+        "ax_share={token}; Path=/; HttpOnly; SameSite=Lax{}",
+        if secure { "; Secure" } else { "" }
+    )
+}
+
+fn share_cookie_redirect(location: &str, expected: &str, secure: bool) -> Response {
     let mut builder = Response::builder()
         .status(StatusCode::SEE_OTHER)
         .header(header::CACHE_CONTROL, "no-store");
     if let Ok(location) = header::HeaderValue::from_str(location) {
         builder = builder.header(header::LOCATION, location);
     }
-    let cookie = format!("ax_share={expected}; Path=/; HttpOnly; SameSite=Lax");
+    let cookie = share_cookie(expected, secure);
     if let Ok(cookie) = header::HeaderValue::from_str(&cookie) {
         builder = builder.header(header::SET_COOKIE, cookie);
     }
@@ -295,6 +311,19 @@ mod tests {
         assert!(
             share_redirect_location("//evil.example", Some("token=sekret"), "sekret").is_none()
         );
+    }
+
+    #[test]
+    fn share_cookie_flags_follow_transport() {
+        let plain = share_cookie("sekret", false);
+        assert!(plain.contains("HttpOnly"));
+        assert!(!plain.contains("Secure"));
+        let tls = share_cookie("sekret", true);
+        assert!(tls.contains("HttpOnly"));
+        assert!(tls.contains("Secure"));
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-proto", "https".parse().unwrap());
+        assert!(share_secure(&headers));
     }
 
     #[tokio::test]

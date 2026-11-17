@@ -38,7 +38,13 @@ impl LanguageExtractor for JavascriptExtractor {
         append_ts_js_refs(
             &mut result,
             tree,
-            &RefCtx { source, file_path: path, language: lang, file_id: &file_id, spans: &spans },
+            &RefCtx {
+                source,
+                file_path: path,
+                language: lang,
+                file_id: &file_id,
+                spans: &spans,
+            },
         );
         emit_same_file_call_edges(&mut result, path);
         result

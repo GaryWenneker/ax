@@ -8,9 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use ax_db::queries::QueryBuilder;
-use ax_types::{
-    Edge, EdgeConfidence, EdgeKind, Language, Node, NodeKind, Provenance,
-};
+use ax_types::{Edge, EdgeConfidence, EdgeKind, Language, Node, NodeKind, Provenance};
 use ignore::WalkBuilder;
 use serde_json::Value;
 

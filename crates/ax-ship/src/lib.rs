@@ -1,5 +1,6 @@
 //! Autonomous Git Command Center daemon.
 
+mod advanced;
 mod auto_commit;
 mod config;
 mod events;
@@ -9,7 +10,6 @@ mod pipeline;
 mod run_log;
 mod runners;
 mod state;
-mod advanced;
 
 pub use runners::run_impacted_tests;
 
@@ -92,7 +92,8 @@ impl ShipDaemon {
     pub async fn auto_provision_sonar(&self) -> Result<(), String> {
         let cfg = self.config.lock().await.clone();
         let repos = resolve_sonar_repo_names(&self.project_root, &cfg);
-        ax_quality::auto_provision_sonar_from_discovery(&cfg.sonar, &self.project_root, &repos).await
+        ax_quality::auto_provision_sonar_from_discovery(&cfg.sonar, &self.project_root, &repos)
+            .await
     }
 
     pub async fn evaluate(&self) -> Result<ShipReport, String> {
@@ -112,14 +113,17 @@ impl ShipDaemon {
         let pipeline = ShipPipeline::new(self.project_root.clone(), cfg, self.bus.clone());
         let report = pipeline.run_evaluate().await?;
         *self.state.lock().await = ShipState::from_report(&report);
-        self.bus.publish(ShipEvent::ReportUpdated { report: Box::new(report.clone()) });
+        self.bus.publish(ShipEvent::ReportUpdated {
+            report: Box::new(report.clone()),
+        });
         Ok(report)
     }
 
     pub async fn run_watch(&self) -> Result<(), String> {
         let cfg = self.config.lock().await.clone();
         let git_roots = resolve_git_roots(&self.project_root, &cfg)?;
-        git_watcher::start_git_watcher(self.project_root.clone(), git_roots, self.bus.clone()).await?;
+        git_watcher::start_git_watcher(self.project_root.clone(), git_roots, self.bus.clone())
+            .await?;
         Ok(())
     }
 }

@@ -22,11 +22,7 @@ impl StatsPage {
     }
 
     pub fn ui(&mut self, ui: &mut Ui, ctx: &mut PageCtx<'_>) {
-        heading(
-            ui,
-            "Stats",
-            "Index overview for the current workspace.",
-        );
+        heading(ui, "Stats", "Index overview for the current workspace.");
 
         if !self.loaded && self.pending.is_none() {
             let c = ctx.client.clone();
@@ -79,7 +75,11 @@ impl StatsPage {
                     metric(ui, "Nodes", &s.node_count.to_string());
                     metric(ui, "Edges", &s.edge_count.to_string());
                     metric(ui, "Files", &s.file_count.to_string());
-                    metric(ui, "Unresolved", &s.unresolved_ref_count.unwrap_or(0).to_string());
+                    metric(
+                        ui,
+                        "Unresolved",
+                        &s.unresolved_ref_count.unwrap_or(0).to_string(),
+                    );
                     metric(ui, "Policy rules", &s.policy_rules_count.to_string());
                     metric(ui, "Policy skills", &s.policy_skills_count.to_string());
                     metric(ui, "DB size", &format_bytes(s.db_size_bytes));
@@ -93,9 +93,12 @@ impl StatsPage {
                     for lang in &s.languages {
                         ui.horizontal(|ui| {
                             ui.label(&lang.language);
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.colored_label(theme::ACCENT, lang.count.to_string());
-                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.colored_label(theme::ACCENT, lang.count.to_string());
+                                },
+                            );
                         });
                     }
                 });

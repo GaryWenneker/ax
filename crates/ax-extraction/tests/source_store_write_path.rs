@@ -9,8 +9,8 @@
 //!
 //! Run: cargo test -p ax-extraction --test source_store_write_path
 
-use ax_db::Database;
 use ax_db::queries::QueryBuilder;
+use ax_db::Database;
 use ax_extraction::orchestrator::{ExtractionOrchestrator, IndexOptions};
 
 struct Fixture {
@@ -57,7 +57,10 @@ async fn index_files_stores_source_only_for_files_it_can_parse() {
     // Stand-ins for build output: a linker object and a rustc metadata blob.
     // Neither has a language, so neither is ever parsed.
     fx.write("target-dev/debug/deps/blob.o", "\u{1}ELF not really code\n");
-    fx.write("target-dev/debug/deps/libthing.rmeta", "rust metadata blob\n");
+    fx.write(
+        "target-dev/debug/deps/libthing.rmeta",
+        "rust metadata blob\n",
+    );
 
     let db = Database::open(&fx.db).await.expect("open db");
     let queries = QueryBuilder::new(db.pool().clone());
@@ -83,7 +86,10 @@ async fn index_files_stores_source_only_for_files_it_can_parse() {
         "a parseable source file must be stored, or snippets fall back to disk"
     );
 
-    for artifact in ["target-dev/debug/deps/blob.o", "target-dev/debug/deps/libthing.rmeta"] {
+    for artifact in [
+        "target-dev/debug/deps/blob.o",
+        "target-dev/debug/deps/libthing.rmeta",
+    ] {
         let stored = queries
             .get_file_content(artifact)
             .await

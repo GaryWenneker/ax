@@ -1,0 +1,24 @@
+# cargo-mutants survivors classified as equivalent: no test can tell them apart from the original.
+# Each entry is a `# reason` line, then the line exactly as cargo-mutants writes it in missed.txt.
+# scripts/neural-gauntlet.sh fails on a survivor that is not listed here and on a listed entry
+# that is no longer missed. Line and column numbers move when a file changes; reclassify then.
+
+# SEMANTIC_WEIGHT is 0.0, so the added term is 0.0 * semantic: plus or minus zero, or NaN either
+# way. Adding it or subtracting it gives the same fused score.
+crates/ax-neural/src/lib.rs:28:11: replace + with - in blend_semantic
+
+# cargo-mutants builds the default features. Without the empty `neural-runtime` feature the
+# function already returns false.
+crates/ax-neural/src/lib.rs:32:5: replace runtime_built -> bool with false
+
+# Every NeuralConfig comes from required() (also behind Default) or from load(), which ends in
+# lock_required. Both set enabled and ranking_enabled to true, the struct does not derive
+# Deserialize, and no code sets the two fields afterwards, so ranking_active is always true.
+crates/ax-neural/src/config.rs:63:9: replace NeuralConfig::ranking_active -> bool with true
+
+# Same reason: both operands are always true, so && and || give the same result.
+crates/ax-neural/src/config.rs:63:22: replace && with || in NeuralConfig::ranking_active
+
+# With ||, plan also records empty keys and keys it has already seen. An empty key never counts
+# as a duplicate and a seen key is already recorded, so no block is judged differently.
+crates/ax-neural/src/rank.rs:35:23: replace && with || in plan

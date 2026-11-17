@@ -125,4 +125,4 @@ See the [CLI reference](/reference/cli/) for all formats.
 
 ## Further reading
 
-Monorepo federation, `ship --ci`, plugins, optional ONNX, LSP enrich, and `ax share` are all available. See [`docs/ROADMAP.md`](https://github.com/GaryWenneker/ax/blob/main/docs/ROADMAP.md).
+Monorepo federation, `ship --ci`, plugins, LSP enrich, and `ax share` are all available. Memory embeddings are the local hash model `hash-v1`. See [`docs/ROADMAP.md`](https://github.com/GaryWenneker/ax/blob/main/docs/ROADMAP.md).

@@ -70,11 +70,15 @@ fn render_with_iterations(
         );
     }
     out["inject"] = json!(text);
+    let neural = base.pointer("/contextBudget/neural").cloned();
     out["contextBudget"] = json!({"included":ids, "omitted":omitted,
         "limit":limit, "requestedBudget":limit, "requiredMinimum":minimum,
         "overBudget":overflow, "tokens":0, "finalTokens":0,
         "measurement":if ax_usage::tokenizer_available() {"o200k_base"} else {"estimate"},
         "projection":"content.text + structuredContent JSON"});
+    if let Some(neural) = neural {
+        out["contextBudget"]["neural"] = neural;
+    }
     // Self-describing token totals converge once their digit widths are stable.
     for _ in 0..iterations {
         let tokens = projection_tokens(&out);
@@ -87,14 +91,61 @@ fn render_with_iterations(
     Err("context token accounting did not converge".into())
 }
 
+/// Neural ranking facts that belong in `contextBudget.neural`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NeuralBudget {
+    pub duplicates: Vec<String>,
+    pub duplicate_tokens: usize,
+}
+
+/// Single JSON shape for `contextBudget.neural` (preflight, status, tests).
+pub fn neural_budget_json(budget: &NeuralBudget) -> Value {
+    json!({
+        "kept": "ranked",
+        "omitted": "over-budget",
+        "duplicates": budget.duplicates,
+        "duplicateTokens": budget.duplicate_tokens
+    })
+}
+
+impl NeuralBudget {
+    /// Kept optional blocks were ranked; `omitted` ids were dropped by the budget;
+    /// `duplicates` were dropped before it because their text repeated an earlier block.
+    fn to_json(&self) -> Value {
+        neural_budget_json(self)
+    }
+}
+
+/// Like `finish_with_memory_reserve`, with `contextBudget.neural` inside the counted reply.
+pub fn finish_with_neural(
+    mut base: Value,
+    blocks: &[ContextBlock],
+    limit: Option<u32>,
+    reserve: u32,
+    neural: &NeuralBudget,
+) -> Result<Value, String> {
+    base["contextBudget"] = json!({ "neural": neural.to_json() });
+    finish_with_memory_reserve(base, blocks, limit, reserve)
+}
+
 pub fn finish(base: Value, blocks: &[ContextBlock], limit: Option<u32>) -> Result<Value, String> {
-    finish_with_iterations(base, blocks, limit, 16)
+    finish_with_memory_reserve(base, blocks, limit, ax_usage::MEMORY_RESERVE_TOKENS)
+}
+
+pub fn finish_with_memory_reserve(
+    base: Value,
+    blocks: &[ContextBlock],
+    limit: Option<u32>,
+    reserve: u32,
+) -> Result<Value, String> {
+    finish_with_iterations(base, blocks, limit, reserve, 16)
 }
 
 fn finish_with_iterations(
     base: Value,
     blocks: &[ContextBlock],
     limit: Option<u32>,
+    reserve: u32,
     iterations: usize,
 ) -> Result<Value, String> {
     let required: Vec<String> = blocks
@@ -125,9 +176,18 @@ fn finish_with_iterations(
     }
     let overflow = limit.is_some_and(|b| minimum > b as usize);
     let mut ids = required;
+    if let Some(memory) = blocks.iter().find(|block| block.id == "memories") {
+        let tokens = count_tokens(&memory.text);
+        if tokens <= reserve as usize && !ids.iter().any(|id| id == "memories") {
+            ids.push(memory.id.clone());
+        }
+    }
     let mut out = render(&base, blocks, &ids, limit, minimum, overflow)?;
     for class in [ContextClass::HighValue, ContextClass::Optional] {
         for block in blocks.iter().filter(|b| b.class == class) {
+            if ids.iter().any(|id| id == &block.id) {
+                continue;
+            }
             let mut candidate_ids = ids.clone();
             candidate_ids.push(block.id.clone());
             let candidate = render(&base, blocks, &candidate_ids, limit, minimum, overflow)?;
@@ -152,9 +212,11 @@ mod tests {
                 .unwrap_err()
                 .contains("accounting did not converge")
         );
-        assert!(finish_with_iterations(base, &[], Some(100), 0)
-            .unwrap_err()
-            .contains("required context token accounting did not converge"));
+        assert!(
+            finish_with_iterations(base, &[], Some(100), ax_usage::MEMORY_RESERVE_TOKENS, 0)
+                .unwrap_err()
+                .contains("required context token accounting did not converge")
+        );
     }
 
     #[test]
@@ -164,5 +226,81 @@ mod tests {
             projection_tokens_with_mode(&base, true),
             count_tokens("required text") + count_tokens(&base.to_string())
         );
+    }
+
+    #[test]
+    fn a_short_memory_block_stays_when_required_context_is_over_budget() {
+        use ax_usage::{ContextBlock, ContextClass};
+        let blocks = vec![
+            ContextBlock {
+                id: "required".into(),
+                class: ContextClass::HardRequired,
+                text: "rule ".repeat(80),
+            },
+            ContextBlock {
+                id: "memories".into(),
+                class: ContextClass::HighValue,
+                text: "hash vectors".into(),
+            },
+        ];
+        let out = finish(json!({"project":{"path":"a"}}), &blocks, Some(1)).unwrap();
+        let included = out["contextBudget"]["included"].as_array().unwrap();
+        assert!(included.iter().any(|value| value == "memories"));
+        assert!(out["inject"].as_str().unwrap().contains("hash vectors"));
+    }
+
+    #[test]
+    fn neural_reasons_are_counted_in_the_budget() {
+        let blocks = vec![
+            ContextBlock {
+                id: "required".into(),
+                class: ContextClass::HardRequired,
+                text: "rule".into(),
+            },
+            ContextBlock {
+                id: "optional".into(),
+                class: ContextClass::Optional,
+                text: "word ".repeat(400),
+            },
+        ];
+        let neural = NeuralBudget {
+            duplicates: vec!["memories:copy".into()],
+            duplicate_tokens: 12,
+        };
+        let base = json!({"project":{"path":"a"}});
+        let out = finish_with_neural(base.clone(), &blocks, Some(200), 0, &neural).unwrap();
+        let budget = &out["contextBudget"];
+        assert_eq!(budget["neural"], neural_budget_json(&neural));
+        assert_eq!(budget["omitted"], json!(["optional"]));
+        assert_eq!(
+            budget["tokens"].as_u64().unwrap() as usize,
+            projection_tokens(&out)
+        );
+        let plain = finish_with_memory_reserve(base, &blocks, Some(200), 0).unwrap();
+        assert!(plain["contextBudget"].get("neural").is_none());
+        assert!(
+            budget["tokens"].as_u64().unwrap() > plain["contextBudget"]["tokens"].as_u64().unwrap()
+        );
+    }
+
+    #[test]
+    fn a_zero_reserve_does_not_force_a_memory_block_over_budget() {
+        use ax_usage::{ContextBlock, ContextClass};
+        let blocks = vec![
+            ContextBlock {
+                id: "required".into(),
+                class: ContextClass::HardRequired,
+                text: "rule ".repeat(80),
+            },
+            ContextBlock {
+                id: "memories".into(),
+                class: ContextClass::HighValue,
+                text: "hash vectors".into(),
+            },
+        ];
+        let out = finish_with_memory_reserve(json!({"project":{"path":"a"}}), &blocks, Some(1), 0)
+            .unwrap();
+        let included = out["contextBudget"]["included"].as_array().unwrap();
+        assert!(included.iter().all(|value| value != "memories"));
     }
 }

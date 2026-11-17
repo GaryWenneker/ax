@@ -1,4 +1,5 @@
 use super::config::{Project, RemoteConfig};
+use axum::http::{header, HeaderMap};
 use jsonwebtoken::{decode, decode_header, jwk::JwkSet, Algorithm, DecodingKey, Validation};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -9,6 +10,17 @@ use std::{
 };
 use subtle::ConstantTimeEq;
 use tokio::sync::RwLock;
+
+/// Extract a bearer token from `Authorization`. A present but non-Bearer header is malformed,
+/// not "missing", so callers must not treat it as an unauthenticated request.
+pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let token = value.strip_prefix("Bearer ")?;
+    if token.is_empty() || token.bytes().any(|b| b.is_ascii_whitespace()) {
+        return None;
+    }
+    Some(token)
+}
 
 pub const CONTEXT_SCOPE: &str = "ax:context";
 pub const WRITE_SCOPE: &str = "ax:write";
@@ -144,6 +156,48 @@ impl TokenVerifier {
             key_projects: Vec::new(),
             key_write: false,
         })
+    }
+}
+
+#[cfg(test)]
+mod mcp_auth {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    #[test]
+    fn malformed_authorization_is_rejected_not_anonymous() {
+        let mut headers = HeaderMap::new();
+        assert_eq!(bearer_token(&headers), None);
+        for value in [
+            "Basic axc_test",
+            "Bearer",
+            "Bearer ",
+            "Bearer  ",
+            "Bearer \tsecret",
+            "bearer secret",
+            "Token secret",
+        ] {
+            headers.insert(
+                header::AUTHORIZATION,
+                HeaderValue::from_str(value).unwrap(),
+            );
+            assert_eq!(bearer_token(&headers), None, "value={value}");
+        }
+    }
+
+    #[test]
+    fn valid_bearer_still_accepted() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer test-ide-key"),
+        );
+        assert_eq!(bearer_token(&headers), Some("test-ide-key"));
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer axo_access-token"),
+        );
+        assert_eq!(bearer_token(&headers), Some("axo_access-token"));
     }
 }
 

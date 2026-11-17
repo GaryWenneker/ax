@@ -28,7 +28,8 @@ pub fn global_db_path() -> Result<PathBuf> {
 pub async fn open_pool(path: &Path, create_if_missing: bool) -> Result<SqlitePool> {
     if create_if_missing {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("mkdir {}", parent.display()))?;
         }
     }
     let options = connect_options(path, create_if_missing);
@@ -170,7 +171,10 @@ mod tests {
             "replication_nodes",
             "security_audit_log",
         ] {
-            assert!(set.iter().any(|n| n == need), "missing table {need}: {set:?}");
+            assert!(
+                set.iter().any(|n| n == need),
+                "missing table {need}: {set:?}"
+            );
         }
     }
 
@@ -274,10 +278,16 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(slice.nodes.len(), 2);
-        let ids: std::collections::HashSet<_> =
-            slice.nodes.iter().map(|n| n.project_name.as_str()).collect();
+        let ids: std::collections::HashSet<_> = slice
+            .nodes
+            .iter()
+            .map(|n| n.project_name.as_str())
+            .collect();
         assert!(ids.contains("a") && ids.contains("b"));
-        assert!(slice.nodes.iter().any(|n| n.selected && n.project_name == "a"));
+        assert!(slice
+            .nodes
+            .iter()
+            .any(|n| n.selected && n.project_name == "a"));
         assert!(slice.nodes.iter().all(|n| n.shared));
     }
 
@@ -373,8 +383,12 @@ mod tests {
         }
         let global = dir.path().join("global.db");
         let g = open_and_init(&global).await.unwrap();
-        sync::sync_project(&g, &dir.path().join("alpha")).await.unwrap();
-        sync::sync_project(&g, &dir.path().join("beta")).await.unwrap();
+        sync::sync_project(&g, &dir.path().join("alpha"))
+            .await
+            .unwrap();
+        sync::sync_project(&g, &dir.path().join("beta"))
+            .await
+            .unwrap();
         let mut local = vec![policy::annotate_local(
             serde_json::json!({"id":"alpha"}),
             "alpha",

@@ -20,11 +20,9 @@ impl GraphQueryManager {
     }
 
     pub async fn get_context(&self, node_id: &str) -> Result<Context, ax_utils::errors::AxError> {
-        let focal = self
-            .queries
-            .get_node_by_id(node_id)
-            .await?
-            .ok_or_else(|| ax_utils::errors::AxError::Other(format!("Node not found: {}", node_id)))?;
+        let focal = self.queries.get_node_by_id(node_id).await?.ok_or_else(|| {
+            ax_utils::errors::AxError::Other(format!("Node not found: {}", node_id))
+        })?;
 
         let ancestors = self.traverser.get_ancestors(node_id).await?;
         let children = self.traverser.get_children(node_id).await?;
@@ -66,11 +64,7 @@ impl GraphQueryManager {
     pub async fn find_dead_code(&self) -> Result<Vec<ax_types::Node>, ax_utils::errors::AxError> {
         use ax_types::{NodeKind, SearchOptions};
 
-        let kinds = [
-            NodeKind::Function,
-            NodeKind::Method,
-            NodeKind::Class,
-        ];
+        let kinds = [NodeKind::Function, NodeKind::Method, NodeKind::Class];
         let mut dead = Vec::new();
         for kind in kinds {
             let opts = SearchOptions {
@@ -98,8 +92,8 @@ impl GraphQueryManager {
         &self,
         changed_files: &[String],
     ) -> Result<Vec<String>, ax_utils::errors::AxError> {
-        use std::collections::HashSet;
         use crate::query_utils::is_test_file;
+        use std::collections::HashSet;
 
         let mut affected = HashSet::new();
         for path in changed_files {
@@ -119,7 +113,11 @@ impl GraphQueryManager {
         Ok(affected.into_iter().collect())
     }
 
-    pub async fn get_dependents(&self, node_id: &str, depth: u32) -> Result<Vec<ax_types::Node>, ax_utils::errors::AxError> {
+    pub async fn get_dependents(
+        &self,
+        node_id: &str,
+        depth: u32,
+    ) -> Result<Vec<ax_types::Node>, ax_utils::errors::AxError> {
         self.traverser.get_dependents(node_id, depth).await
     }
 

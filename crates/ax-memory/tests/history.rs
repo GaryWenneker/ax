@@ -298,7 +298,7 @@ async fn a_request_id_finds_that_turn() {
 }
 
 #[tokio::test]
-async fn preflight_keeps_a_durable_memory_when_the_prompt_does_not_match() {
+async fn preflight_omits_a_durable_memory_when_the_prompt_does_not_match() {
     let dir = tempfile::tempdir().unwrap();
     let db = open_db(dir.path()).await;
     save(
@@ -319,8 +319,7 @@ async fn preflight_keeps_a_durable_memory_when_the_prompt_does_not_match() {
     .unwrap();
 
     let rows = ax_memory::memories_for_preflight(db.pool(), "zzzz", 3).await;
-    assert_eq!(rows.len(), 1, "{rows:?}");
-    assert_eq!(rows[0].memory.title, "Language list decision");
+    assert!(rows.is_empty(), "{rows:?}");
 }
 
 #[tokio::test]

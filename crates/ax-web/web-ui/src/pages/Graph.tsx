@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   streamGraph,
   fetchGraph,
+  fetchGraphAsOf,
   fetchRecentGraph,
   fetchInsights,
   fetchDomainGraph,
@@ -224,6 +225,50 @@ export default function GraphPage() {
     GRAPH_NODE_STEPS.length - 1,
   );
   const limit = GRAPH_NODE_STEPS[stepIndex];
+  const [asOfMs, setAsOfMs] = useState<number | null>(null);
+  useEffect(() => {
+    if (asOfMs == null) return;
+    let cancelled = false;
+    if (abortRef.current) abortRef.current();
+    abortRef.current = null;
+    resetGraphState();
+    setMeta(null);
+    setLegendNodes([]);
+    setLoadedNodes(0);
+    setEdgeCount(0);
+    setLoadDone(false);
+    setLoading(true);
+    setError(null);
+    fetchGraphAsOf(asOfMs, limit)
+      .then((payload) => {
+        if (cancelled) return;
+        addNodes(payload.nodes);
+        addEdges(payload.edges);
+        setLoadedNodes(simNodesRef.current.length);
+        setEdgeCount(simEdgesRef.current.length);
+        setLegendNodes(payload.nodes);
+        setSystems(payload.systems ?? []);
+        setMeta({
+          total_nodes: payload.total_nodes,
+          truncated: payload.truncated,
+          node_count: payload.nodes.length,
+          edge_count: payload.edges.length,
+          systems: payload.systems,
+        });
+        ensureSimulation();
+        setLoadDone(true);
+        setLoading(false);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) {
+          setError(e.message);
+          setLoading(false);
+          setLoadDone(true);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [asOfMs, limit]);
+
 
   const [meta, setMeta] = useState<GraphStreamMeta | null>(null);
   const [system, setSystem] = useState(() => loadString('graph-system', ''));
@@ -406,6 +451,7 @@ export default function GraphPage() {
   }
 
   function load(recompute = false) {
+    if (asOfMs != null) return;
     liveSinceRef.current = Date.now() - LIVE_SINCE_SLACK_MS;
     if (abortRef.current) abortRef.current();
     resetGraphState();
@@ -1424,6 +1470,27 @@ export default function GraphPage() {
               onChange={(e) => setStepIndex(Number(e.target.value))}
             />
             <span className="graph-density-value">{limit} nodes</span>
+          </label>
+          <label className="graph-density" title="Show graph versions valid at this time (from graph history)">
+            <span className="graph-density-label">As of</span>
+            <input
+              type="range"
+              className="graph-density-slider"
+              min={0}
+              max={100}
+              step={1}
+              value={asOfMs == null ? 100 : Math.round(((asOfMs - (Date.now() - 90 * 86400000)) / (90 * 86400000)) * 100)}
+              onChange={(e) => {
+                const pct = Number(e.target.value);
+                if (pct >= 100) {
+                  setAsOfMs(null);
+                  return;
+                }
+                const start = Date.now() - 90 * 86400000;
+                setAsOfMs(Math.floor(start + (pct / 100) * (Date.now() - start)));
+              }}
+            />
+            <span className="graph-density-value">{asOfMs == null ? 'now' : new Date(asOfMs).toLocaleDateString()}</span>
           </label>
           {stepIndex >= 5 && (
             <span className="graph-meta graph-density-hint">High density — browser may lag</span>

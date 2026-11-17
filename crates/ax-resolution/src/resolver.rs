@@ -3,15 +3,17 @@
 use std::collections::HashMap;
 
 use ax_db::queries::QueryBuilder;
-use ax_types::{Edge, EdgeKind, IndexPhase, IndexProgress, Provenance, ReferenceKind, UnresolvedReference};
+use ax_types::{
+    Edge, EdgeKind, IndexPhase, IndexProgress, Provenance, ReferenceKind, UnresolvedReference,
+};
 
-use crate::callback_synthesizer::CallbackSynthesizer;
 use crate::c_fnptr_synthesizer::CFnptrSynthesizer;
+use crate::callback_synthesizer::CallbackSynthesizer;
 use crate::framework_resolve;
 use crate::frameworks::FrameworkRegistry;
 use crate::import_resolver::ImportResolver;
 use crate::name_matcher::NameMatcher;
-use crate::types::{ResolvedBy, ResolvedRef, ResolutionResult, ResolutionStats, UnresolvedRef};
+use crate::types::{ResolutionResult, ResolutionStats, ResolvedBy, ResolvedRef, UnresolvedRef};
 
 /// Which unresolved references to process. `None` = full pass (e.g. `ax index`).
 pub type ResolutionScope<'a> = Option<&'a [String]>;
@@ -42,17 +44,11 @@ impl ReferenceResolver {
         mut on_progress: Option<&mut Box<dyn FnMut(IndexProgress) + Send>>,
     ) -> Result<ResolutionResult, ax_utils::errors::AxError> {
         self.frameworks
-            .run_post_extract(
-                self.import_resolver.project_root(),
-                queries,
-                scope,
-            )
+            .run_post_extract(self.import_resolver.project_root(), queries, scope)
             .await?;
 
         let mut refs = match scope {
-            Some(files) if !files.is_empty() => {
-                queries.get_unresolved_refs_by_files(files).await?
-            }
+            Some(files) if !files.is_empty() => queries.get_unresolved_refs_by_files(files).await?,
             _ => queries.get_unresolved_refs().await?,
         };
         refs.retain(|reference| !ax_db::replication::is_replica(&reference.from_node_id));
@@ -101,10 +97,18 @@ impl ReferenceResolver {
             }
 
             let resolved = match ref_.reference_kind {
-                ReferenceKind::FunctionRef => self.name_matcher.match_function_ref(queries, &ref_).await,
+                ReferenceKind::FunctionRef => {
+                    self.name_matcher.match_function_ref(queries, &ref_).await
+                }
                 ReferenceKind::Imports => self.resolve_import_ref(queries, &ref_).await,
                 _ => {
-                    if let Some(r) = framework_resolve::try_resolve(self.import_resolver.project_root(), queries, &ref_).await {
+                    if let Some(r) = framework_resolve::try_resolve(
+                        self.import_resolver.project_root(),
+                        queries,
+                        &ref_,
+                    )
+                    .await
+                    {
                         Some(r)
                     } else if ref_.reference_kind == ReferenceKind::Calls {
                         if let Some(target_file) =
@@ -149,7 +153,11 @@ impl ReferenceResolver {
                 }
             }
             let ref_ = unresolved_from_db(&db_ref);
-            if let Some(r) = self.name_matcher.resolve_deferred_call(queries, &ref_).await {
+            if let Some(r) = self
+                .name_matcher
+                .resolve_deferred_call(queries, &ref_)
+                .await
+            {
                 result.stats.resolved += 1;
                 let method = format!("{:?}", r.resolved_by);
                 *result.stats.by_method.entry(method).or_insert(0) += 1;
@@ -183,7 +191,11 @@ impl ReferenceResolver {
         self.resolve_all(queries, Some(files), on_progress).await
     }
 
-    async fn resolve_import_ref(&self, queries: &QueryBuilder, ref_: &UnresolvedRef) -> Option<ResolvedRef> {
+    async fn resolve_import_ref(
+        &self,
+        queries: &QueryBuilder,
+        ref_: &UnresolvedRef,
+    ) -> Option<ResolvedRef> {
         let module = ref_
             .candidates
             .as_ref()
@@ -195,15 +207,25 @@ impl ReferenceResolver {
             .import_resolver
             .resolve_to_indexed_file(&ref_.file_path, module)?;
 
-        let nodes = queries.get_nodes_by_file(&target_file).await.unwrap_or_default();
+        let nodes = queries
+            .get_nodes_by_file(&target_file)
+            .await
+            .unwrap_or_default();
         let binding = &ref_.reference_name;
 
         let target = nodes
             .iter()
-            .find(|n| n.name == *binding && (matches!(n.kind, ax_types::NodeKind::Function | ax_types::NodeKind::Method | ax_types::NodeKind::Class | ax_types::NodeKind::Interface)))
-            .or_else(|| {
-                nodes.iter().find(|n| n.kind == ax_types::NodeKind::File)
-            })?;
+            .find(|n| {
+                n.name == *binding
+                    && (matches!(
+                        n.kind,
+                        ax_types::NodeKind::Function
+                            | ax_types::NodeKind::Method
+                            | ax_types::NodeKind::Class
+                            | ax_types::NodeKind::Interface
+                    ))
+            })
+            .or_else(|| nodes.iter().find(|n| n.kind == ax_types::NodeKind::File))?;
 
         let edge = Edge {
             source: ref_.from_node_id.clone(),

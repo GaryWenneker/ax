@@ -905,9 +905,8 @@ pub(crate) async fn store_seeded_skills_in_global_db(
             .map_err(|e| format!("{e:#}"))?;
         let mut stored = Vec::new();
         for (name, raw) in ax_policy::global_db_seed_skills() {
-            if ax_global_db::policy::policy_item_exists(
+            if ax_global_db::policy::global_policy_item_exists(
                 &pool,
-                project_id,
                 ax_global_db::policy::PolicyKind::Skills,
                 name,
             )
@@ -1098,6 +1097,29 @@ mod tests {
         assert_eq!(payload["name"], "review-loop");
         assert_eq!(payload["scope"], "company");
         assert_eq!(payload["body"], "CUSTOM REVIEW LOOP BODY");
+        assert_eq!(skill_rows(&db, "pr-review-comments").await.len(), 1);
+        cleanup(&dir);
+    }
+
+    #[tokio::test]
+    async fn seeded_skills_skip_when_global_exists_under_another_machine_project() {
+        let dir = temp_dir("global-db-machine");
+        let db = dir.join("global.db");
+        let machine_a = dir.join(".ax");
+        let machine_b = dir.join("proj").join(".ax");
+        std::fs::create_dir_all(&machine_b).unwrap();
+        let first = store_seeded_skills_in_global_db(&db, &machine_a)
+            .await
+            .unwrap();
+        assert_eq!(first.len(), 2, "{first:?}");
+        let second = store_seeded_skills_in_global_db(&db, &machine_b)
+            .await
+            .unwrap();
+        assert!(
+            second.is_empty(),
+            "must not duplicate company skills under another machine project id: {second:?}"
+        );
+        assert_eq!(skill_rows(&db, "review-loop").await.len(), 1);
         assert_eq!(skill_rows(&db, "pr-review-comments").await.len(), 1);
         cleanup(&dir);
     }

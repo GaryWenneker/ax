@@ -1,6 +1,6 @@
 [package]
 name = "ax-extraction"
-version = "8.4.6"
+version = "10.0.0"
 edition = "2021"
 
 [features]
@@ -54,3 +54,6 @@ ignore = { workspace = true }
 walkdir = { workspace = true }
 tracing = { workspace = true }
 pulldown-cmark = { workspace = true }
+
+[dev-dependencies]
+sqlx = { workspace = true }

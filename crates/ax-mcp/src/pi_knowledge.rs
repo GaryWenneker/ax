@@ -4,6 +4,7 @@
 //! on the existing context tool.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
 use ax_core::Ax;
@@ -16,6 +17,31 @@ use ax_types::ExploreOptions;
 fn integrations() -> &'static Mutex<HashMap<String, ax_pi::PiIntegration>> {
     static INTEGRATIONS: OnceLock<Mutex<HashMap<String, ax_pi::PiIntegration>>> = OnceLock::new();
     INTEGRATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn mcp_current_ids(root: &Path) -> (String, String) {
+    let fallback = ("mcp".to_string(), "context".to_string());
+    let Ok(text) = std::fs::read_to_string(root.join(".ax").join("turns").join("current.json"))
+    else {
+        return fallback;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return fallback;
+    };
+    let session = value
+        .get("session_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let turn = value
+        .get("turn_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if session.is_empty() || turn.is_empty() {
+        return fallback;
+    }
+    (session.to_string(), turn.to_string())
 }
 
 pub async fn pi_context_for_task(ax: &mut Ax, task: &str) -> Result<ContextResult, String> {
@@ -43,10 +69,11 @@ pub async fn pi_context_for_task(ax: &mut Ax, task: &str) -> Result<ContextResul
     integration
         .set_graph_entities(entities)
         .map_err(|err| err.to_string())?;
+    let (session_id, turn_id) = mcp_current_ids(ax.project_root());
     integration
         .get_session_context(&ContextRequest {
-            session_id: "mcp".into(),
-            turn_id: "context".into(),
+            session_id,
+            turn_id,
             user_intent: Some(task.to_string()),
             repository_root: Some(ax.project_root().display().to_string()),
             changed_files: Vec::new(),
@@ -179,5 +206,32 @@ fn section(
         content,
         mandatory,
         source_paths,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mcp_current_ids;
+
+    #[test]
+    fn mcp_context_uses_the_current_turn_and_keeps_the_placeholder_without_one() {
+        let root = std::env::temp_dir().join(format!("ax-mcp-turn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".ax")).unwrap();
+        assert_eq!(
+            mcp_current_ids(&root),
+            ("mcp".to_string(), "context".to_string())
+        );
+        std::fs::create_dir_all(root.join(".ax/turns")).unwrap();
+        std::fs::write(
+            root.join(".ax/turns/current.json"),
+            r#"{"session_id":"conv-1","turn_id":"gen-1"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            mcp_current_ids(&root),
+            ("conv-1".to_string(), "gen-1".to_string())
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

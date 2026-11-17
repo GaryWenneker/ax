@@ -19,7 +19,11 @@ pub async fn detect_breaking_changes(
             Some(n) => n,
             None => continue,
         };
-        if node.return_type.as_ref().is_some_and(|t| t.contains("Option<")) {
+        if node
+            .return_type
+            .as_ref()
+            .is_some_and(|t| t.contains("Option<"))
+        {
             let sg = GraphTraverser::new(QueryBuilder::new(pool.clone()))
                 .traverse_bfs(
                     &node.id,
@@ -62,7 +66,9 @@ pub async fn check_business_rules(
         .bind(&dirty.id)
         .fetch_all(pool)
         .await
-        .map_err(|e| ax_utils::errors::AxError::Database(ax_utils::errors::DatabaseError::new(e.to_string())))?;
+        .map_err(|e| {
+            ax_utils::errors::AxError::Database(ax_utils::errors::DatabaseError::new(e.to_string()))
+        })?;
 
         for (id, rule_text, severity) in rows {
             warnings.push(BusinessRuleWarning {

@@ -77,6 +77,7 @@ pub fn expand_links(
                     memories.push(MemoryMatch {
                         memory: m.clone(),
                         score: 0.0,
+                        why: None,
                     });
                 }
             }
@@ -495,6 +496,7 @@ mod tests {
         let mut memories = vec![MemoryMatch {
             memory: w.memories[0].clone(),
             score: 1.0,
+            why: None,
         }];
         expand_links(&mut result, &mut memories, &w.rules, &w.skills, &w.memories);
         assert_eq!(names(&result), vec!["rule/plain (link:memory/m1)"]);

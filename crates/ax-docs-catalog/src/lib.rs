@@ -70,7 +70,6 @@ pub struct SyncOptions {
     pub dry_run: bool,
 }
 
-
 /// Sync documentation catalog into ax.db. Emits progress events when `on_event` is set.
 pub async fn sync_catalog(
     project_root: &Path,

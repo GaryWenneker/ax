@@ -1,0 +1,129 @@
+{
+  "candidates": [
+    {
+      "admissibleAsSemantic": false,
+      "admitted": false,
+      "claimsNeuralInference": false,
+      "id": "hash-v1",
+      "kind": "measured",
+      "latency": {
+        "kind": "measured",
+        "lockedRankMicrosMedian": 309.625
+      },
+      "locked": {
+        "mrr": 0.6923076923076922,
+        "ndcgAt5": 0.6666666666666666,
+        "paraphraseRecallAt3": 0.0,
+        "precisionAt3": 0.2222222222222222,
+        "questionsScored": 4,
+        "recallAt3": 0.6666666666666666
+      },
+      "method": "ax_memory::embed::embed_text cosine retrieval",
+      "paraphraseRecallAt3": 0.0
+    },
+    {
+      "admissibleAsSemantic": false,
+      "admitted": false,
+      "claimsNeuralInference": false,
+      "id": "lexical-semantic-cpu",
+      "kind": "measured",
+      "latency": {
+        "kind": "measured",
+        "lockedRankMicrosMedian": 183.792
+      },
+      "locked": {
+        "mrr": 1.0,
+        "ndcgAt5": 1.0,
+        "paraphraseRecallAt3": 1.0,
+        "precisionAt3": 0.3333333333333333,
+        "questionsScored": 4,
+        "recallAt3": 1.0
+      },
+      "method": "lexical synonym + trigger rank (not neural inference)",
+      "paraphraseRecallAt3": 1.0
+    },
+    {
+      "admissibleAsSemantic": false,
+      "admitted": false,
+      "claimsNeuralInference": false,
+      "id": "cpu-blake3",
+      "kind": "measured",
+      "latency": {
+        "kind": "measured",
+        "lockedRankMicrosMedian": 57.083999999999996
+      },
+      "locked": {
+        "mrr": 0.12169312169312169,
+        "ndcgAt5": 0.0,
+        "paraphraseRecallAt3": 0.0,
+        "precisionAt3": 0.0,
+        "questionsScored": 4,
+        "recallAt3": 0.0
+      },
+      "method": "blake3 bag vector via neural-runtime (deterministic; not semantic)",
+      "paraphraseRecallAt3": 0.0
+    },
+    {
+      "admissibleAsSemantic": true,
+      "admissionNote": "paraphrase > hash and held-out R@3 >= hash; SEMANTIC_WEIGHT stays 0; memory column stays hash-v1",
+      "admitted": true,
+      "checksum": "blake3:5cc64684f474bc626dd9aa32a50e54653de2274fdd02801a2381b56ba1aaa7a7",
+      "claimsNeuralInference": true,
+      "heldOut": {
+        "mrr": 0.6909722222222223,
+        "ndcgAt5": 0.7192441461309548,
+        "paraphraseRecallAt3": null,
+        "precisionAt3": 0.2777777777777778,
+        "questionsScored": 15,
+        "recallAt3": 0.8333333333333334
+      },
+      "heldOutHashBaseline": {
+        "mrr": 0.7098214285714285,
+        "ndcgAt5": 0.7025563798394495,
+        "paraphraseRecallAt3": null,
+        "precisionAt3": 0.2222222222222222,
+        "questionsScored": 15,
+        "recallAt3": 0.6666666666666666
+      },
+      "id": "onnx-runtime-cpu",
+      "kind": "measured",
+      "latency": {
+        "kind": "measured",
+        "lockedRankMicrosMedian": 70279.416
+      },
+      "locked": {
+        "mrr": 0.7777777777777777,
+        "ndcgAt5": 0.8333333333333334,
+        "paraphraseRecallAt3": 1.0,
+        "precisionAt3": 0.3333333333333333,
+        "questionsScored": 4,
+        "recallAt3": 1.0
+      },
+      "method": "ONNX Runtime CPU + local all-MiniLM-L6-v2.onnx (neural embedding inference)",
+      "modelPath": "/Users/gary/.ax/models/all-MiniLM-L6-v2.onnx",
+      "paraphraseRecallAt3": 1.0
+    },
+    {
+      "admitted": false,
+      "claimsNeuralInference": false,
+      "id": "candle-cpu",
+      "kind": "not_built",
+      "reason": "Candle not linked; no local model configured under ~/.ax/models"
+    }
+  ],
+  "fixture": "benchmarks/memory/coding.json (built in)",
+  "kind": "measured",
+  "memory": {
+    "kind": "not_measured",
+    "reason": "no portable RSS reader in this harness"
+  },
+  "neuralEmbeddingAdmitted": true,
+  "neuralEmbeddingInferenceActive": false,
+  "productionDefaultsUnchanged": true,
+  "selection": {
+    "basis": "measured candidates on locked families; candle still not_built",
+    "decision": "onnx MiniLM measured and paraphrase-beats-hash; keep SEMANTIC_WEIGHT=0 and memory column hash-v1 until held-out promotion gate"
+  },
+  "semanticWeight": 0.0,
+  "winner": "onnx-runtime-cpu"
+}

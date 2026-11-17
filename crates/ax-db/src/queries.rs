@@ -23,6 +23,16 @@ impl QueryBuilder {
         &self.pool
     }
 
+    fn sql_err(&self, err: sqlx::Error) -> AxError {
+        let message = err.to_string();
+        // The SQL error is the result. Failing to write the incident file must not hide it.
+        let _ = crate::integrity::note_sql_incident(
+            self.pool.connect_options().get_filename(),
+            &message,
+        );
+        AxError::Database(DatabaseError::new(message))
+    }
+
     pub async fn upsert_node(&self, node: &Node) -> Result<(), AxError> {
         sqlx::query(
             r#"
@@ -81,7 +91,7 @@ impl QueryBuilder {
         .bind(node.updated_at)
         .execute(&self.pool)
         .await
-        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        .map_err(|e| self.sql_err(e))?;
         Ok(())
     }
 
@@ -107,7 +117,7 @@ impl QueryBuilder {
         .bind(edge_confidence_str(edge))
         .execute(&self.pool)
         .await
-        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        .map_err(|e| self.sql_err(e))?;
         Ok(())
     }
 
@@ -119,11 +129,7 @@ impl QueryBuilder {
         }
         // 21 columns per row; 400 rows = 8,400 binds per statement.
         const CHUNK: usize = 400;
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        let mut tx = self.pool.begin().await.map_err(|e| self.sql_err(e))?;
         for chunk in nodes.chunks(CHUNK) {
             let mut qb = sqlx::QueryBuilder::new(
                 "INSERT INTO nodes (
@@ -185,11 +191,9 @@ impl QueryBuilder {
             qb.build()
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+                .map_err(|e| self.sql_err(e))?;
         }
-        tx.commit()
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        tx.commit().await.map_err(|e| self.sql_err(e))?;
         Ok(())
     }
 
@@ -199,11 +203,7 @@ impl QueryBuilder {
         }
         // 8 columns per row; 875 rows = 7,000 binds per statement.
         const CHUNK: usize = 875;
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        let mut tx = self.pool.begin().await.map_err(|e| self.sql_err(e))?;
         for chunk in edges.chunks(CHUNK) {
             let mut qb = sqlx::QueryBuilder::new(
                 "INSERT OR IGNORE INTO edges (source, target, kind, metadata, line, col, provenance, confidence) ",
@@ -230,11 +230,9 @@ impl QueryBuilder {
             qb.build()
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+                .map_err(|e| self.sql_err(e))?;
         }
-        tx.commit()
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        tx.commit().await.map_err(|e| self.sql_err(e))?;
         Ok(())
     }
 
@@ -265,34 +263,30 @@ impl QueryBuilder {
         if crate::replication::is_replica(file_path) {
             return Ok(());
         }
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        let mut tx = self.pool.begin().await.map_err(|e| self.sql_err(e))?;
         sqlx::query("DELETE FROM unresolved_refs WHERE file_path = ?")
             .bind(file_path)
             .execute(&mut *tx)
             .await
-            .map_err(db_err)?;
+            .map_err(|e| self.sql_err(e))?;
         sqlx::query("DELETE FROM nodes WHERE file_path = ?")
             .bind(file_path)
             .execute(&mut *tx)
             .await
-            .map_err(db_err)?;
+            .map_err(|e| self.sql_err(e))?;
         sqlx::query("DELETE FROM files WHERE path = ?")
             .bind(file_path)
             .execute(&mut *tx)
             .await
-            .map_err(db_err)?;
+            .map_err(|e| self.sql_err(e))?;
         if drop_content {
             sqlx::query("DELETE FROM file_contents WHERE path = ?")
                 .bind(file_path)
                 .execute(&mut *tx)
                 .await
-                .map_err(db_err)?;
+                .map_err(|e| self.sql_err(e))?;
         }
-        tx.commit().await.map_err(db_err)?;
+        tx.commit().await.map_err(|e| self.sql_err(e))?;
         Ok(())
     }
 
@@ -301,7 +295,7 @@ impl QueryBuilder {
             .bind(lower_name)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            .map_err(|e| self.sql_err(e))?;
         Ok(rows.into_iter().map(|r| r.into_node()).collect())
     }
 
@@ -327,7 +321,7 @@ impl QueryBuilder {
         .bind(file.errors.as_ref().map(|e| serde_json::to_string(e).unwrap_or_default()))
         .execute(&self.pool)
         .await
-        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        .map_err(|e| self.sql_err(e))?;
         Ok(())
     }
 
@@ -367,7 +361,7 @@ impl QueryBuilder {
         .bind(now)
         .execute(&self.pool)
         .await
-        .map_err(db_err)?;
+        .map_err(|e| self.sql_err(e))?;
         Ok(())
     }
 
@@ -380,7 +374,7 @@ impl QueryBuilder {
         .bind(path)
         .fetch_optional(&self.pool)
         .await
-        .map_err(db_err)?;
+        .map_err(|e| self.sql_err(e))?;
         Ok(row)
     }
 
@@ -405,7 +399,7 @@ impl QueryBuilder {
         .bind(path)
         .fetch_optional(&self.pool)
         .await
-        .map_err(db_err)?;
+        .map_err(|e| self.sql_err(e))?;
         Ok(row)
     }
 
@@ -432,7 +426,7 @@ impl QueryBuilder {
                 .build_query_scalar()
                 .fetch_all(&self.pool)
                 .await
-                .map_err(db_err)?;
+                .map_err(|e| self.sql_err(e))?;
             stale.extend(rows);
         }
         Ok(stale)
@@ -446,7 +440,7 @@ impl QueryBuilder {
         let rows: Vec<String> = sqlx::query_scalar("SELECT path FROM file_contents")
             .fetch_all(&self.pool)
             .await
-            .map_err(db_err)?;
+            .map_err(|e| self.sql_err(e))?;
         Ok(rows.into_iter().collect())
     }
 
@@ -460,7 +454,7 @@ impl QueryBuilder {
             sqlx::query("DELETE FROM file_contents WHERE path NOT IN (SELECT path FROM files)")
                 .execute(&self.pool)
                 .await
-                .map_err(db_err)?;
+                .map_err(|e| self.sql_err(e))?;
         Ok(result.rows_affected() as u32)
     }
 
@@ -469,7 +463,7 @@ impl QueryBuilder {
             .bind(path)
             .execute(&self.pool)
             .await
-            .map_err(db_err)?;
+            .map_err(|e| self.sql_err(e))?;
         Ok(())
     }
 
@@ -485,14 +479,14 @@ impl QueryBuilder {
         let stored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM file_contents")
             .fetch_one(&self.pool)
             .await
-            .map_err(db_err)?;
+            .map_err(|e| self.sql_err(e))?;
         let expected: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM files WHERE language != 'unknown' AND size <= ?",
         )
         .bind(crate::source_store_cap_bytes() as i64)
         .fetch_one(&self.pool)
         .await
-        .map_err(db_err)?;
+        .map_err(|e| self.sql_err(e))?;
         Ok((stored, expected))
     }
 
@@ -501,7 +495,7 @@ impl QueryBuilder {
             .bind(id)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            .map_err(|e| self.sql_err(e))?;
         Ok(row.map(|r| r.into_node()))
     }
 
@@ -523,7 +517,7 @@ impl QueryBuilder {
                 .build_query_as()
                 .fetch_all(&self.pool)
                 .await
-                .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+                .map_err(|e| self.sql_err(e))?;
             nodes.extend(rows.into_iter().map(|r| r.into_node()));
         }
         Ok(nodes)
@@ -534,7 +528,7 @@ impl QueryBuilder {
             .bind(file_path)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            .map_err(|e| self.sql_err(e))?;
         Ok(rows.into_iter().map(|r| r.into_node()).collect())
     }
 
@@ -543,7 +537,7 @@ impl QueryBuilder {
             .bind(name)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            .map_err(|e| self.sql_err(e))?;
         Ok(rows.into_iter().map(|r| r.into_node()).collect())
     }
 
@@ -565,7 +559,7 @@ impl QueryBuilder {
             query
                 .fetch_all(&self.pool)
                 .await
-                .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?
+                .map_err(|e| self.sql_err(e))?
         } else {
             sqlx::query_as::<_, EdgeRow>(
                 "SELECT source, target, kind, metadata, line, col, provenance, confidence FROM edges WHERE source = ?",
@@ -573,7 +567,7 @@ impl QueryBuilder {
             .bind(node_id)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?
+            .map_err(|e| self.sql_err(e))?
         };
         Ok(rows.into_iter().map(|r| r.into_edge()).collect())
     }
@@ -585,7 +579,7 @@ impl QueryBuilder {
         .bind(node_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        .map_err(|e| self.sql_err(e))?;
         Ok(rows.into_iter().map(|r| r.into_edge()).collect())
     }
 
@@ -597,7 +591,7 @@ impl QueryBuilder {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        .map_err(|e| self.sql_err(e))?;
         Ok(rows.into_iter().map(|r| r.into_edge()).collect())
     }
 
@@ -606,7 +600,7 @@ impl QueryBuilder {
         let rows = sqlx::query_as::<_, NodeRow>("SELECT * FROM nodes")
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            .map_err(|e| self.sql_err(e))?;
         Ok(rows.into_iter().map(|r| r.into_node()).collect())
     }
 
@@ -616,17 +610,13 @@ impl QueryBuilder {
         assignments: &[(String, i64, Option<String>)],
     ) -> Result<(), AxError> {
         let now = now_ms();
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        let mut tx = self.pool.begin().await.map_err(|e| self.sql_err(e))?;
         sqlx::query("DELETE FROM node_communities WHERE node_id NOT GLOB 'ax-replica/*'")
             .execute(&mut *tx)
             .await
-            .map_err(db_err)?;
+            .map_err(|e| self.sql_err(e))?;
         if !assignments.is_empty() {
-            let offset:i64=sqlx::query_scalar("SELECT COALESCE(MAX(community_id)+1,0) FROM node_communities WHERE node_id GLOB 'ax-replica/*'").fetch_one(&mut *tx).await.map_err(db_err)?;
+            let offset:i64=sqlx::query_scalar("SELECT COALESCE(MAX(community_id)+1,0) FROM node_communities WHERE node_id GLOB 'ax-replica/*'").fetch_one(&mut *tx).await.map_err(|e| self.sql_err(e))?;
             const CHUNK: usize = 800;
             let native: Vec<_> = assignments
                 .iter()
@@ -643,10 +633,13 @@ impl QueryBuilder {
                         .push_bind(label)
                         .push_bind(now);
                 });
-                qb.build().execute(&mut *tx).await.map_err(db_err)?;
+                qb.build()
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| self.sql_err(e))?;
             }
         }
-        tx.commit().await.map_err(db_err)?;
+        tx.commit().await.map_err(|e| self.sql_err(e))?;
         Ok(())
     }
 
@@ -659,7 +652,7 @@ impl QueryBuilder {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(db_err)?;
+        .map_err(|e| self.sql_err(e))?;
         Ok(rows)
     }
 
@@ -669,7 +662,7 @@ impl QueryBuilder {
         sqlx::query("DELETE FROM nodes WHERE kind = 'doc' AND id NOT GLOB 'ax-replica/*'")
             .execute(&self.pool)
             .await
-            .map_err(db_err)?;
+            .map_err(|e| self.sql_err(e))?;
         Ok(())
     }
 
@@ -688,7 +681,7 @@ impl QueryBuilder {
         .bind(limit)
         .fetch_all(&self.pool)
         .await
-        .map_err(db_err)?;
+        .map_err(|e| self.sql_err(e))?;
         Ok(rows)
     }
 
@@ -697,7 +690,7 @@ impl QueryBuilder {
         let v: Option<i64> = sqlx::query_scalar("SELECT MAX(computed_at) FROM node_communities")
             .fetch_one(&self.pool)
             .await
-            .map_err(db_err)?;
+            .map_err(|e| self.sql_err(e))?;
         Ok(v)
     }
 
@@ -739,7 +732,7 @@ impl QueryBuilder {
                 .bind(offset)
                 .fetch_all(&self.pool)
                 .await
-                .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?
+                .map_err(|e| self.sql_err(e))?
         } else {
             let fts_limit = (limit * 5).max(100);
             let fts_query = build_fts_prefix_query(query);
@@ -767,7 +760,7 @@ impl QueryBuilder {
                     .bind(offset)
                     .fetch_all(&self.pool)
                     .await
-                    .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?
+                    .map_err(|e| self.sql_err(e))?
             } else {
                 Vec::new()
             };
@@ -798,7 +791,7 @@ impl QueryBuilder {
                     .bind(offset)
                     .fetch_all(&self.pool)
                     .await
-                    .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+                    .map_err(|e| self.sql_err(e))?;
             }
 
             rows
@@ -872,7 +865,7 @@ impl QueryBuilder {
         .bind(ref_.language.map(|l| l.as_str()).unwrap_or("unknown"))
         .execute(&self.pool)
         .await
-        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        .map_err(|e| self.sql_err(e))?;
         Ok(())
     }
 
@@ -885,11 +878,7 @@ impl QueryBuilder {
         }
         // 8 columns per row; 1000 rows = 8,000 binds per statement.
         const CHUNK: usize = 1000;
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        let mut tx = self.pool.begin().await.map_err(|e| self.sql_err(e))?;
         for chunk in refs.chunks(CHUNK) {
             let mut qb = sqlx::QueryBuilder::new(
                 "INSERT INTO unresolved_refs (from_node_id, reference_name, reference_kind, line, col, candidates, file_path, language) ",
@@ -911,11 +900,9 @@ impl QueryBuilder {
             qb.build()
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+                .map_err(|e| self.sql_err(e))?;
         }
-        tx.commit()
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        tx.commit().await.map_err(|e| self.sql_err(e))?;
         Ok(())
     }
 
@@ -923,7 +910,7 @@ impl QueryBuilder {
         let rows = sqlx::query_as::<_, UnresolvedRefRow>("SELECT * FROM unresolved_refs")
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            .map_err(|e| self.sql_err(e))?;
         Ok(rows.into_iter().map(|r| r.into_ref()).collect())
     }
 
@@ -946,7 +933,7 @@ impl QueryBuilder {
         let rows = query
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            .map_err(|e| self.sql_err(e))?;
         Ok(rows.into_iter().map(|r| r.into_ref()).collect())
     }
 
@@ -966,7 +953,7 @@ impl QueryBuilder {
         .bind(ref_.file_path.as_deref().unwrap_or(""))
         .execute(&self.pool)
         .await
-        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        .map_err(|e| self.sql_err(e))?;
         Ok(())
     }
 
@@ -974,13 +961,13 @@ impl QueryBuilder {
         sqlx::query_scalar("SELECT COUNT(*) FROM unresolved_refs")
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))
+            .map_err(|e| self.sql_err(e))
     }
     pub async fn clear_unresolved_refs(&self) -> Result<(), AxError> {
         sqlx::query("DELETE FROM unresolved_refs WHERE from_node_id NOT GLOB 'ax-replica/*'")
             .execute(&self.pool)
             .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            .map_err(|e| self.sql_err(e))?;
         Ok(())
     }
 
@@ -991,7 +978,7 @@ impl QueryBuilder {
         )
         .execute(&self.pool)
         .await
-        .map_err(db_err)?;
+        .map_err(|e| self.sql_err(e))?;
         Ok(result.rows_affected())
     }
 
@@ -1002,7 +989,7 @@ impl QueryBuilder {
         )
         .execute(&self.pool)
         .await
-        .map_err(db_err)?;
+        .map_err(|e| self.sql_err(e))?;
         Ok(result.rows_affected())
     }
 
@@ -1013,7 +1000,7 @@ impl QueryBuilder {
         )
         .execute(&self.pool)
         .await
-        .map_err(db_err)?;
+        .map_err(|e| self.sql_err(e))?;
         Ok(result.rows_affected())
     }
 
@@ -1078,7 +1065,10 @@ impl QueryBuilder {
         for name in EXTERNAL {
             query = query.bind(*name);
         }
-        let result = query.execute(&self.pool).await.map_err(db_err)?;
+        let result = query
+            .execute(&self.pool)
+            .await
+            .map_err(|e| self.sql_err(e))?;
         Ok(result.rows_affected())
     }
 
@@ -1086,15 +1076,15 @@ impl QueryBuilder {
         let node_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM nodes")
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            .map_err(|e| self.sql_err(e))?;
         let edge_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM edges")
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            .map_err(|e| self.sql_err(e))?;
         let file_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM files")
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            .map_err(|e| self.sql_err(e))?;
 
         let nodes_by_kind = self.count_grouped("nodes", "kind").await?;
         let edges_by_kind = self.count_grouped("edges", "kind").await?;
@@ -1105,12 +1095,12 @@ impl QueryBuilder {
             sqlx::query_scalar("SELECT COALESCE(MAX(updated_at), 0) FROM nodes")
                 .fetch_one(&self.pool)
                 .await
-                .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+                .map_err(|e| self.sql_err(e))?;
 
         let unresolved_ref_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM unresolved_refs")
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            .map_err(|e| self.sql_err(e))?;
 
         let resolution_total = self.parse_metadata_u32("resolution_total").await?;
         let resolution_resolved = self.parse_metadata_u32("resolution_resolved").await?;
@@ -1149,7 +1139,7 @@ impl QueryBuilder {
         let rows: Vec<(String, i64)> = sqlx::query_as(&sql)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            .map_err(|e| self.sql_err(e))?;
         Ok(rows.into_iter().collect())
     }
 
@@ -1163,7 +1153,7 @@ impl QueryBuilder {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        .map_err(|e| self.sql_err(e))?;
         Ok(rows.into_iter().collect())
     }
 
@@ -1171,7 +1161,7 @@ impl QueryBuilder {
         let result: Option<i64> = sqlx::query_scalar("SELECT MAX(indexed_at) FROM files")
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            .map_err(|e| self.sql_err(e))?;
         Ok(result.unwrap_or(0))
     }
 
@@ -1192,7 +1182,7 @@ impl QueryBuilder {
         .bind(now)
         .execute(&self.pool)
         .await
-        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        .map_err(|e| self.sql_err(e))?;
         Ok(())
     }
 
@@ -1202,7 +1192,7 @@ impl QueryBuilder {
                 .bind(key)
                 .fetch_optional(&self.pool)
                 .await
-                .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+                .map_err(|e| self.sql_err(e))?;
         Ok(result)
     }
 
@@ -1225,7 +1215,7 @@ impl QueryBuilder {
         let rows = sqlx::query_as::<_, FileRow>("SELECT * FROM files ORDER BY path")
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            .map_err(|e| self.sql_err(e))?;
         Ok(rows.into_iter().map(|r| r.into_file()).collect())
     }
 
@@ -1233,23 +1223,23 @@ impl QueryBuilder {
         sqlx::query("DELETE FROM edges WHERE source NOT GLOB 'ax-replica/*'")
             .execute(&self.pool)
             .await
-            .map_err(db_err)?;
+            .map_err(|e| self.sql_err(e))?;
         sqlx::query("DELETE FROM unresolved_refs WHERE from_node_id NOT GLOB 'ax-replica/*'")
             .execute(&self.pool)
             .await
-            .map_err(db_err)?;
+            .map_err(|e| self.sql_err(e))?;
         sqlx::query("DELETE FROM nodes WHERE id NOT GLOB 'ax-replica/*'")
             .execute(&self.pool)
             .await
-            .map_err(db_err)?;
+            .map_err(|e| self.sql_err(e))?;
         sqlx::query("DELETE FROM files WHERE path NOT GLOB 'ax-replica/*'")
             .execute(&self.pool)
             .await
-            .map_err(db_err)?;
+            .map_err(|e| self.sql_err(e))?;
         sqlx::query("DELETE FROM file_contents WHERE path NOT GLOB 'ax-replica/*'")
             .execute(&self.pool)
             .await
-            .map_err(db_err)?;
+            .map_err(|e| self.sql_err(e))?;
         Ok(())
     }
 
@@ -1259,7 +1249,7 @@ impl QueryBuilder {
         )
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        .map_err(|e| self.sql_err(e))?;
         Ok(result)
     }
 
@@ -1269,13 +1259,9 @@ impl QueryBuilder {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        .map_err(|e| self.sql_err(e))?;
         Ok(rows)
     }
-}
-
-fn db_err(e: sqlx::Error) -> AxError {
-    AxError::Database(DatabaseError::new(e.to_string()))
 }
 
 fn score_node_for_query(query: &str, node: &Node) -> f64 {

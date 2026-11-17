@@ -1,0 +1,15 @@
+{
+  "kind": "measured",
+  "evidenceType": "runtime",
+  "target": "windows-arm64",
+  "host": "Hangover Wine 11.16 on Ubuntu 24.04 aarch64 (podman --arch arm64) executing PE32+ AArch64",
+  "method": "cross-compile with llvm-mingw to aarch64-pc-windows-gnullvm; execute via hangover-wine in Linux ARM64 container",
+  "testsPassed": 124,
+  "testsFailed": 0,
+  "features": ["neural-runtime"],
+  "binary": "target-dev/aarch64-pc-windows-gnullvm/debug/build/ax-neural/c9999539953ac92f/out/ax_neural-c9999539953ac92f.exe",
+  "logPath": "target-dev/hangover/winarm-runtime.log",
+  "durationSeconds": 9.16,
+  "timestamp": "2026-11-16T12:12:00Z",
+  "note": "Not cargo check. Hangover executed the Windows ARM64 PE; test result: ok. Host is Linux ARM64 + Hangover, not a native Windows ARM64 machine."
+}

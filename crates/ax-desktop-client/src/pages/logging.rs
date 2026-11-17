@@ -76,7 +76,9 @@ impl LoggingPage {
 
         // Kind chips
         ui.horizontal_wrapped(|ui| {
-            let kinds = ["inbound", "outbound", "preview", "error", "enrich", "internal", "other"];
+            let kinds = [
+                "inbound", "outbound", "preview", "error", "enrich", "internal", "other",
+            ];
             for k in kinds {
                 let count = self.entries.iter().filter(|e| e.kind == k).count();
                 if count == 0 && !self.kind_filter.contains(k) {

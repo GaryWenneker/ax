@@ -1,0 +1,1592 @@
+{
+  "kind": "measured",
+  "scope": "identical cursor-agent tasks across Ax baseline vs Neural prediction",
+  "attribution": "Same agent, model, task prompt/repo snapshot; only neural.prediction.enabled differs",
+  "suite": "/Users/gary/io/ax/docs/specs/ax-neural/agent-suite-30.json",
+  "taskCountDefined": 30,
+  "taskCountExecuted": 30,
+  "model": "composer-2-fast",
+  "agent": "/Users/gary/.local/bin/cursor-agent",
+  "arms": {
+    "B_ax_baseline": {
+      "tasks": 30,
+      "successes": 29,
+      "successRate": 0.9666666666666667,
+      "inputTokens": 607528,
+      "outputTokens": 15184
+    },
+    "C_ax_neural_prediction": {
+      "tasks": 30,
+      "successes": 28,
+      "successRate": 0.9333333333333333,
+      "inputTokens": 602272,
+      "outputTokens": 18778
+    }
+  },
+  "byCategory": {
+    "bug_fix:B_ax_baseline": {
+      "n": 5,
+      "successRate": 0.8
+    },
+    "bug_fix:C_ax_neural_prediction": {
+      "n": 5,
+      "successRate": 1.0
+    },
+    "cross_module:B_ax_baseline": {
+      "n": 5,
+      "successRate": 1.0
+    },
+    "cross_module:C_ax_neural_prediction": {
+      "n": 5,
+      "successRate": 1.0
+    },
+    "new_feature:B_ax_baseline": {
+      "n": 5,
+      "successRate": 1.0
+    },
+    "new_feature:C_ax_neural_prediction": {
+      "n": 5,
+      "successRate": 1.0
+    },
+    "performance:B_ax_baseline": {
+      "n": 5,
+      "successRate": 1.0
+    },
+    "performance:C_ax_neural_prediction": {
+      "n": 5,
+      "successRate": 0.6
+    },
+    "refactoring:B_ax_baseline": {
+      "n": 5,
+      "successRate": 1.0
+    },
+    "refactoring:C_ax_neural_prediction": {
+      "n": 5,
+      "successRate": 1.0
+    },
+    "security:B_ax_baseline": {
+      "n": 5,
+      "successRate": 1.0
+    },
+    "security:C_ax_neural_prediction": {
+      "n": 5,
+      "successRate": 1.0
+    }
+  },
+  "rows": [
+    {
+      "taskId": "bug-01",
+      "category": "bug_fix",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "9acbe536-71fd-4293-bf13-fae5a4948c62",
+      "inputTokens": 13418,
+      "outputTokens": 242,
+      "elapsedMillis": 8414.969041012228,
+      "text": "BUG_FN=parse_int",
+      "anchorsHit": [
+        "BUG_FN=parse_int"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "bug-01",
+      "category": "bug_fix",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "5d45972f-6c70-4842-ac3f-4f82e267e808",
+      "inputTokens": 20359,
+      "outputTokens": 268,
+      "elapsedMillis": 8754.904666915536,
+      "text": "BUG_FN=parse_int",
+      "anchorsHit": [
+        "BUG_FN=parse_int"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "bug-02",
+      "category": "bug_fix",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "7f8bfe91-7dc8-4a27-887d-679c967658eb",
+      "inputTokens": 13507,
+      "outputTokens": 283,
+      "elapsedMillis": 8772.933958098292,
+      "text": "Running preflight, then searching the codebase for the function that clamps negatives to zero.\nBUG_FN=clamp",
+      "anchorsHit": [
+        "BUG_FN=clamp"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "bug-02",
+      "category": "bug_fix",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "cffe770c-70dd-442e-9454-fcf0520365c7",
+      "inputTokens": 23753,
+      "outputTokens": 250,
+      "elapsedMillis": 7986.066749785095,
+      "text": "Searching the codebase for the function that clamps negatives to zero.\nBUG_FN=clamp",
+      "anchorsHit": [
+        "BUG_FN=clamp"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "bug-03",
+      "category": "bug_fix",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "86875949-dbc4-4fc2-bea0-b5ea56d769cd",
+      "inputTokens": 13410,
+      "outputTokens": 266,
+      "elapsedMillis": 8670.733750332147,
+      "text": "**BUG_FN=`find_bug`**\n\nIn `src/lib.rs`, `find_bug` is defined as `pub fn find_bug() -> &'static str` and returns the string `\"off-by-one\"`.",
+      "anchorsHit": [],
+      "taskSuccess": false,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "bug-03",
+      "category": "bug_fix",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "04707f22-b30d-4b95-b671-ca1c40589468",
+      "inputTokens": 14092,
+      "outputTokens": 216,
+      "elapsedMillis": 8985.953249968588,
+      "text": "**BUG_FN=find_bug**\n\nIn `src/lib.rs`, `find_bug` is the function that returns the bug label (`\"off-by-one\"`).",
+      "anchorsHit": [
+        "BUG_FN=find_bug"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "bug-04",
+      "category": "bug_fix",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "46155704-162e-43c5-a275-4672b27c894c",
+      "inputTokens": 14241,
+      "outputTokens": 275,
+      "elapsedMillis": 8350.259374827147,
+      "text": "Searching the codebase for the function that reports the last error.\n**BUG_FN=last_error**\n\nIt\u2019s defined in `src/error.rs` as `pub fn last_error() -> Option<&'static str>`.",
+      "anchorsHit": [
+        "BUG_FN=last_error"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "bug-04",
+      "category": "bug_fix",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "157190ae-5c82-4e0b-8d53-abacf8865d37",
+      "inputTokens": 14716,
+      "outputTokens": 435,
+      "elapsedMillis": 10690.814041998237,
+      "text": "Running preflight and searching the codebase for where the last error is reported.\n**BUG_FN=last_error**\n\nThat\u2019s the public function in `src/error.rs` that returns the last error (currently as `Option<&'static str>`, e.g. `Some(\"overflow\")`).",
+      "anchorsHit": [
+        "BUG_FN=last_error"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "bug-05",
+      "category": "bug_fix",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "498c62fe-0640-40ac-b929-bd7d029aaaff",
+      "inputTokens": 23835,
+      "outputTokens": 325,
+      "elapsedMillis": 16830.54683310911,
+      "text": "Searching the codebase for the retry helper and naming convention for BUG_FN.\n**BUG_FN=retry_once**\n\nThe retry helper is `retry_once` in `src/lib.rs` \u2014 a public function that currently returns `false`.",
+      "anchorsHit": [
+        "BUG_FN=retry_once"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "bug-05",
+      "category": "bug_fix",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "79ac9b18-e503-4990-bb4f-bd74690e4c2f",
+      "inputTokens": 17810,
+      "outputTokens": 999,
+      "elapsedMillis": 12716.953916009516,
+      "text": "Running ax_preflight and searching the codebase for the retry helper naming convention.\n\n\n**BUG_FN=retry_once**\n\nThe retry helper is the public function `retry_once` in `src/lib.rs` (currently a stub that returns `false`).",
+      "anchorsHit": [
+        "BUG_FN=retry_once"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "feat-01",
+      "category": "new_feature",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "34fff744-8f50-4f05-9f48-aa9592b3af28",
+      "inputTokens": 13395,
+      "outputTokens": 260,
+      "elapsedMillis": 8927.538458723575,
+      "text": "`FEAT_FN=feature_flag`\n\nDefined in `src/lib.rs` as `pub fn feature_flag() -> bool { true }`.",
+      "anchorsHit": [
+        "FEAT_FN=feature_flag"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "feat-01",
+      "category": "new_feature",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "547c1772-db35-4ebd-bd96-d9d2ab0a689e",
+      "inputTokens": 14376,
+      "outputTokens": 321,
+      "elapsedMillis": 8822.700541000813,
+      "text": "Starting with preflight, then locating how feature flags are implemented in this repo.\nThe exported feature-flag helper in `src/lib.rs` is `feature_flag`:\n\n**FEAT_FN=feature_flag**",
+      "anchorsHit": [
+        "FEAT_FN=feature_flag"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "feat-02",
+      "category": "new_feature",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "4d0b3ea7-9622-4b1c-9f5a-8a8e26e51c81",
+      "inputTokens": 27076,
+      "outputTokens": 335,
+      "elapsedMillis": 13593.712791800499,
+      "text": "Finding the user-creation entrypoint \u2014 running preflight, then exploring the codebase.\n\n\n**FEAT_FN=create_user**\n\nThe indexed user-creation entrypoint is `create_user` in `src/api.rs` (`pub fn create_user() {}`).",
+      "anchorsHit": [
+        "FEAT_FN=create_user"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "feat-02",
+      "category": "new_feature",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "e46bdf36-f2a2-4a58-a100-76e7b553d4d3",
+      "inputTokens": 22342,
+      "outputTokens": 258,
+      "elapsedMillis": 8507.974124979228,
+      "text": "Searching the codebase for the user-creation entrypoint.\n**FEAT_FN=create_user**\n\nThat is the public entrypoint in `src/api.rs` (`pub fn create_user() {}`).",
+      "anchorsHit": [
+        "FEAT_FN=create_user"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "feat-03",
+      "category": "new_feature",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "50a35869-7da3-42fc-9ef3-c9f28a02c0ac",
+      "inputTokens": 19199,
+      "outputTokens": 289,
+      "elapsedMillis": 8870.122583117336,
+      "text": "Finding the CSV export function and naming it. Running preflight and exploring the codebase.\n\n\nThe CSV export entry point in this baseline is `export_csv` in `src/lib.rs`:\n\n```rust\npub fn export_csv() -> &'static str { \"ok\" }\n```\n\n**FEAT_FN=export_csv**",
+      "anchorsHit": [
+        "FEAT_FN=export_csv"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "feat-03",
+      "category": "new_feature",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "f8a2fd41-b5de-4a5b-8e80-557476966eb3",
+      "inputTokens": 13496,
+      "outputTokens": 285,
+      "elapsedMillis": 17005.267000291497,
+      "text": "Locating the CSV export function in the codebase \u2014 starting with ax preflight, then a targeted search.\n**FEAT_FN=export_csv**\n\nDefined in `src/lib.rs` as `pub fn export_csv() -> &'static str`.",
+      "anchorsHit": [
+        "FEAT_FN=export_csv"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "feat-04",
+      "category": "new_feature",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "8e945c40-45d3-4429-a8c1-99e12f118848",
+      "inputTokens": 32309,
+      "outputTokens": 283,
+      "elapsedMillis": 17355.736958328635,
+      "text": "Running preflight, then locating the webhook URL helper to determine its name.\n**FEAT_FN=webhook_url**\n\nThe webhook URL helper is `webhook_url` in `src/lib.rs` \u2014 it returns the static path `\"/hooks\"`.",
+      "anchorsHit": [
+        "FEAT_FN=webhook_url"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "feat-04",
+      "category": "new_feature",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "6019d563-7f3a-4af7-a6d1-f7f76736a19c",
+      "inputTokens": 23990,
+      "outputTokens": 476,
+      "elapsedMillis": 10668.97395811975,
+      "text": "Running preflight, then locating the webhook URL helper to name it.\n**FEAT_FN=webhook_url**\n\nThe helper is `webhook_url` in `src/lib.rs` \u2014 a public function that returns the static path `\"/hooks\"`.",
+      "anchorsHit": [
+        "FEAT_FN=webhook_url"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "feat-05",
+      "category": "new_feature",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "810094db-ceef-48c5-a28f-2f23bbb2a4e2",
+      "inputTokens": 31657,
+      "outputTokens": 693,
+      "elapsedMillis": 14718.037665821612,
+      "text": "Running ax preflight, then locating the badge adder feature and the FEAT_FN naming convention.\nThe badge-adder in this repo is the public Rust function in `src/lib.rs`:\n\n```rust\npub fn add_badge(name: &str) -> usize\n```\n\n**FEAT_FN=add_badge**",
+      "anchorsHit": [
+        "FEAT_FN=add_badge"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "feat-05",
+      "category": "new_feature",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "0ab8a5b3-d7f1-4d11-8162-94fc1f1eab2a",
+      "inputTokens": 21497,
+      "outputTokens": 882,
+      "elapsedMillis": 23246.842124965042,
+      "text": "Running preflight, then locating the badge adder and FEAT_FN naming pattern in the project.\nThe badge-adder in this repo is the public function in `src/lib.rs`:\n\n```1:1:src/lib.rs\npub fn add_badge(name: &str) -> usize { name.len() }\n```\n\n**FEAT_FN=add_badge**",
+      "anchorsHit": [
+        "FEAT_FN=add_badge"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "ref-01",
+      "category": "refactoring",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "671c2d1a-ea46-4a0a-a423-270b38c833a6",
+      "inputTokens": 19145,
+      "outputTokens": 960,
+      "elapsedMillis": 13331.993292085826,
+      "text": "Running preflight and checking context for the extracted helper naming convention.\n\n\nThe extracted helper in `src/lib.rs` is `extract_helper`; `call_site` is its only caller.\n\n**REF_FN=extract_helper**",
+      "anchorsHit": [
+        "REF_FN=extract_helper"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "ref-01",
+      "category": "refactoring",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "fa88cf5e-7cae-4cf9-aeb7-8b98b64ea5ff",
+      "inputTokens": 22067,
+      "outputTokens": 1617,
+      "elapsedMillis": 22329.06754175201,
+      "text": "Running preflight and checking context for the extracted helper naming.\n\n\nThe callee pulled out of `call_site` in `src/lib.rs` is `extract_helper` (graph edge: `calls \u00b7 extracted`).\n\n**REF_FN=extract_helper**",
+      "anchorsHit": [
+        "REF_FN=extract_helper"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "ref-02",
+      "category": "refactoring",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "323be0f4-d53a-4965-89da-0515d87f188f",
+      "inputTokens": 13771,
+      "outputTokens": 267,
+      "elapsedMillis": 7713.77274999395,
+      "text": "Running preflight, then searching the project for the function that should be renamed.\n`REF_FN=rename_me`\n\nIt\u2019s the public function in `src/lib.rs` \u2014 `pub fn rename_me() {}` \u2014 the placeholder name marks it as the rename target.",
+      "anchorsHit": [
+        "REF_FN=rename_me"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "ref-02",
+      "category": "refactoring",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "1caaf8c2-cc36-4687-b491-dbdfeef94440",
+      "inputTokens": 15818,
+      "outputTokens": 687,
+      "elapsedMillis": 11747.125834226608,
+      "text": "REF_FN=rename_me\n\nThat\u2019s the placeholder in `src/lib.rs` \u2014 `pub fn rename_me() {}` \u2014 the name marks it as the function to rename.",
+      "anchorsHit": [
+        "REF_FN=rename_me"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "ref-03",
+      "category": "refactoring",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "f81cdb69-1467-4dd0-8abd-a5bad1ba64c5",
+      "inputTokens": 14635,
+      "outputTokens": 346,
+      "elapsedMillis": 9663.287334144115,
+      "text": "Running ax_preflight, then locating the split-module function in the codebase.\n**REF_FN=split_module**\n\nIt is defined in `src/lib.rs` inside `inner` as `pub fn split_module() {}`.",
+      "anchorsHit": [
+        "REF_FN=split_module"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "ref-03",
+      "category": "refactoring",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "f934f18b-444f-46c4-9c96-565525e4ca21",
+      "inputTokens": 13897,
+      "outputTokens": 436,
+      "elapsedMillis": 11250.429290812463,
+      "text": "Running preflight, then locating the split-module function in the codebase.\n\n\nThe split-module function in this repo is `split_module` (defined in `src/lib.rs` as `pub fn split_module()` inside `mod inner`).\n\n**REF_FN=split_module**",
+      "anchorsHit": [
+        "REF_FN=split_module"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "ref-04",
+      "category": "refactoring",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "bd5eec40-ecf5-4dd5-bbf8-c8ea3d8c5c6d",
+      "inputTokens": 16057,
+      "outputTokens": 764,
+      "elapsedMillis": 12661.310624796897,
+      "text": "Calling ax preflight and searching the project for how inline candidates and REF_FN are defined.\nThe inline candidate in `src/lib.rs` is the small public function whose body is a single expression (`1 + 1`), which makes it a typical LLVM/Rust inlining target.\n\n**REF_FN=inline_candidate**",
+      "anchorsHit": [
+        "REF_FN=inline_candidate"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "ref-04",
+      "category": "refactoring",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "c9429d01-0874-45a8-98f0-670987f8c9ee",
+      "inputTokens": 20147,
+      "outputTokens": 1083,
+      "elapsedMillis": 15830.077375285327,
+      "text": "Starting with preflight, then locating what defines the inline candidate and `REF_FN`.\n\n\nThe inline candidate in this fixture is the public function in `src/lib.rs`:\n\n```1:1:src/lib.rs\npub fn inline_candidate() -> i32 { 1 + 1 }\n```\n\nREF_FN=inline_candidate",
+      "anchorsHit": [
+        "REF_FN=inline_candidate"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "ref-05",
+      "category": "refactoring",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "cc95acb4-e7d4-4bb2-8ec8-7176f75e02d4",
+      "inputTokens": 20241,
+      "outputTokens": 370,
+      "elapsedMillis": 15447.888040915132,
+      "text": "The flatten helper in this repo is **`flatten_nested`** \u2014 the public function in `src/lib.rs` that returns `i32` from nested blocks.\n\n**REF_FN=flatten_nested**",
+      "anchorsHit": [
+        "REF_FN=flatten_nested"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "ref-05",
+      "category": "refactoring",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "cd40ca1e-6df8-4184-97ab-2cca4a08ff09",
+      "inputTokens": 13872,
+      "outputTokens": 395,
+      "elapsedMillis": 13859.593250323087,
+      "text": "Running preflight and locating the flatten helper in the codebase.\n**REF_FN=flatten_nested**\n\nThat\u2019s the public flatten helper in `src/lib.rs` (`pub fn flatten_nested() -> i32 { { { 3 } } }`).",
+      "anchorsHit": [
+        "REF_FN=flatten_nested"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "sec-01",
+      "category": "security",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "2c9f9c58-633b-4c3a-aa21-c46e1aeccdec",
+      "inputTokens": 34992,
+      "outputTokens": 784,
+      "elapsedMillis": 16518.217915669084,
+      "text": "Running preflight and searching the project for the sanitizer context.\n**SEC_FN=sanitize_input**\n\nThe sanitizer in `src/lib.rs` is `sanitize_input` \u2014 it strips `<` characters from the input string.",
+      "anchorsHit": [
+        "SEC_FN=sanitize_input"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "sec-01",
+      "category": "security",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "090df23e-65fa-42fc-b4c4-e4c1d6abf4e7",
+      "inputTokens": 17829,
+      "outputTokens": 1037,
+      "elapsedMillis": 15309.580458328128,
+      "text": "Running preflight, then locating the sanitizer in the project to determine the correct `SEC_FN` name.\nThe input sanitizer in this repo is **`sanitize_input`** \u2014 a public function in `src/lib.rs` that strips `<` from a string.\n\n**SEC_FN=sanitize_input**",
+      "anchorsHit": [
+        "SEC_FN=sanitize_input"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "sec-02",
+      "category": "security",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "bb14c770-e051-4a79-a690-566e4aa88ba7",
+      "inputTokens": 13677,
+      "outputTokens": 344,
+      "elapsedMillis": 11804.618458263576,
+      "text": "Finding the token checker in the codebase and running preflight.\nThe token checker in `src/auth.rs` is **`check_token`**.\n\n**SEC_FN=check_token**",
+      "anchorsHit": [
+        "SEC_FN=check_token"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "sec-02",
+      "category": "security",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "c1f7d2f9-3887-4045-bf34-a2617e34c68f",
+      "inputTokens": 19046,
+      "outputTokens": 642,
+      "elapsedMillis": 12425.688459072262,
+      "text": "Searching the project for the token checker and its naming convention.\nThe token checker in `src/auth.rs` is **`check_token`**.\n\n```\nSEC_FN=check_token\n```",
+      "anchorsHit": [
+        "SEC_FN=check_token"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "sec-03",
+      "category": "security",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "8286f566-73b2-4faa-aee1-353e2dc791be",
+      "inputTokens": 20696,
+      "outputTokens": 452,
+      "elapsedMillis": 10550.961249973625,
+      "text": "Searching the codebase for the redaction function and running ax preflight.\nThe redaction function is in `src/lib.rs`:\n\n```1:1:src/lib.rs\npub fn redact_secret(s: &str) -> String { \"***\".into() }\n```\n\n**SEC_FN=redact_secret**",
+      "anchorsHit": [
+        "SEC_FN=redact_secret"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "sec-03",
+      "category": "security",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "1c3db140-3000-4307-a03e-2f33c001e47d",
+      "inputTokens": 13886,
+      "outputTokens": 401,
+      "elapsedMillis": 15078.6635838449,
+      "text": "Running preflight, then locating the redaction function in the codebase.\n\n\n**SEC_FN=redact_secret**\n\nThat is the public redaction helper in `src/lib.rs`: it takes `&str` and returns `\"***\"`.",
+      "anchorsHit": [
+        "SEC_FN=redact_secret"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "sec-04",
+      "category": "security",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "7ab52cd6-6f67-4707-8ab4-33374dc5ec2c",
+      "inputTokens": 13700,
+      "outputTokens": 355,
+      "elapsedMillis": 9453.19449994713,
+      "text": "Running preflight and locating the CSRF helper in the codebase.\n\n\n**SEC_FN=csrf_token**\n\nThe CSRF helper is the public function `csrf_token()` in `src/lib.rs`; it returns the static token string `\"tok\"`.",
+      "anchorsHit": [
+        "SEC_FN=csrf_token"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "sec-04",
+      "category": "security",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "8185d4aa-2a8a-41a9-af28-441574bdac97",
+      "inputTokens": 13830,
+      "outputTokens": 394,
+      "elapsedMillis": 10523.755040951073,
+      "text": "Running preflight, then locating the CSRF helper in the codebase.\n**SEC_FN=csrf_token**\n\nThat\u2019s the public helper in `src/lib.rs` that returns the CSRF token string.",
+      "anchorsHit": [
+        "SEC_FN=csrf_token"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "sec-05",
+      "category": "security",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "548cb200-48a4-43ee-b4a0-296c0dddd6b8",
+      "inputTokens": 19839,
+      "outputTokens": 612,
+      "elapsedMillis": 12370.898082852364,
+      "text": "Starting with preflight, then locating the path-denial check in the codebase so we can name it for SEC_FN.\nThe path-denial logic lives in `src/lib.rs` as `deny_path`: it returns whether the path should be rejected (it checks for `..`).\n\n**SEC_FN=deny_path**",
+      "anchorsHit": [
+        "SEC_FN=deny_path"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "sec-05",
+      "category": "security",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "d1cb79a9-680b-4201-8691-b7e6f42ae98c",
+      "inputTokens": 34118,
+      "outputTokens": 541,
+      "elapsedMillis": 12016.078500077128,
+      "text": "Finding the path-denial check in the codebase and its naming convention.\n\n\nThe path-denial check is the function `deny_path` in `src/lib.rs` (it returns whether the path should be denied, e.g. by detecting `..`).\n\n**SEC_FN=deny_path**",
+      "anchorsHit": [
+        "SEC_FN=deny_path"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "perf-01",
+      "category": "performance",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "a301520d-bc10-4c01-a6cf-84266da30823",
+      "inputTokens": 27617,
+      "outputTokens": 335,
+      "elapsedMillis": 10695.19366696477,
+      "text": "Running preflight and locating the hot-path function in this perf baseline project.\n\n\n**PERF_FN=hot_path**\n\nIt\u2019s the public function in `src/lib.rs`:\n\n```1:1:src/lib.rs\npub fn hot_path() -> u64 { 1 }\n```",
+      "anchorsHit": [
+        "PERF_FN=hot_path"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "perf-01",
+      "category": "performance",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "4e6adb2e-d541-43bc-a17c-8a91469645f4",
+      "inputTokens": 34859,
+      "outputTokens": 599,
+      "elapsedMillis": 19458.97145802155,
+      "text": "Running preflight and locating the hot-path function in the project.\nThe hot-path symbol in this project is the public Rust function `hot_path` in `src/lib.rs` (the only defined entry point).\n\n**PERF_FN=hot_path**",
+      "anchorsHit": [
+        "PERF_FN=hot_path"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "perf-02",
+      "category": "performance",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "da98547f-6757-46ab-ab43-452a37c55a11",
+      "inputTokens": 13544,
+      "outputTokens": 322,
+      "elapsedMillis": 10215.240791905671,
+      "text": "Searching the codebase for the cache getter to name it as PERF_FN.\n\n\n**PERF_FN=cache_get**\n\nThat\u2019s the public getter in `src/lib.rs`: `pub fn cache_get(k: &str) -> Option<&'static str>`.",
+      "anchorsHit": [
+        "PERF_FN=cache_get"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "perf-02",
+      "category": "performance",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "3f78d807-4716-469b-a4c9-660ef7f725f0",
+      "inputTokens": 15679,
+      "outputTokens": 509,
+      "elapsedMillis": 18266.904041636735,
+      "text": "Running preflight, then locating the cache getter to name for PERF_FN.\nThe cache getter is `cache_get` in `src/lib.rs`.\n\n**PERF_FN=cache_get**",
+      "anchorsHit": [
+        "PERF_FN=cache_get"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "perf-03",
+      "category": "performance",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "1cca693a-a946-4195-a6b6-7e7cca70d6f4",
+      "inputTokens": 45825,
+      "outputTokens": 965,
+      "elapsedMillis": 24966.302041895688,
+      "text": "Locating the batch encoder and how PERF_FN is used in the project.\n\n\nThe batch encoder in this repo is the public Rust function `batch_encode` in `src/lib.rs` (`pub fn batch_encode(n: usize) -> usize`).\n\n**PERF_FN=batch_encode**",
+      "anchorsHit": [
+        "PERF_FN=batch_encode"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "perf-03",
+      "category": "performance",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "793fb34f-5419-4717-82d1-2e6c4ac62a45",
+      "inputTokens": 16995,
+      "outputTokens": 707,
+      "elapsedMillis": 27346.563917119056,
+      "text": "Finding the batch encoder in the codebase and the PERF_FN naming convention.\nThe batch encoder is the `batch_encode` method in `src/lib.rs`.\n\n**PERF_FN=batch_encode**",
+      "anchorsHit": [
+        "PERF_FN=batch_encode"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "perf-04",
+      "category": "performance",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "25b6cd15-b8ab-4cea-a442-8ce295aaf206",
+      "inputTokens": 32957,
+      "outputTokens": 554,
+      "elapsedMillis": 21063.049791846424,
+      "text": "Running preflight and locating the alloc-avoiding helper in the codebase.\n**PERF_FN=avoid_alloc**\n\nThat\u2019s the public helper in `src/lib.rs` (`pub fn avoid_alloc() -> i32 { 42 }`).",
+      "anchorsHit": [
+        "PERF_FN=avoid_alloc"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "perf-04",
+      "category": "performance",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "d06a9b29-c62e-47ca-a92e-53e542851545",
+      "inputTokens": 14973,
+      "outputTokens": 516,
+      "elapsedMillis": 18580.808167345822,
+      "text": "Calling ax_preflight, then locating the alloc-avoiding helper in the codebase.\n**PERF_FN=`avoid_alloc`**\n\nThat\u2019s the public alloc-avoiding helper in `src/lib.rs` (`pub fn avoid_alloc() -> i32 { 42 }`).",
+      "anchorsHit": [],
+      "taskSuccess": false,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "perf-05",
+      "category": "performance",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "523c975a-291a-4e3d-aa03-e35c33d9f411",
+      "inputTokens": 20958,
+      "outputTokens": 571,
+      "elapsedMillis": 16846.141500398517,
+      "text": "Running preflight and locating the parallel map stub to determine the correct `PERF_FN` name.\nThe parallel map stub in `src/lib.rs` is `parallel_map`:\n\n```1:1:src/lib.rs\npub fn parallel_map() -> usize { 8 }\n```\n\n**PERF_FN=parallel_map**",
+      "anchorsHit": [
+        "PERF_FN=parallel_map"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "perf-05",
+      "category": "performance",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "44e2c0ae-81de-495a-a07e-f6a326fce927",
+      "inputTokens": 13839,
+      "outputTokens": 448,
+      "elapsedMillis": 18153.463624883443,
+      "text": "Running preflight and locating the parallel map stub in the project.\n\n\n**PERF_FN=`parallel_map`**\n\nIn `src/lib.rs` the stub is `pub fn parallel_map() -> usize { 8 }`.",
+      "anchorsHit": [],
+      "taskSuccess": false,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "xmod-01",
+      "category": "cross_module",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "1a68fdaf-a5f5-4a3a-9719-4705be795cad",
+      "inputTokens": 15578,
+      "outputTokens": 521,
+      "elapsedMillis": 25175.748167093843,
+      "text": "Running ax preflight, then exploring which function in module `a` is called from module `b`.\nThe function in module `a` that `b` calls is **`module_a`**.\n\n**XMOD_FN=module_a**\n\nIn `src/b.rs`, `module_b` invokes it as `crate::a::module_a()`.",
+      "anchorsHit": [
+        "XMOD_FN=module_a"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "xmod-01",
+      "category": "cross_module",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "72b444d6-498d-42a5-bd4f-9bd21cfa3227",
+      "inputTokens": 51777,
+      "outputTokens": 940,
+      "elapsedMillis": 29570.146167185158,
+      "text": "Finding the function in module `a` invoked from module `b`. Running preflight and exploring the project structure.\n\n\nThe function in module `a` that `b` calls is **`module_a`**.\n\n`src/b.rs` invokes it as `crate::a::module_a()` from `module_b`:\n\n```1:1:src/b.rs\npub fn module_b() { crate::a::module_a(); }\n```\n\n**XMOD_FN=module_a**",
+      "anchorsHit": [
+        "XMOD_FN=module_a"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "xmod-02",
+      "category": "cross_module",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "1479e290-facb-429f-bf6a-8da7dded79a6",
+      "inputTokens": 13480,
+      "outputTokens": 268,
+      "elapsedMillis": 15189.914499875158,
+      "text": "Identifying the core API the UI calls \u2014 starting with project preflight, then tracing UI entry points.\nThe UI layer exposes `ui_call()`, which delegates straight to the core crate:\n\n```1:1:src/ui.rs\npub fn ui_call() -> i32 { crate::core::core_api() }\n```\n\n**XMOD_FN=core_api**",
+      "anchorsHit": [
+        "XMOD_FN=core_api"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "xmod-02",
+      "category": "cross_module",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "1aac6cef-2f71-4fb2-bd7a-ab97a8805358",
+      "inputTokens": 14263,
+      "outputTokens": 243,
+      "elapsedMillis": 13418.348833918571,
+      "text": "Identifying the core API the UI calls \u2014 starting with project preflight, then tracing UI usage.\n**XMOD_FN=core_api**\n\nThe UI exposes `ui_call()` in `src/ui.rs`, which delegates to `crate::core::core_api()` \u2014 that\u2019s the core API the UI uses.",
+      "anchorsHit": [
+        "XMOD_FN=core_api"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "xmod-03",
+      "category": "cross_module",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "3e4c84b2-80a6-4be3-9e0c-b9490898e0af",
+      "inputTokens": 15483,
+      "outputTokens": 731,
+      "elapsedMillis": 27012.87195784971,
+      "text": "Searching the codebase for which database function the service invokes.\n**XMOD_FN=query**\n\n`service::run` invokes `crate::db::query()`.",
+      "anchorsHit": [
+        "XMOD_FN=query"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "xmod-03",
+      "category": "cross_module",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "cfdf0bb0-9b13-428b-b80d-34a1efbf6f6b",
+      "inputTokens": 13502,
+      "outputTokens": 256,
+      "elapsedMillis": 16090.804334264249,
+      "text": "Finding which database function the service invokes. Running preflight and exploring the codebase.\n\n\n**XMOD_FN=query**\n\n`src/service.rs` defines `run()`, which calls `crate::db::query()`.",
+      "anchorsHit": [
+        "XMOD_FN=query"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "xmod-04",
+      "category": "cross_module",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "21b32181-c20c-4075-b8d5-485f6aff5bff",
+      "inputTokens": 15816,
+      "outputTokens": 1247,
+      "elapsedMillis": 34245.20670901984,
+      "text": "Searching the codebase for the net connect function.\n\n\nThe `net` module\u2019s connect entry point is **`connect`**, invoked from `boot()` as `crate::net::connect()`.\n\n**XMOD_FN=connect**",
+      "anchorsHit": [
+        "XMOD_FN=connect"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "xmod-04",
+      "category": "cross_module",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "aa8b6607-36ee-4c1c-b2b9-3fd2b0d50f41",
+      "inputTokens": 29283,
+      "outputTokens": 1997,
+      "elapsedMillis": 44199.75395780057,
+      "text": "Searching the project for the net connect function and the XMOD_FN convention.\n\n\nThe `net` connect function is invoked from `boot()` as `crate::net::connect()`:\n\n```1:1:src/app.rs\npub fn boot() { crate::net::connect(); }\n```\n\n**XMOD_FN=connect**",
+      "anchorsHit": [
+        "XMOD_FN=connect"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "xmod-05",
+      "category": "cross_module",
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "be2a26a0-01da-47ea-aefd-e51bb40aa66b",
+      "inputTokens": 17470,
+      "outputTokens": 1165,
+      "elapsedMillis": 26522.469750139862,
+      "text": "Searching the codebase for the shared utility both sides use.\n\n\nThe shared helper is **`shared_util`** \u2014 both `left()` and `right()` call `crate::shared::shared_util()`.\n\n**XMOD_FN=shared_util**",
+      "anchorsHit": [
+        "XMOD_FN=shared_util"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    },
+    {
+      "taskId": "xmod-05",
+      "category": "cross_module",
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "ok": true,
+      "session": "43626a70-de1a-4226-bfc2-73572c575208",
+      "inputTokens": 26161,
+      "outputTokens": 940,
+      "elapsedMillis": 33795.90045893565,
+      "text": "Searching the codebase for the shared utility both sides use.\nThe left and right entry points both call `crate::shared::shared_util()`:\n\n```1:1:src/left.rs\npub fn left() { let _ = crate::shared::shared_util(); }\n```\n\n```1:1:src/right.rs\npub fn right() { let _ = crate::shared::shared_util(); }\n```\n\n**XMOD_FN=shared_util**",
+      "anchorsHit": [
+        "XMOD_FN=shared_util"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0
+    }
+  ],
+  "productionDefaultsUnchanged": true,
+  "semanticWeight": 0.0,
+  "minimumTasksRequired": 30,
+  "softAnchorSuccess": {
+    "kind": "measured",
+    "method": "exact anchors OR KEY=`value` markdown variant",
+    "B_ax_baseline": {
+      "successRate": 1.0,
+      "tasks": 30
+    },
+    "C_ax_neural_prediction": {
+      "successRate": 1.0,
+      "tasks": 30
+    }
+  },
+  "verdict": {
+    "neuralImprovesSuccessRate": false,
+    "strictNeuralImprovesSuccessRate": false,
+    "note": "On this suite Neural prediction did not improve overall success; soft scoring equalizes markdown false negatives."
+  }
+}

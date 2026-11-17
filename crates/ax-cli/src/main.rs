@@ -163,6 +163,16 @@ enum Commands {
             help = "Confirm a candidate memory by id. Same as ax_remember action=confirm."
         )]
         confirm: Option<String>,
+        #[arg(
+            long,
+            help = "Purge a memory by id (row, cues, links, vectors, tombstone). Same as ax_remember action=purge."
+        )]
+        purge: Option<String>,
+        #[arg(
+            long = "when",
+            help = "Prospective trigger (file:glob | symbol:name | error:pat | command:pat). Stored as a when: tag."
+        )]
+        when: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -184,6 +194,29 @@ enum Commands {
         depth: String,
         #[arg(long)]
         limit: Option<u32>,
+        #[arg(long, help = "Same as ax_recall session.")]
+        session: Option<String>,
+        #[arg(long, help = "Same as ax_recall turn.")]
+        turn: Option<String>,
+        #[arg(long, help = "Same as ax_recall keyword.")]
+        keyword: Option<String>,
+        #[arg(long, help = "Same as ax_recall trigger.")]
+        trigger: Option<String>,
+        #[arg(long, help = "Same as ax_recall file.")]
+        file: Option<String>,
+        #[arg(long, help = "Same as ax_recall symbol.")]
+        symbol: Option<String>,
+        #[arg(long, help = "Same as ax_recall kind.")]
+        kind: Option<String>,
+        #[arg(long, help = "Same as ax_recall since.")]
+        since: Option<i64>,
+        #[arg(long, help = "Same as ax_recall until.")]
+        until: Option<i64>,
+        #[arg(
+            long = "as-of",
+            help = "Only memories created at or before this epoch ms. Same as ax_recall as_of."
+        )]
+        as_of: Option<i64>,
         #[arg(long)]
         json: bool,
     },
@@ -282,6 +315,11 @@ enum Commands {
         path: Option<String>,
         #[arg(long)]
         json: bool,
+    },
+    /// Check or repair a SQLite database
+    Db {
+        #[command(subcommand)]
+        action: DbCommands,
     },
     /// Find callers
     #[command(long_about = help_text::CALLERS_LONG)]
@@ -552,6 +590,13 @@ enum Commands {
     Offload {
         #[command(subcommand)]
         action: Option<OffloadCommands>,
+    },
+    /// Neural Intelligence. Required. ax.json cannot turn it off.
+    Neural {
+        #[arg(long, help = "Project root. Defaults to the current directory")]
+        path: Option<String>,
+        #[command(subcommand)]
+        action: Option<NeuralCommands>,
     },
     /// Browse the local ax code graph in a web UI
     #[command(long_about = help_text::WEB_LONG)]
@@ -1342,6 +1387,49 @@ enum SavingsHookAction {
 }
 
 #[derive(Subcommand)]
+enum DbCommands {
+    /// Report integrity problems. Exits non-zero when something is wrong.
+    Check {
+        #[arg(long, value_name = "DIR")]
+        path: Option<String>,
+        #[arg(
+            long,
+            value_name = "WHICH",
+            default_value = "project",
+            help = "project | usage | global | all"
+        )]
+        db: String,
+        #[arg(long, help = "Use PRAGMA quick_check instead of integrity_check")]
+        quick: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Back up the database, then rebuild indexes, search, and broken links.
+    Repair {
+        #[arg(long, value_name = "DIR")]
+        path: Option<String>,
+        #[arg(
+            long,
+            value_name = "WHICH",
+            default_value = "project",
+            help = "project | usage | global | all"
+        )]
+        db: String,
+        #[arg(long, help = "Show the plan and write nothing")]
+        dry_run: bool,
+        #[arg(
+            long,
+            help = "With an unreadable file, keep the original and record that page recovery is unavailable"
+        )]
+        salvage: bool,
+        #[arg(long, help = "Stop the project daemon, then retry the lock")]
+        stop_writers: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum MemoryCommands {
     /// Export memories tagged for team sync (default tag: shared)
     Export {
@@ -1362,6 +1450,11 @@ enum MemoryCommands {
         path: Option<String>,
         #[arg(long)]
         quiet: bool,
+    },
+    /// Backfill empty search_text and rebuild memories_fts
+    Reindex {
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -1481,6 +1574,230 @@ enum OffloadCommands {
     },
     /// Remove offload configuration
     Clear,
+}
+
+#[derive(Subcommand)]
+enum NeuralCommands {
+    /// Required Neural status with measured metrics. Same JSON as ax_neural_status.
+    Status,
+    /// Semantic search. Empty until a bake-off admits a model.
+    Search { query: String },
+    /// Rank context blocks as preflight does. Hard-required blocks stay first.
+    Rank {
+        query: String,
+        #[arg(
+            long,
+            help = "JSON array of {id, class, text}; class is hard_required, high_value, or optional"
+        )]
+        blocks: Option<String>,
+    },
+    /// Predict skills, rules, memories, and files. Labeled predicted.
+    Predict { task: String },
+    /// Explain the locked fusion weights and the zero semantic blend.
+    Explain,
+    /// Store one execution feedback row. Collection must be enabled.
+    Feedback {
+        execution_id: String,
+        task_category: String,
+        outcome: String,
+        #[arg(
+            long = "context-id",
+            help = "Context id; repeat for more. memory:<id> for a memory"
+        )]
+        context_ids: Vec<String>,
+        #[arg(long = "skill-id", help = "Skill id; repeat for more")]
+        skill_ids: Vec<String>,
+        #[arg(long = "rule-id", help = "Rule id; repeat for more")]
+        rule_ids: Vec<String>,
+        #[arg(long, default_value_t = 0)]
+        retry_count: i64,
+        #[arg(long, default_value_t = 0)]
+        input_tokens: i64,
+        #[arg(long, default_value_t = 0)]
+        output_tokens: i64,
+    },
+    /// Suggest links from this project's edges and feedback. Never writes graph edges.
+    Graph {
+        #[arg(
+            long,
+            help = "JSON array of {source, target}. A preview that stores nothing"
+        )]
+        edges: Option<String>,
+    },
+    /// List registered models. JSON includes bake-off challenger or admission note; stderr prints status.
+    Models,
+    /// Show the promoted checksum for a model id.
+    ModelStatus { model_id: String },
+    /// Bake-off of the fused hash-v1 pipeline on the built-in coding fixture, in a temporary database.
+    Benchmark,
+    /// Phase 2 A/B/C retrieval metrics on the built-in coding fixture (benchmark adapters only).
+    #[command(name = "benchmark-abc")]
+    BenchmarkAbc,
+    /// Phase 3 embedding-runtime bake-off (hash/lexical vs ONNX/Candle status). Temporary fixture only.
+    #[command(name = "embed-bakeoff")]
+    EmbedBakeoff,
+    /// Validation-only ONNX production-path probe + arms A–D (does not change production defaults).
+    #[command(name = "path-validate")]
+    PathValidate,
+    /// Phase 6 fixture agent-eval harness (context P/R across arms; live LLM not_measured).
+    #[command(name = "agent-eval")]
+    AgentEval,
+    /// Offline ranking-prior learning from feedback export (train/validation split). Never auto-promotes.
+    Learn {
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        #[arg(long = "validation-ratio", default_value_t = 0.25)]
+        validation_ratio: f64,
+        #[arg(long = "dataset-version", default_value = "feedback-export")]
+        dataset_version: String,
+        #[arg(long = "model-version", default_value = "rank-prior-1")]
+        model_version: String,
+    },
+    /// Leave-one-out evaluation of predictions on the built-in coding fixture. Stored for status.
+    Evaluate,
+    /// Share packet for neural.mode and the distribution keys. Never sent.
+    Share,
+    /// Write feedback rows for an offline trainer. CLI only. Leaves out secret-shaped rows and the project path.
+    Export {
+        #[arg(long, help = "File to write")]
+        out: std::path::PathBuf,
+    },
+    /// Promote a registered model. Requires an explicit flag and a bake-off win.
+    Promote {
+        model_id: String,
+        version: String,
+        #[arg(long)]
+        explicit: bool,
+        #[arg(long)]
+        beats_baseline: bool,
+        #[arg(long)]
+        regressions_clear: bool,
+    },
+    /// Select the previous promoted checksum.
+    Rollback { model_id: String },
+    /// Register a model checksum. Does not promote it.
+    Register {
+        model_id: String,
+        version: String,
+        checksum: String,
+        #[arg(long, default_value = "embedding")]
+        model_type: String,
+        #[arg(long, default_value = "unspecified")]
+        dataset_version: String,
+        #[arg(long, default_value = "untested")]
+        platforms: String,
+        #[arg(long, help = "JSON object of measured metrics")]
+        metrics: Option<String>,
+    },
+}
+
+/// The dispatch command and MCP-shaped arguments for one `ax neural` subcommand.
+fn neural_request(
+    action: Option<NeuralCommands>,
+) -> Result<(&'static str, serde_json::Value), String> {
+    use commands::neural::{FeedbackFlags, RegisterFlags};
+    use serde_json::json;
+    match action {
+        Some(NeuralCommands::Status) | None => Ok(("status", json!({}))),
+        Some(NeuralCommands::Search { query }) => Ok(("search", json!({ "query": query }))),
+        Some(NeuralCommands::Rank { query, blocks }) => {
+            commands::neural::rank_args(query, blocks).map(|args| ("rank", args))
+        }
+        Some(NeuralCommands::Predict { task }) => Ok(("predict", json!({ "task": task }))),
+        Some(NeuralCommands::Explain) => Ok(("explain", json!({}))),
+        Some(NeuralCommands::Feedback {
+            execution_id,
+            task_category,
+            outcome,
+            context_ids,
+            skill_ids,
+            rule_ids,
+            retry_count,
+            input_tokens,
+            output_tokens,
+        }) => Ok((
+            "feedback",
+            commands::neural::feedback_args(FeedbackFlags {
+                execution_id,
+                task_category,
+                outcome,
+                context_ids,
+                skill_ids,
+                rule_ids,
+                retry_count,
+                input_tokens,
+                output_tokens,
+            }),
+        )),
+        Some(NeuralCommands::Graph { edges }) => {
+            commands::neural::graph_args(edges).map(|args| ("graph", args))
+        }
+        Some(NeuralCommands::Models) => Ok(("models", json!({}))),
+        Some(NeuralCommands::ModelStatus { model_id }) => {
+            Ok(("model_status", json!({ "modelId": model_id })))
+        }
+        Some(NeuralCommands::Benchmark) => Ok(("benchmark", json!({}))),
+        Some(NeuralCommands::BenchmarkAbc) => Ok(("benchmark-abc", json!({}))),
+        Some(NeuralCommands::EmbedBakeoff) => Ok(("embed-bakeoff", json!({}))),
+        Some(NeuralCommands::PathValidate) => Ok(("path-validate", json!({}))),
+        Some(NeuralCommands::AgentEval) => Ok(("agent-eval", json!({}))),
+        Some(NeuralCommands::Learn {
+            seed,
+            validation_ratio,
+            dataset_version,
+            model_version,
+        }) => Ok((
+            "learn",
+            json!({
+                "seed": seed,
+                "validationRatio": validation_ratio,
+                "datasetVersion": dataset_version,
+                "modelVersion": model_version
+            }),
+        )),
+        Some(NeuralCommands::Evaluate) => Ok(("evaluate", json!({}))),
+        Some(NeuralCommands::Share) => Ok(("share", json!({}))),
+        Some(NeuralCommands::Export { .. }) => {
+            Err("export writes a file and has no MCP command".into())
+        }
+        Some(NeuralCommands::Promote {
+            model_id,
+            version,
+            explicit,
+            beats_baseline,
+            regressions_clear,
+        }) => Ok((
+            "promote",
+            json!({
+                "modelId": model_id,
+                "version": version,
+                "explicit": explicit,
+                "beatsBaseline": beats_baseline,
+                "regressionsClear": regressions_clear
+            }),
+        )),
+        Some(NeuralCommands::Rollback { model_id }) => {
+            Ok(("rollback", json!({ "modelId": model_id })))
+        }
+        Some(NeuralCommands::Register {
+            model_id,
+            version,
+            checksum,
+            model_type,
+            dataset_version,
+            platforms,
+            metrics,
+        }) => commands::neural::register_args(RegisterFlags {
+            model_id,
+            version,
+            checksum,
+            model_type,
+            dataset_version,
+            platforms,
+            metrics,
+        })
+        .map(|args| ("register", args)),
+    }
 }
 
 #[derive(Subcommand)]
@@ -2095,6 +2412,8 @@ async fn async_main() {
             files,
             triggers,
             confirm,
+            purge,
+            when,
             json,
         }) => {
             commands::memory::run_remember(commands::memory::RememberArgs {
@@ -2105,6 +2424,8 @@ async fn async_main() {
                 files,
                 triggers,
                 confirm,
+                purge,
+                when,
                 json,
             })
             .await
@@ -2115,8 +2436,39 @@ async fn async_main() {
             id,
             depth,
             limit,
+            session,
+            turn,
+            keyword,
+            trigger,
+            file,
+            symbol,
+            kind,
+            since,
+            until,
+            as_of,
             json,
-        }) => commands::memory::run_recall(query, cue, id, depth, limit, json).await,
+        }) => {
+            commands::memory::run_recall(
+                query,
+                cue,
+                id,
+                depth,
+                limit,
+                ax_memory::MemoryFilter {
+                    session,
+                    turn,
+                    keyword,
+                    trigger,
+                    file,
+                    symbol,
+                    kind,
+                    since,
+                    until: as_of.or(until),
+                },
+                json,
+            )
+            .await
+        }
         Some(Commands::History {
             query,
             since,
@@ -2135,6 +2487,7 @@ async fn async_main() {
             MemoryCommands::Import { path, quiet } => {
                 commands::memory::run_import(path, quiet).await
             }
+            MemoryCommands::Reindex { json } => commands::memory::run_reindex(json).await,
         },
         Some(Commands::Node { name }) => commands::node::run(name).await,
         Some(Commands::Files { format, json }) => commands::files::run(format, json).await,
@@ -2578,6 +2931,19 @@ async fn async_main() {
                 _ => commands::doctor::DoctorMode::Cli,
             };
             commands::doctor::run(mode, path, json).await
+        },
+        Some(Commands::Db { action }) => match action {
+            DbCommands::Check { path, db, quick, json } => {
+                commands::db::run_check(path, db, quick, json).await
+            }
+            DbCommands::Repair {
+                path,
+                db,
+                dry_run,
+                salvage,
+                stop_writers,
+                json,
+            } => commands::db::run_repair(path, db, dry_run, salvage, stop_writers, json).await,
         },
         Some(Commands::Callers { symbol }) => commands::callers::run(symbol).await,
         Some(Commands::Callees { symbol }) => commands::callees::run(symbol).await,
@@ -3193,6 +3559,16 @@ async fn async_main() {
             }
             None => commands::offload::run(Some("status".into()), None, None),
         },
+        Some(Commands::Neural { path, action }) => match commands::neural::project_root(path) {
+            Err(error) => Err(error),
+            Ok(root) => match action {
+                Some(NeuralCommands::Export { out }) => commands::neural::export(root, out).await,
+                other => match neural_request(other) {
+                    Ok((name, args)) => commands::neural::run(root, name, args).await,
+                    Err(error) => Err(error),
+                },
+            },
+        },
         Some(Commands::Serve { mcp, daemon, path }) if mcp && daemon => {
             let root = commands::resolve_path(path);
             if let Err(error) = ax_web::replication_setup::auto_start(&root).await {
@@ -3312,6 +3688,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Turn { .. }) => Some("turn".into()),
         Some(Commands::Cache { .. }) => Some("cache".into()),
         Some(Commands::Doctor { .. }) => Some("doctor".into()),
+        Some(Commands::Db { .. }) => Some("db".into()),
         Some(Commands::Callers { .. }) => Some("callers".into()),
         Some(Commands::Callees { .. }) => Some("callees".into()),
         Some(Commands::Impact { .. }) => Some("impact".into()),
@@ -3342,6 +3719,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Global { .. }) => Some("global".into()),
         Some(Commands::Mcp { .. }) => Some("mcp".into()),
         Some(Commands::Offload { .. }) => Some("offload".into()),
+        Some(Commands::Neural { .. }) => Some("neural".into()),
         Some(Commands::Web { .. }) => Some("web".into()),
         Some(Commands::Desktop { .. }) => Some("desktop".into()),
         Some(Commands::Share { .. }) => Some("share".into()),
@@ -3408,5 +3786,169 @@ mod log_directive_tests {
             log_directive(&args(&["ax", "recall", "turn-hook"])),
             "ax=info"
         );
+    }
+}
+
+#[cfg(test)]
+mod neural_request_tests {
+    use super::{neural_request, Cli, Commands};
+    use clap::Parser;
+    use serde_json::{json, Value};
+    use std::path::Path;
+
+    /// The dispatch command and arguments that `ax neural <words>` sends. Parsed
+    /// on a 16 MiB stack like `main`: in debug builds the derived parser
+    /// overflows the 2 MiB stack of a test thread.
+    fn request(words: &[&str]) -> Result<(&'static str, Value), String> {
+        let argv: Vec<String> = ["ax", "neural"]
+            .iter()
+            .chain(words)
+            .map(|word| word.to_string())
+            .collect();
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || match Cli::try_parse_from(&argv).unwrap().command {
+                Some(Commands::Neural { action, .. }) => neural_request(action),
+                _ => panic!("{argv:?} is not a Neural command"),
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    async fn send(root: &Path, db: &ax_db::Database, words: &[&str]) -> Value {
+        let (name, args) = request(words).unwrap();
+        ax_neural::dispatch::handle(root, name, &args, Some(db.pool()))
+            .await
+            .unwrap_or_else(|error| panic!("ax neural {words:?}: {error}"))
+    }
+
+    #[test]
+    fn each_subcommand_sends_the_mcp_command_and_argument_names() {
+        const BLOCKS: &str = r#"[{"id":"a","class":"optional","text":"t"}]"#;
+        let cases: Vec<(&[&str], &str, Value)> = vec![
+            (&[], "status", json!({})),
+            (&["status"], "status", json!({})),
+            (
+                &["search", "parser errors"],
+                "search",
+                json!({ "query": "parser errors" }),
+            ),
+            (
+                &["rank", "fix it", "--blocks", BLOCKS],
+                "rank",
+                json!({ "query": "fix it", "blocks": [{ "id": "a", "class": "optional", "text": "t" }] }),
+            ),
+            (
+                &["predict", "fix the parser"],
+                "predict",
+                json!({ "task": "fix the parser" }),
+            ),
+            (&["explain"], "explain", json!({})),
+            (
+                &[
+                    "feedback",
+                    "e1",
+                    "parser",
+                    "success",
+                    "--skill-id",
+                    "parse-errors",
+                    "--retry-count",
+                    "2",
+                ],
+                "feedback",
+                json!({
+                    "executionId": "e1",
+                    "taskCategory": "parser",
+                    "outcome": "success",
+                    "contextIds": [],
+                    "skillIds": ["parse-errors"],
+                    "ruleIds": [],
+                    "retryCount": 2,
+                    "inputTokens": 0,
+                    "outputTokens": 0
+                }),
+            ),
+            (&["graph"], "graph", json!({})),
+            (&["models"], "models", json!({})),
+            (
+                &["model-status", "m"],
+                "model_status",
+                json!({ "modelId": "m" }),
+            ),
+            (&["benchmark"], "benchmark", json!({})),
+            (&["benchmark-abc"], "benchmark-abc", json!({})),
+            (&["embed-bakeoff"], "embed-bakeoff", json!({})),
+            (&["path-validate"], "path-validate", json!({})),
+            (&["learn"], "learn", json!({"seed":1,"validationRatio":0.25,"datasetVersion":"feedback-export","modelVersion":"rank-prior-1"})),
+            (&["evaluate"], "evaluate", json!({})),
+            (&["share"], "share", json!({})),
+            (
+                &[
+                    "promote",
+                    "m",
+                    "2",
+                    "--explicit",
+                    "--beats-baseline",
+                    "--regressions-clear",
+                ],
+                "promote",
+                json!({
+                    "modelId": "m",
+                    "version": "2",
+                    "explicit": true,
+                    "beatsBaseline": true,
+                    "regressionsClear": true
+                }),
+            ),
+            (&["rollback", "m"], "rollback", json!({ "modelId": "m" })),
+            (
+                &["register", "m", "1", "abc"],
+                "register",
+                json!({
+                    "modelId": "m",
+                    "version": "1",
+                    "checksum": "abc",
+                    "modelType": "embedding",
+                    "datasetVersion": "unspecified",
+                    "platforms": "untested",
+                    "metrics": {}
+                }),
+            ),
+        ];
+        for (words, name, args) in cases {
+            assert_eq!(request(words), Ok((name, args)), "ax neural {words:?}");
+        }
+        let error = request(&["export", "--out", "rows.json"]).unwrap_err();
+        assert!(error.contains("no MCP command"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn model_commands_built_by_the_cli_work_through_the_shared_dispatcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let db = ax_db::Database::open(&root.join("neural-test.db"))
+            .await
+            .unwrap();
+        let metrics = r#"{"precision":0.8}"#;
+        let flags = ["--explicit", "--beats-baseline", "--regressions-clear"];
+        send(
+            root,
+            &db,
+            &["register", "m", "1", "aaa", "--metrics", metrics],
+        )
+        .await;
+        send(root, &db, &["register", "m", "2", "bbb"]).await;
+        send(root, &db, &[&["promote", "m", "1"][..], &flags].concat()).await;
+        send(root, &db, &[&["promote", "m", "2"][..], &flags].concat()).await;
+        let status = send(root, &db, &["model-status", "m"]).await;
+        assert_eq!(status["promotedChecksum"], "bbb");
+
+        let back = send(root, &db, &["rollback", "m"]).await;
+        assert_eq!(back["rolledBackTo"], "1");
+        let status = send(root, &db, &["model-status", "m"]).await;
+        assert_eq!(status["promotedChecksum"], "aaa");
+        let models = send(root, &db, &["models"]).await;
+        assert_eq!(models["models"].as_array().unwrap().len(), 2);
     }
 }

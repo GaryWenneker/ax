@@ -130,7 +130,8 @@ fn room_for_memories(root: &std::path::Path) {
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_else(|| serde_json::json!({}));
-    config["context"]["budgetTokens"] = serde_json::json!(200_000);
+    // 300 is the reserved memory slice. A pass must not depend on a 200_000 ceiling.
+    config["context"]["budgetTokens"] = serde_json::json!(300);
     std::fs::write(&config_path, config.to_string()).unwrap();
 }
 
@@ -341,25 +342,25 @@ async fn archive_history_lists_the_same_graph_changes_on_every_door() {
 }
 
 async fn candidate(db: &ax_db::Database, turn: &str) -> String {
-    ax_memory::save_turn(
+    let row = ax_memory::remember(
         db.pool(),
-        &ax_memory::TurnRecord {
-            id: turn.into(),
+        ax_memory::RememberInput {
             title: format!("Use cues {turn}"),
             body: format!("We decided {turn} fetches by cue because names are exact."),
+            kind: Some("decision".into()),
+            tags: vec![],
             files: vec![],
+            source: Some("consolidation".into()),
         },
-        now_ms(),
     )
     .await
     .unwrap();
-    ax_memory::consolidate(db.pool()).await.unwrap();
-    sqlx::query_scalar(
-        "SELECT id FROM memories WHERE source = 'consolidation' AND status = 'candidate' ORDER BY created_at DESC LIMIT 1",
-    )
-    .fetch_one(db.pool())
-    .await
-    .unwrap()
+    sqlx::query("UPDATE memories SET status = 'candidate' WHERE id = ?")
+        .bind(&row.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    row.id
 }
 
 async fn status(db: &ax_db::Database, id: &str) -> String {
@@ -458,4 +459,54 @@ async fn preflight_lists_the_cue_hit_first_on_cli_and_mcp() {
         };
         assert!(cue < other, "the cue hit must come first: {text}");
     }
+}
+
+#[tokio::test]
+async fn depth_backup_and_feedback_keys_are_shared() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let init = Command::new(ax_bin())
+        .current_dir(root)
+        .args(["init"])
+        .output()
+        .expect("spawn ax init");
+    assert!(init.status.success());
+    let stored = run_ax(
+        root,
+        &[
+            "remember",
+            "Backup depth finds this unique phrase zztop",
+            "--title",
+            "BackupPhrase",
+            "--json",
+        ],
+    );
+    let id = stored["id"].as_str().unwrap().to_string();
+    let db = ax_db::Database::open(&root.join(".ax").join("ax.db"))
+        .await
+        .unwrap();
+    let _ = ax_memory::write_full_backup(db.pool(), root, 1)
+        .await
+        .unwrap();
+    let backup = ax_memory::search(
+        db.pool(),
+        &ax_memory::SearchRequest {
+            query: "zztop".into(),
+            depth: ax_memory::Depth::Backup,
+            limit: 5,
+            ..ax_memory::SearchRequest::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(!backup.is_empty(), "backup depth should find the phrase");
+    assert!(backup[0].why.is_some());
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    assert!(ax_memory::record_feedback(db.pool(), &id, true, now)
+        .await
+        .unwrap());
+    db.close().await;
 }

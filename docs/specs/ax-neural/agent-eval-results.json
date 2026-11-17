@@ -1,0 +1,130 @@
+{
+  "arms": {
+    "A_ax_without_neural_ranking": {
+      "locked": {
+        "contextPrecisionAt3": 0.6666666666666666,
+        "contextRecallAt3": 0.6666666666666666,
+        "mrr": 0.6666666666666666,
+        "ndcgAt5": 0.6666666666666666,
+        "questionsScored": 4
+      },
+      "method": "bm25 rankings (benchmark adapter)"
+    },
+    "B_ax_original_ranking": {
+      "locked": {
+        "contextPrecisionAt3": 0.6666666666666666,
+        "contextRecallAt3": 0.6666666666666666,
+        "mrr": 0.6666666666666666,
+        "ndcgAt5": 0.6666666666666666,
+        "questionsScored": 4
+      },
+      "method": "Ax locked fusion + hash-v1"
+    },
+    "C_ax_neural_ranking": {
+      "lexicalAdmitted": true,
+      "locked": {
+        "contextPrecisionAt3": 0.3333333333333333,
+        "contextRecallAt3": 1.0,
+        "mrr": 1.0,
+        "ndcgAt5": 1.0,
+        "questionsScored": 4
+      },
+      "method": "lexical-semantic-cpu when admitted"
+    },
+    "D_ax_neural_prediction": {
+      "evaluateFixture": {
+        "coverage": 0.3333333333333333,
+        "kind": "measured",
+        "precision": 1.0
+      },
+      "locked": {
+        "contextPrecisionAt3": 0.0,
+        "contextRecallAt3": 0.0,
+        "mrr": 0.0,
+        "ndcgAt5": 0.0,
+        "questionsScored": 4
+      },
+      "method": "feedback-style leave-one-out memory predictions as ranked context"
+    },
+    "E_ax_neural_learning": {
+      "locked": {
+        "contextPrecisionAt3": 0.3333333333333333,
+        "contextRecallAt3": 1.0,
+        "mrr": 0.5,
+        "ndcgAt5": 0.6309297535714575,
+        "questionsScored": 4
+      },
+      "method": "leave-one-out ranking-prior from fixture feedback (promoted=false)",
+      "trainReports": [
+        {
+          "metrics": {
+            "kind": "measured",
+            "signAgreement": 1.0,
+            "validationScored": 1
+          },
+          "promoted": false,
+          "questionId": "named-trigger",
+          "weightCount": 6
+        },
+        {
+          "metrics": {
+            "kind": "measured",
+            "signAgreement": 1.0,
+            "validationScored": 1
+          },
+          "promoted": false,
+          "questionId": "paraphrase",
+          "weightCount": 6
+        },
+        {
+          "metrics": {
+            "kind": "measured",
+            "signAgreement": 1.0,
+            "validationScored": 1
+          },
+          "promoted": false,
+          "questionId": "abstention",
+          "weightCount": 6
+        },
+        {
+          "metrics": {
+            "kind": "measured",
+            "signAgreement": 1.0,
+            "validationScored": 1
+          },
+          "promoted": false,
+          "questionId": "delivery",
+          "weightCount": 6
+        }
+      ]
+    }
+  },
+  "attribution": "Context P/R differences are attributable to ranking/prediction/learning adapters on a fixed fixture, not to an underlying LLM",
+  "database": "temporary",
+  "kind": "measured",
+  "latency": {
+    "kind": "measured",
+    "scoreCodingMillis": 53.097916000000005
+  },
+  "liveLlmTaskSuccess": {
+    "kind": "not_measured",
+    "reason": "identical live agent models were not executed in this harness run"
+  },
+  "memory": {
+    "kind": "measured",
+    "rssBytes": 34488320,
+    "rssMiB": 32.890625
+  },
+  "openedLiveDatabase": false,
+  "productionDefaultsUnchanged": true,
+  "retries": {
+    "kind": "not_measured",
+    "reason": "no agent loop"
+  },
+  "scope": "coding-fixture context selection (proxy for agent context quality)",
+  "semanticWeight": 0.0,
+  "tokens": {
+    "kind": "not_measured",
+    "reason": "no LLM turn in this harness"
+  }
+}

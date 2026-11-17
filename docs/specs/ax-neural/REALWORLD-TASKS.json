@@ -1,0 +1,1720 @@
+{
+  "version": 1,
+  "benchmark": "ax-neural-realworld-coding-intelligence",
+  "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+  "design": "docs/specs/ax-neural/REALWORLD-BENCHMARK-DESIGN.md",
+  "priorValidationFrozen": {
+    "onnxActivation": false,
+    "predictionActivation": false,
+    "learningPromotion": false,
+    "productionDefaultsUnchanged": true
+  },
+  "taskCount": 50,
+  "categories": {
+    "multi_file_bug": 10,
+    "new_feature": 10,
+    "architectural_refactor": 10,
+    "security": 10,
+    "performance": 10
+  },
+  "splits": {
+    "heldOut": 30,
+    "train": 20
+  },
+  "tasks": [
+    {
+      "id": "bug-mf-01",
+      "category": "multi_file_bug",
+      "difficulty": "medium",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Memory recall returns stale hits after a content-hash change: the vector index is not rebuilt when memories.embedding updates. Fix the store/brain path so recall uses the current embedding after an update, without scanning foreign models.",
+      "acceptanceCriteria": [
+        "Updating a memory body regenerates embedding blob",
+        "Recall for the new text ranks the updated memory in top-3",
+        "Existing unit tests for foreign embeddings still pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-memory/src/store.rs",
+        "crates/ax-memory/src/brain.rs",
+        "crates/ax-memory/src/embed.rs",
+        "crates/ax-memory/tests/brain.rs"
+      ],
+      "expectedContextSymbols": [
+        "recall_scoped",
+        "rebuild_vector_index",
+        "embed_text"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-memory/src/embed.rs').read_text(); assert 'pub const ACTIVE_MODEL: &str = \"hash-v1\";' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-memory/src/embed.rs').read_text(); assert 'pub const ACTIVE_MODEL: &str = \"hash-v1-broken\";' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 3,
+      "notes": "",
+      "inject": {
+        "manifestId": "bug-mf-01",
+        "file": "crates/ax-memory/src/embed.rs"
+      }
+    },
+    {
+      "id": "bug-mf-02",
+      "category": "multi_file_bug",
+      "difficulty": "hard",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "MCP preflight injects Neural predicted blocks even when prediction.enabled is false in ax.json. Trace neural_tool \u2192 config \u2192 preflight and ensure predicted blocks appear only when prediction is active.",
+      "acceptanceCriteria": [
+        "With prediction disabled, preflight JSON has no predicted-labeled context blocks",
+        "With prediction enabled and feedback present, predicted blocks can appear",
+        "lock_required ranking still runs"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-mcp/src/neural_tool.rs",
+        "crates/ax-neural/src/config.rs",
+        "crates/ax-mcp/tests/neural_preflight.rs",
+        "crates/ax-mcp/src/context_budget.rs"
+      ],
+      "expectedContextSymbols": [
+        "prediction_active",
+        "predicted_block",
+        "lock_required"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/config.rs').read_text(); assert 'fn prediction_active(&self) -> bool {\\n        self.prediction_enabled\\n    }\\n}' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/config.rs').read_text(); assert 'fn prediction_active(&self) -> bool {\\n        true // rw-inject\\n    }' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 3,
+      "notes": "",
+      "inject": {
+        "manifestId": "bug-mf-02",
+        "file": "crates/ax-neural/src/config.rs"
+      }
+    },
+    {
+      "id": "bug-mf-03",
+      "category": "multi_file_bug",
+      "difficulty": "medium",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "ax neural status reports neuralEmbeddingInference as active when ort is not linked. Align status capability fields with the binary feature set (hash/lexical vs onnx not_built).",
+      "acceptanceCriteria": [
+        "Default binary status shows neuralEmbeddingInference status not_built or equivalent inactive",
+        "hashVectorRetrieval remains active",
+        "No semanticActive-style false neural claim"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/status.rs",
+        "crates/ax-neural/src/onnx_embed.rs",
+        "crates/ax-cli/src/commands/neural.rs"
+      ],
+      "expectedContextSymbols": [
+        "neural_embedding_capability",
+        "status_report"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/status.rs').read_text(); assert 'crate::SEMANTIC_WEIGHT' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/status.rs').read_text(); assert '0.99 /*rw-inject*/' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": "",
+      "inject": {
+        "manifestId": "bug-mf-03",
+        "file": "crates/ax-neural/src/status.rs"
+      }
+    },
+    {
+      "id": "bug-mf-04",
+      "category": "multi_file_bug",
+      "difficulty": "hard",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Command Center savings import accepts a path outside the project and writes into the live DB. Harden the web savings import handler to refuse path traversal / absolute escapes while preserving legitimate relative imports.",
+      "acceptanceCriteria": [
+        "Absolute path outside project root is rejected",
+        "Relative import under project still works",
+        "Existing savings API tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-web/src/savings.rs",
+        "crates/ax-web/src/web_auth.rs",
+        "crates/ax-usage/src/budget.rs"
+      ],
+      "expectedContextSymbols": [
+        "handle_import",
+        "POST /savings/import"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-web/src/savings.rs').read_text(); assert 'async fn handle_import() -> impl IntoResponse {' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-web/src/savings.rs').read_text(); assert 'async fn handle_import() -> impl IntoResponse {\\n    // rw-inject open\\n' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 3,
+      "notes": "",
+      "inject": {
+        "manifestId": "bug-mf-04",
+        "file": "crates/ax-web/src/savings.rs"
+      }
+    },
+    {
+      "id": "bug-mf-05",
+      "category": "multi_file_bug",
+      "difficulty": "medium",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Git sync hooks install succeeds but repair leaves a stale hook that points at a missing ax binary. Fix install/repair so hooks resolve the current binary and fail closed with a clear error when missing.",
+      "acceptanceCriteria": [
+        "repair_git_hooks rewrites hook to existing binary or errors",
+        "install_git_sync_hooks idempotent",
+        "Related ax-sync tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-sync/src/git_hooks.rs",
+        "crates/ax-sync/src/lib.rs",
+        "crates/ax-cli/src/commands"
+      ],
+      "expectedContextSymbols": [
+        "install_git_sync_hooks",
+        "repair_git_hooks"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-sync/src/git_hooks.rs').read_text(); assert 'pub fn repair_git_hooks(project_root: &Path) -> Result<(), AxError> {' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-sync/src/git_hooks.rs').read_text(); assert 'pub fn /*rw-inject*/ repair_git_hooks(project_root: &Path) -> Result<(), AxError> {' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": "",
+      "inject": {
+        "manifestId": "bug-mf-05",
+        "file": "crates/ax-sync/src/git_hooks.rs"
+      }
+    },
+    {
+      "id": "bug-mf-06",
+      "category": "multi_file_bug",
+      "difficulty": "medium",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Policy seed writes duplicate company skills into the project when a global copy already exists. Dedup on seed so project skills are not duplicated when global is at least as extensive.",
+      "acceptanceCriteria": [
+        "Second seed does not duplicate skill rows",
+        "Global skill preferred when equally extensive",
+        "Seed tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-policy/src/seed.rs",
+        "crates/ax-cli/src/commands",
+        "crates/ax-policy/src"
+      ],
+      "expectedContextSymbols": [
+        "store_seeded_skills",
+        "policy_dedup"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-policy/src/seed.rs').read_text(); assert 'pub fn seed_default_policy(ax_dir: &Path) -> std::io::Result<SeedResult> {' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-policy/src/seed.rs').read_text(); assert 'pub fn seed_default_policy(ax_dir: &Path) -> std::io::Result<SeedResult> {\\n    // rw-inject\\n' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 3,
+      "notes": "",
+      "inject": {
+        "manifestId": "bug-mf-06",
+        "file": "crates/ax-policy/src/seed.rs"
+      }
+    },
+    {
+      "id": "bug-mf-07",
+      "category": "multi_file_bug",
+      "difficulty": "hard",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Session fork copies graph cache ids that resolve to empty stubs in the child chat. Ensure fork copies working notes but not the graph conversation cache (handoff keeps parent readable).",
+      "acceptanceCriteria": [
+        "Forked session has empty graph cache references",
+        "Working context notes present after fork",
+        "MCP session tests for fork/handoff pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-mcp/src/chat_session.rs",
+        "crates/ax-usage/src/durable.rs",
+        "crates/ax-mcp/tests"
+      ],
+      "expectedContextSymbols": [
+        "fork_copies_notes_not_the_graph_cache_and_handoff_keeps_the_parent"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-mcp/src/server.rs').read_text(); assert 'async fn fork_and_handoff_do_not_restart_the_quiet_turn_count() {' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-mcp/src/server.rs').read_text(); assert 'async fn fork_and_handoff_do_not_restart_the_quiet_turn_count() {\\n    // rw-inject\\n' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 3,
+      "notes": "",
+      "inject": {
+        "manifestId": "bug-mf-07",
+        "file": "crates/ax-mcp/src/server.rs"
+      }
+    },
+    {
+      "id": "bug-mf-08",
+      "category": "multi_file_bug",
+      "difficulty": "medium",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Neural search_semantic_query returns blake3 hits labeled as the lexical challenger model id, confusing operators. Correct the response model field to reflect the actual embedding backend used for the query vector.",
+      "acceptanceCriteria": [
+        "Response model field matches runtime backend or hash-v1 fallback",
+        "scannedMemoryColumn remains false",
+        "Store tests still pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/store.rs",
+        "crates/ax-neural/src/runtime.rs",
+        "crates/ax-neural/src/bakeoff.rs"
+      ],
+      "expectedContextSymbols": [
+        "search_semantic_query",
+        "challenger_admitted"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/store.rs').read_text(); assert '\"model\": if admitted { crate::lexical::CHALLENGER_ID } else { \"hash-v1\" }' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/store.rs').read_text(); assert '\"model\": if admitted { crate::lexical::CHALLENGER_ID } else { crate::lexical::CHALLENGER_ID }' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": " RED via injects/manifest.json; apply break before agent.",
+      "inject": {
+        "manifestId": "bug-mf-08",
+        "file": "crates/ax-neural/src/store.rs"
+      }
+    },
+    {
+      "id": "bug-mf-09",
+      "category": "multi_file_bug",
+      "difficulty": "hard",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Daemon unclean-shutdown flag is never cleared after a successful reopen, forcing unnecessary recovery every start. Fix mark_clean_shutdown / take_unclean_shutdown pairing across ax-db and daemon start.",
+      "acceptanceCriteria": [
+        "Clean shutdown clears unclean flag",
+        "Crash leaves unclean flag for next start",
+        "ax-db daemon tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-db/src",
+        "crates/ax-cli/src",
+        "crates/ax-mcp/src"
+      ],
+      "expectedContextSymbols": [
+        "mark_clean_shutdown",
+        "take_unclean_shutdown"
+      ],
+      "verify": [
+        {
+          "cmd": "cargo test -p ax-db --lib -- --nocapture",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 3,
+      "notes": ""
+    },
+    {
+      "id": "bug-mf-10",
+      "category": "multi_file_bug",
+      "difficulty": "medium",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Usage budget snapshot projects daily average incorrectly when remaining days is 0 (divide-by-zero / Inf). Fix budget_snapshot to clamp remaining days and keep JSON finite.",
+      "acceptanceCriteria": [
+        "remainingDays=0 yields finite projected spend",
+        "Positive remaining days unchanged",
+        "ax-pi / ax-usage budget tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-pi/src/context.rs",
+        "crates/ax-usage/src/budget.rs",
+        "crates/ax-cli/src/commands"
+      ],
+      "expectedContextSymbols": [
+        "budget_snapshot",
+        "budget_projects_daily_average_times_remaining_days"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-pi/src/economics.rs').read_text(); assert 'fn budget_projects_daily_average_times_remaining_days() {' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-pi/src/economics.rs').read_text(); assert 'fn budget_projects_daily_average_times_remaining_days() {\\n    // rw-inject\\n' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": "",
+      "inject": {
+        "manifestId": "bug-mf-10",
+        "file": "crates/ax-pi/src/economics.rs"
+      }
+    },
+    {
+      "id": "feat-01",
+      "category": "new_feature",
+      "difficulty": "medium",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Add an optional `ax neural path-validate` CLI help example in neural --help docs string and ensure the dispatch arm is listed in CLI mapping tests (command already exists; wire documentation + mapping completeness).",
+      "acceptanceCriteria": [
+        "neural --help mentions path-validate",
+        "CLI mapping test includes path-validate",
+        "cargo test for neural command mapping passes"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-cli/src/main.rs",
+        "crates/ax-cli/src/commands/neural.rs",
+        "crates/ax-neural/src/dispatch.rs"
+      ],
+      "expectedContextSymbols": [
+        "PathValidate",
+        "path-validate"
+      ],
+      "verify": [
+        {
+          "cmd": "cargo test -p ax-cli --lib -- neural -- --nocapture",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": ""
+    },
+    {
+      "id": "feat-02",
+      "category": "new_feature",
+      "difficulty": "hard",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Add a retrieval-metrics export on `ax neural evaluate` that includes ranking P@3/P@5/R@3/MRR and calibration buckets (fields already partially present) and document them in CAPABILITIES without claiming production ONNX.",
+      "acceptanceCriteria": [
+        "evaluate JSON includes ranking and calibration objects",
+        "CAPABILITIES.md documents fields as measured/offline",
+        "ax-neural predict tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/predict.rs",
+        "docs/specs/ax-neural/CAPABILITIES.md",
+        "crates/ax-cli/src/commands/neural.rs"
+      ],
+      "expectedContextSymbols": [
+        "evaluate_fixture",
+        "calibration_summary"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/predict.rs').read_text(); assert 'let false_positives = self.predictions - self.true_positives;' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/predict.rs').read_text(); assert 'let false_positives = self.true_positives; // rw-inject broken FP math' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 3,
+      "notes": " RED via injects/manifest.json; apply break before agent.",
+      "inject": {
+        "manifestId": "feat-02",
+        "file": "crates/ax-neural/src/predict.rs"
+      }
+    },
+    {
+      "id": "feat-03",
+      "category": "new_feature",
+      "difficulty": "medium",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Expose `productionDefaultsUnchanged` and `semanticWeight` on `ax neural status` JSON so operators can see the frozen gate without reading source.",
+      "acceptanceCriteria": [
+        "status JSON contains semanticWeight=0",
+        "status JSON contains productionDefaultsUnchanged or equivalent note",
+        "status tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/status.rs",
+        "crates/ax-neural/src/lib.rs",
+        "crates/ax-cli/src/commands/neural.rs"
+      ],
+      "expectedContextSymbols": [
+        "status_report",
+        "SEMANTIC_WEIGHT"
+      ],
+      "verify": [
+        {
+          "cmd": "ax neural status | python3 -c \"import sys,json; j=json.load(sys.stdin); assert j.get('semanticWeight')==0.0; assert j.get('productionDefaultsUnchanged') is True\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": ""
+    },
+    {
+      "id": "feat-04",
+      "category": "new_feature",
+      "difficulty": "hard",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Add a Command Center API field on neural status endpoint that mirrors CLI status capabilities (no UI redesign beyond displaying existing JSON). Wire web handler to ax_neural status_report.",
+      "acceptanceCriteria": [
+        "GET neural/status (or existing status path) returns capabilities hashVectorRetrieval",
+        "No SEMANTIC_WEIGHT change",
+        "ax-web handler test or compile check passes"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-web/src",
+        "crates/ax-neural/src/status.rs",
+        "crates/ax-mcp/src/neural_tool.rs"
+      ],
+      "expectedContextSymbols": [
+        "status_report",
+        "handle_status"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-web/src/neural.rs').read_text(); assert 'async fn handle_status(State(hub): State<WebHub>) -> Json<serde_json::Value> {' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-web/src/neural.rs').read_text(); assert 'async fn handle_status(State(hub): State<WebHub>) -> Json<serde_json::Value> {\\n    // rw-inject\\n' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 4,
+      "notes": "",
+      "inject": {
+        "manifestId": "feat-04",
+        "file": "crates/ax-web/src/neural.rs"
+      }
+    },
+    {
+      "id": "feat-05",
+      "category": "new_feature",
+      "difficulty": "medium",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Add script `scripts/neural-realworld-run.py` entry that loads REALWORLD-TASKS.json, filters heldOut, and prints arm plan without executing agents (dry-run mode).",
+      "acceptanceCriteria": [
+        "--dry-run lists 30 heldOut tasks",
+        "Exits 0",
+        "Does not modify ax.json production defaults"
+      ],
+      "expectedRelevantFiles": [
+        "scripts/neural-realworld-run.py",
+        "docs/specs/ax-neural/REALWORLD-TASKS.json"
+      ],
+      "expectedContextSymbols": [],
+      "verify": [
+        {
+          "cmd": "python3 scripts/neural-realworld-run.py --dry-run | python3 -c \"import sys,json; j=json.load(sys.stdin); assert j['heldOut']==30\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": " Harness bootstrap artifact; exclude from Neural benefit claims."
+    },
+    {
+      "id": "feat-06",
+      "category": "new_feature",
+      "difficulty": "medium",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Extend neural feedback export to include a `split` hint column when AX_NEURAL_FEEDBACK_SPLIT=train|heldOut is set (default omit), for offline trainers.",
+      "acceptanceCriteria": [
+        "Without env, export schema unchanged",
+        "With env, rows include split field",
+        "export tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/store.rs",
+        "crates/ax-cli/src/commands/neural.rs"
+      ],
+      "expectedContextSymbols": [
+        "training_export"
+      ],
+      "verify": [
+        {
+          "cmd": "cargo test -p ax-neural --lib store:: -- --nocapture",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": ""
+    },
+    {
+      "id": "feat-07",
+      "category": "new_feature",
+      "difficulty": "hard",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Add paired bootstrap CI helper in scripts/neural-realworld-stats.py for P@k arm deltas (pure Python, no new deps) used by reports.",
+      "acceptanceCriteria": [
+        "Script computes mean delta and 95% percentile CI for paired samples",
+        "Negative control: empty input exits nonzero",
+        "Documented in design"
+      ],
+      "expectedRelevantFiles": [
+        "scripts/neural-realworld-stats.py",
+        "docs/specs/ax-neural/REALWORLD-BENCHMARK-DESIGN.md"
+      ],
+      "expectedContextSymbols": [],
+      "verify": [
+        {
+          "cmd": "python3 scripts/neural-realworld-stats.py --self-test",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 1,
+      "notes": " Harness bootstrap artifact; exclude from Neural benefit claims."
+    },
+    {
+      "id": "feat-08",
+      "category": "new_feature",
+      "difficulty": "medium",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Register model checksum via CLI already exists; add a status line in `ax neural models` listing admitted bake-off challenger id without promoting.",
+      "acceptanceCriteria": [
+        "models JSON includes challenger or admission note",
+        "promoted list unchanged",
+        "models tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/dispatch.rs",
+        "crates/ax-neural/src/bakeoff.rs",
+        "crates/ax-cli/src/main.rs"
+      ],
+      "expectedContextSymbols": [
+        "challenger_admitted",
+        "list_models"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/bakeoff.rs').read_text(); assert 'pub fn challenger_admitted() -> bool {\\n    if !crate::runtime_built() {\\n        return false;\\n    }' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/bakeoff.rs').read_text(); assert 'pub fn challenger_admitted() -> bool { false /* rw-inject */ }' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": "",
+      "inject": {
+        "manifestId": "feat-08",
+        "file": "crates/ax-neural/src/bakeoff.rs"
+      }
+    },
+    {
+      "id": "feat-09",
+      "category": "new_feature",
+      "difficulty": "hard",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Add memory fusion explain note when semantic weight is zero so `ax neural explain` states experimental ONNX fusion is inactive.",
+      "acceptanceCriteria": [
+        "explain JSON mentions SEMANTIC_WEIGHT 0",
+        "Does not claim ONNX active",
+        "explain tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/dispatch.rs",
+        "crates/ax-memory/src/fusion.rs",
+        "crates/ax-neural/src/lib.rs"
+      ],
+      "expectedContextSymbols": [
+        "blend_semantic",
+        "fuse_scores"
+      ],
+      "verify": [
+        {
+          "cmd": "cargo test -p ax-neural --lib dispatch:: -- --nocapture",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": ""
+    },
+    {
+      "id": "feat-10",
+      "category": "new_feature",
+      "difficulty": "medium",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Add invariant check to scripts/neural-invariants.py that REALWORLD-TASKS.json has exactly 50 tasks and 10 per category.",
+      "acceptanceCriteria": [
+        "Invariant fails if count\u226050",
+        "Passes on current suite",
+        "Exit nonzero on tamper"
+      ],
+      "expectedRelevantFiles": [
+        "scripts/neural-invariants.py",
+        "docs/specs/ax-neural/REALWORLD-TASKS.json"
+      ],
+      "expectedContextSymbols": [],
+      "verify": [
+        {
+          "cmd": "python3 -c \"import json; d=json.load(open('docs/specs/ax-neural/REALWORLD-TASKS.json')); assert d['taskCount']==50; from collections import Counter; c=Counter(t['category'] for t in d['tasks']); assert all(v==10 for v in c.values())\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 1,
+      "notes": " Harness bootstrap artifact; exclude from Neural benefit claims."
+    },
+    {
+      "id": "ref-01",
+      "category": "architectural_refactor",
+      "difficulty": "hard",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Extract shared Acc/precision helpers duplicated across embed_bakeoff, path_validate, learn_validate, and agent_eval into one internal metrics module without changing public APIs or SEMANTIC_WEIGHT.",
+      "acceptanceCriteria": [
+        "Duplicated Acc structs reduced to one module",
+        "All four harnesses still compile and their dump/unit tests pass",
+        "No public API removals"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/embed_bakeoff.rs",
+        "crates/ax-neural/src/path_validate.rs",
+        "crates/ax-neural/src/learn_validate.rs",
+        "crates/ax-neural/src/agent_eval.rs",
+        "crates/ax-neural/src/benchmark_abc.rs"
+      ],
+      "expectedContextSymbols": [
+        "precision_at",
+        "mrr"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/metrics.rs').read_text(); assert 'if relevant.is_empty() {\\n        return None;\\n    }' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/metrics.rs').read_text(); assert 'if relevant.is_empty() {\\n        return Some(1.0); // rw-inject\\n    }' not in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; import pathlib; root=pathlib.Path('crates/ax-neural/src'); harness=['embed_bakeoff.rs','path_validate.rs','learn_validate.rs','agent_eval.rs']; assert all('struct Acc' not in (root/h).read_text() for h in harness); assert (root/'metrics.rs').read_text().count('struct Acc')==1\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 5,
+      "notes": "",
+      "inject": {
+        "manifestId": "ref-01",
+        "file": "crates/ax-neural/src/benchmark_abc.rs"
+      }
+    },
+    {
+      "id": "ref-02",
+      "category": "architectural_refactor",
+      "difficulty": "medium",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Consolidate neural CLI actions that skip live DB open into a single allowlist function used by commands/neural.rs.",
+      "acceptanceCriteria": [
+        "Single allowlist function",
+        "benchmark/embed-bakeoff/path-validate/agent-eval covered",
+        "CLI tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-cli/src/commands/neural.rs",
+        "crates/ax-cli/src/main.rs"
+      ],
+      "expectedContextSymbols": [],
+      "verify": [
+        {
+          "cmd": "cargo test -p ax-cli --lib -- --nocapture",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": ""
+    },
+    {
+      "id": "ref-03",
+      "category": "architectural_refactor",
+      "difficulty": "hard",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Split ax-memory fusion weight constants into a documented WeightSet struct while keeping fuse_scores numeric results identical (golden test).",
+      "acceptanceCriteria": [
+        "fuse_scores outputs bitwise/approx equal to before for fixture vectors",
+        "WeightSet documented",
+        "fusion tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-memory/src/fusion.rs",
+        "crates/ax-memory/src/bench.rs"
+      ],
+      "expectedContextSymbols": [
+        "fuse_scores"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-memory/src/fusion.rs').read_text(); assert 'const W_FTS: f64 = 0.45;' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-memory/src/fusion.rs').read_text(); assert 'const W_FTS: f64 = 99.0; // rw-inject' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": " RED via injects/manifest.json; apply break before agent.",
+      "inject": {
+        "manifestId": "ref-03",
+        "file": "crates/ax-memory/src/fusion.rs"
+      }
+    },
+    {
+      "id": "ref-04",
+      "category": "architectural_refactor",
+      "difficulty": "medium",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Move neural SCHEMA_SQL application documentation into ARCHITECTURE.md cross-links from schema.sql comments without changing schema SQL.",
+      "acceptanceCriteria": [
+        "ARCHITECTURE.md links schema tables",
+        "schema.sql unchanged hash for SQL body",
+        "Docs only"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/schema.sql",
+        "docs/specs/ax-neural/ARCHITECTURE.md"
+      ],
+      "expectedContextSymbols": [],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('docs/specs/ax-neural/ARCHITECTURE.md').read_text(); assert '# Ax Neural architecture' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('docs/specs/ax-neural/ARCHITECTURE.md').read_text(); assert '# Ax Neural architecture <!-- rw-inject broken -->' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": "",
+      "inject": {
+        "manifestId": "ref-04",
+        "file": "docs/specs/ax-neural/ARCHITECTURE.md"
+      }
+    },
+    {
+      "id": "ref-05",
+      "category": "architectural_refactor",
+      "difficulty": "hard",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Unify RSS memory_report usage so ABC and agent-eval share one helper call site pattern (already in rss.rs) and remove any duplicated ps parsing.",
+      "acceptanceCriteria": [
+        "Single rss module used",
+        "Windows not_measured path preserved",
+        "ABC + agent-eval tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/rss.rs",
+        "crates/ax-neural/src/benchmark_abc.rs",
+        "crates/ax-neural/src/agent_eval.rs"
+      ],
+      "expectedContextSymbols": [
+        "memory_report"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/agent_eval.rs').read_text(); assert 'productionDefaultsUnchanged\": true' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/agent_eval.rs').read_text(); assert 'productionDefaultsUnchanged\": false // rw-inject' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": " RED via injects/manifest.json; apply break before agent.",
+      "inject": {
+        "manifestId": "ref-05",
+        "file": "crates/ax-neural/src/agent_eval.rs"
+      }
+    },
+    {
+      "id": "ref-06",
+      "category": "architectural_refactor",
+      "difficulty": "medium",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Refactor lexical RankedHit construction to a single constructor used by agent_eval and embed_bakeoff lexical_rank helpers.",
+      "acceptanceCriteria": [
+        "One constructor path",
+        "Lexical metrics unchanged on fixture",
+        "embed_bakeoff + agent_eval tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/lexical.rs",
+        "crates/ax-neural/src/agent_eval.rs",
+        "crates/ax-neural/src/embed_bakeoff.rs"
+      ],
+      "expectedContextSymbols": [
+        "LexicalDoc",
+        "rank"
+      ],
+      "verify": [
+        {
+          "cmd": "cargo test -p ax-neural --lib lexical:: -- --nocapture",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 3,
+      "notes": ""
+    },
+    {
+      "id": "ref-07",
+      "category": "architectural_refactor",
+      "difficulty": "hard",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Introduce an ArmId enum for agent-eval arms A\u2013E instead of stringly-typed JSON keys, with serde rename to keep JSON stable.",
+      "acceptanceCriteria": [
+        "JSON keys unchanged",
+        "Rust uses enum",
+        "agent_eval test passes"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/agent_eval.rs"
+      ],
+      "expectedContextSymbols": [
+        "run_agent_eval"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/rank.rs').read_text(); assert 'reason: \"hard-required\".into()' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/rank.rs').read_text(); assert 'reason: \"optional\".into()' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 1,
+      "notes": " RED via injects/manifest.json; apply break before agent.",
+      "inject": {
+        "manifestId": "ref-07",
+        "file": "crates/ax-neural/src/rank.rs"
+      }
+    },
+    {
+      "id": "ref-08",
+      "category": "architectural_refactor",
+      "difficulty": "medium",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Extract MCP context budget NeuralBudget serialization into a shared helper used by preflight and status.",
+      "acceptanceCriteria": [
+        "No duplicate to_json bodies",
+        "Budget fields unchanged",
+        "mcp tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-mcp/src/context_budget.rs",
+        "crates/ax-mcp/src/neural_tool.rs"
+      ],
+      "expectedContextSymbols": [
+        "NeuralBudget",
+        "to_json"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-mcp/src/context_budget.rs').read_text(); assert 'fn to_json(&self) -> Value {' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-mcp/src/context_budget.rs').read_text(); assert 'fn to_json(&self) -> Value {\\n        // rw-inject\\n' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": "",
+      "inject": {
+        "manifestId": "ref-08",
+        "file": "crates/ax-mcp/src/context_budget.rs"
+      }
+    },
+    {
+      "id": "ref-09",
+      "category": "architectural_refactor",
+      "difficulty": "hard",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Decouple path_validate persistence stage behind a PersistenceProbe trait so non-ort builds do not pull sqlx insert paths into dead code warnings.",
+      "acceptanceCriteria": [
+        "Default build compiles without unused-import warnings for ort-only paths",
+        "ort feature path_validate test still passes",
+        "productionDefaultsUnchanged true"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/path_validate.rs",
+        "crates/ax-neural/src/store.rs"
+      ],
+      "expectedContextSymbols": [
+        "run_path_validate",
+        "insert_embedding"
+      ],
+      "verify": [
+        {
+          "cmd": "cargo test -p ax-neural --lib path_validate:: -- --nocapture",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": ""
+    },
+    {
+      "id": "ref-10",
+      "category": "architectural_refactor",
+      "difficulty": "medium",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Normalize neural dispatch tool name aliases (underscore vs hyphen) through one normalizer used by handle().",
+      "acceptanceCriteria": [
+        "All existing aliases still work",
+        "Single normalizer",
+        "dispatch tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/dispatch.rs"
+      ],
+      "expectedContextSymbols": [
+        "handle"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/rank.rs').read_text(); assert 'filter(|part| part.len() > 2)' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/rank.rs').read_text(); assert 'filter(|part| part.len() > 200) // rw-inject' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 1,
+      "notes": " RED via injects/manifest.json; apply break before agent.",
+      "inject": {
+        "manifestId": "ref-10",
+        "file": "crates/ax-neural/src/rank.rs"
+      }
+    },
+    {
+      "id": "sec-01",
+      "category": "security",
+      "difficulty": "hard",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Remote MCP OAuth callback must reject state mismatch and open redirects. Audit crates/ax-mcp/src/remote/oauth.rs + server and add/adjust tests for forged state.",
+      "acceptanceCriteria": [
+        "Mismatched state rejected",
+        "Redirect URI allowlist enforced",
+        "Remote auth tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-mcp/src/remote/oauth.rs",
+        "crates/ax-mcp/src/remote/server.rs",
+        "crates/ax-mcp/src/remote/auth.rs"
+      ],
+      "expectedContextSymbols": [],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-mcp/src/remote/oauth.rs').read_text(); assert 'if q.response_type!=\"code\" || q.state.is_empty() || q.state.len()>2048 || q.code_challenge_method!=\"S256\" || q.code_challenge.len()!=43 || URL_SAFE_NO_PAD.decode(&q.code_challenge).map_or(true,|v|v.len()!=32) || !scope.contains(CONTEXT_SCOPE) || scope.iter().any(|s|!matches!(*s,CONTEXT_SCOPE|WRITE_SCOPE)) {' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-mcp/src/remote/oauth.rs').read_text(); assert 'if false /*rw-inject*/ {' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 3,
+      "notes": "",
+      "inject": {
+        "manifestId": "sec-01",
+        "file": "crates/ax-mcp/src/remote/oauth.rs"
+      }
+    },
+    {
+      "id": "sec-02",
+      "category": "security",
+      "difficulty": "hard",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "web_auth / share_auth: ensure session cookies are Secure/HttpOnly where applicable and login recovery does not leak whether a user exists.",
+      "acceptanceCriteria": [
+        "Error messages do not distinguish unknown user vs bad password in public responses",
+        "Cookie flags documented/tested",
+        "web auth tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-web/src/web_auth.rs",
+        "crates/ax-web/src/share_auth.rs"
+      ],
+      "expectedContextSymbols": [
+        "recover_login"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-web/src/web_auth.rs').read_text(); assert 'fn recover_login(\\n    ConnectInfo(peer): ConnectInfo<SocketAddr>,\\n    headers: HeaderMap,\\n    Json(body): Json<RecoveryLogin>,\\n) -> Result<Response, ErrorResponse> {' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-web/src/web_auth.rs').read_text(); assert 'fn recover_login(\\n    ConnectInfo(peer): ConnectInfo<SocketAddr>,\\n    headers: HeaderMap,\\n    Json(body): Json<RecoveryLogin>,\\n) -> Result<Response, ErrorResponse> {\\n    // rw-inject\\n' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 3,
+      "notes": "",
+      "inject": {
+        "manifestId": "sec-02",
+        "file": "crates/ax-web/src/web_auth.rs"
+      }
+    },
+    {
+      "id": "sec-03",
+      "category": "security",
+      "difficulty": "medium",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Neural training_export must continue to strip secret-shaped rows and never emit project absolute paths; add a regression fixture with a fake token in feedback body.",
+      "acceptanceCriteria": [
+        "Export omits secret-shaped row",
+        "No absolute project path field",
+        "store export test passes"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/store.rs",
+        "crates/ax-neural/src/learning.rs"
+      ],
+      "expectedContextSymbols": [
+        "training_export",
+        "validate_feedback"
+      ],
+      "verify": [
+        {
+          "cmd": "cargo test -p ax-neural --lib store:: -- --nocapture",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": ""
+    },
+    {
+      "id": "sec-04",
+      "category": "security",
+      "difficulty": "hard",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Prevent path traversal in ax-context project discovery when following symlinks outside the start directory (existing skip symlink test \u2014 extend for nested escape).",
+      "acceptanceCriteria": [
+        "Symlink escape not listed as install project",
+        "Normal projects still discovered",
+        "ax-context tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-context/src/directory.rs",
+        "crates/ax-context/src"
+      ],
+      "expectedContextSymbols": [
+        "discover_projects_for_init"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-context/src/directory.rs').read_text(); assert 'pub fn discover_projects_for_init(root: &Path, max_depth: usize) -> Vec<PathBuf> {' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-context/src/directory.rs').read_text(); assert 'pub fn discover_projects_for_init(root: &Path, max_depth: usize) -> Vec<PathBuf> {\\n    // rw-inject\\n' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": "",
+      "inject": {
+        "manifestId": "sec-04",
+        "file": "crates/ax-context/src/directory.rs"
+      }
+    },
+    {
+      "id": "sec-05",
+      "category": "security",
+      "difficulty": "medium",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Installer must not write hooks that execute attacker-controlled relative paths from the repo (quote/escape binary path).",
+      "acceptanceCriteria": [
+        "Hook script quotes binary path",
+        "Injection via path with spaces still safe",
+        "installer/sync tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-sync/src/git_hooks.rs",
+        "crates/ax-installer/src/ax_command.rs"
+      ],
+      "expectedContextSymbols": [
+        "write_hook"
+      ],
+      "verify": [
+        {
+          "cmd": "cargo test -p ax-sync --lib -- --nocapture",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": ""
+    },
+    {
+      "id": "sec-06",
+      "category": "security",
+      "difficulty": "hard",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Global DB credentials file permissions: ensure credentials are written with owner-only mode on Unix.",
+      "acceptanceCriteria": [
+        "Credentials file mode 0600 on Unix",
+        "Existing credential tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-global-db/src",
+        "crates/ax-mcp/src/remote/credentials.rs"
+      ],
+      "expectedContextSymbols": [],
+      "verify": [
+        {
+          "cmd": "cargo test -p ax-global-db --lib -- --nocapture",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": ""
+    },
+    {
+      "id": "sec-07",
+      "category": "security",
+      "difficulty": "medium",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Refuse promote of hash-v1 as a neural model id (already partially enforced) and ensure register path returns a stable error code/message for operators.",
+      "acceptanceCriteria": [
+        "register(hash-v1) errors",
+        "promote cannot select hash-v1",
+        "store tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/store.rs",
+        "crates/ax-neural/src/learning.rs"
+      ],
+      "expectedContextSymbols": [
+        "register",
+        "promote",
+        "promotion_allowed"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/learning.rs').read_text(); assert '\"promoted\": false' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/learning.rs').read_text(); assert '\"promoted\": true // rw-inject auto-promote lie' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": " RED via injects/manifest.json; apply break before agent.",
+      "inject": {
+        "manifestId": "sec-07",
+        "file": "crates/ax-neural/src/learning.rs"
+      }
+    },
+    {
+      "id": "sec-08",
+      "category": "security",
+      "difficulty": "hard",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "MCP Authorization header parsing must not treat malformed bearer tokens as authenticated anonymous.",
+      "acceptanceCriteria": [
+        "Malformed Authorization rejected",
+        "Valid bearer still accepted in tests",
+        "mcp auth tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-mcp/src",
+        "crates/ax-mcp/src/remote"
+      ],
+      "expectedContextSymbols": [
+        "Authorization"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-mcp/src/remote/oauth.rs').read_text(); assert 'fn authorize(State(p): State<Provider>, Query(q): Query<Authorization>) -> Response {' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-mcp/src/remote/oauth.rs').read_text(); assert 'fn authorize(State(p): State<Provider>, Query(q): Query<Authorization>) -> Response {\\n    // rw-inject\\n' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 3,
+      "notes": "",
+      "inject": {
+        "manifestId": "sec-08",
+        "file": "crates/ax-mcp/src/remote/oauth.rs"
+      }
+    },
+    {
+      "id": "sec-09",
+      "category": "security",
+      "difficulty": "medium",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Policy markdown capture must not execute HTML/script from untrusted rule bodies when rendered in Command Center (escape/sanitize path).",
+      "acceptanceCriteria": [
+        "Script tags escaped or stripped in render path",
+        "Policy bodies preserved as text",
+        "Related web/mcp policy tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-web/src",
+        "crates/ax-mcp/src",
+        "crates/ax-policy/src"
+      ],
+      "expectedContextSymbols": [
+        "policy_markdown",
+        "escapeHtml"
+      ],
+      "verify": [
+        {
+          "cmd": "cargo test -p ax-web --lib -- --nocapture",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 3,
+      "notes": ""
+    },
+    {
+      "id": "sec-10",
+      "category": "security",
+      "difficulty": "hard",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Replication/share path: ensure share packet cannot include secret feedback rows (neural share packet policy).",
+      "acceptanceCriteria": [
+        "Share packet omits feedback secrets",
+        "packet_for respects policy",
+        "share tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/share.rs",
+        "crates/ax-share/src",
+        "crates/ax-neural/src/dispatch.rs"
+      ],
+      "expectedContextSymbols": [
+        "packet_for",
+        "SharePolicy"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/share.rs').read_text(); assert \"pub fn packet_for(\\n    policy: SharePolicy<'_>,\\n    models: &[ModelManifest],\\n    outcome_counts: &[(String, u64)],\\n) -> Value {\" in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/share.rs').read_text(); assert \"pub fn packet_for(\\n    policy: SharePolicy<'_>,\\n    models: &[ModelManifest],\\n    outcome_counts: &[(String, u64)],\\n) -> Value {\\n    // rw-inject\\n\" not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": "",
+      "inject": {
+        "manifestId": "sec-10",
+        "file": "crates/ax-neural/src/share.rs"
+      }
+    },
+    {
+      "id": "perf-01",
+      "category": "performance",
+      "difficulty": "hard",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "search_semantic_query loads all neural_embedding rows into memory. Add a dim/model_id filter and LIMIT-friendly scan or early continue so large tables do not O(n) decode every blob when model_id mismatches.",
+      "acceptanceCriteria": [
+        "Query filters by model_id when provided",
+        "Benchmark or unit test shows skipped wrong-dim rows",
+        "Correctness tests still pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/store.rs",
+        "crates/ax-memory/src/embed.rs"
+      ],
+      "expectedContextSymbols": [
+        "search_semantic_query",
+        "blob_to_embedding"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/store.rs').read_text(); assert 'if vector.len() != query_vec.len() {\\n                    continue;\\n                }' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/store.rs').read_text(); assert 'if vector.len() != query_vec.len() {\\n                    // rw-inject: do not skip mismatched dims\\n                }' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": " RED via injects/manifest.json; apply break before agent.",
+      "inject": {
+        "manifestId": "perf-01",
+        "file": "crates/ax-neural/src/store.rs"
+      }
+    },
+    {
+      "id": "perf-02",
+      "category": "performance",
+      "difficulty": "medium",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Coding fixture score_coding opens a temp DB per ABC run; allow optional reused pool in benchmark_abc without changing metrics (micro-opt for harness latency).",
+      "acceptanceCriteria": [
+        "ABC metrics unchanged vs golden",
+        "Optional reuse path documented",
+        "benchmark_abc tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/benchmark_abc.rs",
+        "crates/ax-memory/src/bench.rs"
+      ],
+      "expectedContextSymbols": [
+        "run_abc",
+        "score_coding"
+      ],
+      "verify": [
+        {
+          "cmd": "cargo test -p ax-neural --lib benchmark_abc:: -- --nocapture",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": ""
+    },
+    {
+      "id": "perf-03",
+      "category": "performance",
+      "difficulty": "hard",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "preflight context budget sorting is O(n^2) on notes; replace with sort_by relevance using existing keep_order without changing hard-required order invariants.",
+      "acceptanceCriteria": [
+        "Hard-required order preserved",
+        "Large synthetic list sorts correctly",
+        "rank + mcp tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/rank.rs",
+        "crates/ax-mcp/src/context_budget.rs"
+      ],
+      "expectedContextSymbols": [
+        "keep_order",
+        "plan"
+      ],
+      "verify": [
+        {
+          "cmd": "cargo test -p ax-neural --lib rank:: -- --nocapture",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": ""
+    },
+    {
+      "id": "perf-04",
+      "category": "performance",
+      "difficulty": "medium",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Graph suggest_report walks too many edges; enforce EDGE_LIMIT consistently and document when truncation occurs in JSON.",
+      "acceptanceCriteria": [
+        "JSON includes truncated/limit fields when capped",
+        "EDGE_LIMIT respected",
+        "graph tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/graph.rs",
+        "crates/ax-neural/src/dispatch.rs"
+      ],
+      "expectedContextSymbols": [
+        "suggest_report",
+        "EDGE_LIMIT"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/dispatch.rs').read_text(); assert 'const EDGE_LIMIT: usize = 200_000;' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/dispatch.rs').read_text(); assert 'const EDGE_LIMIT: usize = 200; // rw-inject' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": "",
+      "inject": {
+        "manifestId": "perf-04",
+        "file": "crates/ax-neural/src/dispatch.rs"
+      }
+    },
+    {
+      "id": "perf-05",
+      "category": "performance",
+      "difficulty": "hard",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "ONNX embed bakeoff re-embeds every document per query. Cache document embeddings per candidate within a bakeoff run (validation-only) without persisting to memories.embedding.",
+      "acceptanceCriteria": [
+        "Bakeoff metrics match uncached within tolerance",
+        "Document vectors computed once per run",
+        "embed_bakeoff tests pass with neural-ort if available else skip ort assertions"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/embed_bakeoff.rs",
+        "crates/ax-neural/src/onnx_embed.rs"
+      ],
+      "expectedContextSymbols": [
+        "run_embed_bakeoff",
+        "cosine_rank"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/embed_bakeoff.rs').read_text(); assert '\"neuralEmbeddingInferenceActive\": false' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/embed_bakeoff.rs').read_text(); assert '\"neuralEmbeddingInferenceActive\": true // rw-inject' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": " RED via injects/manifest.json; apply break before agent.",
+      "inject": {
+        "manifestId": "perf-05",
+        "file": "crates/ax-neural/src/embed_bakeoff.rs"
+      }
+    },
+    {
+      "id": "perf-06",
+      "category": "performance",
+      "difficulty": "medium",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Policy history append can rewrite large files; batch or size-cap verbose history writes without dropping required audit fields.",
+      "acceptanceCriteria": [
+        "History still records actions",
+        "Cap documented",
+        "policy history tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-policy/src/history.rs"
+      ],
+      "expectedContextSymbols": [
+        "push"
+      ],
+      "verify": [
+        {
+          "cmd": "cargo test -p ax-policy --lib history -- --nocapture",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 1,
+      "notes": ""
+    },
+    {
+      "id": "perf-07",
+      "category": "performance",
+      "difficulty": "hard",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Web UI graph settings load/save hits localStorage synchronously on every node drag. Debounce saveGraphSettings without losing last write.",
+      "acceptanceCriteria": [
+        "Debounced save",
+        "Final state persisted",
+        "web-ui unit test for graph settings passes"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-web/web-ui/src",
+        "crates/ax-web/web-ui/src"
+      ],
+      "expectedContextSymbols": [
+        "saveGraphSettings",
+        "loadGraphSettings"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-web/web-ui/src/lib/graphSettings.ts').read_text(); assert 'export function saveGraphSettings(\\n  settings: GraphSettings,\\n  storage: StorageLike | null = defaultStorage(),\\n  key: string = GRAPH_SETTINGS_KEY,\\n): void {' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-web/web-ui/src/lib/graphSettings.ts').read_text(); assert 'export function saveGraphSettings(\\n  settings: GraphSettings,\\n  storage: StorageLike | null = defaultStorage(),\\n  key: string = GRAPH_SETTINGS_KEY,\\n): void {\\n  // rw-inject\\n' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": "",
+      "inject": {
+        "manifestId": "perf-07",
+        "file": "crates/ax-web/web-ui/src/lib/graphSettings.ts"
+      }
+    },
+    {
+      "id": "perf-08",
+      "category": "performance",
+      "difficulty": "medium",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "ax index / sync path: avoid full rebuild when only one file changed if metadata says so (needsFullRebuild false path). Ensure incremental path is exercised by a test.",
+      "acceptanceCriteria": [
+        "Single-file change does not force full rebuild when safe",
+        "Test covers needsFullRebuild",
+        "resolution/db tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-resolution/src",
+        "crates/ax-db/src",
+        "crates/ax-cli/src"
+      ],
+      "expectedContextSymbols": [
+        "needsFullRebuild"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/lib.rs').read_text(); assert 'pub const SEMANTIC_WEIGHT: f64 = 0.0;' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/lib.rs').read_text(); assert 'pub const SEMANTIC_WEIGHT: f64 = 0.35;' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 3,
+      "notes": "",
+      "inject": {
+        "manifestId": "perf-08",
+        "file": "crates/ax-neural/src/lib.rs"
+      }
+    },
+    {
+      "id": "perf-09",
+      "category": "performance",
+      "difficulty": "hard",
+      "split": "train",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "Usage pricing sync downloads full catalog every call; add ETag/If-None-Match short-circuit when supported by cache layer.",
+      "acceptanceCriteria": [
+        "304/unchanged path skips rewrite",
+        "Forced sync still refreshes",
+        "pricing sync tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-usage/src/pricing_sync.rs",
+        "crates/ax-cli/src/commands"
+      ],
+      "expectedContextSymbols": [
+        "pricing_sync"
+      ],
+      "verify": [
+        {
+          "cmd": "cargo test -p ax-usage --lib -- --nocapture",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": ""
+    },
+    {
+      "id": "perf-10",
+      "category": "performance",
+      "difficulty": "medium",
+      "split": "heldOut",
+      "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+      "description": "RSS sampling in neural harnesses shells out too often; sample once per report (ABC/agent-eval) \u2014 verify only one sample call per run via test double or counter if present.",
+      "acceptanceCriteria": [
+        "memory_report called once per harness report",
+        "Metrics still measured|not_measured correctly",
+        "rss tests pass"
+      ],
+      "expectedRelevantFiles": [
+        "crates/ax-neural/src/rss.rs",
+        "crates/ax-neural/src/benchmark_abc.rs",
+        "crates/ax-neural/src/agent_eval.rs"
+      ],
+      "expectedContextSymbols": [
+        "memory_report"
+      ],
+      "verify": [
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/rss.rs').read_text(); assert 'pub fn memory_report() -> serde_json::Value {' in t\"",
+          "expectExit": 0
+        },
+        {
+          "cmd": "python3 -c \"from pathlib import Path; t=Path('crates/ax-neural/src/rss.rs').read_text(); assert 'pub fn memory_report() -> serde_json::Value {\\n    // rw-inject\\n' not in t\"",
+          "expectExit": 0
+        }
+      ],
+      "estimatedFilesTouched": 2,
+      "notes": "",
+      "inject": {
+        "manifestId": "perf-10",
+        "file": "crates/ax-neural/src/rss.rs"
+      }
+    }
+  ]
+}

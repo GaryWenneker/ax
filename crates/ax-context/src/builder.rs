@@ -105,7 +105,11 @@ impl ContextBuilder {
                     subgraph.nodes.insert(id, node);
                 }
                 for edge in sg.edges {
-                    let key = (edge.source.clone(), edge.target.clone(), edge.kind.as_str().to_string());
+                    let key = (
+                        edge.source.clone(),
+                        edge.target.clone(),
+                        edge.kind.as_str().to_string(),
+                    );
                     if edge_keys.insert(key) {
                         subgraph.edges.push(edge);
                     }
@@ -114,9 +118,12 @@ impl ContextBuilder {
         }
         subgraph.roots.sort();
         subgraph.roots.dedup();
-        subgraph.edges.sort_by(|a, b| a.source.cmp(&b.source)
-            .then_with(|| a.target.cmp(&b.target))
-            .then_with(|| a.kind.as_str().cmp(b.kind.as_str())));
+        subgraph.edges.sort_by(|a, b| {
+            a.source
+                .cmp(&b.source)
+                .then_with(|| a.target.cmp(&b.target))
+                .then_with(|| a.kind.as_str().cmp(b.kind.as_str()))
+        });
         let edge_count = subgraph.edges.len() as u32;
 
         let summary = if entry_points.is_empty() {

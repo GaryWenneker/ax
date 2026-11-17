@@ -1,0 +1,154 @@
+{
+  "kind": "measured",
+  "scope": "identical cursor-agent prompt across Neural config arms",
+  "attribution": "Same cursor-agent binary, model, and prompt; only ax.json neural prediction/learning flags differ. Ranking remains required.",
+  "task": {
+    "id": "neural-live-parser",
+    "prompt": "In this tiny Rust project, name the function in src/lib.rs and say whether Ax Neural prediction is relevant to fixing a parser. Reply in two short lines. Include the exact tokens LIB_FN=parse and NEURAL_AWARE=yes. You may call ax_preflight once if available.",
+    "anchors": [
+      "LIB_FN=parse",
+      "NEURAL_AWARE=yes"
+    ]
+  },
+  "model": "composer-2-fast",
+  "agent": "/Users/gary/.local/bin/cursor-agent",
+  "arms": {
+    "B_ax_baseline": {
+      "arm": "B_ax_baseline",
+      "neural": {
+        "prediction": {
+          "enabled": false
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "seedFeedback": false,
+      "taskId": "neural-live-parser",
+      "ok": true,
+      "session": "3309c1d8-dfeb-48d5-b24d-049ad3a5c0fa",
+      "inputTokens": 14433,
+      "outputTokens": 450,
+      "cacheReadTokens": 20736,
+      "cacheCreationTokens": 0,
+      "turns": 1,
+      "durationApiMs": 5927,
+      "elapsedMillis": 8983.61025005579,
+      "text": "Checking the Rust library and whether neural prediction applies to parser fixes.\nThe library entry point in `src/lib.rs` is `parse` (LIB_FN=parse).\nAx Neural prediction can help rank parser-related fixes and call sites, so it is relevant here (NEURAL_AWARE=yes).",
+      "anchorsHit": [
+        "LIB_FN=parse",
+        "NEURAL_AWARE=yes"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0,
+      "agent": "/Users/gary/.local/bin/cursor-agent",
+      "model": "composer-2-fast"
+    },
+    "C_ax_neural_prediction": {
+      "arm": "C_ax_neural_prediction",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": false
+        }
+      },
+      "seedFeedback": false,
+      "taskId": "neural-live-parser",
+      "ok": true,
+      "session": "f3e06069-2721-48ca-b4e7-22e65e947a8f",
+      "inputTokens": 17662,
+      "outputTokens": 736,
+      "cacheReadTokens": 17600,
+      "cacheCreationTokens": 0,
+      "turns": 1,
+      "durationApiMs": 7211,
+      "elapsedMillis": 10155.406791716814,
+      "text": "The public entry point in `src/lib.rs` is **`parse`** \u2014 `LIB_FN=parse`.\n\nAx Neural can surface related symbols and ranked context while you debug parsing logic, so it\u2019s marginally useful \u2014 `NEURAL_AWARE=yes`.",
+      "anchorsHit": [
+        "LIB_FN=parse",
+        "NEURAL_AWARE=yes"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0,
+      "agent": "/Users/gary/.local/bin/cursor-agent",
+      "model": "composer-2-fast"
+    },
+    "E_ax_neural_learning": {
+      "arm": "E_ax_neural_learning",
+      "neural": {
+        "prediction": {
+          "enabled": true
+        },
+        "learning": {
+          "feedback_collection": true
+        }
+      },
+      "seedFeedback": true,
+      "taskId": "neural-live-parser",
+      "ok": true,
+      "session": "7719f7ee-34fd-4837-96b9-2712ed9d0647",
+      "inputTokens": 13505,
+      "outputTokens": 644,
+      "cacheReadTokens": 21696,
+      "cacheCreationTokens": 0,
+      "turns": 1,
+      "durationApiMs": 12057,
+      "elapsedMillis": 14594.947750214487,
+      "text": "The public entry in `src/lib.rs` is **`parse`** \u2014 LIB_FN=parse.\n\nFor a parser bug, logic and tests drive the fix; Ax Neural can still suggest patterns or similar fixes \u2014 NEURAL_AWARE=yes.",
+      "anchorsHit": [
+        "LIB_FN=parse",
+        "NEURAL_AWARE=yes"
+      ],
+      "taskSuccess": true,
+      "isError": false,
+      "exitCode": 0,
+      "agent": "/Users/gary/.local/bin/cursor-agent",
+      "model": "composer-2-fast"
+    }
+  },
+  "liveLlmTaskSuccess": {
+    "kind": "measured",
+    "successRate": 1.0,
+    "perArm": {
+      "B_ax_baseline": true,
+      "C_ax_neural_prediction": true,
+      "E_ax_neural_learning": true
+    }
+  },
+  "tokens": {
+    "kind": "measured",
+    "perArm": {
+      "B_ax_baseline": {
+        "inputTokens": 14433,
+        "outputTokens": 450
+      },
+      "C_ax_neural_prediction": {
+        "inputTokens": 17662,
+        "outputTokens": 736
+      },
+      "E_ax_neural_learning": {
+        "inputTokens": 13505,
+        "outputTokens": 644
+      }
+    }
+  },
+  "latency": {
+    "kind": "measured",
+    "perArmMillis": {
+      "B_ax_baseline": 8983.61025005579,
+      "C_ax_neural_prediction": 10155.406791716814,
+      "E_ax_neural_learning": 14594.947750214487
+    }
+  },
+  "retries": {
+    "kind": "not_measured",
+    "reason": "single-shot turns; no retry loop"
+  },
+  "productionDefaultsUnchanged": true,
+  "semanticWeight": 0.0,
+  "note": "Arm A (disable production Neural ranking) is not runnable; ranking is lock_required."
+}

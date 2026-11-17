@@ -343,7 +343,11 @@ pub fn find_rule_file(roots: &[PathBuf], id: &str) -> Result<PathBuf, String> {
     chosen.ok_or_else(|| format!("rule is not on disk: {id}"))
 }
 
-fn choose_rule_copy(root: &Path, target: &str, found: Vec<PathBuf>) -> Result<Option<PathBuf>, String> {
+fn choose_rule_copy(
+    root: &Path,
+    target: &str,
+    found: Vec<PathBuf>,
+) -> Result<Option<PathBuf>, String> {
     if found.is_empty() {
         return Ok(None);
     }
@@ -605,7 +609,11 @@ fn body_after_frontmatter(markdown: &str) -> String {
     }
 }
 
-fn reference_findings(dir: &Path, body: &str, presence: &SkillPresence<'_>) -> Vec<MechanicalFinding> {
+fn reference_findings(
+    dir: &Path,
+    body: &str,
+    presence: &SkillPresence<'_>,
+) -> Vec<MechanicalFinding> {
     let mut findings = Vec::new();
     let mut seen = Vec::new();
     for raw in referenced_paths(body) {
@@ -643,12 +651,10 @@ fn referenced_item_exists(dir: &Path, raw: &str, presence: &SkillPresence<'_>) -
     {
         return true;
     }
-    presence.roots.iter().any(|root| {
-        root.join("skills")
-            .join(&name)
-            .join("SKILL.md")
-            .is_file()
-    })
+    presence
+        .roots
+        .iter()
+        .any(|root| root.join("skills").join(&name).join("SKILL.md").is_file())
 }
 
 /// `skills/<name>` or `skills/<name>/SKILL.md`, with any prefix such as
@@ -1034,7 +1040,11 @@ mod tests {
         let layer = root.path().join(".agents");
         let skill = layer.join("skills").join("subagents");
         fs::create_dir_all(&skill).unwrap();
-        fs::write(skill.join("SKILL.md"), "---\nname: subagents\ndescription: Run subagents.\n---\n\nBody.\n").unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: subagents\ndescription: Run subagents.\n---\n\nBody.\n",
+        )
+        .unwrap();
         let file = root.path().join("subagents.mdc");
         fs::write(
             &file,
@@ -1342,7 +1352,12 @@ mod tests {
     fn layered_copies_of_a_rule_use_the_later_layer() {
         let root = tempfile::tempdir().unwrap();
         let workspace = root.path().join("io").join(".agents").join("rules");
-        let project = root.path().join("io").join("ax").join(".agents").join("rules");
+        let project = root
+            .path()
+            .join("io")
+            .join("ax")
+            .join(".agents")
+            .join("rules");
         fs::create_dir_all(&workspace).unwrap();
         fs::create_dir_all(&project).unwrap();
         fs::write(workspace.join("subagents.mdc"), "workspace").unwrap();

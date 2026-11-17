@@ -7,7 +7,11 @@ pub fn detect_worktree_index_mismatch(start_path: &Path, resolved_root: &Path) -
     let resolved = resolved_root.canonicalize().ok();
     if let (Some(s), Some(r)) = (start, resolved) {
         if s != r {
-            return Some(format!("worktree path {} differs from index root {}", s.display(), r.display()));
+            return Some(format!(
+                "worktree path {} differs from index root {}",
+                s.display(),
+                r.display()
+            ));
         }
     }
     None

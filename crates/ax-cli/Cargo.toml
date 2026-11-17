@@ -1,6 +1,6 @@
 [package]
 name = "ax-cli"
-version = "9.0.3"
+version = "10.0.0"
 edition = "2021"
 
 [[bin]]
@@ -11,8 +11,6 @@ path = "src/main.rs"
 default = []
 ## Enable wasmtime extractor plugins (`.ax/plugins/*/plugin.toml` with `wasm =`).
 plugins-wasm = ["ax-extraction/plugins-wasm"]
-## Enable ONNX Runtime dense memory embeddings (`AX_ONNX_MODEL` or `~/.ax/models/`).
-onnx = ["ax-memory/onnx"]
 
 [dependencies]
 ax-db = { workspace = true }
@@ -29,6 +27,7 @@ ax-graph = { workspace = true }
 ax-telemetry = { workspace = true }
 ax-usage = { workspace = true }
 ax-reasoning = { workspace = true }
+ax-neural = { workspace = true, features = ["neural-runtime"] }
 ax-policy = { workspace = true }
 ax-skill-catalog = { workspace = true }
 ax-share = { workspace = true }

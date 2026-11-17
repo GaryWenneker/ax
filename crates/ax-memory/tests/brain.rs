@@ -1,8 +1,8 @@
 //! Brain-scale memory: cues, demotion, archive ANN, episodes, and consolidation.
 
 use ax_memory::{
-    capture_activity_engrams, capture_graph_episodes, confirm_memory, consolidate,
-    memories_for_preflight, prune_turns, recall, recall_for_prompt, remember,
+    capture_activity_engrams, capture_graph_episodes, capture_graph_episodes_on, confirm_memory,
+    consolidate, memories_for_preflight, prune_turns, recall, recall_for_prompt, remember,
     remember_with_triggers, save_turn, search, Depth, RememberInput, SearchRequest, TurnRecord,
     TURN_KIND,
 };
@@ -127,7 +127,7 @@ async fn a_91_day_turn_leaves_hot_recall_and_stays_fetchable() {
 }
 
 #[tokio::test]
-async fn archive_knn_matches_brute_force_and_skips_other_models() {
+async fn archive_keyword_search_keeps_a_foreign_model_row() {
     let dir = tempfile::tempdir().unwrap();
     let db = open_db(dir.path()).await;
     let keep = remember(
@@ -180,7 +180,7 @@ async fn archive_knn_matches_brute_force_and_skips_other_models() {
     .await
     .unwrap();
     assert!(found.iter().any(|hit| hit.memory.id == keep.id));
-    assert!(found.iter().all(|hit| hit.memory.id != other.id));
+    assert!(found.iter().any(|hit| hit.memory.id == other.id));
 }
 
 #[tokio::test]
@@ -214,6 +214,44 @@ async fn graph_episode_is_idempotent() {
     .unwrap();
     assert_eq!(again.len(), 1);
     assert_eq!(again[0].memory.kind, "graph_diff");
+}
+
+#[tokio::test]
+async fn graph_capture_rolls_back_as_one_transaction() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    for (id, name) in [("sym-1", "save_turn"), ("sym-2", "load_turn")] {
+        sqlx::query(
+            "INSERT INTO nodes (id, kind, name, qualified_name, file_path, language, start_line, end_line, start_column, end_column, signature, updated_at)
+             VALUES (?, 'function', ?, ?, 'src/turns.rs', 'rust', 1, 4, 0, 1, 'fn old()', 1)",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(format!("turns::{name}"))
+        .execute(db.pool())
+        .await
+        .unwrap();
+    }
+    assert_eq!(capture_graph_episodes(db.pool()).await.unwrap(), 0);
+    sqlx::query("UPDATE nodes SET signature = 'fn new()'")
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    let mut conn = db.pool().acquire().await.unwrap();
+    sqlx::query("BEGIN").execute(&mut *conn).await.unwrap();
+    let written = capture_graph_episodes_on(&mut conn).await.unwrap();
+    assert_eq!(written, 2);
+    sqlx::query("ROLLBACK").execute(&mut *conn).await.unwrap();
+    drop(conn);
+
+    assert_eq!(capture_graph_episodes(db.pool()).await.unwrap(), 2);
+    let episodes: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM memories WHERE kind = 'graph_diff'")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(episodes, 2);
 }
 
 #[tokio::test]
@@ -322,7 +360,7 @@ async fn schema_29_rebuilds_a_misdirected_archive_index() {
             .execute(db.pool())
             .await
             .unwrap();
-        sqlx::query("DELETE FROM schema_versions WHERE version = 29")
+        sqlx::query("DELETE FROM schema_versions WHERE version >= 29")
             .execute(db.pool())
             .await
             .unwrap();
@@ -506,31 +544,31 @@ async fn a_symbol_that_changes_back_and_forth_keeps_recording() {
 async fn candidate_stays_out_of_preflight_until_confirm() {
     let dir = tempfile::tempdir().unwrap();
     let db = open_db(dir.path()).await;
-    save_turn(
+    let row = remember(
         db.pool(),
-        &TurnRecord {
-            id: "turn-decision".into(),
+        RememberInput {
             title: "Use cues".into(),
             body: "We decided to fetch by cue because names are exact.".into(),
+            kind: Some("decision".into()),
+            tags: vec![],
             files: vec![],
+            source: Some("consolidation".into()),
         },
-        NOW,
     )
     .await
     .unwrap();
-    assert_eq!(consolidate(db.pool()).await.unwrap(), 1);
+    sqlx::query("UPDATE memories SET status = 'candidate' WHERE id = ?")
+        .bind(&row.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
     let before = recall_for_prompt(db.pool(), "decided to fetch by cue", 5)
         .await
         .unwrap();
     assert!(before
         .iter()
         .all(|hit| hit.memory.source != "consolidation"));
-    let candidate: String = sqlx::query_scalar(
-        "SELECT id FROM memories WHERE source = 'consolidation' AND status = 'candidate'",
-    )
-    .fetch_one(db.pool())
-    .await
-    .unwrap();
+    let candidate = row.id;
     assert!(confirm_memory(db.pool(), &candidate).await.unwrap());
     let after = recall_for_prompt(db.pool(), "decided to fetch by cue because names", 5)
         .await
@@ -629,6 +667,94 @@ async fn selected_activity_is_an_engram_and_history_archive_sees_it() {
     .await
     .unwrap();
     assert!(entries.iter().any(|entry| entry.kind == "activity"));
+}
+
+#[tokio::test]
+async fn preflight_finds_durable_title_despite_noisy_turns() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    let durable = remember(
+        db.pool(),
+        note(
+            "Music DNA deterministic replay contract and regression fixture",
+            "Reuse the locked Music DNA snapshot for identical song requests.",
+            vec![],
+        ),
+    )
+    .await
+    .unwrap();
+    for n in 0..80 {
+        save_turn(
+            db.pool(),
+            &TurnRecord {
+                id: format!("noise-turn-{n:02}"),
+                title: format!("continue with fixture and contract {n}"),
+                body: "and fixture regression contract deterministic notes from a turn".into(),
+                files: vec![],
+            },
+            NOW,
+        )
+        .await
+        .unwrap();
+    }
+
+    let injected = recall_for_prompt(
+        db.pool(),
+        "Music DNA deterministic replay contract and regression fixture",
+        5,
+    )
+    .await
+    .unwrap();
+    assert!(
+        injected.iter().any(|hit| hit.memory.id == durable.id),
+        "durable title must survive noisy turns, got {injected:?}"
+    );
+}
+
+#[tokio::test]
+async fn preflight_abstains_when_only_a_single_query_term_overlaps() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    remember(
+        db.pool(),
+        note(
+            "Blossom Spotify OAuth HTTPS callback",
+            "Independent smoke observed 404 on /callback, so the user must pull latest main.",
+            vec![],
+        ),
+    )
+    .await
+    .unwrap();
+    remember(
+        db.pool(),
+        note(
+            "Music DNA deterministic replay contract",
+            "Regression fixture locks hexadecimal fingerprints for arrangement analysis.",
+            vec![],
+        ),
+    )
+    .await
+    .unwrap();
+
+    let lute = recall_for_prompt(
+        db.pool(),
+        "medieval lute tablature for imaginary symphony #404",
+        5,
+    )
+    .await
+    .unwrap();
+    assert!(
+        lute.is_empty(),
+        "single-token 404 overlap must abstain, got {lute:?}"
+    );
+
+    let cake = recall_for_prompt(db.pool(), "bake a cake using only hexadecimal integers", 5)
+        .await
+        .unwrap();
+    assert!(
+        cake.is_empty(),
+        "single-token hexadecimal overlap must abstain, got {cake:?}"
+    );
 }
 
 #[tokio::test]
@@ -1082,7 +1208,7 @@ async fn a_listed_file_registers_its_symbol_as_a_cue() {
 }
 
 #[tokio::test]
-async fn a_commit_that_states_a_decision_becomes_a_candidate() {
+async fn a_commit_that_states_a_decision_stays_a_commit() {
     let dir = tempfile::tempdir().unwrap();
     let db = open_db(dir.path()).await;
     let git = remember(
@@ -1099,31 +1225,21 @@ async fn a_commit_that_states_a_decision_becomes_a_candidate() {
     .await
     .unwrap();
     let created = consolidate(db.pool()).await.unwrap();
-    assert_eq!(created, 1);
-    let status: String = sqlx::query_scalar(
-        "SELECT status FROM memories WHERE kind = 'decision' AND source = 'consolidation'",
+    assert_eq!(created, 0);
+    let decisions: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM memories WHERE kind = 'decision' AND source = 'consolidation'",
     )
     .fetch_one(db.pool())
     .await
     .unwrap();
-    assert_eq!(status, "candidate");
+    assert_eq!(decisions, 0);
     let links: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM memory_links WHERE to_id = ? AND kind = 'source'")
             .bind(&git.id)
             .fetch_one(db.pool())
             .await
             .unwrap();
-    assert_eq!(links, 1);
-    let candidate: String = sqlx::query_scalar(
-        "SELECT id FROM memories WHERE kind = 'decision' AND source = 'consolidation'",
-    )
-    .fetch_one(db.pool())
-    .await
-    .unwrap();
-    let injected = recall_for_prompt(db.pool(), "sqlite-vec stays local", 5)
-        .await
-        .unwrap();
-    assert!(injected.iter().all(|hit| hit.memory.id != candidate));
+    assert_eq!(links, 0);
 }
 
 #[tokio::test]
@@ -1154,7 +1270,7 @@ async fn a_foreign_model_is_reembedded_onto_the_active_model() {
         .fetch_one(db.pool())
         .await
         .unwrap();
-    assert!(model == "hash-v1" || model == "minilm-256", "{model}");
+    assert_eq!(model, "hash-v1");
     let indexed: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM memory_vec_map WHERE memory_id = ?")
             .bind(&row.id)
@@ -1216,6 +1332,81 @@ async fn migration_26_moves_git_and_docs_into_the_archive() {
     assert_eq!(tier_of(db.pool(), &git.id).await, "t3");
     assert_eq!(tier_of(db.pool(), &doc.id).await, "t3");
     assert_eq!(tier_of(db.pool(), &decision.id).await, "t2");
+}
+
+#[tokio::test]
+async fn migration_31_rejects_a_heuristic_candidate_and_confirm_restores_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    let candidate = remember(
+        db.pool(),
+        RememberInput {
+            title: "Candidate: keep it".into(),
+            body: "We decided to keep it.".into(),
+            kind: Some("decision".into()),
+            tags: vec![],
+            files: vec![],
+            source: Some("consolidation".into()),
+        },
+    )
+    .await
+    .unwrap();
+    let kept = remember(db.pool(), note("Kept decision", "A real decision.", vec![]))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE memories SET status = 'candidate' WHERE id = ?")
+        .bind(&candidate.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO memory_links (from_id, to_id, kind) VALUES (?, ?, 'supersedes')")
+        .bind(&candidate.id)
+        .bind(&kept.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM schema_versions WHERE version >= 31")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    ax_db::migrations::run_migrations(db.pool(), 30)
+        .await
+        .unwrap();
+    let status: String = sqlx::query_scalar("SELECT status FROM memories WHERE id = ?")
+        .bind(&candidate.id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(status, "rejected");
+    let kept_status: String = sqlx::query_scalar("SELECT status FROM memories WHERE id = ?")
+        .bind(&kept.id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(kept_status, "active");
+    let kind: String =
+        sqlx::query_scalar("SELECT kind FROM memory_links WHERE from_id = ? AND to_id = ?")
+            .bind(&candidate.id)
+            .bind(&kept.id)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(kind, "revoked_supersedes");
+    assert!(confirm_memory(db.pool(), &candidate.id).await.unwrap());
+    let restored: String = sqlx::query_scalar("SELECT status FROM memories WHERE id = ?")
+        .bind(&candidate.id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(restored, "active");
+    let restored_kind: String =
+        sqlx::query_scalar("SELECT kind FROM memory_links WHERE from_id = ? AND to_id = ?")
+            .bind(&candidate.id)
+            .bind(&kept.id)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(restored_kind, "supersedes");
 }
 
 #[tokio::test]
@@ -1414,4 +1605,287 @@ async fn a_wide_recall_returns_every_match_up_to_the_limit() {
     .await
     .unwrap();
     assert_eq!(hits.len(), 60);
+}
+
+#[tokio::test]
+async fn a_trigger_behind_non_injectable_rows_is_still_returned() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    for n in 0..8 {
+        let id = format!("a-turn-{n:02}");
+        sqlx::query(
+            "INSERT INTO memories (id, kind, title, body, created_at, updated_at, tier, status, enabled)
+             VALUES (?, 'turn', 'Turn', 'Turn', 1, 1, 't1', 'active', 1)",
+        )
+        .bind(&id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO memory_cues (memory_id, cue, source, weight) VALUES (?, 'zulu-cue', 'trigger', 1.0)",
+        )
+        .bind(&id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO memories (id, kind, title, body, created_at, updated_at, tier, status, enabled)
+         VALUES ('z-hot', 'decision', 'Hot', 'Hot', 1, 1, 't1', 'active', 1)",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO memory_cues (memory_id, cue, source, weight) VALUES ('z-hot', 'zulu-cue', 'trigger', 1.0)",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+
+    let hits = ax_memory::brain::prompt_cues(db.pool(), "please zulu-cue now", 1)
+        .await
+        .unwrap();
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert_eq!(hits[0].memory.id, "z-hot");
+}
+
+#[tokio::test]
+async fn a_keyword_hit_is_not_hidden_by_its_embedding_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    let row = remember(
+        db.pool(),
+        note("Visible word", "The zephyrword stays searchable.", vec![]),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE memories SET embedding_model = 'minilm' WHERE id = ?")
+        .bind(&row.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    let hits = recall(db.pool(), "zephyrword", 5).await.unwrap();
+    assert!(hits.iter().any(|hit| hit.memory.id == row.id), "{hits:?}");
+}
+
+#[tokio::test]
+async fn a_similar_decision_does_not_confirm_the_candidate() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    let body = "We decided to keep sqlite-vec because it stays local.";
+    remember(
+        db.pool(),
+        RememberInput {
+            title: "Keep sqlite-vec".into(),
+            body: body.into(),
+            kind: Some("decision".into()),
+            tags: vec![],
+            files: vec![],
+            source: Some("test".into()),
+        },
+    )
+    .await
+    .unwrap();
+    remember(
+        db.pool(),
+        RememberInput {
+            title: "Keep sqlite-vec".into(),
+            body: body.into(),
+            kind: Some("git".into()),
+            tags: vec!["git".into()],
+            files: vec![],
+            source: Some("git".into()),
+        },
+    )
+    .await
+    .unwrap();
+
+    let created = consolidate(db.pool()).await.unwrap();
+    assert_eq!(created, 0);
+    let status: String = sqlx::query_scalar("SELECT status FROM memories WHERE kind = 'decision'")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(status, "active");
+    let links: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM memory_links WHERE kind = 'supersedes'")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(links, 0);
+}
+
+#[tokio::test]
+async fn automatic_cues_skip_change_verbs_kinds_and_primitive_types() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    let row = remember_with_triggers(
+        db.pool(),
+        note(
+            "Updated the function string parser",
+            "Keep the parser.",
+            vec![],
+        ),
+        &["updated".into()],
+    )
+    .await
+    .unwrap();
+    let cues: Vec<(String, String)> =
+        sqlx::query_as("SELECT cue, source FROM memory_cues WHERE memory_id = ? ORDER BY cue")
+            .bind(&row.id)
+            .fetch_all(db.pool())
+            .await
+            .unwrap();
+    assert!(cues.iter().any(|(cue, _)| cue == "parser"), "{cues:?}");
+    assert!(
+        cues.iter()
+            .all(|(cue, _)| cue != "function" && cue != "string"),
+        "{cues:?}"
+    );
+    assert_eq!(
+        cues.iter()
+            .find(|(cue, _)| cue == "updated")
+            .map(|(_, source)| source.as_str()),
+        Some("trigger"),
+        "{cues:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_graph_change_registers_only_the_changed_symbol() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    for (id, name) in [("sym-flush", "flush"), ("sym-enqueue", "enqueue")] {
+        sqlx::query(
+            "INSERT INTO nodes (id, kind, name, qualified_name, file_path, language, start_line, end_line, start_column, end_column, signature, updated_at)
+             VALUES (?, 'function', ?, ?, 'src/queue.rs', 'rust', 1, 4, 0, 1, ?, 1)",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(format!("queue::{name}"))
+        .bind(format!("fn {name}()"))
+        .execute(db.pool())
+        .await
+        .unwrap();
+    }
+    capture_graph_episodes(db.pool()).await.unwrap();
+    sqlx::query("UPDATE nodes SET signature = 'fn flush(now: i64)' WHERE id = 'sym-flush'")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    capture_graph_episodes(db.pool()).await.unwrap();
+
+    let memory_id: String = sqlx::query_scalar(
+        "SELECT id FROM memories WHERE kind = 'graph_diff' AND title LIKE '%flush%' ORDER BY rowid DESC LIMIT 1",
+    )
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    let cues: Vec<String> =
+        sqlx::query_scalar("SELECT cue FROM memory_cues WHERE memory_id = ? ORDER BY cue")
+            .bind(&memory_id)
+            .fetch_all(db.pool())
+            .await
+            .unwrap();
+    assert!(cues.iter().any(|cue| cue == "flush"), "{cues:?}");
+    assert!(cues.iter().all(|cue| cue != "enqueue"), "{cues:?}");
+}
+
+#[tokio::test]
+async fn an_overused_automatic_cue_is_not_added_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    for n in 0..32 {
+        remember(
+            db.pool(),
+            note(&format!("commonword shelf {n}"), "A shelf.", vec![]),
+        )
+        .await
+        .unwrap();
+    }
+    let plain = remember(
+        db.pool(),
+        note("commonword finale", "The last shelf.", vec![]),
+    )
+    .await
+    .unwrap();
+    let automatic: Option<String> = sqlx::query_scalar(
+        "SELECT source FROM memory_cues WHERE memory_id = ? AND cue = 'commonword'",
+    )
+    .bind(&plain.id)
+    .fetch_optional(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(automatic, None);
+
+    let triggered = remember_with_triggers(
+        db.pool(),
+        note("Plain finale", "No shared title word.", vec![]),
+        &["commonword".into()],
+    )
+    .await
+    .unwrap();
+    let source: Option<String> = sqlx::query_scalar(
+        "SELECT source FROM memory_cues WHERE memory_id = ? AND cue = 'commonword'",
+    )
+    .bind(&triggered.id)
+    .fetch_optional(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(source.as_deref(), Some("trigger"));
+}
+
+#[tokio::test]
+async fn a_rare_title_cue_outranks_a_common_one_and_a_trigger_stays_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    for n in 0..8 {
+        remember(
+            db.pool(),
+            note(&format!("commonword shelf {n}"), "A shelf.", vec![]),
+        )
+        .await
+        .unwrap();
+    }
+    let rare = remember(db.pool(), note("rareword keeper", "One keeper.", vec![]))
+        .await
+        .unwrap();
+    let trigger = remember_with_triggers(
+        db.pool(),
+        note("Plain note", "No shared title.", vec![]),
+        &["commonword".into()],
+    )
+    .await
+    .unwrap();
+    let hits = ax_memory::brain::prompt_cues(db.pool(), "rareword commonword", 5)
+        .await
+        .unwrap();
+    let ids: Vec<&str> = hits.iter().map(|hit| hit.memory.id.as_str()).collect();
+    assert_eq!(ids.first().copied(), Some(trigger.id.as_str()), "{ids:?}");
+    let rare_at = ids
+        .iter()
+        .position(|id| *id == rare.id.as_str())
+        .unwrap_or_else(|| panic!("{ids:?}"));
+    let common_at = ids
+        .iter()
+        .position(|id| *id != trigger.id.as_str() && *id != rare.id.as_str())
+        .unwrap_or_else(|| panic!("{ids:?}"));
+    assert!(rare_at < common_at, "{ids:?}");
+}
+
+#[test]
+fn suggested_triggers_prefer_title_nouns_then_anchors_then_prompt_words() {
+    let got = ax_memory::suggested_triggers(
+        "Keep sqlite-vec because the archive stays local",
+        &["crates/ax-memory/src/brain.rs".to_string()],
+        "the user asked to remember the vector index",
+        &["sqlite-vec".to_string()],
+    );
+    assert_eq!(
+        got,
+        vec!["archive", "local", "ax-memory", "brain", "vector", "index"]
+    );
+    assert!(ax_memory::suggested_triggers("Update the function", &[], "the", &[]).is_empty());
 }

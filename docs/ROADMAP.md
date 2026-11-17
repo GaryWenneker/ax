@@ -7,7 +7,7 @@ This roadmap covers **net-new** capabilities shipped in **v4.0.0** (branch `ax-v
 | Window | Deliverables |
 |--------|----------------|
 | **Q3 2026** | Monorepo workspace federation + `ax policy pull`; multi-format graph export |
-| **Q4 2026** | WASM plugin host; ONNX dense vectors; `ax ship --ci` + test runners |
+| **Q4 2026** | WASM plugin host; hash embeddings (`hash-v1`); `ax ship --ci` + test runners |
 | **Q1 2027** | LSP bridge; Command Center share / PWA / live stream |
 
 ## Q3–Q1 MVP status (released in v4.0.0)
@@ -22,7 +22,7 @@ UI, Logging/Quality, and deepen thin MVPs:
 - [x] Share Settings + themed token gate + badge
 - [x] PWA icons + network-first SW + dismissible install hint
 - [x] Unresolved → LSP enrich (ModalShell + `/api/lsp/enrich`)
-- [x] ONNX tokenizer path + embed-status API
+- [x] Embed status reports the hash model (`hash-v1`)
 - [x] Plugins list API + Settings note
 - [x] Reusable `.github/workflows/ax-ship.yml`
 - [x] Verbose domain lines + Logging kind filters + Quality checks (plugin/lsp/ship-ci/…)
@@ -34,7 +34,7 @@ Thin MVPs that still need a real Command Center surface:
 
 - [x] Multi-format graph export on Graph page (`GET /api/graph/export` + Download)
 - [x] Plugins list as its own Settings subsection (`GET /api/plugins` table)
-- [x] ONNX / embed-status as its own Settings subsection (paths + feature flag)
+- [x] Embeddings settings shows the one hash model
 
 ## Mobile maturity
 

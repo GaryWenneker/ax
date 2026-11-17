@@ -63,7 +63,10 @@ impl ExploreBuilder {
         if !parsed.path_filters.is_empty() {
             search_opts.include_patterns = Some(parsed.path_filters.clone());
         }
-        let hits = self.queries.search_nodes(&parsed.text, &search_opts).await?;
+        let hits = self
+            .queries
+            .search_nodes(&parsed.text, &search_opts)
+            .await?;
         let hits: Vec<_> = hits
             .into_iter()
             .filter(|h| matches_parsed_query(&h.node, &parsed))
@@ -231,4 +234,3 @@ fn to_neighbors(
         })
         .collect()
 }
-

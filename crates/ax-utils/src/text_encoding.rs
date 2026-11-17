@@ -8,7 +8,8 @@ use crate::errors::FileError;
 pub fn read_text_file(path: &Path) -> Result<String, FileError> {
     let bytes = std::fs::read(path)
         .map_err(|e| FileError::with_path(e.to_string(), path.display().to_string()))?;
-    decode_text_bytes(&bytes).map_err(|message| FileError::with_path(message, path.display().to_string()))
+    decode_text_bytes(&bytes)
+        .map_err(|message| FileError::with_path(message, path.display().to_string()))
 }
 
 fn decode_text_bytes(bytes: &[u8]) -> Result<String, String> {
@@ -54,7 +55,9 @@ fn utf8_slice(bytes: &[u8]) -> Result<String, String> {
 fn decode_utf16_le(bytes: &[u8]) -> Result<String, String> {
     let even = bytes.len() & !1;
     let units: Vec<u16> = bytes[..even]
-        .as_chunks::<2>().0.iter()
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     String::from_utf16(&units).map_err(|e| e.to_string())
@@ -63,7 +66,9 @@ fn decode_utf16_le(bytes: &[u8]) -> Result<String, String> {
 fn decode_utf16_be(bytes: &[u8]) -> Result<String, String> {
     let even = bytes.len() & !1;
     let units: Vec<u16> = bytes[..even]
-        .as_chunks::<2>().0.iter()
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_be_bytes([c[0], c[1]]))
         .collect();
     String::from_utf16(&units).map_err(|e| e.to_string())

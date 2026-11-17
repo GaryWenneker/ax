@@ -14,9 +14,9 @@ mod wellknown;
 
 pub use audit::{
     agent_brief, audit_directory, audit_directory_present, audit_rule_file, audit_rule_present,
-    audit_skill_text, find_rule_file, find_skill_dir, list_latest, load_latest, needs_edit, open_briefs,
-    parse_verdict, project_briefs, require_one_skill, store_report, AuditSummary, SkillAuditReport,
-    SkillPresence,
+    audit_skill_text, find_rule_file, find_skill_dir, list_latest, load_latest, needs_edit,
+    open_briefs, parse_verdict, project_briefs, require_one_skill, store_report, AuditSummary,
+    SkillAuditReport, SkillPresence,
 };
 pub use install::{install_tree, InstallReceipt, COPY_MAX_BYTES, COPY_MAX_FILES};
 pub use lockfile::{catalog_id, LockEntry, LockFile};

@@ -170,7 +170,13 @@ impl ApiClient {
         self.get_json("/api/unresolved/summary")
     }
 
-    pub fn unresolved(&self, q: &str, kind: &str, limit: i64, offset: i64) -> Result<UnresolvedPage> {
+    pub fn unresolved(
+        &self,
+        q: &str,
+        kind: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<UnresolvedPage> {
         let mut sp = vec![format!("limit={limit}"), format!("offset={offset}")];
         if !q.is_empty() {
             sp.push(format!("q={}", urlencoding::encode(q)));
@@ -293,7 +299,12 @@ impl ApiClient {
 
     // --- Usage / savings / pricing ---
 
-    pub fn savings(&self, period: &str, from: Option<&str>, to: Option<&str>) -> Result<SavingsSummary> {
+    pub fn savings(
+        &self,
+        period: &str,
+        from: Option<&str>,
+        to: Option<&str>,
+    ) -> Result<SavingsSummary> {
         let mut path = format!("/api/usage/savings?period={}", urlencoding::encode(period));
         if let Some(f) = from {
             path.push_str(&format!("&from={}", urlencoding::encode(f)));
@@ -324,7 +335,10 @@ impl ApiClient {
     }
 
     pub fn sync_pricing(&self, force: bool) -> Result<PricingSyncReport> {
-        self.post_json("/api/usage/pricing/sync", &serde_json::json!({ "force": force }))
+        self.post_json(
+            "/api/usage/pricing/sync",
+            &serde_json::json!({ "force": force }),
+        )
     }
 
     // --- Ship ---
@@ -447,37 +461,35 @@ impl ApiClient {
     pub fn stream_mcp_trace(&self) -> Receiver<Result<(String, String), String>> {
         let (tx, rx) = mpsc::channel();
         let client = self.clone();
-        thread::spawn(move || {
-            loop {
-                let res = match client
-                    .http
-                    .get(client.url("/api/usage/mcp-trace/events"))
-                    .header("Accept", "text/event-stream")
-                    .send()
-                {
-                    Ok(r) => r,
-                    Err(e) => {
-                        let _ = tx.send(Err(e.to_string()));
-                        thread::sleep(std::time::Duration::from_secs(2));
-                        continue;
-                    }
-                };
-                if !res.status().is_success() {
-                    let _ = tx.send(Err(format!("mcp-trace HTTP {}", res.status())));
+        thread::spawn(move || loop {
+            let res = match client
+                .http
+                .get(client.url("/api/usage/mcp-trace/events"))
+                .header("Accept", "text/event-stream")
+                .send()
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    let _ = tx.send(Err(e.to_string()));
                     thread::sleep(std::time::Duration::from_secs(2));
                     continue;
                 }
-                let _ = consume_sse_blocking(res, |ev: SseEvent| {
-                    tx.send(Ok((ev.event, ev.data))).is_ok()
-                });
-                thread::sleep(std::time::Duration::from_secs(1));
+            };
+            if !res.status().is_success() {
+                let _ = tx.send(Err(format!("mcp-trace HTTP {}", res.status())));
+                thread::sleep(std::time::Duration::from_secs(2));
+                continue;
             }
+            let _ =
+                consume_sse_blocking(res, |ev: SseEvent| tx.send(Ok((ev.event, ev.data))).is_ok());
+            thread::sleep(std::time::Duration::from_secs(1));
         });
         rx
     }
 
     pub fn agent_sessions(&self) -> Result<serde_json::Value> {
-        self.get_json("/api/agent/sessions").or_else(|_| Ok(serde_json::json!({ "sessions": [] })))
+        self.get_json("/api/agent/sessions")
+            .or_else(|_| Ok(serde_json::json!({ "sessions": [] })))
     }
 }
 

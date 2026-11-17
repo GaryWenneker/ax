@@ -745,6 +745,7 @@ pub(crate) fn lean_structured(name: &str, value: &Value) -> Option<Value> {
             "instruction": value.get("instruction"),
             "indexStats": value.get("indexStats"),
             "pendingFiles": value.get("pendingFiles"),
+            "integrity": value.get("integrity"),
             "project": value.get("project"),
             "session": value.get("session"),
             "contextBudget": value.get("contextBudget"),
@@ -756,6 +757,7 @@ pub(crate) fn lean_structured(name: &str, value: &Value) -> Option<Value> {
             "stats": value.get("stats"),
             "lastIndexedAt": value.get("lastIndexedAt"),
             "pendingFiles": value.get("pendingFiles"),
+            "integrity": value.get("integrity"),
             "policy": value.get("policy"),
         })),
         // The markdown context is in content.text; drop the heavy graph payload.

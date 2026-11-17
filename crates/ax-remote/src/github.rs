@@ -14,7 +14,11 @@ pub struct GithubProvider {
 impl GithubProvider {
     pub fn new(token: String, owner: String, repo: String) -> Result<Self, octocrab::Error> {
         let client = Octocrab::builder().personal_token(token).build()?;
-        Ok(Self { client, owner, repo })
+        Ok(Self {
+            client,
+            owner,
+            repo,
+        })
     }
 }
 

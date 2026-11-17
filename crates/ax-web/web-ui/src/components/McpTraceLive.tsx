@@ -10,6 +10,7 @@ import { liveClass, useFreshMarks } from '../lib/useLive';
 import { traceGroupLinks } from '../traceGroups';
 import { traceAge, traceDirection, traceDirectionLabel, traceRowSubtitle } from '../lib/calmRows';
 import { loggingRowView, loggingToolLabel, traceSessionId } from '../lib/loggingPresentation';
+import { groupBySessionThenTurn } from '../logging/sessionTurnGroups';
 import {
   computeMcpTraceStats,
   filterTraceEntries,
@@ -425,6 +426,15 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
     () => [...visibleEntries].reverse(),
     [visibleEntries],
   );
+  const sessionGroups = useMemo(
+    () => groupBySessionThenTurn(displayEntries),
+    [displayEntries],
+  );
+  const entryIndexById = useMemo(() => {
+    const map = new Map<string, number>();
+    displayEntries.forEach((entry, index) => map.set(entry.id, index));
+    return map;
+  }, [displayEntries]);
   const cacheGroups = useMemo(
     () => traceGroupLinks(displayEntries.map((e) => e.message)),
     [displayEntries],
@@ -1368,120 +1378,139 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
             <span className="mcp-dir-legend-item mcp-dir-legend-item--internal">Internal</span>
           </div>
           <ItemList className="calm-list mcp-trace-calm">
-            {displayEntries.map((e, i) => {
-              const group = cacheGroups[i];
-              const meta = entryMeta(e);
-              const textPrimary = primaryTextPayload(e);
-              const hasText = Boolean(textPrimary);
-              const isCursor = cursorId === e.id;
-              const isOpen = selectedId === e.id;
-              const dir = traceDirection(e.kind);
-              const view = loggingRowView(e);
-              const presentation = {
-                title: view.title,
-                subtitle: traceRowSubtitle(traceDirectionLabel(dir) || undefined, KIND_LABELS[e.kind], meta),
-              };
-              const duplicateTool = e.tool?.toLowerCase() === e.kind;
-              return (
-                <ItemRow
-                  key={e.id}
-                  variant="graph"
-                  className={`mcp-trace-row mcp-trace-row--${e.kind} mcp-trace-row--dir-${dir}${hasText ? ' mcp-trace-row--has-query' : ''}${
-                    isCursor && !isOpen ? ' mcp-trace-row--cursor' : ''
-                  }${group ? ` mcp-trace-group${group.joinPrev ? ' mcp-trace-group--prev' : ''}${group.joinNext ? ' mcp-trace-group--next' : ''}` : ''}${liveClass(freshIds, e.id)}`}
-                  style={group ? ({ '--conv-hue': group.hue } as CSSProperties) : undefined}
-                  rowProps={{
-                    id: `mcp-row-${e.id}`,
-                    role: 'option',
-                    tabIndex: -1,
-                    'aria-selected': isCursor || isOpen,
-                    'data-entry-id': e.id,
-                  }}
-                  title={presentation.title}
-                  subtitle={presentation.subtitle}
-                  listValues={[
-                    `${presentation.title} ${presentation.subtitle} ${e.raw}`,
-                    e.raw.match(/^\S+/)?.[0] ?? e.time,
-                    [KIND_LABELS[e.kind], e.badge, e.tool, textPrimary?.leaf, e.origin ? `Node ${e.origin}` : '', group ? `${group.lane} ${group.position}/${group.count}` : ''].filter(Boolean).join(' '),
-                  ]}
-                  meta={traceAge(e.instantMs, e.time, now)}
-                  metaTitle={e.raw.match(/^\S+/)?.[0] ?? e.time}
-                  selected={isOpen}
-                  onClick={() => openEntry(e.id)}
-                  badges={
-                    <>
-                      {e.origin && <span className="page-item-badge" title="Replicated log source">Node {e.origin}</span>}
-                      <button
-                        type="button"
-                        className={`page-item-badge page-item-badge--btn mcp-kind-badge mcp-kind-badge--${e.kind}${
-                          e.kind === 'error' ? ' page-item-badge--danger' : ''
-                        }`}
-                        title={`Filter ${KIND_LABELS[e.kind]}`}
-                        onClick={(ev) => {
-                          ev.stopPropagation();
-                          toggleKind(e.kind);
-                        }}
-                      >
-                        <Codicon name={KIND_ICONS[e.kind]} className="badge-icon" />
-                        {duplicateTool ? KIND_LABELS[e.kind] : e.badge}
-                      </button>
-                      {group && (
-                        <span
-                          className="page-item-badge mcp-trace-group-badge"
-                          title={`Cache ${group.lane} ${group.position} of ${group.count} in group ${group.key}. The same node color belongs together.`}
-                        >
-                          <Codicon name="link" className="badge-icon" />
-                          {group.lane} {group.position}/{group.count}
-                        </span>
-                      )}
-                      {e.tool && (
-                        <button
-                          type="button"
-                          className="page-item-badge page-item-badge--btn mcp-col-tool"
-                          title={`Filter ${view.label}`}
-                          aria-pressed={toolFilter === e.tool}
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            setToolFilter((prev) => (prev === e.tool ? '' : e.tool ?? ''));
+            {sessionGroups.map((session) => (
+              <details key={session.sessionId} className="mcp-trace-session" open>
+                <summary className="mcp-trace-session-summary">
+                  Session {session.sessionId}
+                  <span className="mcp-trace-session-count">
+                    {session.turns.reduce((n, turn) => n + turn.events.length, 0)}
+                  </span>
+                </summary>
+                {session.turns.map((turn) => (
+                  <details key={`${session.sessionId}:${turn.turnId}`} className="mcp-trace-turn" open>
+                    <summary className="mcp-trace-turn-summary">
+                      Turn {turn.turnId}
+                      <span className="mcp-trace-turn-count">{turn.events.length}</span>
+                    </summary>
+                    {turn.events.map((e) => {
+                      const i = entryIndexById.get(e.id) ?? -1;
+                      const group = i >= 0 ? cacheGroups[i] : undefined;
+                      const meta = entryMeta(e);
+                      const textPrimary = primaryTextPayload(e);
+                      const hasText = Boolean(textPrimary);
+                      const isCursor = cursorId === e.id;
+                      const isOpen = selectedId === e.id;
+                      const dir = traceDirection(e.kind);
+                      const view = loggingRowView(e);
+                      const presentation = {
+                        title: view.title,
+                        subtitle: traceRowSubtitle(traceDirectionLabel(dir) || undefined, KIND_LABELS[e.kind], meta),
+                      };
+                      const duplicateTool = e.tool?.toLowerCase() === e.kind;
+                      return (
+                        <ItemRow
+                          key={e.id}
+                          variant="graph"
+                          className={`mcp-trace-row mcp-trace-row--${e.kind} mcp-trace-row--dir-${dir}${hasText ? ' mcp-trace-row--has-query' : ''}${
+                            isCursor && !isOpen ? ' mcp-trace-row--cursor' : ''
+                          }${group ? ` mcp-trace-group${group.joinPrev ? ' mcp-trace-group--prev' : ''}${group.joinNext ? ' mcp-trace-group--next' : ''}` : ''}${liveClass(freshIds, e.id)}`}
+                          style={group ? ({ '--conv-hue': group.hue } as CSSProperties) : undefined}
+                          rowProps={{
+                            id: `mcp-row-${e.id}`,
+                            role: 'option',
+                            tabIndex: -1,
+                            'aria-selected': isCursor || isOpen,
+                            'data-entry-id': e.id,
                           }}
-                        >
-                          <Codicon name="symbol-misc" className="badge-icon" />
-                          {view.label}
-                        </button>
-                      )}
-                      {view.sessionShort && (
-                        <button
-                          type="button"
-                          className="page-item-badge page-item-badge--btn"
-                          title={`Filter session ${view.sessionId}`}
-                          aria-pressed={sessionFilter === view.sessionId}
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            setSessionFilter((prev) => (prev === view.sessionId ? '' : view.sessionId ?? ''));
-                          }}
-                        >
-                          {view.sessionShort}
-                        </button>
-                      )}
-                      {textPrimary && (
-                        <button
-                          type="button"
-                          className={`page-item-badge page-item-badge--btn mcp-trace-badge--text-${textPrimary.leaf}`}
-                          title={`${textPrimary.leaf} text — click to filter`}
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            setHasTextFilter(true);
-                          }}
-                        >
-                          <Codicon name="search" className="badge-icon" />
-                          {textPrimary.leaf}
-                        </button>
-                      )}
-                    </>
-                  }
-                />
-              );
-            })}
+                          title={presentation.title}
+                          subtitle={presentation.subtitle}
+                          listValues={[
+                            `${presentation.title} ${presentation.subtitle} ${e.raw}`,
+                            e.raw.match(/^\S+/)?.[0] ?? e.time,
+                            [KIND_LABELS[e.kind], e.badge, e.tool, textPrimary?.leaf, e.origin ? `Node ${e.origin}` : '', group ? `${group.lane} ${group.position}/${group.count}` : ''].filter(Boolean).join(' '),
+                          ]}
+                          meta={traceAge(e.instantMs, e.time, now)}
+                          metaTitle={e.raw.match(/^\S+/)?.[0] ?? e.time}
+                          selected={isOpen}
+                          onClick={() => openEntry(e.id)}
+                          badges={
+                            <>
+                              {e.origin && <span className="page-item-badge" title="Replicated log source">Node {e.origin}</span>}
+                              <button
+                                type="button"
+                                className={`page-item-badge page-item-badge--btn mcp-kind-badge mcp-kind-badge--${e.kind}${
+                                  e.kind === 'error' ? ' page-item-badge--danger' : ''
+                                }`}
+                                title={`Filter ${KIND_LABELS[e.kind]}`}
+                                onClick={(ev) => {
+                                  ev.stopPropagation();
+                                  toggleKind(e.kind);
+                                }}
+                              >
+                                <Codicon name={KIND_ICONS[e.kind]} className="badge-icon" />
+                                {duplicateTool ? KIND_LABELS[e.kind] : e.badge}
+                              </button>
+                              {group && (
+                                <span
+                                  className="page-item-badge mcp-trace-group-badge"
+                                  title={`Cache ${group.lane} ${group.position} of ${group.count} in group ${group.key}. The same node color belongs together.`}
+                                >
+                                  <Codicon name="link" className="badge-icon" />
+                                  {group.lane} {group.position}/{group.count}
+                                </span>
+                              )}
+                              {e.tool && (
+                                <button
+                                  type="button"
+                                  className="page-item-badge page-item-badge--btn mcp-col-tool"
+                                  title={`Filter ${view.label}`}
+                                  aria-pressed={toolFilter === e.tool}
+                                  onClick={(ev) => {
+                                    ev.stopPropagation();
+                                    setToolFilter((prev) => (prev === e.tool ? '' : e.tool ?? ''));
+                                  }}
+                                >
+                                  <Codicon name="symbol-misc" className="badge-icon" />
+                                  {view.label}
+                                </button>
+                              )}
+                              {view.sessionShort && (
+                                <button
+                                  type="button"
+                                  className="page-item-badge page-item-badge--btn"
+                                  title={`Filter session ${view.sessionId}`}
+                                  aria-pressed={sessionFilter === view.sessionId}
+                                  onClick={(ev) => {
+                                    ev.stopPropagation();
+                                    setSessionFilter((prev) => (prev === view.sessionId ? '' : view.sessionId ?? ''));
+                                  }}
+                                >
+                                  {view.sessionShort}
+                                </button>
+                              )}
+                              {textPrimary && (
+                                <button
+                                  type="button"
+                                  className={`page-item-badge page-item-badge--btn mcp-trace-badge--text-${textPrimary.leaf}`}
+                                  title={`${textPrimary.leaf} text — click to filter`}
+                                  onClick={(ev) => {
+                                    ev.stopPropagation();
+                                    setHasTextFilter(true);
+                                  }}
+                                >
+                                  <Codicon name="search" className="badge-icon" />
+                                  {textPrimary.leaf}
+                                </button>
+                              )}
+                            </>
+                          }
+                        />
+                      );
+                    })}
+                  </details>
+                ))}
+              </details>
+            ))}
           </ItemList>
           </>
         )}

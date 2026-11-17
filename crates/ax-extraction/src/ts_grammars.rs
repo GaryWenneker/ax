@@ -55,7 +55,10 @@ mod tests {
             if lang == Language::Unknown {
                 continue;
             }
-            assert!(has_ts_grammar(lang), "{lang:?} must have a tree-sitter grammar");
+            assert!(
+                has_ts_grammar(lang),
+                "{lang:?} must have a tree-sitter grammar"
+            );
         }
     }
 }

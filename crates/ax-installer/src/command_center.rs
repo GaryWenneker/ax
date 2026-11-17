@@ -29,14 +29,29 @@ struct VscodeIde {
 
 fn vscode_ide(target: &str) -> Option<VscodeIde> {
     let (cli, mac_app, win_dir, ext_dir) = match target {
-        "vscode" => ("code", "Visual Studio Code.app", "Microsoft VS Code", ".vscode"),
+        "vscode" => (
+            "code",
+            "Visual Studio Code.app",
+            "Microsoft VS Code",
+            ".vscode",
+        ),
         "cursor" => ("cursor", "Cursor.app", "cursor", ".cursor"),
         "windsurf" => ("windsurf", "Windsurf.app", "Windsurf", ".windsurf"),
-        "antigravity" => ("antigravity", "Antigravity.app", "Antigravity", ".antigravity"),
+        "antigravity" => (
+            "antigravity",
+            "Antigravity.app",
+            "Antigravity",
+            ".antigravity",
+        ),
         "kiro" => ("kiro", "Kiro.app", "Kiro", ".kiro"),
         _ => return None,
     };
-    Some(VscodeIde { cli, mac_app, win_dir, ext_dir })
+    Some(VscodeIde {
+        cli,
+        mac_app,
+        win_dir,
+        ext_dir,
+    })
 }
 
 pub fn is_vscode_family(target: &str) -> bool {
@@ -44,22 +59,38 @@ pub fn is_vscode_family(target: &str) -> bool {
 }
 
 /// The IDE's command-line tool: PATH first, then the copy inside the app install.
-pub fn resolve_vscode_cli(target: &str, os: Os, places: &Places, probe: &dyn Probe) -> Option<PathBuf> {
+pub fn resolve_vscode_cli(
+    target: &str,
+    os: Os,
+    places: &Places,
+    probe: &dyn Probe,
+) -> Option<PathBuf> {
     let ide = vscode_ide(target)?;
     if probe.on_path(ide.cli) {
         return Some(PathBuf::from(ide.cli));
     }
     let candidates: Vec<PathBuf> = match os {
-        Os::Mac => [PathBuf::from("/Applications"), places.home.join("Applications")]
-            .iter()
-            .map(|root| root.join(ide.mac_app).join("Contents/Resources/app/bin").join(ide.cli))
-            .collect(),
+        Os::Mac => [
+            PathBuf::from("/Applications"),
+            places.home.join("Applications"),
+        ]
+        .iter()
+        .map(|root| {
+            root.join(ide.mac_app)
+                .join("Contents/Resources/app/bin")
+                .join(ide.cli)
+        })
+        .collect(),
         Os::Windows => places
             .local_app_data
             .iter()
             .map(|d| d.join("Programs"))
             .chain(places.program_files.iter().cloned())
-            .map(|d| d.join(ide.win_dir).join("bin").join(format!("{}.cmd", ide.cli)))
+            .map(|d| {
+                d.join(ide.win_dir)
+                    .join("bin")
+                    .join(format!("{}.cmd", ide.cli))
+            })
             .collect(),
         Os::Linux => Vec::new(),
     };
@@ -74,7 +105,9 @@ pub fn install_vscode_extension(
     runner: &dyn Runner,
 ) -> String {
     let Some(cli) = cli else {
-        return format!("Command Center panel not installed: {display_name} command-line tool not found.");
+        return format!(
+            "Command Center panel not installed: {display_name} command-line tool not found."
+        );
     };
     let vsix = vsix.to_string_lossy();
     match runner.run(cli, &["--install-extension", &vsix, "--force"]) {
@@ -85,10 +118,12 @@ pub fn install_vscode_extension(
 
 pub fn uninstall_vscode_extension(cli: Option<&Path>, runner: &dyn Runner) -> Option<String> {
     let cli = cli?;
-    Some(match runner.run(cli, &["--uninstall-extension", EXTENSION_ID]) {
-        Ok(()) => "Command Center panel removed.".into(),
-        Err(e) => format!("Command Center panel not removed: {e}"),
-    })
+    Some(
+        match runner.run(cli, &["--uninstall-extension", EXTENSION_ID]) {
+            Ok(()) => "Command Center panel removed.".into(),
+            Err(e) => format!("Command Center panel not removed: {e}"),
+        },
+    )
 }
 
 pub fn vscode_panel_installed(target: &str, home: &Path, probe: &dyn Probe) -> bool {
@@ -108,7 +143,9 @@ pub fn vscode_panel_current(target: &str, home: &Path, probe: &dyn Probe) -> boo
         return false;
     };
     let current = format!("{EXTENSION_ID}-{EXTENSION_VERSION}");
-    probe.dir_names(&home.join(ide.ext_dir).join("extensions")).contains(&current)
+    probe
+        .dir_names(&home.join(ide.ext_dir).join("extensions"))
+        .contains(&current)
 }
 
 /// True when an IDE `extensions.json` lists this extension at the bundled version.
@@ -145,7 +182,10 @@ fn zed_block(open_command: &str) -> String {
         "reveal": "never",
         "hide": "on_success",
     });
-    let task = serde_json::to_string(&task).unwrap_or_default().replace("\":", "\": ").replace(",\"", ", \"");
+    let task = serde_json::to_string(&task)
+        .unwrap_or_default()
+        .replace("\":", "\": ")
+        .replace(",\"", ", \"");
     format!("\n  {ZED_START}\n  {task},\n  {ZED_END}")
 }
 
@@ -189,14 +229,28 @@ pub fn zed_has_ax_task(content: &str) -> bool {
 }
 
 const JETBRAINS_PRODUCTS: &[&str] = &[
-    "IntelliJIdea", "IdeaIC", "PyCharm", "PyCharmCE", "WebStorm", "GoLand", "Rider", "CLion",
-    "PhpStorm", "RubyMine", "DataGrip", "RustRover", "DataSpell", "Aqua",
+    "IntelliJIdea",
+    "IdeaIC",
+    "PyCharm",
+    "PyCharmCE",
+    "WebStorm",
+    "GoLand",
+    "Rider",
+    "CLion",
+    "PhpStorm",
+    "RubyMine",
+    "DataGrip",
+    "RustRover",
+    "DataSpell",
+    "Aqua",
 ];
 
 fn is_jetbrains_product_dir(name: &str) -> bool {
     JETBRAINS_PRODUCTS.iter().any(|p| {
         name.strip_prefix(p).is_some_and(|v| {
-            !v.is_empty() && v.starts_with(|c: char| c.is_ascii_digit()) && v.chars().all(|c| c.is_ascii_digit() || c == '.')
+            !v.is_empty()
+                && v.starts_with(|c: char| c.is_ascii_digit())
+                && v.chars().all(|c| c.is_ascii_digit() || c == '.')
         })
     })
 }
@@ -223,7 +277,10 @@ pub fn jetbrains_base(os: Os, places: &Places, app_data: Option<&Path>) -> PathB
 }
 
 /// Writes the plugin jar into `<product>/plugins/` of every product folder.
-pub fn install_jetbrains_plugin(product_dirs: &[PathBuf], jar: &[u8]) -> Result<Vec<(PathBuf, FileAction)>, String> {
+pub fn install_jetbrains_plugin(
+    product_dirs: &[PathBuf],
+    jar: &[u8],
+) -> Result<Vec<(PathBuf, FileAction)>, String> {
     let mut out = Vec::new();
     for dir in product_dirs {
         let path = dir.join("plugins").join(JETBRAINS_JAR);
@@ -233,7 +290,8 @@ pub fn install_jetbrains_plugin(product_dirs: &[PathBuf], jar: &[u8]) -> Result<
             Err(_) => FileAction::Created,
         };
         if action != FileAction::Unchanged {
-            std::fs::create_dir_all(dir.join("plugins")).map_err(|e| format!("{}: {e}", dir.display()))?;
+            std::fs::create_dir_all(dir.join("plugins"))
+                .map_err(|e| format!("{}: {e}", dir.display()))?;
             std::fs::write(&path, jar).map_err(|e| format!("{}: {e}", path.display()))?;
         }
         out.push((path, action));
@@ -270,8 +328,22 @@ impl Runner for SystemRunner {
             return Ok(());
         }
         let stderr = String::from_utf8_lossy(&out.stderr);
-        let last = stderr.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
-        Err(format!("{} exited with {}{}", program.display(), out.status, if last.is_empty() { String::new() } else { format!(": {last}") }))
+        let last = stderr
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("")
+            .trim();
+        Err(format!(
+            "{} exited with {}{}",
+            program.display(),
+            out.status,
+            if last.is_empty() {
+                String::new()
+            } else {
+                format!(": {last}")
+            }
+        ))
     }
 }
 
@@ -284,7 +356,12 @@ fn places_here() -> Option<Places> {
 }
 
 pub fn vscode_cli_here(target: &str) -> Option<PathBuf> {
-    resolve_vscode_cli(target, Os::current(), &places_here()?, &crate::detect::System)
+    resolve_vscode_cli(
+        target,
+        Os::current(),
+        &places_here()?,
+        &crate::detect::System,
+    )
 }
 
 pub fn jetbrains_dirs_here() -> Vec<PathBuf> {
@@ -298,7 +375,10 @@ pub fn jetbrains_dirs_here() -> Vec<PathBuf> {
 
 /// Writes the bundled `.vsix` to a temp file the IDE CLI can read.
 pub fn vsix_on_disk() -> Result<PathBuf, String> {
-    let path = std::env::temp_dir().join(format!("ax-command-center-{}.vsix", env!("CARGO_PKG_VERSION")));
+    let path = std::env::temp_dir().join(format!(
+        "ax-command-center-{}.vsix",
+        env!("CARGO_PKG_VERSION")
+    ));
     std::fs::write(&path, VSIX).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(path)
 }
@@ -343,7 +423,12 @@ pub fn install_vscode_panel_here(target: &str, display_name: &str) -> Option<Str
         return Some("Command Center panel up to date.".into());
     }
     let Some(cli) = vscode_cli_here(target) else {
-        return Some(install_vscode_extension(display_name, None, Path::new(""), &SystemRunner));
+        return Some(install_vscode_extension(
+            display_name,
+            None,
+            Path::new(""),
+            &SystemRunner,
+        ));
     };
     Some(match vsix_on_disk() {
         Ok(vsix) => install_vscode_extension(display_name, Some(&cli), &vsix, &SystemRunner),
@@ -392,11 +477,20 @@ mod tests {
         assert_eq!(
             first,
             vec![
-                (idea.join("plugins").join(JETBRAINS_JAR), FileAction::Created),
-                (rider.join("plugins").join(JETBRAINS_JAR), FileAction::Created),
+                (
+                    idea.join("plugins").join(JETBRAINS_JAR),
+                    FileAction::Created
+                ),
+                (
+                    rider.join("plugins").join(JETBRAINS_JAR),
+                    FileAction::Created
+                ),
             ]
         );
-        assert_eq!(std::fs::read(rider.join("plugins").join(JETBRAINS_JAR)).unwrap(), b"jar-v1");
+        assert_eq!(
+            std::fs::read(rider.join("plugins").join(JETBRAINS_JAR)).unwrap(),
+            b"jar-v1"
+        );
         let again = install_jetbrains_plugin(&dirs, b"jar-v1").unwrap();
         assert!(again.iter().all(|(_, a)| *a == FileAction::Unchanged));
         let newer = install_jetbrains_plugin(&dirs, b"jar-v2").unwrap();
@@ -440,9 +534,10 @@ mod tests {
 
     impl Runner for Recorder {
         fn run(&self, program: &Path, args: &[&str]) -> Result<(), String> {
-            self.calls
-                .borrow_mut()
-                .push((program.to_path_buf(), args.iter().map(|a| a.to_string()).collect()));
+            self.calls.borrow_mut().push((
+                program.to_path_buf(),
+                args.iter().map(|a| a.to_string()).collect(),
+            ));
             match &self.fail {
                 Some(e) => Err(e.clone()),
                 None => Ok(()),
@@ -460,33 +555,78 @@ mod tests {
 
     #[test]
     fn resolve_vscode_cli_prefers_path_then_app_bundle() {
-        let on_path = Fake { bins: ["cursor".into()].into(), ..Fake::default() };
-        assert_eq!(resolve_vscode_cli("cursor", Os::Mac, &places(), &on_path), Some(PathBuf::from("cursor")));
+        let on_path = Fake {
+            bins: ["cursor".into()].into(),
+            ..Fake::default()
+        };
+        assert_eq!(
+            resolve_vscode_cli("cursor", Os::Mac, &places(), &on_path),
+            Some(PathBuf::from("cursor"))
+        );
 
         let bundle = "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code";
-        let mac = Fake { paths: [PathBuf::from(bundle)].into(), ..Fake::default() };
-        assert_eq!(resolve_vscode_cli("vscode", Os::Mac, &places(), &mac), Some(PathBuf::from(bundle)));
+        let mac = Fake {
+            paths: [PathBuf::from(bundle)].into(),
+            ..Fake::default()
+        };
+        assert_eq!(
+            resolve_vscode_cli("vscode", Os::Mac, &places(), &mac),
+            Some(PathBuf::from(bundle))
+        );
 
         let user = "/h/Applications/Kiro.app/Contents/Resources/app/bin/kiro";
-        let mac_user = Fake { paths: [PathBuf::from(user)].into(), ..Fake::default() };
-        assert_eq!(resolve_vscode_cli("kiro", Os::Mac, &places(), &mac_user), Some(PathBuf::from(user)));
+        let mac_user = Fake {
+            paths: [PathBuf::from(user)].into(),
+            ..Fake::default()
+        };
+        assert_eq!(
+            resolve_vscode_cli("kiro", Os::Mac, &places(), &mac_user),
+            Some(PathBuf::from(user))
+        );
 
         let win = "/lad/Programs/Windsurf/bin/windsurf.cmd";
-        let windows = Fake { paths: [PathBuf::from(win)].into(), ..Fake::default() };
-        assert_eq!(resolve_vscode_cli("windsurf", Os::Windows, &places(), &windows), Some(PathBuf::from(win)));
-        assert_eq!(resolve_vscode_cli("windsurf", Os::Mac, &places(), &windows), None);
+        let windows = Fake {
+            paths: [PathBuf::from(win)].into(),
+            ..Fake::default()
+        };
+        assert_eq!(
+            resolve_vscode_cli("windsurf", Os::Windows, &places(), &windows),
+            Some(PathBuf::from(win))
+        );
+        assert_eq!(
+            resolve_vscode_cli("windsurf", Os::Mac, &places(), &windows),
+            None
+        );
 
-        assert_eq!(resolve_vscode_cli("vscode", Os::Linux, &places(), &Fake::default()), None);
-        assert_eq!(resolve_vscode_cli("zed", Os::Mac, &places(), &on_path), None);
+        assert_eq!(
+            resolve_vscode_cli("vscode", Os::Linux, &places(), &Fake::default()),
+            None
+        );
+        assert_eq!(
+            resolve_vscode_cli("zed", Os::Mac, &places(), &on_path),
+            None
+        );
     }
 
     #[test]
     fn vscode_extension_install_runs_cli_with_vsix() {
         let runner = Recorder::default();
-        let note = install_vscode_extension("Cursor", Some(Path::new("/bin/cursor")), Path::new("/tmp/ax.vsix"), &runner);
+        let note = install_vscode_extension(
+            "Cursor",
+            Some(Path::new("/bin/cursor")),
+            Path::new("/tmp/ax.vsix"),
+            &runner,
+        );
         assert_eq!(
             runner.calls.borrow().as_slice(),
-            &[(PathBuf::from("/bin/cursor"), vec!["--install-extension".into(), "/tmp/ax.vsix".into(), "--force".into()])]
+            &[(
+                PathBuf::from("/bin/cursor"),
+                vec![
+                    "--install-extension".into(),
+                    "/tmp/ax.vsix".into(),
+                    "--force".into()
+                ]
+            )]
         );
         assert_eq!(note, "Command Center panel installed: run \"ax: Open Command Center\" or click ax in the status bar.");
 
@@ -497,7 +637,10 @@ mod tests {
         );
         assert_eq!(
             gone.calls.borrow().as_slice(),
-            &[(PathBuf::from("/bin/code"), vec!["--uninstall-extension".into(), EXTENSION_ID.into()])]
+            &[(
+                PathBuf::from("/bin/code"),
+                vec!["--uninstall-extension".into(), EXTENSION_ID.into()]
+            )]
         );
     }
 
@@ -505,11 +648,22 @@ mod tests {
     fn missing_cli_is_note_not_error() {
         let runner = Recorder::default();
         let note = install_vscode_extension("Kiro", None, Path::new("/tmp/ax.vsix"), &runner);
-        assert_eq!(note, "Command Center panel not installed: Kiro command-line tool not found.");
+        assert_eq!(
+            note,
+            "Command Center panel not installed: Kiro command-line tool not found."
+        );
         assert!(runner.calls.borrow().is_empty());
 
-        let failing = Recorder { fail: Some("exit 1".into()), ..Recorder::default() };
-        let note = install_vscode_extension("Cursor", Some(Path::new("cursor")), Path::new("/tmp/ax.vsix"), &failing);
+        let failing = Recorder {
+            fail: Some("exit 1".into()),
+            ..Recorder::default()
+        };
+        let note = install_vscode_extension(
+            "Cursor",
+            Some(Path::new("cursor")),
+            Path::new("/tmp/ax.vsix"),
+            &failing,
+        );
         assert_eq!(note, "Command Center panel not installed: exit 1");
         assert_eq!(uninstall_vscode_extension(None, &runner), None);
         assert_eq!(
@@ -520,10 +674,21 @@ mod tests {
 
     #[test]
     fn extension_version_matches_package_json() {
-        let pkg = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../ide/vscode/package.json")).unwrap();
+        let pkg = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../ide/vscode/package.json"
+        ))
+        .unwrap();
         let v: serde_json::Value = serde_json::from_str(&pkg).unwrap();
         assert_eq!(v["version"], EXTENSION_VERSION);
-        assert_eq!(format!("{}.{}", v["publisher"].as_str().unwrap(), v["name"].as_str().unwrap()), EXTENSION_ID);
+        assert_eq!(
+            format!(
+                "{}.{}",
+                v["publisher"].as_str().unwrap(),
+                v["name"].as_str().unwrap()
+            ),
+            EXTENSION_ID
+        );
     }
 
     #[test]
@@ -533,7 +698,9 @@ mod tests {
         let older = format!(r#"[{{"identifier":{{"id":"{EXTENSION_ID}"}},"version":"0.0.1"}}]"#);
         assert!(!manifest_lists_current(&older));
         assert!(!manifest_lists_current("not json"));
-        let current = format!(r#"[{{"identifier":{{"id":"{EXTENSION_ID}"}},"version":"{EXTENSION_VERSION}"}}]"#);
+        let current = format!(
+            r#"[{{"identifier":{{"id":"{EXTENSION_ID}"}},"version":"{EXTENSION_VERSION}"}}]"#
+        );
         assert!(manifest_lists_current(&current));
         assert!(manifest_lists_extension(&older));
         assert!(!manifest_lists_extension(only_other));
@@ -545,7 +712,9 @@ mod tests {
         let ext = home.path().join(".cursor").join("extensions");
         std::fs::create_dir_all(ext.join(format!("{EXTENSION_ID}-{EXTENSION_VERSION}"))).unwrap();
         assert!(!vscode_panel_registered("cursor", home.path()));
-        let current = format!(r#"[{{"identifier":{{"id":"{EXTENSION_ID}"}},"version":"{EXTENSION_VERSION}"}}]"#);
+        let current = format!(
+            r#"[{{"identifier":{{"id":"{EXTENSION_ID}"}},"version":"{EXTENSION_VERSION}"}}]"#
+        );
         std::fs::write(ext.join("extensions.json"), &current).unwrap();
         assert!(vscode_panel_registered("cursor", home.path()));
         assert!(!vscode_panel_registered("zed", home.path()));
@@ -554,8 +723,14 @@ mod tests {
     #[test]
     fn current_panel_version_is_detected() {
         let mut fake = Fake::default();
-        fake.dirs.insert(PathBuf::from("/h/.cursor/extensions"), vec![format!("{EXTENSION_ID}-{EXTENSION_VERSION}")]);
-        fake.dirs.insert(PathBuf::from("/h/.kiro/extensions"), vec![format!("{EXTENSION_ID}-0.0.1")]);
+        fake.dirs.insert(
+            PathBuf::from("/h/.cursor/extensions"),
+            vec![format!("{EXTENSION_ID}-{EXTENSION_VERSION}")],
+        );
+        fake.dirs.insert(
+            PathBuf::from("/h/.kiro/extensions"),
+            vec![format!("{EXTENSION_ID}-0.0.1")],
+        );
         assert!(vscode_panel_current("cursor", Path::new("/h"), &fake));
         assert!(!vscode_panel_current("kiro", Path::new("/h"), &fake));
         assert!(vscode_panel_installed("kiro", Path::new("/h"), &fake));
@@ -564,8 +739,14 @@ mod tests {
     #[test]
     fn panel_detected_from_extensions_folder() {
         let mut fake = Fake::default();
-        fake.dirs.insert(PathBuf::from("/h/.cursor/extensions"), vec!["wenneker.ax-command-center-0.1.0".into()]);
-        fake.dirs.insert(PathBuf::from("/h/.vscode/extensions"), vec!["wenneker.ax-other-1.0.0".into()]);
+        fake.dirs.insert(
+            PathBuf::from("/h/.cursor/extensions"),
+            vec!["wenneker.ax-command-center-0.1.0".into()],
+        );
+        fake.dirs.insert(
+            PathBuf::from("/h/.vscode/extensions"),
+            vec!["wenneker.ax-other-1.0.0".into()],
+        );
         assert!(vscode_panel_installed("cursor", Path::new("/h"), &fake));
         assert!(!vscode_panel_installed("vscode", Path::new("/h"), &fake));
         assert!(!vscode_panel_installed("zed", Path::new("/h"), &fake));
@@ -576,14 +757,20 @@ mod tests {
         let fresh = zed_tasks_with_ax(None, "open http://127.0.0.1:7070");
         assert!(zed_has_ax_task(&fresh));
         assert!(fresh.contains("\"command\": \"open http://127.0.0.1:7070\""));
-        assert_eq!(zed_tasks_with_ax(Some(&fresh), "open http://127.0.0.1:7070"), fresh);
+        assert_eq!(
+            zed_tasks_with_ax(Some(&fresh), "open http://127.0.0.1:7070"),
+            fresh
+        );
 
         let existing = "// my tasks\n[\n  { \"label\": \"build\", \"command\": \"make\" }\n]\n";
         let merged = zed_tasks_with_ax(Some(existing), "open http://127.0.0.1:7070");
         assert!(merged.starts_with("// my tasks\n["));
         assert!(merged.contains("{ \"label\": \"build\", \"command\": \"make\" }"));
         assert_eq!(merged.matches(ZED_TASK_LABEL).count(), 1);
-        assert_eq!(zed_tasks_with_ax(Some(&merged), "open http://127.0.0.1:7070"), merged);
+        assert_eq!(
+            zed_tasks_with_ax(Some(&merged), "open http://127.0.0.1:7070"),
+            merged
+        );
 
         let empty = zed_tasks_with_ax(Some("  \n"), "xdg-open http://127.0.0.1:7070");
         assert!(zed_has_ax_task(&empty));
@@ -617,11 +804,18 @@ mod tests {
         found.sort();
         assert_eq!(
             found,
-            vec![base.join("IntelliJIdea2025.2"), base.join("PyCharmCE2024.3"), base.join("Rider2025.1")]
+            vec![
+                base.join("IntelliJIdea2025.2"),
+                base.join("PyCharmCE2024.3"),
+                base.join("Rider2025.1")
+            ]
         );
 
         assert_eq!(jetbrains_base(Os::Mac, &places(), None), base);
-        assert_eq!(jetbrains_base(Os::Linux, &places(), None), PathBuf::from("/h/.config/JetBrains"));
+        assert_eq!(
+            jetbrains_base(Os::Linux, &places(), None),
+            PathBuf::from("/h/.config/JetBrains")
+        );
         assert_eq!(
             jetbrains_base(Os::Windows, &places(), Some(Path::new("/ad"))),
             PathBuf::from("/ad/JetBrains")

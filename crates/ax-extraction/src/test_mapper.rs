@@ -81,7 +81,12 @@ fn find_call_target<'a>(result: &'a ExtractionResult, name: &str) -> Option<&'a 
     })
 }
 
-fn collect_calls_in_range(tree: &Tree, source: &[u8], start_line: u32, end_line: u32) -> Vec<String> {
+fn collect_calls_in_range(
+    tree: &Tree,
+    source: &[u8],
+    start_line: u32,
+    end_line: u32,
+) -> Vec<String> {
     let start_byte = line_to_byte(source, start_line);
     let end_byte = line_to_byte(source, end_line + 1);
     let mut calls = Vec::new();

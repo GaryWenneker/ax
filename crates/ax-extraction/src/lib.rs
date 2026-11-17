@@ -14,10 +14,10 @@ pub mod ts_grammars;
 
 pub use extraction_version::EXTRACTION_VERSION;
 pub use function_ref::{CaptureMode, FnRefCandidate};
-pub use grammars::{extension_map, language_for_extension, is_language_supported};
-pub use ts_grammars::{has_ts_grammar, ts_language_for};
-pub use orchestrator::{ExtractionOrchestrator, IndexOptions};
+pub use grammars::{extension_map, is_language_supported, language_for_extension};
+pub use orchestrator::{reindex_damaged_files, ExtractionOrchestrator, IndexOptions};
 pub use parse_pool::ParsePool;
+pub use ts_grammars::{has_ts_grammar, ts_language_for};
 
 use ax_types::{ExtractionResult, Language};
 use tree_sitter::Tree;

@@ -10,8 +10,8 @@ use ax_usage::{calculate, CostConfidence, CostUsage, ModelPricing};
 use serde_json::Value;
 
 use crate::types::{
-    AxModelUsage, BudgetSnapshot, Confidence, OptimizationMode, RepeatRecord, ToolAlternative, ToolCallAdvice,
-    ToolCallObservation, GRAPH_EXPLORE_TOKEN_ESTIMATE,
+    AxModelUsage, BudgetSnapshot, Confidence, OptimizationMode, RepeatRecord, ToolAlternative,
+    ToolCallAdvice, ToolCallObservation, GRAPH_EXPLORE_TOKEN_ESTIMATE,
 };
 
 pub struct UsageTokenEstimator;
@@ -346,10 +346,16 @@ pub fn budget_snapshot(
     } else {
         spent / f64::from(days_elapsed)
     };
+    let projected = if days_remaining == 0 {
+        0.0
+    } else {
+        let p = average * f64::from(days_remaining);
+        if p.is_finite() { p } else { 0.0 }
+    };
     BudgetSnapshot {
         spent,
         remaining: (monthly - spent).max(0.0),
-        projected: average * f64::from(days_remaining),
+        projected,
         currency: String::new(),
         days_elapsed,
         days_remaining,
@@ -563,5 +569,13 @@ mod tests {
         assert_eq!(snapshot.spent, 30.0);
         assert_eq!(snapshot.remaining, 30.0);
         assert!((snapshot.projected - 60.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn budget_projected_is_finite_when_no_remaining_days() {
+        let snapshot = budget_snapshot(30.0, 10, 0, 60.0);
+        assert!(snapshot.projected.is_finite());
+        assert!((snapshot.projected - 0.0).abs() < 1e-9);
+        assert_eq!(snapshot.days_remaining, 0);
     }
 }

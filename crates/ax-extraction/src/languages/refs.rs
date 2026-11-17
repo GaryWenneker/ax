@@ -20,7 +20,14 @@ pub struct RefCtx<'a> {
 pub fn append_ts_js_refs(result: &mut ax_types::ExtractionResult, tree: &Tree, ctx: &RefCtx) {
     let root = tree.root_node();
     walk_for_calls(root, ctx, result);
-    walk_for_imports(root, ctx.source, ctx.file_path, ctx.file_id, ctx.language, result);
+    walk_for_imports(
+        root,
+        ctx.source,
+        ctx.file_path,
+        ctx.file_id,
+        ctx.language,
+        result,
+    );
     let gate = build_fn_ref_gate(result, ctx.spans);
     walk_fn_ref_nodes(root, ctx, &gate, result);
 }
@@ -76,7 +83,12 @@ fn walk_call_nodes(
     }
 }
 
-fn push_call_ref(node: TsNode, ctx: &RefCtx, callee: &str, result: &mut ax_types::ExtractionResult) {
+fn push_call_ref(
+    node: TsNode,
+    ctx: &RefCtx,
+    callee: &str,
+    result: &mut ax_types::ExtractionResult,
+) {
     if is_noise_callee(callee) || is_external_callee(callee) {
         return;
     }
@@ -161,19 +173,33 @@ fn emit_ts_js_import_refs(
         for j in 0..child.named_child_count() {
             let clause_child = child.named_child(j).unwrap();
             match clause_child.kind() {
-                "identifier" => push_import_binding(file_id, file_path, &module_path, clause_child, source, language, result),
+                "identifier" => push_import_binding(
+                    file_id,
+                    file_path,
+                    &module_path,
+                    clause_child,
+                    source,
+                    language,
+                    result,
+                ),
                 "named_imports" => {
                     for k in 0..clause_child.named_child_count() {
                         let spec = clause_child.named_child(k).unwrap();
                         if spec.kind() == "import_specifier" {
                             let name = field_text(spec, source, "alias")
                                 .or_else(|| field_text(spec, source, "name"))
-                                .or_else(|| {
-                                    spec.named_child(0).map(|n| node_text(n, source))
-                                });
+                                .or_else(|| spec.named_child(0).map(|n| node_text(n, source)));
                             if let Some(name) = name {
                                 if !name.is_empty() {
-                                    push_import_name(file_id, file_path, &module_path, spec, language, &name, result);
+                                    push_import_name(
+                                        file_id,
+                                        file_path,
+                                        &module_path,
+                                        spec,
+                                        language,
+                                        &name,
+                                        result,
+                                    );
                                 }
                             }
                         }
@@ -183,7 +209,15 @@ fn emit_ts_js_import_refs(
                     for k in 0..clause_child.named_child_count() {
                         let id = clause_child.named_child(k).unwrap();
                         if id.kind() == "identifier" {
-                            push_import_binding(file_id, file_path, &module_path, id, source, language, result);
+                            push_import_binding(
+                                file_id,
+                                file_path,
+                                &module_path,
+                                id,
+                                source,
+                                language,
+                                result,
+                            );
                         }
                     }
                 }
@@ -216,7 +250,15 @@ fn emit_ts_js_reexport_refs(
                 if name.is_empty() || name == "default" {
                     continue;
                 }
-                push_import_name(file_id, file_path, "", spec, Language::Typescript, &name, result);
+                push_import_name(
+                    file_id,
+                    file_path,
+                    "",
+                    spec,
+                    Language::Typescript,
+                    &name,
+                    result,
+                );
             }
         }
     }
@@ -235,7 +277,15 @@ fn push_import_binding(
     if name.is_empty() {
         return;
     }
-    push_import_name(file_id, file_path, module_path, node, language, &name, result);
+    push_import_name(
+        file_id,
+        file_path,
+        module_path,
+        node,
+        language,
+        &name,
+        result,
+    );
 }
 
 fn push_import_name(
@@ -347,16 +397,15 @@ fn callee_from_expression(node: TsNode, source: &[u8]) -> Option<String> {
             None
         }
         "member_access_expression" => field_text(node, source, "name"),
-        "field_expression" | "selector_expression" => {
-            node.child_by_field_name("field").map(|f| node_text(f, source))
-        }
-        "qualified_name" => {
-            node.named_child(node.named_child_count().saturating_sub(1))
-                .map(|n| node_text(n, source))
-        }
-        _ => {
-            node.child_by_field_name("path").map(|scope| node_text(scope, source))
-        }
+        "field_expression" | "selector_expression" => node
+            .child_by_field_name("field")
+            .map(|f| node_text(f, source)),
+        "qualified_name" => node
+            .named_child(node.named_child_count().saturating_sub(1))
+            .map(|n| node_text(n, source)),
+        _ => node
+            .child_by_field_name("path")
+            .map(|scope| node_text(scope, source)),
     }
 }
 
@@ -416,7 +465,10 @@ fn enclosing_symbol_id(line: i32, spans: &[SymbolSpan]) -> Option<String> {
 }
 
 fn is_noise_callee(name: &str) -> bool {
-    matches!(name, "if" | "for" | "while" | "switch" | "catch" | "require" | "import")
+    matches!(
+        name,
+        "if" | "for" | "while" | "switch" | "catch" | "require" | "import"
+    )
 }
 
 fn is_skip_receiver(receiver: &str) -> bool {
@@ -424,7 +476,8 @@ fn is_skip_receiver(receiver: &str) -> bool {
 }
 
 fn field_text(node: TsNode, source: &[u8], field: &str) -> Option<String> {
-    node.child_by_field_name(field).map(|n| node_text(n, source))
+    node.child_by_field_name(field)
+        .map(|n| node_text(n, source))
 }
 
 fn clean_string_literal(s: String) -> String {
@@ -435,9 +488,19 @@ fn node_text(node: TsNode, source: &[u8]) -> String {
     node.utf8_text(source).unwrap_or("").trim().to_string()
 }
 
-
 const FN_REF_STOPLIST: &[&str] = &[
-    "this", "self", "super", "null", "nil", "true", "false", "undefined", "new", "NULL", "nullptr", "None",
+    "this",
+    "self",
+    "super",
+    "null",
+    "nil",
+    "true",
+    "false",
+    "undefined",
+    "new",
+    "NULL",
+    "nullptr",
+    "None",
 ];
 
 fn build_fn_ref_gate(result: &ax_types::ExtractionResult, spans: &[SymbolSpan]) -> HashSet<String> {
@@ -553,13 +616,18 @@ fn extract_fn_ref_name(node: TsNode, source: &[u8]) -> Option<String> {
     }
 }
 
-
 /// Same-file call edges for refs that match a local symbol by name.
 pub fn emit_same_file_call_edges(result: &mut ax_types::ExtractionResult, file_path: &str) {
     let local_names: std::collections::HashMap<String, String> = result
         .nodes
         .iter()
-        .filter(|n| n.file_path == file_path && (matches!(n.kind, ax_types::NodeKind::Function | ax_types::NodeKind::Method)))
+        .filter(|n| {
+            n.file_path == file_path
+                && (matches!(
+                    n.kind,
+                    ax_types::NodeKind::Function | ax_types::NodeKind::Method
+                ))
+        })
         .map(|n| (n.name.clone(), n.id.clone()))
         .collect();
 

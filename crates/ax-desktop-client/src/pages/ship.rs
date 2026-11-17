@@ -242,9 +242,7 @@ impl ShipPage {
                             self.busy = Some("evaluate".into());
                         }
                         "step_finished" => {
-                            if self.live_step.as_deref()
-                                == v.get("step").and_then(|s| s.as_str())
-                            {
+                            if self.live_step.as_deref() == v.get("step").and_then(|s| s.as_str()) {
                                 self.live_step = None;
                             }
                         }

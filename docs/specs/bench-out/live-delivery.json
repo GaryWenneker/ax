@@ -1,0 +1,433 @@
+{
+  "probes": [
+    {
+      "id": "del-note-2bf41946",
+      "query": "Logging parity",
+      "expect": [
+        "2bf41946-923a-48d5-808f-b34e2849c321"
+      ],
+      "family": "delivery",
+      "channel": "preflight",
+      "ids": [
+        "2bf41946-923a-48d5-808f-b34e2849c321"
+      ],
+      "ok": true,
+      "delivered": true,
+      "precision_at_3": 1.0,
+      "block_chars": 200,
+      "block_tokens_approx": 50,
+      "raw_chars": 428
+    },
+    {
+      "id": "del-bug_fix-15b7fe94",
+      "query": "Logging restoration and shared admin list columns",
+      "expect": [
+        "15b7fe94-961f-43eb-9502-1356c5ba9c38"
+      ],
+      "family": "delivery",
+      "channel": "preflight",
+      "ids": [
+        "15b7fe94-961f-43eb-9502-1356c5ba9c38"
+      ],
+      "ok": true,
+      "delivered": true,
+      "precision_at_3": 1.0,
+      "block_chars": 238,
+      "block_tokens_approx": 60,
+      "raw_chars": 1963
+    },
+    {
+      "id": "del-decision-514c777c",
+      "query": "Status bar ax click switches to the workspace project",
+      "expect": [
+        "514c777c-c385-457c-8fbc-3240d6108c86"
+      ],
+      "family": "delivery",
+      "channel": "preflight",
+      "ids": [
+        "514c777c-c385-457c-8fbc-3240d6108c86"
+      ],
+      "ok": true,
+      "delivered": true,
+      "precision_at_3": 1.0,
+      "block_chars": 243,
+      "block_tokens_approx": 61,
+      "raw_chars": 993
+    },
+    {
+      "id": "del-architecture-66b6c786",
+      "query": "Live updates: one change feed for the Command Center",
+      "expect": [
+        "66b6c786-c0cd-4f63-b288-e8e41bf22c27"
+      ],
+      "family": "delivery",
+      "channel": "preflight",
+      "ids": [
+        "66b6c786-c0cd-4f63-b288-e8e41bf22c27"
+      ],
+      "ok": true,
+      "delivered": true,
+      "precision_at_3": 1.0,
+      "block_chars": 246,
+      "block_tokens_approx": 62,
+      "raw_chars": 932
+    },
+    {
+      "id": "del-bug_fix-2f01b447",
+      "query": "Never move .ax aside while ax is running",
+      "expect": [
+        "2f01b447-17ed-4c70-8592-3021b9b5686d"
+      ],
+      "family": "delivery",
+      "channel": "preflight",
+      "ids": [
+        "2f01b447-17ed-4c70-8592-3021b9b5686d"
+      ],
+      "ok": true,
+      "delivered": true,
+      "precision_at_3": 1.0,
+      "block_chars": 229,
+      "block_tokens_approx": 58,
+      "raw_chars": 1171
+    },
+    {
+      "id": "del-bug_fix-9a40189f",
+      "query": "Memory wikilinks and turn request, conversation, outcome",
+      "expect": [
+        "9a40189f-6cc4-44a2-ba9c-ce0f8c44ae80"
+      ],
+      "family": "delivery",
+      "channel": "preflight",
+      "ids": [
+        "9a40189f-6cc4-44a2-ba9c-ce0f8c44ae80"
+      ],
+      "ok": true,
+      "delivered": true,
+      "precision_at_3": 1.0,
+      "block_chars": 245,
+      "block_tokens_approx": 62,
+      "raw_chars": 934
+    },
+    {
+      "id": "del-bug_fix-208ef9e0",
+      "query": "Turn file diffs and compact memory content",
+      "expect": [
+        "208ef9e0-1601-41e1-8dfe-419ddadc1e77"
+      ],
+      "family": "delivery",
+      "channel": "preflight",
+      "ids": [
+        "208ef9e0-1601-41e1-8dfe-419ddadc1e77"
+      ],
+      "ok": true,
+      "delivered": true,
+      "precision_at_3": 1.0,
+      "block_chars": 231,
+      "block_tokens_approx": 58,
+      "raw_chars": 995
+    },
+    {
+      "id": "del-decision-1dc0989a",
+      "query": "Finish full ship pipeline including git push",
+      "expect": [
+        "1dc0989a-bf1b-49fc-aefc-bc7be9b80210"
+      ],
+      "family": "delivery",
+      "channel": "preflight",
+      "ids": [
+        "1dc0989a-bf1b-49fc-aefc-bc7be9b80210"
+      ],
+      "ok": true,
+      "delivered": true,
+      "precision_at_3": 1.0,
+      "block_chars": 234,
+      "block_tokens_approx": 59,
+      "raw_chars": 1108
+    },
+    {
+      "id": "del-bug_fix-497dc0c3",
+      "query": "macOS ax- never overwrite Mach-O in place",
+      "expect": [
+        "497dc0c3-dcf2-47ad-a1bd-a698928fc0ba"
+      ],
+      "family": "delivery",
+      "channel": "preflight",
+      "ids": [
+        "497dc0c3-dcf2-47ad-a1bd-a698928fc0ba"
+      ],
+      "ok": true,
+      "delivered": true,
+      "precision_at_3": 1.0,
+      "block_chars": 230,
+      "block_tokens_approx": 58,
+      "raw_chars": 946
+    },
+    {
+      "id": "del-architecture-c947ca38",
+      "query": "WebDAV vault: guard folders at request level; clippy stops at ax-context",
+      "expect": [
+        "c947ca38-11f5-410d-82db-494e30585169"
+      ],
+      "family": "delivery",
+      "channel": "preflight",
+      "ids": [
+        "c947ca38-11f5-410d-82db-494e30585169"
+      ],
+      "ok": true,
+      "delivered": true,
+      "precision_at_3": 1.0,
+      "block_chars": 266,
+      "block_tokens_approx": 67,
+      "raw_chars": 1315
+    },
+    {
+      "id": "del-note-ctxrpt-c",
+      "query": "Context c785857c-905d-46d7-915b-8f5cc931fb3e",
+      "expect": [
+        "ctxrpt-c785857c-905d-46d7-915b-8f5cc931fb3e"
+      ],
+      "family": "delivery",
+      "channel": "preflight",
+      "ids": [
+        "ctxrpt-c785857c-905d-46d7-915b-8f5cc931fb3e"
+      ],
+      "ok": true,
+      "delivered": true,
+      "precision_at_3": 1.0,
+      "block_chars": 237,
+      "block_tokens_approx": 60,
+      "raw_chars": 620
+    },
+    {
+      "id": "del-note-ctxrpt-5",
+      "query": "Context 536193a2-ec59-4ba3-8bea-cbabf61ab9af",
+      "expect": [
+        "ctxrpt-536193a2-ec59-4ba3-8bea-cbabf61ab9af"
+      ],
+      "family": "delivery",
+      "channel": "preflight",
+      "ids": [
+        "ctxrpt-536193a2-ec59-4ba3-8bea-cbabf61ab9af"
+      ],
+      "ok": true,
+      "delivered": true,
+      "precision_at_3": 1.0,
+      "block_chars": 237,
+      "block_tokens_approx": 60,
+      "raw_chars": 632
+    },
+    {
+      "id": "del-note-ctxrpt-f",
+      "query": "Context ff3a3fc2-a82b-48d9-a03e-98e3d54c8d42",
+      "expect": [
+        "ctxrpt-ff3a3fc2-a82b-48d9-a03e-98e3d54c8d42"
+      ],
+      "family": "delivery",
+      "channel": "preflight",
+      "ids": [
+        "ctxrpt-ff3a3fc2-a82b-48d9-a03e-98e3d54c8d42"
+      ],
+      "ok": true,
+      "delivered": true,
+      "precision_at_3": 1.0,
+      "block_chars": 237,
+      "block_tokens_approx": 60,
+      "raw_chars": 620
+    },
+    {
+      "id": "del-note-ctxrpt-a",
+      "query": "Context a2901fb6-5746-4857-9a52-2e336186d6d4",
+      "expect": [
+        "ctxrpt-a2901fb6-5746-4857-9a52-2e336186d6d4"
+      ],
+      "family": "delivery",
+      "channel": "preflight",
+      "ids": [
+        "ctxrpt-a2901fb6-5746-4857-9a52-2e336186d6d4"
+      ],
+      "ok": true,
+      "delivered": true,
+      "precision_at_3": 1.0,
+      "block_chars": 237,
+      "block_tokens_approx": 60,
+      "raw_chars": 631
+    },
+    {
+      "id": "del-note-ctxrpt-4",
+      "query": "Context 43778dde-0129-4a19-a5fb-226e490059a4",
+      "expect": [
+        "ctxrpt-43778dde-0129-4a19-a5fb-226e490059a4"
+      ],
+      "family": "delivery",
+      "channel": "preflight",
+      "ids": [
+        "ctxrpt-43778dde-0129-4a19-a5fb-226e490059a4"
+      ],
+      "ok": true,
+      "delivered": true,
+      "precision_at_3": 1.0,
+      "block_chars": 237,
+      "block_tokens_approx": 60,
+      "raw_chars": 620
+    },
+    {
+      "id": "abs-nonsense-1",
+      "query": "xyzzy plum pudding quantum zucchini neon trombone",
+      "expect": "empty",
+      "family": "abstention",
+      "channel": "preflight",
+      "ids": [],
+      "ok": true,
+      "delivered": null,
+      "precision_at_3": 1.0,
+      "block_chars": 0,
+      "block_tokens_approx": 0,
+      "raw_chars": 2
+    },
+    {
+      "id": "abs-nonsense-2",
+      "query": "fnord quux blorple snarf waffle iron cosmology 90210",
+      "expect": "empty",
+      "family": "abstention",
+      "channel": "preflight",
+      "ids": [],
+      "ok": true,
+      "delivered": null,
+      "precision_at_3": 1.0,
+      "block_chars": 0,
+      "block_tokens_approx": 0,
+      "raw_chars": 2
+    },
+    {
+      "id": "abs-nonsense-3",
+      "query": "asdkfjhasldkfjh random gibberish tokens qwertyuiop",
+      "expect": "empty",
+      "family": "abstention",
+      "channel": "preflight",
+      "ids": [],
+      "ok": true,
+      "delivered": null,
+      "precision_at_3": 1.0,
+      "block_chars": 0,
+      "block_tokens_approx": 0,
+      "raw_chars": 2
+    },
+    {
+      "id": "abs-nonsense-4",
+      "query": "unrelated topic about medieval basket weaving in antarctica",
+      "expect": "empty",
+      "family": "abstention",
+      "channel": "preflight",
+      "ids": [],
+      "ok": true,
+      "delivered": null,
+      "precision_at_3": 1.0,
+      "block_chars": 0,
+      "block_tokens_approx": 0,
+      "raw_chars": 2
+    },
+    {
+      "id": "abs-nonsense-5",
+      "query": "completely invented API called ZorpulateX without any docs",
+      "expect": "empty",
+      "family": "abstention",
+      "channel": "preflight",
+      "ids": [],
+      "ok": true,
+      "delivered": null,
+      "precision_at_3": 1.0,
+      "block_chars": 0,
+      "block_tokens_approx": 0,
+      "raw_chars": 2
+    },
+    {
+      "id": "abs-nonsense-6",
+      "query": "phone number of the queen of mars directory listing",
+      "expect": "empty",
+      "family": "abstention",
+      "channel": "preflight",
+      "ids": [],
+      "ok": true,
+      "delivered": null,
+      "precision_at_3": 1.0,
+      "block_chars": 0,
+      "block_tokens_approx": 0,
+      "raw_chars": 2
+    },
+    {
+      "id": "abs-nonsense-7",
+      "query": "recipe for invisible purple elephants in SQL",
+      "expect": "empty",
+      "family": "abstention",
+      "channel": "preflight",
+      "ids": [],
+      "ok": true,
+      "delivered": null,
+      "precision_at_3": 1.0,
+      "block_chars": 0,
+      "block_tokens_approx": 0,
+      "raw_chars": 2
+    },
+    {
+      "id": "abs-nonsense-8",
+      "query": "how to teach a rock to juggle TCP packets underwater",
+      "expect": "empty",
+      "family": "abstention",
+      "channel": "preflight",
+      "ids": [],
+      "ok": true,
+      "delivered": null,
+      "precision_at_3": 1.0,
+      "block_chars": 0,
+      "block_tokens_approx": 0,
+      "raw_chars": 2
+    },
+    {
+      "id": "abs-nonsense-9",
+      "query": "lorem ipsum dolor sit amet consectetur adipiscing elit axnull",
+      "expect": "empty",
+      "family": "abstention",
+      "channel": "preflight",
+      "ids": [],
+      "ok": true,
+      "delivered": null,
+      "precision_at_3": 1.0,
+      "block_chars": 0,
+      "block_tokens_approx": 0,
+      "raw_chars": 2
+    },
+    {
+      "id": "abs-nonsense-10",
+      "query": "banana phone encryptor firmware for toaster v0.0.0-never",
+      "expect": "empty",
+      "family": "abstention",
+      "channel": "preflight",
+      "ids": [],
+      "ok": true,
+      "delivered": null,
+      "precision_at_3": 1.0,
+      "block_chars": 0,
+      "block_tokens_approx": 0,
+      "raw_chars": 2
+    }
+  ],
+  "passed": 25,
+  "total": 25,
+  "metrics": {
+    "delivery_ok": 15,
+    "delivery_total": 15,
+    "delivery_pct": 100.0,
+    "abstention_ok": 10,
+    "abstention_total": 10,
+    "abstention_pct": 100.0,
+    "block_tokens_p95": 63.49999999999999,
+    "precision_at_3_mean": 1.0,
+    "gates": {
+      "delivery_ge_95": true,
+      "abstention_ge_90": true,
+      "block_tokens_p95_le_300": true,
+      "precision_at_3_ge_0_8": true
+    },
+    "all_gates_pass": true
+  }
+}

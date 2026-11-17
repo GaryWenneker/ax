@@ -84,11 +84,27 @@ async fn index_one(root: &std::path::Path, force: bool, quiet: bool) -> Result<(
         .as_ref()
         .map(|pb| index_progress_callback(Arc::clone(pb)));
 
-    let result = match ax.index_all(opts, on_progress).await {
+    let needs_full = force
+        || ax
+            .queries()
+            .needs_full_rebuild()
+            .await
+            .map_err(|e| e.to_string())?;
+    let result = match if needs_full {
+        ax.index_all(opts, on_progress).await
+    } else {
+        ax.sync(opts, on_progress).await
+    } {
         Ok(r) => r,
         Err(e) => {
             finish_progress_bar(progress);
-            ax_usage::log_workspace(Some(root), "index fail stage=index");
+            ax_usage::log_workspace(
+                Some(root),
+                format!(
+                    "index fail stage={}",
+                    if needs_full { "index" } else { "sync" }
+                ),
+            );
             return Err(e.to_string());
         }
     };

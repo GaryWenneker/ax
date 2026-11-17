@@ -8595,6 +8595,33 @@ button.linkish {
   line-height: 1.5;
 }
 
+
+.memory-inbox-filters {
+  display: inline-flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.memory-inbox-chip,
+.memory-related-chip {
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.memory-inbox-chip.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.memory-related-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 12px;
+}
+
 .memory-archive-toggle {
   display: inline-flex;
   align-items: center;
@@ -15979,6 +16006,37 @@ html[data-ax-theme="macos"] :is(
   background-color: var(--dir-ink, #8d8d8d);
   -webkit-mask: var(--dir-mark) center / 22px 16px no-repeat;
   mask: var(--dir-mark) center / 22px 16px no-repeat;
+}
+
+.mcp-trace-session,
+.mcp-trace-turn {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.mcp-trace-session-summary,
+.mcp-trace-turn-summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font: 500 12px var(--font-ui);
+  color: var(--text-dim);
+}
+.mcp-trace-session-summary::-webkit-details-marker,
+.mcp-trace-turn-summary::-webkit-details-marker {
+  display: none;
+}
+.mcp-trace-turn {
+  margin-left: 10px;
+}
+.mcp-trace-session-count,
+.mcp-trace-turn-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
 }
 
 /* Row hover actions: one tight icon group (GitLens-like); checkbox and toggle apart on the right. */

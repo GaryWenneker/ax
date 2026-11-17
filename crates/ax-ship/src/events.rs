@@ -8,9 +8,17 @@ use crate::state::ShipReport;
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ShipEvent {
-    GitChanged { branch: Option<String> },
-    StepStarted { step: String },
-    StepFinished { step: String, ok: bool, detail: Option<String> },
+    GitChanged {
+        branch: Option<String>,
+    },
+    StepStarted {
+        step: String,
+    },
+    StepFinished {
+        step: String,
+        ok: bool,
+        detail: Option<String>,
+    },
     SonarProjectStarted {
         project_key: String,
         repo_name: String,
@@ -28,9 +36,15 @@ pub enum ShipEvent {
         repo_name: String,
         reason: String,
     },
-    RunLogUpdated { last_run: LastRunLog },
-    ReportUpdated { report: Box<ShipReport> },
-    Error { message: String },
+    RunLogUpdated {
+        last_run: LastRunLog,
+    },
+    ReportUpdated {
+        report: Box<ShipReport>,
+    },
+    Error {
+        message: String,
+    },
 }
 
 #[derive(Clone)]

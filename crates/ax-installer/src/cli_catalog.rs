@@ -420,15 +420,23 @@ pub fn headless_command(
     profile_env: &[(String, String)],
 ) -> Result<CommandSpec, String> {
     let entry = catalog_entry(id).ok_or_else(|| format!("Unknown agent: {id}"))?;
-    let mode = entry
-        .headless
-        .ok_or_else(|| format!("{} is not runnable from the agent terminal", entry.display_name))?;
+    let mode = entry.headless.ok_or_else(|| {
+        format!(
+            "{} is not runnable from the agent terminal",
+            entry.display_name
+        )
+    })?;
 
     let spawn = resolve_cli_spawn(id)?;
     let mut args = spawn.args_prefix.clone();
     match mode {
         HeadlessMode::PrintOutputText => {
-            args.extend(["-p".into(), prompt.into(), "--output-format".into(), "text".into()]);
+            args.extend([
+                "-p".into(),
+                prompt.into(),
+                "--output-format".into(),
+                "text".into(),
+            ]);
         }
         HeadlessMode::CursorAgent => {
             args.extend([
@@ -549,12 +557,7 @@ fn npm_global_root() -> Option<PathBuf> {
 
 fn npm_global_script(pkg: &str, script: &str) -> Option<PathBuf> {
     let root = npm_global_root()?;
-    let candidates = [
-        script,
-        "cli.js",
-        "dist/index.js",
-        "bin/cli.js",
-    ];
+    let candidates = [script, "cli.js", "dist/index.js", "bin/cli.js"];
     for name in candidates {
         let path = root.join(pkg).join(name);
         if path.is_file() {
@@ -602,15 +605,20 @@ fn find_on_path(name: &str) -> Option<String> {
 fn resolve_from_candidates(candidates: &[PathBuf], npm: Option<NpmEntry>) -> Option<CliSpawn> {
     if cfg!(target_os = "windows") {
         resolve_windows_candidates(candidates, npm)
-    } else { candidates.first().map(|first| CliSpawn {
+    } else {
+        candidates.first().map(|first| CliSpawn {
             program: first.clone(),
             args_prefix: Vec::new(),
             extra_env: HashMap::new(),
-        }) }
+        })
+    }
 }
 
 fn resolve_windows_candidates(candidates: &[PathBuf], npm: Option<NpmEntry>) -> Option<CliSpawn> {
-    if let Some(exe) = candidates.iter().find(|c| c.extension().is_some_and(|e| e == "exe")) {
+    if let Some(exe) = candidates
+        .iter()
+        .find(|c| c.extension().is_some_and(|e| e == "exe"))
+    {
         return Some(CliSpawn {
             program: exe.clone(),
             args_prefix: Vec::new(),
@@ -719,7 +727,12 @@ fn cursor_agent_dir() -> Option<PathBuf> {
 
 fn cursor_agent_bin() -> Option<PathBuf> {
     let dir = cursor_agent_dir()?;
-    for name in ["agent.exe", "agent.cmd", "cursor-agent.exe", "cursor-agent.cmd"] {
+    for name in [
+        "agent.exe",
+        "agent.cmd",
+        "cursor-agent.exe",
+        "cursor-agent.cmd",
+    ] {
         let path = dir.join(name);
         if path.is_file() {
             return Some(path);
@@ -767,7 +780,11 @@ fn augment_path(env: &mut HashMap<String, String>) {
     }
 
     let current = env.get(key).cloned().unwrap_or_default();
-    let sep = if cfg!(target_os = "windows") { ";" } else { ":" };
+    let sep = if cfg!(target_os = "windows") {
+        ";"
+    } else {
+        ":"
+    };
     let mut parts: Vec<String> = current
         .split(sep)
         .map(str::trim)
@@ -806,10 +823,23 @@ mod tests {
     #[test]
     fn catalog_covers_all_targets() {
         for id in [
-            "claude", "cursor", "codex", "opencode", "hermes", "gemini", "antigravity", "kiro",
-            "vscode", "windsurf", "zed", "continue",
+            "claude",
+            "cursor",
+            "codex",
+            "opencode",
+            "hermes",
+            "gemini",
+            "antigravity",
+            "kiro",
+            "vscode",
+            "windsurf",
+            "zed",
+            "continue",
         ] {
-            assert!(catalog_entry(id).is_some(), "missing catalog entry for {id}");
+            assert!(
+                catalog_entry(id).is_some(),
+                "missing catalog entry for {id}"
+            );
         }
     }
 
@@ -841,7 +871,10 @@ mod tests {
     #[test]
     fn extract_js_from_cmd_line_parses_dp0() {
         let line = r#""%_prog%"  "%dp0%\cli.js" %*"#;
-        assert_eq!(extract_js_from_cmd_line(line), Some(r"%dp0%\cli.js".to_string()));
+        assert_eq!(
+            extract_js_from_cmd_line(line),
+            Some(r"%dp0%\cli.js".to_string())
+        );
         let normalized = r"%dp0%\cli.js".replace("%dp0%\\", "");
         assert_eq!(normalized, "cli.js");
     }

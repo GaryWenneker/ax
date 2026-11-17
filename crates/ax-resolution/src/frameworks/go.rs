@@ -10,7 +10,14 @@ use crate::types::UnresolvedRef;
 
 use super::extract::{now_ms, stable_node_id, FrameworkExtractResult};
 
-const HANDLER_DIRS: &[&str] = &["handler", "handlers", "api", "routes", "controller", "controllers"];
+const HANDLER_DIRS: &[&str] = &[
+    "handler",
+    "handlers",
+    "api",
+    "routes",
+    "controller",
+    "controllers",
+];
 const SERVICE_DIRS: &[&str] = &["service", "services", "repository", "store", "pkg"];
 const MIDDLEWARE_DIRS: &[&str] = &["middleware", "middlewares"];
 const MODEL_DIRS: &[&str] = &["model", "models", "entity", "entities", "domain", "pkg"];
@@ -104,14 +111,9 @@ pub async fn try_resolve_target(
     let name = &ref_.reference_name;
 
     if name.ends_with("Handler") || name.starts_with("Handle") {
-        if let Some(n) = resolve_by_name_and_kind(
-            queries,
-            name,
-            Some(NodeKind::Function),
-            HANDLER_DIRS,
-            None,
-        )
-        .await
+        if let Some(n) =
+            resolve_by_name_and_kind(queries, name, Some(NodeKind::Function), HANDLER_DIRS, None)
+                .await
         {
             return Some((n, 0.8));
         }
@@ -141,14 +143,8 @@ pub async fn try_resolve_target(
     }
 
     if is_pascal_case(name) {
-        if let Some(n) = resolve_by_name_and_kind(
-            queries,
-            name,
-            Some(NodeKind::Struct),
-            MODEL_DIRS,
-            None,
-        )
-        .await
+        if let Some(n) =
+            resolve_by_name_and_kind(queries, name, Some(NodeKind::Struct), MODEL_DIRS, None).await
         {
             return Some((n, 0.7));
         }
@@ -201,6 +197,8 @@ fn extract_go_tail_ident(expr: &str) -> Option<String> {
 fn is_pascal_case(name: &str) -> bool {
     let mut chars = name.chars();
     let first = chars.next();
-    first.map(|c| c.is_uppercase() && c.is_alphabetic()).unwrap_or(false)
+    first
+        .map(|c| c.is_uppercase() && c.is_alphabetic())
+        .unwrap_or(false)
         && chars.all(|c| c.is_alphanumeric())
 }

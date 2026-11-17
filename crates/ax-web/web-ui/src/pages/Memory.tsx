@@ -10,6 +10,9 @@ import {
   fetchMemories,
   fetchMemoryFileChanges,
   fetchMemoryFileLinks,
+  fetchMemoryRelated,
+  fetchMemoryHealth,
+  fetchMemoryReview,
   recallMemories,
   setMemoryEnabled,
   syncDocsCatalog,
@@ -88,6 +91,9 @@ export default function MemoryPage() {
   const [total, setTotal] = useState(0);
   const [q, setQ] = usePersistedString('memory-q', '');
   const [archiveOn, setArchiveOn] = useState(false);
+  const [inboxFilter, setInboxFilter] = useState<'all' | 'stale' | 'foreign' | 'candidates'>('all');
+  const [inboxIds, setInboxIds] = useState<Set<string>>(new Set());
+  const [health, setHealth] = useState<{ schemaVersion: number; memories: number; staleOrOrphanAnchors: number; lastBackup: string | null } | null>(null);
   const [selectedId, setSelectedId] = useState(() => parseLocation().memoryId ?? '');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -116,6 +122,22 @@ export default function MemoryPage() {
   }
 
   useEffect(() => { loadAll(); }, []);
+  useEffect(() => {
+    fetchMemoryHealth().then(setHealth).catch(() => setHealth(null));
+  }, []);
+
+  useEffect(() => {
+    fetchMemoryReview()
+      .then((inbox) => {
+        const ids =
+          inboxFilter === 'stale' ? inbox.stale
+          : inboxFilter === 'foreign' ? inbox.foreign
+          : inboxFilter === 'candidates' ? inbox.candidates
+          : [];
+        setInboxIds(new Set(ids));
+      })
+      .catch(() => setInboxIds(new Set()));
+  }, [inboxFilter]);
 
   useEffect(() => {
     function syncFromRoute() {
@@ -252,7 +274,9 @@ export default function MemoryPage() {
     }
   }
 
-  const shown: Array<MemoryRow & { score?: number }> = matches ?? memories;
+  const shown: Array<MemoryRow & { score?: number }> = (matches ?? memories).filter(
+    (m) => inboxFilter === 'all' || inboxIds.has(m.id),
+  );
   const archiveSearch = matches !== null && archiveOn;
   const convLinks = useMemo(() => conversationLinks(shown), [shown]);
   const selected = shown.find((m) => m.id === selectedId) ?? null;
@@ -431,6 +455,12 @@ export default function MemoryPage() {
               </InfoHover>
             </span>
           </div>
+          {health && (
+            <div className="mem-stat" title="Memory health">
+              <span className="mem-stat-value">v{health.schemaVersion}</span>
+              <span className="mem-stat-label">schema · {health.staleOrOrphanAnchors} stale · {health.lastBackup ? 'backup ok' : 'no backup'}</span>
+            </div>
+          )}
           <div className="mem-stat">
             <span className="mem-stat-value">{gitCount}</span>
             <span className="mem-stat-label">
@@ -512,6 +542,18 @@ export default function MemoryPage() {
               />
               Archive
             </label>
+            <div className="memory-inbox-filters" role="group" aria-label="Review inbox">
+              {(['all', 'stale', 'foreign', 'candidates'] as const).map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={`memory-inbox-chip${inboxFilter === key ? ' is-active' : ''}`}
+                  onClick={() => setInboxFilter(key)}
+                >
+                  {key}
+                </button>
+              ))}
+            </div>
             <InfoHover label="About recall search">
               Type a question or keywords. This runs the <strong>same hybrid search</strong> that
               agents use during <code>ax_preflight</code> — FTS5 full-text + vector similarity,
@@ -654,6 +696,7 @@ export default function MemoryPage() {
           memory={selected}
           onClose={() => setSelectedId('')}
           onDelete={() => remove(selected.id)}
+          onSelect={(id) => setSelectedId(id)}
         />
       )}
     </PageShell>
@@ -711,16 +754,27 @@ function MemoryBlade({
   memory,
   onClose,
   onDelete,
+  onSelect,
 }: {
   memory: MemoryRow & { score?: number };
   onClose: () => void;
   onDelete: () => void;
+  onSelect: (id: string) => void;
 }) {
   const now = useNow();
   const [fileChanges, setFileChanges] = useState<Record<string, FileChange>>({});
   const [fileLinks, setFileLinks] = useState<Record<string, string>>({});
+  const [related, setRelated] = useState<{ id: string; kind: string }[]>([]);
   const [zoomImage, setZoomImage] = useState<{ src: string; alt: string } | null>(null);
   const closeZoomImage = useCallback(() => setZoomImage(null), []);
+  
+  useEffect(() => {
+    let cancelled = false;
+    fetchMemoryRelated(memory.id)
+      .then((res) => { if (!cancelled) setRelated(res.related ?? []); })
+      .catch(() => { if (!cancelled) setRelated([]); });
+    return () => { cancelled = true; };
+  }, [memory.id]);
   useEffect(() => {
     let cancelled = false;
     setFileChanges({});
@@ -766,7 +820,13 @@ function MemoryBlade({
       </div>
       <div className="detail-body memory-blade-body">
         <div className="detail-meta">
-          <div className="detail-kv">
+          {(memory as MemoryMatch).why && (
+          <div className="detail-kv why-recalled">
+            <span className="detail-key">Why</span>
+            <span className="detail-val">{((memory as MemoryMatch).why?.signals ?? []).join(', ')}</span>
+          </div>
+        )}
+        <div className="detail-kv">
             <span className="detail-key">Id</span>
             <span className="detail-val">{memory.id}</span>
           </div>
@@ -890,6 +950,22 @@ function MemoryBlade({
           </div>
         )}
         <Backlinks backlinks={links?.backlinks} />
+      {related.length > 0 && (
+        <div className="memory-related-chips" aria-label="Related memories">
+          {related.map((r) => (
+            <button
+              key={`${r.kind}-${r.id}`}
+              type="button"
+              className="memory-related-chip"
+              onClick={() => onSelect(r.id)}
+              title={`${r.kind} → ${r.id}`}
+            >
+              {r.kind}: {r.id.slice(0, 8)}
+            </button>
+          ))}
+        </div>
+      )}
+
         {filePaths.length > 0 && (
           <div>
             <div className="detail-section-title">

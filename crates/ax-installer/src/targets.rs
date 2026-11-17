@@ -6,15 +6,26 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::report::{FileAction, InstallSummary, TargetReport};
-use crate::hooks::{self, GuardIde};
 use crate::cli_catalog::{catalog_entry, detect_cli_available};
 use crate::cli_install::cli_installable;
 use crate::command_center;
 use crate::detect::app_installed_here;
+use crate::hooks::{self, GuardIde};
 
 pub const TARGETS: &[&str] = &[
-    "claude", "cursor", "codex", "opencode", "hermes", "gemini", "antigravity", "kiro",
-    "vscode", "windsurf", "zed", "continue", "jetbrains",
+    "claude",
+    "cursor",
+    "codex",
+    "opencode",
+    "hermes",
+    "gemini",
+    "antigravity",
+    "kiro",
+    "vscode",
+    "windsurf",
+    "zed",
+    "continue",
+    "jetbrains",
 ];
 
 pub fn display_name(target: &str) -> &'static str {
@@ -52,13 +63,20 @@ fn app_present(target: &str) -> bool {
 /// Whether the Command Center is present in this IDE; `None` for terminal agents.
 fn panel_status(target: &str) -> Option<bool> {
     match target {
-        "jetbrains" => Some(
-            command_center::jetbrains_dirs_here()
-                .iter()
-                .any(|d| d.join("plugins").join(command_center::JETBRAINS_JAR).is_file()),
+        "jetbrains" => Some(command_center::jetbrains_dirs_here().iter().any(|d| {
+            d.join("plugins")
+                .join(command_center::JETBRAINS_JAR)
+                .is_file()
+        })),
+        "zed" => Some(
+            zed_tasks_path()
+                .ok()
+                .and_then(|p| fs::read_to_string(p).ok())
+                .is_some_and(|c| command_center::zed_has_ax_task(&c)),
         ),
-        "zed" => Some(zed_tasks_path().ok().and_then(|p| fs::read_to_string(p).ok()).is_some_and(|c| command_center::zed_has_ax_task(&c))),
-        t if command_center::is_vscode_family(t) => Some(command_center::vscode_panel_listed_here(t)),
+        t if command_center::is_vscode_family(t) => {
+            Some(command_center::vscode_panel_listed_here(t))
+        }
         _ => None,
     }
 }
@@ -120,7 +138,9 @@ fn target_status(id: &str, project_root: &Path) -> Result<AgentTargetStatus, Str
     Ok(AgentTargetStatus {
         id: id.to_string(),
         display_name: display_name(id).to_string(),
-        bin: entry.map(|e| e.bin.to_string()).unwrap_or_else(|| id.to_string()),
+        bin: entry
+            .map(|e| e.bin.to_string())
+            .unwrap_or_else(|| id.to_string()),
         detected: cli_available || app_installed,
         cli_available,
         cli_on_path: cli_available,
@@ -138,10 +158,7 @@ pub fn catalog_with_status(project_root: &Path) -> Result<Vec<AgentTargetStatus>
     agent_status(project_root)
 }
 
-pub fn install_targets(
-    project_root: &Path,
-    selected: &[String],
-) -> Result<InstallSummary, String> {
+pub fn install_targets(project_root: &Path, selected: &[String]) -> Result<InstallSummary, String> {
     let mut reports = Vec::new();
     for target in selected {
         let id = target.trim().to_ascii_lowercase();
@@ -155,7 +172,10 @@ pub fn install_targets(
     Ok(InstallSummary { reports })
 }
 
-pub fn uninstall_targets(project_root: &Path, selected: &[String]) -> Result<Vec<TargetReport>, String> {
+pub fn uninstall_targets(
+    project_root: &Path,
+    selected: &[String],
+) -> Result<Vec<TargetReport>, String> {
     let mut reports = Vec::new();
     for target in selected {
         let id = target.trim().to_ascii_lowercase();
@@ -174,10 +194,7 @@ fn is_ax_configured(target: &str, project_root: &Path) -> Result<(bool, Vec<Stri
     let bin = ax_bin();
     let paths: Vec<PathBuf> = match target {
         "cursor" => vec![home.join(".cursor").join("mcp.json")],
-        "claude" => vec![
-            home.join(".claude.json"),
-            project_root.join(".mcp.json"),
-        ],
+        "claude" => vec![home.join(".claude.json"), project_root.join(".mcp.json")],
         "codex" => vec![home.join(".codex").join("config.toml")],
         "opencode" => vec![opencode_config_path()?],
         "gemini" => vec![home.join(".gemini").join("settings.json")],
@@ -187,22 +204,25 @@ fn is_ax_configured(target: &str, project_root: &Path) -> Result<(bool, Vec<Stri
         "vscode" => vec![vscode_mcp_path(project_root)],
         "windsurf" => vec![windsurf_mcp_path()?],
         "zed" => vec![zed_settings_path()?],
-        "continue" => vec![
-            continue_mcp_path(project_root),
-            continue_global_mcp_path()?,
-        ],
+        "continue" => vec![continue_mcp_path(project_root), continue_global_mcp_path()?],
         "jetbrains" => {
             let jars: Vec<PathBuf> = command_center::jetbrains_dirs_here()
                 .iter()
                 .map(|d| d.join("plugins").join(command_center::JETBRAINS_JAR))
                 .filter(|p| p.is_file())
                 .collect();
-            let str_paths = jars.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+            let str_paths = jars
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
             return Ok((!jars.is_empty(), str_paths));
         }
         _ => return Ok((false, Vec::new())),
     };
-    let str_paths: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+    let str_paths: Vec<String> = paths
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
     let configured = paths.iter().any(|p| config_has_ax(p, &bin, project_root));
     Ok((configured, str_paths))
 }
@@ -216,15 +236,13 @@ fn config_has_ax(path: &Path, bin: &str, project_root: &Path) -> bool {
         return content.contains("[mcp_servers.ax]") && content.contains(bin);
     }
     if path.extension().and_then(|e| e.to_str()) == Some("yaml") {
-        return content.contains("mcp_servers:") && content.contains("  ax:") && content.contains(bin);
+        return content.contains("mcp_servers:")
+            && content.contains("  ax:")
+            && content.contains(bin);
     }
     // Zed / VS Code settings files may contain JSONC comments — strip before parsing.
     let val = read_json_lenient(path);
-    if val
-        .get("mcpServers")
-        .and_then(|v| v.get("ax"))
-        .is_some()
-    {
+    if val.get("mcpServers").and_then(|v| v.get("ax")).is_some() {
         return val
             .get("mcpServers")
             .and_then(|v| v.get("ax"))
@@ -241,7 +259,11 @@ fn config_has_ax(path: &Path, bin: &str, project_root: &Path) -> bool {
         return true;
     }
     // Zed `settings.json` root key.
-    if val.get("context_servers").and_then(|v| v.get("ax")).is_some() {
+    if val
+        .get("context_servers")
+        .and_then(|v| v.get("ax"))
+        .is_some()
+    {
         return true;
     }
     // Continue `.continue/mcpServers/ax.json` — single-server file (name + command).
@@ -519,10 +541,7 @@ fn remove_mcp_servers(path: &Path) -> Result<Option<FileAction>, String> {
         return Ok(None);
     }
     let mut config = read_json(path);
-    let had = config
-        .get("mcpServers")
-        .and_then(|v| v.get("ax"))
-        .is_some();
+    let had = config.get("mcpServers").and_then(|v| v.get("ax")).is_some();
     if !had {
         return Ok(None);
     }
@@ -657,9 +676,8 @@ fn install_claude_hook(
         g.get("hooks")
             .and_then(|h| h.as_array())
             .is_some_and(|list| {
-                list.iter().any(|e| {
-                    command_of(e).is_some_and(|s| s == hook_cmd || s == plain_cmd)
-                })
+                list.iter()
+                    .any(|e| command_of(e).is_some_and(|s| s == hook_cmd || s == plain_cmd))
             })
     });
     if has_current {
@@ -680,7 +698,11 @@ fn install_claude_hook(
     Ok(Some((settings_path.to_path_buf(), action)))
 }
 
-fn remove_claude_hook(settings_path: &Path, event: &str, hook_subcommand: &str) -> Result<bool, String> {
+fn remove_claude_hook(
+    settings_path: &Path,
+    event: &str,
+    hook_subcommand: &str,
+) -> Result<bool, String> {
     if !settings_path.exists() {
         return Ok(false);
     }
@@ -739,7 +761,11 @@ fn uninstall_codex_mcp() -> Result<TargetReport, String> {
     let mut report = TargetReport::new("codex", display_name("codex"));
     uninstall_read_guard(&mut report, home_dir()?.join(".codex").join("hooks.json"));
     let path = home_dir()?.join(".codex").join("config.toml");
-    if !path.exists() || !fs::read_to_string(&path).unwrap_or_default().contains("[mcp_servers.ax]") {
+    if !path.exists()
+        || !fs::read_to_string(&path)
+            .unwrap_or_default()
+            .contains("[mcp_servers.ax]")
+    {
         return Ok(report);
     }
     let content = fs::read_to_string(&path).unwrap_or_default();
@@ -826,7 +852,9 @@ fn install_opencode_mcp(_project_root: &Path) -> Result<TargetReport, String> {
     });
     report.push_file(path.clone(), write_json_action(&path, &config)?);
     if let Ok(app_data) = std::env::var("APPDATA") {
-        let legacy = PathBuf::from(app_data).join("opencode").join("opencode.jsonc");
+        let legacy = PathBuf::from(app_data)
+            .join("opencode")
+            .join("opencode.jsonc");
         if legacy.exists() && legacy != path {
             let mut legacy_cfg = read_json(&legacy);
             if legacy_cfg.get("mcp").and_then(|v| v.get("ax")).is_some() {
@@ -880,7 +908,10 @@ fn antigravity_mcp_path() -> Result<PathBuf, String> {
     let unified_dir = home_dir()?.join(".gemini").join("config");
     let unified = unified_dir.join("mcp_config.json");
     let marker = unified_dir.join(".migrated");
-    let legacy = home_dir()?.join(".gemini").join("antigravity").join("mcp_config.json");
+    let legacy = home_dir()?
+        .join(".gemini")
+        .join("antigravity")
+        .join("mcp_config.json");
     if marker.exists() || unified.exists() {
         Ok(unified)
     } else {
@@ -904,8 +935,14 @@ fn install_antigravity_mcp(_project_root: &Path) -> Result<TargetReport, String>
 fn uninstall_antigravity_mcp() -> Result<TargetReport, String> {
     let mut report = TargetReport::new("antigravity", display_name("antigravity"));
     for path in [
-        home_dir()?.join(".gemini").join("config").join("mcp_config.json"),
-        home_dir()?.join(".gemini").join("antigravity").join("mcp_config.json"),
+        home_dir()?
+            .join(".gemini")
+            .join("config")
+            .join("mcp_config.json"),
+        home_dir()?
+            .join(".gemini")
+            .join("antigravity")
+            .join("mcp_config.json"),
     ] {
         if let Some(action) = remove_mcp_servers(&path)? {
             report.push_file(path, action);
@@ -970,7 +1007,11 @@ fn install_vscode_mcp(project_root: &Path) -> Result<TargetReport, String> {
         "Reload the VS Code window and set Copilot Chat to Agent mode for MCP tools.",
     )?;
     // Copilot agent hooks are read from Claude's user settings (same PreToolUse format).
-    install_read_guard(&mut report, home_dir()?.join(".claude").join("settings.json"), GuardIde::Claude);
+    install_read_guard(
+        &mut report,
+        home_dir()?.join(".claude").join("settings.json"),
+        GuardIde::Claude,
+    );
     Ok(report)
 }
 
@@ -982,7 +1023,10 @@ fn continue_mcp_path(project_root: &Path) -> PathBuf {
 }
 
 fn continue_global_mcp_path() -> Result<PathBuf, String> {
-    Ok(home_dir()?.join(".continue").join("mcpServers").join("ax.json"))
+    Ok(home_dir()?
+        .join(".continue")
+        .join("mcpServers")
+        .join("ax.json"))
 }
 
 /// Continue discovers one JSON file per server under `.continue/mcpServers/`.
@@ -1066,7 +1110,9 @@ fn windsurf_config_dir() -> Option<PathBuf> {
 }
 
 fn windsurf_mcp_path() -> Result<PathBuf, String> {
-    Ok(windsurf_config_dir().ok_or("no home dir")?.join("mcp_config.json"))
+    Ok(windsurf_config_dir()
+        .ok_or("no home dir")?
+        .join("mcp_config.json"))
 }
 
 fn install_windsurf_mcp(_project_root: &Path) -> Result<TargetReport, String> {
@@ -1079,7 +1125,9 @@ fn install_windsurf_mcp(_project_root: &Path) -> Result<TargetReport, String> {
 }
 
 fn windsurf_hooks_path() -> Result<PathBuf, String> {
-    Ok(windsurf_config_dir().ok_or("no home dir")?.join("hooks.json"))
+    Ok(windsurf_config_dir()
+        .ok_or("no home dir")?
+        .join("hooks.json"))
 }
 
 fn uninstall_windsurf_mcp() -> Result<TargetReport, String> {
@@ -1151,8 +1199,15 @@ fn uninstall_zed_mcp() -> Result<TargetReport, String> {
     let path = zed_settings_path()?;
     if path.exists() {
         let mut config = read_json_lenient(&path);
-        if config.get("context_servers").and_then(|v| v.get("ax")).is_some() {
-            if let Some(servers) = config.get_mut("context_servers").and_then(|v| v.as_object_mut()) {
+        if config
+            .get("context_servers")
+            .and_then(|v| v.get("ax"))
+            .is_some()
+        {
+            if let Some(servers) = config
+                .get_mut("context_servers")
+                .and_then(|v| v.as_object_mut())
+            {
                 servers.remove("ax");
                 report.push_file(path.clone(), write_json_action(&path, &config)?);
             }
@@ -1226,7 +1281,11 @@ fn install_hermes_mcp(_project_root: &Path) -> Result<TargetReport, String> {
 fn uninstall_hermes_mcp() -> Result<TargetReport, String> {
     let mut report = TargetReport::new("hermes", display_name("hermes"));
     let path = hermes_config_path()?;
-    if !path.exists() || !fs::read_to_string(&path).unwrap_or_default().contains("  ax:") {
+    if !path.exists()
+        || !fs::read_to_string(&path)
+            .unwrap_or_default()
+            .contains("  ax:")
+    {
         return Ok(report);
     }
     let content = fs::read_to_string(&path).unwrap_or_default();
@@ -1245,7 +1304,10 @@ fn uninstall_hermes_mcp() -> Result<TargetReport, String> {
                 && l.trim() != "enabled: true"
         })
         .collect();
-    report.push_file(path.clone(), write_text_action(&path, &(filtered.join("\n") + "\n"))?);
+    report.push_file(
+        path.clone(),
+        write_text_action(&path, &(filtered.join("\n") + "\n"))?,
+    );
     Ok(report)
 }
 
@@ -1260,9 +1322,15 @@ fn install_zed_task(report: &mut TargetReport) -> Result<(), String> {
     let path = zed_tasks_path()?;
     let existing = fs::read_to_string(&path).ok();
     let url = format!("http://127.0.0.1:{}", DEFAULT_WEB_PORT);
-    let next = command_center::zed_tasks_with_ax(existing.as_deref(), &command_center::open_url_command(&url));
+    let next = command_center::zed_tasks_with_ax(
+        existing.as_deref(),
+        &command_center::open_url_command(&url),
+    );
     report.push_file(path.clone(), write_text_action(&path, &next)?);
-    report.note(format!("Command Center: run the task \"{}\" (task: spawn).", command_center::ZED_TASK_LABEL));
+    report.note(format!(
+        "Command Center: run the task \"{}\" (task: spawn).",
+        command_center::ZED_TASK_LABEL
+    ));
     Ok(())
 }
 
@@ -1292,7 +1360,9 @@ fn install_jetbrains() -> Result<TargetReport, String> {
         report.note("No JetBrains IDE found (start it once so it creates its settings folder).");
         return Ok(report);
     }
-    for (path, action) in command_center::install_jetbrains_plugin(&dirs, command_center::JETBRAINS_PLUGIN)? {
+    for (path, action) in
+        command_center::install_jetbrains_plugin(&dirs, command_center::JETBRAINS_PLUGIN)?
+    {
         report.push_file(path, action);
     }
     report.note("Restart the JetBrains IDE, then open the \"ax\" tool window on the right.");
@@ -1304,7 +1374,8 @@ fn uninstall_jetbrains() -> Result<TargetReport, String> {
     if command_center::panels_disabled() {
         return Ok(report);
     }
-    for path in command_center::uninstall_jetbrains_plugin(&command_center::jetbrains_dirs_here())? {
+    for path in command_center::uninstall_jetbrains_plugin(&command_center::jetbrains_dirs_here())?
+    {
         report.push_file(path, FileAction::Updated);
     }
     Ok(report)
@@ -1390,11 +1461,15 @@ mod mcp_path_tests {
     fn zed_entry_requires_source_custom() {
         let entry = zed_context_server_entry();
         assert_eq!(entry["source"], "custom");
-        assert!(entry.get("cwd").is_none(), "Zed context_servers has no documented cwd field");
+        assert!(
+            entry.get("cwd").is_none(),
+            "Zed context_servers has no documented cwd field"
+        );
     }
 
     fn temp_settings_path(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("ax-installer-test-{}-{}", name, std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("ax-installer-test-{}-{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("mkdir");
         dir.join("settings.json")
@@ -1443,11 +1518,9 @@ mod mcp_path_tests {
     #[test]
     fn c5_a_correct_hook_in_a_hand_formatted_file_keeps_its_formatting() {
         let path = temp_settings_path("hand-formatted-hook");
-        let command = serde_json::to_string(&format!(
-            "{} stop-hook",
-            crate::hooks::shell_bin(&ax_bin())
-        ))
-        .unwrap();
+        let command =
+            serde_json::to_string(&format!("{} stop-hook", crate::hooks::shell_bin(&ax_bin())))
+                .unwrap();
         let compact = format!(
             r#"{{"hooks":{{"Stop":[{{"hooks":[{{"type":"command","command":{command}}}]}}]}}}}"#
         );
@@ -1493,14 +1566,20 @@ mod mcp_path_tests {
         install_claude_hook(&path, "SubagentStop", "stop-hook").unwrap();
 
         let value: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(value["hooks"]["UserPromptSubmit"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            value["hooks"]["UserPromptSubmit"].as_array().unwrap().len(),
+            1
+        );
         assert_eq!(value["hooks"]["Stop"].as_array().unwrap().len(), 1);
         assert_eq!(value["hooks"]["SubagentStop"].as_array().unwrap().len(), 1);
 
         // Removing the prompt hook must not disturb the Stop/SubagentStop hooks.
         remove_claude_hook(&path, "UserPromptSubmit", "prompt-hook").unwrap();
         let value: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(value["hooks"]["UserPromptSubmit"].as_array().unwrap().len(), 0);
+        assert_eq!(
+            value["hooks"]["UserPromptSubmit"].as_array().unwrap().len(),
+            0
+        );
         assert_eq!(value["hooks"]["Stop"].as_array().unwrap().len(), 1);
 
         let _ = fs::remove_dir_all(path.parent().unwrap());

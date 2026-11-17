@@ -75,7 +75,10 @@ impl PluginHost {
             .and_then(|e| e.to_str())
             .unwrap_or("");
         let plugin = self.plugins.iter().find(|p| p.matches_ext(ext))?;
-        Some((plugin.manifest.name.clone(), run_plugin(plugin, path, content)))
+        Some((
+            plugin.manifest.name.clone(),
+            run_plugin(plugin, path, content),
+        ))
     }
 }
 
@@ -137,8 +140,7 @@ fn run_plugin(
         let err = String::from_utf8_lossy(&output.stderr);
         return Err(PluginRunError::Failed(format!(
             "plugin {} exited {}: {err}",
-            plugin.manifest.name,
-            output.status
+            plugin.manifest.name, output.status
         )));
     }
 

@@ -146,7 +146,10 @@ pub fn workspace_sonar_key(configured_key: &str, project_root: &Path) -> String 
 }
 
 /// Sonar project key + display name for each git repo in a multi-repo workspace.
-pub fn resolve_sonar_repo_projects(workspace_key: &str, repo_names: &[String]) -> Vec<RepoProjectStatus> {
+pub fn resolve_sonar_repo_projects(
+    workspace_key: &str,
+    repo_names: &[String],
+) -> Vec<RepoProjectStatus> {
     let multi_repo = repo_names.len() > 1;
     repo_names
         .iter()
@@ -162,7 +165,11 @@ pub fn resolve_sonar_repo_projects(workspace_key: &str, repo_names: &[String]) -
 }
 
 /// Canonical SonarQube project key for a git repo folder under a workspace.
-pub fn canonical_repo_project_key(workspace_key: &str, repo_name: &str, multi_repo: bool) -> String {
+pub fn canonical_repo_project_key(
+    workspace_key: &str,
+    repo_name: &str,
+    multi_repo: bool,
+) -> String {
     if multi_repo {
         format!("{workspace_key}-{}", sonar_key_from_name(repo_name))
     } else {
@@ -263,7 +270,9 @@ pub async fn inspect_setup(
         return Ok(SonarSetupStatus {
             login_user: config.admin_user.clone(),
             login_password: config.admin_password.clone(),
-            login_password_hint: "Default local admin credentials in .ax/ship.toml — applied automatically by ax.".into(),
+            login_password_hint:
+                "Default local admin credentials in .ax/ship.toml — applied automatically by ax."
+                    .into(),
             project_exists: false,
             project_lookup: ProjectLookup::Unreachable,
             repo_projects,
@@ -319,7 +328,8 @@ pub async fn inspect_setup(
     Ok(SonarSetupStatus {
         login_user: config.admin_user.clone(),
         login_password: config.admin_password.clone(),
-        login_password_hint: "Default local admin credentials in .ax/ship.toml — applied automatically by ax.".into(),
+        login_password_hint:
+            "Default local admin credentials in .ax/ship.toml — applied automatically by ax.".into(),
         project_exists,
         project_lookup,
         repo_projects,
@@ -392,7 +402,8 @@ pub async fn bootstrap_sonar(
         token_env_set,
         ui_url: config.host.clone(),
         login_user: config.admin_user.clone(),
-        login_password_hint: "Default local admin credentials in .ax/ship.toml — applied automatically by ax.".into(),
+        login_password_hint:
+            "Default local admin credentials in .ax/ship.toml — applied automatically by ax.".into(),
         token_path: token_path.display().to_string(),
         message,
     })
@@ -416,7 +427,8 @@ pub async fn ensure_sonar_projects(
         Some(t) => validate_sonar_token(&config.host, t).await,
         None => false,
     };
-    let admin_ok = validate_sonar_login(&config.host, &config.admin_user, &config.admin_password).await?;
+    let admin_ok =
+        validate_sonar_login(&config.host, &config.admin_user, &config.admin_password).await?;
 
     if !admin_ok && !token_ok {
         return Err(format!(
@@ -454,7 +466,7 @@ pub async fn ensure_sonar_projects(
             &config.admin_password,
         )
         .await
-        != ProjectLookup::Found
+            != ProjectLookup::Found
         {
             if !admin_ok {
                 return Err(
@@ -643,7 +655,8 @@ pub async fn regenerate_sonar_token(
         token_env_set,
         ui_url: config.host.clone(),
         login_user: config.admin_user.clone(),
-        login_password_hint: "Default local admin credentials in .ax/ship.toml — applied automatically by ax.".into(),
+        login_password_hint:
+            "Default local admin credentials in .ax/ship.toml — applied automatically by ax.".into(),
         token_path: token_path.display().to_string(),
         message: "Regenerated and saved scanner token.".into(),
     })
@@ -671,7 +684,9 @@ pub async fn ensure_sonar_dark_theme(host: &str, user: &str, password: &str) {
             }
         }
     }
-    tracing::debug!("SonarQube dark theme preferences applied (proxy also injects dark theme in HTML)");
+    tracing::debug!(
+        "SonarQube dark theme preferences applied (proxy also injects dark theme in HTML)"
+    );
 }
 
 /// Whether the SonarQube HTTP API responds at `host`.
@@ -704,7 +719,10 @@ pub async fn validate_sonar_login(host: &str, user: &str, password: &str) -> Res
         return Ok(false);
     }
     if !resp.status().is_success() {
-        return Err(format!("SonarQube login check failed: HTTP {}", resp.status()));
+        return Err(format!(
+            "SonarQube login check failed: HTTP {}",
+            resp.status()
+        ));
     }
     let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
     Ok(body.get("valid").and_then(|v| v.as_bool()).unwrap_or(false))
@@ -777,8 +795,14 @@ pub async fn lookup_project(
         .0
 }
 
-fn summarize_project_lookup(project_keys: &[String], exists: &HashMap<String, bool>) -> ProjectLookup {
-    if project_keys.iter().all(|k| exists.get(k).copied().unwrap_or(false)) {
+fn summarize_project_lookup(
+    project_keys: &[String],
+    exists: &HashMap<String, bool>,
+) -> ProjectLookup {
+    if project_keys
+        .iter()
+        .all(|k| exists.get(k).copied().unwrap_or(false))
+    {
         ProjectLookup::Found
     } else {
         ProjectLookup::Missing
@@ -930,7 +954,9 @@ async fn migrate_legacy_sonar_projects(
                     &config.admin_password,
                 )
                 .await?;
-                actions.push(format!("Renamed SonarQube project '{legacy}' → '{canonical}'"));
+                actions.push(format!(
+                    "Renamed SonarQube project '{legacy}' → '{canonical}'"
+                ));
             }
         }
     }
@@ -956,7 +982,9 @@ async fn delete_project(
     }
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
-    Err(format!("Failed to delete SonarQube project '{project_key}': HTTP {status} {body}"))
+    Err(format!(
+        "Failed to delete SonarQube project '{project_key}': HTTP {status} {body}"
+    ))
 }
 
 async fn update_project_key(
@@ -1004,7 +1032,9 @@ async fn create_project(
     }
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
-    Err(format!("Failed to create SonarQube project: HTTP {status} {body}"))
+    Err(format!(
+        "Failed to create SonarQube project: HTTP {status} {body}"
+    ))
 }
 
 /// Apply default quality profiles, new-code period, and quality gate (idempotent).
@@ -1061,7 +1091,12 @@ fn encode_query(value: &str) -> String {
         .collect()
 }
 
-async fn generate_token(host: &str, name: &str, user: &str, password: &str) -> Result<String, String> {
+async fn generate_token(
+    host: &str,
+    name: &str,
+    user: &str,
+    password: &str,
+) -> Result<String, String> {
     match try_generate_token(host, name, user, password).await {
         Ok(token) => Ok(token),
         Err(e) if token_already_exists(&e) => {
@@ -1076,13 +1111,20 @@ fn token_already_exists(err: &str) -> bool {
     err.contains("already exists")
 }
 
-async fn try_generate_token(host: &str, name: &str, user: &str, password: &str) -> Result<String, String> {
+async fn try_generate_token(
+    host: &str,
+    name: &str,
+    user: &str,
+    password: &str,
+) -> Result<String, String> {
     let url = format!("{host}/api/user_tokens/generate?name={name}");
     let resp = authed_post(&url, user, password).await?;
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Failed to generate SonarQube token: HTTP {status} {body}"));
+        return Err(format!(
+            "Failed to generate SonarQube token: HTTP {status} {body}"
+        ));
     }
     let body: TokenGenerateResponse = resp.json().await.map_err(|e| e.to_string())?;
     Ok(body.token)
@@ -1096,7 +1138,9 @@ async fn revoke_token(host: &str, name: &str, user: &str, password: &str) -> Res
     }
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
-    Err(format!("Failed to revoke existing SonarQube token: HTTP {status} {body}"))
+    Err(format!(
+        "Failed to revoke existing SonarQube token: HTTP {status} {body}"
+    ))
 }
 
 async fn authed_get(url: &str, user: &str, password: &str) -> Result<reqwest::Response, String> {
@@ -1186,9 +1230,7 @@ fn basic_auth(user: &str, password: &str) -> String {
 fn set_user_env_var(name: &str, value: &str) -> bool {
     #[cfg(windows)]
     {
-        let script = format!(
-            "[Environment]::SetEnvironmentVariable('{name}', '{value}', 'User')"
-        );
+        let script = format!("[Environment]::SetEnvironmentVariable('{name}', '{value}', 'User')");
         return std::process::Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .status()
@@ -1257,7 +1299,10 @@ mod tests {
     #[test]
     fn legacy_prefix_from_workspace_folder() {
         let root = Path::new(r"C:\gary\Contoso");
-        assert_eq!(legacy_workspace_prefixes("ax", root), vec!["Contoso".to_string()]);
+        assert_eq!(
+            legacy_workspace_prefixes("ax", root),
+            vec!["Contoso".to_string()]
+        );
         assert!(legacy_workspace_prefixes("Contoso", root).is_empty());
     }
 
@@ -1265,7 +1310,10 @@ mod tests {
     #[test]
     fn legacy_prefix_from_workspace_folder_unix() {
         let root = Path::new("/home/gary/Contoso");
-        assert_eq!(legacy_workspace_prefixes("ax", root), vec!["Contoso".to_string()]);
+        assert_eq!(
+            legacy_workspace_prefixes("ax", root),
+            vec!["Contoso".to_string()]
+        );
         assert!(legacy_workspace_prefixes("Contoso", root).is_empty());
     }
 

@@ -26,7 +26,10 @@ pub async fn sync_project(global: &SqlitePool, project_root: &Path) -> Result<Sy
     let started = Instant::now();
     let db_path = project_db_path(project_root);
     if !db_path.is_file() {
-        bail!("no project index at {} (expected .ax/ax.db)", db_path.display());
+        bail!(
+            "no project index at {} (expected .ax/ax.db)",
+            db_path.display()
+        );
     }
 
     let name = project_root
@@ -186,14 +189,13 @@ pub async fn sync_project(global: &SqlitePool, project_root: &Path) -> Result<Sy
 }
 
 async fn table_exists(pool: &SqlitePool, name: &str) -> bool {
-    let found: Option<(String,)> = sqlx::query_as(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
-    )
-    .bind(name)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
+    let found: Option<(String,)> =
+        sqlx::query_as("SELECT name FROM sqlite_master WHERE type='table' AND name = ?")
+            .bind(name)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
     found.is_some()
 }
 

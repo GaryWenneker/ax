@@ -1,7 +1,7 @@
 //! Rust web route extraction (Actix/Rocket attrs, Axum, Actix builder) — CG: frameworks/rust.ts
 
-use std::sync::OnceLock;
 use regex::Regex;
+use std::sync::OnceLock;
 
 use ax_db::queries::QueryBuilder;
 use ax_types::{Language, Node, NodeKind, ReferenceKind, UnresolvedReference};
@@ -11,9 +11,22 @@ use crate::types::UnresolvedRef;
 
 use super::extract::{now_ms, stable_node_id, FrameworkExtractResult};
 
-const HANDLER_DIRS: &[&str] = &["/handlers/", "/handler/", "/api/", "/routes/", "/controllers/"];
+const HANDLER_DIRS: &[&str] = &[
+    "/handlers/",
+    "/handler/",
+    "/api/",
+    "/routes/",
+    "/controllers/",
+];
 const SERVICE_DIRS: &[&str] = &["/services/", "/service/", "/repository/", "/domain/"];
-const MODEL_DIRS: &[&str] = &["/models/", "/model/", "/entities/", "/entity/", "/domain/", "/types/"];
+const MODEL_DIRS: &[&str] = &[
+    "/models/",
+    "/model/",
+    "/entities/",
+    "/entity/",
+    "/domain/",
+    "/types/",
+];
 
 pub fn detect(project_root: &std::path::Path) -> bool {
     project_root.join("Cargo.toml").exists()
@@ -53,7 +66,9 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
             now,
         );
 
-        let tail = safe.get(match_start + cap.get(0).map(|m| m.len()).unwrap_or(0)..).unwrap_or("");
+        let tail = safe
+            .get(match_start + cap.get(0).map(|m| m.len()).unwrap_or(0)..)
+            .unwrap_or("");
         let fn_re = fn_after_attr_re();
         if let Some(fn_cap) = fn_re.captures(tail) {
             if let Some(handler) = fn_cap.get(1) {
@@ -82,7 +97,10 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
             let method_body = &args[prefix_len..];
             let mh_re = axum_method_re();
             for mh in mh_re.captures_iter(method_body) {
-                let upper = mh.get(1).map(|x| x.as_str().to_uppercase()).unwrap_or_default();
+                let upper = mh
+                    .get(1)
+                    .map(|x| x.as_str().to_uppercase())
+                    .unwrap_or_default();
                 let handler = mh
                     .get(2)
                     .map(|x| x.as_str())
@@ -98,7 +116,6 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
             }
         }
     }
-
 
     let resource_re = Regex::new(r#"web::resource\s*\(\s*"([^"]+)"\s*\)"#).expect("actix resource");
     for cap in resource_re.captures_iter(&safe) {
@@ -122,7 +139,8 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
             if handler.is_empty() {
                 continue;
             }
-            let m_line = start_line + chain[..m2.get(0).unwrap().start()].matches('\n').count() as i32;
+            let m_line =
+                start_line + chain[..m2.get(0).unwrap().start()].matches('\n').count() as i32;
             let upper = method.to_uppercase();
             push_route(&mut out, file_path, &upper, route_path, m_line, 0, now);
             if let Some(route_id) = out.nodes.last().map(|n| n.id.clone()) {
@@ -144,7 +162,7 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
             }
         }
     }
-  let app_route = Regex::new(
+    let app_route = Regex::new(
         r#"\.route\s*\(\s*"([^"]+)"\s*,\s*web::(get|post|put|patch|delete|head)\s*\(\s*\)\s*\.to\s*\(\s*([A-Za-z_][\w:]*)"#,
     )
     .expect("actix app route");
@@ -164,7 +182,8 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
         }
     }
 
-    let sql_re = Regex::new(r#"(?i)(?:FROM|INTO|UPDATE|JOIN)\s+([a-z_][a-z0-9_]*)"#).expect("sql table");
+    let sql_re =
+        Regex::new(r#"(?i)(?:FROM|INTO|UPDATE|JOIN)\s+([a-z_][a-z0-9_]*)"#).expect("sql table");
     for cap in sql_re.captures_iter(&safe) {
         let table = cap.get(1).map(|m| m.as_str()).unwrap_or("");
         if ["select", "where", "set", "values", "on"].contains(&table) {
@@ -209,13 +228,7 @@ pub async fn try_resolve_target(
     let name = &ref_.reference_name;
 
     if name.ends_with("_handler") || name.starts_with("handle_") {
-        if let Some(n) = resolve_by_kinds(
-            queries,
-            name,
-            &[NodeKind::Function],
-            HANDLER_DIRS,
-        )
-        .await
+        if let Some(n) = resolve_by_kinds(queries, name, &[NodeKind::Function], HANDLER_DIRS).await
         {
             return Some((n, 0.8));
         }
@@ -396,13 +409,17 @@ fn find_matching_paren(s: &str, open_idx: usize) -> i32 {
 fn is_pascal_case(name: &str) -> bool {
     let mut chars = name.chars();
     let first = chars.next();
-    first.map(|c| c.is_uppercase() && c.is_alphabetic()).unwrap_or(false)
+    first
+        .map(|c| c.is_uppercase() && c.is_alphabetic())
+        .unwrap_or(false)
         && chars.all(|c| c.is_alphanumeric())
 }
 
 fn fn_after_attr_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\n\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)").expect("fn after attr"))
+    RE.get_or_init(|| {
+        Regex::new(r"\n\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)").expect("fn after attr")
+    })
 }
 
 fn route_path_re() -> &'static Regex {
@@ -412,12 +429,20 @@ fn route_path_re() -> &'static Regex {
 
 fn axum_method_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\b(get|post|put|patch|delete|head|options|trace)\s*\(\s*([A-Za-z_][\w:]*)").expect("axum method handler"))
+    RE.get_or_init(|| {
+        Regex::new(r"\b(get|post|put|patch|delete|head|options|trace)\s*\(\s*([A-Za-z_][\w:]*)")
+            .expect("axum method handler")
+    })
 }
 
 fn actix_method_to_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r#"web::(get|post|put|patch|delete|head)\s*\(\s*\)\s*\.to\s*\(\s*([A-Za-z_][\w:]*)"#).expect("actix method to"))
+    RE.get_or_init(|| {
+        Regex::new(
+            r#"web::(get|post|put|patch|delete|head)\s*\(\s*\)\s*\.to\s*\(\s*([A-Za-z_][\w:]*)"#,
+        )
+        .expect("actix method to")
+    })
 }
 
 fn direct_to_re() -> &'static Regex {

@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 29;
+pub const CURRENT_SCHEMA_VERSION: i32 = 46;
 
 struct Migration {
     version: i32,
@@ -425,6 +425,266 @@ const MIGRATIONS: &[Migration] = &[
             DROP TABLE IF EXISTS memory_vec_map;
             DROP TABLE IF EXISTS memory_vec;
         ",
+    },
+    Migration {
+        version: 30,
+        description: "Drop automatic cues that are noise words or already shared by 32 memories",
+        sql: "
+            DELETE FROM memory_cues
+            WHERE source != 'trigger'
+              AND cue IN (
+                'add','added','adding','any','array','bool','boolean','change','changed',
+                'changing','char','class','const','create','created','delete','deleted',
+                'deleting','enum','f32','f64','field','fix','fixed','float','fn','function',
+                'i32','i64','impl','int','integer','interface','method','modify','modified',
+                'modifying','module','number','object','parameter','refactor','refactored',
+                'remove','removed','removing','rename','renamed','renaming','str','string',
+                'struct','trait','type','u32','u64','update','updated','updating','usize',
+                'variable','void'
+              );
+            DELETE FROM memory_cues
+            WHERE source != 'trigger'
+              AND cue IN (
+                SELECT cue FROM (
+                  SELECT cue FROM memory_cues
+                  WHERE source != 'trigger'
+                  GROUP BY cue
+                  HAVING COUNT(DISTINCT memory_id) >= 32
+                )
+              );
+        ",
+    },
+    Migration {
+        version: 31,
+        description: "Reject heuristic consolidation candidates and revoke similarity supersedes links",
+        sql: "
+            UPDATE memories
+            SET status = 'rejected'
+            WHERE status = 'candidate' AND COALESCE(source, '') = 'consolidation';
+            UPDATE memory_links
+            SET kind = 'revoked_supersedes'
+            WHERE kind = 'supersedes';
+        ",
+    },
+    Migration {
+        version: 32,
+        description: "Register running builds so an older build can skip background writers",
+        sql: "
+            CREATE TABLE IF NOT EXISTS ax_builds (
+                role TEXT NOT NULL,
+                pid INTEGER NOT NULL,
+                version TEXT NOT NULL,
+                mtime_ms INTEGER NOT NULL,
+                len INTEGER NOT NULL,
+                seen_at INTEGER NOT NULL,
+                PRIMARY KEY (role, pid)
+            );
+        ",
+    },
+    Migration {
+        version: 33,
+        description: "Flag Blossom notes as foreign so injection skips them",
+        sql: "
+            UPDATE memories SET status = 'foreign'
+            WHERE status = 'active'
+              AND (
+                lower(COALESCE(source, '')) IN ('blossom', 'foreign')
+                OR lower(COALESCE(tags, '')) LIKE '%\"blossom\"%'
+                OR lower(COALESCE(files, '')) LIKE '%/blossom/%'
+                OR lower(COALESCE(files, '')) LIKE '%\\blossom\\%'
+                OR lower(COALESCE(title, '')) LIKE '%blossom%'
+                OR lower(COALESCE(body, '')) LIKE '%blossom%'
+              );
+        ",
+    },
+    Migration {
+        version: 34,
+        description: "Demote build-output code changes to noise",
+        sql: r#"
+            UPDATE memories
+            SET status = 'noise', tier = 't3', enabled = 0
+            WHERE COALESCE(status, 'active') = 'active'
+              AND (
+                files LIKE '%/target-dev/%' OR files LIKE '%"target-dev/%'
+                OR files LIKE '%\target-dev\%' OR body LIKE '% in target-dev/%'
+                OR body LIKE '% in target-dev\%'
+                OR files LIKE '%/target/%' OR files LIKE '%"target/%'
+                OR body LIKE '% in target/%' OR body LIKE '% in target\%'
+                OR files LIKE '%/node_modules/%' OR files LIKE '%"node_modules/%'
+                OR body LIKE '% in node_modules/%'
+                OR files LIKE '%/dist/%' OR files LIKE '%"dist/%'
+                OR body LIKE '% in dist/%' OR body LIKE '% in dist\%'
+              );
+        "#,
+    },
+    Migration {
+        version: 35,
+        description: "Prompt text on hook turns",
+        sql: "
+            ALTER TABLE agent_turns ADD COLUMN prompt TEXT NOT NULL DEFAULT '';
+            ALTER TABLE agent_turns ADD COLUMN outcome TEXT;
+            ALTER TABLE agent_turns ADD COLUMN files TEXT NOT NULL DEFAULT '[]';
+            ALTER TABLE agent_turns ADD COLUMN commits TEXT NOT NULL DEFAULT '[]';
+        ",
+    },
+    Migration {
+        version: 36,
+        description: "Session and turn on memories",
+        sql: "
+            ALTER TABLE memories ADD COLUMN session_id TEXT NOT NULL DEFAULT '';
+            ALTER TABLE memories ADD COLUMN turn_id TEXT NOT NULL DEFAULT '';
+        ",
+    },
+    Migration {
+        version: 37,
+        description: "Graph node and edge version history",
+        sql: "
+            CREATE TABLE IF NOT EXISTS graph_node_versions (
+              node_key TEXT NOT NULL,
+              version INTEGER NOT NULL,
+              body_hash TEXT NOT NULL,
+              signature TEXT NOT NULL DEFAULT '',
+              kind TEXT NOT NULL DEFAULT '',
+              file_path TEXT NOT NULL DEFAULT '',
+              start_line INTEGER NOT NULL DEFAULT 0,
+              end_line INTEGER NOT NULL DEFAULT 0,
+              valid_from INTEGER NOT NULL,
+              valid_to INTEGER,
+              commit_id TEXT NOT NULL DEFAULT '',
+              session_id TEXT NOT NULL DEFAULT '',
+              turn_id TEXT NOT NULL DEFAULT '',
+              PRIMARY KEY (node_key, version)
+            );
+            CREATE TABLE IF NOT EXISTS graph_edge_versions (
+              source_key TEXT NOT NULL,
+              target_key TEXT NOT NULL,
+              kind TEXT NOT NULL,
+              version INTEGER NOT NULL,
+              valid_from INTEGER NOT NULL,
+              valid_to INTEGER,
+              commit_id TEXT NOT NULL DEFAULT '',
+              session_id TEXT NOT NULL DEFAULT '',
+              turn_id TEXT NOT NULL DEFAULT '',
+              PRIMARY KEY (source_key, target_key, kind, version)
+            );
+            CREATE TABLE IF NOT EXISTS graph_body_blobs (
+              body_hash TEXT PRIMARY KEY,
+              body BLOB NOT NULL
+            );
+        ",
+    },
+    Migration {
+        version: 38,
+        description: "Memory purge tombstones",
+        sql: "
+            CREATE TABLE IF NOT EXISTS memory_tombstones (
+              memory_id TEXT PRIMARY KEY,
+              purged_at INTEGER NOT NULL
+            );
+        ",
+    },
+    Migration {
+        version: 39,
+        description: "Memory provenance and trust",
+        sql: "
+            ALTER TABLE memories ADD COLUMN origin TEXT NOT NULL DEFAULT '';
+            ALTER TABLE memories ADD COLUMN author TEXT NOT NULL DEFAULT '';
+            ALTER TABLE memories ADD COLUMN trust_level TEXT NOT NULL DEFAULT 'trusted';
+            ALTER TABLE memories ADD COLUMN commit_id TEXT NOT NULL DEFAULT '';
+            ALTER TABLE memories ADD COLUMN instruction_like INTEGER NOT NULL DEFAULT 0;
+        ",
+    },
+    Migration {
+        version: 40,
+        description: "Normalized search_text on memories",
+        sql: "
+            ALTER TABLE memories ADD COLUMN search_text TEXT NOT NULL DEFAULT '';
+        ",
+    },
+    Migration {
+        version: 41,
+        description: "Memory anchors to graph versions",
+        sql: "
+            CREATE TABLE IF NOT EXISTS memory_anchors (
+              memory_id TEXT NOT NULL,
+              node_key TEXT NOT NULL,
+              version INTEGER NOT NULL DEFAULT 0,
+              stale INTEGER NOT NULL DEFAULT 0,
+              orphan INTEGER NOT NULL DEFAULT 0,
+              PRIMARY KEY (memory_id, node_key, version)
+            );
+        ",
+    },
+    Migration {
+        version: 42,
+        description: "Memory access log",
+        sql: "
+            CREATE TABLE IF NOT EXISTS memory_access (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              memory_id TEXT NOT NULL,
+              kind TEXT NOT NULL,
+              accessed_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_access_memory ON memory_access(memory_id, accessed_at);
+        ",
+    },
+    Migration {
+        version: 43,
+        description: "Deterministic learning episodes",
+        sql: "
+            CREATE TABLE IF NOT EXISTS memory_episodes (
+              id TEXT PRIMARY KEY,
+              session_id TEXT NOT NULL DEFAULT '',
+              turn_id TEXT NOT NULL DEFAULT '',
+              goal TEXT NOT NULL DEFAULT '',
+              outcome TEXT NOT NULL DEFAULT '',
+              created_at INTEGER NOT NULL
+            );
+        ",
+    },
+    Migration {
+        version: 44,
+        description: "FTS5 includes search_text with BM25F column weights",
+        sql: "
+            DROP TRIGGER IF EXISTS memories_ai;
+            DROP TRIGGER IF EXISTS memories_ad;
+            DROP TRIGGER IF EXISTS memories_au;
+            DROP TABLE IF EXISTS memories_fts;
+            CREATE VIRTUAL TABLE memories_fts USING fts5(
+                id,
+                title,
+                body,
+                tags,
+                search_text,
+                content='memories',
+                content_rowid='rowid'
+            );
+            CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
+                INSERT INTO memories_fts(rowid, id, title, body, tags, search_text)
+                VALUES (NEW.rowid, NEW.id, NEW.title, NEW.body, NEW.tags, NEW.search_text);
+            END;
+            CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
+                INSERT INTO memories_fts(memories_fts, rowid, id, title, body, tags, search_text)
+                VALUES ('delete', OLD.rowid, OLD.id, OLD.title, OLD.body, OLD.tags, OLD.search_text);
+            END;
+            CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
+                INSERT INTO memories_fts(memories_fts, rowid, id, title, body, tags, search_text)
+                VALUES ('delete', OLD.rowid, OLD.id, OLD.title, OLD.body, OLD.tags, OLD.search_text);
+                INSERT INTO memories_fts(rowid, id, title, body, tags, search_text)
+                VALUES (NEW.rowid, NEW.id, NEW.title, NEW.body, NEW.tags, NEW.search_text);
+            END;
+            INSERT INTO memories_fts(memories_fts) VALUES('rebuild');
+        ",
+    },
+    Migration {
+        version: 45,
+        description: "Neural tables, separate from hash-v1 memory embeddings",
+        sql: include_str!("../../ax-neural/schema.sql"),
+    },
+    Migration {
+        version: 46,
+        description: "Neural rank totals per project: preflights, duplicate tokens, ranking time",
+        sql: include_str!("../../ax-neural/schema_rank.sql"),
     },
 ];
 

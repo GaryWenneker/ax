@@ -47,20 +47,40 @@ pub struct ContextEfficiency {
     pub tokens_avoided: i64,
 }
 
+pub const MEMORY_RESERVE_TOKENS: u32 = 300;
+
 pub fn select_context(blocks: &[ContextBlock], budget_tokens: Option<u32>) -> Vec<ContextBlock> {
     let Some(budget) = budget_tokens else {
         return blocks.to_vec();
     };
+    let reserve = blocks
+        .iter()
+        .find(|block| block.id == "memories")
+        .map(|block| count_tokens(&block.text) as u32)
+        .filter(|tokens| *tokens <= MEMORY_RESERVE_TOKENS)
+        .unwrap_or(0);
     let mut kept = Vec::new();
     let mut used = 0u32;
+    let mut memory_placed = false;
     for class in [
         ContextClass::HardRequired,
         ContextClass::HighValue,
         ContextClass::Optional,
     ] {
-        for block in blocks.iter().filter(|b| b.class == class) {
+        for block in blocks.iter().filter(|block| block.class == class) {
             let tokens = count_tokens(&block.text) as u32;
-            if class == ContextClass::HardRequired || used.saturating_add(tokens) <= budget {
+            if block.id == "memories" && reserve > 0 {
+                kept.push(block.clone());
+                used = used.saturating_add(tokens);
+                memory_placed = true;
+                continue;
+            }
+            let room = if memory_placed {
+                budget
+            } else {
+                budget.saturating_sub(reserve)
+            };
+            if class == ContextClass::HardRequired || used.saturating_add(tokens) <= room {
                 kept.push(block.clone());
                 used = used.saturating_add(tokens);
             }
@@ -316,6 +336,29 @@ mod tests {
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].id, "critical");
         assert_eq!(kept[0].text, blocks[0].text);
+    }
+
+    #[test]
+    fn a_short_memory_block_survives_when_other_high_value_fills_the_budget() {
+        let policy = "policy ".repeat(80);
+        let blocks = vec![
+            block("policy", ContextClass::HighValue, &policy),
+            block("memories", ContextClass::HighValue, "hash vectors"),
+        ];
+        let budget = crate::tokenizer::count_tokens(&policy) as u32;
+        let kept = select_context(&blocks, Some(budget));
+        assert!(kept.iter().any(|block| block.id == "memories"));
+    }
+
+    #[test]
+    fn a_short_memory_block_survives_when_required_text_is_over_budget() {
+        let blocks = vec![
+            block("critical", ContextClass::HardRequired, &"rule ".repeat(80)),
+            block("memories", ContextClass::HighValue, "hash vectors"),
+        ];
+        let kept = select_context(&blocks, Some(1));
+        assert!(kept.iter().any(|block| block.id == "memories"));
+        assert!(kept.iter().any(|block| block.id == "critical"));
     }
 
     #[test]

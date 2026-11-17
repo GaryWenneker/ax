@@ -1,0 +1,35 @@
+---
+id: release-it
+level: CRITICAL
+alwaysApply: false
+globs: []
+triggers: ["release it"]
+tags: ["release","ship"]
+priority: 90
+enabled: true
+status: approved
+scope: project
+---
+
+# Release it
+
+When the user says "release it", ship the current product from this checkout.
+
+## Required
+
+- Commit the pending product work on main and push `origin main`.
+- Update the build number in every crate `Cargo.toml`, the web UI `package.json`, and `site/public/releases/latest.txt`.
+- Use a patch bump. Use a major bump when the change is a large special update, such as a new subsystem.
+- Update the documentation and the website in the same change so version identifiers match the tag. Do not add a What's new or per-version page.
+- Publish the GitHub release and wait until all six platform assets exist.
+- Rebuild and reinstall the local `ax` binary.
+
+## Forbidden
+
+- Stopping after a local commit without the push and the published release.
+- Publishing `latest.txt` before the six platform assets exist.
+- A major bump for a small fix.
+
+## Exceptions
+
+- Use a minor bump when the user asks for one.

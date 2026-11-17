@@ -105,7 +105,10 @@ impl GraphPage {
             ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Search nodes…"));
             ui.label("Density");
             if ui
-                .add(egui::Slider::new(&mut self.step_index, 0..=NODE_STEPS.len() - 1))
+                .add(egui::Slider::new(
+                    &mut self.step_index,
+                    0..=NODE_STEPS.len() - 1,
+                ))
                 .changed()
             {
                 self.seeded = false;
@@ -164,7 +167,11 @@ impl GraphPage {
                 })
                 .show_ui(ui, |ui| {
                     for k in &kinds {
-                        let label = if k.is_empty() { "All kinds" } else { k.as_str() };
+                        let label = if k.is_empty() {
+                            "All kinds"
+                        } else {
+                            k.as_str()
+                        };
                         if ui.selectable_label(self.kind_filter == *k, label).clicked() {
                             self.kind_filter = k.clone();
                         }
@@ -548,6 +555,6 @@ fn detail_iters(limit: i64) -> i32 {
 
 fn fastrand_angle(i: usize) -> f32 {
     // Deterministic-ish spread without extra deps.
-    
+
     (i as f32 * 2.399963) % std::f32::consts::TAU
 }

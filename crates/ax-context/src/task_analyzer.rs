@@ -1,6 +1,6 @@
 //! Deterministic analysis of an agent's prompt. No model, no filesystem reads.
-use std::sync::OnceLock;
 use regex::Regex;
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineRequest {
@@ -26,8 +26,12 @@ fn location_pattern() -> &'static Regex {
 pub fn safe_relative_path(path: &str) -> Option<String> {
     let normalized = path.replace('\\', "/");
     let normalized = normalized.strip_prefix("./").unwrap_or(&normalized);
-    if normalized.is_empty() || normalized.starts_with('/') || normalized.contains(':')
-        || normalized.split('/').any(|p| p.is_empty() || p == "." || p == "..")
+    if normalized.is_empty()
+        || normalized.starts_with('/')
+        || normalized.contains(':')
+        || normalized
+            .split('/')
+            .any(|p| p.is_empty() || p == "." || p == "..")
     {
         return None;
     }
@@ -37,34 +41,87 @@ pub fn safe_relative_path(path: &str) -> Option<String> {
 pub fn analyze(prompt: &str) -> TaskAnalysis {
     let mut analysis = TaskAnalysis::default();
     for hit in location_pattern().captures_iter(prompt) {
-        let Some(path) = hit.name("path").and_then(|m| safe_relative_path(m.as_str())) else { continue };
-        let number = hit.name("colon").or_else(|| hit.name("word"))
-            .and_then(|m| m.as_str().parse::<usize>().ok()).unwrap_or(0);
-        if number > 0 && number <= 1_000_000
-            && !analysis.line_requests.iter().any(|r| r.path == path && r.line == number)
+        let Some(path) = hit
+            .name("path")
+            .and_then(|m| safe_relative_path(m.as_str()))
+        else {
+            continue;
+        };
+        let number = hit
+            .name("colon")
+            .or_else(|| hit.name("word"))
+            .and_then(|m| m.as_str().parse::<usize>().ok())
+            .unwrap_or(0);
+        if number > 0
+            && number <= 1_000_000
+            && !analysis
+                .line_requests
+                .iter()
+                .any(|r| r.path == path && r.line == number)
         {
-            analysis.line_requests.push(LineRequest { path, line: number });
+            analysis
+                .line_requests
+                .push(LineRequest { path, line: number });
         }
     }
     let keywords = [
-        "code", "source", "broncode", "functie", "function", "class", "klasse", "method",
-        "methode", "interface", "trait", "import", "dependency", "afhankelijkheid",
-        "compile", "typescript", "rust", "csharp", "c#", ".net", "config",
-        "token", "auth", "login", "inloggen", "api", "test", "bug", "build",
-        "script", "component", "route", "call", "aanroep", "refactor",
+        "code",
+        "source",
+        "broncode",
+        "functie",
+        "function",
+        "class",
+        "klasse",
+        "method",
+        "methode",
+        "interface",
+        "trait",
+        "import",
+        "dependency",
+        "afhankelijkheid",
+        "compile",
+        "typescript",
+        "rust",
+        "csharp",
+        "c#",
+        ".net",
+        "config",
+        "token",
+        "auth",
+        "login",
+        "inloggen",
+        "api",
+        "test",
+        "bug",
+        "build",
+        "script",
+        "component",
+        "route",
+        "call",
+        "aanroep",
+        "refactor",
     ];
     let lower = prompt.to_lowercase();
     analysis.is_code_related = !analysis.line_requests.is_empty()
-        || keywords.iter().any(|k| lower.split(|c: char| !c.is_alphanumeric() && c != '#' && c != '.')
-            .any(|part| part == *k))
+        || keywords.iter().any(|k| {
+            lower
+                .split(|c: char| !c.is_alphanumeric() && c != '#' && c != '.')
+                .any(|part| part == *k)
+        })
         || prompt.contains("::")
-        || prompt.contains(".ts") || prompt.contains(".rs") || prompt.contains(".cs");
-    let stop = ["wat", "waar", "welke", "waarom", "wordt", "zijn", "een", "het", "de",
-        "dat", "die", "dan", "uit", "met", "voor", "van", "hoe", "kan", "als", "ik",
-        "and", "the", "this", "that", "what", "how", "does", "with", "when",
-        "from", "are", "you", "there", "in", "on", "for", "line", "regel", "staat"];
+        || prompt.contains(".ts")
+        || prompt.contains(".rs")
+        || prompt.contains(".cs");
+    let stop = [
+        "wat", "waar", "welke", "waarom", "wordt", "zijn", "een", "het", "de", "dat", "die", "dan",
+        "uit", "met", "voor", "van", "hoe", "kan", "als", "ik", "and", "the", "this", "that",
+        "what", "how", "does", "with", "when", "from", "are", "you", "there", "in", "on", "for",
+        "line", "regel", "staat",
+    ];
     for raw in prompt.split(|c: char| !c.is_alphanumeric() && c != '_') {
-        if raw.len() < 3 { continue; }
+        if raw.len() < 3 {
+            continue;
+        }
         let term = raw.to_lowercase();
         if stop.contains(&term.as_str()) || term.chars().all(|c| c.is_ascii_digit()) {
             continue;
@@ -83,7 +140,13 @@ mod tests {
     #[test]
     fn dutch_manifest_line() {
         let result = analyze("Wat staat er in package.json op regel 309?");
-        assert_eq!(result.line_requests, vec![LineRequest { path: "package.json".into(), line: 309 }]);
+        assert_eq!(
+            result.line_requests,
+            vec![LineRequest {
+                path: "package.json".into(),
+                line: 309
+            }]
+        );
         assert!(result.is_code_related);
     }
     #[test]
@@ -94,7 +157,12 @@ mod tests {
     }
     #[test]
     fn no_cross_project_or_traversal() {
-        for path in ["../other/secret.json", "/etc/passwd", "C:/secrets.json", "a//b.json"] {
+        for path in [
+            "../other/secret.json",
+            "/etc/passwd",
+            "C:/secrets.json",
+            "a//b.json",
+        ] {
             assert!(safe_relative_path(path).is_none(), "{path}");
         }
     }

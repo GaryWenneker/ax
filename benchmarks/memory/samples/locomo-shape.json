@@ -1,0 +1,27 @@
+[
+  {
+    "sample_id": "conv-1",
+    "qa": [
+      {
+        "question": "where was the car parked",
+        "answer": "Oak street",
+        "evidence": ["D1:1"]
+      }
+    ],
+    "conversation": {
+      "speaker_a": "A",
+      "session_1": [
+        {
+          "speaker": "A",
+          "dia_id": "D1:1",
+          "text": "the car was parked on Oak street"
+        },
+        {
+          "speaker": "B",
+          "dia_id": "D1:2",
+          "text": "The soup needs salt"
+        }
+      ]
+    }
+  }
+]

@@ -1,0 +1,19 @@
+{
+  "kind": "measured",
+  "evidenceType": "runtime",
+  "target": "windows-x86_64",
+  "host": "Wine 11.21 (Gcenx) under Rosetta on Darwin arm64 — PE32+ x86-64 binary executed",
+  "method": "cross-compile with x86_64-w64-mingw32-gcc; execute ax_neural-*.exe via arch -x86_64 wine",
+  "testsPassed": 124,
+  "testsFailed": 0,
+  "features": ["neural-runtime"],
+  "binary": "target-dev/x86_64-pc-windows-gnu/debug/build/ax-neural/68b0f2daeeb9a3ed/out/ax_neural-68b0f2daeeb9a3ed.exe",
+  "logPath": "target-dev/windows-x86_64-ax-neural-test.log",
+  "durationSeconds": 25.67,
+  "memory": {
+    "kind": "not_measured",
+    "reason": "Windows RSS sampling not implemented; suite asserts not_measured on windows"
+  },
+  "timestamp": "2026-11-16T12:08:00Z",
+  "note": "Not cargo check --target. Wine executed the Windows PE and reported test result: ok. This is Windows ABI runtime evidence on a Wine host, not a native Windows machine."
+}

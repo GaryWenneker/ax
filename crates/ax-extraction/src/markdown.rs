@@ -17,7 +17,15 @@ use ignore::WalkBuilder;
 use pulldown_cmark::{CowStr, Event, HeadingLevel, Parser, Tag, TagEnd};
 
 const SKIP_DIRS: &[&str] = &[
-    "node_modules", "target", "dist", "build", ".git", "vendor", "tmp", "temp", ".ax",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".git",
+    "vendor",
+    "tmp",
+    "temp",
+    ".ax",
     ".fastembed_cache",
 ];
 
@@ -26,9 +34,8 @@ pub const MARKDOWN_EXTENSIONS: &[&str] = &["md", "mdx"];
 /// Binary/opaque document types that appear as `Doc` nodes in the graph
 /// without content parsing.
 pub const OPAQUE_DOC_EXTENSIONS: &[&str] = &[
-    "pdf", "docx", "doc", "xlsx", "xls", "pptx", "ppt", "csv", "tsv",
-    "odt", "ods", "odp", "rtf", "txt", "tex", "epub", "pages", "numbers",
-    "keynote", "json", "xml", "html", "htm",
+    "pdf", "docx", "doc", "xlsx", "xls", "pptx", "ppt", "csv", "tsv", "odt", "ods", "odp", "rtf",
+    "txt", "tex", "epub", "pages", "numbers", "keynote", "json", "xml", "html", "htm",
 ];
 
 /// Minimum length for an inline-code mention to be considered a code symbol.
@@ -182,11 +189,7 @@ fn doc_node(doc: &ParsedDoc, now: i64) -> Node {
 /// Create a doc node for a non-markdown file (pdf, docx, xlsx, etc.).
 /// No content parsing — just registers the file's presence in the graph.
 fn opaque_doc_node(rel_path: &str, now: i64) -> Node {
-    let name = rel_path
-        .rsplit('/')
-        .next()
-        .unwrap_or(rel_path)
-        .to_string();
+    let name = rel_path.rsplit('/').next().unwrap_or(rel_path).to_string();
     Node {
         id: doc_node_id(rel_path),
         kind: NodeKind::Doc,
@@ -294,7 +297,11 @@ fn mention_symbol(code: &CowStr) -> Option<String> {
     if !ok {
         return None;
     }
-    if !raw.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_') {
+    if !raw
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_alphabetic() || c == '_')
+    {
         return None;
     }
     Some(raw.to_string())
@@ -321,7 +328,9 @@ fn resolve_doc_link(
         return None;
     }
 
-    let base_dir = Path::new(from_rel).parent().unwrap_or_else(|| Path::new(""));
+    let base_dir = Path::new(from_rel)
+        .parent()
+        .unwrap_or_else(|| Path::new(""));
     let joined = base_dir.join(dest);
     let normalized = normalize_rel(&joined);
 
@@ -368,7 +377,9 @@ fn scan_doc_files(project_root: &Path, exclude: &[String]) -> Vec<ScannedDoc> {
         .git_ignore(true)
         .git_global(true)
         .git_exclude(true)
-        .filter_entry(|e| crate::orchestrator::keep_scan_entry_name(&e.file_name().to_string_lossy()))
+        .filter_entry(|e| {
+            crate::orchestrator::keep_scan_entry_name(&e.file_name().to_string_lossy())
+        })
         .build();
     let mut files = Vec::new();
     for entry in walker.flatten() {
@@ -394,7 +405,11 @@ fn scan_doc_files(project_root: &Path, exclude: &[String]) -> Vec<ScannedDoc> {
         if should_skip_path(&rel, exclude_matcher.as_ref()) {
             continue;
         }
-        files.push(ScannedDoc { rel, full: path.to_path_buf(), is_markdown });
+        files.push(ScannedDoc {
+            rel,
+            full: path.to_path_buf(),
+            is_markdown,
+        });
     }
     files
 }
@@ -455,7 +470,8 @@ mod tests {
 
     #[test]
     fn parses_title_links_and_mentions() {
-        let content = "# Auth Guide\n\nSee [setup](./setup.md) and call `login_user()`.\n\n## Details\n";
+        let content =
+            "# Auth Guide\n\nSee [setup](./setup.md) and call `login_user()`.\n\n## Details\n";
         let doc = parse_doc("docs/auth.md".to_string(), content);
         assert_eq!(doc.title.as_deref(), Some("Auth Guide"));
         assert!(doc.outline.iter().any(|h| h == "Details"));
@@ -486,7 +502,10 @@ mod tests {
     fn ignores_noisy_mentions() {
         assert!(mention_symbol(&CowStr::from("ax")).is_none()); // too short
         assert!(mention_symbol(&CowStr::from("npm run build")).is_none()); // whitespace
-        assert_eq!(mention_symbol(&CowStr::from("foo()")).as_deref(), Some("foo"));
+        assert_eq!(
+            mention_symbol(&CowStr::from("foo()")).as_deref(),
+            Some("foo")
+        );
         assert_eq!(
             mention_symbol(&CowStr::from("MyStruct")).as_deref(),
             Some("MyStruct")

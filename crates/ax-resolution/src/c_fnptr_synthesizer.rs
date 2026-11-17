@@ -49,7 +49,10 @@ impl CFnptrSynthesizer {
             if content.is_empty() {
                 continue;
             }
-            let file_nodes = queries.get_nodes_by_file(&file.path).await.unwrap_or_default();
+            let file_nodes = queries
+                .get_nodes_by_file(&file.path)
+                .await
+                .unwrap_or_default();
             let func_ids: std::collections::HashMap<String, String> = file_nodes
                 .iter()
                 .filter(|n| matches!(n.kind, NodeKind::Function | NodeKind::Method))
@@ -69,7 +72,8 @@ impl CFnptrSynthesizer {
                     .filter(|c| *c == '\n')
                     .count() as i32
                     + 1;
-                let from_id = enclosing_node_at_line(&file_nodes, line).unwrap_or_else(|| file_id.clone());
+                let from_id =
+                    enclosing_node_at_line(&file_nodes, line).unwrap_or_else(|| file_id.clone());
                 let target_id = func_ids[rhs].clone();
                 let edge = Edge {
                     source: from_id,
@@ -99,7 +103,12 @@ fn stable_file_id(file_path: &str) -> String {
 fn enclosing_node_at_line(nodes: &[ax_types::Node], line: i32) -> Option<String> {
     nodes
         .iter()
-        .filter(|n| matches!(n.kind, NodeKind::Function | NodeKind::Method | NodeKind::Class))
+        .filter(|n| {
+            matches!(
+                n.kind,
+                NodeKind::Function | NodeKind::Method | NodeKind::Class
+            )
+        })
         .filter(|n| line >= n.start_line && line <= n.end_line)
         .max_by_key(|n| n.start_line)
         .map(|n| n.id.clone())

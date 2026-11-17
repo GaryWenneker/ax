@@ -68,11 +68,10 @@ pub async fn enrich_project(
     }
 
     let root = project_root.to_path_buf();
-    let (mut batch_report, partials) = tokio::task::spawn_blocking(move || {
-        enrich::enrich_files_blocking(&root, jobs)
-    })
-    .await
-    .map_err(|e| AxError::Other(e.to_string()))?;
+    let (mut batch_report, partials) =
+        tokio::task::spawn_blocking(move || enrich::enrich_files_blocking(&root, jobs))
+            .await
+            .map_err(|e| AxError::Other(e.to_string()))?;
 
     report.examined += batch_report.examined;
     report.resolved += batch_report.resolved;
@@ -113,9 +112,10 @@ async fn remap_one_edge(queries: &QueryBuilder, edge: &mut Edge) -> Result<(), A
         return Ok(());
     }
     let nodes = queries.get_nodes_by_file(path).await?;
-    if let Some(node) = nodes.iter().find(|n| {
-        n.kind != ax_types::NodeKind::File && n.start_line <= line && n.end_line >= line
-    }) {
+    if let Some(node) = nodes
+        .iter()
+        .find(|n| n.kind != ax_types::NodeKind::File && n.start_line <= line && n.end_line >= line)
+    {
         edge.target = node.id.clone();
     } else if let Some(file_node) = nodes.iter().find(|n| n.kind == ax_types::NodeKind::File) {
         edge.target = file_node.id.clone();

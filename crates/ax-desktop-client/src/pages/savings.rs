@@ -46,10 +46,7 @@ impl SavingsPage {
                 ("month", "Month"),
                 ("year", "Year"),
             ] {
-                if ui
-                    .selectable_label(self.period == id, label)
-                    .clicked()
-                {
+                if ui.selectable_label(self.period == id, label).clicked() {
                     self.period = id.into();
                     self.loaded = false;
                 }
@@ -117,18 +114,41 @@ impl SavingsPage {
             return;
         };
 
-        ui.label(format!("{} → {} · priced at {}", s.from, s.to, s.pricing.reference_model));
+        ui.label(format!(
+            "{} → {} · priced at {}",
+            s.from, s.to, s.pricing.reference_model
+        ));
 
         egui::Grid::new("sv_hero")
             .num_columns(4)
             .spacing([20.0, 10.0])
             .show(ui, |ui| {
-                hero(ui, "Tokens saved", &fmt_compact(s.tokens_saved_est), theme::OK);
+                hero(
+                    ui,
+                    "Tokens saved",
+                    &fmt_compact(s.tokens_saved_est),
+                    theme::OK,
+                );
                 hero(ui, "Cost saved", &fmt_usd(s.cost_saved_usd_est), theme::OK);
                 hero(ui, "Graph calls", &s.graph_calls.to_string(), theme::ACCENT);
-                hero(ui, "Files avoided", &s.counterfactual_files.to_string(), theme::ACCENT);
-                hero(ui, "Success", &format!("{:.0}%", s.success_rate_pct), theme::OK);
-                hero(ui, "Projects", &s.projects_active.to_string(), theme::ACCENT);
+                hero(
+                    ui,
+                    "Files avoided",
+                    &s.counterfactual_files.to_string(),
+                    theme::ACCENT,
+                );
+                hero(
+                    ui,
+                    "Success",
+                    &format!("{:.0}%", s.success_rate_pct),
+                    theme::OK,
+                );
+                hero(
+                    ui,
+                    "Projects",
+                    &s.projects_active.to_string(),
+                    theme::ACCENT,
+                );
                 hero(
                     ui,
                     "Without ax",

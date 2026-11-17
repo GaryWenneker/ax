@@ -1,12 +1,12 @@
 //! Git diff and blame utilities.
 
-mod diff;
 mod blame;
+mod diff;
 mod node_map;
 
+pub use blame::{aggregate_authors, blame_authors, BlameLine};
 pub use diff::{changed_files, diff_vs_base, ChangedFile, ChangedHunk, DiffResult, GitContext};
-pub use blame::{blame_authors, aggregate_authors, BlameLine};
-pub use node_map::{map_hunks_to_nodes, map_files_to_nodes, DirtyNode};
+pub use node_map::{map_files_to_nodes, map_hunks_to_nodes, DirtyNode};
 
 use std::path::Path;
 

@@ -38,6 +38,8 @@ pub struct BudgetSettings {
     /// Input USD per million tokens at or below this value, and above cheap, is standard.
     pub standard_max_input_per_mtok: f64,
     pub context_budget_tokens: Option<u32>,
+    /// Preflight tokens kept for the memories block. `None` uses the default reserve.
+    pub context_memory_tokens: Option<u32>,
 }
 
 impl Default for BudgetSettings {
@@ -56,6 +58,7 @@ impl Default for BudgetSettings {
             cheap_max_input_per_mtok: 1.0,
             standard_max_input_per_mtok: 5.0,
             context_budget_tokens: None,
+            context_memory_tokens: None,
         }
     }
 }
@@ -176,6 +179,8 @@ struct AgentSection {
 struct ContextSection {
     #[serde(rename = "budgetTokens")]
     budget_tokens: Option<u32>,
+    #[serde(rename = "memoryTokens")]
+    memory_tokens: Option<u32>,
 }
 
 pub fn parse_settings(global_json: Option<&str>, project_json: Option<&str>) -> BudgetSettings {
@@ -238,6 +243,9 @@ fn apply_json(settings: &mut BudgetSettings, text: &str) {
     if let Some(context) = file.context {
         if let Some(v) = context.budget_tokens {
             settings.context_budget_tokens = Some(v);
+        }
+        if let Some(v) = context.memory_tokens {
+            settings.context_memory_tokens = Some(v);
         }
     }
 }
@@ -344,7 +352,10 @@ pub fn save_global_budget(patch: &BudgetSectionPatch) -> Result<std::path::PathB
 }
 
 /// Write `context.budgetTokens` into the project's `ax.json` and leave every other key alone.
-pub fn save_project_context_budget(project_root: &std::path::Path, tokens: u32) -> Result<std::path::PathBuf, String> {
+pub fn save_project_context_budget(
+    project_root: &std::path::Path,
+    tokens: u32,
+) -> Result<std::path::PathBuf, String> {
     let path = project_root.join("ax.json");
     let mut root: Value = std::fs::read_to_string(&path)
         .ok()
@@ -835,13 +846,25 @@ mod tests {
         assert_eq!(settings.currency, Currency::Eur);
         assert_eq!(settings.mode, BudgetMode::Cheap);
         assert_eq!(settings.context_budget_tokens, Some(12_000));
+        assert_eq!(settings.context_memory_tokens, None);
+    }
+
+    #[test]
+    fn project_context_memory_tokens_override_the_default() {
+        let project = r#"{"context":{"memoryTokens":80}}"#;
+        let settings = parse_settings(None, Some(project));
+        assert_eq!(settings.context_memory_tokens, Some(80));
     }
 
     #[test]
     fn project_context_budget_keeps_other_keys() {
         let dir = std::env::temp_dir().join(format!("ax-budget-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("ax.json"), r#"{"name":"keep","budget":{"enabled":false}}"#).unwrap();
+        std::fs::write(
+            dir.join("ax.json"),
+            r#"{"name":"keep","budget":{"enabled":false}}"#,
+        )
+        .unwrap();
         save_project_context_budget(&dir, 8_000).unwrap();
         let text = std::fs::read_to_string(dir.join("ax.json")).unwrap();
         let settings = parse_settings(None, Some(&text));

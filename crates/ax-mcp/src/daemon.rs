@@ -250,6 +250,7 @@ impl DaemonLifecycle {
             self.client_count()
         );
         remove_daemon_info(&self.project_root);
+        ax_core::mark_clean_shutdown(&self.project_root);
         if let Some(pid_path) = &self.pid_path {
             release_daemon_lock(pid_path);
         }
@@ -508,6 +509,11 @@ async fn start_daemon_core(
     let lifecycle = DaemonLifecycle::new(project_root.clone(), Some(pid_path));
     lifecycle.spawn_watchers();
     lifecycle.arm_idle().await;
+    let force = ax_core::take_unclean_shutdown(&project_root);
+    let check_root = project_root.clone();
+    tokio::spawn(async move {
+        ax_core::run_database_check(&check_root, force).await;
+    });
 
     let lc_signal = Arc::clone(&lifecycle);
     let root_signal = project_root.clone();

@@ -88,7 +88,7 @@ See [Remote Policy Share](/guides/policy-sharing/).
 | GET, PUT, DELETE | `/api/memory/{id}` | Read, save, delete a memory |
 | PATCH | `/api/memory/{id}/enabled` | Include or exclude a memory from preflight |
 | GET | `/api/memory/recall` | Hybrid search |
-| GET | `/api/memory/embed-status` | Embedding backend status |
+| GET | `/api/memory/embed-status` | Embedding status: `backend` is `hash` and `model` is `hash-v1` |
 | POST | `/api/memory/capture-git` | Capture memories from recent commits |
 | GET | `/api/memory/{id}/file-changes` | Files changed in the turn behind a memory |
 | GET | `/api/memory/{id}/file-links` | Files a memory links to |

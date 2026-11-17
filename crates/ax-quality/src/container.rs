@@ -134,10 +134,7 @@ pub struct SonarDiscovery {
 }
 
 fn runtime_version(runtime: ContainerRuntime) -> Option<String> {
-    let out = Command::new(runtime.cli())
-        .arg("--version")
-        .output()
-        .ok()?;
+    let out = Command::new(runtime.cli()).arg("--version").output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -225,9 +222,9 @@ pub fn discover_sonar(host: &str, container_name: &str, preferred: Option<&str>)
             }
             None
         });
-    let database = container.as_ref().and_then(|c| {
-        find_container(c.runtime, &db_container_name(container_name))
-    });
+    let database = container
+        .as_ref()
+        .and_then(|c| find_container(c.runtime, &db_container_name(container_name)));
     let embedded_database = container
         .as_ref()
         .is_some_and(|c| !container_uses_postgres(c.runtime, container_name));
@@ -370,7 +367,9 @@ pub async fn wait_for_sonar(host: &str, timeout_secs: u64) -> Result<(), String>
     let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
     loop {
         if tokio::time::Instant::now() > deadline {
-            return Err(format!("SonarQube did not become ready at {host} within {timeout_secs}s"));
+            return Err(format!(
+                "SonarQube did not become ready at {host} within {timeout_secs}s"
+            ));
         }
         if let Ok(resp) = client.get(&url).send().await {
             if resp.status().is_success() {
@@ -414,7 +413,10 @@ fn start_container_once(runtime: ContainerRuntime, name: &str) -> Result<(), Str
     if status.success() {
         Ok(())
     } else {
-        Err(format!("{} start {name} exited with {status}", runtime.cli()))
+        Err(format!(
+            "{} start {name} exited with {status}",
+            runtime.cli()
+        ))
     }
 }
 
@@ -427,7 +429,10 @@ pub fn stop_container(runtime: ContainerRuntime, name: &str) -> Result<(), Strin
     if status.success() {
         Ok(())
     } else {
-        Err(format!("{} stop {name} exited with {status}", runtime.cli()))
+        Err(format!(
+            "{} stop {name} exited with {status}",
+            runtime.cli()
+        ))
     }
 }
 
@@ -464,7 +469,12 @@ fn is_legacy_sonar_image(image: &str) -> bool {
 
 fn container_env(runtime: ContainerRuntime, name: &str) -> Vec<String> {
     let output = Command::new(runtime.cli())
-        .args(["inspect", name, "--format", "{{range .Config.Env}}{{println .}}{{end}}"])
+        .args([
+            "inspect",
+            name,
+            "--format",
+            "{{range .Config.Env}}{{println .}}{{end}}",
+        ])
         .output()
         .ok();
     let Some(output) = output else {
@@ -503,7 +513,10 @@ fn ensure_network(runtime: ContainerRuntime, log: &InstallLog) -> Result<(), Str
     {
         return Ok(());
     }
-    log.push(format!("$ {} network create {SONAR_NETWORK}", runtime.cli()));
+    log.push(format!(
+        "$ {} network create {SONAR_NETWORK}",
+        runtime.cli()
+    ));
     let status = Command::new(runtime.cli())
         .args(["network", "create", SONAR_NETWORK])
         .status()
@@ -511,7 +524,10 @@ fn ensure_network(runtime: ContainerRuntime, log: &InstallLog) -> Result<(), Str
     if status.success() {
         Ok(())
     } else {
-        Err(format!("{} network create {SONAR_NETWORK} failed", runtime.cli()))
+        Err(format!(
+            "{} network create {SONAR_NETWORK} failed",
+            runtime.cli()
+        ))
     }
 }
 
@@ -532,7 +548,11 @@ fn remove_container(runtime: ContainerRuntime, name: &str) -> Result<(), String>
     }
 }
 
-fn remove_container_logged(runtime: ContainerRuntime, name: &str, log: &InstallLog) -> Result<(), String> {
+fn remove_container_logged(
+    runtime: ContainerRuntime,
+    name: &str,
+    log: &InstallLog,
+) -> Result<(), String> {
     log.push(format!("$ {} rm -f {name}", runtime.cli()));
     remove_container(runtime, name).map_err(|e| {
         log.push(format!("ERROR: {e}"));
@@ -559,7 +579,15 @@ fn wait_for_postgres_sync(
             return Err(msg);
         }
         let ready = Command::new(runtime.cli())
-            .args(["exec", db_name, "pg_isready", "-U", POSTGRES_USER, "-d", POSTGRES_DB])
+            .args([
+                "exec",
+                db_name,
+                "pg_isready",
+                "-U",
+                POSTGRES_USER,
+                "-d",
+                POSTGRES_DB,
+            ])
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false);
@@ -574,7 +602,11 @@ fn wait_for_postgres_sync(
     }
 }
 
-fn create_postgres_container(runtime: ContainerRuntime, db_name: &str, log: &InstallLog) -> Result<(), String> {
+fn create_postgres_container(
+    runtime: ContainerRuntime,
+    db_name: &str,
+    log: &InstallLog,
+) -> Result<(), String> {
     if find_container(runtime, db_name).is_some() {
         return Ok(());
     }
@@ -685,7 +717,11 @@ fn create_sonar_app_container(
 }
 
 /// Start PostgreSQL sidecar (when present) then SonarQube.
-pub fn start_sonar_stack(runtime: ContainerRuntime, sonar_name: &str, log: &InstallLog) -> Result<(), String> {
+pub fn start_sonar_stack(
+    runtime: ContainerRuntime,
+    sonar_name: &str,
+    log: &InstallLog,
+) -> Result<(), String> {
     let db_name = db_container_name(sonar_name);
     if let Some(db) = find_container(runtime, &db_name) {
         if !db.running {
@@ -700,7 +736,11 @@ pub fn start_sonar_stack(runtime: ContainerRuntime, sonar_name: &str, log: &Inst
     start_container_logged(runtime, sonar_name, log)
 }
 
-fn stop_sonar_stack(runtime: ContainerRuntime, sonar_name: &str, log: &InstallLog) -> Result<(), String> {
+fn stop_sonar_stack(
+    runtime: ContainerRuntime,
+    sonar_name: &str,
+    log: &InstallLog,
+) -> Result<(), String> {
     let db_name = db_container_name(sonar_name);
     if let Some(sonar) = find_container(runtime, sonar_name) {
         if sonar.running {
@@ -731,7 +771,14 @@ pub async fn ensure_sonar_live(
     preferred: Option<&str>,
     host_port: u16,
 ) -> Result<SonarDiscovery, String> {
-    ensure_sonar_live_with_log(host, container_name, preferred, host_port, &InstallLog::new()).await
+    ensure_sonar_live_with_log(
+        host,
+        container_name,
+        preferred,
+        host_port,
+        &InstallLog::new(),
+    )
+    .await
 }
 
 pub async fn ensure_sonar_live_with_log(
@@ -820,7 +867,10 @@ pub async fn start_sonar_container_with_log(
         log.push(format!("ERROR: {msg}"));
         return Err(msg);
     };
-    log.push(format!("Container '{}' — {}", existing.name, existing.status));
+    log.push(format!(
+        "Container '{}' — {}",
+        existing.name, existing.status
+    ));
     if sonar_stack_needs_postgres_upgrade(runtime, container_name) {
         let msg = format!(
             "Container '{container_name}' uses embedded H2 — run Install to upgrade to PostgreSQL"
@@ -955,7 +1005,11 @@ async fn create_sonar_container_logged(
     create_sonar_app_container(runtime, name, &db_name, host_port, log)
 }
 
-async fn wait_for_sonar_logged(host: &str, timeout_secs: u64, log: &InstallLog) -> Result<(), String> {
+async fn wait_for_sonar_logged(
+    host: &str,
+    timeout_secs: u64,
+    log: &InstallLog,
+) -> Result<(), String> {
     let url = format!("{}/api/system/status", host.trim_end_matches('/'));
     let client = reqwest::Client::new();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);

@@ -51,6 +51,9 @@ pub struct MemoryMatch {
     pub memory: MemoryRow,
     /// Combined FTS rank and confidence-decay score. Higher is better.
     pub score: f64,
+    /// Why this memory was recalled (signals, terms, anchors).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<crate::fusion::WhyRecalled>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -61,4 +64,18 @@ pub struct RememberInput {
     pub tags: Vec<String>,
     pub files: Vec<String>,
     pub source: Option<String>,
+}
+
+/// Shared recall filter keys for MCP, CLI, and the Command Center API.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MemoryFilter {
+    pub session: Option<String>,
+    pub turn: Option<String>,
+    pub keyword: Option<String>,
+    pub trigger: Option<String>,
+    pub file: Option<String>,
+    pub symbol: Option<String>,
+    pub kind: Option<String>,
+    pub since: Option<i64>,
+    pub until: Option<i64>,
 }

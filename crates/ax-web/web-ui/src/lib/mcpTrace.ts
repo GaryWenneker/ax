@@ -2,6 +2,7 @@ import {
   formatInstantInZone,
   resolveTimeZone,
 } from './timeZone';
+import { traceIdsFromMessage } from './traceIds';
 
 /** Unicode axe (U+1FA93) — prefix for ax logging and chat output. */
 export const AX_LOG_ICON = '🪓';
@@ -87,6 +88,10 @@ export interface TraceEntry {
   /** Optional tool name for highlighting. */
   tool: string | null;
   origin?: string;
+  /** Session id from `session=` on the log line, when present. */
+  sessionId?: string | null;
+  /** Turn id from `turn=` on the log line, when present. */
+  turnId?: string | null;
 }
 
 /** Active IANA zone for Logging Date/time (resolved; never empty). */
@@ -648,6 +653,7 @@ export function parseTraceEntry(raw: string): TraceEntry {
   rest = rest.replace(/^\[ax-mcp\]\s*(?:🪓\s*)?/, '');
   const { kind, badge } = classify(rest);
   const message = withAxLogIcon(rest.replace(/⏎/g, '↵ '));
+  const { sessionId, turnId } = traceIdsFromMessage(message);
   return {
     id,
     raw,
@@ -659,6 +665,8 @@ export function parseTraceEntry(raw: string): TraceEntry {
     message,
     tool: extractTool(message),
     origin,
+    sessionId,
+    turnId,
   };
 }
 

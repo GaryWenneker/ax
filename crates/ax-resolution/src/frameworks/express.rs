@@ -1,25 +1,78 @@
 //! Express / Node.js route extraction.
 
-use std::sync::OnceLock;
 use regex::Regex;
+use std::sync::OnceLock;
 
-use ax_types::{
-    Language, Node, NodeKind, ReferenceKind, UnresolvedReference,
-};
+use ax_types::{Language, Node, NodeKind, ReferenceKind, UnresolvedReference};
 
 use crate::strip_comments::strip_comments_for_regex;
 
 use super::extract::{language_for_path, now_ms, stable_node_id, FrameworkExtractResult};
 
 const RESERVED_CALLS: &[&str] = &[
-    "json", "jsonp", "send", "sendStatus", "sendFile", "status", "end", "redirect",
-    "render", "set", "get", "header", "type", "format", "attachment", "download",
-    "cookie", "clearCookie", "append", "location", "vary", "links", "accepts", "is",
-    "next", "then", "catch", "finally", "resolve", "reject", "all", "race",
-    "map", "filter", "forEach", "reduce", "find", "push", "pop", "slice", "splice",
-    "includes", "keys", "values", "entries", "assign", "parse", "stringify",
-    "log", "error", "warn", "info", "String", "Number", "Boolean", "Array", "Object",
-    "Date", "Math", "JSON", "Promise", "require", "fail",
+    "json",
+    "jsonp",
+    "send",
+    "sendStatus",
+    "sendFile",
+    "status",
+    "end",
+    "redirect",
+    "render",
+    "set",
+    "get",
+    "header",
+    "type",
+    "format",
+    "attachment",
+    "download",
+    "cookie",
+    "clearCookie",
+    "append",
+    "location",
+    "vary",
+    "links",
+    "accepts",
+    "is",
+    "next",
+    "then",
+    "catch",
+    "finally",
+    "resolve",
+    "reject",
+    "all",
+    "race",
+    "map",
+    "filter",
+    "forEach",
+    "reduce",
+    "find",
+    "push",
+    "pop",
+    "slice",
+    "splice",
+    "includes",
+    "keys",
+    "values",
+    "entries",
+    "assign",
+    "parse",
+    "stringify",
+    "log",
+    "error",
+    "warn",
+    "info",
+    "String",
+    "Number",
+    "Boolean",
+    "Array",
+    "Object",
+    "Date",
+    "Math",
+    "JSON",
+    "Promise",
+    "require",
+    "fail",
 ];
 
 pub fn detect(project_root: &std::path::Path) -> bool {
@@ -192,7 +245,10 @@ fn make_ref(
 fn extract_tail_ident(expr: &str) -> Option<String> {
     let cleaned = expr.replace(' ', "").replace("()", "");
     let re = Regex::new(r"(?:\.|^)([A-Za-z_][A-Za-z0-9_]*)$").ok();
-    re.and_then(|r| r.captures(&cleaned).and_then(|c| c.get(1).map(|m| m.as_str().to_string())))
+    re.and_then(|r| {
+        r.captures(&cleaned)
+            .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
+    })
 }
 
 fn extract_arrow_body(after_arrow: &str) -> &str {

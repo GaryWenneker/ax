@@ -59,8 +59,7 @@ impl AgentPage {
                     self.pending = None;
                     self.loaded = true;
                     self.sessions_json =
-                        "{\n  \"note\": \"Agent sessions endpoint unavailable or empty\"\n}"
-                            .into();
+                        "{\n  \"note\": \"Agent sessions endpoint unavailable or empty\"\n}".into();
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
                     ui.spinner();

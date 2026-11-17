@@ -1,0 +1,14 @@
+{
+  "kind": "compile_only",
+  "evidenceType": "compile",
+  "target": "windows-arm64",
+  "method": "cross-compile with llvm-mingw aarch64-w64-mingw32-clang to aarch64-pc-windows-gnullvm",
+  "binary": "target-dev/aarch64-pc-windows-gnullvm/debug/build/ax-neural/c9999539953ac92f/out/ax_neural-c9999539953ac92f.exe",
+  "file": "PE32+ executable (console) Aarch64, for MS Windows",
+  "runtimeExecution": {
+    "kind": "not_measured",
+    "reason": "No Windows ARM64 executor on this Darwin host; x86_64 Wine cannot run AArch64 PE; no Windows ARM64 VM/device available in-session"
+  },
+  "timestamp": "2026-11-16T12:10:00Z",
+  "note": "Compilation succeeded. Do not treat this as runtime evidence."
+}

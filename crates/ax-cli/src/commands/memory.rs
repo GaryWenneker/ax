@@ -12,6 +12,8 @@ pub struct RememberArgs {
     pub files: Vec<String>,
     pub triggers: Vec<String>,
     pub confirm: Option<String>,
+    pub purge: Option<String>,
+    pub when: Option<String>,
     pub json: bool,
 }
 
@@ -24,11 +26,13 @@ pub async fn run_remember(args: RememberArgs) -> Result<(), String> {
         files,
         triggers,
         confirm,
+        purge,
+        when,
         json,
     } = args;
     let root = resolve_path(None);
-    let text = if confirm.is_none() {
-        Some(text.ok_or("give the memory text, or --confirm ID")?)
+    let text = if confirm.is_none() && purge.is_none() {
+        Some(text.ok_or("give the memory text, or --confirm ID, or --purge ID")?)
     } else {
         text
     };
@@ -67,7 +71,36 @@ pub async fn run_remember(args: RememberArgs) -> Result<(), String> {
         }
         return Ok(());
     }
+    if let Some(id) = purge {
+        let purged = ax_memory::purge_memory(ax.db_pool(), &id)
+            .await
+            .map_err(|e| e.to_string())?;
+        if json {
+            println!(
+                "{}",
+                serde_json::json!({ "ok": purged, "id": id, "purged": purged })
+            );
+        } else if purged {
+            println!("Purged {id}");
+        } else {
+            println!("No memory with id {id}");
+        }
+        return Ok(());
+    }
     let text = text.unwrap_or_default();
+    let mut tags = tags;
+    if let Some(when) = when {
+        if let Some(clause) = ax_memory::parse_when(&when) {
+            tags.push(format!("when:{}:{}", clause.kind, clause.pattern));
+        } else {
+            return Err(format!("invalid --when {when}"));
+        }
+    }
+    if let Err(e) = ax_memory::assert_scope(&root, &files) {
+        let msg = e.to_string();
+        trace.finish_err(&msg);
+        return Err(msg);
+    }
     let row = match ax_memory::remember_with_triggers(
         ax.db_pool(),
         ax_memory::RememberInput {
@@ -94,6 +127,7 @@ pub async fn run_remember(args: RememberArgs) -> Result<(), String> {
         Some(&root),
         format!("remember ok id={} kind={}", row.id, row.kind),
     );
+    let suggestions = ax_memory::suggested_triggers(&row.title, &row.files, &row.body, &triggers);
     let summary = format!("Remembered [{}] {}", row.kind, row.title);
     trace.finish_ok(&summary);
 
@@ -115,7 +149,8 @@ pub async fn run_remember(args: RememberArgs) -> Result<(), String> {
             "title": row.title,
             "kind": row.kind,
             "memory": row,
-            "similar": similar
+            "similar": similar,
+            "suggested_triggers": suggestions
         });
         println!(
             "{}",
@@ -137,6 +172,9 @@ pub async fn run_remember(args: RememberArgs) -> Result<(), String> {
                     s.memory.id
                 );
             }
+        }
+        if !suggestions.is_empty() {
+            println!("  suggested triggers: {}", suggestions.join(", "));
         }
     }
     Ok(())
@@ -242,6 +280,7 @@ pub async fn run_recall(
     id: Option<String>,
     depth: String,
     limit: Option<u32>,
+    filter: ax_memory::MemoryFilter,
     json: bool,
 ) -> Result<(), String> {
     let root = resolve_path(None);
@@ -276,7 +315,7 @@ pub async fn run_recall(
         files: Vec::new(),
         limit,
     };
-    let matches = match ax_memory::search(ax.db_pool(), &request).await {
+    let mut matches = match ax_memory::search(ax.db_pool(), &request).await {
         Ok(m) => m,
         Err(e) => {
             ax_usage::log_memory(Some(&root), "recall fail");
@@ -285,6 +324,11 @@ pub async fn run_recall(
             return Err(msg);
         }
     };
+    if let Err(e) = ax_memory::apply_memory_filter(ax.db_pool(), &mut matches, &filter).await {
+        let msg = e.to_string();
+        trace.finish_err(&msg);
+        return Err(msg);
+    }
     ax_usage::log_memory(
         Some(&root),
         format!("recall ok hits={} limit={limit}", matches.len()),
@@ -405,6 +449,25 @@ pub async fn run_import(path: Option<String>, quiet: bool) -> Result<(), String>
             result.updated,
             result.skipped
         );
+    }
+    Ok(())
+}
+
+pub async fn run_reindex(json: bool) -> Result<(), String> {
+    let root = resolve_path(None);
+    ax_usage::log_memory(Some(&root), "reindex start");
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let updated = ax_memory::reindex_memory_fts(ax.db_pool())
+        .await
+        .map_err(|e| e.to_string())?;
+    ax_usage::log_memory(Some(&root), format!("reindex ok updated={updated}"));
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({ "ok": true, "search_text_updated": updated })
+        );
+    } else {
+        println!("Rebuilt memories_fts; updated search_text on {updated} rows");
     }
     Ok(())
 }

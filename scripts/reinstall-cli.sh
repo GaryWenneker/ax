@@ -77,8 +77,8 @@ uname_s="$(uname -s)"
 if [[ "$uname_s" == "Darwin" ]]; then
 	# Do not pkill ax: MCP and `ax web` keep the old inode until restarted.
 	# Replacing ~/.local/bin with a shim does not require stopping processes.
-	echo "Building ax-cli (release, onnx) into target-dev..."
-	cargo build --release -p ax-cli --features onnx
+	echo "Building ax-cli (release) into target-dev..."
+	cargo build --release -p ax-cli
 	bin="$root/target-dev/release/ax"
 	relink_macos_macho "$bin"
 	install_macos_path_shim "$bin"
@@ -88,7 +88,7 @@ if [[ "$uname_s" == "Darwin" ]]; then
 else
 	kill_all_ax
 	echo "Installing ax-cli to cargo bin..."
-	cargo install --path crates/ax-cli --force --features onnx
+	cargo install --path crates/ax-cli --force
 	bin="$(command -v ax)"
 	echo "$(ax --version)"
 	echo "Installed: $bin"

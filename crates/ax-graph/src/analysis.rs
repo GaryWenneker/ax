@@ -178,9 +178,10 @@ pub fn detect_communities(nodes: &[Node], edges: &[Edge], resolution: f64) -> Co
         if !is_architectural_edge(edge.kind) {
             continue;
         }
-        let (Some(&a), Some(&b)) =
-            (id_to_idx.get(edge.source.as_str()), id_to_idx.get(edge.target.as_str()))
-        else {
+        let (Some(&a), Some(&b)) = (
+            id_to_idx.get(edge.source.as_str()),
+            id_to_idx.get(edge.target.as_str()),
+        ) else {
             continue;
         };
         if a == b {
@@ -357,8 +358,7 @@ pub fn surprising_connections(
         if !is_architectural_edge(edge.kind) {
             continue;
         }
-        let (Some(&sc), Some(&tc)) =
-            (communities.get(&edge.source), communities.get(&edge.target))
+        let (Some(&sc), Some(&tc)) = (communities.get(&edge.source), communities.get(&edge.target))
         else {
             continue;
         };
@@ -374,8 +374,7 @@ pub fn surprising_connections(
         if !is_architectural_edge(edge.kind) {
             continue;
         }
-        let (Some(&sc), Some(&tc)) =
-            (communities.get(&edge.source), communities.get(&edge.target))
+        let (Some(&sc), Some(&tc)) = (communities.get(&edge.source), communities.get(&edge.target))
         else {
             continue;
         };
@@ -447,11 +446,7 @@ fn semantic_degrees(
 
 /// Derive a community label from its dominant top-level module, falling back to
 /// the highest-degree member's name.
-fn derive_label(
-    members: &[usize],
-    nodes: &[Node],
-    degrees: &[(usize, usize, usize)],
-) -> String {
+fn derive_label(members: &[usize], nodes: &[Node], degrees: &[(usize, usize, usize)]) -> String {
     // Most common top-level module among members.
     let mut module_counts: HashMap<String, usize> = HashMap::new();
     for &i in members {
@@ -485,7 +480,10 @@ fn top_module(file_path: &str) -> String {
         (Some(first), Some(second)) => {
             // For monorepo-ish layouts (crates/, packages/, src/), include one
             // more level so communities don't all collapse into "src".
-            if matches!(first, "crates" | "packages" | "apps" | "src" | "lib" | "pkg") {
+            if matches!(
+                first,
+                "crates" | "packages" | "apps" | "src" | "lib" | "pkg"
+            ) {
                 format!("{first}/{second}")
             } else {
                 first.to_string()

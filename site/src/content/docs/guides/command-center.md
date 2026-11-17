@@ -351,7 +351,7 @@ Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.to
 - **Vault connection** — mount rules, skills, and memories as a WebDAV drive for Obsidian or any editor — see [Obsidian Vault](/guides/obsidian-vault/). With login on, the browser vault uses that session and a desktop mount needs the share token.
 - **Open Knowledge Format (OKF)** — **Generate OKF bundle** / **Validate** (and optional wiki publish) via `/api/okf/*`; writes Markdown under `okf.outDir` from `ax.json` — see [OKF](/guides/okf/)
 - **Plugins** — live extractor table from `GET /api/plugins` (name, mode, extensions, entry) with Refresh
-- **Embeddings** — memory embed backend (`hash` / `onnx` / …), onnx Cargo feature, model + tokenizer paths from `GET /api/memory/embed-status` with Re-probe
+- **Embeddings** — the one hash model (`hash-v1`) from `GET /api/memory/embed-status`
 - **Remote policy share** — pull team rules, skills, and optional memory from a git host or OneDrive for this project — see [Remote Policy Share](/guides/policy-sharing/)
 
 ## Command Center inside your IDE

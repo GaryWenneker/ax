@@ -15,7 +15,7 @@ pub use debounce::{debounce, Throttle};
 pub use errors::*;
 pub use file_lock::{clear_stale_lock, FileLock, DEFAULT_LOCK_WAIT};
 pub use logger::{get_logger, set_logger, Logger};
-pub use memory::MemoryMonitor;
+pub use memory::{current_rss_bytes, MemoryMonitor};
 pub use mutex::AsyncMutex;
 pub use paths::validate_path_within_root;
 pub use process::{is_pid_alive, kill_listening_on_port, pids_listening_on_port};
@@ -47,7 +47,11 @@ where
 }
 
 /// Synchronous batch processing variant.
-pub fn process_in_batches_sync<T, F>(items: Vec<T>, batch_size: usize, mut callback: F) -> Result<(), AxError>
+pub fn process_in_batches_sync<T, F>(
+    items: Vec<T>,
+    batch_size: usize,
+    mut callback: F,
+) -> Result<(), AxError>
 where
     T: Clone,
     F: FnMut(Vec<T>) -> Result<(), AxError>,

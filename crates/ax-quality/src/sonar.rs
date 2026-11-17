@@ -25,8 +25,13 @@ const DEFAULT_EXCLUSIONS: &str = "\
 **/*.so,\
 **/*.dylib";
 
-use crate::bootstrap::{canonical_repo_project_key, read_sonar_token, scanner_available, scanner_host_url, sonar_reachable, workspace_sonar_key};
-use crate::container::{find_container_any, resolve_runtime, start_sonar_stack, InstallLog, SONAR_SCANNER_IMAGE};
+use crate::bootstrap::{
+    canonical_repo_project_key, read_sonar_token, scanner_available, scanner_host_url,
+    sonar_reachable, workspace_sonar_key,
+};
+use crate::container::{
+    find_container_any, resolve_runtime, start_sonar_stack, InstallLog, SONAR_SCANNER_IMAGE,
+};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SonarConfig {
@@ -203,12 +208,14 @@ impl SonarClient {
             runtime.cli()
         );
         start_sonar_stack(runtime, container_name, &log)?;
-        crate::container::wait_for_sonar(host, 120).await.map_err(|e| {
-            format!(
-                "SonarQube container '{}' started but API at {host} is not responding: {e}",
-                container.name
-            )
-        })
+        crate::container::wait_for_sonar(host, 120)
+            .await
+            .map_err(|e| {
+                format!(
+                    "SonarQube container '{}' started but API at {host} is not responding: {e}",
+                    container.name
+                )
+            })
     }
 
     pub fn run_platform_scan(
@@ -218,7 +225,14 @@ impl SonarClient {
         dirty_files: &[String],
         full_repo: bool,
     ) -> Result<(), String> {
-        self.run_platform_scan_inner(project_root, repo_names, dirty_files, full_repo, None, &mut None)
+        self.run_platform_scan_inner(
+            project_root,
+            repo_names,
+            dirty_files,
+            full_repo,
+            None,
+            &mut None,
+        )
     }
 
     pub fn run_platform_scan_with_progress(
@@ -256,7 +270,12 @@ impl SonarClient {
         log: &crate::container::InstallLog,
         workspace_repo_count: usize,
     ) -> Result<(), String> {
-        let scope = ScanScope { repo_names, dirty_files: &[], full_repo: true, workspace_repo_count };
+        let scope = ScanScope {
+            repo_names,
+            dirty_files: &[],
+            full_repo: true,
+            workspace_repo_count,
+        };
         self.run_platform_scan_inner_counted(project_root, scope, Some(log), &mut None)
     }
 
@@ -269,7 +288,12 @@ impl SonarClient {
         log: Option<&crate::container::InstallLog>,
         progress: &mut Option<&mut dyn FnMut(SonarScanProgressEvent)>,
     ) -> Result<(), String> {
-        let scope = ScanScope { repo_names, dirty_files, full_repo, workspace_repo_count: repo_names.len() };
+        let scope = ScanScope {
+            repo_names,
+            dirty_files,
+            full_repo,
+            workspace_repo_count: repo_names.len(),
+        };
         self.run_platform_scan_inner_counted(project_root, scope, log, progress)
     }
 
@@ -280,7 +304,12 @@ impl SonarClient {
         log: Option<&crate::container::InstallLog>,
         progress: &mut Option<&mut dyn FnMut(SonarScanProgressEvent)>,
     ) -> Result<(), String> {
-        let ScanScope { repo_names, dirty_files, full_repo, workspace_repo_count } = scope;
+        let ScanScope {
+            repo_names,
+            dirty_files,
+            full_repo,
+            workspace_repo_count,
+        } = scope;
         if !self.config.enabled {
             return Ok(());
         }
@@ -306,7 +335,13 @@ impl SonarClient {
         } else {
             &filtered_dirty
         };
-        let targets = build_scan_targets_with_count(&workspace_key, repo_names, files_for_targets, full_repo, workspace_repo_count);
+        let targets = build_scan_targets_with_count(
+            &workspace_key,
+            repo_names,
+            files_for_targets,
+            full_repo,
+            workspace_repo_count,
+        );
         emit_skipped_repos(
             &workspace_key,
             repo_names,
@@ -480,10 +515,7 @@ impl SonarClient {
             SONAR_SCANNER_IMAGE
         );
 
-        let mut args = vec![
-            "run".to_string(),
-            "--rm".to_string(),
-        ];
+        let mut args = vec!["run".to_string(), "--rm".to_string()];
         if let Some(t) = token {
             args.push("-e".to_string());
             args.push(format!("SONAR_TOKEN={t}"));
@@ -527,7 +559,8 @@ impl SonarClient {
         project_root: &Path,
         repo_names: &[String],
     ) -> Result<QualityGateResult, String> {
-        self.fetch_quality_gate_inner(project_root, repo_names, true).await
+        self.fetch_quality_gate_inner(project_root, repo_names, true)
+            .await
     }
 
     /// Fetch without waiting for the Compute Engine (for status checks / dashboards).
@@ -536,7 +569,8 @@ impl SonarClient {
         project_root: &Path,
         repo_names: &[String],
     ) -> Result<QualityGateResult, String> {
-        self.fetch_quality_gate_inner(project_root, repo_names, false).await
+        self.fetch_quality_gate_inner(project_root, repo_names, false)
+            .await
     }
 
     async fn fetch_quality_gate_inner(
@@ -570,7 +604,9 @@ impl SonarClient {
         };
 
         for key in keys {
-            let result = self.fetch_quality_gate_for_key(project_root, &key, wait_for_ce).await?;
+            let result = self
+                .fetch_quality_gate_for_key(project_root, &key, wait_for_ce)
+                .await?;
             if !result.passed {
                 combined.passed = false;
                 combined.status = result.status.clone();
@@ -659,7 +695,9 @@ impl SonarClient {
 
 fn run_command_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<(), String> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("failed to start scanner: {e}"))?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("failed to start scanner: {e}"))?;
     let start = Instant::now();
     loop {
         match child.try_wait() {
@@ -683,10 +721,7 @@ fn run_command_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<(), 
                 if start.elapsed() > timeout {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(format!(
-                        "timed out after {}s — killed",
-                        timeout.as_secs()
-                    ));
+                    return Err(format!("timed out after {}s — killed", timeout.as_secs()));
                 }
                 std::thread::sleep(Duration::from_millis(250));
             }
@@ -784,7 +819,13 @@ fn build_scan_targets(
     dirty_files: &[String],
     full_repo: bool,
 ) -> Vec<ScanTarget> {
-    build_scan_targets_with_count(workspace_key, repo_names, dirty_files, full_repo, repo_names.len())
+    build_scan_targets_with_count(
+        workspace_key,
+        repo_names,
+        dirty_files,
+        full_repo,
+        repo_names.len(),
+    )
 }
 
 fn build_scan_targets_with_count(
@@ -819,7 +860,10 @@ fn build_scan_targets_with_count(
             continue;
         }
         let rel = file.strip_prefix(&format!("{repo}/")).unwrap_or(file);
-        grouped.entry(repo.to_string()).or_default().push(rel.to_string());
+        grouped
+            .entry(repo.to_string())
+            .or_default()
+            .push(rel.to_string());
     }
 
     // Use workspace_repo_count for multi-repo detection so that scanning a single repo
@@ -893,9 +937,7 @@ mod tests {
 
     #[test]
     fn large_diff_collapses_to_repo_globs() {
-        let files: Vec<String> = (0..300)
-            .map(|i| format!("src/File{i}.cs"))
-            .collect();
+        let files: Vec<String> = (0..300).map(|i| format!("src/File{i}.cs")).collect();
         let inc = build_inclusions(&files);
         assert_eq!(inc, "**/*");
         assert!(!use_properties_file(&inc));
@@ -903,9 +945,16 @@ mod tests {
 
     #[test]
     fn resolve_rel_path_splits_forward_slashes() {
-        let root = Path::new(if cfg!(windows) { r"C:\workspace" } else { "/workspace" });
+        let root = Path::new(if cfg!(windows) {
+            r"C:\workspace"
+        } else {
+            "/workspace"
+        });
         let resolved = resolve_rel_path(root, "Contoso-Web/src/Foo.cs");
-        assert_eq!(resolved, root.join("Contoso-Web").join("src").join("Foo.cs"));
+        assert_eq!(
+            resolved,
+            root.join("Contoso-Web").join("src").join("Foo.cs")
+        );
     }
 
     #[test]
@@ -924,7 +973,10 @@ mod tests {
         assert!(targets.iter().all(|t| t.sources != "FabrikamTeams"));
         let web = targets.iter().find(|t| t.sources == "Contoso-Web").unwrap();
         assert!(web.inclusions.contains("Foo.cs"));
-        let contoso = targets.iter().find(|t| t.sources == "ContosoPortal").unwrap();
+        let contoso = targets
+            .iter()
+            .find(|t| t.sources == "ContosoPortal")
+            .unwrap();
         assert!(contoso.inclusions.contains("Bar.cs"));
     }
 

@@ -27,6 +27,7 @@ mod mcp_ops;
 mod mcp_quality;
 mod mcp_trace;
 mod memory;
+mod neural;
 mod node_tracker;
 mod okf_api;
 mod plugins_api;
@@ -513,6 +514,41 @@ async fn handle_graph_recent(
         return api_err(e.to_string()).into_response();
     }
     let ids = node_tracker::created_since(&ws.db_path, since, limit as usize);
+    match queries::get_graph_for_ids(&ws.graph_pool, &ids).await {
+        Ok(payload) => (StatusCode::OK, Json(payload)).into_response(),
+        Err(e) => api_err(e.to_string()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct GraphAsOfQuery {
+    at: i64,
+    #[serde(default = "default_graph_limit")]
+    limit: i64,
+}
+
+async fn handle_graph_as_of(
+    State(hub): State<WebHub>,
+    Query(p): Query<GraphAsOfQuery>,
+) -> impl IntoResponse {
+    let limit = p.limit.clamp(1, graph_max_limit());
+    let ws = hub.read().await;
+    let ids: Result<Vec<String>, _> = sqlx::query_scalar(
+        "SELECT DISTINCT node_key FROM graph_node_versions
+         WHERE valid_from <= ?
+           AND (valid_to IS NULL OR valid_to > ?)
+         ORDER BY node_key
+         LIMIT ?",
+    )
+    .bind(p.at)
+    .bind(p.at)
+    .bind(limit)
+    .fetch_all(&ws.graph_pool)
+    .await;
+    let ids = match ids {
+        Ok(ids) => ids,
+        Err(e) => return api_err(e.to_string()).into_response(),
+    };
     match queries::get_graph_for_ids(&ws.graph_pool, &ids).await {
         Ok(payload) => (StatusCode::OK, Json(payload)).into_response(),
         Err(e) => api_err(e.to_string()).into_response(),

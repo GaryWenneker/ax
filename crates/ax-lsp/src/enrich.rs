@@ -4,9 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use ax_types::{
-    Edge, EdgeConfidence, EdgeKind, Provenance, ReferenceKind, UnresolvedReference,
-};
+use ax_types::{Edge, EdgeConfidence, EdgeKind, Provenance, ReferenceKind, UnresolvedReference};
 
 use crate::client::{column_for_name, language_id_for_ext, LspClient};
 use crate::servers::{server_available_in, spec_for_extension, ServerSpec};

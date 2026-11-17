@@ -14,7 +14,7 @@ use crate::targets::display_name;
 
 pub use crate::cli_catalog::{
     auth_command, build_child_env, cli_bin_name, headless_command, is_cli_on_path,
-    resolve_cli_path, resolve_cli_spawn, CommandSpec, CliSpawn,
+    resolve_cli_path, resolve_cli_spawn, CliSpawn, CommandSpec,
 };
 
 #[derive(Debug, Clone)]
@@ -195,7 +195,8 @@ fn run_native_script(
     entry: &CliCatalogEntry,
     on_line: &mut impl FnMut(&str),
 ) -> Result<bool, String> {
-    let url = native_install_url(entry).ok_or_else(|| format!("No native installer for {}", entry.id))?;
+    let url =
+        native_install_url(entry).ok_or_else(|| format!("No native installer for {}", entry.id))?;
     if cfg!(target_os = "windows") {
         on_line(&format!("Running native installer: {url}"));
         on_line("Downloading installer script…");
@@ -232,10 +233,7 @@ fn run_native_script(
     }
 }
 
-fn run_npm_global(
-    entry: &CliCatalogEntry,
-    on_line: &mut impl FnMut(&str),
-) -> Result<bool, String> {
+fn run_npm_global(entry: &CliCatalogEntry, on_line: &mut impl FnMut(&str)) -> Result<bool, String> {
     let package = entry
         .install
         .npm_package
@@ -289,7 +287,12 @@ fn run_scoop(plan: &CliInstallPlan, on_line: &mut impl FnMut(&str)) -> Result<bo
 fn run_choco(plan: &CliInstallPlan, on_line: &mut impl FnMut(&str)) -> Result<bool, String> {
     let choco = find_on_path("choco").ok_or_else(|| "choco not found".to_string())?;
     on_line(&format!("choco install {}", plan.target));
-    run_command_with_logs(&choco, &["install", &plan.target, "-y"], on_line, Duration::from_secs(600))
+    run_command_with_logs(
+        &choco,
+        &["install", &plan.target, "-y"],
+        on_line,
+        Duration::from_secs(600),
+    )
 }
 
 fn find_on_path(name: &str) -> Option<String> {
@@ -317,9 +320,7 @@ fn run_command_with_logs(
 ) -> Result<bool, String> {
     on_line(&format!("$ {program} {}", args.join(" ")));
     let mut cmd = Command::new(program);
-    cmd.args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;

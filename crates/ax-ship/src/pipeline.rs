@@ -54,7 +54,9 @@ impl ShipPipeline {
 
         self.step_start("index");
         logger.step_start("index");
-        let mut ax = Ax::open(&self.project_root).await.map_err(|e| e.to_string())?;
+        let mut ax = Ax::open(&self.project_root)
+            .await
+            .map_err(|e| e.to_string())?;
         let index_result = if full_index {
             logger.line("Full index — scanning entire project");
             ax.index_all(IndexOptions::default(), None)
@@ -92,16 +94,22 @@ impl ShipPipeline {
 
         let mut checkpoint_roots: Vec<(PathBuf, Checkpoint)> = Vec::new();
         if self.config.auto_commit.enabled {
-            logger.line("Auto-commit enabled — checkpointing uncommitted changes before the gate runs");
+            logger.line(
+                "Auto-commit enabled — checkpointing uncommitted changes before the gate runs",
+            );
             for root in &git_roots {
                 let label = root
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("repo")
                     .to_string();
-                match auto_commit::create_checkpoint(root, &label, &self.config.auto_commit.message) {
+                match auto_commit::create_checkpoint(root, &label, &self.config.auto_commit.message)
+                {
                     Ok(Some(cp)) => {
-                        logger.line(format!("Checkpoint committed in {label}: {}", &cp.sha[..cp.sha.len().min(12)]));
+                        logger.line(format!(
+                            "Checkpoint committed in {label}: {}",
+                            &cp.sha[..cp.sha.len().min(12)]
+                        ));
                         checkpoint_roots.push((root.clone(), cp));
                     }
                     Ok(None) => {}
@@ -171,7 +179,10 @@ impl ShipPipeline {
             if changed_files.is_empty() {
                 "No impacted tests — no changed files".to_string()
             } else {
-                format!("No impacted tests — {} changed file(s)", changed_files.len())
+                format!(
+                    "No impacted tests — {} changed file(s)",
+                    changed_files.len()
+                )
             }
         } else {
             format!("{} impacted test(s)", tia.tests.len())
@@ -231,61 +242,58 @@ impl ShipPipeline {
                 logger.step_fail("sonar", &e);
                 ("failed".to_string(), Some(e), None)
             } else {
-            let bus = self.bus.clone();
-            if full_sonar {
-                logger.line(format!(
-                    "Full SonarQube scan — all {} git repositor{}",
-                    repo_names.len().max(1),
-                    if repo_names.len() == 1 { "y" } else { "ies" }
-                ));
-            } else {
-                logger.line(format!(
-                    "SonarQube scan — all {} git repositor{} ({} changed file(s) in diff)",
-                    repo_names.len().max(1),
-                    if repo_names.len() == 1 { "y" } else { "ies" },
-                    changed_files.len()
-                ));
-            }
-            let sonar_scan = run_sonar_platform_scan_async(
-                self.config.sonar.clone(),
-                self.project_root.clone(),
-                repo_names.clone(),
+                let bus = self.bus.clone();
                 if full_sonar {
-                    Vec::new()
+                    logger.line(format!(
+                        "Full SonarQube scan — all {} git repositor{}",
+                        repo_names.len().max(1),
+                        if repo_names.len() == 1 { "y" } else { "ies" }
+                    ));
                 } else {
-                    changed_files.clone()
-                },
-                full_sonar,
-                bus,
-                &mut logger,
-            )
-            .await;
-            let scan_ok = sonar_scan.is_ok();
-            if let Err(e) = sonar_scan {
-                self.step_fail("sonar", &e);
-                logger.step_fail("sonar", &e);
-            } else {
-                self.step_ok("sonar", Some("Scan completed".to_string()));
-                logger.step_ok("sonar", Some("Scan completed"));
-            }
-            let sonar_result = sonar
-                .fetch_quality_gate_snapshot(&self.project_root, &repo_names)
-                .await
-                .ok();
-            let (status, detail) = if !scan_ok {
-                (
-                    "failed",
-                    Some("Scanner failed — see log".to_string()),
+                    logger.line(format!(
+                        "SonarQube scan — all {} git repositor{} ({} changed file(s) in diff)",
+                        repo_names.len().max(1),
+                        if repo_names.len() == 1 { "y" } else { "ies" },
+                        changed_files.len()
+                    ));
+                }
+                let sonar_scan = run_sonar_platform_scan_async(
+                    self.config.sonar.clone(),
+                    self.project_root.clone(),
+                    repo_names.clone(),
+                    if full_sonar {
+                        Vec::new()
+                    } else {
+                        changed_files.clone()
+                    },
+                    full_sonar,
+                    bus,
+                    &mut logger,
                 )
-            } else if let Some(ref gate) = sonar_result {
-                (
-                    if gate.passed { "passed" } else { "failed" },
-                    Some(format!("Quality gate {}", gate.status)),
-                )
-            } else {
-                ("failed", Some("Could not fetch quality gate".to_string()))
-            };
-            (status.to_string(), detail, sonar_result)
+                .await;
+                let scan_ok = sonar_scan.is_ok();
+                if let Err(e) = sonar_scan {
+                    self.step_fail("sonar", &e);
+                    logger.step_fail("sonar", &e);
+                } else {
+                    self.step_ok("sonar", Some("Scan completed".to_string()));
+                    logger.step_ok("sonar", Some("Scan completed"));
+                }
+                let sonar_result = sonar
+                    .fetch_quality_gate_snapshot(&self.project_root, &repo_names)
+                    .await
+                    .ok();
+                let (status, detail) = if !scan_ok {
+                    ("failed", Some("Scanner failed — see log".to_string()))
+                } else if let Some(ref gate) = sonar_result {
+                    (
+                        if gate.passed { "passed" } else { "failed" },
+                        Some(format!("Quality gate {}", gate.status)),
+                    )
+                } else {
+                    ("failed", Some("Could not fetch quality gate".to_string()))
+                };
+                (status.to_string(), detail, sonar_result)
             }
         } else {
             self.step_ok("sonar", Some("Disabled in settings".to_string()));
@@ -381,7 +389,11 @@ impl ShipPipeline {
         Ok(ShipReport::from_pipeline(result))
     }
 
-    pub async fn create_draft_pr(&self, title: &str, body: &str) -> Result<ax_remote::PrRef, String> {
+    pub async fn create_draft_pr(
+        &self,
+        title: &str,
+        body: &str,
+    ) -> Result<ax_remote::PrRef, String> {
         let report = self.run_evaluate().await?;
         if !report.quality_gate.passed {
             return Err("quality gate failed — cannot create PR".into());
@@ -411,7 +423,8 @@ impl ShipPipeline {
         passed: bool,
         logger: &mut RunLogger,
     ) -> AutoCommitOutcome {
-        let checkpoints: Vec<Checkpoint> = checkpoint_roots.iter().map(|(_, cp)| cp.clone()).collect();
+        let checkpoints: Vec<Checkpoint> =
+            checkpoint_roots.iter().map(|(_, cp)| cp.clone()).collect();
         if checkpoints.is_empty() {
             return AutoCommitOutcome {
                 status: "clean".into(),
@@ -424,7 +437,10 @@ impl ShipPipeline {
             return AutoCommitOutcome {
                 status: "committed".into(),
                 checkpoints,
-                detail: format!("{} checkpoint(s) committed and kept", checkpoint_roots.len()),
+                detail: format!(
+                    "{} checkpoint(s) committed and kept",
+                    checkpoint_roots.len()
+                ),
             };
         }
         if !self.config.auto_commit.revert_on_fail {
@@ -432,7 +448,9 @@ impl ShipPipeline {
             return AutoCommitOutcome {
                 status: "kept-failing".into(),
                 checkpoints,
-                detail: "Quality gate failed — checkpoint(s) committed anyway (revert_on_fail disabled)".into(),
+                detail:
+                    "Quality gate failed — checkpoint(s) committed anyway (revert_on_fail disabled)"
+                        .into(),
             };
         }
         let mut errors = Vec::new();

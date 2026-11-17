@@ -9,7 +9,6 @@ pub struct FrameworkExtractResult {
     pub edges: Vec<Edge>,
 }
 
-
 pub fn stable_node_id(file_path: &str, qualified_name: &str) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -29,7 +28,10 @@ pub fn now_ms() -> i64 {
 pub fn language_for_path(file_path: &str) -> ax_types::Language {
     if file_path.ends_with(".ts") || file_path.ends_with(".tsx") {
         ax_types::Language::Typescript
-    } else if file_path.ends_with(".js") || file_path.ends_with(".jsx") || file_path.ends_with(".mjs") {
+    } else if file_path.ends_with(".js")
+        || file_path.ends_with(".jsx")
+        || file_path.ends_with(".mjs")
+    {
         ax_types::Language::Javascript
     } else {
         ax_types::Language::Unknown

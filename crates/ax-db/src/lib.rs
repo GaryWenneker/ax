@@ -1,9 +1,14 @@
 //! SQLite storage layer for ax.
 
+pub mod builds;
+pub mod graph_history;
+pub mod hook_turns;
+pub mod integrity;
 pub mod migrations;
 pub mod queries;
 pub mod replication;
 pub mod schema;
+pub mod sync_strategy;
 pub mod vec_ext;
 
 use std::path::Path;
@@ -133,7 +138,11 @@ impl Database {
             }
         })
         .await
-        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        .map_err(|e| {
+            let message = e.to_string();
+            let _ = crate::integrity::note_sql_incident(path, &message);
+            AxError::Database(DatabaseError::new(message))
+        })?;
 
         let db = Self {
             pool,

@@ -21,31 +21,54 @@ pub fn parse_query(raw: &str) -> ParsedQuery {
             let value = unquote(value);
             match key.as_str() {
                 "kind" => {
-                    if let Some(k) = NodeKind::parse(&value) { out.kinds.push(k); } else { text_parts.push(tok); }
+                    if let Some(k) = NodeKind::parse(&value) {
+                        out.kinds.push(k);
+                    } else {
+                        text_parts.push(tok);
+                    }
                 }
                 "lang" | "language" => {
-                    if let Some(l) = Language::parse(&value.to_lowercase()) { out.languages.push(l); } else { text_parts.push(tok); }
+                    if let Some(l) = Language::parse(&value.to_lowercase()) {
+                        out.languages.push(l);
+                    } else {
+                        text_parts.push(tok);
+                    }
                 }
                 "path" => out.path_filters.push(value),
                 "name" => out.name_filters.push(value),
                 _ => text_parts.push(tok),
             }
-        } else { text_parts.push(tok); }
+        } else {
+            text_parts.push(tok);
+        }
     }
     out.text = text_parts.join(" ");
     out
 }
 
 fn unquote(s: &str) -> String {
-    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') { s[1..s.len()-1].to_string() } else { s.to_string() }
+    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+        s[1..s.len() - 1].to_string()
+    } else {
+        s.to_string()
+    }
 }
 
 pub fn bounded_edit_distance(a: &str, b: &str, max_dist: usize) -> usize {
-    if a == b { return 0; }
-    let al = a.len(); let bl = b.len();
-    if al.abs_diff(bl) > max_dist { return max_dist + 1; }
-    if al == 0 { return bl; }
-    if bl == 0 { return al; }
+    if a == b {
+        return 0;
+    }
+    let al = a.len();
+    let bl = b.len();
+    if al.abs_diff(bl) > max_dist {
+        return max_dist + 1;
+    }
+    if al == 0 {
+        return bl;
+    }
+    if bl == 0 {
+        return al;
+    }
     let mut prev: Vec<usize> = (0..=bl).collect();
     let mut cur = vec![0; bl + 1];
     for (i, ac) in a.bytes().enumerate() {
@@ -56,7 +79,9 @@ pub fn bounded_edit_distance(a: &str, b: &str, max_dist: usize) -> usize {
             cur[j + 1] = (cur[j] + 1).min(prev[j + 1] + 1).min(prev[j] + cost);
             row_min = row_min.min(cur[j + 1]);
         }
-        if row_min > max_dist { return max_dist + 1; }
+        if row_min > max_dist {
+            return max_dist + 1;
+        }
         prev.clone_from_slice(&cur);
     }
     prev[bl]

@@ -3,9 +3,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use ax_db::queries::QueryBuilder;
-use ax_types::{
-    Edge, EdgeKind, Node, Subgraph, TraversalDirection, TraversalOptions,
-};
+use ax_types::{Edge, EdgeKind, Node, Subgraph, TraversalDirection, TraversalOptions};
 
 pub struct GraphTraverser {
     queries: QueryBuilder,
@@ -34,10 +32,20 @@ impl GraphTraverser {
         if opts.include_start.unwrap_or(true) {
             nodes.insert(start_node.id.clone(), start_node.clone());
         }
-        queue.push_back((start_node, Edge {
-            source: String::new(), target: String::new(), kind: EdgeKind::Contains,
-            metadata: None, line: None, column: None, provenance: None, confidence: None,
-        }, 0));
+        queue.push_back((
+            start_node,
+            Edge {
+                source: String::new(),
+                target: String::new(),
+                kind: EdgeKind::Contains,
+                metadata: None,
+                line: None,
+                column: None,
+                provenance: None,
+                confidence: None,
+            },
+            0,
+        ));
 
         while let Some((node, edge, depth)) = queue.pop_front() {
             if visited.contains(&node.id) {
@@ -49,9 +57,10 @@ impl GraphTraverser {
             visited.insert(node.id.clone());
             nodes.insert(node.id.clone(), node.clone());
             if (edge.source != edge.target && !edge.source.is_empty() || !edge.target.is_empty())
-                && !edge.source.is_empty() {
-                    edges.push(edge.clone());
-                }
+                && !edge.source.is_empty()
+            {
+                edges.push(edge.clone());
+            }
 
             if depth >= opts.max_depth.unwrap_or(u32::MAX) {
                 continue;
@@ -73,7 +82,10 @@ impl GraphTraverser {
             let mut neighbor_edges: Vec<(String, Edge)> = Vec::new();
 
             if follow_outgoing {
-                let outgoing = self.queries.get_outgoing_edges(&node.id, edge_kinds).await?;
+                let outgoing = self
+                    .queries
+                    .get_outgoing_edges(&node.id, edge_kinds)
+                    .await?;
                 for e in outgoing {
                     neighbor_edges.push((e.target.clone(), e));
                 }
@@ -118,7 +130,11 @@ impl GraphTraverser {
         })
     }
 
-    pub async fn get_callers(&self, node_id: &str, depth: u32) -> Result<Vec<Node>, ax_utils::errors::AxError> {
+    pub async fn get_callers(
+        &self,
+        node_id: &str,
+        depth: u32,
+    ) -> Result<Vec<Node>, ax_utils::errors::AxError> {
         let opts = TraversalOptions {
             max_depth: Some(depth),
             edge_kinds: Some(vec![EdgeKind::Calls]),
@@ -126,10 +142,19 @@ impl GraphTraverser {
             ..Default::default()
         };
         let sg = self.traverse_bfs(node_id, opts).await?;
-        Ok(sg.nodes.values().filter(|n| n.id != node_id).cloned().collect())
+        Ok(sg
+            .nodes
+            .values()
+            .filter(|n| n.id != node_id)
+            .cloned()
+            .collect())
     }
 
-    pub async fn get_callees(&self, node_id: &str, depth: u32) -> Result<Vec<Node>, ax_utils::errors::AxError> {
+    pub async fn get_callees(
+        &self,
+        node_id: &str,
+        depth: u32,
+    ) -> Result<Vec<Node>, ax_utils::errors::AxError> {
         let opts = TraversalOptions {
             max_depth: Some(depth),
             edge_kinds: Some(vec![EdgeKind::Calls, EdgeKind::References]),
@@ -137,10 +162,19 @@ impl GraphTraverser {
             ..Default::default()
         };
         let sg = self.traverse_bfs(node_id, opts).await?;
-        Ok(sg.nodes.values().filter(|n| n.id != node_id).cloned().collect())
+        Ok(sg
+            .nodes
+            .values()
+            .filter(|n| n.id != node_id)
+            .cloned()
+            .collect())
     }
 
-    pub async fn get_impact_radius(&self, node_id: &str, depth: u32) -> Result<Subgraph, ax_utils::errors::AxError> {
+    pub async fn get_impact_radius(
+        &self,
+        node_id: &str,
+        depth: u32,
+    ) -> Result<Subgraph, ax_utils::errors::AxError> {
         let opts = TraversalOptions {
             max_depth: Some(depth),
             direction: Some(TraversalDirection::Incoming),
@@ -150,34 +184,65 @@ impl GraphTraverser {
     }
 
     /// CG: reverse callers — nodes that depend on `node_id` via Calls/References/Imports.
-    pub async fn get_dependents(&self, node_id: &str, depth: u32) -> Result<Vec<Node>, ax_utils::errors::AxError> {
+    pub async fn get_dependents(
+        &self,
+        node_id: &str,
+        depth: u32,
+    ) -> Result<Vec<Node>, ax_utils::errors::AxError> {
         let opts = TraversalOptions {
             max_depth: Some(depth),
-            edge_kinds: Some(vec![EdgeKind::Calls, EdgeKind::References, EdgeKind::Imports]),
+            edge_kinds: Some(vec![
+                EdgeKind::Calls,
+                EdgeKind::References,
+                EdgeKind::Imports,
+            ]),
             direction: Some(TraversalDirection::Incoming),
             ..Default::default()
         };
         let sg = self.traverse_bfs(node_id, opts).await?;
-        Ok(sg.nodes.values().filter(|n| n.id != node_id).cloned().collect())
+        Ok(sg
+            .nodes
+            .values()
+            .filter(|n| n.id != node_id)
+            .cloned()
+            .collect())
     }
 
     /// CG: `getImpactSubgraph` — full incoming subgraph for blast-radius.
-    pub async fn get_impact_subgraph(&self, node_id: &str, depth: u32) -> Result<Subgraph, ax_utils::errors::AxError> {
+    pub async fn get_impact_subgraph(
+        &self,
+        node_id: &str,
+        depth: u32,
+    ) -> Result<Subgraph, ax_utils::errors::AxError> {
         self.get_impact_radius(node_id, depth).await
     }
 
-    pub async fn get_ancestors(&self, node_id: &str) -> Result<Vec<Node>, ax_utils::errors::AxError> {
+    pub async fn get_ancestors(
+        &self,
+        node_id: &str,
+    ) -> Result<Vec<Node>, ax_utils::errors::AxError> {
         let opts = TraversalOptions {
             edge_kinds: Some(vec![EdgeKind::Contains]),
             direction: Some(TraversalDirection::Incoming),
             ..Default::default()
         };
         let sg = self.traverse_bfs(node_id, opts).await?;
-        Ok(sg.nodes.values().filter(|n| n.id != node_id).cloned().collect())
+        Ok(sg
+            .nodes
+            .values()
+            .filter(|n| n.id != node_id)
+            .cloned()
+            .collect())
     }
 
-    pub async fn get_children(&self, node_id: &str) -> Result<Vec<Node>, ax_utils::errors::AxError> {
-        let edges = self.queries.get_outgoing_edges(node_id, Some(&[EdgeKind::Contains])).await?;
+    pub async fn get_children(
+        &self,
+        node_id: &str,
+    ) -> Result<Vec<Node>, ax_utils::errors::AxError> {
+        let edges = self
+            .queries
+            .get_outgoing_edges(node_id, Some(&[EdgeKind::Contains]))
+            .await?;
         let ids: Vec<String> = edges.into_iter().map(|e| e.target).collect();
         self.queries.get_nodes_by_ids(&ids).await
     }

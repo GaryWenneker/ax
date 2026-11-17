@@ -16,11 +16,14 @@ pub fn router_hub(hub: WebHub) -> Router {
     Router::new()
         .route("/", get(handle_list).post(handle_create))
         .route("/recall", get(handle_recall))
+        .route("/review", get(handle_review))
+        .route("/health", get(handle_memory_health))
         .route("/embed-status", get(handle_embed_status))
         .route("/capture-git", post(handle_capture_git))
         .route("/{id}/enabled", patch(handle_set_enabled))
         .route("/{id}/file-changes", get(handle_file_changes))
         .route("/{id}/file-links", get(handle_file_links))
+        .route("/{id}/related", get(handle_related))
         .route("/{id}/diff", get(handle_diff))
         .route("/{id}/image", get(handle_image))
         .route(
@@ -39,32 +42,137 @@ fn forbidden_readonly() -> axum::response::Response {
     err(StatusCode::FORBIDDEN, "read-only mode (AX_WEB_READONLY=1)")
 }
 
-async fn handle_embed_status() -> Json<serde_json::Value> {
-    let backend = if ax_memory::onnx::onnx_available() {
-        "onnx"
-    } else if ax_memory::onnx::onnx_model_configured() {
-        "onnx_unconfigured"
-    } else {
-        "hash"
+async fn handle_memory_health(State(hub): State<WebHub>) -> impl IntoResponse {
+    let ws = hub.read().await;
+    let pool = &ws.graph_pool;
+    let memories: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memories")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+    let stale: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM memory_anchors WHERE stale = 1 OR orphan = 1")
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
+    let schema: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM schema_versions")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+    let backup_dir = ws.project_root.join(".ax").join("backups").join("memory");
+    let last_backup = std::fs::read_dir(&backup_dir).ok().and_then(|rd| {
+        rd.filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| ext == "zst" || ext == "jsonl")
+            })
+            .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+    });
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "schemaVersion": schema,
+            "memories": memories,
+            "staleOrOrphanAnchors": stale,
+            "lastBackup": last_backup,
+            "mechanisms": {
+                "fts": true,
+                "vectors": true,
+                "anchors": true,
+                "prospective": true,
+                "backups": last_backup.is_some(),
+            }
+        })),
+    )
+        .into_response()
+}
+
+async fn handle_review(State(hub): State<WebHub>) -> impl IntoResponse {
+    let ws = hub.read().await;
+    let pool = &ws.graph_pool;
+    let stale: Vec<String> = match sqlx::query_scalar(
+        "SELECT DISTINCT memory_id FROM memory_anchors WHERE stale = 1 OR orphan = 1 LIMIT 200",
+    )
+    .fetch_all(pool)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     };
-    let tokenizer = ax_memory::onnx::onnx_tokenizer_configured();
-    let feature = ax_memory::onnx::onnx_feature_enabled();
-    let model_path = ax_memory::onnx::onnx_model_path().map(|p| p.to_string_lossy().into_owned());
-    let tokenizer_path =
-        ax_memory::onnx::onnx_tokenizer_path().map(|p| p.to_string_lossy().into_owned());
+    let foreign: Vec<String> = match sqlx::query_scalar(
+        "SELECT id FROM memories WHERE trust_level != 'trusted' AND enabled = 1 LIMIT 200",
+    )
+    .fetch_all(pool)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
+    let candidates: Vec<String> = match sqlx::query_scalar(
+        "SELECT id FROM memories WHERE source = 'extractor' OR tags LIKE '%candidate%' LIMIT 200",
+    )
+    .fetch_all(pool)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "stale": stale,
+            "foreign": foreign,
+            "candidates": candidates,
+        })),
+    )
+        .into_response()
+}
+
+async fn handle_related(State(hub): State<WebHub>, Path(id): Path<String>) -> impl IntoResponse {
+    let ws = hub.read().await;
+    let pool = &ws.graph_pool;
+    let rows: Result<Vec<(String, String, String)>, _> = sqlx::query_as(
+        "SELECT from_id, to_id, kind FROM memory_links
+         WHERE from_id = ? OR to_id = ?
+         LIMIT 50",
+    )
+    .bind(&id)
+    .bind(&id)
+    .fetch_all(pool)
+    .await;
+    match rows {
+        Ok(rows) => {
+            let links: Vec<serde_json::Value> = rows
+                .into_iter()
+                .map(|(from_id, to_id, kind)| {
+                    let other = if from_id == id { to_id } else { from_id };
+                    serde_json::json!({ "id": other, "kind": kind })
+                })
+                .collect();
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "related": links })),
+            )
+                .into_response()
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+async fn handle_embed_status() -> Json<serde_json::Value> {
+    let status = ax_memory::embed::embed_status();
     static LOGGED: std::sync::Once = std::sync::Once::new();
     LOGGED.call_once(|| {
         ax_usage::log_embed(
             None,
-            format!("backend={backend} tokenizer={tokenizer} feature={feature}"),
+            format!("backend={} model={}", status.backend, status.model),
         );
     });
     Json(serde_json::json!({
-        "backend": backend,
-        "tokenizer": tokenizer,
-        "feature": feature,
-        "modelPath": model_path,
-        "tokenizerPath": tokenizer_path,
+        "backend": status.backend,
+        "model": status.model,
     }))
 }
 
@@ -99,6 +207,24 @@ struct RecallQuery {
     limit: usize,
     #[serde(default)]
     depth: String,
+    #[serde(default)]
+    session: Option<String>,
+    #[serde(default)]
+    turn: Option<String>,
+    #[serde(default)]
+    keyword: Option<String>,
+    #[serde(default)]
+    trigger: Option<String>,
+    #[serde(default)]
+    file: Option<String>,
+    #[serde(default)]
+    symbol: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    since: Option<i64>,
+    #[serde(default)]
+    until: Option<i64>,
 }
 
 fn default_recall_limit() -> usize {
@@ -115,6 +241,17 @@ async fn handle_recall(
     } else {
         ax_memory::Depth::Hot
     };
+    let filter = ax_memory::MemoryFilter {
+        session: p.session,
+        turn: p.turn,
+        keyword: p.keyword,
+        trigger: p.trigger,
+        file: p.file,
+        symbol: p.symbol,
+        kind: p.kind,
+        since: p.since,
+        until: p.until,
+    };
     match ax_memory::search(
         &ws.graph_pool,
         &ax_memory::SearchRequest {
@@ -128,11 +265,18 @@ async fn handle_recall(
     )
     .await
     {
-        Ok(matches) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "matches": matches })),
-        )
-            .into_response(),
+        Ok(mut matches) => {
+            if let Err(e) =
+                ax_memory::apply_memory_filter(&ws.graph_pool, &mut matches, &filter).await
+            {
+                return err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
+            }
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "matches": matches })),
+            )
+                .into_response()
+        }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }

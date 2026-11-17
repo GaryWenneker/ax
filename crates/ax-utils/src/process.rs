@@ -131,7 +131,9 @@ fn parse_ss_pids(text: &str) -> Vec<u32> {
     for line in text.lines() {
         if let Some(start) = line.find("pid=") {
             let rest = &line[start + 4..];
-            let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+            let end = rest
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(rest.len());
             if let Ok(pid) = rest[..end].parse::<u32>() {
                 if pid > 0 {
                     pids.push(pid);
@@ -199,6 +201,87 @@ pub fn is_pid_alive(pid: u32) -> bool {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileHolder {
+    pub pid: u32,
+    pub command: String,
+}
+
+pub fn parse_lsof_holders(text: &str) -> Vec<FileHolder> {
+    let mut holders = Vec::new();
+    let mut pid: Option<u32> = None;
+    let mut command = String::new();
+    let mut have_command = false;
+    for line in text.lines() {
+        let mut chars = line.chars();
+        let Some(kind) = chars.next() else {
+            continue;
+        };
+        let rest: String = chars.collect();
+        match kind {
+            'p' => {
+                push_holder(&mut holders, pid.take(), &command, have_command);
+                command.clear();
+                have_command = false;
+                pid = rest.trim().parse().ok();
+            }
+            'c' if pid.is_some() && !have_command => {
+                command = rest;
+                have_command = true;
+            }
+            _ => {}
+        }
+    }
+    push_holder(&mut holders, pid.take(), &command, have_command);
+    holders
+}
+
+fn push_holder(holders: &mut Vec<FileHolder>, pid: Option<u32>, command: &str, have_command: bool) {
+    let Some(pid) = pid else {
+        return;
+    };
+    if pid == 0 || holders.iter().any(|holder| holder.pid == pid) {
+        return;
+    }
+    holders.push(FileHolder {
+        pid,
+        command: if have_command {
+            command.to_string()
+        } else {
+            String::new()
+        },
+    });
+}
+
+pub fn file_holders(path: &std::path::Path) -> Vec<FileHolder> {
+    let Ok(output) = std::process::Command::new("lsof")
+        .args(["-F", "pc", "--"])
+        .arg(path)
+        .output()
+    else {
+        return Vec::new();
+    };
+    parse_lsof_holders(&String::from_utf8_lossy(&output.stdout))
+}
+
+pub fn with_holders(detail: &str, holders: &[FileHolder]) -> String {
+    if holders.is_empty() || detail.contains("holders:") {
+        return detail.to_string();
+    }
+    let listed = holders
+        .iter()
+        .map(|holder| {
+            if holder.command.is_empty() {
+                holder.pid.to_string()
+            } else {
+                format!("{} {}", holder.pid, holder.command)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{detail}; holders: {listed}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,5 +319,50 @@ mod tests {
     fn parse_ss_pids_extracts_pid() {
         let sample = "LISTEN 0 128 127.0.0.1:7070 0.0.0.0:* users:((\"ax\",pid=1234,fd=3))";
         assert_eq!(super::parse_ss_pids(sample), vec![1234]);
+    }
+
+    #[test]
+    fn lsof_fields_list_each_holder_once() {
+        let holders =
+            parse_lsof_holders("p7\ncax-mcp\np0\ncignored\ncorphan\np9\ncax\np7\ncagain\n");
+        assert_eq!(
+            holders,
+            vec![
+                FileHolder {
+                    pid: 7,
+                    command: "ax-mcp".to_string(),
+                },
+                FileHolder {
+                    pid: 9,
+                    command: "ax".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn holders_are_appended_to_a_lock_message() {
+        let detail = with_holders(
+            "database is locked",
+            &[
+                FileHolder {
+                    pid: 7,
+                    command: "ax-mcp".to_string(),
+                },
+                FileHolder {
+                    pid: 9,
+                    command: String::new(),
+                },
+            ],
+        );
+        assert_eq!(detail, "database is locked; holders: 7 ax-mcp, 9");
+    }
+
+    #[test]
+    fn an_empty_holder_list_leaves_the_lock_message() {
+        assert_eq!(
+            with_holders("database is locked", &[]),
+            "database is locked"
+        );
     }
 }

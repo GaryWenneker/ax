@@ -11,7 +11,10 @@ use crate::providers::PullResult;
 
 const GRAPH_V1: &str = "https://graph.microsoft.com/v1.0";
 
-pub async fn pull_onedrive(config: &OneDriveShareConfig, dest_root: &Path) -> Result<PullResult, String> {
+pub async fn pull_onedrive(
+    config: &OneDriveShareConfig,
+    dest_root: &Path,
+) -> Result<PullResult, String> {
     let share_url = config.share_url.trim();
     if share_url.is_empty() {
         return Err("onedrive.shareUrl is not set in ax.json".into());
@@ -36,9 +39,7 @@ pub(crate) async fn pull_onedrive_with_token(
     let graph_base = graph_base.trim_end_matches('/');
 
     let item: DriveItem = client
-        .get(format!(
-            "{graph_base}/shares/{share_id}/driveItem"
-        ))
+        .get(format!("{graph_base}/shares/{share_id}/driveItem"))
         .bearer_auth(token)
         .send()
         .await
@@ -213,16 +214,13 @@ pub async fn push_onedrive(
 
     let mut uploaded = 0usize;
     if pack_dir.is_dir() {
-        let policy_folder =
-            ensure_child_folder(&client, &token, &root.id, "policy").await?;
-        let shared_folder =
-            ensure_child_folder(&client, &token, &policy_folder, "shared").await?;
+        let policy_folder = ensure_child_folder(&client, &token, &root.id, "policy").await?;
+        let shared_folder = ensure_child_folder(&client, &token, &policy_folder, "shared").await?;
         uploaded += upload_dir(&client, &token, &shared_folder, pack_dir).await?;
     }
     if let Some(mem) = memory_file {
         if mem.is_file() {
-            let memory_folder =
-                ensure_child_folder(&client, &token, &root.id, "memory").await?;
+            let memory_folder = ensure_child_folder(&client, &token, &root.id, "memory").await?;
             let content = std::fs::read(mem).map_err(|e| e.to_string())?;
             upload_file(&client, &token, &memory_folder, "shared.jsonl", &content).await?;
             uploaded += 1;
@@ -237,9 +235,7 @@ async fn ensure_child_folder(
     parent_id: &str,
     name: &str,
 ) -> Result<String, String> {
-    let url = format!(
-        "https://graph.microsoft.com/v1.0/me/drive/items/{parent_id}/children"
-    );
+    let url = format!("https://graph.microsoft.com/v1.0/me/drive/items/{parent_id}/children");
     let list: ChildrenList = client
         .get(&url)
         .bearer_auth(token)
@@ -315,9 +311,8 @@ async fn upload_file(
     name: &str,
     content: &[u8],
 ) -> Result<(), String> {
-    let url = format!(
-        "https://graph.microsoft.com/v1.0/me/drive/items/{parent_id}:/{name}:/content"
-    );
+    let url =
+        format!("https://graph.microsoft.com/v1.0/me/drive/items/{parent_id}:/{name}:/content");
     client
         .put(&url)
         .bearer_auth(token)
@@ -357,7 +352,9 @@ mod tests {
             .await;
 
         Mock::given(method("GET"))
-            .and(path_regex(r"^/v1\.0/drives/drive-1/items/root-folder/children$"))
+            .and(path_regex(
+                r"^/v1\.0/drives/drive-1/items/root-folder/children$",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "value": [{
                     "id": "policy-folder",
@@ -369,7 +366,9 @@ mod tests {
             .await;
 
         Mock::given(method("GET"))
-            .and(path_regex(r"^/v1\.0/drives/drive-1/items/policy-folder/children$"))
+            .and(path_regex(
+                r"^/v1\.0/drives/drive-1/items/policy-folder/children$",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "value": [{
                     "id": "shared-folder",
@@ -414,9 +413,19 @@ mod tests {
             .join("policy")
             .join("shared")
             .join("manifest.json");
-        assert!(manifest.is_file(), "expected manifest at {}", manifest.display());
+        assert!(
+            manifest.is_file(),
+            "expected manifest at {}",
+            manifest.display()
+        );
         let pack_dir = result.pack_dir.expect("pack_dir should be set");
-        assert_eq!(pack_dir, PathBuf::from(dest.path()).join("pull").join("policy").join("shared"));
+        assert_eq!(
+            pack_dir,
+            PathBuf::from(dest.path())
+                .join("pull")
+                .join("policy")
+                .join("shared")
+        );
     }
 
     #[tokio::test]
@@ -450,8 +459,12 @@ mod tests {
             .await;
 
         Mock::given(method("GET"))
-            .and(path_regex(r"^/v1\.0/drives/drive-1/items/empty-root/children$"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [] })))
+            .and(path_regex(
+                r"^/v1\.0/drives/drive-1/items/empty-root/children$",
+            ))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [] })),
+            )
             .mount(&server)
             .await;
 

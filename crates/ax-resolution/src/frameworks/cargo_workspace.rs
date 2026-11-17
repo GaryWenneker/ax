@@ -64,7 +64,10 @@ fn has_glob_chars(member: &str) -> bool {
 }
 
 fn clean_path(member_path: &str) -> String {
-    member_path.replace('\\', "/").trim_end_matches('/').to_string()
+    member_path
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string()
 }
 
 /// CG: `expandMembers` + `expandGlobMember` (picomatch → `glob::Pattern`).
@@ -282,14 +285,16 @@ mod tests {
 
     #[test]
     fn workspace_glob_smoke_fixture() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../test-smoke-workspace");
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-smoke-workspace");
         if !root.join("Cargo.toml").exists() {
             return;
         }
         let map = load_crate_map(&root);
         assert!(map.contains_key("alpha-crate"));
         assert!(map.contains_key("beta-crate"));
-        assert_eq!(map.get("alpha-crate").map(|s| s.as_str()), Some("crates/alpha"));
+        assert_eq!(
+            map.get("alpha-crate").map(|s| s.as_str()),
+            Some("crates/alpha")
+        );
     }
 }

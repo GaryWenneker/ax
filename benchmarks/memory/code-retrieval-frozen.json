@@ -1,0 +1,5824 @@
+{
+  "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+  "roots": [
+    "site",
+    "src",
+    "benchmarks",
+    "examples",
+    "test-smoke",
+    "test-smoke-rust",
+    "test-smoke-go",
+    "test-smoke-workspace",
+    "telemetry-worker",
+    "ide"
+  ],
+  "excludedFromDocTasks": [
+    "crates"
+  ],
+  "labelRule": "Gold ids are the snapshot function a signature-preserving rename, a doc comment, or a bare cross-file call names. Same-file call edges are the only edges given to the ranker. Doc tasks stay outside crates. Rename tasks may name a function in crates, excluding the diagnosed files. No score was consulted.",
+  "candidates": [
+    {
+      "id": "benchmarks/context-efficiency/run-01/src/ledger.rs:16",
+      "name": "new",
+      "file": "benchmarks/context-efficiency/run-01/src/ledger.rs",
+      "signature": "pub fn new() -> Self {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/run-01/src/ledger.rs:23",
+      "name": "apply",
+      "file": "benchmarks/context-efficiency/run-01/src/ledger.rs",
+      "signature": "pub fn apply(&mut self, amount_cents: i64) -> u64 {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/run-01/src/ledger.rs:34",
+      "name": "balance_cents",
+      "file": "benchmarks/context-efficiency/run-01/src/ledger.rs",
+      "signature": "pub fn balance_cents(&self) -> i64 {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/run-01/src/ledger.rs:42",
+      "name": "get",
+      "file": "benchmarks/context-efficiency/run-01/src/ledger.rs",
+      "signature": "pub fn get(&self, id: u64) -> Option<&Entry> {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/run-01/src/ledger.rs:46",
+      "name": "void",
+      "file": "benchmarks/context-efficiency/run-01/src/ledger.rs",
+      "signature": "pub fn void(&mut self, id: u64) -> Result<(), VoidError> {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/run-01/tests/apply.rs:4",
+      "name": "apply_updates_balance_and_ids",
+      "file": "benchmarks/context-efficiency/run-01/tests/apply.rs",
+      "signature": "fn apply_updates_balance_and_ids() {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/run-01/tests/void.rs:16",
+      "name": "void_twice_returns_already_voided",
+      "file": "benchmarks/context-efficiency/run-01/tests/void.rs",
+      "signature": "fn void_twice_returns_already_voided() {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/run-01/tests/void.rs:30",
+      "name": "void_one_of_two_leaves_the_other_in_balance",
+      "file": "benchmarks/context-efficiency/run-01/tests/void.rs",
+      "signature": "fn void_one_of_two_leaves_the_other_in_balance() {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/run-01/tests/void.rs:4",
+      "name": "void_unknown_id_does_not_change_balance",
+      "file": "benchmarks/context-efficiency/run-01/tests/void.rs",
+      "signature": "fn void_unknown_id_does_not_change_balance() {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/run-02/src/ledger.rs:16",
+      "name": "new",
+      "file": "benchmarks/context-efficiency/run-02/src/ledger.rs",
+      "signature": "pub fn new() -> Self {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/run-02/src/ledger.rs:23",
+      "name": "apply",
+      "file": "benchmarks/context-efficiency/run-02/src/ledger.rs",
+      "signature": "pub fn apply(&mut self, amount_cents: i64) -> u64 {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/run-02/src/ledger.rs:34",
+      "name": "void",
+      "file": "benchmarks/context-efficiency/run-02/src/ledger.rs",
+      "signature": "pub fn void(&mut self, id: u64) -> Result<(), VoidError> {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/run-02/src/ledger.rs:45",
+      "name": "balance_cents",
+      "file": "benchmarks/context-efficiency/run-02/src/ledger.rs",
+      "signature": "pub fn balance_cents(&self) -> i64 {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/run-02/src/ledger.rs:53",
+      "name": "get",
+      "file": "benchmarks/context-efficiency/run-02/src/ledger.rs",
+      "signature": "pub fn get(&self, id: u64) -> Option<&Entry> {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/run-02/tests/apply.rs:4",
+      "name": "apply_updates_balance_and_ids",
+      "file": "benchmarks/context-efficiency/run-02/tests/apply.rs",
+      "signature": "fn apply_updates_balance_and_ids() {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/run-02/tests/void.rs:14",
+      "name": "void_twice_returns_already_voided",
+      "file": "benchmarks/context-efficiency/run-02/tests/void.rs",
+      "signature": "fn void_twice_returns_already_voided() {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/run-02/tests/void.rs:26",
+      "name": "void_one_of_two_leaves_the_other_in_the_balance",
+      "file": "benchmarks/context-efficiency/run-02/tests/void.rs",
+      "signature": "fn void_one_of_two_leaves_the_other_in_the_balance() {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/run-02/tests/void.rs:4",
+      "name": "void_unknown_id_does_not_change_balance",
+      "file": "benchmarks/context-efficiency/run-02/tests/void.rs",
+      "signature": "fn void_unknown_id_does_not_change_balance() {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/seed/src/ledger.rs:10",
+      "name": "new",
+      "file": "benchmarks/context-efficiency/seed/src/ledger.rs",
+      "signature": "pub fn new() -> Self {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/seed/src/ledger.rs:17",
+      "name": "apply",
+      "file": "benchmarks/context-efficiency/seed/src/ledger.rs",
+      "signature": "pub fn apply(&mut self, amount_cents: i64) -> u64 {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/seed/src/ledger.rs:28",
+      "name": "balance_cents",
+      "file": "benchmarks/context-efficiency/seed/src/ledger.rs",
+      "signature": "pub fn balance_cents(&self) -> i64 {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/seed/src/ledger.rs:36",
+      "name": "get",
+      "file": "benchmarks/context-efficiency/seed/src/ledger.rs",
+      "signature": "pub fn get(&self, id: u64) -> Option<&Entry> {"
+    },
+    {
+      "id": "benchmarks/context-efficiency/seed/tests/apply.rs:4",
+      "name": "apply_updates_balance_and_ids",
+      "file": "benchmarks/context-efficiency/seed/tests/apply.rs",
+      "signature": "fn apply_updates_balance_and_ids() {"
+    },
+    {
+      "id": "crates/ax-core/src/project_config.rs:130",
+      "name": "dedup_union",
+      "file": "crates/ax-core/src/project_config.rs",
+      "signature": "fn dedup_union(base: Vec<String>, overrides: Vec<String>) -> Vec<String> {"
+    },
+    {
+      "id": "crates/ax-core/src/project_config.rs:145",
+      "name": "read_project_config_file",
+      "file": "crates/ax-core/src/project_config.rs",
+      "signature": "fn read_project_config_file(project_root: &Path) -> ProjectConfigFile {"
+    },
+    {
+      "id": "crates/ax-core/src/project_config.rs:154",
+      "name": "global_config_path",
+      "file": "crates/ax-core/src/project_config.rs",
+      "signature": "fn global_config_path() -> PathBuf {"
+    },
+    {
+      "id": "crates/ax-core/src/project_config.rs:160",
+      "name": "read_global_index_config",
+      "file": "crates/ax-core/src/project_config.rs",
+      "signature": "fn read_global_index_config() -> GlobalIndexConfigFile {"
+    },
+    {
+      "id": "crates/ax-core/src/project_config.rs:65",
+      "name": "load",
+      "file": "crates/ax-core/src/project_config.rs",
+      "signature": "pub fn load(project_root: &Path) -> Self {"
+    },
+    {
+      "id": "crates/ax-core/src/project_config.rs:95",
+      "name": "load_merged",
+      "file": "crates/ax-core/src/project_config.rs",
+      "signature": "fn load_merged(project_root: &Path) -> ProjectConfig {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1005",
+      "name": "install_continue_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn install_continue_mcp(project_root: &Path) -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1021",
+      "name": "uninstall_continue_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn uninstall_continue_mcp() -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1039",
+      "name": "uninstall_vscode_lineage_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn uninstall_vscode_lineage_mcp(target: &'static str) -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1058",
+      "name": "uninstall_vscode_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn uninstall_vscode_mcp() -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1064",
+      "name": "windsurf_config_dir",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn windsurf_config_dir() -> Option<PathBuf> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1068",
+      "name": "windsurf_mcp_path",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn windsurf_mcp_path() -> Result<PathBuf, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1072",
+      "name": "install_windsurf_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn install_windsurf_mcp(_project_root: &Path) -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:108",
+      "name": "agent_status",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "pub fn agent_status(project_root: &Path) -> Result<Vec<AgentTargetStatus>, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1081",
+      "name": "windsurf_hooks_path",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn windsurf_hooks_path() -> Result<PathBuf, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1085",
+      "name": "uninstall_windsurf_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn uninstall_windsurf_mcp() -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1097",
+      "name": "zed_settings_path",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn zed_settings_path() -> Result<PathBuf, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1114",
+      "name": "zed_context_server_entry",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn zed_context_server_entry() -> Value {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1124",
+      "name": "read_json_lenient",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn read_json_lenient(path: &Path) -> Value {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1136",
+      "name": "install_zed_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn install_zed_mcp(_project_root: &Path) -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1149",
+      "name": "uninstall_zed_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn uninstall_zed_mcp() -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:115",
+      "name": "target_status",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn target_status(id: &str, project_root: &Path) -> Result<AgentTargetStatus, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1166",
+      "name": "strip_json_comments",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn strip_json_comments(input: &str) -> String {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1204",
+      "name": "hermes_config_path",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn hermes_config_path() -> Result<PathBuf, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1212",
+      "name": "install_hermes_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn install_hermes_mcp(_project_root: &Path) -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1226",
+      "name": "uninstall_hermes_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn uninstall_hermes_mcp() -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1252",
+      "name": "zed_tasks_path",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn zed_tasks_path() -> Result<PathBuf, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1256",
+      "name": "install_zed_task",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn install_zed_task(report: &mut TargetReport) -> Result<(), String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1269",
+      "name": "uninstall_zed_task",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn uninstall_zed_task(report: &mut TargetReport) -> Result<(), String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1285",
+      "name": "install_jetbrains",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn install_jetbrains() -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1302",
+      "name": "uninstall_jetbrains",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn uninstall_jetbrains() -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1318",
+      "name": "global_targets_use_process_cwd_not_unexpanded_workspace_folder",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn global_targets_use_process_cwd_not_unexpanded_workspace_folder() {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1331",
+      "name": "mcp_config_entry_never_embeds_install_cwd",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn mcp_config_entry_never_embeds_install_cwd() {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1343",
+      "name": "codex_block_upserts_with_process_cwd",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn codex_block_upserts_with_process_cwd() {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1357",
+      "name": "hermes_block_includes_path_arg",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn hermes_block_includes_path_arg() {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1364",
+      "name": "vscode_uses_workspace_token_others_use_process_cwd",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn vscode_uses_workspace_token_others_use_process_cwd() {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:137",
+      "name": "catalog_with_status",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "pub fn catalog_with_status(project_root: &Path) -> Result<Vec<AgentTargetStatus>, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1372",
+      "name": "continue_entry_is_single_server_file",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn continue_entry_is_single_server_file() {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1383",
+      "name": "vscode_entry_uses_servers_shape_with_type_stdio",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn vscode_entry_uses_servers_shape_with_type_stdio() {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1390",
+      "name": "zed_entry_requires_source_custom",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn zed_entry_requires_source_custom() {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1396",
+      "name": "temp_settings_path",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn temp_settings_path(name: &str) -> PathBuf {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1404",
+      "name": "c4_a_stale_claude_hook_path_is_replaced_in_place",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn c4_a_stale_claude_hook_path_is_replaced_in_place() {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:141",
+      "name": "install_targets",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "pub fn install_targets("
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1430",
+      "name": "c5_a_correct_claude_hook_is_left_byte_for_byte",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn c5_a_correct_claude_hook_is_left_byte_for_byte() {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1444",
+      "name": "c5_a_correct_hook_in_a_hand_formatted_file_keeps_its_formatting",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn c5_a_correct_hook_in_a_hand_formatted_file_keeps_its_formatting() {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1465",
+      "name": "claude_stop_hook_install_is_idempotent_and_removable",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn claude_stop_hook_install_is_idempotent_and_removable() {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1489",
+      "name": "claude_hooks_for_different_events_do_not_collide",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn claude_hooks_for_different_events_do_not_collide() {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1509",
+      "name": "event_commands",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn event_commands(value: &Value, event: &str) -> Vec<String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:1520",
+      "name": "claude_hooks_include_turn_start_once_and_uninstall_keeps_user_hooks",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn claude_hooks_include_turn_start_once_and_uninstall_keeps_user_hooks() {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:158",
+      "name": "uninstall_targets",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "pub fn uninstall_targets(project_root: &Path, selected: &[String]) -> Result<Vec<TargetReport>, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:172",
+      "name": "is_ax_configured",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn is_ax_configured(target: &str, project_root: &Path) -> Result<(bool, Vec<String>), String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:20",
+      "name": "display_name",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "pub fn display_name(target: &str) -> &'static str {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:210",
+      "name": "config_has_ax",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn config_has_ax(path: &Path, bin: &str, project_root: &Path) -> bool {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:261",
+      "name": "uninstall_all",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "pub fn uninstall_all(project_root: &Path) -> Result<Vec<TargetReport>, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:271",
+      "name": "install_target",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn install_target(target: &str, project_root: &Path) -> Result<Option<TargetReport>, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:304",
+      "name": "uninstall_target",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn uninstall_target(target: &str, project_root: &Path) -> Result<Option<TargetReport>, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:333",
+      "name": "ax_bin",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn ax_bin() -> String {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:347",
+      "name": "mcp_path_token",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn mcp_path_token(target: &str) -> &'static str {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:360",
+      "name": "mcp_serve_args",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn mcp_serve_args(path_token: &str) -> Vec<String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:376",
+      "name": "mcp_config_entry",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn mcp_config_entry(target: &str) -> Value {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:385",
+      "name": "antigravity_mcp_entry",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn antigravity_mcp_entry() -> Value {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:389",
+      "name": "replace_toml_section",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn replace_toml_section(content: &str, section: &str, block: &str) -> String {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:40",
+      "name": "is_detected",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "pub fn is_detected(target: &str) -> bool {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:415",
+      "name": "codex_ax_block",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn codex_ax_block(bin: &str) -> String {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:422",
+      "name": "hermes_ax_block",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn hermes_ax_block(bin: &str) -> String {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:429",
+      "name": "replace_hermes_ax_block",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn replace_hermes_ax_block(content: &str, block: &str) -> String {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:45",
+      "name": "app_present",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn app_present(target: &str) -> bool {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:470",
+      "name": "home_dir",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn home_dir() -> Result<PathBuf, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:474",
+      "name": "read_json",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn read_json(path: &Path) -> Value {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:483",
+      "name": "json_equal",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn json_equal(a: &Value, b: &Value) -> bool {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:487",
+      "name": "write_json_action",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn write_json_action(path: &Path, value: &Value) -> Result<FileAction, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:508",
+      "name": "upsert_mcp_servers",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn upsert_mcp_servers(path: &Path, target: &str) -> Result<FileAction, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:517",
+      "name": "remove_mcp_servers",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn remove_mcp_servers(path: &Path) -> Result<Option<FileAction>, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:53",
+      "name": "panel_status",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn panel_status(target: &str) -> Option<bool> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:537",
+      "name": "install_read_guard",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn install_read_guard(report: &mut TargetReport, path: PathBuf, ide: GuardIde) {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:544",
+      "name": "uninstall_read_guard",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn uninstall_read_guard(report: &mut TargetReport, path: PathBuf) {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:552",
+      "name": "install_cursor_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn install_cursor_mcp(_project_root: &Path) -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:567",
+      "name": "uninstall_cursor_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn uninstall_cursor_mcp() -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:583",
+      "name": "install_claude_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn install_claude_mcp(project_root: &Path) -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:600",
+      "name": "uninstall_claude_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn uninstall_claude_mcp(project_root: &Path) -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:632",
+      "name": "install_claude_hook",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn install_claude_hook("
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:653",
+      "name": "command_of",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn command_of(entry: &Value) -> Option<&str> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:66",
+      "name": "install_detected",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "pub fn install_detected(project_root: &Path, install_all: bool) -> Result<InstallSummary, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:683",
+      "name": "remove_claude_hook",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn remove_claude_hook(settings_path: &Path, event: &str, hook_subcommand: &str) -> Result<bool, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:703",
+      "name": "hook_group_matches",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn hook_group_matches(groups: &[Value], hook_subcommand: &str) -> bool {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:719",
+      "name": "install_codex_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn install_codex_mcp(_project_root: &Path) -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:738",
+      "name": "uninstall_codex_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn uninstall_codex_mcp() -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:769",
+      "name": "write_text_action",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn write_text_action(path: &Path, content: &str) -> Result<FileAction, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:788",
+      "name": "opencode_config_dir",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn opencode_config_dir() -> Result<PathBuf, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:796",
+      "name": "opencode_config_path",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn opencode_config_path() -> Result<PathBuf, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:809",
+      "name": "install_opencode_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn install_opencode_mcp(_project_root: &Path) -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:843",
+      "name": "uninstall_opencode_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn uninstall_opencode_mcp() -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:858",
+      "name": "install_gemini_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn install_gemini_mcp(_project_root: &Path) -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:869",
+      "name": "uninstall_gemini_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn uninstall_gemini_mcp() -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:879",
+      "name": "antigravity_mcp_path",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn antigravity_mcp_path() -> Result<PathBuf, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:891",
+      "name": "install_antigravity_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn install_antigravity_mcp(_project_root: &Path) -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:904",
+      "name": "uninstall_antigravity_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn uninstall_antigravity_mcp() -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:917",
+      "name": "install_kiro_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn install_kiro_mcp(_project_root: &Path) -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:924",
+      "name": "uninstall_kiro_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn uninstall_kiro_mcp() -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:935",
+      "name": "vscode_mcp_path",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn vscode_mcp_path(project_root: &Path) -> PathBuf {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:939",
+      "name": "vscode_mcp_entry",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn vscode_mcp_entry() -> Value {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:949",
+      "name": "install_vscode_lineage_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn install_vscode_lineage_mcp("
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:966",
+      "name": "install_vscode_mcp",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn install_vscode_mcp(project_root: &Path) -> Result<TargetReport, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:977",
+      "name": "continue_mcp_path",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn continue_mcp_path(project_root: &Path) -> PathBuf {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:984",
+      "name": "continue_global_mcp_path",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn continue_global_mcp_path() -> Result<PathBuf, String> {"
+    },
+    {
+      "id": "crates/ax-installer/src/targets.rs:990",
+      "name": "continue_mcp_entry",
+      "file": "crates/ax-installer/src/targets.rs",
+      "signature": "fn continue_mcp_entry(use_path_bin: bool) -> Value {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1028",
+      "name": "write_utf8",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "fn write_utf8(path: &Path, content: &str) -> Result<(), AxError> {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1035",
+      "name": "now_ms",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "fn now_ms() -> i64 {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1065",
+      "name": "into_row",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "fn into_row(self) -> PolicyRuleRow {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1126",
+      "name": "into_row",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "fn into_row(self) -> PolicySkillRow {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1164",
+      "name": "parse_json_array",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "fn parse_json_array(s: &str) -> Vec<String> {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1175",
+      "name": "test_pool",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn test_pool() -> (TempDir, SqlitePool) {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:121",
+      "name": "import_one_policy_dir",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn import_one_policy_dir("
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1221",
+      "name": "database_mode_save_without_files",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn database_mode_save_without_files() {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1258",
+      "name": "properties_survive_database_roundtrip",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn properties_survive_database_roundtrip() {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1281",
+      "name": "import_skips_unparseable_cursor_files",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn import_skips_unparseable_cursor_files() {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1318",
+      "name": "database_authority_never_auto_imports_a_stale_disk_copy",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn database_authority_never_auto_imports_a_stale_disk_copy() {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1343",
+      "name": "ensure_policy_ready_skips_cursor_files_when_checking_stale",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn ensure_policy_ready_skips_cursor_files_when_checking_stale() {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1377",
+      "name": "restore_then_index_with_cursor_native_neighbor",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn restore_then_index_with_cursor_native_neighbor() {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1419",
+      "name": "ensure_policy_ready_imports_when_db_empty",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn ensure_policy_ready_imports_when_db_empty() {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1439",
+      "name": "skill_always_apply_persists",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn skill_always_apply_persists() {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1450",
+      "name": "global_db_with",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn global_db_with(path: &Path, rows: &[(&str, &str, &str, &str)]) {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1483",
+      "name": "write_skill",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "fn write_skill(root: &Path, name: &str, body: &str) {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1493",
+      "name": "write_rule",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "fn write_rule(root: &Path, id: &str, body: &str) {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1502",
+      "name": "fixture_policy",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "fn fixture_policy(root: &Path) {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1519",
+      "name": "import_preserves_distinct_project_policy_despite_global_name_collision",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn import_preserves_distinct_project_policy_despite_global_name_collision() {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:1578",
+      "name": "import_without_global_db_keeps_everything",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn import_without_global_db_keeps_everything() {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:248",
+      "name": "materialize_rule_stub",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "fn materialize_rule_stub(project_root: &Path, doc: &mut PolicyRuleDoc) -> Result<(), String> {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:273",
+      "name": "materialize_skill_stub",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "fn materialize_skill_stub(project_root: &Path, doc: &mut PolicySkillDoc) -> Result<(), String> {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:297",
+      "name": "export_policy_to_files",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub async fn export_policy_to_files("
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:306",
+      "name": "export_policy_to_files_filtered",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub async fn export_policy_to_files_filtered("
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:33",
+      "name": "index_policy",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub async fn index_policy("
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:355",
+      "name": "upsert_rule_doc",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub async fn upsert_rule_doc(pool: &SqlitePool, doc: &PolicyRuleDoc) -> Result<(), AxError> {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:360",
+      "name": "upsert_skill_doc",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub async fn upsert_skill_doc(pool: &SqlitePool, doc: &PolicySkillDoc) -> Result<(), AxError> {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:365",
+      "name": "delete_rule_by_id",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub async fn delete_rule_by_id(pool: &SqlitePool, id: &str) -> Result<bool, AxError> {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:374",
+      "name": "delete_skill_by_name",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub async fn delete_skill_by_name(pool: &SqlitePool, name: &str) -> Result<bool, AxError> {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:383",
+      "name": "db_counts",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn db_counts(pool: &SqlitePool) -> Result<PolicyIndexResult, AxError> {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:398",
+      "name": "policy_storage_label",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "fn policy_storage_label(storage: PolicyStorage) -> &'static str {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:405",
+      "name": "policy_files_nonempty",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "fn policy_files_nonempty(project_root: &Path) -> bool {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:411",
+      "name": "policy_dir_nonempty",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "fn policy_dir_nonempty(policy_dir: &Path) -> bool {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:435",
+      "name": "ensure_policy_ready",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub async fn ensure_policy_ready("
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:518",
+      "name": "policy_disk_stale",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub async fn policy_disk_stale(pool: &SqlitePool, project_root: &Path) -> Result<bool, AxError> {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:527",
+      "name": "policy_dir_disk_stale",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn policy_dir_disk_stale(pool: &SqlitePool, policy_dir: &Path) -> Result<bool, AxError> {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:54",
+      "name": "import_policy_from_files",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub async fn import_policy_from_files("
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:620",
+      "name": "properties_differ",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn properties_differ("
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:641",
+      "name": "policy_status",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub async fn policy_status("
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:655",
+      "name": "upsert_rule",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn upsert_rule("
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:703",
+      "name": "properties_json",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "fn properties_json(properties: &crate::types::PolicyProperties) -> String {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:707",
+      "name": "parse_properties",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "fn parse_properties(raw: &str) -> crate::types::PolicyProperties {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:711",
+      "name": "upsert_skill",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn upsert_skill("
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:760",
+      "name": "prune_rules_hybrid",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn prune_rules_hybrid(pool: &SqlitePool, keep: &[String]) -> Result<(), AxError> {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:785",
+      "name": "prune_skills_hybrid",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "async fn prune_skills_hybrid(pool: &SqlitePool, keep: &[String]) -> Result<(), AxError> {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:822",
+      "name": "list_rules",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub async fn list_rules(pool: &SqlitePool) -> Result<Vec<PolicyRuleRow>, AxError> {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:832",
+      "name": "list_rules_enriched",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub async fn list_rules_enriched("
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:844",
+      "name": "list_skills",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub async fn list_skills(pool: &SqlitePool) -> Result<Vec<PolicySkillRow>, AxError> {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:854",
+      "name": "list_skills_enriched",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub async fn list_skills_enriched("
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:866",
+      "name": "enrich_rule_row",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub fn enrich_rule_row(row: &mut PolicyRuleRow, default: PolicyStorage) {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:882",
+      "name": "enrich_skill_row",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub fn enrich_skill_row(row: &mut PolicySkillRow, default: PolicyStorage) {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:898",
+      "name": "get_rule",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub async fn get_rule(pool: &SqlitePool, id: &str) -> Result<Option<PolicyRuleRow>, AxError> {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:907",
+      "name": "get_skill",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub async fn get_skill(pool: &SqlitePool, name: &str) -> Result<Option<PolicySkillRow>, AxError> {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:917",
+      "name": "policy_tools_enabled",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub fn policy_tools_enabled(project_root: &Path) -> bool {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:928",
+      "name": "policy_exists",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub fn policy_exists(project_root: &Path) -> bool {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:932",
+      "name": "policy_exists_filesystem",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub fn policy_exists_filesystem(project_root: &Path) -> bool {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:941",
+      "name": "policy_has_content",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub async fn policy_has_content(pool: &SqlitePool) -> Result<bool, AxError> {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:946",
+      "name": "rule_row_to_doc",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub fn rule_row_to_doc(row: &PolicyRuleRow, project_root: &Path) -> PolicyRuleDoc {"
+    },
+    {
+      "id": "crates/ax-policy/src/index.rs:987",
+      "name": "skill_row_to_doc",
+      "file": "crates/ax-policy/src/index.rs",
+      "signature": "pub fn skill_row_to_doc(row: &PolicySkillRow, project_root: &Path) -> PolicySkillDoc {"
+    },
+    {
+      "id": "crates/ax-web/src/mcp_trace.rs:118",
+      "name": "router",
+      "file": "crates/ax-web/src/mcp_trace.rs",
+      "signature": "pub fn router(hub: WebHub) -> Router {"
+    },
+    {
+      "id": "crates/ax-web/src/mcp_trace.rs:126",
+      "name": "hub_project",
+      "file": "crates/ax-web/src/mcp_trace.rs",
+      "signature": "async fn hub_project(hub: &WebHub) -> PathBuf {"
+    },
+    {
+      "id": "crates/ax-web/src/mcp_trace.rs:131",
+      "name": "handle_mcp_trace_path",
+      "file": "crates/ax-web/src/mcp_trace.rs",
+      "signature": "async fn handle_mcp_trace_path(State(hub): State<WebHub>) -> Json<serde_json::Value> {"
+    },
+    {
+      "id": "crates/ax-web/src/mcp_trace.rs:142",
+      "name": "handle_mcp_trace_chunk",
+      "file": "crates/ax-web/src/mcp_trace.rs",
+      "signature": "async fn handle_mcp_trace_chunk("
+    },
+    {
+      "id": "crates/ax-web/src/mcp_trace.rs:183",
+      "name": "handle_mcp_trace_events",
+      "file": "crates/ax-web/src/mcp_trace.rs",
+      "signature": "async fn handle_mcp_trace_events("
+    },
+    {
+      "id": "crates/ax-web/src/mcp_trace.rs:30",
+      "name": "pick_trace_project_root",
+      "file": "crates/ax-web/src/mcp_trace.rs",
+      "signature": "pub fn pick_trace_project_root(hub_root: &Path, recent: &[PathBuf]) -> (PathBuf, Option<String>) {"
+    },
+    {
+      "id": "crates/ax-web/src/mcp_trace.rs:312",
+      "name": "read_new_chunk",
+      "file": "crates/ax-web/src/mcp_trace.rs",
+      "signature": "async fn read_new_chunk(path: &Path, offset: u64) -> Result<(String, u64), std::io::Error> {"
+    },
+    {
+      "id": "crates/ax-web/src/mcp_trace.rs:329",
+      "name": "log_path_is_dated_under_project_ax",
+      "file": "crates/ax-web/src/mcp_trace.rs",
+      "signature": "fn log_path_is_dated_under_project_ax() {"
+    },
+    {
+      "id": "crates/ax-web/src/mcp_trace.rs:336",
+      "name": "pick_trace_keeps_hub_when_it_has_logs",
+      "file": "crates/ax-web/src/mcp_trace.rs",
+      "signature": "fn pick_trace_keeps_hub_when_it_has_logs() {"
+    },
+    {
+      "id": "crates/ax-web/src/mcp_trace.rs:354",
+      "name": "pick_trace_falls_back_to_recent_with_logs",
+      "file": "crates/ax-web/src/mcp_trace.rs",
+      "signature": "fn pick_trace_falls_back_to_recent_with_logs() {"
+    },
+    {
+      "id": "crates/ax-web/src/mcp_trace.rs:61",
+      "name": "same_path",
+      "file": "crates/ax-web/src/mcp_trace.rs",
+      "signature": "fn same_path(a: &Path, b: &Path) -> bool {"
+    },
+    {
+      "id": "crates/ax-web/src/mcp_trace.rs:65",
+      "name": "project_has_verbose_logs",
+      "file": "crates/ax-web/src/mcp_trace.rs",
+      "signature": "fn project_has_verbose_logs(root: &Path) -> bool {"
+    },
+    {
+      "id": "crates/ax-web/src/mcp_trace.rs:72",
+      "name": "recent_project_paths",
+      "file": "crates/ax-web/src/mcp_trace.rs",
+      "signature": "fn recent_project_paths() -> Vec<PathBuf> {"
+    },
+    {
+      "id": "crates/ax-web/src/mcp_trace.rs:80",
+      "name": "resolve_follow_root",
+      "file": "crates/ax-web/src/mcp_trace.rs",
+      "signature": "fn resolve_follow_root(hub_root: &Path) -> (PathBuf, Option<String>) {"
+    },
+    {
+      "id": "crates/ax-web/src/mcp_trace.rs:84",
+      "name": "mcp_verbose_log_path",
+      "file": "crates/ax-web/src/mcp_trace.rs",
+      "signature": "pub fn mcp_verbose_log_path(project_root: &Path) -> PathBuf {"
+    },
+    {
+      "id": "crates/ax-web/src/mcp_trace.rs:88",
+      "name": "project_label",
+      "file": "crates/ax-web/src/mcp_trace.rs",
+      "signature": "fn project_label(project_root: &Path) -> String {"
+    },
+    {
+      "id": "crates/ax-web/src/mcp_trace.rs:96",
+      "name": "project_meta",
+      "file": "crates/ax-web/src/mcp_trace.rs",
+      "signature": "fn project_meta("
+    },
+    {
+      "id": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenter.java:12",
+      "name": "url",
+      "file": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenter.java",
+      "signature": "public static String url(int port) {"
+    },
+    {
+      "id": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenter.java:20",
+      "name": "startCommand",
+      "file": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenter.java",
+      "signature": "public static List<String> startCommand(String binary, int port, String projectDir) {"
+    },
+    {
+      "id": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java:28",
+      "name": "createToolWindowContent",
+      "file": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java",
+      "signature": "public void createToolWindowContent(@NotNull Project project, @NotNull ToolWindow toolWindow) {"
+    },
+    {
+      "id": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java:47",
+      "name": "browser",
+      "file": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java",
+      "signature": "private static JComponent browser(String url, Content content) {"
+    },
+    {
+      "id": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java:53",
+      "name": "fallback",
+      "file": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java",
+      "signature": "private static JComponent fallback(String url, String error) {"
+    },
+    {
+      "id": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java:63",
+      "name": "isUp",
+      "file": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java",
+      "signature": "private static boolean isUp(int port) {"
+    },
+    {
+      "id": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java:75",
+      "name": "ensureServer",
+      "file": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java",
+      "signature": "private static String ensureServer(int port, String projectDir) {"
+    },
+    {
+      "id": "ide/jetbrains/src/test/java/io/wenneker/ax/CommandCenterTest.java:11",
+      "name": "urlIsEmbedModeOnLoopback",
+      "file": "ide/jetbrains/src/test/java/io/wenneker/ax/CommandCenterTest.java",
+      "signature": "public void urlIsEmbedModeOnLoopback() {"
+    },
+    {
+      "id": "ide/jetbrains/src/test/java/io/wenneker/ax/CommandCenterTest.java:16",
+      "name": "urlRejectsPortOutOfRange",
+      "file": "ide/jetbrains/src/test/java/io/wenneker/ax/CommandCenterTest.java",
+      "signature": "public void urlRejectsPortOutOfRange() {"
+    },
+    {
+      "id": "ide/jetbrains/src/test/java/io/wenneker/ax/CommandCenterTest.java:22",
+      "name": "startCommandAddsProjectDirOnlyWhenPresent",
+      "file": "ide/jetbrains/src/test/java/io/wenneker/ax/CommandCenterTest.java",
+      "signature": "public void startCommandAddsProjectDirOnlyWhenPresent() {"
+    },
+    {
+      "id": "ide/vscode/src/core.ts:10",
+      "name": "commandCenterUrl",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "export function commandCenterUrl(port: number): string {"
+    },
+    {
+      "id": "ide/vscode/src/core.ts:105",
+      "name": "nearestProjectRoot",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "function nearestProjectRoot(start: string, hasAxDb: (root: string) => boolean): string | undefined {"
+    },
+    {
+      "id": "ide/vscode/src/core.ts:117",
+      "name": "workspaceProjectPath",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "export function workspaceProjectPath("
+    },
+    {
+      "id": "ide/vscode/src/core.ts:128",
+      "name": "popoutRows",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "export function popoutRows(workspacePath: string, recent: readonly RecentProject[]): PopoutRow[] {"
+    },
+    {
+      "id": "ide/vscode/src/core.ts:140",
+      "name": "launchArgs",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "export function launchArgs(port: number, projectPath: string): string[] {"
+    },
+    {
+      "id": "ide/vscode/src/core.ts:144",
+      "name": "rowAction",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "export function rowAction(row: PopoutRow): { openPanel: true; switchPath?: string } {"
+    },
+    {
+      "id": "ide/vscode/src/core.ts:15",
+      "name": "webviewHtml",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "export function webviewHtml(port: number, nonce: string): string {"
+    },
+    {
+      "id": "ide/vscode/src/core.ts:155",
+      "name": "hubUrl",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "function hubUrl(port: number, suffix: string): string {"
+    },
+    {
+      "id": "ide/vscode/src/core.ts:159",
+      "name": "hubSignal",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "function hubSignal(): AbortSignal {"
+    },
+    {
+      "id": "ide/vscode/src/core.ts:163",
+      "name": "isRecord",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "function isRecord(value: unknown): value is Record<string, unknown> {"
+    },
+    {
+      "id": "ide/vscode/src/core.ts:167",
+      "name": "errorMessage",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "function errorMessage(value: unknown, fallback: string): string {"
+    },
+    {
+      "id": "ide/vscode/src/core.ts:172",
+      "name": "recentProjects",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "function recentProjects(value: unknown): RecentProject[] {"
+    },
+    {
+      "id": "ide/vscode/src/core.ts:183",
+      "name": "readJson",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "async function readJson(res: Response): Promise<unknown> {"
+    },
+    {
+      "id": "ide/vscode/src/core.ts:191",
+      "name": "switchProject",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "export async function switchProject("
+    },
+    {
+      "id": "ide/vscode/src/core.ts:212",
+      "name": "readCurrent",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "async function readCurrent("
+    },
+    {
+      "id": "ide/vscode/src/core.ts:231",
+      "name": "preparePopout",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "export async function preparePopout(input: {"
+    },
+    {
+      "id": "ide/vscode/src/core.ts:3",
+      "name": "checkPort",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "function checkPort(port: number): number {"
+    },
+    {
+      "id": "ide/vscode/src/core.ts:75",
+      "name": "sameProjectPath",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "export function sameProjectPath(a: string, b: string): boolean {"
+    },
+    {
+      "id": "ide/vscode/src/core.ts:76",
+      "name": "norm",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "const norm = (value: string) => {"
+    },
+    {
+      "id": "ide/vscode/src/core.ts:83",
+      "name": "isInside",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "function isInside(folder: string, file: string): boolean {"
+    },
+    {
+      "id": "ide/vscode/src/core.ts:90",
+      "name": "folderForActiveFile",
+      "file": "ide/vscode/src/core.ts",
+      "signature": "function folderForActiveFile(folders: readonly string[], activeFile: string | undefined): string | undefined {"
+    },
+    {
+      "id": "ide/vscode/src/extension.ts:118",
+      "name": "deactivate",
+      "file": "ide/vscode/src/extension.ts",
+      "signature": "export function deactivate(): void {}"
+    },
+    {
+      "id": "ide/vscode/src/extension.ts:19",
+      "name": "settings",
+      "file": "ide/vscode/src/extension.ts",
+      "signature": "function settings(): { port: number; binary: string } {"
+    },
+    {
+      "id": "ide/vscode/src/extension.ts:24",
+      "name": "isUp",
+      "file": "ide/vscode/src/extension.ts",
+      "signature": "async function isUp(port: number): Promise<boolean> {"
+    },
+    {
+      "id": "ide/vscode/src/extension.ts:34",
+      "name": "ensureServer",
+      "file": "ide/vscode/src/extension.ts",
+      "signature": "async function ensureServer(port: number, binary: string, projectPath: string): Promise<void> {"
+    },
+    {
+      "id": "ide/vscode/src/extension.ts:50",
+      "name": "activate",
+      "file": "ide/vscode/src/extension.ts",
+      "signature": "export function activate(context: vscode.ExtensionContext): void {"
+    },
+    {
+      "id": "ide/vscode/test/core.test.ts:325",
+      "name": "jsonResponse",
+      "file": "ide/vscode/test/core.test.ts",
+      "signature": "function jsonResponse(body: unknown): Response {"
+    },
+    {
+      "id": "ide/vscode/test/core.test.ts:66",
+      "name": "hasDb",
+      "file": "ide/vscode/test/core.test.ts",
+      "signature": "function hasDb(roots: readonly string[]): (root: string) => boolean {"
+    },
+    {
+      "id": "ide/vscode/test/mutate.mjs:37",
+      "name": "runTests",
+      "file": "ide/vscode/test/mutate.mjs",
+      "signature": "function runTests() {"
+    },
+    {
+      "id": "ide/vscode/test/mutate.mjs:46",
+      "name": "apply",
+      "file": "ide/vscode/test/mutate.mjs",
+      "signature": "function apply(mutant, source) {"
+    },
+    {
+      "id": "site/astro.config.mjs:33",
+      "name": "open",
+      "file": "site/astro.config.mjs",
+      "signature": "function open(src,alt){"
+    },
+    {
+      "id": "site/astro.config.mjs:46",
+      "name": "close",
+      "file": "site/astro.config.mjs",
+      "signature": "function close(){"
+    },
+    {
+      "id": "site/astro.config.mjs:50",
+      "name": "onKey",
+      "file": "site/astro.config.mjs",
+      "signature": "function onKey(e){if(e.key==='Escape')close()}"
+    },
+    {
+      "id": "site/astro.config.mjs:62",
+      "name": "axFocusableCode",
+      "file": "site/astro.config.mjs",
+      "signature": "function axFocusableCode(){"
+    },
+    {
+      "id": "site/astro.config.mjs:75",
+      "name": "axStripPagefindTitle",
+      "file": "site/astro.config.mjs",
+      "signature": "function axStripPagefindTitle(root){"
+    },
+    {
+      "id": "site/astro.config.mjs:85",
+      "name": "axWatchPagefind",
+      "file": "site/astro.config.mjs",
+      "signature": "function axWatchPagefind(){"
+    },
+    {
+      "id": "site/netlify/functions/admin-telemetry.ts:10",
+      "name": "verifyToken",
+      "file": "site/netlify/functions/admin-telemetry.ts",
+      "signature": "async function verifyToken(authHeader: string | undefined, secret: string): Promise<boolean> {"
+    },
+    {
+      "id": "site/netlify/functions/admin-telemetry.ts:102",
+      "name": "buildDashboard",
+      "file": "site/netlify/functions/admin-telemetry.ts",
+      "signature": "async function buildDashboard("
+    },
+    {
+      "id": "site/netlify/functions/admin-telemetry.ts:28",
+      "name": "runHogQL",
+      "file": "site/netlify/functions/admin-telemetry.ts",
+      "signature": "async function runHogQL("
+    },
+    {
+      "id": "site/netlify/functions/admin-telemetry.ts:72",
+      "name": "asNumber",
+      "file": "site/netlify/functions/admin-telemetry.ts",
+      "signature": "function asNumber(v: unknown): number {"
+    },
+    {
+      "id": "site/netlify/functions/admin-telemetry.ts:81",
+      "name": "asString",
+      "file": "site/netlify/functions/admin-telemetry.ts",
+      "signature": "function asString(v: unknown): string {"
+    },
+    {
+      "id": "site/netlify/functions/admin-telemetry.ts:85",
+      "name": "fillDays",
+      "file": "site/netlify/functions/admin-telemetry.ts",
+      "signature": "function fillDays(grouped: Record<string, number>, days: number): Array<{ date: string; count: number }> {"
+    },
+    {
+      "id": "site/netlify/functions/admin-telemetry.ts:95",
+      "name": "rowsToCounts",
+      "file": "site/netlify/functions/admin-telemetry.ts",
+      "signature": "function rowsToCounts(rows: HogRow[], nameIdx = 0, countIdx = 1, limit = 10): Array<{ name: string; count: number }> {"
+    },
+    {
+      "id": "site/netlify/functions/latest-release.ts:21",
+      "name": "createHandler",
+      "file": "site/netlify/functions/latest-release.ts",
+      "signature": "export function createHandler(version: string): Handler {"
+    },
+    {
+      "id": "site/netlify/functions/latest-release.ts:5",
+      "name": "wantsHtml",
+      "file": "site/netlify/functions/latest-release.ts",
+      "signature": "function wantsHtml(acceptHeader: string): boolean {"
+    },
+    {
+      "id": "site/netlify/lib/ingest.ts:102",
+      "name": "clampTimestamp",
+      "file": "site/netlify/lib/ingest.ts",
+      "signature": "function clampTimestamp(v: unknown): string | undefined {"
+    },
+    {
+      "id": "site/netlify/lib/ingest.ts:111",
+      "name": "sanitizeEvent",
+      "file": "site/netlify/lib/ingest.ts",
+      "signature": "function sanitizeEvent(raw: unknown, machineId: string, common: JsonObject): PostHogEvent | null {"
+    },
+    {
+      "id": "site/netlify/lib/ingest.ts:144",
+      "name": "forwardToPostHog",
+      "file": "site/netlify/lib/ingest.ts",
+      "signature": "async function forwardToPostHog(batch: PostHogEvent[]): Promise<boolean> {"
+    },
+    {
+      "id": "site/netlify/lib/ingest.ts:180",
+      "name": "handleTelemetryIngest",
+      "file": "site/netlify/lib/ingest.ts",
+      "signature": "export async function handleTelemetryIngest("
+    },
+    {
+      "id": "site/scripts/audit-documentation.mjs:15",
+      "name": "requireMention",
+      "file": "site/scripts/audit-documentation.mjs",
+      "signature": "function requireMention(value,text,location){if(!text.includes(value))issues.push(`${location}: missing ${value}`);}"
+    },
+    {
+      "id": "site/scripts/audit-documentation.mjs:32",
+      "name": "body",
+      "file": "site/scripts/audit-documentation.mjs",
+      "signature": "function body(module,name) {"
+    },
+    {
+      "id": "site/scripts/audit-documentation.mjs:42",
+      "name": "collect",
+      "file": "site/scripts/audit-documentation.mjs",
+      "signature": "function collect(prefix,module,fn) {"
+    },
+    {
+      "id": "site/scripts/capture-screenshots.mjs:180",
+      "name": "clickOrFail",
+      "file": "site/scripts/capture-screenshots.mjs",
+      "signature": "async function clickOrFail(page, selector) {"
+    },
+    {
+      "id": "site/scripts/capture-screenshots.mjs:187",
+      "name": "maskHome",
+      "file": "site/scripts/capture-screenshots.mjs",
+      "signature": "async function maskHome(page) {"
+    },
+    {
+      "id": "site/scripts/capture-screenshots.mjs:204",
+      "name": "loadPuppeteer",
+      "file": "site/scripts/capture-screenshots.mjs",
+      "signature": "async function loadPuppeteer() {"
+    },
+    {
+      "id": "site/scripts/capture-screenshots.mjs:220",
+      "name": "loadRedactTerms",
+      "file": "site/scripts/capture-screenshots.mjs",
+      "signature": "function loadRedactTerms() {"
+    },
+    {
+      "id": "site/scripts/capture-screenshots.mjs:240",
+      "name": "redactPage",
+      "file": "site/scripts/capture-screenshots.mjs",
+      "signature": "async function redactPage(page, terms) {"
+    },
+    {
+      "id": "site/scripts/capture-screenshots.mjs:243",
+      "name": "has",
+      "file": "site/scripts/capture-screenshots.mjs",
+      "signature": "const has = (s) => {"
+    },
+    {
+      "id": "site/scripts/capture-screenshots.mjs:287",
+      "name": "waitReady",
+      "file": "site/scripts/capture-screenshots.mjs",
+      "signature": "async function waitReady(page, selector, timeoutMs = 15000) {"
+    },
+    {
+      "id": "site/scripts/capture-screenshots.mjs:296",
+      "name": "main",
+      "file": "site/scripts/capture-screenshots.mjs",
+      "signature": "async function main() {"
+    },
+    {
+      "id": "site/scripts/capture-screenshots.mjs:310",
+      "name": "selectedShots",
+      "file": "site/scripts/capture-screenshots.mjs",
+      "signature": "const selectedShots = (only.length ? SHOTS.filter((s) => only.includes(s.name)) : SHOTS).filter("
+    },
+    {
+      "id": "site/scripts/capture-site-design.mjs:118",
+      "name": "seekMoire",
+      "file": "site/scripts/capture-site-design.mjs",
+      "signature": "const seekMoire = async (milliseconds) => page.evaluate((milliseconds) => {"
+    },
+    {
+      "id": "site/scripts/check-install-docs.mjs:29",
+      "name": "motion",
+      "file": "site/scripts/check-install-docs.mjs",
+      "signature": "const motion=()=>page.$eval('.ax-doc-moire .ax-halftone-screen-two',el=>getComputedStyle(el).transform);"
+    },
+    {
+      "id": "site/scripts/check-mobile-header.mjs:11",
+      "name": "luminance",
+      "file": "site/scripts/check-mobile-header.mjs",
+      "signature": "function luminance([r, g, b]) {"
+    },
+    {
+      "id": "site/scripts/check-mobile-header.mjs:18",
+      "name": "contrast",
+      "file": "site/scripts/check-mobile-header.mjs",
+      "signature": "function contrast(a, b) {"
+    },
+    {
+      "id": "site/scripts/check-mobile-header.mjs:22",
+      "name": "parseRgba",
+      "file": "site/scripts/check-mobile-header.mjs",
+      "signature": "function parseRgba(s) {"
+    },
+    {
+      "id": "site/scripts/check-mobile-header.mjs:28",
+      "name": "over",
+      "file": "site/scripts/check-mobile-header.mjs",
+      "signature": "function over(fg, bgRgb) {"
+    },
+    {
+      "id": "site/scripts/check-mobile-header.mjs:32",
+      "name": "measure",
+      "file": "site/scripts/check-mobile-header.mjs",
+      "signature": "async function measure(page) {"
+    },
+    {
+      "id": "site/scripts/check-mobile-header.mjs:34",
+      "name": "rect",
+      "file": "site/scripts/check-mobile-header.mjs",
+      "signature": "const rect = (el) => {"
+    },
+    {
+      "id": "site/scripts/check-mobile-header.mjs:60",
+      "name": "checkMenuButton",
+      "file": "site/scripts/check-mobile-header.mjs",
+      "signature": "function checkMenuButton(m, label) {"
+    },
+    {
+      "id": "site/scripts/check-mobile-header.mjs:9",
+      "name": "fail",
+      "file": "site/scripts/check-mobile-header.mjs",
+      "signature": "const fail = (msg) => failures.push(msg);"
+    },
+    {
+      "id": "site/scripts/check-moire-motion.mjs:18",
+      "name": "transform",
+      "file": "site/scripts/check-moire-motion.mjs",
+      "signature": "const transform = () => page.$eval('.ax-halftone-screen-two',el=>getComputedStyle(el).transform);"
+    },
+    {
+      "id": "site/scripts/process-logo.mjs:23",
+      "name": "isBackground",
+      "file": "site/scripts/process-logo.mjs",
+      "signature": "function isBackground(r, g, b) {"
+    },
+    {
+      "id": "site/scripts/render-og.mjs:109",
+      "name": "capturePage",
+      "file": "site/scripts/render-og.mjs",
+      "signature": "async function capturePage(page, pageUrl) {"
+    },
+    {
+      "id": "site/scripts/render-og.mjs:123",
+      "name": "systemChrome",
+      "file": "site/scripts/render-og.mjs",
+      "signature": "function systemChrome() {"
+    },
+    {
+      "id": "site/scripts/render-og.mjs:129",
+      "name": "launchBrowser",
+      "file": "site/scripts/render-og.mjs",
+      "signature": "async function launchBrowser(puppeteer) {"
+    },
+    {
+      "id": "site/scripts/render-og.mjs:151",
+      "name": "main",
+      "file": "site/scripts/render-og.mjs",
+      "signature": "async function main() {"
+    },
+    {
+      "id": "site/scripts/render-og.mjs:47",
+      "name": "walkHtml",
+      "file": "site/scripts/render-og.mjs",
+      "signature": "function walkHtml(dir, out = []) {"
+    },
+    {
+      "id": "site/scripts/render-og.mjs:56",
+      "name": "serve",
+      "file": "site/scripts/render-og.mjs",
+      "signature": "function serve(root) {"
+    },
+    {
+      "id": "site/scripts/render-og.mjs:90",
+      "name": "pagesToRender",
+      "file": "site/scripts/render-og.mjs",
+      "signature": "function pagesToRender() {"
+    },
+    {
+      "id": "site/scripts/render-social.mjs:124",
+      "name": "frame",
+      "file": "site/scripts/render-social.mjs",
+      "signature": "const frame = (shot) =>"
+    },
+    {
+      "id": "site/scripts/render-social.mjs:127",
+      "name": "wideBody",
+      "file": "site/scripts/render-social.mjs",
+      "signature": "function wideBody(points, shot) {"
+    },
+    {
+      "id": "site/scripts/render-social.mjs:133",
+      "name": "stackedBody",
+      "file": "site/scripts/render-social.mjs",
+      "signature": "function stackedBody(layout, points, shot) {"
+    },
+    {
+      "id": "site/scripts/render-social.mjs:141",
+      "name": "main",
+      "file": "site/scripts/render-social.mjs",
+      "signature": "async function main() {"
+    },
+    {
+      "id": "site/scripts/render-social.mjs:43",
+      "name": "fileUrl",
+      "file": "site/scripts/render-social.mjs",
+      "signature": "const fileUrl = (p) => pathToFileURL(p).href;"
+    },
+    {
+      "id": "site/scripts/render-social.mjs:45",
+      "name": "fontCss",
+      "file": "site/scripts/render-social.mjs",
+      "signature": "function fontCss() {"
+    },
+    {
+      "id": "site/scripts/render-social.mjs:54",
+      "name": "html",
+      "file": "site/scripts/render-social.mjs",
+      "signature": "function html(format) {"
+    },
+    {
+      "id": "site/scripts/screenshot-fixtures.mjs:133",
+      "name": "screenshotResponse",
+      "file": "site/scripts/screenshot-fixtures.mjs",
+      "signature": "export function screenshotResponse(url) {"
+    },
+    {
+      "id": "site/scripts/screenshot-fixtures.mjs:171",
+      "name": "startScreenshotServer",
+      "file": "site/scripts/screenshot-fixtures.mjs",
+      "signature": "export async function startScreenshotServer(uiDist) {"
+    },
+    {
+      "id": "site/src/lib/agent-icons.ts:9",
+      "name": "mark",
+      "file": "site/src/lib/agent-icons.ts",
+      "signature": "function mark(d: string, extra = ''): string {"
+    },
+    {
+      "id": "site/src/lib/github.ts:14",
+      "name": "fetchStars",
+      "file": "site/src/lib/github.ts",
+      "signature": "async function fetchStars(fallback: string): Promise<string> {"
+    },
+    {
+      "id": "site/src/lib/github.ts:48",
+      "name": "getStarsLabel",
+      "file": "site/src/lib/github.ts",
+      "signature": "export function getStarsLabel(fallback = ''): Promise<string> {"
+    },
+    {
+      "id": "site/src/lib/github.ts:9",
+      "name": "format",
+      "file": "site/src/lib/github.ts",
+      "signature": "function format(n: number): string {"
+    },
+    {
+      "id": "site/src/lib/install-command.ts:16",
+      "name": "prefersWindowsInstall",
+      "file": "site/src/lib/install-command.ts",
+      "signature": "export function prefersWindowsInstall(platform: string, userAgent = ''): boolean {"
+    },
+    {
+      "id": "site/src/lib/install-command.ts:19",
+      "name": "installCommandFor",
+      "file": "site/src/lib/install-command.ts",
+      "signature": "export function installCommandFor(platform: string, userAgent = ''): string {"
+    },
+    {
+      "id": "site/src/lib/install-command.ts:23",
+      "name": "mountInstallPickers",
+      "file": "site/src/lib/install-command.ts",
+      "signature": "export function mountInstallPickers(): void {"
+    },
+    {
+      "id": "site/src/lib/install-command.ts:29",
+      "name": "select",
+      "file": "site/src/lib/install-command.ts",
+      "signature": "function select(os: InstallOS, automatic: boolean) {"
+    },
+    {
+      "id": "site/src/lib/install-command.ts:6",
+      "name": "detectInstallOS",
+      "file": "site/src/lib/install-command.ts",
+      "signature": "export function detectInstallOS(platform: string, userAgent = '', touchPoints = 0): InstallOS | null {"
+    },
+    {
+      "id": "site/src/lib/og-card.mjs:101",
+      "name": "distPathForOgUrl",
+      "file": "site/src/lib/og-card.mjs",
+      "signature": "export function distPathForOgUrl(ogUrl, distDir, siteOrigin = SITE_ORIGIN) {"
+    },
+    {
+      "id": "site/src/lib/og-card.mjs:117",
+      "name": "clipBox",
+      "file": "site/src/lib/og-card.mjs",
+      "signature": "export function clipBox(box, viewport) {"
+    },
+    {
+      "id": "site/src/lib/og-card.mjs:126",
+      "name": "prepareShareShot",
+      "file": "site/src/lib/og-card.mjs",
+      "signature": "export function prepareShareShot() {"
+    },
+    {
+      "id": "site/src/lib/og-card.mjs:143",
+      "name": "cardHtml",
+      "file": "site/src/lib/og-card.mjs",
+      "signature": "export function cardHtml({ version, kicker, title, description, shotUrl, logoUrl, shotPosition = 'left top' }) {"
+    },
+    {
+      "id": "site/src/lib/og-card.mjs:17",
+      "name": "ogImagePath",
+      "file": "site/src/lib/og-card.mjs",
+      "signature": "export function ogImagePath(pathname) {"
+    },
+    {
+      "id": "site/src/lib/og-card.mjs:27",
+      "name": "kickerFor",
+      "file": "site/src/lib/og-card.mjs",
+      "signature": "export function kickerFor(pathname) {"
+    },
+    {
+      "id": "site/src/lib/og-card.mjs:34",
+      "name": "shareTitle",
+      "file": "site/src/lib/og-card.mjs",
+      "signature": "export function shareTitle(documentTitle) {"
+    },
+    {
+      "id": "site/src/lib/og-card.mjs:42",
+      "name": "releaseLabel",
+      "file": "site/src/lib/og-card.mjs",
+      "signature": "export function releaseLabel(raw) {"
+    },
+    {
+      "id": "site/src/lib/og-card.mjs:51",
+      "name": "pngDataUrl",
+      "file": "site/src/lib/og-card.mjs",
+      "signature": "export function pngDataUrl(bytes) {"
+    },
+    {
+      "id": "site/src/lib/og-card.mjs:55",
+      "name": "escapeHtml",
+      "file": "site/src/lib/og-card.mjs",
+      "signature": "export function escapeHtml(value) {"
+    },
+    {
+      "id": "site/src/lib/og-card.mjs:72",
+      "name": "metaContent",
+      "file": "site/src/lib/og-card.mjs",
+      "signature": "function metaContent(html, attr, name) {"
+    },
+    {
+      "id": "site/src/lib/og-card.mjs:84",
+      "name": "readShareMeta",
+      "file": "site/src/lib/og-card.mjs",
+      "signature": "export function readShareMeta(html) {"
+    },
+    {
+      "id": "site/src/lib/og-card.mjs:93",
+      "name": "pathnameFromDistHtml",
+      "file": "site/src/lib/og-card.mjs",
+      "signature": "export function pathnameFromDistHtml(distDir, file) {"
+    },
+    {
+      "id": "site/src/lib/page-lock.ts:2",
+      "name": "pageLockScript",
+      "file": "site/src/lib/page-lock.ts",
+      "signature": "export function pageLockScript(): string {"
+    },
+    {
+      "id": "site/src/lib/source-version.mjs:5",
+      "name": "readSourceVersion",
+      "file": "site/src/lib/source-version.mjs",
+      "signature": "export function readSourceVersion(siteDir) {"
+    },
+    {
+      "id": "site/src/lib/ticker.ts:18",
+      "name": "tickerHalfCopies",
+      "file": "site/src/lib/ticker.ts",
+      "signature": "export function tickerHalfCopies(sequenceWidth: number, viewportWidth: number): number {"
+    },
+    {
+      "id": "site/src/lib/ticker.ts:23",
+      "name": "tickerDurationSeconds",
+      "file": "site/src/lib/ticker.ts",
+      "signature": "export function tickerDurationSeconds(sequenceWidth: number): number {"
+    },
+    {
+      "id": "site/src/lib/ticker.ts:7",
+      "name": "tickerCopiesNeeded",
+      "file": "site/src/lib/ticker.ts",
+      "signature": "export function tickerCopiesNeeded("
+    },
+    {
+      "id": "site/src/scripts/live-terminal.js:115",
+      "name": "timestamp",
+      "file": "site/src/scripts/live-terminal.js",
+      "signature": "const timestamp = (date) => date.toTimeString().slice(0, 8);"
+    },
+    {
+      "id": "site/src/scripts/live-terminal.js:120",
+      "name": "mountLiveTerminal",
+      "file": "site/src/scripts/live-terminal.js",
+      "signature": "export function mountLiveTerminal(root) {"
+    },
+    {
+      "id": "site/src/scripts/live-terminal.js:143",
+      "name": "clockNext",
+      "file": "site/src/scripts/live-terminal.js",
+      "signature": "function clockNext() {"
+    },
+    {
+      "id": "site/src/scripts/live-terminal.js:147",
+      "name": "append",
+      "file": "site/src/scripts/live-terminal.js",
+      "signature": "function append(type, message) {"
+    },
+    {
+      "id": "site/src/scripts/live-terminal.js:165",
+      "name": "listInto",
+      "file": "site/src/scripts/live-terminal.js",
+      "signature": "function listInto(container, rows, length) {"
+    },
+    {
+      "id": "site/src/scripts/live-terminal.js:178",
+      "name": "pushCall",
+      "file": "site/src/scripts/live-terminal.js",
+      "signature": "function pushCall(name, detail) {"
+    },
+    {
+      "id": "site/src/scripts/live-terminal.js:183",
+      "name": "pushCommand",
+      "file": "site/src/scripts/live-terminal.js",
+      "signature": "function pushCommand(name) {"
+    },
+    {
+      "id": "site/src/scripts/live-terminal.js:188",
+      "name": "isPaused",
+      "file": "site/src/scripts/live-terminal.js",
+      "signature": "function isPaused() {"
+    },
+    {
+      "id": "site/src/scripts/live-terminal.js:191",
+      "name": "delay",
+      "file": "site/src/scripts/live-terminal.js",
+      "signature": "function delay(ms) {"
+    },
+    {
+      "id": "site/src/scripts/live-terminal.js:194",
+      "name": "tick",
+      "file": "site/src/scripts/live-terminal.js",
+      "signature": "function tick() {"
+    },
+    {
+      "id": "site/src/scripts/live-terminal.js:238",
+      "name": "onVisibility",
+      "file": "site/src/scripts/live-terminal.js",
+      "signature": "const onVisibility = () => {"
+    },
+    {
+      "id": "site/src/scripts/live-terminal.js:243",
+      "name": "onMotionChange",
+      "file": "site/src/scripts/live-terminal.js",
+      "signature": "const onMotionChange = (event) => {"
+    },
+    {
+      "id": "site/src/scripts/live-terminal.js:247",
+      "name": "destroy",
+      "file": "site/src/scripts/live-terminal.js",
+      "signature": "const destroy = () => {"
+    },
+    {
+      "id": "site/src/scripts/minimal-download.ts:11",
+      "name": "getReleaseAsset",
+      "file": "site/src/scripts/minimal-download.ts",
+      "signature": "export const getReleaseAsset = (os: InstallOS, arch: Arch) => release + releaseAssets[os][arch];"
+    },
+    {
+      "id": "site/src/scripts/minimal-download.ts:18",
+      "name": "mountMinimalDownload",
+      "file": "site/src/scripts/minimal-download.ts",
+      "signature": "export function mountMinimalDownload(): void {"
+    },
+    {
+      "id": "site/src/scripts/minimal-download.ts:39",
+      "name": "concealInstall",
+      "file": "site/src/scripts/minimal-download.ts",
+      "signature": "function concealInstall(immediate: boolean): void {"
+    },
+    {
+      "id": "site/src/scripts/minimal-download.ts:56",
+      "name": "revealInstall",
+      "file": "site/src/scripts/minimal-download.ts",
+      "signature": "function revealInstall(): void {"
+    },
+    {
+      "id": "site/src/scripts/minimal-download.ts:63",
+      "name": "openPanel",
+      "file": "site/src/scripts/minimal-download.ts",
+      "signature": "function openPanel(open: boolean): void {"
+    },
+    {
+      "id": "site/src/scripts/minimal-download.ts:69",
+      "name": "render",
+      "file": "site/src/scripts/minimal-download.ts",
+      "signature": "function render(): void {"
+    },
+    {
+      "id": "site/src/scripts/minimal-download.ts:88",
+      "name": "copyCommand",
+      "file": "site/src/scripts/minimal-download.ts",
+      "signature": "function copyCommand(selected: InstallOS): void {"
+    },
+    {
+      "id": "site/src/scripts/motion.js:2",
+      "name": "motionPaused",
+      "file": "site/src/scripts/motion.js",
+      "signature": "export function motionPaused() {"
+    },
+    {
+      "id": "site/src/scripts/scroll-reveal.js:19",
+      "name": "show",
+      "file": "site/src/scripts/scroll-reveal.js",
+      "signature": "function show(item) {"
+    },
+    {
+      "id": "site/src/scripts/scroll-reveal.js:24",
+      "name": "updateMotion",
+      "file": "site/src/scripts/scroll-reveal.js",
+      "signature": "function updateMotion() {"
+    },
+    {
+      "id": "site/src/scripts/scroll-reveal.js:4",
+      "name": "mountScrollReveal",
+      "file": "site/src/scripts/scroll-reveal.js",
+      "signature": "export function mountScrollReveal() {"
+    },
+    {
+      "id": "site/tests/design-coherence.test.ts:8",
+      "name": "file",
+      "file": "site/tests/design-coherence.test.ts",
+      "signature": "const file = (relative: string) => readFileSync(path.join(root, relative), 'utf8');"
+    },
+    {
+      "id": "site/tests/evergreen-docs.test.ts:10",
+      "name": "scan",
+      "file": "site/tests/evergreen-docs.test.ts",
+      "signature": "function scan(dir: string) {"
+    },
+    {
+      "id": "site/tests/home-minimal.test.ts:128",
+      "name": "visit",
+      "file": "site/tests/home-minimal.test.ts",
+      "signature": "const visit = (node: ReturnType<typeof make>) => {"
+    },
+    {
+      "id": "site/tests/home-minimal.test.ts:159",
+      "name": "setGlobal",
+      "file": "site/tests/home-minimal.test.ts",
+      "signature": "function setGlobal(name: 'document' | 'window' | 'navigator' | 'Node', value: unknown) {"
+    },
+    {
+      "id": "site/tests/home-minimal.test.ts:191",
+      "name": "flush",
+      "file": "site/tests/home-minimal.test.ts",
+      "signature": "function flush(ms: number) {"
+    },
+    {
+      "id": "site/tests/home-minimal.test.ts:198",
+      "name": "click",
+      "file": "site/tests/home-minimal.test.ts",
+      "signature": "function click(el: { _listeners: Map<string, (() => void)[]> }) {"
+    },
+    {
+      "id": "site/tests/home-minimal.test.ts:84",
+      "name": "make",
+      "file": "site/tests/home-minimal.test.ts",
+      "signature": "function make(selectors: string[], dataset: Record<string, string> = {}) {"
+    },
+    {
+      "id": "site/tests/home-minimal.test.ts:9",
+      "name": "read",
+      "file": "site/tests/home-minimal.test.ts",
+      "signature": "const read = (p: string) => readFileSync(path.join(site, p), 'utf8');"
+    },
+    {
+      "id": "site/tests/install-script.test.ts:111",
+      "name": "runInstaller",
+      "file": "site/tests/install-script.test.ts",
+      "signature": "function runInstaller(installer: string, env: NodeJS.ProcessEnv) {"
+    },
+    {
+      "id": "site/tests/install-script.test.ts:115",
+      "name": "freshZsh",
+      "file": "site/tests/install-script.test.ts",
+      "signature": "function freshZsh(f: ReturnType<typeof fixture>) {"
+    },
+    {
+      "id": "site/tests/install-script.test.ts:27",
+      "name": "fixture",
+      "file": "site/tests/install-script.test.ts",
+      "signature": "function fixture(options: { os?: string; arch?: string; withoutPython?: boolean; stalePin?: boolean; loginShell?: string; binName?: string; binaryVersion?: string } = {}) {"
+    },
+    {
+      "id": "site/tests/install-script.test.ts:61",
+      "name": "release",
+      "file": "site/tests/install-script.test.ts",
+      "signature": "const release=(tag,extra={})=>({tag_name:tag,draft:false,prerelease:false,assets:[{name:asset}],...extra});"
+    },
+    {
+      "id": "site/tests/install-script.test.ts:62",
+      "name": "emit",
+      "file": "site/tests/install-script.test.ts",
+      "signature": "const emit=(body,code=200)=>{"
+    },
+    {
+      "id": "site/tests/installation-beginner.test.ts:10",
+      "name": "fencedCommands",
+      "file": "site/tests/installation-beginner.test.ts",
+      "signature": "function fencedCommands(markdown: string): string[] {"
+    },
+    {
+      "id": "site/tests/installation-beginner.test.ts:8",
+      "name": "read",
+      "file": "site/tests/installation-beginner.test.ts",
+      "signature": "const read = (name: string) => readFileSync(path.join(site, 'src/content/docs/getting-started', name), 'utf8');"
+    },
+    {
+      "id": "site/tests/latest-release.test.ts:11",
+      "name": "call",
+      "file": "site/tests/latest-release.test.ts",
+      "signature": "async function call(version: string, accept: string) {"
+    },
+    {
+      "id": "site/tests/latest-release.test.ts:38",
+      "name": "siteDir",
+      "file": "site/tests/latest-release.test.ts",
+      "signature": "function siteDir(latest?: string) {"
+    },
+    {
+      "id": "src/database/content-hash.ts:19",
+      "name": "computeFileHash",
+      "file": "src/database/content-hash.ts",
+      "signature": "export function computeFileHash(filePath: string): string {"
+    },
+    {
+      "id": "src/database/content-hash.ts:27",
+      "name": "computeStringHash",
+      "file": "src/database/content-hash.ts",
+      "signature": "export function computeStringHash(content: string): string {"
+    },
+    {
+      "id": "src/database/content-hash.ts:34",
+      "name": "hasFileChanged",
+      "file": "src/database/content-hash.ts",
+      "signature": "export function hasFileChanged(filePath: string, previousHash?: string): boolean {"
+    },
+    {
+      "id": "src/database/content-hash.ts:46",
+      "name": "getFileMetadata",
+      "file": "src/database/content-hash.ts",
+      "signature": "export function getFileMetadata(filePath: string): FileContent | null {"
+    },
+    {
+      "id": "src/database/content-hash.ts:69",
+      "name": "batchComputeHashes",
+      "file": "src/database/content-hash.ts",
+      "signature": "export function batchComputeHashes(filePaths: string[]): FileContent[] {"
+    },
+    {
+      "id": "src/database/content-hash.ts:85",
+      "name": "findDuplicates",
+      "file": "src/database/content-hash.ts",
+      "signature": "export function findDuplicates(fileContents: FileContent[]): Map<string, FileContent[]> {"
+    },
+    {
+      "id": "src/database/sync-strategy.ts:57",
+      "name": "getProjectMetadata",
+      "file": "src/database/sync-strategy.ts",
+      "signature": "private async getProjectMetadata(projectName: string): Promise<{"
+    },
+    {
+      "id": "src/watchdog/file-watcher.ts:90",
+      "name": "poll",
+      "file": "src/watchdog/file-watcher.ts",
+      "signature": "const poll = () => {"
+    },
+    {
+      "id": "src/watchdog/file-watcher.ts:96",
+      "name": "walkDir",
+      "file": "src/watchdog/file-watcher.ts",
+      "signature": "function walkDir(dir: string): void {"
+    },
+    {
+      "id": "telemetry-worker/src/index.ts:127",
+      "name": "clampTimestamp",
+      "file": "telemetry-worker/src/index.ts",
+      "signature": "function clampTimestamp(v: unknown): string | undefined {"
+    },
+    {
+      "id": "telemetry-worker/src/index.ts:137",
+      "name": "sanitizeEvent",
+      "file": "telemetry-worker/src/index.ts",
+      "signature": "function sanitizeEvent(raw: unknown, machineId: string, common: JsonObject): PostHogEvent | null {"
+    },
+    {
+      "id": "telemetry-worker/src/index.ts:171",
+      "name": "forwardToPostHog",
+      "file": "telemetry-worker/src/index.ts",
+      "signature": "async function forwardToPostHog(env: Env, batch: PostHogEvent[]): Promise<void> {"
+    },
+    {
+      "id": "test-smoke-go/main.go:5",
+      "name": "listUsers",
+      "file": "test-smoke-go/main.go",
+      "signature": "func listUsers(w http.ResponseWriter, r *http.Request) {"
+    },
+    {
+      "id": "test-smoke-go/main.go:9",
+      "name": "main",
+      "file": "test-smoke-go/main.go",
+      "signature": "func main() {"
+    },
+    {
+      "id": "test-smoke-rust/fixtures/actix_routes.rs:2",
+      "name": "legacy_get",
+      "file": "test-smoke-rust/fixtures/actix_routes.rs",
+      "signature": "async fn legacy_get() {}"
+    },
+    {
+      "id": "test-smoke-rust/fixtures/actix_routes.rs:4",
+      "name": "_actix_route_smoke",
+      "file": "test-smoke-rust/fixtures/actix_routes.rs",
+      "signature": "fn _actix_route_smoke() {"
+    },
+    {
+      "id": "test-smoke-rust/src/main.rs:11",
+      "name": "health_check",
+      "file": "test-smoke-rust/src/main.rs",
+      "signature": "async fn health_check() {}"
+    },
+    {
+      "id": "test-smoke-rust/src/main.rs:2",
+      "name": "list_users",
+      "file": "test-smoke-rust/src/main.rs",
+      "signature": "async fn list_users() {}"
+    },
+    {
+      "id": "test-smoke-rust/src/main.rs:5",
+      "name": "create_item",
+      "file": "test-smoke-rust/src/main.rs",
+      "signature": "async fn create_item() {}"
+    },
+    {
+      "id": "test-smoke-rust/src/main.rs:7",
+      "name": "main",
+      "file": "test-smoke-rust/src/main.rs",
+      "signature": "fn main() {"
+    },
+    {
+      "id": "test-smoke-workspace/crates/alpha/src/lib.rs:1",
+      "name": "alpha_fn",
+      "file": "test-smoke-workspace/crates/alpha/src/lib.rs",
+      "signature": "pub fn alpha_fn() {}"
+    },
+    {
+      "id": "test-smoke-workspace/crates/beta/src/lib.rs:1",
+      "name": "beta_fn",
+      "file": "test-smoke-workspace/crates/beta/src/lib.rs",
+      "signature": "pub fn beta_fn() {}"
+    },
+    {
+      "id": "test-smoke/App.tsx:3",
+      "name": "App",
+      "file": "test-smoke/App.tsx",
+      "signature": "function App() {"
+    },
+    {
+      "id": "test-smoke/Dashboard.tsx:1",
+      "name": "Dashboard",
+      "file": "test-smoke/Dashboard.tsx",
+      "signature": "export function Dashboard() { return <div>dash</div>; }"
+    },
+    {
+      "id": "test-smoke/Home.tsx:1",
+      "name": "Home",
+      "file": "test-smoke/Home.tsx",
+      "signature": "function Home() { return <div>home</div>; }"
+    },
+    {
+      "id": "test-smoke/app/blog/[slug]/page.tsx:1",
+      "name": "BlogPost",
+      "file": "test-smoke/app/blog/[slug]/page.tsx",
+      "signature": "export default function BlogPost() {"
+    },
+    {
+      "id": "test-smoke/emitter.ts:11",
+      "name": "dispatch",
+      "file": "test-smoke/emitter.ts",
+      "signature": "export function dispatch(emitter: EventEmitter) {"
+    },
+    {
+      "id": "test-smoke/emitter.ts:3",
+      "name": "onMount",
+      "file": "test-smoke/emitter.ts",
+      "signature": "export function onMount() {"
+    },
+    {
+      "id": "test-smoke/emitter.ts:7",
+      "name": "setup",
+      "file": "test-smoke/emitter.ts",
+      "signature": "export function setup(emitter: EventEmitter) {"
+    },
+    {
+      "id": "test-smoke/greet.ts:1",
+      "name": "greet",
+      "file": "test-smoke/greet.ts",
+      "signature": "export function greet(name: string) { return name; }"
+    },
+    {
+      "id": "test-smoke/hello.ts:1",
+      "name": "greet",
+      "file": "test-smoke/hello.ts",
+      "signature": "export function greet(name: string) { return Hello, !; }"
+    },
+    {
+      "id": "test-smoke/hello.ts:2",
+      "name": "farewell",
+      "file": "test-smoke/hello.ts",
+      "signature": "export function farewell() { greet('world'); }"
+    },
+    {
+      "id": "test-smoke/pages/about.tsx:1",
+      "name": "About",
+      "file": "test-smoke/pages/about.tsx",
+      "signature": "export default function About() {"
+    },
+    {
+      "id": "test-smoke/server.ts:4",
+      "name": "handleUsers",
+      "file": "test-smoke/server.ts",
+      "signature": "export function handleUsers(req: any, res: any) {"
+    }
+  ],
+  "edges": [
+    {
+      "source": "crates/ax-core/src/project_config.rs:160",
+      "target": "crates/ax-core/src/project_config.rs:154",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-core/src/project_config.rs:65",
+      "target": "crates/ax-core/src/project_config.rs:95",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-core/src/project_config.rs:95",
+      "target": "crates/ax-core/src/project_config.rs:130",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-core/src/project_config.rs:95",
+      "target": "crates/ax-core/src/project_config.rs:145",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-core/src/project_config.rs:95",
+      "target": "crates/ax-core/src/project_config.rs:160",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1005",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1005",
+      "target": "crates/ax-installer/src/targets.rs:487",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1005",
+      "target": "crates/ax-installer/src/targets.rs:977",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1005",
+      "target": "crates/ax-installer/src/targets.rs:984",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1005",
+      "target": "crates/ax-installer/src/targets.rs:990",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1021",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1021",
+      "target": "crates/ax-installer/src/targets.rs:977",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1021",
+      "target": "crates/ax-installer/src/targets.rs:984",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1039",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1039",
+      "target": "crates/ax-installer/src/targets.rs:474",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1039",
+      "target": "crates/ax-installer/src/targets.rs:487",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1039",
+      "target": "crates/ax-installer/src/targets.rs:935",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1058",
+      "target": "crates/ax-installer/src/targets.rs:1039",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1064",
+      "target": "crates/ax-installer/src/targets.rs:470",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1068",
+      "target": "crates/ax-installer/src/targets.rs:1064",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1072",
+      "target": "crates/ax-installer/src/targets.rs:1068",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1072",
+      "target": "crates/ax-installer/src/targets.rs:1081",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1072",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1072",
+      "target": "crates/ax-installer/src/targets.rs:508",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1072",
+      "target": "crates/ax-installer/src/targets.rs:537",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:108",
+      "target": "crates/ax-installer/src/targets.rs:115",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1081",
+      "target": "crates/ax-installer/src/targets.rs:1064",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1085",
+      "target": "crates/ax-installer/src/targets.rs:1068",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1085",
+      "target": "crates/ax-installer/src/targets.rs:1081",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1085",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1085",
+      "target": "crates/ax-installer/src/targets.rs:517",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1085",
+      "target": "crates/ax-installer/src/targets.rs:544",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1097",
+      "target": "crates/ax-installer/src/targets.rs:470",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1114",
+      "target": "crates/ax-installer/src/targets.rs:333",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1114",
+      "target": "crates/ax-installer/src/targets.rs:347",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1114",
+      "target": "crates/ax-installer/src/targets.rs:360",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1124",
+      "target": "crates/ax-installer/src/targets.rs:1166",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1124",
+      "target": "crates/ax-installer/src/targets.rs:474",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1136",
+      "target": "crates/ax-installer/src/targets.rs:1097",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1136",
+      "target": "crates/ax-installer/src/targets.rs:1114",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1136",
+      "target": "crates/ax-installer/src/targets.rs:1124",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1136",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1136",
+      "target": "crates/ax-installer/src/targets.rs:487",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1149",
+      "target": "crates/ax-installer/src/targets.rs:1097",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1149",
+      "target": "crates/ax-installer/src/targets.rs:1124",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1149",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1149",
+      "target": "crates/ax-installer/src/targets.rs:487",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:115",
+      "target": "crates/ax-installer/src/targets.rs:172",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:115",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:115",
+      "target": "crates/ax-installer/src/targets.rs:45",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:115",
+      "target": "crates/ax-installer/src/targets.rs:53",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1204",
+      "target": "crates/ax-installer/src/targets.rs:470",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1212",
+      "target": "crates/ax-installer/src/targets.rs:1204",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1212",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1212",
+      "target": "crates/ax-installer/src/targets.rs:333",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1212",
+      "target": "crates/ax-installer/src/targets.rs:422",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1212",
+      "target": "crates/ax-installer/src/targets.rs:429",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1212",
+      "target": "crates/ax-installer/src/targets.rs:769",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1226",
+      "target": "crates/ax-installer/src/targets.rs:1204",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1226",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1226",
+      "target": "crates/ax-installer/src/targets.rs:769",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1252",
+      "target": "crates/ax-installer/src/targets.rs:1097",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1256",
+      "target": "crates/ax-installer/src/targets.rs:1252",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1256",
+      "target": "crates/ax-installer/src/targets.rs:769",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1269",
+      "target": "crates/ax-installer/src/targets.rs:1252",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1269",
+      "target": "crates/ax-installer/src/targets.rs:769",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1285",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1302",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1318",
+      "target": "crates/ax-installer/src/targets.rs:347",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1331",
+      "target": "crates/ax-installer/src/targets.rs:376",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1343",
+      "target": "crates/ax-installer/src/targets.rs:389",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1343",
+      "target": "crates/ax-installer/src/targets.rs:415",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1357",
+      "target": "crates/ax-installer/src/targets.rs:422",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1364",
+      "target": "crates/ax-installer/src/targets.rs:347",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:137",
+      "target": "crates/ax-installer/src/targets.rs:108",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1372",
+      "target": "crates/ax-installer/src/targets.rs:990",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1383",
+      "target": "crates/ax-installer/src/targets.rs:939",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1390",
+      "target": "crates/ax-installer/src/targets.rs:1114",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1404",
+      "target": "crates/ax-installer/src/targets.rs:1396",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1404",
+      "target": "crates/ax-installer/src/targets.rs:333",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1404",
+      "target": "crates/ax-installer/src/targets.rs:632",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:141",
+      "target": "crates/ax-installer/src/targets.rs:271",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1430",
+      "target": "crates/ax-installer/src/targets.rs:1396",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1430",
+      "target": "crates/ax-installer/src/targets.rs:632",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1444",
+      "target": "crates/ax-installer/src/targets.rs:1396",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1444",
+      "target": "crates/ax-installer/src/targets.rs:333",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1444",
+      "target": "crates/ax-installer/src/targets.rs:632",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1465",
+      "target": "crates/ax-installer/src/targets.rs:1396",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1465",
+      "target": "crates/ax-installer/src/targets.rs:632",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1465",
+      "target": "crates/ax-installer/src/targets.rs:683",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1489",
+      "target": "crates/ax-installer/src/targets.rs:1396",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1489",
+      "target": "crates/ax-installer/src/targets.rs:632",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1489",
+      "target": "crates/ax-installer/src/targets.rs:683",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1520",
+      "target": "crates/ax-installer/src/targets.rs:1396",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1520",
+      "target": "crates/ax-installer/src/targets.rs:1509",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1520",
+      "target": "crates/ax-installer/src/targets.rs:632",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:1520",
+      "target": "crates/ax-installer/src/targets.rs:683",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:158",
+      "target": "crates/ax-installer/src/targets.rs:304",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:172",
+      "target": "crates/ax-installer/src/targets.rs:1068",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:172",
+      "target": "crates/ax-installer/src/targets.rs:1097",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:172",
+      "target": "crates/ax-installer/src/targets.rs:1204",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:172",
+      "target": "crates/ax-installer/src/targets.rs:210",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:172",
+      "target": "crates/ax-installer/src/targets.rs:333",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:172",
+      "target": "crates/ax-installer/src/targets.rs:470",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:172",
+      "target": "crates/ax-installer/src/targets.rs:796",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:172",
+      "target": "crates/ax-installer/src/targets.rs:879",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:172",
+      "target": "crates/ax-installer/src/targets.rs:935",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:172",
+      "target": "crates/ax-installer/src/targets.rs:977",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:172",
+      "target": "crates/ax-installer/src/targets.rs:984",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:210",
+      "target": "crates/ax-installer/src/targets.rs:1124",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:261",
+      "target": "crates/ax-installer/src/targets.rs:304",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:271",
+      "target": "crates/ax-installer/src/targets.rs:1005",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:271",
+      "target": "crates/ax-installer/src/targets.rs:1072",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:271",
+      "target": "crates/ax-installer/src/targets.rs:1136",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:271",
+      "target": "crates/ax-installer/src/targets.rs:1212",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:271",
+      "target": "crates/ax-installer/src/targets.rs:1256",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:271",
+      "target": "crates/ax-installer/src/targets.rs:1285",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:271",
+      "target": "crates/ax-installer/src/targets.rs:552",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:271",
+      "target": "crates/ax-installer/src/targets.rs:583",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:271",
+      "target": "crates/ax-installer/src/targets.rs:719",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:271",
+      "target": "crates/ax-installer/src/targets.rs:809",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:271",
+      "target": "crates/ax-installer/src/targets.rs:858",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:271",
+      "target": "crates/ax-installer/src/targets.rs:891",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:271",
+      "target": "crates/ax-installer/src/targets.rs:917",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:271",
+      "target": "crates/ax-installer/src/targets.rs:966",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:304",
+      "target": "crates/ax-installer/src/targets.rs:1021",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:304",
+      "target": "crates/ax-installer/src/targets.rs:1058",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:304",
+      "target": "crates/ax-installer/src/targets.rs:1085",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:304",
+      "target": "crates/ax-installer/src/targets.rs:1149",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:304",
+      "target": "crates/ax-installer/src/targets.rs:1226",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:304",
+      "target": "crates/ax-installer/src/targets.rs:1269",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:304",
+      "target": "crates/ax-installer/src/targets.rs:1302",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:304",
+      "target": "crates/ax-installer/src/targets.rs:567",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:304",
+      "target": "crates/ax-installer/src/targets.rs:600",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:304",
+      "target": "crates/ax-installer/src/targets.rs:738",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:304",
+      "target": "crates/ax-installer/src/targets.rs:843",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:304",
+      "target": "crates/ax-installer/src/targets.rs:869",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:304",
+      "target": "crates/ax-installer/src/targets.rs:904",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:304",
+      "target": "crates/ax-installer/src/targets.rs:924",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:376",
+      "target": "crates/ax-installer/src/targets.rs:333",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:376",
+      "target": "crates/ax-installer/src/targets.rs:347",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:376",
+      "target": "crates/ax-installer/src/targets.rs:360",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:385",
+      "target": "crates/ax-installer/src/targets.rs:376",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:40",
+      "target": "crates/ax-installer/src/targets.rs:45",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:415",
+      "target": "crates/ax-installer/src/targets.rs:347",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:422",
+      "target": "crates/ax-installer/src/targets.rs:347",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:487",
+      "target": "crates/ax-installer/src/targets.rs:474",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:487",
+      "target": "crates/ax-installer/src/targets.rs:483",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:508",
+      "target": "crates/ax-installer/src/targets.rs:376",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:508",
+      "target": "crates/ax-installer/src/targets.rs:474",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:508",
+      "target": "crates/ax-installer/src/targets.rs:487",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:517",
+      "target": "crates/ax-installer/src/targets.rs:474",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:517",
+      "target": "crates/ax-installer/src/targets.rs:487",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:53",
+      "target": "crates/ax-installer/src/targets.rs:1252",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:537",
+      "target": "crates/ax-installer/src/targets.rs:333",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:552",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:552",
+      "target": "crates/ax-installer/src/targets.rs:333",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:552",
+      "target": "crates/ax-installer/src/targets.rs:470",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:552",
+      "target": "crates/ax-installer/src/targets.rs:508",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:552",
+      "target": "crates/ax-installer/src/targets.rs:537",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:567",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:567",
+      "target": "crates/ax-installer/src/targets.rs:470",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:567",
+      "target": "crates/ax-installer/src/targets.rs:517",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:567",
+      "target": "crates/ax-installer/src/targets.rs:544",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:583",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:583",
+      "target": "crates/ax-installer/src/targets.rs:470",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:583",
+      "target": "crates/ax-installer/src/targets.rs:508",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:583",
+      "target": "crates/ax-installer/src/targets.rs:537",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:583",
+      "target": "crates/ax-installer/src/targets.rs:632",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:600",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:600",
+      "target": "crates/ax-installer/src/targets.rs:470",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:600",
+      "target": "crates/ax-installer/src/targets.rs:517",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:600",
+      "target": "crates/ax-installer/src/targets.rs:544",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:600",
+      "target": "crates/ax-installer/src/targets.rs:683",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:632",
+      "target": "crates/ax-installer/src/targets.rs:333",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:632",
+      "target": "crates/ax-installer/src/targets.rs:474",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:632",
+      "target": "crates/ax-installer/src/targets.rs:487",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:632",
+      "target": "crates/ax-installer/src/targets.rs:653",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:66",
+      "target": "crates/ax-installer/src/targets.rs:271",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:66",
+      "target": "crates/ax-installer/src/targets.rs:40",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:683",
+      "target": "crates/ax-installer/src/targets.rs:474",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:683",
+      "target": "crates/ax-installer/src/targets.rs:487",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:683",
+      "target": "crates/ax-installer/src/targets.rs:703",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:719",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:719",
+      "target": "crates/ax-installer/src/targets.rs:333",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:719",
+      "target": "crates/ax-installer/src/targets.rs:389",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:719",
+      "target": "crates/ax-installer/src/targets.rs:415",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:719",
+      "target": "crates/ax-installer/src/targets.rs:470",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:719",
+      "target": "crates/ax-installer/src/targets.rs:537",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:719",
+      "target": "crates/ax-installer/src/targets.rs:769",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:738",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:738",
+      "target": "crates/ax-installer/src/targets.rs:470",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:738",
+      "target": "crates/ax-installer/src/targets.rs:544",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:738",
+      "target": "crates/ax-installer/src/targets.rs:769",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:788",
+      "target": "crates/ax-installer/src/targets.rs:470",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:796",
+      "target": "crates/ax-installer/src/targets.rs:788",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:809",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:809",
+      "target": "crates/ax-installer/src/targets.rs:333",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:809",
+      "target": "crates/ax-installer/src/targets.rs:347",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:809",
+      "target": "crates/ax-installer/src/targets.rs:360",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:809",
+      "target": "crates/ax-installer/src/targets.rs:474",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:809",
+      "target": "crates/ax-installer/src/targets.rs:487",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:809",
+      "target": "crates/ax-installer/src/targets.rs:796",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:843",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:843",
+      "target": "crates/ax-installer/src/targets.rs:474",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:843",
+      "target": "crates/ax-installer/src/targets.rs:487",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:843",
+      "target": "crates/ax-installer/src/targets.rs:796",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:858",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:858",
+      "target": "crates/ax-installer/src/targets.rs:470",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:858",
+      "target": "crates/ax-installer/src/targets.rs:508",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:858",
+      "target": "crates/ax-installer/src/targets.rs:537",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:869",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:869",
+      "target": "crates/ax-installer/src/targets.rs:470",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:869",
+      "target": "crates/ax-installer/src/targets.rs:517",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:869",
+      "target": "crates/ax-installer/src/targets.rs:544",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:879",
+      "target": "crates/ax-installer/src/targets.rs:470",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:891",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:891",
+      "target": "crates/ax-installer/src/targets.rs:385",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:891",
+      "target": "crates/ax-installer/src/targets.rs:474",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:891",
+      "target": "crates/ax-installer/src/targets.rs:487",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:891",
+      "target": "crates/ax-installer/src/targets.rs:879",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:904",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:904",
+      "target": "crates/ax-installer/src/targets.rs:470",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:904",
+      "target": "crates/ax-installer/src/targets.rs:517",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:917",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:917",
+      "target": "crates/ax-installer/src/targets.rs:470",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:917",
+      "target": "crates/ax-installer/src/targets.rs:508",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:924",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:924",
+      "target": "crates/ax-installer/src/targets.rs:470",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:924",
+      "target": "crates/ax-installer/src/targets.rs:517",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:939",
+      "target": "crates/ax-installer/src/targets.rs:333",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:939",
+      "target": "crates/ax-installer/src/targets.rs:347",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:939",
+      "target": "crates/ax-installer/src/targets.rs:360",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:949",
+      "target": "crates/ax-installer/src/targets.rs:20",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:949",
+      "target": "crates/ax-installer/src/targets.rs:474",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:949",
+      "target": "crates/ax-installer/src/targets.rs:487",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:949",
+      "target": "crates/ax-installer/src/targets.rs:935",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:949",
+      "target": "crates/ax-installer/src/targets.rs:939",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:966",
+      "target": "crates/ax-installer/src/targets.rs:470",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:966",
+      "target": "crates/ax-installer/src/targets.rs:537",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:966",
+      "target": "crates/ax-installer/src/targets.rs:949",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:984",
+      "target": "crates/ax-installer/src/targets.rs:470",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:990",
+      "target": "crates/ax-installer/src/targets.rs:333",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:990",
+      "target": "crates/ax-installer/src/targets.rs:347",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-installer/src/targets.rs:990",
+      "target": "crates/ax-installer/src/targets.rs:360",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1065",
+      "target": "crates/ax-policy/src/index.rs:1164",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1065",
+      "target": "crates/ax-policy/src/index.rs:707",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1126",
+      "target": "crates/ax-policy/src/index.rs:1164",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1126",
+      "target": "crates/ax-policy/src/index.rs:707",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:121",
+      "target": "crates/ax-policy/src/index.rs:1035",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:121",
+      "target": "crates/ax-policy/src/index.rs:248",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:121",
+      "target": "crates/ax-policy/src/index.rs:273",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:121",
+      "target": "crates/ax-policy/src/index.rs:655",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:121",
+      "target": "crates/ax-policy/src/index.rs:711",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1221",
+      "target": "crates/ax-policy/src/index.rs:1175",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1221",
+      "target": "crates/ax-policy/src/index.rs:33",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1221",
+      "target": "crates/ax-policy/src/index.rs:355",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1221",
+      "target": "crates/ax-policy/src/index.rs:822",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1258",
+      "target": "crates/ax-policy/src/index.rs:1175",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1258",
+      "target": "crates/ax-policy/src/index.rs:355",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1258",
+      "target": "crates/ax-policy/src/index.rs:360",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1258",
+      "target": "crates/ax-policy/src/index.rs:822",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1258",
+      "target": "crates/ax-policy/src/index.rs:844",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1258",
+      "target": "crates/ax-policy/src/index.rs:946",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1258",
+      "target": "crates/ax-policy/src/index.rs:987",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1281",
+      "target": "crates/ax-policy/src/index.rs:1175",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1281",
+      "target": "crates/ax-policy/src/index.rs:54",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1281",
+      "target": "crates/ax-policy/src/index.rs:822",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1318",
+      "target": "crates/ax-policy/src/index.rs:1175",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1318",
+      "target": "crates/ax-policy/src/index.rs:435",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1318",
+      "target": "crates/ax-policy/src/index.rs:898",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1343",
+      "target": "crates/ax-policy/src/index.rs:1175",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1343",
+      "target": "crates/ax-policy/src/index.rs:435",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1343",
+      "target": "crates/ax-policy/src/index.rs:822",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1377",
+      "target": "crates/ax-policy/src/index.rs:1175",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1377",
+      "target": "crates/ax-policy/src/index.rs:54",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1377",
+      "target": "crates/ax-policy/src/index.rs:822",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1419",
+      "target": "crates/ax-policy/src/index.rs:1175",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1419",
+      "target": "crates/ax-policy/src/index.rs:435",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1419",
+      "target": "crates/ax-policy/src/index.rs:822",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1439",
+      "target": "crates/ax-policy/src/index.rs:1175",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1439",
+      "target": "crates/ax-policy/src/index.rs:360",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1439",
+      "target": "crates/ax-policy/src/index.rs:844",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1502",
+      "target": "crates/ax-policy/src/index.rs:1483",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1502",
+      "target": "crates/ax-policy/src/index.rs:1493",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1519",
+      "target": "crates/ax-policy/src/index.rs:1175",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1519",
+      "target": "crates/ax-policy/src/index.rs:1450",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1519",
+      "target": "crates/ax-policy/src/index.rs:1502",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1519",
+      "target": "crates/ax-policy/src/index.rs:54",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1519",
+      "target": "crates/ax-policy/src/index.rs:822",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1519",
+      "target": "crates/ax-policy/src/index.rs:844",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1578",
+      "target": "crates/ax-policy/src/index.rs:1175",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1578",
+      "target": "crates/ax-policy/src/index.rs:1502",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1578",
+      "target": "crates/ax-policy/src/index.rs:54",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1578",
+      "target": "crates/ax-policy/src/index.rs:822",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:1578",
+      "target": "crates/ax-policy/src/index.rs:844",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:297",
+      "target": "crates/ax-policy/src/index.rs:306",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:306",
+      "target": "crates/ax-policy/src/index.rs:1028",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:306",
+      "target": "crates/ax-policy/src/index.rs:822",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:306",
+      "target": "crates/ax-policy/src/index.rs:844",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:306",
+      "target": "crates/ax-policy/src/index.rs:946",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:306",
+      "target": "crates/ax-policy/src/index.rs:987",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:33",
+      "target": "crates/ax-policy/src/index.rs:383",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:33",
+      "target": "crates/ax-policy/src/index.rs:54",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:355",
+      "target": "crates/ax-policy/src/index.rs:1035",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:355",
+      "target": "crates/ax-policy/src/index.rs:655",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:360",
+      "target": "crates/ax-policy/src/index.rs:1035",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:360",
+      "target": "crates/ax-policy/src/index.rs:711",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:405",
+      "target": "crates/ax-policy/src/index.rs:411",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:435",
+      "target": "crates/ax-policy/src/index.rs:1035",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:435",
+      "target": "crates/ax-policy/src/index.rs:248",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:435",
+      "target": "crates/ax-policy/src/index.rs:273",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:435",
+      "target": "crates/ax-policy/src/index.rs:383",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:435",
+      "target": "crates/ax-policy/src/index.rs:405",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:435",
+      "target": "crates/ax-policy/src/index.rs:54",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:435",
+      "target": "crates/ax-policy/src/index.rs:655",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:435",
+      "target": "crates/ax-policy/src/index.rs:711",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:435",
+      "target": "crates/ax-policy/src/index.rs:822",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:435",
+      "target": "crates/ax-policy/src/index.rs:844",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:518",
+      "target": "crates/ax-policy/src/index.rs:527",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:527",
+      "target": "crates/ax-policy/src/index.rs:620",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:54",
+      "target": "crates/ax-policy/src/index.rs:121",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:54",
+      "target": "crates/ax-policy/src/index.rs:760",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:54",
+      "target": "crates/ax-policy/src/index.rs:785",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:641",
+      "target": "crates/ax-policy/src/index.rs:383",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:641",
+      "target": "crates/ax-policy/src/index.rs:398",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:655",
+      "target": "crates/ax-policy/src/index.rs:703",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:711",
+      "target": "crates/ax-policy/src/index.rs:703",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:832",
+      "target": "crates/ax-policy/src/index.rs:822",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:832",
+      "target": "crates/ax-policy/src/index.rs:866",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:854",
+      "target": "crates/ax-policy/src/index.rs:844",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:854",
+      "target": "crates/ax-policy/src/index.rs:882",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:917",
+      "target": "crates/ax-policy/src/index.rs:932",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:928",
+      "target": "crates/ax-policy/src/index.rs:917",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-policy/src/index.rs:941",
+      "target": "crates/ax-policy/src/index.rs:383",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-web/src/mcp_trace.rs:131",
+      "target": "crates/ax-web/src/mcp_trace.rs:126",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-web/src/mcp_trace.rs:131",
+      "target": "crates/ax-web/src/mcp_trace.rs:80",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-web/src/mcp_trace.rs:131",
+      "target": "crates/ax-web/src/mcp_trace.rs:96",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-web/src/mcp_trace.rs:142",
+      "target": "crates/ax-web/src/mcp_trace.rs:126",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-web/src/mcp_trace.rs:142",
+      "target": "crates/ax-web/src/mcp_trace.rs:80",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-web/src/mcp_trace.rs:183",
+      "target": "crates/ax-web/src/mcp_trace.rs:312",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-web/src/mcp_trace.rs:183",
+      "target": "crates/ax-web/src/mcp_trace.rs:80",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-web/src/mcp_trace.rs:183",
+      "target": "crates/ax-web/src/mcp_trace.rs:84",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-web/src/mcp_trace.rs:183",
+      "target": "crates/ax-web/src/mcp_trace.rs:96",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-web/src/mcp_trace.rs:30",
+      "target": "crates/ax-web/src/mcp_trace.rs:61",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-web/src/mcp_trace.rs:30",
+      "target": "crates/ax-web/src/mcp_trace.rs:65",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-web/src/mcp_trace.rs:30",
+      "target": "crates/ax-web/src/mcp_trace.rs:88",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-web/src/mcp_trace.rs:329",
+      "target": "crates/ax-web/src/mcp_trace.rs:84",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-web/src/mcp_trace.rs:336",
+      "target": "crates/ax-web/src/mcp_trace.rs:30",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-web/src/mcp_trace.rs:354",
+      "target": "crates/ax-web/src/mcp_trace.rs:30",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-web/src/mcp_trace.rs:80",
+      "target": "crates/ax-web/src/mcp_trace.rs:30",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-web/src/mcp_trace.rs:80",
+      "target": "crates/ax-web/src/mcp_trace.rs:72",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-web/src/mcp_trace.rs:96",
+      "target": "crates/ax-web/src/mcp_trace.rs:84",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "crates/ax-web/src/mcp_trace.rs:96",
+      "target": "crates/ax-web/src/mcp_trace.rs:88",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java:28",
+      "target": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java:47",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java:28",
+      "target": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java:53",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java:28",
+      "target": "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java:75",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:10",
+      "target": "ide/vscode/src/core.ts:3",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:117",
+      "target": "ide/vscode/src/core.ts:105",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:117",
+      "target": "ide/vscode/src/core.ts:90",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:128",
+      "target": "ide/vscode/src/core.ts:75",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:140",
+      "target": "ide/vscode/src/core.ts:3",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:15",
+      "target": "ide/vscode/src/core.ts:10",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:15",
+      "target": "ide/vscode/src/core.ts:3",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:155",
+      "target": "ide/vscode/src/core.ts:3",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:167",
+      "target": "ide/vscode/src/core.ts:163",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:172",
+      "target": "ide/vscode/src/core.ts:163",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:191",
+      "target": "ide/vscode/src/core.ts:155",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:191",
+      "target": "ide/vscode/src/core.ts:159",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:191",
+      "target": "ide/vscode/src/core.ts:163",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:191",
+      "target": "ide/vscode/src/core.ts:167",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:191",
+      "target": "ide/vscode/src/core.ts:183",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:212",
+      "target": "ide/vscode/src/core.ts:155",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:212",
+      "target": "ide/vscode/src/core.ts:159",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:212",
+      "target": "ide/vscode/src/core.ts:163",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:212",
+      "target": "ide/vscode/src/core.ts:167",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:212",
+      "target": "ide/vscode/src/core.ts:172",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:212",
+      "target": "ide/vscode/src/core.ts:183",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:231",
+      "target": "ide/vscode/src/core.ts:117",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:231",
+      "target": "ide/vscode/src/core.ts:128",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:231",
+      "target": "ide/vscode/src/core.ts:191",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:231",
+      "target": "ide/vscode/src/core.ts:212",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:231",
+      "target": "ide/vscode/src/core.ts:75",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/core.ts:90",
+      "target": "ide/vscode/src/core.ts:83",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/extension.ts:50",
+      "target": "ide/vscode/src/extension.ts:19",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "ide/vscode/src/extension.ts:50",
+      "target": "ide/vscode/src/extension.ts:34",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/astro.config.mjs:33",
+      "target": "site/astro.config.mjs:46",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/astro.config.mjs:50",
+      "target": "site/astro.config.mjs:46",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/astro.config.mjs:85",
+      "target": "site/astro.config.mjs:75",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/netlify/functions/admin-telemetry.ts:102",
+      "target": "site/netlify/functions/admin-telemetry.ts:28",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/netlify/functions/admin-telemetry.ts:102",
+      "target": "site/netlify/functions/admin-telemetry.ts:72",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/netlify/functions/admin-telemetry.ts:102",
+      "target": "site/netlify/functions/admin-telemetry.ts:81",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/netlify/functions/admin-telemetry.ts:102",
+      "target": "site/netlify/functions/admin-telemetry.ts:85",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/netlify/functions/admin-telemetry.ts:102",
+      "target": "site/netlify/functions/admin-telemetry.ts:95",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/netlify/functions/admin-telemetry.ts:95",
+      "target": "site/netlify/functions/admin-telemetry.ts:72",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/netlify/functions/admin-telemetry.ts:95",
+      "target": "site/netlify/functions/admin-telemetry.ts:81",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/netlify/functions/latest-release.ts:21",
+      "target": "site/netlify/functions/latest-release.ts:5",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/netlify/lib/ingest.ts:111",
+      "target": "site/netlify/lib/ingest.ts:102",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/netlify/lib/ingest.ts:180",
+      "target": "site/netlify/lib/ingest.ts:111",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/netlify/lib/ingest.ts:180",
+      "target": "site/netlify/lib/ingest.ts:144",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/capture-screenshots.mjs:296",
+      "target": "site/scripts/capture-screenshots.mjs:187",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/capture-screenshots.mjs:296",
+      "target": "site/scripts/capture-screenshots.mjs:204",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/capture-screenshots.mjs:296",
+      "target": "site/scripts/capture-screenshots.mjs:220",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/capture-screenshots.mjs:296",
+      "target": "site/scripts/capture-screenshots.mjs:240",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/capture-screenshots.mjs:296",
+      "target": "site/scripts/capture-screenshots.mjs:287",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/check-mobile-header.mjs:18",
+      "target": "site/scripts/check-mobile-header.mjs:11",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/check-mobile-header.mjs:60",
+      "target": "site/scripts/check-mobile-header.mjs:18",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/check-mobile-header.mjs:60",
+      "target": "site/scripts/check-mobile-header.mjs:22",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/render-og.mjs:129",
+      "target": "site/scripts/render-og.mjs:123",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/render-og.mjs:151",
+      "target": "site/scripts/render-og.mjs:109",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/render-og.mjs:151",
+      "target": "site/scripts/render-og.mjs:129",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/render-og.mjs:151",
+      "target": "site/scripts/render-og.mjs:56",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/render-og.mjs:151",
+      "target": "site/scripts/render-og.mjs:90",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/render-og.mjs:90",
+      "target": "site/scripts/render-og.mjs:47",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/render-social.mjs:127",
+      "target": "site/scripts/render-social.mjs:124",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/render-social.mjs:133",
+      "target": "site/scripts/render-social.mjs:124",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/render-social.mjs:141",
+      "target": "site/scripts/render-social.mjs:43",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/render-social.mjs:45",
+      "target": "site/scripts/render-social.mjs:43",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/render-social.mjs:54",
+      "target": "site/scripts/render-social.mjs:127",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/render-social.mjs:54",
+      "target": "site/scripts/render-social.mjs:133",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/render-social.mjs:54",
+      "target": "site/scripts/render-social.mjs:43",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/render-social.mjs:54",
+      "target": "site/scripts/render-social.mjs:45",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/scripts/screenshot-fixtures.mjs:171",
+      "target": "site/scripts/screenshot-fixtures.mjs:133",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/lib/github.ts:14",
+      "target": "site/src/lib/github.ts:9",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/lib/github.ts:48",
+      "target": "site/src/lib/github.ts:14",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/lib/install-command.ts:16",
+      "target": "site/src/lib/install-command.ts:6",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/lib/install-command.ts:19",
+      "target": "site/src/lib/install-command.ts:16",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/lib/install-command.ts:23",
+      "target": "site/src/lib/install-command.ts:29",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/lib/install-command.ts:23",
+      "target": "site/src/lib/install-command.ts:6",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/lib/og-card.mjs:143",
+      "target": "site/src/lib/og-card.mjs:34",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/lib/og-card.mjs:143",
+      "target": "site/src/lib/og-card.mjs:42",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/lib/og-card.mjs:143",
+      "target": "site/src/lib/og-card.mjs:55",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/lib/og-card.mjs:84",
+      "target": "site/src/lib/og-card.mjs:72",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/live-terminal.js:120",
+      "target": "site/src/scripts/live-terminal.js:115",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/live-terminal.js:120",
+      "target": "site/src/scripts/live-terminal.js:143",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/live-terminal.js:120",
+      "target": "site/src/scripts/live-terminal.js:147",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/live-terminal.js:120",
+      "target": "site/src/scripts/live-terminal.js:165",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/live-terminal.js:120",
+      "target": "site/src/scripts/live-terminal.js:178",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/live-terminal.js:120",
+      "target": "site/src/scripts/live-terminal.js:183",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/live-terminal.js:120",
+      "target": "site/src/scripts/live-terminal.js:188",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/live-terminal.js:120",
+      "target": "site/src/scripts/live-terminal.js:191",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/live-terminal.js:143",
+      "target": "site/src/scripts/live-terminal.js:115",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/live-terminal.js:147",
+      "target": "site/src/scripts/live-terminal.js:143",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/live-terminal.js:178",
+      "target": "site/src/scripts/live-terminal.js:165",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/live-terminal.js:183",
+      "target": "site/src/scripts/live-terminal.js:143",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/live-terminal.js:183",
+      "target": "site/src/scripts/live-terminal.js:165",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/live-terminal.js:194",
+      "target": "site/src/scripts/live-terminal.js:147",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/live-terminal.js:194",
+      "target": "site/src/scripts/live-terminal.js:178",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/live-terminal.js:194",
+      "target": "site/src/scripts/live-terminal.js:183",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/live-terminal.js:194",
+      "target": "site/src/scripts/live-terminal.js:188",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/live-terminal.js:194",
+      "target": "site/src/scripts/live-terminal.js:191",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/live-terminal.js:238",
+      "target": "site/src/scripts/live-terminal.js:188",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/minimal-download.ts:18",
+      "target": "site/src/scripts/minimal-download.ts:39",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/minimal-download.ts:18",
+      "target": "site/src/scripts/minimal-download.ts:56",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/minimal-download.ts:18",
+      "target": "site/src/scripts/minimal-download.ts:63",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/minimal-download.ts:18",
+      "target": "site/src/scripts/minimal-download.ts:69",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/minimal-download.ts:18",
+      "target": "site/src/scripts/minimal-download.ts:88",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/minimal-download.ts:56",
+      "target": "site/src/scripts/minimal-download.ts:39",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/minimal-download.ts:63",
+      "target": "site/src/scripts/minimal-download.ts:39",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/minimal-download.ts:88",
+      "target": "site/src/scripts/minimal-download.ts:56",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/src/scripts/scroll-reveal.js:4",
+      "target": "site/src/scripts/scroll-reveal.js:24",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "site/tests/install-script.test.ts:27",
+      "target": "site/tests/install-script.test.ts:61",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "src/database/content-hash.ts:34",
+      "target": "src/database/content-hash.ts:19",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "src/database/content-hash.ts:46",
+      "target": "src/database/content-hash.ts:19",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "src/database/content-hash.ts:69",
+      "target": "src/database/content-hash.ts:46",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "src/watchdog/file-watcher.ts:90",
+      "target": "src/watchdog/file-watcher.ts:96",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "telemetry-worker/src/index.ts:137",
+      "target": "telemetry-worker/src/index.ts:127",
+      "kind": "calls",
+      "confidence": "extracted"
+    },
+    {
+      "source": "test-smoke/hello.ts:2",
+      "target": "test-smoke/hello.ts:1",
+      "kind": "calls",
+      "confidence": "extracted"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "bug:55b52bd9763919e88b6012b6527b1b6ab7a018d7:site/src/lib/source-version.mjs:5",
+      "kind": "bug_localization",
+      "query": "Fix docs source version and expose Ax 8 features on the homepage",
+      "relevant": [
+        "site/src/lib/source-version.mjs:5"
+      ]
+    },
+    {
+      "id": "bug:5a5ec6dc32479fe3a5f6fc93d596480834909499:site/tests/install-script.test.ts:27",
+      "kind": "bug_localization",
+      "query": "Fix shell installer parsing and macOS version selection (#43)",
+      "relevant": [
+        "site/tests/install-script.test.ts:27"
+      ]
+    },
+    {
+      "id": "cross:site/scripts/render-og.mjs:109",
+      "kind": "cross_module_call",
+      "query": "capturePage",
+      "relevant": [
+        "site/src/lib/og-card.mjs:117"
+      ]
+    },
+    {
+      "id": "cross:site/scripts/render-og.mjs:90",
+      "kind": "cross_module_call",
+      "query": "pagesToRender",
+      "relevant": [
+        "site/src/lib/og-card.mjs:17",
+        "site/src/lib/og-card.mjs:84",
+        "site/src/lib/og-card.mjs:93"
+      ]
+    },
+    {
+      "id": "cross:site/src/scripts/minimal-download.ts:18",
+      "kind": "cross_module_call",
+      "query": "mountMinimalDownload",
+      "relevant": [
+        "site/src/lib/install-command.ts:6"
+      ]
+    },
+    {
+      "id": "doc:ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenter.java:20",
+      "kind": "function_documentation",
+      "query": "* `ax web --port N [projectDir]`; the project dir is omitted when the IDE has none.",
+      "relevant": [
+        "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenter.java:20"
+      ]
+    },
+    {
+      "id": "doc:ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java:75",
+      "kind": "function_documentation",
+      "query": "* Null when ax web answers; otherwise the reason it did not.",
+      "relevant": [
+        "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java:75"
+      ]
+    },
+    {
+      "id": "doc:ide/vscode/src/core.ts:15",
+      "kind": "function_documentation",
+      "query": "* The webview only frames the local Command Center; it runs no script of its own.",
+      "relevant": [
+        "ide/vscode/src/core.ts:15"
+      ]
+    },
+    {
+      "id": "doc:ide/vscode/src/extension.ts:34",
+      "kind": "function_documentation",
+      "query": "* Starts `ax web` for the workspace project and waits until it answers.",
+      "relevant": [
+        "ide/vscode/src/extension.ts:34"
+      ]
+    },
+    {
+      "id": "doc:site/netlify/functions/latest-release.ts:21",
+      "kind": "function_documentation",
+      "query": "* Prefer Accept: text/html (browsers / axe) \u2192 HTML with lang + title; else plain text for installers.",
+      "relevant": [
+        "site/netlify/functions/latest-release.ts:21"
+      ]
+    },
+    {
+      "id": "doc:site/netlify/functions/latest-release.ts:5",
+      "kind": "function_documentation",
+      "query": "* True only when the client explicitly prefers HTML (browsers / axe), not wildcard Accept.",
+      "relevant": [
+        "site/netlify/functions/latest-release.ts:5"
+      ]
+    },
+    {
+      "id": "doc:site/netlify/lib/ingest.ts:180",
+      "kind": "function_documentation",
+      "query": "* Handle telemetry ingest for Netlify Functions (path /v1/events).",
+      "relevant": [
+        "site/netlify/lib/ingest.ts:180"
+      ]
+    },
+    {
+      "id": "doc:site/scripts/capture-screenshots.mjs:187",
+      "kind": "function_documentation",
+      "query": "* Show the home folder as `~` so screenshots do not carry the local user name.",
+      "relevant": [
+        "site/scripts/capture-screenshots.mjs:187"
+      ]
+    },
+    {
+      "id": "doc:site/scripts/capture-screenshots.mjs:240",
+      "kind": "function_documentation",
+      "query": "* Remove rows holding a term; return how many were removed and which terms are still visible.",
+      "relevant": [
+        "site/scripts/capture-screenshots.mjs:240"
+      ]
+    },
+    {
+      "id": "doc:site/scripts/process-logo.mjs:23",
+      "kind": "function_documentation",
+      "query": "* True when pixel is backdrop black (not letter interior).",
+      "relevant": [
+        "site/scripts/process-logo.mjs:23"
+      ]
+    },
+    {
+      "id": "doc:site/scripts/screenshot-fixtures.mjs:171",
+      "kind": "function_documentation",
+      "query": "* Serve the actual production UI with synthetic API responses; no Rust build needed.",
+      "relevant": [
+        "site/scripts/screenshot-fixtures.mjs:171"
+      ]
+    },
+    {
+      "id": "doc:site/src/lib/agent-icons.ts:9",
+      "kind": "function_documentation",
+      "query": "* Monochrome marks for the homepage (currentColor). Paths are the Simple Icons brand marks (CC0), not generic stand-ins. Platforms (Apple, Tux, Windows panes) are a static row, not ticker items. The ticker uses the Cursor cube, Claude knot, OpenAI blossom (Codex), Gemini spark, OpenCode frame, VS Code ribbon, Windsurf cascade, Zed mark, and MCP loops. /",
+      "relevant": [
+        "site/src/lib/agent-icons.ts:9"
+      ]
+    },
+    {
+      "id": "doc:site/src/lib/github.ts:48",
+      "kind": "function_documentation",
+      "query": "* Live star label, e.g. `\"12\"` or `\"1,234\"`. Empty string if fetch failed.",
+      "relevant": [
+        "site/src/lib/github.ts:48"
+      ]
+    },
+    {
+      "id": "doc:site/src/lib/github.ts:9",
+      "kind": "function_documentation",
+      "query": "* Build-time GitHub star count. Fetched once when the site is built; memoized for the build process so every page share a single API call. Always renders the live `stargazers_count` (never a marketing placeholder). If the API is unreachable, falls back to an empty label so the UI can omit a fake number rather than inventing one. /",
+      "relevant": [
+        "site/src/lib/github.ts:9"
+      ]
+    },
+    {
+      "id": "doc:site/src/lib/og-card.mjs:117",
+      "kind": "function_documentation",
+      "query": "* Clip a screenshot to the viewport, keeping the top of the element and capping height so a long article does not become a thin strip. /",
+      "relevant": [
+        "site/src/lib/og-card.mjs:117"
+      ]
+    },
+    {
+      "id": "doc:site/src/lib/og-card.mjs:126",
+      "kind": "function_documentation",
+      "query": "* Runs inside the browser. Must not close over Node values.",
+      "relevant": [
+        "site/src/lib/og-card.mjs:126"
+      ]
+    },
+    {
+      "id": "doc:site/src/lib/og-card.mjs:17",
+      "kind": "function_documentation",
+      "query": "* Public path of the PNG for a site pathname. Unexpected paths use the home card.",
+      "relevant": [
+        "site/src/lib/og-card.mjs:17"
+      ]
+    },
+    {
+      "id": "doc:site/src/lib/og-card.mjs:42",
+      "kind": "function_documentation",
+      "query": "* `latest.txt` stores `v7.0.0`. Anything else is a broken release pointer.",
+      "relevant": [
+        "site/src/lib/og-card.mjs:42"
+      ]
+    },
+    {
+      "id": "doc:site/src/lib/og-card.mjs:51",
+      "kind": "function_documentation",
+      "query": "* Puppeteer screenshots are Uint8Array. Typed arrays ignore a toString encoding.",
+      "relevant": [
+        "site/src/lib/og-card.mjs:51"
+      ]
+    },
+    {
+      "id": "doc:site/src/lib/page-lock.ts:2",
+      "kind": "function_documentation",
+      "query": "* Blocks text selection and the browser context menu on the public site.",
+      "relevant": [
+        "site/src/lib/page-lock.ts:2"
+      ]
+    },
+    {
+      "id": "doc:site/src/lib/source-version.mjs:5",
+      "kind": "function_documentation",
+      "query": "* Version of the CLI source used to build these docs, independent of downloads.",
+      "relevant": [
+        "site/src/lib/source-version.mjs:5"
+      ]
+    },
+    {
+      "id": "doc:site/src/lib/ticker.ts:18",
+      "kind": "function_documentation",
+      "query": "* Sequences in one half of the track. The page clones that half so the loop can move -50%.",
+      "relevant": [
+        "site/src/lib/ticker.ts:18"
+      ]
+    },
+    {
+      "id": "doc:site/src/scripts/live-terminal.js:120",
+      "kind": "function_documentation",
+      "query": "* Kept independent of Astro. Called only for the designated demo container. /",
+      "relevant": [
+        "site/src/scripts/live-terminal.js:120"
+      ]
+    },
+    {
+      "id": "doc:site/src/scripts/motion.js:2",
+      "kind": "function_documentation",
+      "query": "* Explicit Play/Pause overrides the OS preference; otherwise respect it.",
+      "relevant": [
+        "site/src/scripts/motion.js:2"
+      ]
+    },
+    {
+      "id": "doc:site/src/scripts/scroll-reveal.js:4",
+      "kind": "function_documentation",
+      "query": "Progressive enhancement: no script/observer means all content stays visible.",
+      "relevant": [
+        "site/src/scripts/scroll-reveal.js:4"
+      ]
+    },
+    {
+      "id": "doc:src/database/content-hash.ts:19",
+      "kind": "function_documentation",
+      "query": "* Compute SHA-256 hash of file contents /",
+      "relevant": [
+        "src/database/content-hash.ts:19"
+      ]
+    },
+    {
+      "id": "doc:src/database/content-hash.ts:27",
+      "kind": "function_documentation",
+      "query": "* Compute hash from content string (for in-memory comparison) /",
+      "relevant": [
+        "src/database/content-hash.ts:27"
+      ]
+    },
+    {
+      "id": "doc:src/database/content-hash.ts:34",
+      "kind": "function_documentation",
+      "query": "* Check if file has changed by comparing hashes /",
+      "relevant": [
+        "src/database/content-hash.ts:34"
+      ]
+    },
+    {
+      "id": "doc:src/database/content-hash.ts:69",
+      "kind": "function_documentation",
+      "query": "* Batch compute hashes for multiple files /",
+      "relevant": [
+        "src/database/content-hash.ts:69"
+      ]
+    },
+    {
+      "id": "doc:src/database/content-hash.ts:85",
+      "kind": "function_documentation",
+      "query": "* Find duplicate files by content hash /",
+      "relevant": [
+        "src/database/content-hash.ts:85"
+      ]
+    },
+    {
+      "id": "doc:test-smoke-rust/fixtures/actix_routes.rs:2",
+      "kind": "function_documentation",
+      "query": "Index-only fixture \u2014 Actix `web::resource` chain (CG rust.ts lines 221\u2013245)",
+      "relevant": [
+        "test-smoke-rust/fixtures/actix_routes.rs:2"
+      ]
+    },
+    {
+      "id": "negative:aquietriverrunsthroughth",
+      "kind": "negative",
+      "query": "A quiet river runs through the valley",
+      "relevant": []
+    },
+    {
+      "id": "negative:bakeaspongecakewithbutte",
+      "kind": "negative",
+      "query": "Bake a sponge cake with butter and sugar",
+      "relevant": []
+    },
+    {
+      "id": "negative:howtallisthetowerbytheha",
+      "kind": "negative",
+      "query": "How tall is the tower by the harbour",
+      "relevant": []
+    },
+    {
+      "id": "negative:pleasebookatablefortwoon",
+      "kind": "negative",
+      "query": "Please book a table for two on Friday",
+      "relevant": []
+    },
+    {
+      "id": "negative:therecipeusesoatsandhone",
+      "kind": "negative",
+      "query": "The recipe uses oats and honey only",
+      "relevant": []
+    },
+    {
+      "id": "negative:thetraintohaarlemleavesa",
+      "kind": "negative",
+      "query": "The train to Haarlem leaves at noon",
+      "relevant": []
+    },
+    {
+      "id": "negative:whatistheweatherinutrech",
+      "kind": "negative",
+      "query": "What is the weather in Utrecht tomorrow morning",
+      "relevant": []
+    },
+    {
+      "id": "negative:whopaintedtheceilingofth",
+      "kind": "negative",
+      "query": "Who painted the ceiling of the chapel",
+      "relevant": []
+    },
+    {
+      "id": "rename:crates/ax-core/src/project_config.rs:load_from_disk:load_merged",
+      "kind": "symbol_rename",
+      "query": "load_from_disk",
+      "relevant": [
+        "crates/ax-core/src/project_config.rs:95"
+      ]
+    },
+    {
+      "id": "rename:crates/ax-installer/src/targets.rs:has_agent_data_dir:app_present",
+      "kind": "symbol_rename",
+      "query": "has_agent_data_dir",
+      "relevant": [
+        "crates/ax-installer/src/targets.rs:45"
+      ]
+    },
+    {
+      "id": "rename:crates/ax-policy/src/index.rs:prune_rules:prune_rules_hybrid",
+      "kind": "symbol_rename",
+      "query": "prune_rules",
+      "relevant": [
+        "crates/ax-policy/src/index.rs:760"
+      ]
+    },
+    {
+      "id": "rename:crates/ax-policy/src/index.rs:prune_skills:prune_skills_hybrid",
+      "kind": "symbol_rename",
+      "query": "prune_skills",
+      "relevant": [
+        "crates/ax-policy/src/index.rs:785"
+      ]
+    },
+    {
+      "id": "rename:crates/ax-web/src/mcp_trace.rs:active_log_path:hub_project",
+      "kind": "symbol_rename",
+      "query": "active_log_path",
+      "relevant": [
+        "crates/ax-web/src/mcp_trace.rs:126"
+      ]
+    },
+    {
+      "id": "similar:ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenter.java:20",
+      "kind": "similar_unrelated",
+      "query": "startCommand",
+      "relevant": [
+        "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenter.java:20"
+      ]
+    },
+    {
+      "id": "similar:ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java:28",
+      "kind": "similar_unrelated",
+      "query": "createToolWindowContent",
+      "relevant": [
+        "ide/jetbrains/src/main/java/io/wenneker/ax/CommandCenterToolWindow.java:28"
+      ]
+    },
+    {
+      "id": "similar:ide/vscode/src/core.ts:140",
+      "kind": "similar_unrelated",
+      "query": "launchArgs",
+      "relevant": [
+        "ide/vscode/src/core.ts:140"
+      ]
+    },
+    {
+      "id": "similar:ide/vscode/src/core.ts:183",
+      "kind": "similar_unrelated",
+      "query": "readJson",
+      "relevant": [
+        "ide/vscode/src/core.ts:183"
+      ]
+    },
+    {
+      "id": "similar:ide/vscode/src/core.ts:212",
+      "kind": "similar_unrelated",
+      "query": "readCurrent",
+      "relevant": [
+        "ide/vscode/src/core.ts:212"
+      ]
+    },
+    {
+      "id": "similar:ide/vscode/src/core.ts:231",
+      "kind": "similar_unrelated",
+      "query": "preparePopout",
+      "relevant": [
+        "ide/vscode/src/core.ts:231"
+      ]
+    },
+    {
+      "id": "similar:ide/vscode/src/core.ts:3",
+      "kind": "similar_unrelated",
+      "query": "checkPort",
+      "relevant": [
+        "ide/vscode/src/core.ts:3"
+      ]
+    },
+    {
+      "id": "similar:ide/vscode/src/extension.ts:50",
+      "kind": "similar_unrelated",
+      "query": "activate",
+      "relevant": [
+        "ide/vscode/src/extension.ts:50"
+      ]
+    },
+    {
+      "id": "similar:site/netlify/functions/latest-release.ts:21",
+      "kind": "similar_unrelated",
+      "query": "createHandler",
+      "relevant": [
+        "site/netlify/functions/latest-release.ts:21"
+      ]
+    },
+    {
+      "id": "similar:site/netlify/lib/ingest.ts:180",
+      "kind": "similar_unrelated",
+      "query": "handleTelemetryIngest",
+      "relevant": [
+        "site/netlify/lib/ingest.ts:180"
+      ]
+    },
+    {
+      "id": "similar:site/scripts/capture-screenshots.mjs:204",
+      "kind": "similar_unrelated",
+      "query": "loadPuppeteer",
+      "relevant": [
+        "site/scripts/capture-screenshots.mjs:204"
+      ]
+    },
+    {
+      "id": "similar:site/scripts/render-og.mjs:90",
+      "kind": "similar_unrelated",
+      "query": "pagesToRender",
+      "relevant": [
+        "site/scripts/render-og.mjs:90"
+      ]
+    },
+    {
+      "id": "similar:site/src/lib/install-command.ts:23",
+      "kind": "similar_unrelated",
+      "query": "mountInstallPickers",
+      "relevant": [
+        "site/src/lib/install-command.ts:23"
+      ]
+    },
+    {
+      "id": "similar:site/src/lib/og-card.mjs:84",
+      "kind": "similar_unrelated",
+      "query": "readShareMeta",
+      "relevant": [
+        "site/src/lib/og-card.mjs:84"
+      ]
+    },
+    {
+      "id": "similar:site/src/scripts/live-terminal.js:120",
+      "kind": "similar_unrelated",
+      "query": "mountLiveTerminal",
+      "relevant": [
+        "site/src/scripts/live-terminal.js:120"
+      ]
+    },
+    {
+      "id": "similar:site/src/scripts/live-terminal.js:165",
+      "kind": "similar_unrelated",
+      "query": "listInto",
+      "relevant": [
+        "site/src/scripts/live-terminal.js:165"
+      ]
+    },
+    {
+      "id": "similar:site/src/scripts/live-terminal.js:178",
+      "kind": "similar_unrelated",
+      "query": "pushCall",
+      "relevant": [
+        "site/src/scripts/live-terminal.js:178"
+      ]
+    },
+    {
+      "id": "similar:site/src/scripts/live-terminal.js:243",
+      "kind": "similar_unrelated",
+      "query": "onMotionChange",
+      "relevant": [
+        "site/src/scripts/live-terminal.js:243"
+      ]
+    },
+    {
+      "id": "similar:site/src/scripts/minimal-download.ts:18",
+      "kind": "similar_unrelated",
+      "query": "mountMinimalDownload",
+      "relevant": [
+        "site/src/scripts/minimal-download.ts:18"
+      ]
+    },
+    {
+      "id": "similar:src/database/content-hash.ts:19",
+      "kind": "similar_unrelated",
+      "query": "computeFileHash",
+      "relevant": [
+        "src/database/content-hash.ts:19"
+      ]
+    },
+    {
+      "id": "trace:site/scripts/render-og.mjs:90",
+      "kind": "multi_file_dependency",
+      "query": "pagesToRender",
+      "relevant": [
+        "site/src/lib/og-card.mjs:17",
+        "site/src/lib/og-card.mjs:72",
+        "site/src/lib/og-card.mjs:84",
+        "site/src/lib/og-card.mjs:93"
+      ]
+    }
+  ]
+}

@@ -51,13 +51,9 @@ impl MemoryMonitor {
     }
 }
 
-fn current_rss_bytes() -> u64 {
-    #[cfg(target_os = "windows")]
-    {
-        // Approximate via Windows API not available without extra deps; return 0
-        0
-    }
-    #[cfg(not(target_os = "windows"))]
+/// Current process RSS in bytes when the platform provides a reader; otherwise 0.
+pub fn current_rss_bytes() -> u64 {
+    #[cfg(target_os = "linux")]
     {
         if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
             for line in status.lines() {
@@ -71,6 +67,25 @@ fn current_rss_bytes() -> u64 {
                 }
             }
         }
+        0
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let pid = std::process::id().to_string();
+        if let Ok(output) = std::process::Command::new("ps")
+            .args(["-o", "rss=", "-p", &pid])
+            .output()
+        {
+            if let Ok(text) = String::from_utf8(output.stdout) {
+                if let Ok(kb) = text.trim().parse::<u64>() {
+                    return kb.saturating_mul(1024);
+                }
+            }
+        }
+        0
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
         0
     }
 }

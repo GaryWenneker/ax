@@ -1,0 +1,12 @@
+[
+  {
+    "question_id": "q1",
+    "question": "where was the car parked",
+    "answer_session_ids": ["s1"],
+    "haystack_session_ids": ["s1", "s2"],
+    "haystack_sessions": [
+      [{ "role": "user", "content": "the car was parked on Oak street" }],
+      [{ "role": "user", "content": "recipe for soup" }]
+    ]
+  }
+]

@@ -435,7 +435,9 @@ impl EdgeConfidence {
     /// should override with `EdgeConfidence::Ambiguous` explicitly.
     pub fn from_provenance(provenance: Option<Provenance>) -> Option<Self> {
         match provenance {
-            Some(Provenance::TreeSitter) | Some(Provenance::Scip) => Some(EdgeConfidence::Extracted),
+            Some(Provenance::TreeSitter) | Some(Provenance::Scip) => {
+                Some(EdgeConfidence::Extracted)
+            }
             Some(Provenance::Heuristic) => Some(EdgeConfidence::Inferred),
             Some(Provenance::Lsp) => Some(EdgeConfidence::Exact),
             None => None,
@@ -518,7 +520,6 @@ pub enum TraversalDirection {
     Incoming,
     Both,
 }
-
 
 /// Output format for context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

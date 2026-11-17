@@ -3,7 +3,9 @@ title: Memory
 description: Brain-style memory for ax — working notes, named long-term decisions, and a permanent archive bound to the code graph.
 ---
 
-ax keeps a brain-style memory in the same local SQLite database as the code graph. A name fetches the exact memory. The raw episode stays. Recall is bound to the live graph. MCP and the CLI call one function, so neither surface is a subset.
+ax keeps a brain-style memory in the same local SQLite database as the code graph.
+
+Current vault behavior (schema 44+): FTS ranks over normalized `search_text` with BM25F field weights; recall can expand with a bilingual lexicon and PMI associations and returns a `why` signal per hit. Memories auto-anchor to graph node versions; sync captures file changes and graph history. Full backups are zstd-compressed JSONL under `.ax/backups/memory/`. Prospective `--when` tags fire on guard. The Command Center Memory page has a review inbox; the Graph page has an as-of time slider. A name fetches the exact memory. The raw episode stays. Recall is bound to the live graph. MCP and the CLI call one function, so neither surface is a subset.
 
 ## What ax remembers
 
@@ -13,7 +15,7 @@ There are five tiers. Forgetting moves a memory down. It does not erase it.
 
 **Recent turns** are the last 90 days of agent work. Preflight can show related turn history. A turn is not a durable decision.
 
-**Long-term memory** is a decision, a bug fix, an architecture note, a convention, or a note. Store it with a trigger name. Preflight injects at most three titles, and that block stops at 6000 characters. If the prompt contains a registered name, that memory comes first. An unknown name returns nothing. Free text is only the fallback, for a paraphrase.
+**Long-term memory** is a decision, a bug fix, an architecture note, a convention, or a note. Store it with a trigger name. Preflight injects at most three titles, and that block stops at 6000 characters. If the prompt contains a registered name, that memory comes first. An unknown name returns nothing. Free text is only the fallback, for a paraphrase. Automatic cues come from the title, tags, file name, and symbols. They skip change verbs, node kinds, and primitive type names, and a word already used by 32 memories is not added again. A graph change cues only the symbol that changed. An explicit trigger is kept either way, and it still ranks ahead of a title cue. Among title cues, a rarer word ranks ahead of a common one. Schema 30 drops the old automatic cues that match those rules. The indexer and the pending file list both skip paths named by `.gitignore`. A code change under `target`, `target-dev`, `node_modules`, or `dist` is kept and marked noise: search skips it, and a fetch by id still returns it. A path such as `target-design` stays a normal memory.
 
 **The archive** is permanent. These rows are never injected:
 
@@ -29,16 +31,18 @@ Fetch an archive row by name, by id, or with `depth=archive`. That search uses f
 
 A JSONL file written at demotion is a crash copy. Search uses the database.
 
-A turn or a commit that states a decision becomes a **candidate** long-term memory, linked to the source episode. Preflight skips the candidate until a second source agrees, or you confirm it. The original episode stays in the archive. A near-duplicate (cosine at least 0.80) gets a supersedes link. The old body stays.
+A turn or a commit that contains “because” or “decided” is not stored as a decision. A decision is stored when you confirm it. An older consolidation candidate stays out of preflight until you confirm it. Confirming it restores the row.
 
-Embeddings stay on this machine. The default is a local hash (`hash-v1`). An optional ONNX MiniLM model (`minilm-256`) can replace it. There is no cloud embedding API. Recall never compares two models. After a model change, sync rewrites the old rows in the background.
+A note from the Blossom project is stored and is not injected. That covers a source or tag named `blossom` or `foreign`, and a file path with a `blossom` segment. The next database open also marks an existing active note whose title or body names Blossom. A new note that only mentions Blossom in the body stays injectable. Fetch the stored row by id.
+
+Embeddings stay on this machine. Every build stores one local hash model, `hash-v1`, on `memories.embedding`. There is no second memory model and no download. Neural Intelligence is required. It stays on when `ax.json` omits it or sets `neural.enabled` to false. It does not replace `hash-v1` and it does not download a model. Keyword search still finds a row written by an older model. That row is rewritten onto `hash-v1` only when a re-embed pass runs. Opening the database does not run that pass.
 
 ### How to use it
 
 1. Keep facts for this chat in `ax session` (MCP: `ax_session`). They do not go into the vault.
-2. Store a durable decision, fix, or convention with `ax remember --trigger NAME` (MCP: `triggers`). The name can be repeated.
+2. Store a durable decision, fix, or convention with `ax remember --trigger NAME` (MCP: `triggers`). The name can be repeated. The reply includes `suggested_triggers`: title words, file anchors, and words from the text. Those names are not stored until you pass them as triggers.
 3. Before re-deriving it, fetch that name with `ax recall --cue NAME` (MCP: `cue`). If you name the trigger, that fetch comes before explore. Free-text recall is the fallback.
-4. For an old graph change, a log, or a past turn, use `ax recall --depth archive` and `ax history --depth archive` (MCP: `depth=archive` on both). Preflight will not contain those hits. `ax recall --id ID` returns the full body and its cues.
+4. For an old graph change, a log, or a past turn, use `ax recall --depth archive` and `ax history --depth archive` (MCP: `depth=archive` on both). Preflight will not contain those hits. To search zstd/JSONL memory snapshots under `.ax/backups/memory/` (including a purged row that still exists in a snapshot), use `ax recall --depth backup` (MCP: `depth=backup`). That path is recall-only and is never injected. `ax recall --id ID` returns the full body and its cues.
 5. Confirm a candidate with `ax remember --confirm ID` (MCP: `action=confirm` and `id`). The old episode stays.
 
 On the Command Center Memory page, every row shows its tier: working, recent, long-term, or archive. Turn on Archive to search the permanent tier. A hit from that search is also marked recalled from archive.
@@ -106,7 +110,7 @@ flowchart LR
   memory --> db[(ax.db)]
 ```
 
-`triggers` and `--trigger` store a name. `cue` and `--cue` fetch it. `depth=archive` and `--depth archive` search the archive. `action=confirm` and `--confirm` enable a candidate. The JSON keys match.
+`triggers` and `--trigger` store a name. `cue` and `--cue` fetch it. `depth=archive` and `--depth archive` search the archive. `depth=backup` and `--depth backup` search memory snapshots under `.ax/backups/memory/`. `action=confirm` and `--confirm` enable a candidate. The JSON keys match.
 
 ## Demotion
 
@@ -185,7 +189,7 @@ The query is tokenized, stop words are removed (English and Dutch), and each rem
 
 ### Step 2 — Vector similarity (semantic leg)
 
-The query is embedded locally into a fixed 256-dimensional vector. **Default:** feature hashing (FNV-1a tokens + character trigrams) — no API calls, no model download. **Optional:** build with `--features onnx` and place a MiniLM `.onnx` at `AX_ONNX_MODEL` or `~/.ax/models/all-MiniLM-L6-v2.onnx` for dense neural embeddings (projected to 256-d for storage compatibility). Stored embeddings are compared via cosine similarity. Matches below 0.1 similarity are discarded. Legs are fused with weighted RRF (vector 0.5 / FTS 0.3 / graph 0.2 when an open file is on the memory). Hot rows stay an exact scan. Archive rows use sqlite-vec KNN. Recall never compares two embedding models. Each row stores `hash-v1` or `minilm-256`.
+The query is embedded locally into a fixed 256-dimensional vector by feature hashing (FNV-1a tokens and character trigrams). There is no model download. Stored embeddings are compared via cosine similarity. Matches below 0.1 similarity are discarded. Legs are fused with weighted RRF (vector 0.5 / FTS 0.3 / graph 0.2 when an open file is on the memory). Hot rows stay an exact scan. Archive rows use sqlite-vec KNN. Keyword search, and a hot vector that parses as 256 floats, are not hidden by the stored model name. The archive index stores the active model, `hash-v1`. A row left on an older model stays out of that index until it is rewritten.
 
 ### Step 3 — Reciprocal Rank Fusion (RRF)
 
@@ -217,8 +221,8 @@ Updating or re-saving a memory resets its confidence to 1.0. This prevents stale
 This is the mechanism that makes memories useful without agent action:
 
 1. Every agent turn starts with `ax_preflight(prompt, files)` (mandatory per ax policy).
-2. Preflight looks up a registered name first, then runs hybrid recall, and keeps at most 3 injectable memories. Archive rows and candidates are left out.
-3. Matches with score <= 0.0 are filtered out.
+2. Preflight looks up a registered name first, then runs hybrid recall, and keeps at most 3 injectable memories. Archive rows, candidates, and rows that do not match the prompt are left out.
+3. The memories block is at most 300 tokens by default (`context.memoryTokens` in `ax.json`). It stays even when required policy is already over the token budget. When nothing matches, that slice costs nothing.
 4. Remaining matches are formatted as an `<ax_memories>` XML block (max 6,000 characters).
 5. The block is appended to the inject string alongside policy rules.
 6. Items that a delivered rule, skill, or memory links to with `[[...]]` are added too: one hop, at most five per turn (see [Linking rules, skills and memories](/guides/policy-engine/#linking-rules-skills-and-memories)). A linked memory joins the `<ax_memories>` block.
@@ -240,7 +244,7 @@ Besides automatic injection, agents can explicitly search memories when they nee
 
 - **By name.** `ax_recall` with `cue`, or `ax recall --cue NAME`. Exact match, every tier, including a demoted turn. An unknown cue is empty.
 - **By id.** `ax_recall` with `id`, or `ax recall --id ID`. Returns that row and its cues.
-- **Free text.** `ax_recall` with `query` and `depth` (`hot` or `archive`), or `ax recall QUERY --depth hot|archive`. Hot skips the archive. Archive is only the archive, then one hop. Default depth is hot. `limit` defaults to 5.
+- **Free text.** `ax_recall` with `query` and `depth` (`hot`, `archive`, or `backup`), or `ax recall QUERY --depth hot|archive|backup`. Hot skips the archive. Archive is only the archive, then one hop. Backup scans `.ax/backups/memory/` snapshots (`.zst` / `.jsonl`) and is not injected. Default depth is hot. `limit` defaults to 5.
 - **History.** `ax_history` and `ax history --depth archive` list old turns, graph changes, and selected logs.
 - **Command Center.** The Memory search box runs the same hot search. The Archive checkbox switches it to archive depth.
 
@@ -254,7 +258,7 @@ When a new memory is stored (via any path), ax runs `find_similar` with a cosine
 - **CLI:** Prints "Similar existing memories (possible duplicate/contradiction)" with similarity percentages.
 - **Command Center:** Shows a toast warning with the count of similar memories.
 
-A near-duplicate is not deleted. Consolidation links it with `supersedes` and leaves the old body in the archive. Confirm the new candidate, or update the long-term row, when the decision has actually changed.
+A near-duplicate is not deleted. Consolidation does not turn a turn or a commit into a decision because the body contains "because", "decided", or "decision", and it does not write a `supersedes` link from a similar memory. A decision is stored when a person confirms it. Schema 31 marks an old consolidation candidate rejected. Confirm restores that row and any similarity link that was revoked with it.
 
 ## The embedding model
 
@@ -264,7 +268,7 @@ The embedding model is entirely local — no API calls, no model files to downlo
 - **Sign randomization:** A second hash bit determines the sign of each feature, reducing collision bias.
 - **L2 normalization:** The final vector is normalized to unit length, so cosine similarity equals the dot product.
 
-Feature-hash embeddings give deterministic, typo-tolerant similarity that fuses well with FTS5. Optional ONNX dense embeddings replace `embed_text()` without changing the storage format (the 256-dim blob column stays the same). Command Center **Settings → Embeddings** shows the live backend (`hash` / `onnx` / `onnx_unconfigured`), Cargo feature flag, and model / tokenizer paths (`GET /api/memory/embed-status`). See [`docs/ONNX.md`](https://github.com/GaryWenneker/ax/blob/main/docs/ONNX.md).
+Feature-hash embeddings give deterministic, typo-tolerant similarity that fuses well with FTS5. The stored model name is `hash-v1`. Command Center **Settings → Embeddings** shows that one memory model (`GET /api/memory/embed-status` returns `backend` `hash` and `model` `hash-v1`) and a Neural status row (`GET /api/neural/status`) with the measured token delta, rank latency per preflight, last evaluated precision, and promoted models. A number that was not measured reads as unavailable. Neural is required and stays on. `ax neural` and the `ax_neural_*` MCP tools return the same JSON. See [CLI](/reference/cli/#ax-neural) and [MCP](/reference/mcp-server/).
 
 ## Storage schema
 
@@ -357,6 +361,10 @@ To switch it off for a project, set this in `ax.json`:
 
 `AX_NO_STOP_HOOK=1` switches it off (together with the Claude turn-end policy check) for one environment.
 
+## Benchmark
+
+`scripts/memory-bench.sh` scores a fixed coding fixture and a plain BM25 baseline, then writes `benchmarks/memory/results/<commit>.json`. The bundled LongMemEval and LoCoMo files are shape samples, not the public datasets. A missing dataset is recorded as skipped. The harness does not open the project vault.
+
 ## CLI
 
 ```bash
@@ -367,6 +375,10 @@ ax remember "We use tiktoken o200k_base for token counts; chars/4 was 30% off" \
 # Search memories
 ax recall "why tiktoken"
 ax recall "tokenizer" --limit 10 --json
+
+# Check the project database, then repair it
+ax db check
+ax db repair
 
 # Capture git history
 ax capture-git --limit 100

@@ -99,3 +99,6 @@ obsidian/getax/node_modules/
 scripts/bench-agent-efficiency/out/
 __pycache__/
 *.py[cod]
+
+# External memory public-set downloads (not vendored)
+benchmarks/memory/datasets/

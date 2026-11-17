@@ -25,7 +25,7 @@ Where future plugins and federation layers attach. Prefer extending these hooks 
 
 | Hook | Location | Notes |
 |------|----------|-------|
-| Embed | `ax-memory::embed::embed_text` | Feature-hash default; ONNX when `--features onnx` + model |
+| Embed | `ax-memory::embed::embed_text` | Feature hash, model `hash-v1`, in every build |
 | Hybrid recall | `ax-memory::store::recall` | Weighted RRF (vector / FTS / graph reserved) |
 
 ## LSP

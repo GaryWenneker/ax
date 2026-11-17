@@ -2,12 +2,27 @@
 
 use crate::targets::TARGETS;
 
-const EDITORS: &[&str] = &["cursor", "vscode", "windsurf", "zed", "kiro", "antigravity", "continue", "jetbrains"];
+const EDITORS: &[&str] = &[
+    "cursor",
+    "vscode",
+    "windsurf",
+    "zed",
+    "kiro",
+    "antigravity",
+    "continue",
+    "jetbrains",
+];
 
 /// Every installer target with its menu group, editors first.
 pub fn ide_groups() -> Vec<(&'static str, &'static str)> {
-    let editors = EDITORS.iter().filter(|id| TARGETS.contains(id)).map(|id| ("Editors", *id));
-    let agents = TARGETS.iter().filter(|id| !EDITORS.contains(id)).map(|id| ("CLI agents", *id));
+    let editors = EDITORS
+        .iter()
+        .filter(|id| TARGETS.contains(id))
+        .map(|id| ("Editors", *id));
+    let agents = TARGETS
+        .iter()
+        .filter(|id| !EDITORS.contains(id))
+        .map(|id| ("CLI agents", *id));
     editors.chain(agents).collect()
 }
 
@@ -39,7 +54,10 @@ pub fn parse_ide_choice(line: &str, defaults: &[String]) -> Result<Vec<String>, 
         .map(str::to_ascii_lowercase)
     {
         if !is_known(&id) {
-            return Err(format!("unknown IDE '{id}'; choose from: {}", TARGETS.join(", ")));
+            return Err(format!(
+                "unknown IDE '{id}'; choose from: {}",
+                TARGETS.join(", ")
+            ));
         }
         if !chosen.contains(&id) {
             chosen.push(id);
@@ -87,8 +105,14 @@ mod tests {
             assert_eq!(groups.iter().filter(|(_, id)| id == t).count(), 1, "{t}");
         }
         let first_cli = groups.iter().position(|(g, _)| *g == "CLI agents").unwrap();
-        assert!(groups[..first_cli].iter().all(|(g, _)| *g == "Editors"), "{groups:?}");
-        assert!(groups[first_cli..].iter().all(|(g, _)| *g == "CLI agents"), "{groups:?}");
+        assert!(
+            groups[..first_cli].iter().all(|(g, _)| *g == "Editors"),
+            "{groups:?}"
+        );
+        assert!(
+            groups[first_cli..].iter().all(|(g, _)| *g == "CLI agents"),
+            "{groups:?}"
+        );
         assert_eq!(groups[0], ("Editors", "cursor"));
         assert!(groups.contains(&("CLI agents", "claude")));
     }
@@ -105,10 +129,22 @@ mod tests {
     fn typed_choice_parses_ids_none_and_empty() {
         let defaults = ids(&["cursor"]);
         assert_eq!(parse_ide_choice("  \n", &defaults).unwrap(), defaults);
-        assert_eq!(parse_ide_choice("none", &defaults).unwrap(), Vec::<String>::new());
-        assert_eq!(parse_ide_choice("NONE\n", &defaults).unwrap(), Vec::<String>::new());
-        assert_eq!(parse_ide_choice("VSCode, zed cursor", &defaults).unwrap(), ids(&["vscode", "zed", "cursor"]));
-        assert_eq!(parse_ide_choice("zed zed", &defaults).unwrap(), ids(&["zed"]));
+        assert_eq!(
+            parse_ide_choice("none", &defaults).unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            parse_ide_choice("NONE\n", &defaults).unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            parse_ide_choice("VSCode, zed cursor", &defaults).unwrap(),
+            ids(&["vscode", "zed", "cursor"])
+        );
+        assert_eq!(
+            parse_ide_choice("zed zed", &defaults).unwrap(),
+            ids(&["zed"])
+        );
         let err = parse_ide_choice("cursor notepad", &defaults).unwrap_err();
         assert!(err.contains("notepad") && err.contains("vscode"), "{err}");
     }
@@ -116,10 +152,19 @@ mod tests {
     #[test]
     fn every_configured_ide_that_is_not_chosen_is_removed() {
         let chosen = ids(&["cursor"]);
-        assert_eq!(ides_to_remove(&ids(&["cursor", "zed", "claude"]), &chosen), ids(&["zed", "claude"]));
+        assert_eq!(
+            ides_to_remove(&ids(&["cursor", "zed", "claude"]), &chosen),
+            ids(&["zed", "claude"])
+        );
         assert_eq!(ides_to_remove(&[], &chosen), Vec::<String>::new());
-        assert_eq!(ides_to_remove(&ids(&["cursor"]), &chosen), Vec::<String>::new());
-        assert_eq!(ides_to_remove(&ids(&["notepad"]), &[]), Vec::<String>::new());
+        assert_eq!(
+            ides_to_remove(&ids(&["cursor"]), &chosen),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            ides_to_remove(&ids(&["notepad"]), &[]),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -127,8 +172,14 @@ mod tests {
         let configured = ids(&["cursor", "claude"]);
         assert_eq!(pack_refresh_targets(&[], None), Vec::<String>::new());
         assert_eq!(pack_refresh_targets(&configured, None), configured);
-        assert_eq!(pack_refresh_targets(&configured, Some(&ids(&["cursor", "zed"]))), ids(&["cursor"]));
-        assert_eq!(pack_refresh_targets(&configured, Some(&[])), Vec::<String>::new());
+        assert_eq!(
+            pack_refresh_targets(&configured, Some(&ids(&["cursor", "zed"]))),
+            ids(&["cursor"])
+        );
+        assert_eq!(
+            pack_refresh_targets(&configured, Some(&[])),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -136,11 +187,16 @@ mod tests {
         assert_eq!(TARGETS.len(), 13);
         assert!(TARGETS.contains(&"jetbrains"));
         assert!(!TARGETS.contains(&"takumi"));
-        assert!(parse_ide_choice("takumi", &[]).unwrap_err().contains("unknown IDE 'takumi'"));
+        assert!(parse_ide_choice("takumi", &[])
+            .unwrap_err()
+            .contains("unknown IDE 'takumi'"));
     }
 
     #[test]
     fn unknown_saved_ids_are_split_out() {
-        assert_eq!(known_ides(&ids(&["cursor", "notepad", "zed"])), (ids(&["cursor", "zed"]), ids(&["notepad"])));
+        assert_eq!(
+            known_ides(&ids(&["cursor", "notepad", "zed"])),
+            (ids(&["cursor", "zed"]), ids(&["notepad"]))
+        );
     }
 }

@@ -46,7 +46,14 @@ impl UnresolvedPage {
                     &self.kind
                 })
                 .show_ui(ui, |ui| {
-                    for k in ["", "calls", "imports", "references", "extends", "implements"] {
+                    for k in [
+                        "",
+                        "calls",
+                        "imports",
+                        "references",
+                        "extends",
+                        "implements",
+                    ] {
                         let label = if k.is_empty() { "All kinds" } else { k };
                         if ui.selectable_label(self.kind == k, label).clicked() {
                             self.kind = k.into();

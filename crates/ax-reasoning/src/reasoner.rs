@@ -46,7 +46,7 @@ pub fn strip_agent_directives(context: &str) -> String {
         i += 1;
     }
     let joined = out.join("\n");
-  joined.replace("\n\n\n", "\n\n").trim_end().to_string()
+    joined.replace("\n\n\n", "\n\n").trim_end().to_string()
 }
 
 #[derive(Debug, Clone)]
@@ -64,7 +64,10 @@ pub async fn synthesize_offload(
     if !cfg.enabled {
         return None;
     }
-    let url = cfg.url.as_ref().map(|u| format!("{}/chat/completions", u.trim_end_matches('/')));
+    let url = cfg
+        .url
+        .as_ref()
+        .map(|u| format!("{}/chat/completions", u.trim_end_matches('/')));
     let url = url?;
     let ctx = if cfg.strip {
         strip_agent_directives(context)

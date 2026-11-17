@@ -28,6 +28,8 @@ use uuid::Uuid;
 use webauthn_rs::prelude::*;
 
 type ErrorResponse = (StatusCode, Json<serde_json::Value>);
+const PUBLIC_LOGIN_DENIED: &str = "Invalid credentials";
+const PUBLIC_RECOVERY_DENIED: &str = "Invalid recovery code";
 fn err(status: StatusCode, reason: &'static str) -> ErrorResponse {
     (status, Json(serde_json::json!({"error":reason})))
 }
@@ -230,6 +232,7 @@ async fn require_owner(pool: &SqlitePool, member_id: &str) -> Result<(), ErrorRe
         Err(err(StatusCode::FORBIDDEN, "Owner role required"))
     }
 }
+/// Session cookie for browser login: `HttpOnly`, `SameSite=Strict`, and `Secure` on HTTPS (or proxied HTTPS).
 fn session_cookie(token: &str, secure: bool) -> String {
     format!(
         "ax_web_session={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800{}",
@@ -614,7 +617,7 @@ async fn password_login(
     }
     let identity = body.identity.trim();
     if identity.is_empty() || body.password.len() > 1024 {
-        return Err(err(StatusCode::UNAUTHORIZED, "Invalid credentials"));
+        return Err(err(StatusCode::UNAUTHORIZED, PUBLIC_LOGIN_DENIED));
     }
     let limit_key = format!("{}:{}", peer.ip(), hash(identity));
     {
@@ -658,7 +661,7 @@ async fn password_login(
             *entry = (0, Instant::now());
         }
         entry.0 += 1;
-        return Err(err(StatusCode::UNAUTHORIZED, "Invalid credentials"));
+        return Err(err(StatusCode::UNAUTHORIZED, PUBLIC_LOGIN_DENIED));
     }
     login_attempts().lock().await.remove(&limit_key);
     establish(
@@ -887,7 +890,10 @@ async fn recover_login(
     }
     let identity = body.identity.trim();
     if !body.code.starts_with("axr-") || body.code.len() > 100 || identity.is_empty() {
-        return Err(err(StatusCode::UNAUTHORIZED, "Invalid recovery code"));
+        return Err(err(
+            StatusCode::UNAUTHORIZED,
+            PUBLIC_RECOVERY_DENIED,
+        ));
     }
     let limit_key = format!("recovery:{}:{}", peer.ip(), hash(identity));
     {
@@ -899,42 +905,58 @@ async fn recover_login(
             return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many attempts"));
         }
     }
+    let verifier = hash(&body.code);
     let mut tx = pool
         .begin()
         .await
         .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Recovery unavailable"))?;
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT m.id FROM team_members m JOIN web_recovery_codes c ON c.member_id=m.id
-         WHERE m.status='active' AND (m.id=? OR m.email=? OR m.display_name=?)
-         AND c.verifier=? AND c.consumed_at IS NULL LIMIT 1",
+    let member: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM team_members WHERE status='active'
+         AND (id=? OR email=? OR display_name=?) LIMIT 1",
     )
     .bind(identity)
     .bind(identity)
     .bind(identity)
-    .bind(hash(&body.code))
     .fetch_optional(&mut *tx)
     .await
     .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Recovery unavailable"))?;
-    let Some((member_id,)) = row else {
-        let mut attempts = login_attempts().lock().await;
-        let attempt = attempts.entry(limit_key).or_insert((0, Instant::now()));
-        if attempt.1.elapsed() >= Duration::from_secs(300) {
-            *attempt = (0, Instant::now());
+    let code_holder: Option<(String,)> = sqlx::query_as(
+        "SELECT member_id FROM web_recovery_codes
+         WHERE verifier=? AND consumed_at IS NULL LIMIT 1",
+    )
+    .bind(&verifier)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Recovery unavailable"))?;
+    let member_id = match (member, code_holder) {
+        (Some((id,)), Some((code_member,))) if id == code_member => id,
+        _ => {
+            let mut attempts = login_attempts().lock().await;
+            let attempt = attempts.entry(limit_key).or_insert((0, Instant::now()));
+            if attempt.1.elapsed() >= Duration::from_secs(300) {
+                *attempt = (0, Instant::now());
+            }
+            attempt.0 += 1;
+            return Err(err(
+                StatusCode::UNAUTHORIZED,
+                PUBLIC_RECOVERY_DENIED,
+            ));
         }
-        attempt.0 += 1;
-        return Err(err(StatusCode::UNAUTHORIZED, "Invalid recovery code"));
     };
     let updated = sqlx::query(
         "UPDATE web_recovery_codes SET consumed_at=unixepoch()
         WHERE member_id=? AND verifier=? AND consumed_at IS NULL",
     )
     .bind(&member_id)
-    .bind(hash(&body.code))
+    .bind(&verifier)
     .execute(&mut *tx)
     .await
     .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Recovery unavailable"))?;
     if updated.rows_affected() != 1 {
-        return Err(err(StatusCode::UNAUTHORIZED, "Recovery code already used"));
+        return Err(err(
+            StatusCode::UNAUTHORIZED,
+            PUBLIC_RECOVERY_DENIED,
+        ));
     }
     tx.commit()
         .await
@@ -1516,6 +1538,16 @@ mod tests {
         assert!(!local_owner_can_manage_without_session(false, true));
     }
     #[test]
+    fn public_login_and_recovery_use_single_denial_messages() {
+        assert_eq!(PUBLIC_LOGIN_DENIED, "Invalid credentials");
+        assert_eq!(PUBLIC_RECOVERY_DENIED, "Invalid recovery code");
+        assert!(session_cookie("abc", true).contains("HttpOnly"));
+        assert!(session_cookie("abc", true).contains("Secure"));
+        assert!(session_cookie("abc", false).contains("HttpOnly"));
+        assert!(!session_cookie("abc", false).contains("Secure"));
+    }
+
+    #[test]
     fn invalid_origins_and_cookie_parsing() {
         let mut headers = HeaderMap::new();
         headers.insert(header::HOST, "localhost:7070".parse().unwrap());
@@ -1532,8 +1564,6 @@ mod tests {
             "203.0.113.7:23456".parse().unwrap(),
             7070
         ));
-        assert!(session_cookie("abc", true).contains("HttpOnly"));
-        assert!(session_cookie("abc", true).contains("Secure"));
     }
 
     #[test]

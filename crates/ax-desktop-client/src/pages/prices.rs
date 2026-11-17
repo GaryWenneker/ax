@@ -134,7 +134,10 @@ impl PricesPage {
                     .iter()
                     .map(|p| p.input_per_mtok.max(p.output_per_mtok))
                     .fold(0.01_f64, f64::max) as f32;
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 140.0), egui::Sense::hover());
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), 140.0),
+                    egui::Sense::hover(),
+                );
                 let painter = ui.painter_at(rect);
                 painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(0x18, 0x18, 0x18));
                 let n = (series.len() - 1) as f32;
@@ -142,8 +145,10 @@ impl PricesPage {
                 let mut out_pts = Vec::new();
                 for (i, p) in series.iter().enumerate() {
                     let x = rect.min.x + (i as f32 / n) * rect.width();
-                    let yin = rect.max.y - ((p.input_per_mtok as f32 / max) * (rect.height() - 8.0));
-                    let yout = rect.max.y - ((p.output_per_mtok as f32 / max) * (rect.height() - 8.0));
+                    let yin =
+                        rect.max.y - ((p.input_per_mtok as f32 / max) * (rect.height() - 8.0));
+                    let yout =
+                        rect.max.y - ((p.output_per_mtok as f32 / max) * (rect.height() - 8.0));
                     in_pts.push(egui::pos2(x, yin));
                     out_pts.push(egui::pos2(x, yout));
                 }

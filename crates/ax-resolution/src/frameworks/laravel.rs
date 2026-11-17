@@ -33,7 +33,11 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
     )
     .expect("route re");
     for cap in route_re.captures_iter(&safe) {
-        let method = cap.get(1).map(|m| m.as_str()).unwrap_or("get").to_uppercase();
+        let method = cap
+            .get(1)
+            .map(|m| m.as_str())
+            .unwrap_or("get")
+            .to_uppercase();
         let route_path = cap.get(2).map(|m| m.as_str()).unwrap_or("");
         let handler_expr = cap.get(3).map(|m| m.as_str()).unwrap_or("");
         let match_start = cap.get(0).map(|m| m.start()).unwrap_or(0);
@@ -136,13 +140,16 @@ pub async fn try_resolve_target(
     let name = &ref_.reference_name;
 
     if let Some((controller, method)) = parse_controller_method(name) {
-        if let Some(node) = resolve_controller_method(queries, project_root, controller, method).await {
+        if let Some(node) =
+            resolve_controller_method(queries, project_root, controller, method).await
+        {
             return Some((node, 0.9));
         }
     }
 
     if let Some((class_name, method_name)) = parse_model_call(name) {
-        if let Some(node) = resolve_model_call(queries, project_root, class_name, method_name).await {
+        if let Some(node) = resolve_model_call(queries, project_root, class_name, method_name).await
+        {
             return Some((node, 0.85));
         }
     }
@@ -171,7 +178,10 @@ async fn resolve_controller_method(
     let controller_path = format!("app/Http/Controllers/{}.php", controller);
     if project_root.join(&controller_path).exists() {
         if let Ok(nodes) = queries.get_nodes_by_file(&controller_path).await {
-            if let Some(n) = nodes.iter().find(|n| n.kind == NodeKind::Method && n.name == method) {
+            if let Some(n) = nodes
+                .iter()
+                .find(|n| n.kind == NodeKind::Method && n.name == method)
+            {
                 return Some(n.clone());
             }
         }
@@ -181,7 +191,10 @@ async fn resolve_controller_method(
         for ctrl in candidates {
             if ctrl.kind == NodeKind::Class && ctrl.file_path.contains("Controllers") {
                 if let Ok(nodes) = queries.get_nodes_by_file(&ctrl.file_path).await {
-                    if let Some(n) = nodes.iter().find(|n| n.kind == NodeKind::Method && n.name == method) {
+                    if let Some(n) = nodes
+                        .iter()
+                        .find(|n| n.kind == NodeKind::Method && n.name == method)
+                    {
                         return Some(n.clone());
                     }
                 }
@@ -207,10 +220,16 @@ async fn resolve_model_call(
             continue;
         }
         if let Ok(nodes) = queries.get_nodes_by_file(&model_path).await {
-            if let Some(n) = nodes.iter().find(|n| n.kind == NodeKind::Method && n.name == method_name) {
+            if let Some(n) = nodes
+                .iter()
+                .find(|n| n.kind == NodeKind::Method && n.name == method_name)
+            {
                 return Some(n.clone());
             }
-            if let Some(n) = nodes.iter().find(|n| n.kind == NodeKind::Class && n.name == class_name) {
+            if let Some(n) = nodes
+                .iter()
+                .find(|n| n.kind == NodeKind::Class && n.name == class_name)
+            {
                 return Some(n.clone());
             }
         }
@@ -224,10 +243,9 @@ fn short_name(s: &str) -> &str {
 
 fn extract_laravel_handler(expr: &str) -> Option<String> {
     let trimmed = expr.trim();
-    let tuple_re = regex::Regex::new(
-        r#"^\[\s*([A-Za-z_\\][\w\\]*)::class\s*,\s*['"]([^'"]+)['"]\s*\]"#,
-    )
-    .expect("tuple");
+    let tuple_re =
+        regex::Regex::new(r#"^\[\s*([A-Za-z_\\][\w\\]*)::class\s*,\s*['"]([^'"]+)['"]\s*\]"#)
+            .expect("tuple");
     if let Some(cap) = tuple_re.captures(trimmed) {
         let class = short_name(cap.get(1)?.as_str());
         let method = cap.get(2)?.as_str();
@@ -294,7 +312,10 @@ mod tests {
         let content = "Route::resource('posts', PostController::class);";
         let r = extract_file("routes/web.php", content);
         assert!(r.nodes.iter().any(|n| n.name == "resource:posts"));
-        assert!(r.references.iter().any(|r| r.reference_name == "PostController"));
+        assert!(r
+            .references
+            .iter()
+            .any(|r| r.reference_name == "PostController"));
     }
 
     #[test]

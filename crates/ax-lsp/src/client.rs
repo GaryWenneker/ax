@@ -317,7 +317,10 @@ impl LspClient {
             if remaining.is_zero() {
                 break;
             }
-            match self.incoming.recv_timeout(remaining.min(Duration::from_millis(100))) {
+            match self
+                .incoming
+                .recv_timeout(remaining.min(Duration::from_millis(100)))
+            {
                 Ok(Ok(msg)) => {
                     self.observe_notification(&msg);
                     let _ = self.maybe_answer_server_request(&msg)?;
@@ -568,7 +571,10 @@ mod tests {
             Ok(Some(loc)) => {
                 eprintln!("RESOLVED -> {}:{}", loc.path.display(), loc.line + 1);
             }
-            Ok(None) => panic!("definition returned None (quiescent={})", client.is_quiescent()),
+            Ok(None) => panic!(
+                "definition returned None (quiescent={})",
+                client.is_quiescent()
+            ),
             Err(e) => panic!("definition error: {e}"),
         }
     }

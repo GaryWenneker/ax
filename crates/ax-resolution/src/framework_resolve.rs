@@ -41,7 +41,9 @@ pub async fn try_resolve(
         return None;
     }
 
-        if spring::claims_reference(&ref_.reference_name) || ref_.reference_kind != ReferenceKind::Imports {
+    if spring::claims_reference(&ref_.reference_name)
+        || ref_.reference_kind != ReferenceKind::Imports
+    {
         if let Some((node, conf)) = spring::try_resolve_target(queries, ref_).await {
             if conf >= 0.85 {
                 return commit_resolution(queries, ref_, &node, conf).await;
@@ -53,7 +55,7 @@ pub async fn try_resolve(
             }
         }
     }
-if let Some((node, conf)) = react::try_resolve_target(queries, ref_).await {
+    if let Some((node, conf)) = react::try_resolve_target(queries, ref_).await {
         if conf >= 0.9 {
             return commit_resolution(queries, ref_, &node, conf).await;
         }
@@ -107,7 +109,11 @@ if let Some((node, conf)) = react::try_resolve_target(queries, ref_).await {
         }
     }
 
-    if let Some((node, conf)) = best { commit_resolution(queries, ref_, &node, conf).await } else { None }
+    if let Some((node, conf)) = best {
+        commit_resolution(queries, ref_, &node, conf).await
+    } else {
+        None
+    }
 }
 
 async fn commit_resolution(

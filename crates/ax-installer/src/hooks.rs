@@ -136,8 +136,18 @@ pub fn upsert(config: &mut Value, ide: GuardIde, bin: &str) -> Result<(), String
             let entry = json!({ "command": cmd, "matcher": "Read|Grep|Shell", "timeout": 5 });
             replace_or_push(event_array(config, "preToolUse")?, entry, is_guard);
         }
-        GuardIde::Claude => nested(config, "PreToolUse", "Read|Grep|Bash", json!({ "type": "command", "command": cmd, "timeout": 5 }))?,
-        GuardIde::Codex => nested(config, "PreToolUse", "^Bash$", json!({ "type": "command", "command": cmd, "timeout": 5 }))?,
+        GuardIde::Claude => nested(
+            config,
+            "PreToolUse",
+            "Read|Grep|Bash",
+            json!({ "type": "command", "command": cmd, "timeout": 5 }),
+        )?,
+        GuardIde::Codex => nested(
+            config,
+            "PreToolUse",
+            "^Bash$",
+            json!({ "type": "command", "command": cmd, "timeout": 5 }),
+        )?,
         GuardIde::Gemini => nested(
             config,
             "BeforeTool",
@@ -172,7 +182,9 @@ fn remove_marked(config: &mut Value, is_ours: fn(&Value) -> bool) -> bool {
     let mut changed = false;
     let mut emptied = Vec::new();
     for (event, items) in hooks.iter_mut() {
-        let Some(items) = items.as_array_mut() else { continue };
+        let Some(items) = items.as_array_mut() else {
+            continue;
+        };
         let before = items.len();
         let mut inner_changed = false;
         items.retain_mut(|item| {
@@ -241,7 +253,8 @@ pub fn uninstall_turn_hooks_file(path: &Path) -> Result<Option<FileAction>, Stri
 fn read_strict(path: &Path) -> Result<Value, String> {
     match fs::read_to_string(path) {
         Ok(raw) if raw.trim().is_empty() => Ok(json!({})),
-        Ok(raw) => serde_json::from_str(&raw).map_err(|e| format!("{} is not valid JSON ({e}); left unchanged", path.display())),
+        Ok(raw) => serde_json::from_str(&raw)
+            .map_err(|e| format!("{} is not valid JSON ({e}); left unchanged", path.display())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
         Err(e) => Err(format!("cannot read {}: {e}", path.display())),
     }
@@ -256,7 +269,11 @@ fn write(path: &Path, before: &Value, after: &Value, existed: bool) -> Result<Fi
     }
     let body = serde_json::to_string_pretty(after).map_err(|e| e.to_string())?;
     fs::write(path, body).map_err(|e| e.to_string())?;
-    Ok(if existed { FileAction::Updated } else { FileAction::Created })
+    Ok(if existed {
+        FileAction::Updated
+    } else {
+        FileAction::Created
+    })
 }
 
 pub fn install_file(path: &Path, ide: GuardIde, bin: &str) -> Result<FileAction, String> {
@@ -294,7 +311,8 @@ mod tests {
     const BIN: &str = "/opt/ax/bin/ax";
 
     fn temp_file(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("ax-guard-hooks-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("ax-guard-hooks-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir.join("hooks.json")
@@ -302,7 +320,10 @@ mod tests {
 
     #[test]
     fn command_quotes_a_bin_path_with_spaces() {
-        assert_eq!(guard_command(BIN, GuardIde::Cursor), "/opt/ax/bin/ax read-guard --ide cursor");
+        assert_eq!(
+            guard_command(BIN, GuardIde::Cursor),
+            "/opt/ax/bin/ax read-guard --ide cursor"
+        );
         assert_eq!(
             guard_command("/Users/me/Application Support/ax", GuardIde::Gemini),
             "\"/Users/me/Application Support/ax\" read-guard --ide gemini"
@@ -315,9 +336,15 @@ mod tests {
             quote_bin(r"C:\Users\gary.dyksman\AppData\Local\ax\current\bin\ax.exe"),
             "C:/Users/gary.dyksman/AppData/Local/ax/current/bin/ax.exe"
         );
-        assert_eq!(quote_bin(r"C:\Program Files\ax\ax.exe"), "\"C:/Program Files/ax/ax.exe\"");
+        assert_eq!(
+            quote_bin(r"C:\Program Files\ax\ax.exe"),
+            "\"C:/Program Files/ax/ax.exe\""
+        );
         assert_eq!(quote_bin(r"\\?\C:\ax\ax.exe"), "C:/ax/ax.exe");
-        assert_eq!(quote_bin(r"\\?\UNC\server\share\ax.exe"), "//server/share/ax.exe");
+        assert_eq!(
+            quote_bin(r"\\?\UNC\server\share\ax.exe"),
+            "//server/share/ax.exe"
+        );
         assert_eq!(quote_bin("/opt/ax/bin/ax"), "/opt/ax/bin/ax");
         assert!(!quote_bin(r"C:\Users\a\ax.exe").contains('\\'));
     }
@@ -347,7 +374,10 @@ mod tests {
         let mut codex = json!({});
         upsert(&mut codex, GuardIde::Codex, BIN).unwrap();
         assert_eq!(codex["hooks"]["PreToolUse"][0]["matcher"], "^Bash$");
-        assert_eq!(codex["hooks"]["PreToolUse"][0]["hooks"][0]["command"], "/opt/ax/bin/ax read-guard --ide codex");
+        assert_eq!(
+            codex["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+            "/opt/ax/bin/ax read-guard --ide codex"
+        );
         let mut gemini = json!({});
         upsert(&mut gemini, GuardIde::Gemini, BIN).unwrap();
         assert_eq!(
@@ -362,7 +392,8 @@ mod tests {
     fn windsurf_guards_reads_and_commands() {
         let mut c = json!({});
         upsert(&mut c, GuardIde::Windsurf, BIN).unwrap();
-        let entry = json!([{ "command": "/opt/ax/bin/ax read-guard --ide windsurf", "show_output": true }]);
+        let entry =
+            json!([{ "command": "/opt/ax/bin/ax read-guard --ide windsurf", "show_output": true }]);
         assert_eq!(c["hooks"]["pre_read_code"], entry);
         assert_eq!(c["hooks"]["pre_run_command"], entry);
     }
@@ -381,13 +412,17 @@ mod tests {
         assert_eq!(c, once, "second install changes nothing");
         let items = c["hooks"]["preToolUse"].as_array().unwrap();
         assert_eq!(items.len(), 2, "duplicates collapse to one entry");
-        assert_eq!(items[0]["command"], "/opt/ax/bin/ax read-guard --ide cursor");
+        assert_eq!(
+            items[0]["command"],
+            "/opt/ax/bin/ax read-guard --ide cursor"
+        );
         assert_eq!(items[1], other, "unrelated hooks keep their place");
     }
 
     #[test]
     fn upsert_preserves_unrelated_settings_and_groups() {
-        let prompt = json!({ "hooks": [{ "type": "command", "command": "/opt/ax/bin/ax prompt-hook" }] });
+        let prompt =
+            json!({ "hooks": [{ "type": "command", "command": "/opt/ax/bin/ax prompt-hook" }] });
         let mut c = json!({ "model": "opus", "hooks": { "UserPromptSubmit": [prompt.clone()], "PreToolUse": [
             { "matcher": "Write", "hooks": [{ "type": "command", "command": "lint" }] }
         ] } });
@@ -423,13 +458,22 @@ mod tests {
             "pre_read_code": [{ "command": "ax read-guard --ide windsurf" }]
         } });
         assert!(remove(&mut c));
-        assert_eq!(c["hooks"]["preToolUse"], json!([{ "command": "./audit.sh" }]));
+        assert_eq!(
+            c["hooks"]["preToolUse"],
+            json!([{ "command": "./audit.sh" }])
+        );
         assert_eq!(
             c["hooks"]["PreToolUse"],
             json!([{ "matcher": "*", "hooks": [{ "type": "command", "command": "keep-me" }] }])
         );
-        assert_eq!(c["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"], "ax prompt-hook");
-        assert!(c["hooks"].get("pre_read_code").is_none(), "an event emptied by removal is dropped");
+        assert_eq!(
+            c["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
+            "ax prompt-hook"
+        );
+        assert!(
+            c["hooks"].get("pre_read_code").is_none(),
+            "an event emptied by removal is dropped"
+        );
         assert!(!remove(&mut c), "second remove is a no-op");
     }
 
@@ -444,17 +488,33 @@ mod tests {
         } });
         assert!(remove(&mut c));
         assert!(c["hooks"].get("PreToolUse").is_none());
-        assert_eq!(c["hooks"]["Stop"], json!([]), "an untouched empty event survives an earlier removal");
+        assert_eq!(
+            c["hooks"]["Stop"],
+            json!([]),
+            "an untouched empty event survives an earlier removal"
+        );
     }
 
     #[test]
     fn install_and_uninstall_files() {
         let path = temp_file("roundtrip");
-        assert_eq!(install_file(&path, GuardIde::Cursor, BIN).unwrap(), FileAction::Created);
-        assert_eq!(install_file(&path, GuardIde::Cursor, BIN).unwrap(), FileAction::Unchanged);
-        assert_eq!(install_file(&path, GuardIde::Cursor, "/new/ax").unwrap(), FileAction::Updated);
+        assert_eq!(
+            install_file(&path, GuardIde::Cursor, BIN).unwrap(),
+            FileAction::Created
+        );
+        assert_eq!(
+            install_file(&path, GuardIde::Cursor, BIN).unwrap(),
+            FileAction::Unchanged
+        );
+        assert_eq!(
+            install_file(&path, GuardIde::Cursor, "/new/ax").unwrap(),
+            FileAction::Updated
+        );
         let on_disk: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(on_disk["hooks"]["preToolUse"][0]["command"], "/new/ax read-guard --ide cursor");
+        assert_eq!(
+            on_disk["hooks"]["preToolUse"][0]["command"],
+            "/new/ax read-guard --ide cursor"
+        );
         assert_eq!(uninstall_file(&path).unwrap(), Some(FileAction::Updated));
         assert_eq!(uninstall_file(&path).unwrap(), None);
         let _ = fs::remove_dir_all(path.parent().unwrap());

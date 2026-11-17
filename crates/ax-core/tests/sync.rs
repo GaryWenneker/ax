@@ -260,3 +260,38 @@ export function alphaRenamed() {
 
     ax.destroy().await.unwrap();
 }
+
+#[tokio::test]
+async fn index_names_each_maintenance_step() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "src/app.ts",
+        "export function greet(name: string) { return name; }\n",
+    );
+    let mut ax = Ax::init(dir.path()).await.unwrap();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let capture = std::sync::Arc::clone(&seen);
+    let progress = Box::new(move |event: ax_types::IndexProgress| {
+        if event.phase == ax_types::IndexPhase::Optimizing {
+            if let Some(label) = event.file_path {
+                capture.lock().expect("progress").push(label);
+            }
+        }
+    }) as Box<dyn FnMut(ax_types::IndexProgress) + Send>;
+    ax.index_all(quiet_opts(), Some(progress)).await.unwrap();
+    let labels = seen.lock().expect("progress").clone();
+    assert_eq!(
+        labels,
+        vec![
+            "markdown docs".to_string(),
+            "contracts".to_string(),
+            "SQLite maintenance".to_string(),
+            "graph episodes".to_string(),
+            "activity engrams".to_string(),
+            "memory consolidation".to_string(),
+            "memory re-embed".to_string(),
+        ]
+    );
+    ax.destroy().await.unwrap();
+}

@@ -106,7 +106,10 @@ impl McpEngine {
 
     /// Start the debounced file watcher and connect-time catch-up background services.
     pub fn start_background_services(project_root: &Path) {
-        drop(Ax::spawn_background_watch(project_root.to_path_buf()));
+        drop(Ax::spawn_background_watch_as(
+            project_root.to_path_buf(),
+            "mcp",
+        ));
         ax_usage::spawn_ensure_daily_pricing_sync();
     }
 

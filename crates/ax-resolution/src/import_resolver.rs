@@ -58,11 +58,11 @@ impl ImportResolver {
         }
     }
 
-
     fn load_cargo_workspace(&mut self, root: &Path) {
         let cargo = root.join("Cargo.toml");
         if cargo.exists() {
-            self.path_aliases.insert("@crate".to_string(), ".".to_string());
+            self.path_aliases
+                .insert("@crate".to_string(), ".".to_string());
         }
     }
 
@@ -87,7 +87,10 @@ impl ImportResolver {
     pub fn resolve_import(&self, import_path: &str, from_file: &str) -> Option<String> {
         for (alias, target) in &self.path_aliases {
             if import_path.starts_with(alias) {
-                let rest = import_path.strip_prefix(alias).unwrap_or("").trim_start_matches('/');
+                let rest = import_path
+                    .strip_prefix(alias)
+                    .unwrap_or("")
+                    .trim_start_matches('/');
                 if rest.is_empty() {
                     return Some(target.clone());
                 }
@@ -133,7 +136,11 @@ impl ImportResolver {
 }
 
 fn clean_import_path(import_path: &str) -> String {
-    import_path.trim().trim_matches('"').trim_matches('\'').to_string()
+    import_path
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_string()
 }
 
 /// Strip `//` and `/* */` comments so tsconfig/jsconfig with comments parse (CG jsonc-parser).

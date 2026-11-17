@@ -261,5 +261,8 @@ static ALL_SPECS: &[&LangSpec] = &[
 ];
 
 pub fn generic_extractors() -> Vec<GenericExtractor> {
-    ALL_SPECS.iter().map(|s| GenericExtractor { spec: s }).collect()
+    ALL_SPECS
+        .iter()
+        .map(|s| GenericExtractor { spec: s })
+        .collect()
 }

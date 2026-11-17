@@ -39,7 +39,9 @@ impl ParsePool {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
-        let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+        let cpus = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
         let pool_size = if env > 0 {
             env.min(MAX_POOL_SIZE)
         } else {
@@ -60,7 +62,10 @@ impl ParsePool {
         }
     }
 
-    pub fn parse_batch(&self, tasks: Vec<ParseTask>) -> Vec<(String, Result<ExtractionResult, String>)> {
+    pub fn parse_batch(
+        &self,
+        tasks: Vec<ParseTask>,
+    ) -> Vec<(String, Result<ExtractionResult, String>)> {
         let extractors = Arc::clone(&self.extractors);
         self.pool.install(|| {
             tasks
@@ -74,7 +79,10 @@ impl ParsePool {
     }
 }
 
-fn parse_file(task: &ParseTask, extractors: &HashMap<Language, Box<dyn LanguageExtractor>>) -> Result<ExtractionResult, String> {
+fn parse_file(
+    task: &ParseTask,
+    extractors: &HashMap<Language, Box<dyn LanguageExtractor>>,
+) -> Result<ExtractionResult, String> {
     let Some(extractor) = extractor_for_task(task.language, extractors) else {
         return Ok(ExtractionResult::default());
     };
@@ -85,7 +93,9 @@ fn parse_file(task: &ParseTask, extractors: &HashMap<Language, Box<dyn LanguageE
     parser.set_language(&ts_lang).map_err(|e| e.to_string())?;
 
     let source = task.content.as_bytes();
-    let tree = parser.parse(source, None).ok_or_else(|| "parse failed".to_string())?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| "parse failed".to_string())?;
     Ok(extractor.extract(source, &tree, &task.file_path))
 }
 

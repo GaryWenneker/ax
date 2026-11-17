@@ -51,6 +51,9 @@ pub struct Dataset {
     pub files: u64,
     pub source_bytes: u64,
     pub agent_sessions: u64,
+    /// Optional Neural share/model manifest blob. Absent on older peers (serde default).
+    #[serde(default)]
+    pub neural: Option<FileManifest>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -446,6 +449,7 @@ pub async fn export(root: &Path, origin: &str, _pool: &SqlitePool) -> Result<Dat
             files: files as u64,
             source_bytes: source_bytes as u64,
             agent_sessions: agent_sessions as u64,
+            neural: None,
         };
         let previous = directory(&root_owned, "datasets")?.join(format!("{}.json", item.origin));
         if previous.exists() {

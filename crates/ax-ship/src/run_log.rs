@@ -124,7 +124,9 @@ impl RunLogger {
     }
 
     pub fn sonar_project_skip(&mut self, project_key: &str, repo_name: &str, reason: &str) {
-        self.line(format!("– sonar:{project_key} — {repo_name} — skipped ({reason})"));
+        self.line(format!(
+            "– sonar:{project_key} — {repo_name} — skipped ({reason})"
+        ));
     }
 
     pub fn finish(mut self, ok: bool) -> LastRunLog {

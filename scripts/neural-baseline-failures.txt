@@ -1,0 +1,30 @@
+# Test failures that exist without the Neural change, one per line as `<label> <test name>`.
+# scripts/neural-test-verdict.py fails on every failing test that is not listed for its label.
+# Names are not qualified by test binary: a new failure with a listed name would not be noticed.
+# Measured on 2026-11-15 with an empty HOME and AX_SKIP_WEB_BUILD=1, as scripts/neural-gauntlet.sh
+# runs them. ax-neural, ax-db, and ax-cli had no failing test.
+
+# server.rs:1179: the first preflight has no `## Index` block. It fails the same way with Neural
+# ranking forced off, and prediction is off in this project's ax.json, so no Neural block is added.
+ax-mcp server::policy_integration::unchanged_catalog_and_memory_titles_are_sent_once_per_session
+
+# Free-text recall over turns returns nothing. The uncommitted memory full-text work (not Neural)
+# rebuilds memories_fts in crates/ax-db/src/migrations.rs; Neural migrations 45 and 46 only create
+# neural_* tables, and no Neural code reads memories_fts.
+ax-memory h1_free_text_needs_a_shared_word_beyond_recall
+ax-memory h1_free_text_uses_recall_on_turns
+ax-memory r1_turn_sharing_two_words_with_the_prompt_is_related
+ax-memory r3_prompt_matches_are_capped_at_three_newest_first
+ax-memory preflight_recall_skips_turn_memories_but_recall_finds_them
+# Flaky under load: failed 1 of 5 full runs of tests/history.rs while mutation testing ran
+# (save_turn returned an error at history.rs:37) and passed 6 of 6 runs alone. The four failures
+# above also fail with the real HOME, so the empty HOME does not cause them.
+ax-memory h1_symbol_name_resolves_to_its_file
+
+# dav_vault.rs:75: "vtable constructor failed: memories_fts", the same uncommitted full-text work.
+ax-web b12_obsidian_new_note_flow_ends_in_rule
+
+# costs.rs:160: Cursor transcript import returns no models. costs.rs is unchanged by Neural.
+# Dirty ax-usage work in this tree (activity/savings/budget, not Neural) leaves the import empty.
+# Measured again on 2026-11-16 with an empty HOME and AX_SKIP_WEB_BUILD=1.
+ax-cli commands::costs::tests::run_imports_a_cursor_transcript_before_the_report

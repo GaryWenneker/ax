@@ -1,0 +1,15 @@
+{
+  "kind": "measured",
+  "evidenceType": "runtime",
+  "target": "macos-x86_64",
+  "host": "Darwin arm64 host executing Mach-O x86_64 under Rosetta 2",
+  "method": "cross-compile on aarch64-apple-darwin host to x86_64-apple-darwin; execute with arch -x86_64",
+  "testsPassed": 124,
+  "testsFailed": 0,
+  "features": ["neural-runtime"],
+  "binary": "target-dev/x86_64-apple-darwin/debug/build/ax-neural/c11c4476eb4f26b7/out/ax_neural-c11c4476eb4f26b7",
+  "logPath": "target-dev/macos-x86_64-ax-neural-test.log",
+  "durationSeconds": 16.38,
+  "timestamp": "2026-11-16T12:05:00Z",
+  "note": "Not compile-only. Rosetta executed the x86_64 Mach-O; test result: ok."
+}

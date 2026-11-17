@@ -5,6 +5,7 @@ import SecuritySettingsSection from '../components/SecuritySettingsSection';
 import { useEffect, useState, type ReactNode } from 'react';
 
 import EmbedSettingsSection from '../components/EmbedSettingsSection';
+import NeuralSettingsSection from '../components/NeuralSettingsSection';
 import RemoteMcpSettingsSection from '../components/RemoteMcpSettingsSection';
 import OkfSettingsSection from '../components/OkfSettingsSection';
 import PluginsSettingsSection from '../components/PluginsSettingsSection';
@@ -670,10 +671,11 @@ export default function SettingsPage() {
         <section className="settings-card">
           <div className="settings-card-header">
             <h2>Embeddings</h2>
-            <p>Memory embed backend (feature-hash or ONNX dense vectors).</p>
+            <p>Memory embeddings are hash-v1. Neural is required and stays on.</p>
           </div>
           <div className="settings-card-body">
             <EmbedSettingsSection />
+            <NeuralSettingsSection />
           </div>
         </section>
 

@@ -60,6 +60,14 @@ pub const CORE_TOOLS: &[&str] = &[
     "ax_tool_economics",
     "ax_optimization_advice",
     "ax_cost",
+    "ax_neural_status",
+    "ax_neural_search",
+    "ax_neural_rank",
+    "ax_neural_predict",
+    "ax_neural_explain",
+    "ax_neural_model_list",
+    "ax_neural_model_status",
+    "ax_neural_benchmark",
 ];
 
 /// Every `ax_*` tool named by the shipped policy rules and IDE bootstrap text

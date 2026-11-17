@@ -70,12 +70,7 @@ pub fn log_tool_inbound(project_root: Option<&Path>, tool: &str, args: &Value) {
 }
 
 /// Append `outbound tool=…` and optional preview (CLI brand).
-pub fn log_tool_outbound(
-    project_root: Option<&Path>,
-    tool: &str,
-    duration_ms: i64,
-    text: &str,
-) {
+pub fn log_tool_outbound(project_root: Option<&Path>, tool: &str, duration_ms: i64, text: &str) {
     let text_chars = text.chars().count();
     let mut lines = vec![format_ax_tagged(format!(
         "outbound tool={tool} mode=lean text_chars={text_chars} structured=false duration_ms={duration_ms}"
@@ -90,12 +85,7 @@ pub fn log_tool_outbound(
 }
 
 /// Append `error tool=…`.
-pub fn log_tool_error(
-    project_root: Option<&Path>,
-    tool: &str,
-    message: &str,
-    duration_ms: i64,
-) {
+pub fn log_tool_error(project_root: Option<&Path>, tool: &str, message: &str, duration_ms: i64) {
     let msg = truncate_chars(message, ARGS_FIELD_MAX);
     let line = format_ax_tagged(format!(
         "error tool={tool} message={msg} duration_ms={duration_ms}"
@@ -140,10 +130,7 @@ mod tests {
             text.contains("outbound tool=ax_explore"),
             "missing outbound: {text}"
         );
-        assert!(
-            text.contains("[ax]"),
-            "expected CLI brand [ax]: {text}"
-        );
+        assert!(text.contains("[ax]"), "expected CLI brand [ax]: {text}");
         assert!(
             !text.contains("[ax-mcp]"),
             "must not fake MCP brand: {text}"
@@ -176,8 +163,7 @@ mod tests {
 
         ToolTrace::begin(Some(&dir), "ax_remember", &json!({"body": "note"}))
             .finish_ok("Remembered");
-        ToolTrace::begin(Some(&dir), "ax_recall", &json!({"query": "note"}))
-            .finish_ok("1 memory");
+        ToolTrace::begin(Some(&dir), "ax_recall", &json!({"query": "note"})).finish_ok("1 memory");
 
         let text = read_today_log(&dir);
         assert!(text.contains("inbound tool=ax_remember"));

@@ -104,9 +104,12 @@ async fn put_settings(
     })))
 }
 
-async fn list_installed(State(hub): State<WebHub>) -> Result<Json<Vec<String>>, (StatusCode, String)> {
+async fn list_installed(
+    State(hub): State<WebHub>,
+) -> Result<Json<Vec<String>>, (StatusCode, String)> {
     let root = hub.read().await.project_root.clone();
-    let lock = ax_skill_catalog::LockFile::load(&root.join(".ax").join("skills-lock.json")).map_err(bad)?;
+    let lock = ax_skill_catalog::LockFile::load(&root.join(".ax").join("skills-lock.json"))
+        .map_err(bad)?;
     Ok(Json(lock.installed_ids()))
 }
 
@@ -247,9 +250,9 @@ async fn audit_one(
     let report = tokio::task::spawn_blocking(move || {
         audit_installed(&root, &skill_name, verdict, &names, stored)
     })
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .map_err(bad)?;
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(bad)?;
     Ok(Json(report))
 }
 

@@ -228,13 +228,23 @@ impl Telemetry {
         self.read_config().is_some()
     }
 
-    pub fn record_usage(&mut self, kind: UsageKind, name: &str, ok: bool, client: Option<&ClientInfo>) {
+    pub fn record_usage(
+        &mut self,
+        kind: UsageKind,
+        name: &str,
+        ok: bool,
+        client: Option<&ClientInfo>,
+    ) {
         if !self.is_enabled() {
             return;
         }
         let day = utc_day();
-        let cn = client.and_then(|c| c.name.as_ref()).map(|s| truncate(s, 64));
-        let cv = client.and_then(|c| c.version.as_ref()).map(|s| truncate(s, 32));
+        let cn = client
+            .and_then(|c| c.name.as_ref())
+            .map(|s| truncate(s, 64));
+        let cv = client
+            .and_then(|c| c.version.as_ref())
+            .map(|s| truncate(s, 32));
         let key = format!(
             "{}\0{}\0{}\0{}\0{}",
             day,
@@ -388,9 +398,10 @@ impl Telemetry {
     }
 
     fn claim_queue(&self) -> Option<(PathBuf, Vec<BufferLine>)> {
-        let claim_path = self
-            .dir
-            .join(format!("telemetry-queue.sending.{}.jsonl", std::process::id()));
+        let claim_path = self.dir.join(format!(
+            "telemetry-queue.sending.{}.jsonl",
+            std::process::id()
+        ));
         let queue = self.queue_path();
         if fs::rename(&queue, &claim_path).is_err() {
             return None;

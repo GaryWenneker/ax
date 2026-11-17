@@ -8,7 +8,9 @@ use crate::strip_comments::strip_comments_for_regex;
 
 use super::extract::{language_for_path, now_ms, stable_node_id, FrameworkExtractResult};
 
-const HTTP_METHODS: &[&str] = &["Get", "Post", "Put", "Patch", "Delete", "Head", "Options", "All"];
+const HTTP_METHODS: &[&str] = &[
+    "Get", "Post", "Put", "Patch", "Delete", "Head", "Options", "All",
+];
 
 pub fn detect(project_root: &std::path::Path) -> bool {
     let pkg_path = project_root.join("package.json");
@@ -142,7 +144,8 @@ fn join_http_path(prefix: &str, path: &str) -> String {
 fn method_name_after(safe: &str, from: usize) -> Option<String> {
     let tail = safe.get(from..).unwrap_or("");
     let re = Regex::new(r"\b(?:async\s+)?(\w+)\s*\(").expect("method name");
-    re.captures(tail).and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
+    re.captures(tail)
+        .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
 }
 
 fn read_balanced_paren_end(s: &str, open: usize) -> usize {

@@ -78,7 +78,9 @@ fn turns_dir(root: &Path) -> PathBuf {
 }
 
 fn snapshot_path(root: &Path, session: &str, turn_id: &str) -> PathBuf {
-    turns_dir(root).join(session).join(format!("{turn_id}.json"))
+    turns_dir(root)
+        .join(session)
+        .join(format!("{turn_id}.json"))
 }
 
 fn write_snapshot(root: &Path, snap: &TurnSnapshot) -> Result<(), String> {
@@ -298,12 +300,7 @@ pub async fn turn_event(
     let _ = record_activity(
         root,
         ActivityRecord {
-            idempotency_key: format!(
-                "turn.event:{}:{}:{}",
-                turn_id,
-                kind,
-                snap.events.len()
-            ),
+            idempotency_key: format!("turn.event:{}:{}:{}", turn_id, kind, snap.events.len()),
             source: Some(ActivitySource::Agent),
             session_id: Some(session_id.to_string()),
             turn_id: Some(turn_id.to_string()),
@@ -538,7 +535,15 @@ async fn save_cli_turn_memory(
 
     let mut body = snap.prompt.clone();
     if !snap.files.is_empty() {
-        body.push_str(&format!("\n\nFiles: {}", snap.files.iter().take(30).cloned().collect::<Vec<_>>().join(", ")));
+        body.push_str(&format!(
+            "\n\nFiles: {}",
+            snap.files
+                .iter()
+                .take(30)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
     }
     if !commits.is_empty() {
         body.push_str("\n\nCommits:");
@@ -565,7 +570,10 @@ async fn save_cli_turn_memory(
         body.push_str(outcome);
     }
 
-    let id = format!("turn-{}", &blake3_hex(&format!("{}:{}", snap.session_id, snap.turn_id))[..16]);
+    let id = format!(
+        "turn-{}",
+        &blake3_hex(&format!("{}:{}", snap.session_id, snap.turn_id))[..16]
+    );
     let files_json = serde_json::to_string(&snap.files).unwrap_or_else(|_| "[]".into());
     let now = now_ms();
     sqlx::query(
@@ -663,11 +671,7 @@ pub async fn turn_fail(
 }
 
 /// Status of a turn, or list open turns for a session when turn_id is None.
-pub fn turn_status(
-    root: &Path,
-    session_id: &str,
-    turn_id: Option<&str>,
-) -> Result<Value, String> {
+pub fn turn_status(root: &Path, session_id: &str, turn_id: Option<&str>) -> Result<Value, String> {
     if let Some(id) = turn_id {
         let snap = read_snapshot(root, session_id, id)?;
         return serde_json::to_value(snap).map_err(|e| e.to_string());
@@ -710,11 +714,7 @@ mod tests {
 
     static SEQ: AtomicUsize = AtomicUsize::new(0);
 
-    async fn fixture() -> (
-        PathBuf,
-        SqlitePool,
-        tokio::sync::MutexGuard<'static, ()>,
-    ) {
+    async fn fixture() -> (PathBuf, SqlitePool, tokio::sync::MutexGuard<'static, ()>) {
         let guard = crate::store::USAGE_ENV_LOCK.lock().await;
         let n = SEQ.fetch_add(1, Ordering::SeqCst);
         let dir = std::env::temp_dir().join(format!("ax-turn-{}-{n}", std::process::id()));
@@ -736,10 +736,7 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        std::env::set_var(
-            "AX_USAGE_DB",
-            dir.join("usage.db").display().to_string(),
-        );
+        std::env::set_var("AX_USAGE_DB", dir.join("usage.db").display().to_string());
         let _ = open_pool_at(&dir.join("usage.db")).await.unwrap();
         (dir, pool, guard)
     }
@@ -801,6 +798,8 @@ mod tests {
             .unwrap();
         let status = turn_status(&root, "sess-b", None).unwrap();
         let open = status["open"].as_array().unwrap();
-        assert!(open.iter().any(|v| v.as_str() == Some(begin.turn_id.as_str())));
+        assert!(open
+            .iter()
+            .any(|v| v.as_str() == Some(begin.turn_id.as_str())));
     }
 }

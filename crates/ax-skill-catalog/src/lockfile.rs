@@ -96,13 +96,17 @@ mod tests {
         assert_eq!(loaded.skills["pdf"].sha, "abc");
         assert_eq!(loaded.installed_ids(), Vec::<String>::new());
         fs::create_dir_all(dir.path().join("skills/pdf")).unwrap();
-        fs::write(dir.path().join("skills/pdf/SKILL.md"), "---\nname: pdf\n---\n").unwrap();
+        fs::write(
+            dir.path().join("skills/pdf/SKILL.md"),
+            "---\nname: pdf\n---\n",
+        )
+        .unwrap();
         lock.skills.get_mut("pdf").unwrap().skill_path =
             dir.path().join("skills/pdf").display().to_string();
+        assert_eq!(lock.installed_ids(), vec!["acme/skills/pdf".to_string()]);
         assert_eq!(
-            lock.installed_ids(),
-            vec!["acme/skills/pdf".to_string()]
+            catalog_id("pdf", "anthropics/skills/pdf"),
+            "anthropics/skills/pdf"
         );
-        assert_eq!(catalog_id("pdf", "anthropics/skills/pdf"), "anthropics/skills/pdf");
     }
 }

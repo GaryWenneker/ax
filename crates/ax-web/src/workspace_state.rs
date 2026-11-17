@@ -155,6 +155,7 @@ impl WebHub {
             )
             .nest("/api/usage", crate::savings::router(hub.clone()))
             .nest("/api/memory", crate::memory::router_hub(hub.clone()))
+            .nest("/api/neural", crate::neural::router(hub.clone()))
             .nest("/api/links", crate::links_api::router_hub(hub.clone()))
             .nest(
                 "/api/docs-catalog",
@@ -387,6 +388,7 @@ fn graph_router(hub: WebHub) -> Router {
         .route("/node/{id}", get(crate::handle_node))
         .route("/graph", get(crate::handle_graph))
         .route("/graph/recent", get(crate::handle_graph_recent))
+        .route("/graph/as-of", get(crate::handle_graph_as_of))
         .route("/graph/stream", get(crate::handle_graph_stream))
         .route("/graph/export", get(crate::graph_export::handle_export))
         .route("/insights", get(crate::handle_insights))

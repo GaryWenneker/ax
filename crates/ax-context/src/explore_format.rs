@@ -66,7 +66,8 @@ fn format_node_list(out: &mut String, label: &str, neighbors: &[CallNeighbor]) {
         return;
     }
     let cap = max_neighbors();
-    let mut ordered: Vec<&CallNeighbor> = neighbors.iter().filter(|c| c.edge_kind.is_some()).collect();
+    let mut ordered: Vec<&CallNeighbor> =
+        neighbors.iter().filter(|c| c.edge_kind.is_some()).collect();
     ordered.extend(neighbors.iter().filter(|c| c.edge_kind.is_none()));
     for c in ordered.iter().take(cap) {
         let n = &c.node;
@@ -81,7 +82,11 @@ fn format_node_list(out: &mut String, label: &str, neighbors: &[CallNeighbor]) {
         ));
     }
     if ordered.len() > cap {
-        let tool = if label == "Callers" { "ax_callers" } else { "ax_callees" };
+        let tool = if label == "Callers" {
+            "ax_callers"
+        } else {
+            "ax_callees"
+        };
         out.push_str(&format!(
             "_+{} more; call `{tool}` on this symbol for the full list._\n",
             ordered.len() - cap
@@ -178,19 +183,37 @@ mod tests {
         let mut callees: Vec<CallNeighbor> = (0..40)
             .map(|i| neighbor(&format!("transitive{i}"), "src/t.ts", i, None, None))
             .collect();
-        callees.push(neighbor("directFn", "src/d.ts", 1, Some(EdgeKind::Calls), Some(EdgeConfidence::Extracted)));
+        callees.push(neighbor(
+            "directFn",
+            "src/d.ts",
+            1,
+            Some(EdgeKind::Calls),
+            Some(EdgeConfidence::Extracted),
+        ));
         let mut out = String::new();
         format_node_list(&mut out, "Callees", &callees);
         assert!(out.contains("### Callees (41)"), "{out}");
-        assert!(out.find("directFn").unwrap() < out.find("transitive0").unwrap(), "{out}");
-        assert_eq!(out.lines().filter(|l| l.starts_with("- ")).count(), MAX_NEIGHBORS_DEFAULT);
-        assert!(out.contains(&format!("+{} more", 41 - MAX_NEIGHBORS_DEFAULT)), "{out}");
+        assert!(
+            out.find("directFn").unwrap() < out.find("transitive0").unwrap(),
+            "{out}"
+        );
+        assert_eq!(
+            out.lines().filter(|l| l.starts_with("- ")).count(),
+            MAX_NEIGHBORS_DEFAULT
+        );
+        assert!(
+            out.contains(&format!("+{} more", 41 - MAX_NEIGHBORS_DEFAULT)),
+            "{out}"
+        );
         assert!(out.contains("ax_callees"), "{out}");
     }
 
     #[test]
     fn short_neighbor_list_is_unchanged() {
-        let callers = vec![neighbor("a", "src/a.ts", 1, None, None), neighbor("b", "src/b.ts", 2, None, None)];
+        let callers = vec![
+            neighbor("a", "src/a.ts", 1, None, None),
+            neighbor("b", "src/b.ts", 2, None, None),
+        ];
         let mut out = String::new();
         format_node_list(&mut out, "Callers", &callers);
         assert_eq!(out.lines().filter(|l| l.starts_with("- ")).count(), 2);

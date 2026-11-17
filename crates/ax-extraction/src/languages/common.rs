@@ -3,9 +3,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use ax_types::{
-    Edge, EdgeKind, ExtractionResult, Language, Node, NodeKind, Provenance,
-};
+use ax_types::{Edge, EdgeKind, ExtractionResult, Language, Node, NodeKind, Provenance};
 use tree_sitter::{Node as TsNode, Tree};
 
 #[derive(Debug, Clone)]
@@ -30,7 +28,12 @@ pub fn symbol_spans_from_result(result: &ExtractionResult) -> Vec<SymbolSpan> {
     result
         .nodes
         .iter()
-        .filter(|n| matches!(n.kind, NodeKind::Function | NodeKind::Method | NodeKind::Class))
+        .filter(|n| {
+            matches!(
+                n.kind,
+                NodeKind::Function | NodeKind::Method | NodeKind::Class
+            )
+        })
         .map(|n| SymbolSpan {
             id: n.id.clone(),
             start_line: n.start_line,
@@ -54,7 +57,11 @@ pub fn extract_symbols(
     let file_node = Node {
         id: file_id.clone(),
         kind: NodeKind::File,
-        name: file_path.rsplit('/').next().unwrap_or(file_path).to_string(),
+        name: file_path
+            .rsplit('/')
+            .next()
+            .unwrap_or(file_path)
+            .to_string(),
         qualified_name: file_path.to_string(),
         file_path: file_path.to_string(),
         language,
@@ -123,7 +130,6 @@ pub fn extract_symbols(
 
     result
 }
-
 
 fn declaration_name(node: TsNode, source: &[u8], node_type: &str) -> String {
     if let Some(name_node) = node.child_by_field_name("name") {
@@ -207,7 +213,10 @@ pub(crate) fn leading_doc_comment(node: TsNode, source: &[u8]) -> Option<String>
 fn strip_comment_marker(line: &str) -> String {
     let t = line.trim();
     let t = t.trim_start_matches("/**").trim_end_matches("*/");
-    let t = t.trim_start_matches("///").trim_start_matches("//!").trim_start_matches("//");
+    let t = t
+        .trim_start_matches("///")
+        .trim_start_matches("//!")
+        .trim_start_matches("//");
     let t = t.trim_start_matches('#').trim_start_matches('*');
     t.trim().to_string()
 }
@@ -219,9 +228,17 @@ mod tests {
 
     fn rust_docs(src: &str) -> Vec<(String, Option<String>)> {
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_rust::LANGUAGE.into()).unwrap();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
         let tree = parser.parse(src, None).unwrap();
-        let result = extract_symbols(&tree, src.as_bytes(), "a.rs", Language::Rust, &[(NodeKind::Method, "function_item")]);
+        let result = extract_symbols(
+            &tree,
+            src.as_bytes(),
+            "a.rs",
+            Language::Rust,
+            &[(NodeKind::Method, "function_item")],
+        );
         result
             .nodes
             .into_iter()
@@ -233,7 +250,13 @@ mod tests {
     #[test]
     fn rust_doc_comment_becomes_docstring() {
         let docs = rust_docs("/// Log token savings.\n/// Second line.\nfn record() {}\n");
-        assert_eq!(docs, vec![("record".into(), Some("Log token savings.\nSecond line.".into()))]);
+        assert_eq!(
+            docs,
+            vec![(
+                "record".into(),
+                Some("Log token savings.\nSecond line.".into())
+            )]
+        );
     }
 
     #[test]
@@ -251,6 +274,9 @@ mod tests {
     #[test]
     fn function_without_comment_has_no_docstring() {
         let docs = rust_docs("fn a() {}\n/// b docs\nfn b() {}\n");
-        assert_eq!(docs, vec![("a".into(), None), ("b".into(), Some("b docs".into()))]);
+        assert_eq!(
+            docs,
+            vec![("a".into(), None), ("b".into(), Some("b docs".into()))]
+        );
     }
 }

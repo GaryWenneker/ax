@@ -24,16 +24,25 @@ pub async fn run(path: Option<String>, json: bool) -> Result<(), String> {
             pending.len()
         ),
     );
+    let incident = ax_core::database_incident_value(&root);
+    let notice = ax_core::database_incident_notice(&root);
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&serde_json::json!({ "stats": stats, "lastIndexedAt": last, "pendingFiles": pending }))
-                .unwrap_or_default()
+            serde_json::to_string_pretty(&serde_json::json!({
+                "stats": stats,
+                "lastIndexedAt": last,
+                "pendingFiles": pending,
+                "integrity": incident,
+            }))
+            .unwrap_or_default()
         );
     } else {
-        print_colored_status(&ax_core::stats_format::format_status_text(
-            &stats, last, &pending,
-        ));
+        let mut text = ax_core::stats_format::format_status_text(&stats, last, &pending);
+        if let Some(note) = notice {
+            text.push_str(&note);
+        }
+        print_colored_status(&text);
     }
     Ok(())
 }

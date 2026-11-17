@@ -227,7 +227,10 @@ async fn resolve_by_dirs(
     dirs: &[&str],
 ) -> Option<Node> {
     let nodes = queries.get_nodes_by_name(name).await.unwrap_or_default();
-    let filtered: Vec<Node> = nodes.into_iter().filter(|n| kinds.contains(&n.kind)).collect();
+    let filtered: Vec<Node> = nodes
+        .into_iter()
+        .filter(|n| kinds.contains(&n.kind))
+        .collect();
     if filtered.is_empty() {
         return None;
     }
@@ -240,9 +243,15 @@ async fn resolve_by_dirs(
 }
 
 async fn resolve_model_iterable_iter(queries: &QueryBuilder) -> Option<Node> {
-    let classes = queries.get_nodes_by_name("ModelIterable").await.unwrap_or_default();
+    let classes = queries
+        .get_nodes_by_name("ModelIterable")
+        .await
+        .unwrap_or_default();
     let class = classes.iter().find(|n| n.kind == NodeKind::Class)?;
-    let iters = queries.get_nodes_by_name("__iter__").await.unwrap_or_default();
+    let iters = queries
+        .get_nodes_by_name("__iter__")
+        .await
+        .unwrap_or_default();
     iters
         .iter()
         .find(|n| {
@@ -254,9 +263,11 @@ async fn resolve_model_iterable_iter(queries: &QueryBuilder) -> Option<Node> {
 }
 
 fn is_short_pascal(name: &str) -> bool {
-  let mut chars = name.chars();
+    let mut chars = name.chars();
     let first = chars.next();
-    first.map(|c| c.is_uppercase() && c.is_alphabetic()).unwrap_or(false)
+    first
+        .map(|c| c.is_uppercase() && c.is_alphabetic())
+        .unwrap_or(false)
         && chars.all(|c| c.is_alphanumeric())
         && name.len() <= 32
 }
@@ -313,7 +324,10 @@ mod tests {
         let content = "router.register(r'articles', ArticleViewSet, basename='article')";
         let r = extract_file("urls.py", content);
         assert!(r.nodes.iter().any(|n| n.name.contains("VIEWSET")));
-        assert!(r.references.iter().any(|ref_| ref_.reference_name == "ArticleViewSet"));
+        assert!(r
+            .references
+            .iter()
+            .any(|ref_| ref_.reference_name == "ArticleViewSet"));
     }
 
     #[test]

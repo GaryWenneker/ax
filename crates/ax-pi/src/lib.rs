@@ -11,8 +11,8 @@ mod types;
 pub use context::ContextCache;
 pub use economics::display_amount;
 pub use integration::{
-    create_pi_integration, note_read_guard, read_economics, read_optimization, PiError,
-    PiIntegration, PiOptions,
+    create_pi_integration, note_read_guard, read_economics, read_guard_ids, read_optimization,
+    PiError, PiIntegration, PiOptions,
 };
 pub use report::apply_display_currency;
 pub use report::{

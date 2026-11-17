@@ -847,6 +847,32 @@ pub async fn read_economics(
 
 /// Record a read-guard recommendation. Missing databases and Ax errors do not
 /// change the guard decision.
+pub fn read_guard_ids(db: &Path, fallback_session: &str) -> (String, String) {
+    let Some(parent) = db.parent() else {
+        return (fallback_session.to_string(), "read-guard".into());
+    };
+    let Ok(text) = std::fs::read_to_string(parent.join("turns").join("current.json")) else {
+        return (fallback_session.to_string(), "read-guard".into());
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&text) else {
+        return (fallback_session.to_string(), "read-guard".into());
+    };
+    let session = value
+        .get("session_id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let turn = value
+        .get("turn_id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if session.is_empty() || turn.is_empty() {
+        return (fallback_session.to_string(), "read-guard".into());
+    }
+    (session.to_string(), turn.to_string())
+}
+
 pub async fn note_read_guard(
     db: &Path,
     session_id: &str,
@@ -858,9 +884,10 @@ pub async fn note_read_guard(
     if !db.is_file() {
         return Ok(());
     }
+    let (session_id, turn_id) = read_guard_ids(db, session_id);
     let observation = ToolCallObservation {
-        session_id: session_id.to_string(),
-        turn_id: "read-guard".into(),
+        session_id,
+        turn_id,
         call_id: format!("read-guard-{}", now_ms()),
         tool_name: tool_name.to_string(),
         arguments,

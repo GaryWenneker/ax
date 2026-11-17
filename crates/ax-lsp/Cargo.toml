@@ -1,6 +1,6 @@
 [package]
 name = "ax-lsp"
-version = "8.4.6"
+version = "10.0.0"
 edition = "2021"
 description = "Optional Language Server Protocol bridge for exact edge enrichment"
 

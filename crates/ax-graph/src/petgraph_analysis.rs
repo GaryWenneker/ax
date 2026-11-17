@@ -87,13 +87,7 @@ pub fn shortest_call_path(edges: &[Edge], from_id: &str, to_id: &str) -> Option<
     let start = *index.get(from_id)?;
     let goal = *index.get(to_id)?;
     let id_by_idx: HashMap<NodeIndex, String> = index.into_iter().map(|(k, v)| (v, k)).collect();
-    let (_cost, path) = astar(
-        &graph,
-        start,
-        |n| n == goal,
-        |_| 1usize,
-        |_| 0usize,
-    )?;
+    let (_cost, path) = astar(&graph, start, |n| n == goal, |_| 1usize, |_| 0usize)?;
     Some(
         path.into_iter()
             .filter_map(|idx| id_by_idx.get(&idx).cloned())

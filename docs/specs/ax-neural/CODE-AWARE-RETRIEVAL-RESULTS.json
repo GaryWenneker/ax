@@ -1,0 +1,60 @@
+{
+  "snapshot": "85fa176a9b4b6ce5e33687bee268767d87731c60",
+  "benchmark": "benchmarks/memory/code-retrieval-frozen.json",
+  "tasksWithGold": 62,
+  "negativeQueries": 8,
+  "promoted": false,
+  "productionDefaultsUnchanged": true,
+  "affixFlagLeftUnset": true,
+  "wiredIntoProductionRank": false,
+  "promotionBar": {
+    "mrrGainAtLeast": 0.02,
+    "recallAt3LossAtMost": 0.01,
+    "abstentionNotWorse": true,
+    "kindMrrLossAtMost": 0.05
+  },
+  "measured": {
+    "production": {
+      "mrr": 0.447599846390169,
+      "ndcg": 0.4753426947889109,
+      "precisionAt3": 0.15591397849462366,
+      "recallAt3": 0.46774193548387094,
+      "abstained": 6,
+      "latencyMillis": 4511
+    },
+    "affix": {
+      "mrr": 0.447599846390169,
+      "ndcg": 0.4753426947889109,
+      "precisionAt3": 0.15591397849462366,
+      "recallAt3": 0.46774193548387094,
+      "abstained": 6,
+      "latencyMillis": 4879
+    },
+    "graphHybrid": {
+      "mrr": 0.4395353302611367,
+      "ndcg": 0.4693899488787731,
+      "precisionAt3": 0.15591397849462366,
+      "recallAt3": 0.46774193548387094,
+      "abstained": 6,
+      "latencyMillis": 162
+    }
+  },
+  "mrrDeltaGraphMinusProduction": -0.0080645161290323,
+  "kindMrr": {
+    "bug_localization": { "production": 0.18333333333333335, "affix": 0.18333333333333335, "graphHybrid": 0.18333333333333335, "tasks": 2 },
+    "cross_module_call": { "production": 0.0, "affix": 0.0, "graphHybrid": 0.0, "tasks": 3 },
+    "function_documentation": { "production": 0.14143625192012288, "affix": 0.14143625192012288, "graphHybrid": 0.14143625192012288, "tasks": 31 },
+    "multi_file_dependency": { "production": 0.0, "affix": 0.0, "graphHybrid": 0.0, "tasks": 1 },
+    "similar_unrelated": { "production": 1.0, "affix": 1.0, "graphHybrid": 0.975, "tasks": 20 },
+    "symbol_rename": { "production": 0.6, "affix": 0.6, "graphHybrid": 0.6, "tasks": 5 }
+  },
+  "memory": {
+    "isolatedPerArm": false,
+    "processRssBytesAtStart": 16728064,
+    "processRssBytesAtEnd": 23920640,
+    "note": "One process inserted the corpus and ran all three arms. The RSS samples are that process, not a per-arm overhead."
+  },
+  "command": "CARGO_TARGET_DIR=/tmp/ax-recovery-target cargo test -p ax-neural --lib frozen_code_retrieval_comparison -- --test-threads=1 --ignored --nocapture",
+  "elapsedSeconds": 10.18,
+  "note": "Affix matched production on every reported figure. Graph hybrid lost 0.025 MRR on similar_unrelated and was otherwise tied. Cross-file gold was not given to the ranker as edges, and none of the three arms retrieved it. The ranker was not changed after this measurement."
+}

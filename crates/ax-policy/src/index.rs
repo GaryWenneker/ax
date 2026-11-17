@@ -129,8 +129,9 @@ async fn import_one_policy_dir(
     use crate::global_level::Kind;
     let shadowed = |kind: Kind, name: &str, body: &str, _path: &Path| {
         global.is_some_and(|g| {
-            g.leader(kind, name)
-                .is_some_and(|row| crate::global_level::same_text(body, &row.body))
+            g.leader(kind, name).is_some_and(|row| {
+                !crate::global_level::lower_copy_wins(body, 0, &row.body, row.changed_ms)
+            })
         })
     };
     let mut rules_indexed = 0u32;

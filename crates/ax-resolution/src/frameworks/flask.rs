@@ -1,8 +1,8 @@
 //! Flask + FastAPI route extraction — CG: frameworks/python.ts flaskResolver / fastapiResolver.
 
-use std::sync::OnceLock;
 use regex::Regex;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use ax_db::queries::QueryBuilder;
 use ax_types::{Language, Node, NodeKind, ReferenceKind, UnresolvedReference};
@@ -24,16 +24,15 @@ pub fn flask_detect(project_root: &Path, file_paths: &[String]) -> bool {
             }
         }
     }
-    let entry_re = regex::Regex::new(r"(?:^|/)(app|application|main|wsgi|__init__)\.py$").expect("entry");
+    let entry_re =
+        regex::Regex::new(r"(?:^|/)(app|application|main|wsgi|__init__)\.py$").expect("entry");
     for fp in file_paths.iter().take(50) {
         if !entry_re.is_match(fp) {
             continue;
         }
         let path = project_root.join(fp);
         if let Ok(c) = std::fs::read_to_string(&path) {
-            if c.contains("Flask(")
-                && (c.contains("import flask") || c.contains("from flask"))
-            {
+            if c.contains("Flask(") && (c.contains("import flask") || c.contains("from flask")) {
                 return true;
             }
         }
@@ -93,7 +92,10 @@ pub fn fastapi_extract_file(file_path: &str, content: &str) -> FrameworkExtractR
     )
 }
 
-pub async fn try_resolve_target(queries: &QueryBuilder, ref_: &UnresolvedRef) -> Option<(Node, f64)> {
+pub async fn try_resolve_target(
+    queries: &QueryBuilder,
+    ref_: &UnresolvedRef,
+) -> Option<(Node, f64)> {
     let name = &ref_.reference_name;
     if name.ends_with("_bp") || name.ends_with("_blueprint") {
         if let Some(n) = resolve_by_kind(queries, name, &[NodeKind::Variable], &[]).await {
@@ -142,7 +144,10 @@ fn extract_decorator_routes(
                 if let Some(mg) = cap.get(3) {
                     let method_re = method_re();
                     if let Some(m) = method_re.captures(mg.as_str()) {
-                        method = m.get(1).map(|x| x.as_str().to_uppercase()).unwrap_or(method);
+                        method = m
+                            .get(1)
+                            .map(|x| x.as_str().to_uppercase())
+                            .unwrap_or(method);
                     }
                 }
                 (method, path.to_string())
@@ -194,7 +199,8 @@ fn extract_decorator_routes(
             if let Some(def_cap) = def_re.captures(tail) {
                 let handler = def_cap.get(1).map(|m| m.as_str()).unwrap_or("");
                 if !handler.is_empty() {
-                    out.references.push(make_ref(&route_id, handler, line, file_path));
+                    out.references
+                        .push(make_ref(&route_id, handler, line, file_path));
                 }
             }
         }
@@ -204,8 +210,10 @@ fn extract_decorator_routes(
 }
 
 fn extract_flask_restful(file_path: &str, safe: &str) -> FrameworkExtractResult {
-    let re = regex::Regex::new(r#"\.add\w*[Rr]esource\s*\(\s*(\w+)\s*,\s*((?:['"][^'"]+['"]\s*,?\s*)+)"#)
-        .expect("restful re");
+    let re = regex::Regex::new(
+        r#"\.add\w*[Rr]esource\s*\(\s*(\w+)\s*,\s*((?:['"][^'"]+['"]\s*,?\s*)+)"#,
+    )
+    .expect("restful re");
     let path_re = regex::Regex::new(r#"['"]([^'"]+)['"]"#).expect("path re");
     let mut out = FrameworkExtractResult::default();
     let now = now_ms();
@@ -245,7 +253,8 @@ fn extract_flask_restful(file_path: &str, safe: &str) -> FrameworkExtractResult 
                 updated_at: now,
             });
 
-            out.references.push(make_ref(&route_id, class_name, line, file_path));
+            out.references
+                .push(make_ref(&route_id, class_name, line, file_path));
         }
     }
 
@@ -259,7 +268,10 @@ async fn resolve_by_kind(
     dirs: &[&str],
 ) -> Option<Node> {
     let nodes = queries.get_nodes_by_name(name).await.unwrap_or_default();
-    let filtered: Vec<Node> = nodes.into_iter().filter(|n| kinds.contains(&n.kind)).collect();
+    let filtered: Vec<Node> = nodes
+        .into_iter()
+        .filter(|n| kinds.contains(&n.kind))
+        .collect();
     if filtered.is_empty() {
         return None;
     }
@@ -280,7 +292,12 @@ fn merge_extract(dst: &mut FrameworkExtractResult, src: FrameworkExtractResult) 
     dst.edges.extend(src.edges);
 }
 
-fn make_ref(from_node_id: &str, reference_name: &str, line: i32, file_path: &str) -> UnresolvedReference {
+fn make_ref(
+    from_node_id: &str,
+    reference_name: &str,
+    line: i32,
+    file_path: &str,
+) -> UnresolvedReference {
     UnresolvedReference {
         from_node_id: from_node_id.to_string(),
         reference_name: reference_name.to_string(),
@@ -334,6 +351,9 @@ mod tests {
         let content = "api.add_resource(UserResource, '/users', '/users/<id>')";
         let r = flask_extract_file("app.py", content);
         assert_eq!(r.nodes.len(), 2);
-        assert!(r.references.iter().all(|ref_| ref_.reference_name == "UserResource"));
+        assert!(r
+            .references
+            .iter()
+            .all(|ref_| ref_.reference_name == "UserResource"));
     }
 }

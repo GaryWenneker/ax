@@ -87,7 +87,7 @@ impl FileWatcher {
                         .strip_prefix(&root)
                         .map(|p| p.to_string_lossy().replace('\\', "/"))
                         .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
-                    if rel.contains("/.ax/") || rel.starts_with(".ax/") {
+                    if !pending_path_is_kept(&root, &rel) {
                         continue;
                     }
                     map.entry(rel.clone()).or_insert_with(|| PendingFile {
@@ -117,7 +117,13 @@ impl FileWatcher {
     }
 
     async fn publish_pending(&self) {
-        let snapshot = self.pending.lock().await.values().cloned().collect::<Vec<_>>();
+        let snapshot = self
+            .pending
+            .lock()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
         crate::pending_registry::publish(&self.project_root, &snapshot);
     }
 
@@ -183,6 +189,28 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+pub(crate) fn pending_path_is_kept(root: &std::path::Path, rel: &str) -> bool {
+    if rel.is_empty() || rel.contains("/.ax/") || rel.starts_with(".ax/") || rel == ".ax" {
+        return false;
+    }
+    for segment in rel.split('/') {
+        if matches!(
+            segment,
+            "target" | "target-dev" | "node_modules" | "dist" | ".git"
+        ) {
+            return false;
+        }
+    }
+    let mut builder = ignore::gitignore::GitignoreBuilder::new(root);
+    let _ = builder.add(root.join(".gitignore"));
+    if let Ok(rules) = builder.build() {
+        if rules.matched(rel, false).is_ignore() {
+            return false;
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,7 +271,11 @@ mod tests {
         let mut found = false;
         for _ in 0..50 {
             tokio::time::sleep(Duration::from_millis(100)).await;
-            if w.get_pending_files().await.iter().any(|p| p.path == "hello.ts") {
+            if w.get_pending_files()
+                .await
+                .iter()
+                .any(|p| p.path == "hello.ts")
+            {
                 found = true;
                 break;
             }
@@ -281,5 +313,14 @@ mod tests {
             pending.iter().all(|p| !p.path.starts_with(".ax/")),
             "files under .ax/ must not become pending: {pending:?}"
         );
+    }
+
+    #[test]
+    fn a_gitignored_path_is_not_pending() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".gitignore"), "secret.rs\ntarget-dev/\n").unwrap();
+        assert!(!pending_path_is_kept(dir.path(), "secret.rs"));
+        assert!(!pending_path_is_kept(dir.path(), "target-dev/out.rs"));
+        assert!(pending_path_is_kept(dir.path(), "src/keep.rs"));
     }
 }

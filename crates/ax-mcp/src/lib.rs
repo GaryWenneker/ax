@@ -11,6 +11,7 @@ pub mod exe_identity;
 pub mod invoke;
 pub mod links;
 pub mod liveness_watchdog;
+pub mod neural_tool;
 pub mod pi_knowledge;
 pub mod policy_session;
 pub mod ppid_watchdog;

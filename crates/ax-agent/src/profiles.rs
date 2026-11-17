@@ -17,7 +17,6 @@ pub enum AuthStatus {
     Unknown,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileEntry {
     pub id: String,

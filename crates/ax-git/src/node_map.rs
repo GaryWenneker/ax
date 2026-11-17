@@ -54,7 +54,10 @@ pub async fn map_files_to_nodes(
 }
 
 fn overlaps_hunk(node: &Node, hunk: &ChangedHunk) -> bool {
-    let hunk_end = hunk.new_start.saturating_add(hunk.new_lines).saturating_sub(1);
+    let hunk_end = hunk
+        .new_start
+        .saturating_add(hunk.new_lines)
+        .saturating_sub(1);
     let node_start = node.start_line as u32;
     let node_end = node.end_line as u32;
     node_start <= hunk_end && hunk.new_start <= node_end

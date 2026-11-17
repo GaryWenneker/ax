@@ -1,0 +1,202 @@
+{
+  "arms": {
+    "A_hash_v1": {
+      "claimsNeuralInference": false,
+      "heldOut": {
+        "mrr": 0.7098214285714285,
+        "ndcgAt5": 0.7025563798394495,
+        "precisionAt3": 0.2222222222222222,
+        "precisionAt5": 0.15,
+        "questionsScored": 15,
+        "recallAt3": 0.6666666666666666,
+        "samples": {
+          "mrr": 12,
+          "precisionAt3": 12,
+          "recallAt3": 12
+        }
+      },
+      "kind": "measured",
+      "locked": {
+        "mrr": 0.6923076923076922,
+        "ndcgAt5": 0.6666666666666666,
+        "precisionAt3": 0.2222222222222222,
+        "precisionAt5": 0.13333333333333333,
+        "questionsScored": 4,
+        "recallAt3": 0.6666666666666666,
+        "samples": {
+          "mrr": 3,
+          "precisionAt3": 3,
+          "recallAt3": 3
+        }
+      },
+      "method": "ax_memory::embed::embed_text cosine"
+    },
+    "B_lexical_semantic": {
+      "claimsNeuralInference": false,
+      "heldOut": {
+        "mrr": 0.5909090909090909,
+        "ndcgAt5": 0.5833333333333334,
+        "precisionAt3": 0.19444444444444442,
+        "precisionAt5": 0.11666666666666665,
+        "questionsScored": 15,
+        "recallAt3": 0.5833333333333334,
+        "samples": {
+          "mrr": 12,
+          "precisionAt3": 12,
+          "recallAt3": 12
+        }
+      },
+      "kind": "measured",
+      "locked": {
+        "mrr": 1.0,
+        "ndcgAt5": 1.0,
+        "precisionAt3": 0.3333333333333333,
+        "precisionAt5": 0.20000000000000004,
+        "questionsScored": 4,
+        "recallAt3": 1.0,
+        "samples": {
+          "mrr": 3,
+          "precisionAt3": 3,
+          "recallAt3": 3
+        }
+      },
+      "method": "lexical synonym + trigger rank"
+    },
+    "C_onnx_embedding": {
+      "claimsNeuralInference": true,
+      "heldOut": {
+        "mrr": 0.6909722222222223,
+        "ndcgAt5": 0.7192441461309548,
+        "precisionAt3": 0.2777777777777778,
+        "precisionAt5": 0.16666666666666666,
+        "questionsScored": 15,
+        "recallAt3": 0.8333333333333334,
+        "samples": {
+          "mrr": 12,
+          "precisionAt3": 12,
+          "recallAt3": 12
+        }
+      },
+      "kind": "measured",
+      "locked": {
+        "mrr": 0.7777777777777777,
+        "ndcgAt5": 0.8333333333333334,
+        "precisionAt3": 0.3333333333333333,
+        "precisionAt5": 0.20000000000000004,
+        "questionsScored": 4,
+        "recallAt3": 1.0,
+        "samples": {
+          "mrr": 3,
+          "precisionAt3": 3,
+          "recallAt3": 3
+        }
+      },
+      "method": "ONNX MiniLM cosine on fixture memories"
+    },
+    "D_combined_rrf": {
+      "heldOut": {
+        "mrr": 0.6813492063492065,
+        "ndcgAt5": 0.7098152134004999,
+        "precisionAt3": 0.25,
+        "precisionAt5": 0.16666666666666666,
+        "questionsScored": 15,
+        "recallAt3": 0.75,
+        "samples": {
+          "mrr": 12,
+          "precisionAt3": 12,
+          "recallAt3": 12
+        }
+      },
+      "kind": "measured",
+      "locked": {
+        "mrr": 0.8333333333333334,
+        "ndcgAt5": 0.8769765845238192,
+        "precisionAt3": 0.3333333333333333,
+        "precisionAt5": 0.20000000000000004,
+        "questionsScored": 4,
+        "recallAt3": 1.0,
+        "samples": {
+          "mrr": 3,
+          "precisionAt3": 3,
+          "recallAt3": 3
+        }
+      },
+      "method": "RRF(k=60) of hash-v1 + lexical + ONNX"
+    }
+  },
+  "elapsedMillis": 3121.904625,
+  "kind": "measured",
+  "neuralEmbeddingInferenceActive": false,
+  "productionDefaultsUnchanged": true,
+  "productionWiring": {
+    "blendSemanticWired": false,
+    "memoryColumn": "hash-v1",
+    "onnxInDefaultBinary": true,
+    "rankPlanUses": "lexical overlap only",
+    "searchSemanticUses": "blake3 runtime when challenger admitted; not ONNX"
+  },
+  "scope": "validation-only ONNX production-path probe + arms A–D",
+  "semanticWeight": 0.0,
+  "spec": "docs/specs/ax-neural/SPEC-VALIDATION-ONNX-PATH.md",
+  "stages": {
+    "contextDelivery": {
+      "detail": "rank::plan applied to ONNX-retrieved blocks (lexical overlap relevance; production context path)",
+      "noteCount": 5,
+      "order": [
+        "file-change",
+        "hash-vectors",
+        "stale-capture",
+        "archived",
+        "renamed-symbol"
+      ],
+      "status": "measured"
+    },
+    "embeddingInference": {
+      "detail": "ONNX MiniLM loaded and produced a vector",
+      "dim": 384,
+      "modelId": "onnx-minilm-l6-v2",
+      "status": "measured"
+    },
+    "modelLoading": {
+      "detail": "ONNX MiniLM loaded and produced a vector",
+      "dim": 384,
+      "modelId": "onnx-minilm-l6-v2",
+      "status": "measured"
+    },
+    "queryEmbedding": {
+      "detail": "query embedded with ONNX MiniLM",
+      "dim": 384,
+      "status": "measured"
+    },
+    "rankingFusion": {
+      "blendSemanticCallersInProduction": 0,
+      "detail": "Validation RRF computed for arm D; production blend_semantic weight stays 0 and is unwired",
+      "semanticWeight": 0.0,
+      "status": "inactive_in_production",
+      "validationFusion": "RRF_k60"
+    },
+    "retrieval": {
+      "detail": "ONNX cosine retrieval produced a ranked key list",
+      "status": "measured",
+      "top3": [
+        "archived",
+        "stale-capture",
+        "hash-vectors"
+      ]
+    },
+    "similarity": {
+      "detail": "cosine(same) > cosine(unrelated)",
+      "ordered": true,
+      "samePrompt": 0.9999998807907104,
+      "status": "measured",
+      "unrelated": 0.12955676019191742
+    },
+    "vectorPersistence": {
+      "detail": "ONNX vectors stored in neural_embedding; memories.embedding untouched",
+      "embeddingCount": 13,
+      "status": "measured",
+      "storedVectors": 13,
+      "table": "neural_embedding"
+    }
+  }
+}

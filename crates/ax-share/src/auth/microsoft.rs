@@ -78,9 +78,7 @@ pub fn write_ms_client_id_to_config(client_id: &str) -> Result<(), String> {
     let obj = root
         .as_object_mut()
         .ok_or_else(|| "config root must be a JSON object".to_string())?;
-    let share = obj
-        .entry("share")
-        .or_insert_with(|| serde_json::json!({}));
+    let share = obj.entry("share").or_insert_with(|| serde_json::json!({}));
     let share_obj = share
         .as_object_mut()
         .ok_or_else(|| "share must be a JSON object".to_string())?;
@@ -175,10 +173,7 @@ pub async fn start_device_flow() -> Result<DeviceFlowStart, String> {
     let client = Client::new();
     let resp: DeviceCodeResponse = client
         .post(DEVICE_CODE_URL)
-        .form(&[
-            ("client_id", client_id.as_str()),
-            ("scope", GRAPH_SCOPE),
-        ])
+        .form(&[("client_id", client_id.as_str()), ("scope", GRAPH_SCOPE)])
         .send()
         .await
         .map_err(|e| e.to_string())?

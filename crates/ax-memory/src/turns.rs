@@ -30,6 +30,137 @@ fn db_err(e: impl std::fmt::Display) -> AxError {
 }
 
 /// Insert `record` as a `turn` memory. Returns `false` when a memory with that id exists.
+
+/// Cap and zstd-compress a hunk for storage inside a file_change body (base64).
+pub const HUNK_CAP_BYTES: usize = 64 * 1024;
+
+pub fn compress_hunk(text: &str) -> String {
+    let redacted = redact_secrets(text);
+    let capped = if redacted.len() > HUNK_CAP_BYTES {
+        format!("{}\n…truncated…", &redacted[..HUNK_CAP_BYTES])
+    } else {
+        redacted
+    };
+    let compressed = zstd::encode_all(capped.as_bytes(), 3).unwrap_or_default();
+    // Hex keeps the payload printable without a base64 dependency.
+    compressed.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+pub const FILE_CHANGE_KIND: &str = "file_change";
+
+pub async fn save_file_changes(
+    pool: &SqlitePool,
+    paths: &[String],
+    session_id: &str,
+    turn_id: &str,
+    now_ms: i64,
+) -> Result<usize, AxError> {
+    let mut written = 0usize;
+    for path in paths {
+        let path = path.trim();
+        if path.is_empty() {
+            continue;
+        }
+        let id_source = format!("{session_id}\n{turn_id}\n{path}");
+        let id = format!(
+            "filechange-{}",
+            &blake3::hash(id_source.as_bytes()).to_hex()[..16]
+        );
+        let title = redact_secrets(&format!("changed {path}"));
+        let files =
+            serde_json::to_string(&vec![path]).map_err(|e| AxError::Other(e.to_string()))?;
+        let (vector, model) = crate::embed::embed_labeled(&format!("{title} {path}"));
+        let embedding = crate::embed::embedding_to_blob(&vector);
+        let result = sqlx::query(
+            r#"INSERT OR IGNORE INTO memories
+               (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, embedding, enabled, session_id, turn_id)
+               VALUES (?, ?, ?, ?, '[]', ?, 1.0, 'turn', ?, ?, ?, 1, ?, ?)"#,
+        )
+        .bind(&id)
+        .bind(FILE_CHANGE_KIND)
+        .bind(&title)
+        .bind(&title)
+        .bind(&files)
+        .bind(now_ms)
+        .bind(now_ms)
+        .bind(embedding)
+        .bind(session_id)
+        .bind(turn_id)
+        .execute(pool)
+        .await
+        .map_err(db_err)?;
+        if result.rows_affected() > 0 {
+            crate::brain::stamp_memory(pool, &id, FILE_CHANGE_KIND, model).await?;
+            if let Some(row) = crate::store::get(pool, &id).await? {
+                crate::brain::register_cues(pool, &row, &[]).await?;
+            }
+            written += 1;
+        }
+    }
+    Ok(written)
+}
+
+/// Like `save_file_changes`, and stores a redacted capped zstd hunk in the body when provided.
+pub async fn save_file_change_with_hunk(
+    pool: &SqlitePool,
+    path: &str,
+    hunk: Option<&str>,
+    before_hash: Option<&str>,
+    after_hash: Option<&str>,
+    session_id: &str,
+    turn_id: &str,
+    now_ms: i64,
+) -> Result<usize, AxError> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Ok(0);
+    }
+    let id_source = format!("{session_id}\n{turn_id}\n{path}");
+    let id = format!(
+        "filechange-{}",
+        &blake3::hash(id_source.as_bytes()).to_hex()[..16]
+    );
+    let title = redact_secrets(&format!("changed {path}"));
+    let mut body = title.clone();
+    if let Some(h) = hunk {
+        let encoded = compress_hunk(h);
+        body = format!(
+            "{title}\nbefore={}\nafter={}\nhunk_zstd_hex={encoded}",
+            before_hash.unwrap_or(""),
+            after_hash.unwrap_or("")
+        );
+    }
+    let files = serde_json::to_string(&vec![path]).map_err(|e| AxError::Other(e.to_string()))?;
+    let (vector, model) = crate::embed::embed_labeled(&format!("{title} {path}"));
+    let embedding = crate::embed::embedding_to_blob(&vector);
+    let result = sqlx::query(
+        r#"INSERT OR IGNORE INTO memories
+           (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, embedding, enabled, session_id, turn_id)
+           VALUES (?, ?, ?, ?, '[]', ?, 1.0, 'turn', ?, ?, ?, 1, ?, ?)"#,
+    )
+    .bind(&id)
+    .bind(FILE_CHANGE_KIND)
+    .bind(&title)
+    .bind(&body)
+    .bind(&files)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind(embedding)
+    .bind(session_id)
+    .bind(turn_id)
+    .execute(pool)
+    .await
+    .map_err(db_err)?;
+    if result.rows_affected() > 0 {
+        crate::brain::stamp_memory(pool, &id, FILE_CHANGE_KIND, model).await?;
+        if let Some(row) = crate::store::get(pool, &id).await? {
+            crate::brain::register_cues(pool, &row, &[]).await?;
+        }
+        return Ok(1);
+    }
+    Ok(0)
+}
+
 pub async fn save_turn(
     pool: &SqlitePool,
     record: &TurnRecord,
@@ -55,6 +186,8 @@ pub async fn save_turn(
     .await
     .map_err(db_err)?;
     if result.rows_affected() > 0 {
+        crate::store::stamp_current_turn(pool, &record.id).await?;
+        crate::store::link_follows_in_session(pool, &record.id).await?;
         crate::brain::stamp_memory(pool, &record.id, TURN_KIND, model).await?;
         if let Some(row) = crate::store::get(pool, &record.id).await? {
             crate::brain::register_cues(pool, &row, &[]).await?;

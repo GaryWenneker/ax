@@ -5,7 +5,10 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use ax_db::queries::QueryBuilder;
-use ax_types::{ExtractionError, ExtractionResult, ExtractionSeverity, FileRecord, IndexPhase, IndexProgress, Language};
+use ax_types::{
+    ExtractionError, ExtractionResult, ExtractionSeverity, FileRecord, IndexPhase, IndexProgress,
+    Language,
+};
 use blake3::hash;
 use ignore::gitignore::Gitignore;
 use ignore::WalkBuilder;
@@ -16,7 +19,15 @@ use crate::parse_pool::{ParsePool, ParseTask};
 
 /// Path segments always skipped during scan (even when not gitignored).
 const BUILTIN_SKIP_DIRS: &[&str] = &[
-    "node_modules", "target", "dist", "build", ".git", "vendor", "tmp", "temp", ".ax",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".git",
+    "vendor",
+    "tmp",
+    "temp",
+    ".ax",
     ".fastembed_cache",
 ];
 
@@ -39,7 +50,8 @@ pub(crate) fn keep_scan_entry_name(name: &str) -> bool {
 /// arbitrary JSON (including appsettings.json) are deliberately excluded.
 fn is_context_manifest(rel: &str) -> bool {
     let name = rel.rsplit('/').next().unwrap_or("");
-    name == "package.json" || name == "Cargo.toml"
+    name == "package.json"
+        || name == "Cargo.toml"
         || name.ends_with(".csproj")
         || name == "tsconfig.json"
         || (name.starts_with("tsconfig.") && name.ends_with(".json"))
@@ -55,7 +67,6 @@ pub struct IndexOptions {
     pub exclude: Vec<String>,
 }
 
-
 pub struct ExtractionOrchestrator {
     project_root: PathBuf,
     parse_pool: ParsePool,
@@ -63,7 +74,10 @@ pub struct ExtractionOrchestrator {
 
 impl ExtractionOrchestrator {
     pub fn new(project_root: PathBuf) -> Self {
-        Self { project_root, parse_pool: ParsePool::new() }
+        Self {
+            project_root,
+            parse_pool: ParsePool::new(),
+        }
     }
 
     /// Run out-of-tree plugins first, then tree-sitter parse pool.
@@ -73,12 +87,13 @@ impl ExtractionOrchestrator {
         on_progress: &mut Option<&mut Box<dyn FnMut(IndexProgress) + Send>>,
     ) -> (Vec<ParseOutcome>, u32) {
         let plugins = ax_plugins::load_plugins(&self.project_root);
-        let mut results: Vec<ParseOutcome> =
-            Vec::with_capacity(tasks.len());
+        let mut results: Vec<ParseOutcome> = Vec::with_capacity(tasks.len());
         let mut remaining = Vec::new();
         for task in tasks {
             if !plugins.is_empty() {
-                if let Some((plugin_name, plugin_res)) = plugins.extract(&task.file_path, &task.content) {
+                if let Some((plugin_name, plugin_res)) =
+                    plugins.extract(&task.file_path, &task.content)
+                {
                     let ok = plugin_res.is_ok();
                     let ext = std::path::Path::new(&task.file_path)
                         .extension()
@@ -166,19 +181,24 @@ impl ExtractionOrchestrator {
         let full_path = self.project_root.join(rel);
         let size = file_size(&full_path);
         let modified_at = file_mtime_ms(&full_path).unwrap_or_else(now_ms);
-        queries.upsert_file(&FileRecord {
-            path: rel.to_string(),
-            content_hash: hash.to_string(),
-            language: Language::Unknown,
-            size,
-            modified_at,
-            indexed_at: now_ms(),
-            node_count: 0,
-            errors: None,
-        }).await
+        queries
+            .upsert_file(&FileRecord {
+                path: rel.to_string(),
+                content_hash: hash.to_string(),
+                language: Language::Unknown,
+                size,
+                modified_at,
+                indexed_at: now_ms(),
+                node_count: 0,
+                errors: None,
+            })
+            .await
     }
 
-    pub async fn scan_files(&self, opts: &IndexOptions) -> Result<Vec<PathBuf>, ax_utils::errors::AxError> {
+    pub async fn scan_files(
+        &self,
+        opts: &IndexOptions,
+    ) -> Result<Vec<PathBuf>, ax_utils::errors::AxError> {
         let mut files = Vec::new();
         let exclude_matcher = build_exclude_matcher(&self.project_root, &opts.exclude);
         let walker = WalkBuilder::new(&self.project_root)
@@ -191,8 +211,12 @@ impl ExtractionOrchestrator {
         let ext_map = extension_map();
         let plugin_exts = ax_plugins::load_plugins(&self.project_root).extensions();
         for entry in walker {
-            let entry = entry.map_err(|e| ax_utils::errors::AxError::File(ax_utils::errors::FileError::new(e.to_string())))?;
-            if !entry.file_type().is_some_and(|t| t.is_file()) { continue; }
+            let entry = entry.map_err(|e| {
+                ax_utils::errors::AxError::File(ax_utils::errors::FileError::new(e.to_string()))
+            })?;
+            if !entry.file_type().is_some_and(|t| t.is_file()) {
+                continue;
+            }
             let path = entry.path();
             let rel = path
                 .strip_prefix(&self.project_root)
@@ -204,11 +228,19 @@ impl ExtractionOrchestrator {
             }
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             let dotted = format!(".{}", ext);
-            let lang = opts.custom_extensions.get(&dotted).copied().or_else(|| language_for_extension(&dotted));
-            let plugin_hit = plugin_exts.iter().any(|e| {
-                e.eq_ignore_ascii_case(&dotted) || e.eq_ignore_ascii_case(ext)
-            });
-            if is_context_manifest(&rel) || lang.is_some() || ext_map.contains_key(&dotted) || plugin_hit {
+            let lang = opts
+                .custom_extensions
+                .get(&dotted)
+                .copied()
+                .or_else(|| language_for_extension(&dotted));
+            let plugin_hit = plugin_exts
+                .iter()
+                .any(|e| e.eq_ignore_ascii_case(&dotted) || e.eq_ignore_ascii_case(ext));
+            if is_context_manifest(&rel)
+                || lang.is_some()
+                || ext_map.contains_key(&dotted)
+                || plugin_hit
+            {
                 files.push(path.to_path_buf());
             }
         }
@@ -225,28 +257,50 @@ impl ExtractionOrchestrator {
         let files = self.scan_files(opts).await?;
         let total = files.len() as u32;
         if let Some(ref mut cb) = on_progress {
-            cb(IndexProgress { phase: IndexPhase::Scanning, current: total, total, file_path: None });
+            cb(IndexProgress {
+                phase: IndexPhase::Scanning,
+                current: total,
+                total,
+                file_path: None,
+            });
         }
         let mut tasks = Vec::new();
         let mut content_hashes: HashMap<String, String> = HashMap::new();
         let mut manifest_count = 0;
         for path in &files {
-            let rel = path.strip_prefix(&self.project_root).unwrap_or(path).to_string_lossy().replace('\\', "/");
+            let rel = path
+                .strip_prefix(&self.project_root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/");
             let content = ax_utils::read_text_file(path)?;
-            if is_generated(&content) { continue; }
+            if is_generated(&content) {
+                continue;
+            }
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            let lang = opts.custom_extensions.get(&format!(".{}", ext)).copied().or_else(|| language_for_extension(ext)).unwrap_or(Language::Unknown);
+            let lang = opts
+                .custom_extensions
+                .get(&format!(".{}", ext))
+                .copied()
+                .or_else(|| language_for_extension(ext))
+                .unwrap_or(Language::Unknown);
             let content_hash = hash(content.as_bytes()).to_hex().to_string();
             // Store the text now, while we still own it — query-time snippets are
             // served from here so a graph read never touches the working tree.
-            queries.upsert_file_content(&rel, &content_hash, &content).await?;
+            queries
+                .upsert_file_content(&rel, &content_hash, &content)
+                .await?;
             if is_context_manifest(&rel) {
                 self.index_manifest(queries, &rel, &content_hash).await?;
                 manifest_count += 1;
                 continue;
             }
             content_hashes.insert(rel.clone(), content_hash);
-            tasks.push(ParseTask { file_path: rel, content, language: lang });
+            tasks.push(ParseTask {
+                file_path: rel,
+                content,
+                language: lang,
+            });
         }
 
         let (results, parse_total) = self.parse_with_plugins(tasks, &mut on_progress);
@@ -282,31 +336,64 @@ impl ExtractionOrchestrator {
                     let full_path = self.project_root.join(&file_path);
                     let meta = std::fs::metadata(&full_path).ok();
                     let size = meta.as_ref().map(|m| m.len() as i64).unwrap_or(0);
-                    let modified = meta.and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(now_ms());
+                    let modified = meta
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(now_ms());
                     let content_hash = content_hashes.remove(&file_path).unwrap_or_default();
-                    queries.upsert_file(&FileRecord {
-                        path: file_path,
-                        content_hash,
-                        language: extraction.nodes.first().map(|n| n.language).unwrap_or(Language::Unknown),
-                        size, modified_at: modified, indexed_at: now_ms(),
-                        node_count: extraction.nodes.len() as i64,
-                        errors: if extraction.errors.is_empty() { None } else { Some(extraction.errors.clone()) },
-                    }).await?;
+                    queries
+                        .upsert_file(&FileRecord {
+                            path: file_path,
+                            content_hash,
+                            language: extraction
+                                .nodes
+                                .first()
+                                .map(|n| n.language)
+                                .unwrap_or(Language::Unknown),
+                            size,
+                            modified_at: modified,
+                            indexed_at: now_ms(),
+                            node_count: extraction.nodes.len() as i64,
+                            errors: if extraction.errors.is_empty() {
+                                None
+                            } else {
+                                Some(extraction.errors.clone())
+                            },
+                        })
+                        .await?;
                 }
                 Err(msg) => {
                     // A failed parse writes an empty content_hash, which no stored
                     // text could ever match. Drop the row so reads say "not stored"
                     // instead of looking permanently stale and retrying forever.
                     queries.delete_file_content(&file_path).await?;
-                    queries.upsert_file(&FileRecord {
-                        path: file_path.clone(), content_hash: String::new(), language: Language::Unknown,
-                        size: 0, modified_at: now_ms(), indexed_at: now_ms(), node_count: 0,
-                        errors: Some(vec![ExtractionError { message: msg, file_path: Some(file_path), line: None, column: None, severity: ExtractionSeverity::Error, code: None }]),
-                    }).await?;
+                    queries
+                        .upsert_file(&FileRecord {
+                            path: file_path.clone(),
+                            content_hash: String::new(),
+                            language: Language::Unknown,
+                            size: 0,
+                            modified_at: now_ms(),
+                            indexed_at: now_ms(),
+                            node_count: 0,
+                            errors: Some(vec![ExtractionError {
+                                message: msg,
+                                file_path: Some(file_path),
+                                line: None,
+                                column: None,
+                                severity: ExtractionSeverity::Error,
+                                code: None,
+                            }]),
+                        })
+                        .await?;
                 }
             }
         }
-        Ok(IndexResult { files_indexed: parse_total + manifest_count, duration_ms: start.elapsed().as_millis() as u64 })
+        Ok(IndexResult {
+            files_indexed: parse_total + manifest_count,
+            duration_ms: start.elapsed().as_millis() as u64,
+        })
     }
 
     /// Incremental sync — scan project, re-index only new/changed files, drop stale entries.
@@ -330,8 +417,11 @@ impl ExtractionOrchestrator {
         }
 
         let indexed = queries.get_all_files().await?;
-        let indexed_map: HashMap<String, FileRecord> =
-            indexed.into_iter().filter(|f| !ax_db::replication::is_replica(&f.path)).map(|f| (f.path.clone(), f)).collect();
+        let indexed_map: HashMap<String, FileRecord> = indexed
+            .into_iter()
+            .filter(|f| !ax_db::replication::is_replica(&f.path))
+            .map(|f| (f.path.clone(), f))
+            .collect();
 
         // Databases indexed before schema v17 have file rows but no stored source.
         // Unchanged files would never be revisited, so snippets would stay
@@ -477,7 +567,8 @@ impl ExtractionOrchestrator {
             if !full_path.is_file() {
                 continue;
             }
-            let content = ax_utils::read_text_file(&full_path).map_err(ax_utils::errors::AxError::File)?;
+            let content =
+                ax_utils::read_text_file(&full_path).map_err(ax_utils::errors::AxError::File)?;
             if is_generated(&content) {
                 continue;
             }
@@ -494,8 +585,12 @@ impl ExtractionOrchestrator {
             // Only for files a parser claims: callers of index_files did not run
             // the scan filter, and storing build output would put megabytes of
             // object-file text in ax.db that no snippet could ever use.
-            if is_context_manifest(&rel) || self.is_extractable(&full_path, opts, &ext_map, &plugin_exts) {
-                queries.upsert_file_content(&rel, &content_hash, &content).await?;
+            if is_context_manifest(&rel)
+                || self.is_extractable(&full_path, opts, &ext_map, &plugin_exts)
+            {
+                queries
+                    .upsert_file_content(&rel, &content_hash, &content)
+                    .await?;
             }
             if is_context_manifest(&rel) {
                 self.index_manifest(queries, &rel, &content_hash).await?;
@@ -503,7 +598,11 @@ impl ExtractionOrchestrator {
                 continue;
             }
             content_hashes.insert(rel.clone(), content_hash);
-            tasks.push(ParseTask { file_path: rel, content, language: lang });
+            tasks.push(ParseTask {
+                file_path: rel,
+                content,
+                language: lang,
+            });
         }
 
         let (results, batch_total) = self.parse_with_plugins(tasks, &mut on_progress);
@@ -544,44 +643,100 @@ impl ExtractionOrchestrator {
                         .map(|d| d.as_millis() as i64)
                         .unwrap_or(now_ms());
                     let content_hash = content_hashes.remove(&file_path).unwrap_or_default();
-                    queries.upsert_file(&FileRecord {
-                        path: file_path,
-                        content_hash,
-                        language: extraction.nodes.first().map(|n| n.language).unwrap_or(Language::Unknown),
-                        size,
-                        modified_at: modified,
-                        indexed_at: now_ms(),
-                        node_count: extraction.nodes.len() as i64,
-                        errors: if extraction.errors.is_empty() { None } else { Some(extraction.errors.clone()) },
-                    }).await?;
+                    queries
+                        .upsert_file(&FileRecord {
+                            path: file_path,
+                            content_hash,
+                            language: extraction
+                                .nodes
+                                .first()
+                                .map(|n| n.language)
+                                .unwrap_or(Language::Unknown),
+                            size,
+                            modified_at: modified,
+                            indexed_at: now_ms(),
+                            node_count: extraction.nodes.len() as i64,
+                            errors: if extraction.errors.is_empty() {
+                                None
+                            } else {
+                                Some(extraction.errors.clone())
+                            },
+                        })
+                        .await?;
                 }
                 Err(msg) => {
                     // A failed parse writes an empty content_hash, which no stored
                     // text could ever match. Drop the row so reads say "not stored"
                     // instead of looking permanently stale and retrying forever.
                     queries.delete_file_content(&file_path).await?;
-                    queries.upsert_file(&FileRecord {
-                        path: file_path.clone(),
-                        content_hash: String::new(),
-                        language: Language::Unknown,
-                        size: 0,
-                        modified_at: now_ms(),
-                        indexed_at: now_ms(),
-                        node_count: 0,
-                        errors: Some(vec![ExtractionError {
-                            message: msg,
-                            file_path: Some(file_path),
-                            line: None,
-                            column: None,
-                            severity: ExtractionSeverity::Error,
-                            code: None,
-                        }]),
-                    }).await?;
+                    queries
+                        .upsert_file(&FileRecord {
+                            path: file_path.clone(),
+                            content_hash: String::new(),
+                            language: Language::Unknown,
+                            size: 0,
+                            modified_at: now_ms(),
+                            indexed_at: now_ms(),
+                            node_count: 0,
+                            errors: Some(vec![ExtractionError {
+                                message: msg,
+                                file_path: Some(file_path),
+                                line: None,
+                                column: None,
+                                severity: ExtractionSeverity::Error,
+                                code: None,
+                            }]),
+                        })
+                        .await?;
                 }
             }
         }
-        Ok(IndexResult { files_indexed: batch_total + manifest_count, duration_ms: start.elapsed().as_millis() as u64 })
+        Ok(IndexResult {
+            files_indexed: batch_total + manifest_count,
+            duration_ms: start.elapsed().as_millis() as u64,
+        })
     }
+}
+
+pub async fn reindex_damaged_files(
+    project_root: &Path,
+    queries: &QueryBuilder,
+    follow_up: &[String],
+) -> Result<Vec<String>, ax_utils::errors::AxError> {
+    let mut paths = Vec::new();
+    for action in follow_up {
+        let Some(path) = action.strip_prefix("reindex:") else {
+            continue;
+        };
+        if !stays_in_project(path) {
+            continue;
+        }
+        let normalized = path.replace('\\', "/");
+        if paths
+            .iter()
+            .any(|existing: &String| existing == &normalized)
+        {
+            continue;
+        }
+        paths.push(normalized);
+    }
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let orchestrator = ExtractionOrchestrator::new(project_root.to_path_buf());
+    let result = orchestrator
+        .index_files(queries, &paths, &IndexOptions::default(), None)
+        .await?;
+    Ok(vec![format!("reindex:{}", result.files_indexed)])
+}
+
+fn stays_in_project(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.starts_with('\\')
+        && path
+            .split(['/', '\\'])
+            .all(|part| !part.is_empty() && part != "." && part != "..")
 }
 
 pub struct IndexResult {
@@ -624,7 +779,10 @@ fn file_size(path: &Path) -> i64 {
 }
 
 fn now_ms() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 fn build_exclude_matcher(project_root: &Path, patterns: &[String]) -> Option<Gitignore> {
@@ -661,12 +819,22 @@ mod tests {
 
     #[test]
     fn manifest_allowlist_excludes_sensitive_json() {
-        for path in ["package.json", "frontend/package.json", "Cargo.toml",
-            "backend/Auth.csproj", "tsconfig.build.json"] {
+        for path in [
+            "package.json",
+            "frontend/package.json",
+            "Cargo.toml",
+            "backend/Auth.csproj",
+            "tsconfig.build.json",
+        ] {
             assert!(is_context_manifest(path), "{path}");
         }
-        for path in ["appsettings.json", ".env", "credentials.json",
-            "package-lock.json", "arbitrary.json"] {
+        for path in [
+            "appsettings.json",
+            ".env",
+            "credentials.json",
+            "package-lock.json",
+            "arbitrary.json",
+        ] {
             assert!(!is_context_manifest(path), "{path}");
         }
     }
@@ -697,6 +865,38 @@ mod tests {
         assert!(
             !rels.iter().any(|r| r.contains(".git")),
             "must not index .git: {rels:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn scan_files_skips_gitignored_paths() {
+        let dir = std::env::temp_dir().join(format!("ax-scan-ignore-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::create_dir_all(dir.join("target-dev")).unwrap();
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        std::fs::write(dir.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(dir.join(".gitignore"), "secret.rs\ntarget-dev/\n").unwrap();
+        std::fs::write(dir.join("src/keep.rs"), "pub fn keep() {}\n").unwrap();
+        std::fs::write(dir.join("secret.rs"), "pub fn secret() {}\n").unwrap();
+        std::fs::write(dir.join("target-dev/out.rs"), "pub fn out() {}\n").unwrap();
+        let orch = ExtractionOrchestrator::new(dir.clone());
+        let files = orch.scan_files(&IndexOptions::default()).await.unwrap();
+        let rels: Vec<String> = files
+            .iter()
+            .map(|path| {
+                path.strip_prefix(&dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert!(rels.iter().any(|rel| rel == "src/keep.rs"), "{rels:?}");
+        assert!(rels.iter().all(|rel| rel != "secret.rs"), "{rels:?}");
+        assert!(
+            rels.iter().all(|rel| !rel.starts_with("target-dev/")),
+            "{rels:?}"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

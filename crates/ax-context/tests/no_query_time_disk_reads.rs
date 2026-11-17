@@ -160,7 +160,10 @@ fn every_source_module_is_classified() {
     /// Exempt, with the reason it cannot be graph-only.
     const EXEMPT: &[(&str, &str)] = &[
         ("src/lib.rs", "module declarations only"),
-        ("src/directory.rs", "locating .ax/ax.db is filesystem work by design"),
+        (
+            "src/directory.rs",
+            "locating .ax/ax.db is filesystem work by design",
+        ),
     ];
 
     let src = crate_root().join("src");

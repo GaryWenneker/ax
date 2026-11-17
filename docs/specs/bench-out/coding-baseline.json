@@ -1,0 +1,475 @@
+{
+  "coding": {
+    "inserted": [
+      "hash-vectors",
+      "wal-old",
+      "wal-new",
+      "stale-capture",
+      "renamed-symbol",
+      "asof-old",
+      "asof-new",
+      "boilerplate",
+      "foreign-note",
+      "hop-writer",
+      "hop-hook",
+      "archived",
+      "file-change"
+    ],
+    "questions": [
+      {
+        "abstained": false,
+        "ax": [
+          "hash-vectors"
+        ],
+        "block_bytes": null,
+        "bm25": [
+          "hash-vectors"
+        ],
+        "bm25_recall_at_5": 1.0,
+        "channel": "cue",
+        "family": "named_trigger",
+        "forbidden_absent": true,
+        "id": "named-trigger",
+        "latest_first": null,
+        "ndcg_at_10": 1.0,
+        "recall_at_10": 1.0,
+        "recall_at_5": 1.0
+      },
+      {
+        "abstained": false,
+        "ax": [
+          "hash-vectors"
+        ],
+        "block_bytes": null,
+        "bm25": [
+          "hash-vectors"
+        ],
+        "bm25_recall_at_5": 1.0,
+        "channel": "recall",
+        "family": "decision_why",
+        "forbidden_absent": true,
+        "id": "decision-why",
+        "latest_first": null,
+        "ndcg_at_10": 1.0,
+        "recall_at_10": 1.0,
+        "recall_at_5": 1.0
+      },
+      {
+        "abstained": true,
+        "ax": [],
+        "block_bytes": null,
+        "bm25": [],
+        "bm25_recall_at_5": 0.0,
+        "channel": "recall",
+        "family": "dutch_to_english",
+        "forbidden_absent": true,
+        "id": "dutch-prompt",
+        "latest_first": null,
+        "ndcg_at_10": 0.0,
+        "recall_at_10": 0.0,
+        "recall_at_5": 0.0
+      },
+      {
+        "abstained": true,
+        "ax": [],
+        "block_bytes": null,
+        "bm25": [
+          "stale-capture",
+          "hop-hook",
+          "wal-new",
+          "boilerplate",
+          "wal-old",
+          "foreign-note",
+          "hop-writer",
+          "asof-new",
+          "asof-old",
+          "file-change"
+        ],
+        "bm25_recall_at_5": 0.0,
+        "channel": "recall",
+        "family": "paraphrase",
+        "forbidden_absent": true,
+        "id": "paraphrase",
+        "latest_first": null,
+        "ndcg_at_10": 0.0,
+        "recall_at_10": 0.0,
+        "recall_at_5": 0.0
+      },
+      {
+        "abstained": false,
+        "ax": [
+          "wal-new"
+        ],
+        "block_bytes": null,
+        "bm25": [
+          "wal-new",
+          "wal-old",
+          "boilerplate",
+          "foreign-note",
+          "hop-writer",
+          "hop-hook",
+          "asof-new",
+          "asof-old",
+          "file-change",
+          "stale-capture"
+        ],
+        "bm25_recall_at_5": 1.0,
+        "channel": "recall",
+        "family": "knowledge_update",
+        "forbidden_absent": true,
+        "id": "knowledge-update",
+        "latest_first": true,
+        "ndcg_at_10": 1.0,
+        "recall_at_10": 1.0,
+        "recall_at_5": 1.0
+      },
+      {
+        "abstained": false,
+        "ax": [
+          "stale-capture"
+        ],
+        "block_bytes": null,
+        "bm25": [
+          "stale-capture"
+        ],
+        "bm25_recall_at_5": null,
+        "channel": "recall",
+        "family": "stale_after_code_change",
+        "forbidden_absent": false,
+        "id": "stale-capture",
+        "latest_first": null,
+        "ndcg_at_10": 0.0,
+        "recall_at_10": null,
+        "recall_at_5": null
+      },
+      {
+        "abstained": true,
+        "ax": [],
+        "block_bytes": null,
+        "bm25": [],
+        "bm25_recall_at_5": 0.0,
+        "channel": "recall",
+        "family": "rename",
+        "forbidden_absent": true,
+        "id": "rename",
+        "latest_first": null,
+        "ndcg_at_10": 0.0,
+        "recall_at_10": 0.0,
+        "recall_at_5": 0.0
+      },
+      {
+        "abstained": false,
+        "ax": [
+          "asof-old",
+          "asof-new"
+        ],
+        "block_bytes": null,
+        "bm25": [
+          "asof-old",
+          "asof-new",
+          "archived",
+          "wal-new",
+          "boilerplate",
+          "wal-old",
+          "foreign-note",
+          "hop-writer",
+          "hop-hook",
+          "file-change"
+        ],
+        "bm25_recall_at_5": 1.0,
+        "channel": "recall",
+        "family": "as_of",
+        "forbidden_absent": true,
+        "id": "as-of",
+        "latest_first": null,
+        "ndcg_at_10": 1.0,
+        "recall_at_10": 1.0,
+        "recall_at_5": 1.0
+      },
+      {
+        "abstained": true,
+        "ax": [],
+        "block_bytes": null,
+        "bm25": [],
+        "bm25_recall_at_5": null,
+        "channel": "inject",
+        "family": "abstention",
+        "forbidden_absent": true,
+        "id": "abstention",
+        "latest_first": null,
+        "ndcg_at_10": 1.0,
+        "recall_at_10": null,
+        "recall_at_5": null
+      },
+      {
+        "abstained": false,
+        "ax": [
+          "hash-vectors"
+        ],
+        "block_bytes": 225,
+        "bm25": [
+          "hash-vectors"
+        ],
+        "bm25_recall_at_5": 1.0,
+        "channel": "preflight",
+        "family": "delivery_budget",
+        "forbidden_absent": true,
+        "id": "delivery",
+        "latest_first": null,
+        "ndcg_at_10": 1.0,
+        "recall_at_10": 1.0,
+        "recall_at_5": 1.0
+      },
+      {
+        "abstained": false,
+        "ax": [
+          "wal-new",
+          "boilerplate"
+        ],
+        "block_bytes": null,
+        "bm25": [
+          "boilerplate",
+          "wal-new",
+          "archived",
+          "wal-old",
+          "foreign-note",
+          "hop-writer",
+          "hop-hook",
+          "asof-new",
+          "asof-old",
+          "file-change"
+        ],
+        "bm25_recall_at_5": null,
+        "channel": "inject",
+        "family": "boilerplate_junk",
+        "forbidden_absent": false,
+        "id": "boilerplate",
+        "latest_first": null,
+        "ndcg_at_10": 0.0,
+        "recall_at_10": null,
+        "recall_at_5": null
+      },
+      {
+        "abstained": true,
+        "ax": [],
+        "block_bytes": null,
+        "bm25": [
+          "foreign-note",
+          "hop-hook",
+          "asof-new",
+          "wal-new",
+          "stale-capture",
+          "boilerplate",
+          "wal-old",
+          "hop-writer",
+          "asof-old",
+          "file-change"
+        ],
+        "bm25_recall_at_5": null,
+        "channel": "inject",
+        "family": "foreign_project",
+        "forbidden_absent": true,
+        "id": "foreign-project",
+        "latest_first": null,
+        "ndcg_at_10": 1.0,
+        "recall_at_10": null,
+        "recall_at_5": null
+      },
+      {
+        "abstained": false,
+        "ax": [
+          "hop-writer",
+          "renamed-symbol"
+        ],
+        "block_bytes": null,
+        "bm25": [
+          "hop-writer",
+          "renamed-symbol",
+          "archived"
+        ],
+        "bm25_recall_at_5": 0.0,
+        "channel": "recall",
+        "family": "multi_hop",
+        "forbidden_absent": true,
+        "id": "multi-hop",
+        "latest_first": null,
+        "ndcg_at_10": 0.0,
+        "recall_at_10": 0.0,
+        "recall_at_5": 0.0
+      },
+      {
+        "abstained": false,
+        "ax": [
+          "archived"
+        ],
+        "block_bytes": null,
+        "bm25": [
+          "archived"
+        ],
+        "bm25_recall_at_5": 1.0,
+        "channel": "cue",
+        "family": "archived_400_days",
+        "forbidden_absent": true,
+        "id": "archived-trigger",
+        "latest_first": null,
+        "ndcg_at_10": 1.0,
+        "recall_at_10": 1.0,
+        "recall_at_5": 1.0
+      },
+      {
+        "abstained": false,
+        "ax": [
+          "archived"
+        ],
+        "block_bytes": null,
+        "bm25": [
+          "archived",
+          "asof-new",
+          "asof-old"
+        ],
+        "bm25_recall_at_5": 1.0,
+        "channel": "archive",
+        "family": "archived_400_days",
+        "forbidden_absent": true,
+        "id": "archived-keyword",
+        "latest_first": null,
+        "ndcg_at_10": 1.0,
+        "recall_at_10": 1.0,
+        "recall_at_5": 1.0
+      },
+      {
+        "abstained": false,
+        "ax": [
+          "asof-old"
+        ],
+        "block_bytes": null,
+        "bm25": [
+          "wal-new",
+          "hash-vectors"
+        ],
+        "bm25_recall_at_5": 0.0,
+        "channel": "recall",
+        "family": "backup_only",
+        "forbidden_absent": true,
+        "id": "backup-only",
+        "latest_first": null,
+        "ndcg_at_10": 0.0,
+        "recall_at_10": 0.0,
+        "recall_at_5": 0.0
+      },
+      {
+        "abstained": false,
+        "ax": [
+          "file-change",
+          "stale-capture"
+        ],
+        "block_bytes": null,
+        "bm25": [
+          "stale-capture",
+          "file-change",
+          "renamed-symbol"
+        ],
+        "bm25_recall_at_5": 1.0,
+        "channel": "near",
+        "family": "file_change",
+        "forbidden_absent": true,
+        "id": "file-path",
+        "latest_first": null,
+        "ndcg_at_10": 1.0,
+        "recall_at_10": 1.0,
+        "recall_at_5": 1.0
+      },
+      {
+        "abstained": false,
+        "ax": [
+          "file-change"
+        ],
+        "block_bytes": null,
+        "bm25": [
+          "file-change"
+        ],
+        "bm25_recall_at_5": 1.0,
+        "channel": "recall",
+        "family": "file_change",
+        "forbidden_absent": true,
+        "id": "file-symbol",
+        "latest_first": null,
+        "ndcg_at_10": 1.0,
+        "recall_at_10": 1.0,
+        "recall_at_5": 1.0
+      },
+      {
+        "abstained": false,
+        "ax": [
+          "file-change"
+        ],
+        "block_bytes": null,
+        "bm25": [
+          "file-change"
+        ],
+        "bm25_recall_at_5": 1.0,
+        "channel": "recall",
+        "family": "file_change",
+        "forbidden_absent": true,
+        "id": "file-keyword",
+        "latest_first": null,
+        "ndcg_at_10": 1.0,
+        "recall_at_10": 1.0,
+        "recall_at_5": 1.0
+      }
+    ]
+  },
+  "commit": "85fa176a",
+  "dirty": true,
+  "mechanisms": "not_in_this_slice",
+  "public": {
+    "locomo": {
+      "bm25_ndcg_at_10": 0.3828564108855582,
+      "bm25_recall_at_10": 0.5204004907164225,
+      "bm25_recall_at_5": 0.44074920293163905,
+      "ndcg_at_10": 0.46392571996902016,
+      "questions": 1982,
+      "recall_at_10": 0.5853028394088338,
+      "recall_at_5": 0.5225548986374359,
+      "recall_at_5_delta": 0.08180569570579682,
+      "source": "dataset",
+      "status": "scored"
+    },
+    "locomo_sample": {
+      "bm25_ndcg_at_10": 1.0,
+      "bm25_recall_at_10": 1.0,
+      "bm25_recall_at_5": 1.0,
+      "ndcg_at_10": 1.0,
+      "questions": 1,
+      "recall_at_10": 1.0,
+      "recall_at_5": 1.0,
+      "recall_at_5_delta": 0.0,
+      "source": "shape-sample",
+      "status": "scored"
+    },
+    "longmemeval": {
+      "bm25_ndcg_at_10": 0.8936602157141703,
+      "bm25_recall_at_10": 0.9472333333333335,
+      "bm25_recall_at_5": 0.9081333333333336,
+      "ndcg_at_10": 0.9160607733019334,
+      "questions": 500,
+      "recall_at_10": 0.9668,
+      "recall_at_5": 0.9416333333333334,
+      "recall_at_5_delta": 0.03349999999999986,
+      "source": "dataset",
+      "status": "scored"
+    },
+    "longmemeval_sample": {
+      "bm25_ndcg_at_10": 1.0,
+      "bm25_recall_at_10": 1.0,
+      "bm25_recall_at_5": 1.0,
+      "ndcg_at_10": 1.0,
+      "questions": 1,
+      "recall_at_10": 1.0,
+      "recall_at_5": 1.0,
+      "recall_at_5_delta": 0.0,
+      "source": "shape-sample",
+      "status": "scored"
+    }
+  }
+}

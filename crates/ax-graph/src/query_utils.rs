@@ -2,7 +2,10 @@
 
 pub fn is_test_file(path: &str) -> bool {
     let lower = path.to_lowercase();
-    lower.contains("/test/") || lower.contains("_test.") || lower.contains(".test.") || lower.ends_with("_test.rs")
+    lower.contains("/test/")
+        || lower.contains("_test.")
+        || lower.contains(".test.")
+        || lower.ends_with("_test.rs")
 }
 
 pub fn extract_search_terms(query: &str) -> Vec<String> {
@@ -36,8 +39,8 @@ pub fn is_distinctive_identifier(term: &str) -> bool {
     term.len() >= 3 && term.chars().any(|c| c.is_uppercase() || c == '_')
 }
 
-use ax_types::Node;
 use crate::query_parser::ParsedQuery;
+use ax_types::Node;
 
 pub fn matches_parsed_query(node: &Node, parsed: &ParsedQuery) -> bool {
     if !parsed.kinds.is_empty() && !parsed.kinds.contains(&node.kind) {

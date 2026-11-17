@@ -1,0 +1,110 @@
+{
+  "baseline": "hash-v1 with the locked fusion, scored by ax_memory::bench::score_coding",
+  "binarySizeDeltaBytes": 0,
+  "candidates": {
+    "candle-cpu": "not_built",
+    "cpu-blake3": "built-not-admissible",
+    "hash-v1": "built",
+    "lexical-semantic-cpu": "built",
+    "onnx-runtime-cpu": "not_built"
+  },
+  "challengerAdmitted": true,
+  "challengerFamilies": {
+    "abstention": {
+      "challenger": "lexical-semantic-cpu",
+      "hits": 1,
+      "measured": true,
+      "scored": 1
+    },
+    "delivery_budget": {
+      "challenger": "lexical-semantic-cpu",
+      "hits": 1,
+      "measured": true,
+      "scored": 1
+    },
+    "named_trigger": {
+      "challenger": "lexical-semantic-cpu",
+      "hits": 1,
+      "measured": true,
+      "scored": 1
+    },
+    "paraphrase": {
+      "challenger": "lexical-semantic-cpu",
+      "hits": 1,
+      "measured": true,
+      "scored": 1
+    }
+  },
+  "database": "temporary",
+  "families": {
+    "abstention": {
+      "hits": 1,
+      "measured": true,
+      "rule": "nothing returned",
+      "scored": 1
+    },
+    "delivery_budget": {
+      "blockBytes": 225,
+      "hits": 1,
+      "measured": true,
+      "rule": "a relevant memory in the preflight memory block",
+      "scored": 1
+    },
+    "named_trigger": {
+      "hits": 1,
+      "measured": true,
+      "rule": "top result is the named memory",
+      "scored": 1
+    },
+    "paraphrase": {
+      "hits": 0,
+      "measured": true,
+      "rule": "a relevant memory in the top 3",
+      "scored": 1
+    }
+  },
+  "fixture": "benchmarks/memory/coding.json (built in)",
+  "openedLiveDatabase": false,
+  "queryLatency": {
+    "embedMicrosMedian": 6.792000000000001,
+    "kind": "measured",
+    "samples": 19,
+    "scoreMillis": 56.819916
+  },
+  "ram": {
+    "kind": "not_measured",
+    "reason": "the standard library has no portable resident-memory reading; a challenger must record it before admission"
+  },
+  "runtimeFeature": true,
+  "winner": "lexical-semantic-cpu",
+  "withoutAx": {
+    "families": {
+      "abstention": {
+        "hits": 1,
+        "measured": true,
+        "rule": "nothing returned",
+        "scored": 1
+      },
+      "delivery_budget": {
+        "blockBytes": 225,
+        "hits": 1,
+        "measured": true,
+        "rule": "a relevant memory in the preflight memory block",
+        "scored": 1
+      },
+      "named_trigger": {
+        "hits": 1,
+        "measured": true,
+        "rule": "top result is the named memory",
+        "scored": 1
+      },
+      "paraphrase": {
+        "hits": 0,
+        "measured": true,
+        "rule": "a relevant memory in the top 3",
+        "scored": 1
+      }
+    },
+    "method": "bm25 rankings from the same coding fixture (no Ax fusion)"
+  }
+}

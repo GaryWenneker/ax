@@ -79,11 +79,7 @@ impl NodesPage {
         self.poll(ctx);
         err_label(ui, &self.err);
 
-        ui.label(format!(
-            "{} shown · {} total",
-            self.nodes.len(),
-            self.total
-        ));
+        ui.label(format!("{} shown · {} total", self.nodes.len(), self.total));
 
         ui.columns(2, |cols| {
             egui::ScrollArea::vertical()
@@ -101,8 +97,7 @@ impl NodesPage {
                             self.selected = Some(n.id.clone());
                             let c = ctx.client.clone();
                             let id = n.id.clone();
-                            self.detail_pending =
-                                Some(spawn_fetch(move || c.node_detail(&id)));
+                            self.detail_pending = Some(spawn_fetch(move || c.node_detail(&id)));
                         }
                     }
                 });
@@ -146,7 +141,10 @@ impl NodesPage {
 
         ui.horizontal(|ui| {
             let can_prev = self.offset > 0;
-            if ui.add_enabled(can_prev, egui::Button::new("Prev")).clicked() {
+            if ui
+                .add_enabled(can_prev, egui::Button::new("Prev"))
+                .clicked()
+            {
                 self.offset = (self.offset - 50).max(0);
                 self.reload(ctx);
             }

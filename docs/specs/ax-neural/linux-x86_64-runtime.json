@@ -1,0 +1,16 @@
+{
+  "kind": "measured",
+  "evidenceType": "runtime",
+  "target": "linux-x86_64",
+  "host": "debian:bookworm-slim via podman --arch amd64 on Apple Silicon (qemu)",
+  "uname": "x86_64",
+  "method": "cross-compile on macOS (x86_64-unknown-linux-gnu + x86_64-linux-gnu-gcc), execute ELF in amd64 Debian container with repo mounted for CARGO_MANIFEST_DIR fixture path",
+  "testsPassed": 124,
+  "testsFailed": 0,
+  "features": ["neural-runtime"],
+  "binary": "target-dev/x86_64-unknown-linux-gnu/debug/build/ax-neural/5d4572333dff1914/out/ax_neural-5d4572333dff1914",
+  "logPath": "target-dev/linux-x86_64-ax-neural-test.log",
+  "durationSeconds": 35.86,
+  "timestamp": "2026-11-16T11:58:00Z",
+  "note": "Not cargo check --target. Container reported uname -m = x86_64 and test result: ok."
+}

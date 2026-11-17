@@ -129,9 +129,8 @@ impl FilesPage {
                                     self.pending = Some(spawn_fetch(move || {
                                         let page = c.file_roots()?;
                                         let mut files = page.files;
-                                        files.extend(
-                                            c.files("", "", Some(&prefix), 2000, 0)?.files,
-                                        );
+                                        files
+                                            .extend(c.files("", "", Some(&prefix), 2000, 0)?.files);
                                         Ok(FilesLoad {
                                             roots: page.roots,
                                             files,

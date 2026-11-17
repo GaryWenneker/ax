@@ -71,9 +71,7 @@ pub fn discover_servers_in(project_root: Option<&Path>) -> Vec<ServerStatus> {
                 id: s.id.into(),
                 command: s.command.into(),
                 available: working.is_some(),
-                path: working
-                    .or(display)
-                    .map(|p| p.display().to_string()),
+                path: working.or(display).map(|p| p.display().to_string()),
                 languages: vec![format!("{:?}", s.language).to_ascii_lowercase()],
             }
         })
@@ -239,7 +237,9 @@ pub fn server_available_in(spec: &ServerSpec, project_root: Option<&Path>) -> bo
 
 pub fn spec_for_extension(ext: &str) -> Option<&'static ServerSpec> {
     let e = ext.trim_start_matches('.').to_ascii_lowercase();
-    SERVERS.iter().find(|s| s.extensions.iter().any(|x| *x == e))
+    SERVERS
+        .iter()
+        .find(|s| s.extensions.iter().any(|x| *x == e))
 }
 
 #[cfg(all(test, unix))]
@@ -277,10 +277,7 @@ mod tests {
         let extra = vec![dir.path().to_path_buf()];
         let (_d, w) = resolve_command("pyright-langserver", &extra);
         assert!(w.is_none());
-        write_exec(
-            &named_shim,
-            "#!/bin/sh\necho pyright-langserver\nexit 0\n",
-        );
+        write_exec(&named_shim, "#!/bin/sh\necho pyright-langserver\nexit 0\n");
         let (_d, w) = resolve_command("pyright-langserver", &extra);
         assert!(w.is_some());
     }
@@ -291,7 +288,10 @@ mod tests {
         let bin = root.path().join("node_modules/.bin");
         fs::create_dir_all(&bin).unwrap();
         let tls = bin.join("typescript-language-server");
-        write_exec(&tls, "#!/bin/sh\necho typescript-language-server 4.0.0\nexit 0\n");
+        write_exec(
+            &tls,
+            "#!/bin/sh\necho typescript-language-server 4.0.0\nexit 0\n",
+        );
         let extra = extra_bin_dirs(Some(root.path()));
         let (_, working) = resolve_command("typescript-language-server", &extra);
         assert_eq!(working.as_ref(), Some(&tls));
@@ -300,7 +300,10 @@ mod tests {
     #[test]
     fn l1_shim_text_is_case_insensitive() {
         let output = std::process::Command::new("sh")
-            .args(["-c", "echo \"error: unknown binary 'rust-analyzer'\" >&2; exit 1"])
+            .args([
+                "-c",
+                "echo \"error: unknown binary 'rust-analyzer'\" >&2; exit 1",
+            ])
             .output()
             .unwrap();
         assert!(looks_like_missing_shim(&output));

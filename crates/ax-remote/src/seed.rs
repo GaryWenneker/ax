@@ -13,7 +13,10 @@ pub struct ShipSeedResult {
 }
 
 /// Write default `.ax/ship.toml` when missing. Never overwrites existing files.
-pub fn seed_ship_config(ax_dir: &Path, project_name: Option<&str>) -> std::io::Result<ShipSeedResult> {
+pub fn seed_ship_config(
+    ax_dir: &Path,
+    project_name: Option<&str>,
+) -> std::io::Result<ShipSeedResult> {
     std::fs::create_dir_all(ax_dir)?;
     let dest = ax_dir.join("ship.toml");
     let rel = "ship.toml".to_string();

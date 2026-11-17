@@ -26,8 +26,14 @@ impl NameMatcher {
         }
     }
 
-    pub async fn resolve_ref(&mut self, queries: &QueryBuilder, ref_: &UnresolvedRef) -> Option<ResolvedRef> {
-        let nodes = self.cached_nodes_by_name(queries, &ref_.reference_name).await;
+    pub async fn resolve_ref(
+        &mut self,
+        queries: &QueryBuilder,
+        ref_: &UnresolvedRef,
+    ) -> Option<ResolvedRef> {
+        let nodes = self
+            .cached_nodes_by_name(queries, &ref_.reference_name)
+            .await;
         if nodes.is_empty() {
             return None;
         }
@@ -40,13 +46,15 @@ impl NameMatcher {
             if !in_file.is_empty() {
                 in_file
             } else {
-                self.cached_nodes_by_name(queries, &ref_.reference_name).await
+                self.cached_nodes_by_name(queries, &ref_.reference_name)
+                    .await
             }
         } else {
             nodes
         };
 
-        self.commit_resolution(queries, ref_, &candidates[0], ResolvedBy::ExactMatch).await
+        self.commit_resolution(queries, ref_, &candidates[0], ResolvedBy::ExactMatch)
+            .await
     }
 
     async fn cached_nodes_by_name(&mut self, queries: &QueryBuilder, name: &str) -> Vec<Node> {
@@ -70,34 +78,53 @@ impl NameMatcher {
         ref_: &UnresolvedRef,
         file_path: &str,
     ) -> Option<ResolvedRef> {
-        let nodes = queries.get_nodes_by_file(file_path).await.unwrap_or_default();
+        let nodes = queries
+            .get_nodes_by_file(file_path)
+            .await
+            .unwrap_or_default();
         let callable: Vec<Node> = nodes
             .iter()
             .filter(|n| {
                 n.name == ref_.reference_name
-                    && matches!(n.kind, ax_types::NodeKind::Function | ax_types::NodeKind::Method)
+                    && matches!(
+                        n.kind,
+                        ax_types::NodeKind::Function | ax_types::NodeKind::Method
+                    )
             })
             .cloned()
             .collect();
         if callable.is_empty() {
             return None;
         }
-        self.commit_resolution(queries, ref_, &callable[0], ResolvedBy::Import).await
+        self.commit_resolution(queries, ref_, &callable[0], ResolvedBy::Import)
+            .await
     }
 
-    pub async fn match_function_ref(&mut self, queries: &QueryBuilder, ref_: &UnresolvedRef) -> Option<ResolvedRef> {
+    pub async fn match_function_ref(
+        &mut self,
+        queries: &QueryBuilder,
+        ref_: &UnresolvedRef,
+    ) -> Option<ResolvedRef> {
         if ref_.reference_kind != ReferenceKind::FunctionRef {
             return None;
         }
-        let nodes = self.cached_nodes_by_name(queries, &ref_.reference_name).await;
+        let nodes = self
+            .cached_nodes_by_name(queries, &ref_.reference_name)
+            .await;
         let func_nodes: Vec<Node> = nodes
             .into_iter()
-            .filter(|n| matches!(n.kind, ax_types::NodeKind::Function | ax_types::NodeKind::Method))
+            .filter(|n| {
+                matches!(
+                    n.kind,
+                    ax_types::NodeKind::Function | ax_types::NodeKind::Method
+                )
+            })
             .collect();
         if func_nodes.is_empty() {
             return None;
         }
-        self.commit_resolution(queries, ref_, &func_nodes[0], ResolvedBy::FunctionRef).await
+        self.commit_resolution(queries, ref_, &func_nodes[0], ResolvedBy::FunctionRef)
+            .await
     }
 
     pub async fn resolve_deferred_call(
@@ -172,7 +199,9 @@ impl NameMatcher {
         let inner_node = file_nodes.iter().find(|n| {
             matches!(
                 n.kind,
-                ax_types::NodeKind::Function | ax_types::NodeKind::Method | ax_types::NodeKind::Class
+                ax_types::NodeKind::Function
+                    | ax_types::NodeKind::Method
+                    | ax_types::NodeKind::Class
             ) && n.name == inner_name
         });
         if let Some(inner_node) = inner_node {
@@ -182,7 +211,9 @@ impl NameMatcher {
                 file_nodes
                     .iter()
                     .filter(|n| n.kind == ax_types::NodeKind::Class)
-                    .filter(|n| inner_node.start_line >= n.start_line && inner_node.end_line <= n.end_line)
+                    .filter(|n| {
+                        inner_node.start_line >= n.start_line && inner_node.end_line <= n.end_line
+                    })
                     .max_by_key(|n| n.start_line)
             };
             if let Some(class) = class {

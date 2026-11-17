@@ -32,7 +32,13 @@ impl LanguageExtractor for PythonExtractor {
         append_lang_call_refs(
             &mut result,
             tree,
-            &RefCtx { source, file_path: path, language: Language::Python, file_id: &file_id, spans: &spans },
+            &RefCtx {
+                source,
+                file_path: path,
+                language: Language::Python,
+                file_id: &file_id,
+                spans: &spans,
+            },
             &["call"],
         );
         emit_same_file_call_edges(&mut result, path);

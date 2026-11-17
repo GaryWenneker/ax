@@ -49,6 +49,44 @@ const SOURCE_RESYNC_MUTEX_WAIT: std::time::Duration = std::time::Duration::from_
 /// Same idea for the cross-process `.ax/ax.lock`: try briefly, never camp on it.
 const SOURCE_RESYNC_FILE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(750);
 
+fn project_db(project_root: &std::path::Path) -> std::path::PathBuf {
+    project_root.join(".ax").join("ax.db")
+}
+
+pub fn database_incident_notice(project_root: &std::path::Path) -> Option<String> {
+    ax_db::integrity::incident_notice(&project_db(project_root))
+}
+
+pub fn database_incident_value(project_root: &std::path::Path) -> Option<serde_json::Value> {
+    ax_db::integrity::incident_value(&project_db(project_root))
+}
+
+pub fn take_unclean_shutdown(project_root: &std::path::Path) -> bool {
+    ax_db::integrity::take_unclean_shutdown(project_root)
+}
+
+pub fn mark_clean_shutdown(project_root: &std::path::Path) {
+    ax_db::integrity::mark_clean_shutdown(project_root);
+}
+
+pub async fn run_database_check(project_root: &std::path::Path, force: bool) {
+    let db = project_db(project_root);
+    if db.is_file() {
+        let result = if force {
+            ax_db::integrity::run_quick_check(&db, true).await
+        } else {
+            ax_db::integrity::run_due_quick_check(&db).await
+        };
+        if let Err(err) = result {
+            tracing::warn!("database check: {err}");
+        }
+    }
+}
+
+pub async fn run_due_database_check(project_root: &std::path::Path) {
+    run_database_check(project_root, false).await;
+}
+
 pub struct Ax {
     db: Database,
     queries: QueryBuilder,
@@ -389,7 +427,19 @@ impl Ax {
     /// Spawn a background task that watches the project and incrementally re-indexes changed files.
     /// Coordinates with other index operations via the on-disk file lock.
     pub fn spawn_background_watch(project_root: PathBuf) -> tokio::task::JoinHandle<()> {
+        Self::spawn_background_watch_as(project_root, "watch")
+    }
+
+    pub fn spawn_background_watch_as(
+        project_root: PathBuf,
+        role: &'static str,
+    ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
+            let db = project_db(&project_root);
+            if ax_db::integrity::writers_blocked(&db) {
+                tracing::warn!("background watch skipped: database incident. Run ax db repair");
+                return;
+            }
             let mut ax = match Ax::open(&project_root).await {
                 Ok(ax) => ax,
                 Err(e) => {
@@ -397,6 +447,18 @@ impl Ax {
                     return;
                 }
             };
+            let stamp = ax_db::builds::current_build_stamp(env!("CARGO_PKG_VERSION"));
+            if let Err(e) =
+                ax_db::builds::register_build(ax.db_pool(), role, std::process::id() as i64, &stamp)
+                    .await
+            {
+                // A failed registration still checks stamps that are already stored.
+                tracing::warn!("background watch could not register its build: {e}");
+            }
+            if let Ok(false) = ax_db::builds::writers_allowed(ax.db_pool(), &stamp).await {
+                tracing::warn!("background watch skipped: a newer build is registered");
+                return;
+            }
             let opts = IndexOptions {
                 quiet: true,
                 ..IndexOptions::default()
@@ -427,8 +489,13 @@ impl Ax {
         }
         let debounce_ms = ax_sync::watcher::resolve_watch_debounce_ms();
         let poll_ms = 200u64;
+        let stamp = ax_db::builds::current_build_stamp(env!("CARGO_PKG_VERSION"));
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(poll_ms)).await;
+            if let Ok(false) = ax_db::builds::writers_allowed(self.db_pool(), &stamp).await {
+                tracing::warn!("background watch stopped: a newer build is registered");
+                break Ok(());
+            }
             if self.is_indexing().await {
                 continue;
             }
@@ -984,6 +1051,17 @@ fn path_matches_module(haystack: &str, needle: &str) -> bool {
     false
 }
 
+fn report_optimizing(on_progress: &mut Option<Box<dyn FnMut(IndexProgress) + Send>>, label: &str) {
+    if let Some(cb) = on_progress.as_mut() {
+        cb(IndexProgress {
+            phase: IndexPhase::Optimizing,
+            current: 1,
+            total: 1,
+            file_path: Some(label.into()),
+        });
+    }
+}
+
 async fn finalize_after_extract(
     resolver: &mut ReferenceResolver,
     queries: &QueryBuilder,
@@ -997,14 +1075,6 @@ async fn finalize_after_extract(
     let resolution = resolver
         .resolve_all(queries, scope, on_progress.as_mut())
         .await?;
-    if let Some(cb) = on_progress.as_mut() {
-        cb(IndexProgress {
-            phase: IndexPhase::Optimizing,
-            current: 1,
-            total: 1,
-            file_path: Some("SQLite maintenance".into()),
-        });
-    }
     queries
         .set_metadata("resolution_total", &resolution.stats.total.to_string())
         .await?;
@@ -1020,16 +1090,19 @@ async fn finalize_after_extract(
             &resolution.stats.unresolved.to_string(),
         )
         .await?;
+    report_optimizing(on_progress, "markdown docs");
     let docs_indexed =
         ax_extraction::markdown::index_markdown(project_root, queries, exclude).await?;
     queries
         .set_metadata("docs_indexed", &docs_indexed.to_string())
         .await?;
+    report_optimizing(on_progress, "contracts");
     let contracts_indexed =
         ax_extraction::contracts::index_contracts(project_root, queries, exclude).await?;
     queries
         .set_metadata("contracts_indexed", &contracts_indexed.to_string())
         .await?;
+    report_optimizing(on_progress, "SQLite maintenance");
     db.run_maintenance().await?;
     queries
         .set_metadata("extraction_version", EXTRACTION_VERSION)
@@ -1037,15 +1110,48 @@ async fn finalize_after_extract(
     queries
         .set_metadata("package_version", env!("CARGO_PKG_VERSION"))
         .await?;
+    if scope.is_none() {
+        queries.record_full_sync().await?;
+    }
+    if let Some(paths) = scope {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        report_optimizing(on_progress, "file-change capture");
+        if let Err(error) =
+            ax_memory::capture_affected_paths(db.pool(), project_root, paths, now).await
+        {
+            tracing::warn!("file-change capture failed: {error}");
+        }
+        report_optimizing(on_progress, "graph versions");
+        if let Err(error) =
+            ax_memory::record_versions_for_paths(db.pool(), project_root, paths, now).await
+        {
+            tracing::warn!("graph version capture failed: {error}");
+        }
+    }
+    report_optimizing(on_progress, "graph episodes");
     if let Err(error) = ax_memory::capture_graph_episodes(db.pool()).await {
         tracing::warn!("graph episode capture failed: {error}");
     }
+    report_optimizing(on_progress, "activity engrams");
     if let Err(error) = ax_memory::capture_activity_engrams(db.pool()).await {
         tracing::warn!("activity engram capture failed: {error}");
     }
+    report_optimizing(on_progress, "rename re-anchor");
+    if let Err(error) = ax_memory::reanchor_renames(db.pool()).await {
+        tracing::warn!("rename re-anchor failed: {error}");
+    }
+    report_optimizing(on_progress, "anchor flags");
+    if let Err(error) = ax_memory::refresh_anchor_flags(db.pool()).await {
+        tracing::warn!("anchor flag refresh failed: {error}");
+    }
+    report_optimizing(on_progress, "memory consolidation");
     if let Err(error) = ax_memory::consolidate(db.pool()).await {
         tracing::warn!("memory consolidation failed: {error}");
     }
+    report_optimizing(on_progress, "memory re-embed");
     if let Err(error) = ax_memory::reembed_stale(db.pool(), 32).await {
         tracing::warn!("memory re-embed failed: {error}");
     }

@@ -26,7 +26,6 @@ pub struct ShipConfig {
     pub reviewers: HashMap<String, String>,
 }
 
-
 /// Opt-in Aider-style checkpointing around `ax ship --evaluate`. Disabled by
 /// default — this is a deliberate automation feature, not a silent behavior
 /// change. When enabled, uncommitted working-tree changes are committed
@@ -203,7 +202,13 @@ pub fn load_ship_config(project_root: &Path) -> ShipConfig {
 
     // Migrate legacy single git_root into git_roots when the list is empty.
     if config.ship.git_roots.is_empty() {
-        if let Some(single) = config.ship.git_root.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(single) = config
+            .ship
+            .git_root
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             config.ship.git_roots = vec![single.to_string()];
         }
     }
@@ -226,7 +231,10 @@ mod tests {
     #[test]
     fn auto_commit_is_opt_in_by_default() {
         let config = ShipConfig::default();
-        assert!(!config.auto_commit.enabled, "auto-commit must default to disabled");
+        assert!(
+            !config.auto_commit.enabled,
+            "auto-commit must default to disabled"
+        );
         assert!(!config.auto_commit.revert_on_fail);
         assert!(!config.auto_commit.message.is_empty());
     }
