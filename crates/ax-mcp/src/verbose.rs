@@ -59,16 +59,7 @@ pub fn active_session_id() -> Option<String> {
             return Some(v.to_string());
         }
     }
-    let path = ax_utils::paths::home_dir()?
-        .join(".ax")
-        .join("active-cursor-session");
-    let text = std::fs::read_to_string(path).ok()?;
-    let id = text.lines().next()?.trim();
-    if id.is_empty() {
-        None
-    } else {
-        Some(id.to_string())
-    }
+    ax_usage::read_active_cursor_session()
 }
 
 /// Collapse newlines so each event stays one log line (tail -f friendly).

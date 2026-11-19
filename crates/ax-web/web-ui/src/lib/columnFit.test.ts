@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {fitWidths, titleTrack, combineDemands, computeFit, type ColumnDemand} from './columnFit.ts';
+import {fitWidths, titleTrack, combineDemands, computeFit, measurableRowHosts, type ColumnDemand, type RowHost} from './columnFit.ts';
 
 const sum = (widths: number[]) => widths.reduce((total, width) => total + width, 0);
 const flexible = (natural: number): ColumnDemand => ({natural, rigid: false});
@@ -74,4 +74,28 @@ test('demands from several lists on one page combine to the widest content and s
   ]);
   assert.deepEqual(combined, [rigid(100), flexible(500), {natural: 118, rigid: false}]);
   assert.deepEqual(combineDemands([]), []);
+});
+
+test('grouped logging rows are measured, a flat row is kept once, and a nested list is left alone', () => {
+  const row = (name: string): RowHost => ({className: `item-column-row ${name}`, children: []});
+  const list: RowHost = {
+    className: 'page-item-list column-list',
+    children: [
+      {className: 'column-header item-column-header', children: []},
+      {
+        className: 'mcp-trace-session',
+        children: [
+          {className: 'mcp-trace-session-summary', children: []},
+          {className: 'mcp-trace-turn', children: [row('explore'), row('note')]},
+        ],
+      },
+      row('flat'),
+      {className: 'page-item-list', children: [row('foreign')]},
+    ],
+  };
+  const names = measurableRowHosts(list).map(host => host.className);
+  assert.ok(names.includes('item-column-row explore'), names.join(' | '));
+  assert.ok(names.includes('item-column-row note'), names.join(' | '));
+  assert.equal(names.filter(name => name === 'item-column-row flat').length, 1);
+  assert.equal(names.includes('item-column-row foreign'), false);
 });

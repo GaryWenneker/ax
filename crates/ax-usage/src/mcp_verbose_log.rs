@@ -107,10 +107,55 @@ pub fn append_verbose_log(lines: &[String], project_root: Option<&Path>) {
         return;
     };
     let ts = iso_timestamp_utc();
+    let (session, turn) = correlation(project_root);
     for line in lines {
-        let body = sanitize_one_line(line);
+        let body = stamp_correlation(
+            &sanitize_one_line(line),
+            session.as_deref(),
+            turn.as_deref(),
+        );
         let _ = writeln!(f, "{ts} {body}");
     }
+}
+
+fn correlation(project_root: Option<&Path>) -> (Option<String>, Option<String>) {
+    if let Some((session, turn)) = project_root.and_then(open_turn) {
+        return (Some(session), Some(turn));
+    }
+    (crate::read_active_cursor_session(), None)
+}
+
+fn open_turn(root: &Path) -> Option<(String, String)> {
+    let text = fs::read_to_string(root.join(".ax").join("turns").join("current.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let session = log_token(value.get("session_id")?.as_str()?)?;
+    let turn = log_token(value.get("turn_id")?.as_str()?)?;
+    Some((session, turn))
+}
+
+fn log_token(value: &str) -> Option<String> {
+    let id = value.trim();
+    if id.is_empty() || id.chars().any(|c| c.is_whitespace() || c == '=') {
+        return None;
+    }
+    Some(id.to_string())
+}
+
+fn stamp_correlation(body: &str, session: Option<&str>, turn: Option<&str>) -> String {
+    let mut out = body.to_string();
+    if let Some(session) = session {
+        if !out.contains("session=") {
+            out.push_str(" session=");
+            out.push_str(session);
+        }
+    }
+    if let Some(turn) = turn {
+        if !out.contains("turn=") {
+            out.push_str(" turn=");
+            out.push_str(turn);
+        }
+    }
+    out
 }
 
 /// Verified file layout for received logs. Native append/export never uses this directory.
@@ -489,6 +534,27 @@ mod tests {
         let dir = tempfile_dir();
         assert!(verbose_enabled(Some(&dir)));
         assert!(verbose_enabled(None));
+    }
+
+    #[test]
+    fn cli_line_without_session_picks_up_the_open_turn() {
+        let dir = tempfile_dir();
+        fs::create_dir_all(dir.join(".ax/turns")).unwrap();
+        fs::write(
+            dir.join(".ax/turns/current.json"),
+            r#"{"session_id":"conv-1","turn_id":"gen-1"}"#,
+        )
+        .unwrap();
+        append_verbose_log(&["inbound tool=ax_explore args={}".to_string()], Some(&dir));
+        let text = fs::read_to_string(current_log_path(Some(&dir))).unwrap();
+        assert!(
+            text.contains("session=conv-1"),
+            "session did not propagate: {text}"
+        );
+        assert!(
+            text.contains("turn=gen-1"),
+            "turn did not propagate: {text}"
+        );
     }
 
     #[test]

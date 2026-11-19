@@ -285,6 +285,7 @@ export function ItemGroupHeader({
 export function ItemRow({
   icon,
   title,
+  titleMark,
   subtitle,
   meta,
   metaTitle,
@@ -307,6 +308,8 @@ export function ItemRow({
   style?: CSSProperties;
   icon?: ReactNode;
   title: string;
+  /** Optional mark rendered before the title, such as the logging rank star. */
+  titleMark?: ReactNode;
   subtitle?: string;
   meta?: string;
   metaTitle?: string;
@@ -352,7 +355,7 @@ export function ItemRow({
         <>
           {leading && <div className="portal-data-lead">{leading}</div>}
           <div className="portal-data-name">
-            <div className="page-item-title" title={title}>{title}</div>
+            <div className="page-item-title" title={title}>{titleMark}{title}</div>
             {subtitle && <div className="page-item-sub" title={subtitle}>{subtitle}</div>}
             {badges && <div className="page-item-badges portal-data-tags">{badges}</div>}
           </div>
@@ -360,7 +363,7 @@ export function ItemRow({
           <div className="portal-data-actions">{aside}</div>
         </>
       ) : columns && !columns.trace ? (<>
-        <div className="item-column-name" data-label={columns.labels[0]}>{icon}<span className="page-item-title" title={title}>{title}</span></div>
+        <div className="item-column-name" data-label={columns.labels[0]}>{icon}{titleMark}<span className="page-item-title" title={title}>{title}</span></div>
         <div className="item-column-detail" data-label={columns.labels[1]} title={subtitle}>{subtitle}</div>
         <div className="item-column-context" data-label={columns.labels[2]}>{badges}{aside}</div>
       </>) : (<>
@@ -370,6 +373,7 @@ export function ItemRow({
         {graph ? (
           <>
             <div className="page-item-title-line">
+              {titleMark}
               <div className="page-item-title" title={title} data-chase={title}>{title}</div>
               {!columns && badges && <div className="page-item-badges">{badges}</div>}
             </div>
@@ -377,7 +381,7 @@ export function ItemRow({
           </>
         ) : (
           <>
-            <div className="page-item-title" title={title} data-chase={title}>{title}</div>
+            <div className="page-item-title" title={title} data-chase={title}>{titleMark}{title}</div>
             {subtitle && <div className="page-item-sub" data-chase={subtitle}>{subtitle}</div>}
           </>
         )}

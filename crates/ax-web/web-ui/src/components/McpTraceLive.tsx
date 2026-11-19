@@ -41,7 +41,12 @@ import {
   reformatTraceEntry,
   setTraceTimeZone,
   summarizeTraceLine,
+  isContextRankEntry,
+  nextRankMotion,
+  rankMotionActive,
+  rankStarActive,
   traceEntriesFromLines,
+  type RankMotion,
   type TextPayload,
   type TraceEntry,
   type TraceKind,
@@ -382,6 +387,11 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
   const maxHostRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
   followRef.current = follow;
+  const rankMotionRef = useRef<RankMotion>({ turnId: null, entryId: null, untilMs: 0 });
+  const rankTimer = useRef<number | null>(null);
+  const [rankMotion, setRankMotion] = useState<RankMotion>({ turnId: null, entryId: null, untilMs: 0 });
+  const [rankNow, setRankNow] = useState(() => Date.now());
+  const neuralOn = rankMotionActive(rankMotion, rankNow);
 
   function applyProjectMeta(d: {
     path?: string;
@@ -673,6 +683,22 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
       if (batch.length === 0) return;
       setEntries((prev) => [...prev, ...batch]);
       if (live) markFresh(batch.map((e) => e.id));
+      if (live) {
+        const now = Date.now();
+        const next = nextRankMotion(rankMotionRef.current, batch, true, now);
+        rankMotionRef.current = next;
+        setRankMotion(next);
+        setRankNow(now);
+        if (rankTimer.current != null) window.clearTimeout(rankTimer.current);
+        const delay = next.untilMs - now;
+        rankTimer.current =
+          next.turnId != null && delay > 0
+            ? window.setTimeout(() => {
+                rankTimer.current = null;
+                if (!disposed) setRankNow(Date.now());
+              }, delay)
+            : null;
+      }
       setPendingNew((pending) => nextPending(followRef.current, live, batch.length, pending));
       const last = lines[lines.length - 1];
       if (last) {
@@ -746,6 +772,10 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
       disposed = true;
       unsub();
       setLive(false);
+      if (rankTimer.current != null) {
+        window.clearTimeout(rankTimer.current);
+        rankTimer.current = null;
+      }
     };
   }, [markFresh]);
 
@@ -1372,10 +1402,19 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
           </div>
         ) : (
           <>
-          <div className="mcp-dir-legend" aria-label="Direction">
+          <div className="mcp-dir-legend" aria-label="Direction and context ranking">
             <span className="mcp-dir-legend-item mcp-dir-legend-item--in">Inbound</span>
             <span className="mcp-dir-legend-item mcp-dir-legend-item--out">Outbound</span>
             <span className="mcp-dir-legend-item mcp-dir-legend-item--internal">Internal</span>
+            <span
+              className={`mcp-dir-legend-item mcp-dir-legend-item--neural${neuralOn ? ' is-ranking' : ''}`}
+              title="Context ranking runs on each preflight."
+            >
+              Neural
+              <span className="mcp-dir-legend-live" aria-live="polite">
+                {neuralOn ? 'Context ranking ran.' : ''}
+              </span>
+            </span>
           </div>
           <ItemList className="calm-list mcp-trace-calm">
             {sessionGroups.map((session) => (
@@ -1411,7 +1450,9 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                         <ItemRow
                           key={e.id}
                           variant="graph"
-                          className={`mcp-trace-row mcp-trace-row--${e.kind} mcp-trace-row--dir-${dir}${hasText ? ' mcp-trace-row--has-query' : ''}${
+                          className={`mcp-trace-row mcp-trace-row--${e.kind} mcp-trace-row--dir-${dir}${
+                            isContextRankEntry(e) ? ' mcp-trace-row--rank' : ''
+                          }${hasText ? ' mcp-trace-row--has-query' : ''}${
                             isCursor && !isOpen ? ' mcp-trace-row--cursor' : ''
                           }${group ? ` mcp-trace-group${group.joinPrev ? ' mcp-trace-group--prev' : ''}${group.joinNext ? ' mcp-trace-group--next' : ''}` : ''}${liveClass(freshIds, e.id)}`}
                           style={group ? ({ '--conv-hue': group.hue } as CSSProperties) : undefined}
@@ -1423,6 +1464,15 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                             'data-entry-id': e.id,
                           }}
                           title={presentation.title}
+                          titleMark={
+                            isContextRankEntry(e) ? (
+                              <Codicon
+                                name="sparkle"
+                                className={`mcp-ai-star${rankStarActive(rankMotion, e.id, rankNow) ? ' is-live' : ''}`}
+                                title="Context ranking"
+                              />
+                            ) : undefined
+                          }
                           subtitle={presentation.subtitle}
                           listValues={[
                             `${presentation.title} ${presentation.subtitle} ${e.raw}`,

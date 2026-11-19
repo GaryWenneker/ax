@@ -189,7 +189,15 @@ pub(crate) fn start_turn(root: &Path, input: &HookInput) -> Option<()> {
     let dir = turns_dir(root);
     std::fs::create_dir_all(&dir).ok()?;
     std::fs::write(dir.join(".gitignore"), "*\n").ok()?;
-    write_snapshot(root, &input.conversation, &snapshot)
+    write_snapshot(root, &input.conversation, &snapshot)?;
+    if !input.conversation.is_empty() && !snapshot.turn.is_empty() {
+        let body = serde_json::json!({
+            "session_id": input.conversation,
+            "turn_id": snapshot.turn,
+        });
+        std::fs::write(dir.join("current.json"), body.to_string()).ok()?;
+    }
+    Some(())
 }
 
 fn write_snapshot(root: &Path, conversation: &str, snapshot: &Snapshot) -> Option<()> {
@@ -586,6 +594,25 @@ mod tests {
         git(root, &["commit", "-q", "-m", "initial"]);
         std::fs::create_dir_all(root.join(".ax")).unwrap();
         dir
+    }
+
+    #[test]
+    fn start_turn_publishes_session_and_turn_for_logging() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".ax")).unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        start_turn(root, &input("fix logging", Some("gen-1"))).unwrap();
+        let written = std::fs::read_to_string(root.join(".ax/turns/current.json"))
+            .expect("current turn file");
+        let value: serde_json::Value = serde_json::from_str(&written).unwrap();
+        assert_eq!(value["session_id"], "conv-1");
+        assert_eq!(value["turn_id"], "gen-1");
     }
 
     fn input(prompt: &str, generation: Option<&str>) -> HookInput {

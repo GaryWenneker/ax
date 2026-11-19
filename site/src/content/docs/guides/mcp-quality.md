@@ -37,6 +37,10 @@ The Logging status bar and kind chips use three directions:
 | **Outbound** | `outbound tool=ax_…` (+ optional preview) | MCP tool response, or CLI `ToolTrace` finish |
 | **Internal** | domain / activity lines (`cli`, `policy`, `memory`, …) | Lifecycle detail that is not a request/response pair |
 
+The same legend includes **Neural**. That mark is the context ranker. It stays still. The latest preflight sparkle is what moves. The motion means context ranking ran during this turn. It does not mean a neural-network embedding was produced. With reduced motion the sparkle stays still, and the page announces “Context ranking ran.”
+
+Each preflight row shows a sparkle at the start of its title. Only the latest preflight row keeps moving while its turn is still receiving log lines, and for one minute after the last line. When a newer preflight row arrives, that sparkle animates and the earlier ones stay still. A line from a different turn stops it. With reduced motion it never moves.
+
 MCP brands those lines `[ax-mcp]`. CLI brands the same body with `[ax]` so provenance stays honest — Command Center still classifies them as inbound/outbound.
 
 **CLI commands that emit inbound + outbound** (same tool ids agents use over MCP):

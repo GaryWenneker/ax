@@ -47,13 +47,9 @@ pub async fn run() -> Result<(), String> {
         .and_then(|v| v.as_str())
         .unwrap_or("");
     if event == "beforeSubmitPrompt" {
-        if let Some(cwd) = input.get("cwd").and_then(|v| v.as_str()) {
-            if let Some(root) =
-                ax_context::directory::find_nearest_ax_root(std::path::Path::new(cwd))
-            {
-                let _ = write_current_turn(&root, &input);
-                let _ = record_prompt_turn(&root, &input).await;
-            }
+        let _ = sync_current_turn_from_hook(&input);
+        if let Some(root) = hook_project_root(&input) {
+            let _ = record_prompt_turn(&root, &input).await;
         }
         let prompt = input
             .get("prompt")
@@ -166,9 +162,24 @@ pub(crate) fn write_current_turn(
     std::fs::write(dir.join("current.json"), text).map_err(|err| err.to_string())
 }
 
+fn hook_project_root(input: &serde_json::Value) -> Option<std::path::PathBuf> {
+    let raw = input
+        .get("workspace_roots")
+        .and_then(|value| value.as_array())
+        .and_then(|roots| roots.first())
+        .and_then(|value| value.as_str())
+        .or_else(|| input.get("cwd").and_then(|value| value.as_str()))?;
+    ax_context::directory::find_nearest_ax_root(std::path::Path::new(raw))
+}
+
+pub(crate) fn sync_current_turn_from_hook(input: &serde_json::Value) -> Result<(), String> {
+    let root = hook_project_root(input).ok_or("no ax project")?;
+    write_current_turn(&root, input)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{record_prompt_turn, write_current_turn};
+    use super::{record_prompt_turn, sync_current_turn_from_hook, write_current_turn};
 
     #[test]
     fn before_submit_writes_the_session_and_the_turn() {
@@ -219,6 +230,24 @@ mod tests {
         )
         .unwrap();
         assert!(!missing.join(".ax/turns/current.json").exists());
+    }
+
+    #[test]
+    fn before_submit_uses_workspace_root_when_cwd_is_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".ax")).unwrap();
+        std::fs::write(dir.path().join(".ax/ax.db"), []).unwrap();
+        let input = serde_json::json!({
+            "hook_event_name": "beforeSubmitPrompt",
+            "conversation_id": "conv-9",
+            "generation_id": "gen-9",
+            "workspace_roots": [dir.path().to_str().unwrap()],
+        });
+        sync_current_turn_from_hook(&input).unwrap();
+        let written = std::fs::read_to_string(dir.path().join(".ax/turns/current.json")).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&written).unwrap();
+        assert_eq!(value["session_id"], "conv-9");
+        assert_eq!(value["turn_id"], "gen-9");
     }
 
     #[tokio::test]

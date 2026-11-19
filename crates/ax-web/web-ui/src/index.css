@@ -15939,32 +15939,37 @@ html[data-ax-theme="macos"] :is(
 .mcp-blade-steps .mcp-blade-step--dir-in,
 .mcp-dir-legend-item--in {
   --dir-ink: #4fa8ff;
-  --dir-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 16'%3E%3Cg fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='6' cy='8' r='5'/%3E%3Cpath d='M12.2 8H19.2M16.4 5.3 19.4 8 16.4 10.7'/%3E%3C/g%3E%3C/svg%3E");
+  --dir-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 16'%3E%3Cg fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='14' cy='8' r='5'/%3E%3Cpath d='M19.8 8H26.4M23.6 5.3 26.6 8 23.6 10.7'/%3E%3C/g%3E%3C/svg%3E");
 }
 .mcp-trace-calm .mcp-trace-row--dir-out,
 .mcp-blade-steps .mcp-blade-step--dir-out,
 .mcp-dir-legend-item--out {
   --dir-ink: #3ee4b2;
-  --dir-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 16'%3E%3Cg fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='16' cy='8' r='5'/%3E%3Cpath d='M9.8 8H2.8M5.6 5.3 2.6 8 5.6 10.7'/%3E%3C/g%3E%3C/svg%3E");
+  --dir-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 16'%3E%3Cg fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='14' cy='8' r='5'/%3E%3Cpath d='M8.2 8H1.6M4.4 5.3 1.4 8 4.4 10.7'/%3E%3C/g%3E%3C/svg%3E");
 }
 .mcp-trace-calm .mcp-trace-row--dir-internal,
 .mcp-blade-steps .mcp-blade-step--dir-internal,
 .mcp-dir-legend-item--internal {
   --dir-ink: #8d8d8d;
-  --dir-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 16'%3E%3Cg fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round'%3E%3Ccircle cx='11' cy='8' r='5'/%3E%3Cpath d='M6.2 8h9.6'/%3E%3C/g%3E%3C/svg%3E");
+  --dir-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 16'%3E%3Cg fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round'%3E%3Ccircle cx='14' cy='8' r='5'/%3E%3Cpath d='M9.2 8h9.6'/%3E%3C/g%3E%3C/svg%3E");
+}
+.mcp-dir-legend-item--neural {
+  position: relative;
+  --dir-ink: var(--accent-text);
+  --dir-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 16'%3E%3Cg fill='none' stroke='%23000' stroke-width='1.4'%3E%3Ccircle cx='14' cy='8' r='5'/%3E%3Ccircle cx='14' cy='8' r='1.5' fill='%23000' stroke='none'/%3E%3C/g%3E%3C/svg%3E");
 }
 .mcp-trace-calm .page-item-node,
 .mcp-blade-steps .page-item-node {
-  left: 8px;
-  width: 22px;
+  left: 6px;
+  width: 28px;
   height: 16px;
   margin-top: -8px;
   border: none;
   border-radius: 0;
   box-shadow: none;
   background-color: var(--dir-ink, #8d8d8d);
-  -webkit-mask: var(--dir-mark) center / 22px 16px no-repeat;
-  mask: var(--dir-mark) center / 22px 16px no-repeat;
+  -webkit-mask: var(--dir-mark) center / 28px 16px no-repeat;
+  mask: var(--dir-mark) center / 28px 16px no-repeat;
 }
 .mcp-trace-calm .page-item--graph:hover .page-item-node,
 .mcp-trace-calm .page-item--selected.page-item--graph .page-item-node,
@@ -15995,17 +16000,58 @@ html[data-ax-theme="macos"] :is(
 .mcp-trace-calm .mcp-trace-group--next::after { bottom: 0; }
 .mcp-trace-calm .mcp-trace-group .mcp-trace-group-badge .badge-icon { color: var(--conv-color); }
 .mcp-trace-calm .mcp-trace-row--dir-internal .page-item-title { color: var(--accent-text); }
-.mcp-dir-legend { display: flex; gap: 14px; padding: 6px 12px; font-size: 11px; color: var(--text-dim); }
+.mcp-dir-legend { display: flex; flex-wrap: wrap; gap: 14px; padding: 6px 12px; font-size: 11px; color: var(--text-dim); }
 .mcp-dir-legend-item { display: inline-flex; align-items: center; gap: 6px; }
 .mcp-dir-legend-item::before {
   content: "";
-  width: 22px;
+  width: 28px;
   height: 16px;
   border: none;
   border-radius: 0;
   background-color: var(--dir-ink, #8d8d8d);
-  -webkit-mask: var(--dir-mark) center / 22px 16px no-repeat;
-  mask: var(--dir-mark) center / 22px 16px no-repeat;
+  -webkit-mask: var(--dir-mark) center / 28px 16px no-repeat;
+  mask: var(--dir-mark) center / 28px 16px no-repeat;
+}
+.mcp-dir-legend-item--neural::before { opacity: 0.72; }
+.mcp-dir-legend-item--neural.is-ranking { color: var(--accent-text); }
+.mcp-ai-star {
+  color: var(--accent-text);
+  font-size: 14px;
+  flex: 0 0 auto;
+}
+.mcp-ai-star.is-live {
+  animation: mcp-ai-star 1.3s ease-in-out infinite;
+}
+@keyframes mcp-ai-star {
+  0%, 100% { opacity: 0.4; transform: scale(0.82) rotate(0deg); }
+  50% { opacity: 1; transform: scale(1.18) rotate(16deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mcp-ai-star.is-live { animation: none; opacity: 1; transform: none; }
+}
+.mcp-dir-legend-item--neural.is-ranking::before {
+  animation: none;
+}
+@keyframes mcp-neural-rank {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mcp-dir-legend-item--neural.is-ranking::before {
+    animation: none;
+    opacity: 1;
+  }
+}
+.mcp-dir-legend-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .mcp-trace-session,
@@ -16022,7 +16068,14 @@ html[data-ax-theme="macos"] :is(
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
-  font: 500 12px var(--font-ui);
+  font-family: "Share Tech Mono", var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  font-synthesis: none;
+  -webkit-text-stroke: 0.32px currentColor;
+  paint-order: stroke fill;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
   color: var(--text-dim);
 }
 .mcp-trace-session-summary::-webkit-details-marker,
@@ -16392,6 +16445,8 @@ html[data-ax-theme="macos"] :is(
 .sidebar-logo .ax-app-wordmark--sidebar{font-size:55px}
 
 @font-face{font-family:"Archivo Variable";font-style:normal;font-weight:100 900;font-display:swap;src:url("./assets/archivo-latin-wght-normal.woff2") format("woff2")}
+/* Share Tech Mono (OFL, reserved name "Share"). License: public/ShareTechMono-LICENSE.txt */
+@font-face{font-family:"Share Tech Mono";font-style:normal;font-weight:400;font-display:swap;src:url("./assets/share-tech-mono-latin-400-normal.woff2") format("woff2")}
 .ax-app-wordmark{text-decoration:none}
 .ax-app-wordmark:focus-visible{outline:2px solid #b9ff6a;outline-offset:4px;border-radius:2px}
 @media(max-width:600px){.titlebar-brand .ax-app-wordmark{font-size:22px}}

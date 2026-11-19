@@ -19,12 +19,13 @@ import {
   emptyMcpTraceStats,
   MCP_TRACE_STATS,
   publishMcpTraceAction,
+  publishMcpTraceActivity,
   publishMcpTraceFilter,
   type McpTraceStats,
 } from '../lib/mcpTraceEvents';
 import type { TraceKind } from '../lib/mcpTrace';
 import { navigateRoute, pageFromNavId } from '../lib/routes';
-import { MCP_TRACE_EVENTS_URL } from '../lib/mcpTrace';
+import { MCP_TRACE_EVENTS_URL, summarizeTraceLine } from '../lib/mcpTrace';
 import { subscribeSharedEventSource } from '../lib/sharedEventSource';
 import { NewArrivalPill } from './ui/NewArrivalPill';
 import { memoryRowAge } from '../memoryHeadline';
@@ -309,7 +310,12 @@ export default function StatusBar() {
     if (isLogging) return;
     return subscribeSharedEventSource(MCP_TRACE_EVENTS_URL, {
       events: {
-        line: () => setLogArrivals((count) => count + 1),
+        line: (ev) => {
+          const data = ((ev as MessageEvent).data as string) ?? '';
+          setLogArrivals((count) => count + 1);
+          const summary = summarizeTraceLine(data);
+          if (summary) publishMcpTraceActivity({ summary });
+        },
       },
     });
   }, [isLogging]);

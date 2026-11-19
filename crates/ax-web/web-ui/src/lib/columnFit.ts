@@ -205,6 +205,38 @@ function nameParts(cell: HTMLElement): {title: HTMLElement; description: HTMLEle
   return {title, description, gap: px(style.columnGap || style.gap) || 12};
 }
 
+export type RowHost = {className: string; children: ArrayLike<RowHost>};
+
+function classTokens(className: string): string[] {
+  return className.split(/\s+/).filter(Boolean);
+}
+
+/**
+ * Column rows, including ones nested under group elements such as a logging
+ * session. Group wrappers are not rows. A nested `.page-item-list` keeps its
+ * own rows.
+ */
+export function measurableRowHosts(list: RowHost): RowHost[] {
+  const seen = new Set<RowHost>();
+  const rows: RowHost[] = [];
+  const walk = (node: RowHost) => {
+    for (const child of Array.from(node.children)) {
+      const names = classTokens(child.className);
+      if (names.includes('page-item-list')) continue;
+      if (names.includes('item-column-row') || names.includes('portal-data-row')) {
+        if (!seen.has(child)) {
+          seen.add(child);
+          rows.push(child);
+        }
+        continue;
+      }
+      walk(child);
+    }
+  };
+  walk(list);
+  return rows;
+}
+
 /** Measure a rendered list: the header row plus up to `SAMPLE_ROWS` rows whose cell count matches the columns. */
 export function measureList(list: HTMLElement, columnCount: number): ListMeasurement | null {
   const header = list.querySelector<HTMLElement>(':scope > .column-header');
@@ -214,8 +246,9 @@ export function measureList(list: HTMLElement, columnCount: number): ListMeasure
   const available = header.clientWidth - px(headerStyle.paddingLeft) - px(headerStyle.paddingRight) - gap * Math.max(0, columnCount - 1);
   if (available <= 0) return null;
   // Grid cells only: absolutely positioned decorations (the logging node dot) are not columns.
-  const rows = Array.from(list.children)
-    .filter((child): child is HTMLElement => child instanceof HTMLElement && child !== header && !child.classList.contains('column-empty'))
+  // Logging rows sit inside session and turn groups, so direct children are not enough.
+  const rows = measurableRowHosts(list)
+    .filter((row): row is HTMLElement => row instanceof HTMLElement)
     .map(row => Array.from(row.children).filter((cell): cell is HTMLElement => cell instanceof HTMLElement && getComputedStyle(cell).position !== 'absolute'))
     .filter(cells => cells.length === columnCount)
     .slice(0, SAMPLE_ROWS);

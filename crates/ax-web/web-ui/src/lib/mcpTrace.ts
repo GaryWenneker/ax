@@ -1,8 +1,8 @@
 import {
   formatInstantInZone,
   resolveTimeZone,
-} from './timeZone';
-import { traceIdsFromMessage } from './traceIds';
+} from './timeZone.ts';
+import { traceIdsFromMessage } from './traceIds.ts';
 
 /** Unicode axe (U+1FA93) — prefix for ax logging and chat output. */
 export const AX_LOG_ICON = '🪓';
@@ -173,6 +173,73 @@ function extractTool(body: string): string | null {
   }
 
   return null;
+}
+
+/** Live Logging pulse: a preflight row means context ranking ran. */
+export function isContextRankEntry(entry: { tool: string | null }): boolean {
+  return entry.tool === 'ax_preflight';
+}
+
+export function shouldPulseContextRank(
+  entries: readonly { tool: string | null }[],
+  live: boolean,
+): boolean {
+  return live && entries.some(isContextRankEntry);
+}
+
+/** Neural icons keep moving this long after the last live line of the turn. */
+export const RANK_TURN_QUIET_MS = 60_000;
+
+export type RankMotion = {
+  turnId: string | null;
+  entryId: string | null;
+  untilMs: number;
+};
+
+export function rankMotionActive(motion: RankMotion, now: number): boolean {
+  return motion.turnId != null && now < motion.untilMs;
+}
+
+export function rankStarActive(
+  motion: RankMotion,
+  entryId: string | null | undefined,
+  now: number,
+): boolean {
+  return rankMotionActive(motion, now) && motion.entryId != null && entryId === motion.entryId;
+}
+
+function turnKey(turnId: string | null | undefined): string {
+  return (turnId ?? '').trim();
+}
+
+/** Live lines of one turn keep the neural icons moving. History does not. */
+export function nextRankMotion(
+  current: RankMotion,
+  lines: readonly { id?: string; turnId?: string | null; tool: string | null }[],
+  live: boolean,
+  now: number,
+): RankMotion {
+  if (!live || lines.length === 0) return current;
+  let { turnId, entryId, untilMs } = current;
+  for (const line of lines) {
+    const key = turnKey(line.turnId);
+    if (isContextRankEntry(line)) {
+      if (key.length > 0) turnId = key;
+      if (turnId != null && line.id) entryId = line.id;
+      if (turnId != null) untilMs = now + RANK_TURN_QUIET_MS;
+      continue;
+    }
+    if (turnId != null && key.length > 0 && key !== turnId) {
+      turnId = null;
+      entryId = null;
+      untilMs = now;
+      continue;
+    }
+    if (turnId != null && key.length > 0 && key === turnId) {
+      untilMs = now + RANK_TURN_QUIET_MS;
+    }
+  }
+  return { turnId, entryId, untilMs };
 }
 
 /** Exported for smoke / unit checks of TOOL column labeling. */
