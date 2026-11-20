@@ -896,7 +896,7 @@ pub async fn import_workspace_plans(
     project_id: &str,
 ) -> Result<usize, String> {
     let recent = recent_project_paths();
-    let (mut dirs, user_plans) = plan_directories(root, dirs::home_dir().as_deref(), &recent);
+    let (mut dirs, user_plans) = plan_directories(root, ax_utils::paths::home_dir().as_deref(), &recent);
     for extra in extra_user_plan_dirs() {
         if !dirs.iter().any(|dir| dir == &extra) {
             dirs.push(extra);
@@ -1156,7 +1156,7 @@ fn member_roots(workspace_root: &Path) -> Vec<PathBuf> {
 }
 
 fn recent_project_paths() -> Vec<PathBuf> {
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = ax_utils::paths::home_dir() else {
         return Vec::new();
     };
     let Ok(text) = std::fs::read_to_string(home.join(".ax").join("config.json")) else {
@@ -1194,7 +1194,7 @@ fn live_session_ids(root: &Path) -> Vec<String> {
             }
         }
     }
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = ax_utils::paths::home_dir() {
         if let Ok(text) = std::fs::read_to_string(home.join(".ax").join("active-cursor-session")) {
             let id = text.trim();
             if !id.is_empty() && !ids.iter().any(|existing| existing == id) {
@@ -1209,7 +1209,7 @@ fn is_broad_root(path: &Path) -> bool {
     if path == Path::new("/") {
         return true;
     }
-    dirs::home_dir().is_some_and(|home| path == home)
+    ax_utils::paths::home_dir().is_some_and(|home| path == home)
 }
 
 fn newest_user_plan(files: &[PathBuf], user_plans_dir: Option<&Path>) -> Option<PathBuf> {
@@ -1770,8 +1770,8 @@ mod tests {
         assert!(dirs.iter().all(|path| path != Path::new("/")));
         assert!(dirs
             .iter()
-            .all(|path| Some(path.as_path()) != dirs::home_dir().as_deref()));
-        let real_home = dirs::home_dir().expect("home");
+            .all(|path| Some(path.as_path()) != ax_utils::paths::home_dir().as_deref()));
+        let real_home = ax_utils::paths::home_dir().expect("home");
         let (real_dirs, real_user) = plan_directories(dir.path(), Some(&real_home), &[]);
         let cursor_plans = real_home.join(".cursor").join("plans");
         assert!(real_dirs.iter().any(|path| path == &cursor_plans));

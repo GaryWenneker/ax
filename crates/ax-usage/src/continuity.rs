@@ -1602,6 +1602,12 @@ mod tests {
         assert!(gate_failures(&drifted).contains(&"reproducible"));
     }
 
+    fn read_lf(path: &std::path::Path) -> String {
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .replace("\r\n", "\n")
+    }
+
     #[test]
     fn the_twelve_scenarios_pass_and_do_not_claim_equivalence() {
         let report = validate_continuity().expect("scenarios");
@@ -1639,14 +1645,8 @@ mod tests {
             std::fs::write(&results, format!("{json}\n")).unwrap();
             std::fs::write(&written, render_report(&report)).unwrap();
         }
-        assert_eq!(
-            std::fs::read_to_string(&results).unwrap_or_default(),
-            format!("{json}\n")
-        );
-        assert_eq!(
-            std::fs::read_to_string(&written).unwrap_or_default(),
-            render_report(&report)
-        );
+        assert_eq!(read_lf(&results), format!("{json}\n"));
+        assert_eq!(read_lf(&written), render_report(&report));
     }
 
     #[test]
