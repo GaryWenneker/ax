@@ -143,7 +143,10 @@ export default function MemoryPage() {
     function syncFromRoute() {
       const id = parseLocation().memoryId;
       if (id) setSelectedId(id);
+      const recall = new URLSearchParams(window.location.search).get('q');
+      if (recall) setQ(recall);
     }
+    syncFromRoute();
     window.addEventListener('popstate', syncFromRoute);
     return () => window.removeEventListener('popstate', syncFromRoute);
   }, []);

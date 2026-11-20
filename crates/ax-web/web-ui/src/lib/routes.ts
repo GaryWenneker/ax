@@ -10,6 +10,7 @@ export type Page =
   | 'sonar'
   | 'settings'
   | 'logging'
+  | 'specs'
   | 'savings'
   | 'prices'
   | 'unresolved'
@@ -37,6 +38,10 @@ export interface RouteState {
   skillEditMode?: boolean;
   origin?: string | null;
   projectId?: number | null;
+  /** Logging filter (`/logging?session=…`). */
+  session?: string | null;
+  /** Memory search (`/memory?q=…`). */
+  recallQuery?: string | null;
 }
 
 const VALID_PAGES: Page[] = [
@@ -49,6 +54,7 @@ const VALID_PAGES: Page[] = [
   'sonar',
   'settings',
   'logging',
+  'specs',
   'savings',
   'prices',
   'unresolved',
@@ -65,6 +71,7 @@ const VALID_PAGES: Page[] = [
 export const FULL_BLEED_PAGES: ReadonlySet<Page> = new Set([
   'graph',
   'logging',
+  'specs',
 ]);
 
 const PAGE_PATH: Record<Page, string> = {
@@ -77,6 +84,7 @@ const PAGE_PATH: Record<Page, string> = {
   sonar: '/sonar',
   settings: '/settings',
   logging: '/logging',
+  specs: '/specs',
   savings: '/savings',
   prices: '/prices',
   unresolved: '/unresolved',
@@ -108,6 +116,7 @@ const LEGACY_HASH_PAGE: Record<string, Page> = {
   agent: 'stats',
   settings: 'settings',
   logging: 'logging',
+  specs: 'specs',
   savings: 'savings',
   prices: 'prices',
   unresolved: 'unresolved',
@@ -152,6 +161,8 @@ export function parseLocation(loc: Location = window.location): RouteState & { v
     skillEditMode: edit && page === 'policy-skill-edit',
     origin,
     projectId: Number.isFinite(projectId) ? projectId : null,
+    session: params.get('session'),
+    recallQuery: params.get('q'),
   };
 }
 
@@ -176,7 +187,9 @@ export function buildPath(state: Partial<RouteState> & Pick<RouteState, 'page'>)
   }
   if (state.page === 'unresolved' && state.kind) params.set('kind', state.kind);
   if (state.page === 'logging' && state.kind) params.set('kind', state.kind);
+  if (state.page === 'logging' && state.session) params.set('session', state.session);
   if (state.page === 'memory' && state.memoryId) params.set('memory', state.memoryId);
+  if (state.page === 'memory' && state.recallQuery) params.set('q', state.recallQuery);
   if (state.page === 'sonar' && state.sonarTab === 'setup') params.set('tab', 'setup');
   const qs = params.toString();
   return qs ? `${base}?${qs}` : base;
@@ -194,6 +207,8 @@ export function navigateRoute(state: Partial<RouteState> & Pick<RouteState, 'pag
     skillEditMode: state.skillEditMode ?? false,
     origin: state.origin ?? null,
     projectId: state.projectId ?? null,
+    session: state.session ?? null,
+    recallQuery: state.recallQuery ?? null,
   });
   const current = `${window.location.pathname}${window.location.search}`;
   if (current === path) return;

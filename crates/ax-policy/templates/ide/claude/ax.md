@@ -18,6 +18,10 @@
 
 When the user states a durable rule — `je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule` — persist it. `ax_preflight` sets `directiveDetected` and returns a ready `captureProposal` (rule + `questions`). Ask each question, then call `ax_policy_capture(action="save", rule)` after the user confirms. This works even if the project has no policy yet — the first save bootstraps it. Never silently ignore such a directive.
 
+## Spec
+
+The approved spec is the agreement. Store a finished plan as a draft and do not treat capture as approval. Do not rewrite an approved spec because code drifted; record a draft and wait for review. A bound turn receives the spec id, approved revision, and hash from preflight. After implementation, check the spec again before calling the work done.
+
 ## Capability discovery
 
 ax is actively developed. **Do not rely on cached knowledge of ax features.** `ax_preflight` returns the latest matched rules, skills, and capabilities every call. When preflight returns tools or rules you haven't seen before, use them.

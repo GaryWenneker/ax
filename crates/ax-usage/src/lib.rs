@@ -4,7 +4,9 @@ mod activity;
 mod budget;
 mod cache_status;
 mod context_cache;
+mod context_export;
 mod context_plan;
+mod continuity;
 mod cost;
 mod cost_report;
 mod cursor_state;
@@ -20,6 +22,7 @@ mod pricing_sync;
 pub mod replication;
 mod reuse_cache;
 mod savings;
+mod spec_registry;
 mod store;
 mod tokenizer;
 mod tool_trace;
@@ -48,10 +51,19 @@ pub use context_cache::{
     spawn_note_session_event, stash_project_text, stash_text, tool_chunks_from_jsonl, CacheOutcome,
     CatalogEntry, ExpandPage, StashReceipt,
 };
+pub use context_export::{
+    load_export_input, validate_context_export, CoverageReport, DecisionInput, ExportBundle,
+    ExportInput, FailureInput, IdentityInput, RefInput, Section, TurnInput,
+};
 pub use context_plan::{
     compare_snapshots, cycle_efficiency, efficiency, optional_room, select_context,
     snapshot_from_parts, ContextBlock, ContextChange, ContextClass, ContextEfficiency,
     ContextSnapshot, CycleEfficiency, MEMORY_RESERVE_TOKENS,
+};
+pub use continuity::{
+    continuity_prompt, copy_identifier, gate_failures, render_report, same_mode, score,
+    seal_checkpoint, validate_continuity, Arm, Checkpoint, CopyKind, KnowledgeItem, Scenario,
+    SessionIdentity, TestMode, TestReference, ValidationReport,
 };
 pub use cost::{calculate, Cost, CostComponent, CostConfidence, CostUsage};
 pub use cost_report::{
@@ -111,6 +123,13 @@ pub use savings::{
     query_call_token_detail, query_savings_summary, record_mcp_call, record_session_model_tag,
     spawn_record_mcp_call, stash_cli_result, CallTokenDetail, ImportResult, McpCallRecord,
     SavingsAssumptions, SavingsEstimate, SavingsQuery, SavingsSummary, PREVIEW_MAX_BYTES,
+};
+pub use spec_registry::{
+    approve_revision, approved_revision, capture_finished_plan, check_linked_files,
+    delivered_version, ensure_spec_schema, import_plan_mode_files, import_workspace_plans,
+    is_plan_request, list_revisions, list_specs, on_turn_finished, record_delivery, revision,
+    save_revision, show_spec, spec_context_block, spec_pointer_for, sync_markdown, SpecHistoryRow,
+    SpecListItem, SpecPointer, SpecRevision,
 };
 pub use store::{open_pool, usage_db_path};
 pub use tokenizer::{

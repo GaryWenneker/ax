@@ -19,7 +19,11 @@ Call **`ax_preflight`** exactly once per turn **before all other work**. This is
 
 **Working context:** Record a durable fact, file, symbol, decision, or open question with `ax_session` (actions `add`, `update`, `compact`, `clear`, `fork`, `handoff`). Preflight shows `<ax_working_context>`; pass its hash as `known_context` and an unchanged snapshot comes back as one line. Pass the `session` id from `<ax_chat>` to every ax call in this chat; a preflight without it starts a new chat. A changed index marks it stale; `compact` confirms the notes against the current index. fork copies these notes to a new session. handoff starts a new session from the note you send. The old session stays readable, and the graph cache is not copied. `ax_durable` stores this chat's transcript, documents, and checkpointed tasks.
 
+**Memory:** Working notes for this chat stay in `ax_session` / `ax session`. They do not go into the vault. A durable decision, fix, or convention is `ax_remember` / `ax remember` with a trigger name (`triggers` / `--trigger`). Before re-deriving, fetch that name with `ax_recall` `cue` / `ax recall --cue`. If the user names a trigger, that fetch comes before explore. Free-text recall is the fallback. Questions about old graph changes, logs, or past turns use `depth=archive` on `ax_recall` / `ax recall` and on `ax_history` / `ax history`. Preflight will not contain those hits. A candidate long-term memory is confirmed with `ax_remember` `action=confirm` / `ax remember --confirm`. The old engram stays.
+
 **Directive capture:** When the user gives durable rules (`je moet`, `always`, `never`, `@rule`), call **`ax_policy_capture`** with `action: "propose"`, ask each question from `questions[]`, and save only after explicit confirmation (stored in ax.db).
+
+**Spec:** The approved spec is the agreement. Store a finished plan as a draft and do not treat capture as approval. Do not rewrite an approved spec because code drifted; record a draft and wait for review. A bound turn receives the spec id, approved revision, and hash from preflight. After implementation, check the spec again before calling the work done.
 
 ## Capability discovery
 
@@ -48,14 +52,18 @@ ax is actively developed. **Do not rely on cached knowledge of ax features.** `a
 | Rest of a cut reply | `ax_expand` (id from the footer) |
 | Build task context | `ax_context` |
 
-**Prefer MCP over shell:** When ax MCP is connected, call these tools directly — do **not** shell `ax sync` / `ax lsp` / `ax ship --ci` / `ax policy index`. Shell CLI is only for DEGRADED mode or ops with no MCP tool.
+**Prefer MCP over shell:** When ax MCP is connected, call these tools directly — do **not** shell `ax sync` / `ax lsp` / `ax ship --ci` / `ax policy index`. Shell CLI is for CLI-only projects, DEGRADED mode, or ops with no MCP tool.
 
 ## Version freshness
 
 If `ax_status` reports a stale index or outdated version, warn immediately and suggest `ax upgrade` or re-index.
 
+## CLI-only / MCP unavailable
+
+Prefer MCP when connected. When MCP is unavailable or the project is CLI-only (`ax install --mode cli-only`), use the CLI equivalents — do not skip the workflow: `ax preflight` (or `ax turn begin`), `ax explore` / `ax query` / `ax node`, `ax policy guard <path>`, `ax policy capture` / `ax policy skill`, `ax session` / `ax turn`, `ax sync`, `ax remember --trigger` / `ax recall --cue` / `ax history --depth archive` / `ax remember --confirm`. See `.agents/skills/ax-cli/SKILL.md` when present.
+
 ## Degraded mode
 
-MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`. Do not silently proceed without policy checks.
+MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`. Continue with the CLI graph/ops commands above — do not silently proceed without policy checks.
 
 Full guide: [Policy Engine](https://getax.wenneker.io/guides/policy-engine/).

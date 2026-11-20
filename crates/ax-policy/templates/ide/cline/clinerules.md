@@ -27,6 +27,8 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 
 **Directive capture:** When the user states a durable rule — `je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule` — persist it. `ax_preflight` returns `directiveDetected` + a ready `captureProposal`; ask the questions it lists, then call `ax_policy_capture(action="save", rule)` after the user confirms. Works even if the project has no policy yet (the first save bootstraps it). Never silently ignore such a directive.
 
+**Spec:** The approved spec is the agreement. Store a finished plan as a draft and do not treat capture as approval. Do not rewrite an approved spec because code drifted; record a draft and wait for review. A bound turn receives the spec id, approved revision, and hash from preflight. After implementation, check the spec again before calling the work done.
+
 **Capability discovery:** ax is actively developed. Do not rely on cached knowledge of ax features — `ax_preflight` returns the latest capabilities, rules, and skills each call. Use any new tools or rules it returns.
 
 **Version freshness:** Call `ax_status` at session start. If the index is stale or a newer version exists, warn the user and suggest `ax upgrade` or re-index.

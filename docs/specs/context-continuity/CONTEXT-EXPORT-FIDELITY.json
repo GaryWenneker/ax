@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "1.0",
+  "generatedBy": "cargo test -p ax-usage --lib context_export",
+  "source": "synthetic ExportInput fixtures and one temporary agent_turns database",
+  "equivalenceClaimed": false,
+  "crossChatExperiments": 0,
+  "fixtures": [
+    {
+      "name": "closed-three-turns",
+      "completeness": "complete",
+      "turns": "3 / 3",
+      "decisions": "1 / 1",
+      "rulesAndSkills": "2 / 2",
+      "unresolvedReferences": 0,
+      "sourceIntegrity": "Verified",
+      "contextRelevance": "Not yet tested",
+      "crossChatContinuity": "Pending",
+      "spec": "not_captured",
+      "blockers": []
+    },
+    {
+      "name": "two-hundred-turns",
+      "completeness": "complete",
+      "turns": "200 / 200",
+      "earlyDecisionKept": "keep the first ranking",
+      "rejectedApproachKept": "rejected neural ranker v1",
+      "earlyPromptInAgentReady": false,
+      "lastPromptInAgentReady": true
+    },
+    {
+      "name": "stored-agent-turns",
+      "completeness": "partial",
+      "turns": "2 / 2",
+      "decisions": "not captured",
+      "secondPromptState": "truncated",
+      "note": "The loader reads agent_turns and does not invent decisions. A prompt at the 8000-character writer cap is truncated."
+    }
+  ]
+}

@@ -255,6 +255,8 @@ enum Commands {
     /// Node details (same as ax_node MCP tool)
     #[command(long_about = help_text::NODE_LONG)]
     Node { name: Option<String> },
+    /// Print a stored spec or plan body (`id` or `id@version`)
+    Spec { spec: String },
     /// List project files
     #[command(long_about = help_text::FILES_LONG)]
     Files {
@@ -2490,6 +2492,7 @@ async fn async_main() {
             MemoryCommands::Reindex { json } => commands::memory::run_reindex(json).await,
         },
         Some(Commands::Node { name }) => commands::node::run(name).await,
+        Some(Commands::Spec { spec }) => commands::spec::show(spec).await,
         Some(Commands::Files { format, json }) => commands::files::run(format, json).await,
         Some(Commands::Context { task }) => commands::context::run(task).await,
         Some(Commands::Preflight {
@@ -3680,6 +3683,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::CaptureGit { .. }) => Some("capture-git".into()),
         Some(Commands::Memory { .. }) => Some("memory".into()),
         Some(Commands::Node { .. }) => Some("node".into()),
+        Some(Commands::Spec { .. }) => Some("spec".into()),
         Some(Commands::Files { .. }) => Some("files".into()),
         Some(Commands::Context { .. }) => Some("context".into()),
         Some(Commands::Preflight { .. }) => Some("preflight".into()),

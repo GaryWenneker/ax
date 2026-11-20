@@ -890,10 +890,7 @@ async fn recover_login(
     }
     let identity = body.identity.trim();
     if !body.code.starts_with("axr-") || body.code.len() > 100 || identity.is_empty() {
-        return Err(err(
-            StatusCode::UNAUTHORIZED,
-            PUBLIC_RECOVERY_DENIED,
-        ));
+        return Err(err(StatusCode::UNAUTHORIZED, PUBLIC_RECOVERY_DENIED));
     }
     let limit_key = format!("recovery:{}:{}", peer.ip(), hash(identity));
     {
@@ -937,10 +934,7 @@ async fn recover_login(
                 *attempt = (0, Instant::now());
             }
             attempt.0 += 1;
-            return Err(err(
-                StatusCode::UNAUTHORIZED,
-                PUBLIC_RECOVERY_DENIED,
-            ));
+            return Err(err(StatusCode::UNAUTHORIZED, PUBLIC_RECOVERY_DENIED));
         }
     };
     let updated = sqlx::query(
@@ -953,10 +947,7 @@ async fn recover_login(
     .await
     .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Recovery unavailable"))?;
     if updated.rows_affected() != 1 {
-        return Err(err(
-            StatusCode::UNAUTHORIZED,
-            PUBLIC_RECOVERY_DENIED,
-        ));
+        return Err(err(StatusCode::UNAUTHORIZED, PUBLIC_RECOVERY_DENIED));
     }
     tx.commit()
         .await

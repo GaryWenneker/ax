@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
+import ContinuityPanel from '../components/ContinuityPanel';
 import McpTraceLive from '../components/McpTraceLive';
 import { usePageContext } from '../context/UiContext';
+import type { ContinuityDraft } from '../lib/continuity';
 import {
   emptyMcpTraceStats,
   MCP_TRACE_STATS,
@@ -15,6 +17,12 @@ import {
  */
 export default function LoggingPage() {
   const [stats, setStats] = useState<McpTraceStats>(emptyMcpTraceStats);
+  const [continuityOpen, setContinuityOpen] = useState(false);
+  const [pickedContinuity, setPickedContinuity] = useState<ContinuityDraft | null>(null);
+  const onContinuityOpen = useCallback((open: boolean) => {
+    setContinuityOpen(open);
+    if (!open) setPickedContinuity(null);
+  }, []);
 
   const detail =
     stats.projectLabel && stats.projectLabel !== '—'
@@ -36,7 +44,8 @@ export default function LoggingPage() {
 
   return (
     <div className="logging-page">
-      <McpTraceLive variant="page" />
+      <ContinuityPanel values={pickedContinuity ?? stats.continuity} onOpenChange={onContinuityOpen} />
+      <McpTraceLive variant="page" rowOpensBlade={!continuityOpen} onContinuityRow={setPickedContinuity} />
     </div>
   );
 }

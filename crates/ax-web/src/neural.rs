@@ -59,7 +59,13 @@ mod tests {
         assert_eq!(value["rankingActive"], true);
         assert_eq!(value["metrics"]["feedbackCount"]["kind"], "measured");
         assert_eq!(value["metrics"]["feedbackCount"]["value"], 0);
-        assert_eq!(value["capabilities"]["hashVectorRetrieval"]["status"], "active");
-        assert_eq!(value["capabilities"]["hashVectorRetrieval"]["kind"], "hash-v1");
+        assert_eq!(
+            value["capabilities"]["hashVectorRetrieval"]["status"],
+            "active"
+        );
+        assert_eq!(
+            value["capabilities"]["hashVectorRetrieval"]["kind"],
+            "hash-v1"
+        );
     }
 }

@@ -480,6 +480,21 @@ pub async fn turn_finish(
     )
     .await;
 
+    if let Err(error) = crate::spec_registry::on_turn_finished(
+        pool,
+        root,
+        &snap.project_id,
+        session_id,
+        turn_id,
+        &snap.prompt,
+        &outcome,
+        &snap.files,
+    )
+    .await
+    {
+        tracing::warn!("spec capture skipped: {error}");
+    }
+
     if !input.open_questions.is_empty() {
         let _ = crate::working_context_apply(
             root,

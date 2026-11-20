@@ -192,6 +192,14 @@ html, body {
   align-self: stretch;
 }
 
+.workspace > .container--full:has(.logging-page) {
+  overflow: hidden;
+}
+
+.workspace > .container--full:has(.specs-page) {
+  overflow: hidden;
+}
+
 /* Tablet: sidebar hidden — stage is full viewport */
 @media (max-width: 899px) {
   .app {
@@ -7355,7 +7363,9 @@ html:-webkit-full-screen .mcp-trace-max-overlay {
 .logging-page {
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - 96px);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
 }
 
 .logging-page--immersive {
@@ -7366,7 +7376,45 @@ html:-webkit-full-screen .mcp-trace-max-overlay {
 
 .logging-page.container--full,
 .container--full .logging-page {
-  min-height: calc(100vh - 96px);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.logging-page .continuity-panel--docked:not(:has(.continuity-body[hidden])) {
+  flex: 1 1 0;
+  min-height: min-content;
+  overflow: visible;
+}
+
+.logging-page .continuity-panel--docked:not(:has(.continuity-body[hidden])) .continuity-body,
+.logging-page .continuity-panel--docked:not(:has(.continuity-body[hidden])) .continuity-prompt,
+.logging-page .continuity-panel--docked:not(:has(.continuity-body[hidden])) .continuity-prompt label {
+  flex: 1 1 auto;
+  min-height: min-content;
+}
+
+.logging-page .continuity-panel--docked:not(:has(.continuity-body[hidden])) .continuity-prompt textarea {
+  flex: 1 1 auto;
+  min-height: 14em;
+  height: auto;
+}
+
+.logging-page .mcp-trace-card--page {
+  flex: 1 1 0;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+
+.logging-page .mcp-trace-page-body,
+.logging-page .mcp-trace-shell--page,
+.logging-page .mcp-trace-shell--page .mcp-trace-scroller-wrap,
+.logging-page .mcp-trace-shell--page .mcp-trace-scroller {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
 }
 
 .logging-page .settings-hero {
@@ -16036,6 +16084,167 @@ html[data-ax-theme="macos"] :is(
   0%, 100% { opacity: 0.45; }
   50% { opacity: 1; }
 }
+.continuity-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0 0 12px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  position: static;
+  flex: 0 0 auto;
+  height: auto;
+  max-height: none;
+  overflow: visible;
+}
+.continuity-panel--docked:has(.continuity-body[hidden]) {
+  display: none;
+}
+.continuity-panel--docked {
+  border: none;
+  background: transparent;
+  margin: 0 0 8px;
+}
+#continuity-toolbar-slot {
+  display: contents;
+}
+.continuity-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px 10px;
+}
+.continuity-body[hidden] { display: none; }
+.continuity-notice {
+  margin: 0;
+  color: var(--text-dim);
+  font-family: "Archivo Variable", var(--font-ui);
+  font-size: 11px;
+  font-weight: 450;
+  line-height: 1.3;
+  white-space: pre-wrap;
+}
+.continuity-prompt {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 4px 6px 6px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+}
+.continuity-prompt label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+  font-family: "Archivo Variable", var(--font-ui);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  line-height: 1.1;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.continuity-prompt textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 2px 64px 2px 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-hi);
+  font: 13px/1.3 "Share Tech Mono", var(--font-mono);
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 400;
+  resize: vertical;
+  min-height: 14em;
+}
+.continuity-prompt-copy {
+  position: absolute;
+  top: 18px;
+  right: 6px;
+  margin: 0;
+  padding: 4px 8px;
+  font-family: "Archivo Variable", var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 0;
+}
+.continuity-prompt:focus-within { border-color: var(--accent); }
+.continuity-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+.continuity-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 4px 6px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  font-family: "Archivo Variable", var(--font-ui);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  line-height: 1.1;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.continuity-grid label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.continuity-grid label:focus-within { border-color: var(--accent); }
+.continuity-grid input, .continuity-grid select, .continuity-grid textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-hi);
+  font: 13px/1.3 "Share Tech Mono", var(--font-mono);
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 400;
+}
+.continuity-grid textarea { height: 1.3em; min-height: 0; resize: vertical; overflow: hidden; }
+.continuity-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.continuity-actions button {
+  font-family: "Archivo Variable", var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  padding: 5px 8px;
+}
+.continuity-actions .continuity-prepare {
+  background: var(--accent);
+  color: var(--accent-on-fill);
+  border-color: var(--accent);
+}
+.mcp-trace-header-actions .continuity-toggle:focus-visible,
+.continuity-actions button:focus-visible,
+.continuity-prompt-copy:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 @media (prefers-reduced-motion: reduce) {
   .mcp-dir-legend-item--neural.is-ranking::before {
     animation: none;
@@ -16495,4 +16704,60 @@ html[data-ax-layout="portal"] .titlebar-brand .ax-app-wordmark > span{color:#b9f
   .mcp-trace-shell--page .mcp-trace-filter-kinds { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 3px; }
   .mcp-trace-shell--page .mcp-trace-filter-chip { flex-shrink: 0; }
   .mcp-trace-shell--page .mcp-trace-scroller { padding: 6px 12px 12px; }
+}
+
+.specs-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+.specs-filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.specs-filters button[aria-pressed="true"] { border-color: var(--accent); color: var(--text-hi); }
+.specs-search { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--text-dim); }
+.specs-search input {
+  min-height: 30px;
+  padding: 4px 8px;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  font: 13px/1.3 "Share Tech Mono", var(--font-mono);
+}
+.specs-history-nav, .specs-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.specs-editor-label { display: flex; flex-direction: column; gap: 4px; min-height: 0; }
+.specs-editor {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 14em;
+  padding: 12px;
+  color: var(--text-hi);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  font: 13px/1.45 "Share Tech Mono", var(--font-mono);
+  resize: vertical;
+}
+.specs-diff { display: flex; flex-direction: column; gap: 2px; font: 13px/1.4 "Share Tech Mono", var(--font-mono); }
+.specs-diff p { margin: 0; }
+.specs-diff-removed::before { content: ""; }
+.specs-diff-added, .specs-diff-removed { color: var(--text); }
+.specs-page h1, .specs-page h2 { font-family: var(--font-ui); font-weight: 600; }
+.specs-revision { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.specs-session-links { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.specs-page .column-list { min-height: 0; overflow: auto; }
+.specs-session { display: inline-flex; gap: 8px; align-items: baseline; font: 13px/1.3 "Share Tech Mono", ui-monospace, monospace; }
+.specs-session a { text-decoration: underline; }
+.specs-body {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow: auto;
+  max-height: 24rem;
+  width: 100%;
+  margin: 0;
+  padding: 12px;
+  color: var(--text);
+  background: var(--bg-input);
 }

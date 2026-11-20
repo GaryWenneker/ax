@@ -1,0 +1,247 @@
+{
+  "scenarios": [
+    {
+      "scenario": "unfinished_feature",
+      "gates": [],
+      "score": {
+        "fact_recall": 1.0,
+        "fact_precision": 1.0,
+        "decision_consistency": 1.0,
+        "rule_compliance": 1.0,
+        "acceptance_pass_rate": 1.0,
+        "outcome_equivalence": 1.0,
+        "token_overhead": 0.056074766355140186,
+        "retrieval_latency_ms": 5,
+        "negative_control_pass_rate": 0.0,
+        "confidence_low": 0.34237195288961925,
+        "confidence_high": 1.0,
+        "historical_dependency": true
+      },
+      "checkpoint_hash": "57c27bb9aaa3e3c6c1a775efa2111cfa4c0c91887b2af7351426bfa17427ccad",
+      "mode": "historical"
+    },
+    {
+      "scenario": "architectural_decision",
+      "gates": [],
+      "score": {
+        "fact_recall": 1.0,
+        "fact_precision": 1.0,
+        "decision_consistency": 1.0,
+        "rule_compliance": 1.0,
+        "acceptance_pass_rate": 1.0,
+        "outcome_equivalence": 1.0,
+        "token_overhead": 0.054409005628517824,
+        "retrieval_latency_ms": 5,
+        "negative_control_pass_rate": 0.0,
+        "confidence_low": null,
+        "confidence_high": null,
+        "historical_dependency": true
+      },
+      "checkpoint_hash": "7a65e25784339b2509ae222b5d9481efd48f6ad92a8242a667075e142df24b89",
+      "mode": "historical"
+    },
+    {
+      "scenario": "diagnosed_bug",
+      "gates": [],
+      "score": {
+        "fact_recall": 1.0,
+        "fact_precision": 1.0,
+        "decision_consistency": 1.0,
+        "rule_compliance": 1.0,
+        "acceptance_pass_rate": 1.0,
+        "outcome_equivalence": 1.0,
+        "token_overhead": 0.07522935779816514,
+        "retrieval_latency_ms": 5,
+        "negative_control_pass_rate": 0.0,
+        "confidence_low": null,
+        "confidence_high": null,
+        "historical_dependency": true
+      },
+      "checkpoint_hash": "8acb18dbfe25af19a6fe1ae4fec68d81e7637375a539810c6d62aee7a6dbea78",
+      "mode": "historical"
+    },
+    {
+      "scenario": "project_rule",
+      "gates": [],
+      "score": {
+        "fact_recall": 1.0,
+        "fact_precision": 1.0,
+        "decision_consistency": 1.0,
+        "rule_compliance": 1.0,
+        "acceptance_pass_rate": 1.0,
+        "outcome_equivalence": 1.0,
+        "token_overhead": 0.05783582089552239,
+        "retrieval_latency_ms": 5,
+        "negative_control_pass_rate": 0.0,
+        "confidence_low": null,
+        "confidence_high": null,
+        "historical_dependency": true
+      },
+      "checkpoint_hash": "44fc53c651e1fe49b77570d85ff245b90642570ad59955a52f97d39f81153f06",
+      "mode": "historical"
+    },
+    {
+      "scenario": "early_memory",
+      "gates": [],
+      "score": {
+        "fact_recall": 1.0,
+        "fact_precision": 1.0,
+        "decision_consistency": 1.0,
+        "rule_compliance": 1.0,
+        "acceptance_pass_rate": 1.0,
+        "outcome_equivalence": 1.0,
+        "token_overhead": 0.06307977736549165,
+        "retrieval_latency_ms": 5,
+        "negative_control_pass_rate": 0.0,
+        "confidence_low": null,
+        "confidence_high": null,
+        "historical_dependency": true
+      },
+      "checkpoint_hash": "eb026c890665a6800c73f1fe99003360afa24303ec8674ac91ff7ce6d4b80544",
+      "mode": "historical"
+    },
+    {
+      "scenario": "modified_file",
+      "gates": [],
+      "score": {
+        "fact_recall": 1.0,
+        "fact_precision": 1.0,
+        "decision_consistency": 1.0,
+        "rule_compliance": 1.0,
+        "acceptance_pass_rate": 1.0,
+        "outcome_equivalence": 1.0,
+        "token_overhead": 0.054307116104868915,
+        "retrieval_latency_ms": 5,
+        "negative_control_pass_rate": 0.0,
+        "confidence_low": null,
+        "confidence_high": null,
+        "historical_dependency": true
+      },
+      "checkpoint_hash": "3c66dce9a9ae8406bed207a6e9d4ee8d93cbcae913914662d537717f10617d84",
+      "mode": "historical"
+    },
+    {
+      "scenario": "daemon_restart",
+      "gates": [],
+      "score": {
+        "fact_recall": 1.0,
+        "fact_precision": 1.0,
+        "decision_consistency": 1.0,
+        "rule_compliance": 1.0,
+        "acceptance_pass_rate": 1.0,
+        "outcome_equivalence": 1.0,
+        "token_overhead": 0.056074766355140186,
+        "retrieval_latency_ms": 5,
+        "negative_control_pass_rate": 0.0,
+        "confidence_low": null,
+        "confidence_high": null,
+        "historical_dependency": true
+      },
+      "checkpoint_hash": "6c373631a7fb5326c5c26edc6894bea8099a8f748f3b531968bc6059919763d5",
+      "mode": "historical"
+    },
+    {
+      "scenario": "ide_restart",
+      "gates": [],
+      "score": {
+        "fact_recall": 1.0,
+        "fact_precision": 1.0,
+        "decision_consistency": 1.0,
+        "rule_compliance": 1.0,
+        "acceptance_pass_rate": 1.0,
+        "outcome_equivalence": 1.0,
+        "token_overhead": 0.056074766355140186,
+        "retrieval_latency_ms": 5,
+        "negative_control_pass_rate": 0.0,
+        "confidence_low": null,
+        "confidence_high": null,
+        "historical_dependency": true
+      },
+      "checkpoint_hash": "d4015cd37b97885d95af7235b2e36131788482ef4abe21d6db5707cd4b6efb19",
+      "mode": "historical"
+    },
+    {
+      "scenario": "different_agent",
+      "gates": [],
+      "score": {
+        "fact_recall": 1.0,
+        "fact_precision": 1.0,
+        "decision_consistency": 1.0,
+        "rule_compliance": 1.0,
+        "acceptance_pass_rate": 1.0,
+        "outcome_equivalence": 1.0,
+        "token_overhead": 0.056074766355140186,
+        "retrieval_latency_ms": 5,
+        "negative_control_pass_rate": 0.0,
+        "confidence_low": null,
+        "confidence_high": null,
+        "historical_dependency": true
+      },
+      "checkpoint_hash": "b47c020d2f21c7bf8f0094bcb1670096f4f921d8367f25c1e51497c04f72961a",
+      "mode": "historical"
+    },
+    {
+      "scenario": "replica",
+      "gates": [],
+      "score": {
+        "fact_recall": 1.0,
+        "fact_precision": 1.0,
+        "decision_consistency": 1.0,
+        "rule_compliance": 1.0,
+        "acceptance_pass_rate": 1.0,
+        "outcome_equivalence": 1.0,
+        "token_overhead": 0.056074766355140186,
+        "retrieval_latency_ms": 5,
+        "negative_control_pass_rate": 0.0,
+        "confidence_low": null,
+        "confidence_high": null,
+        "historical_dependency": true
+      },
+      "checkpoint_hash": "44322fb8f136e0ebe82cf70b2f0d565a117973cfc2945bb0471fa36f432d4e0c",
+      "mode": "historical"
+    },
+    {
+      "scenario": "conflicting_decisions",
+      "gates": [],
+      "score": {
+        "fact_recall": 1.0,
+        "fact_precision": 1.0,
+        "decision_consistency": 1.0,
+        "rule_compliance": 1.0,
+        "acceptance_pass_rate": 1.0,
+        "outcome_equivalence": 1.0,
+        "token_overhead": 0.054409005628517824,
+        "retrieval_latency_ms": 5,
+        "negative_control_pass_rate": 0.0,
+        "confidence_low": null,
+        "confidence_high": null,
+        "historical_dependency": true
+      },
+      "checkpoint_hash": "83fdb1048e9eae5aeb1d05e443b3c1f90395865b682c91f6840cbbf82e951280",
+      "mode": "historical"
+    },
+    {
+      "scenario": "unrelated_history",
+      "gates": [],
+      "score": {
+        "fact_recall": 1.0,
+        "fact_precision": 1.0,
+        "decision_consistency": 1.0,
+        "rule_compliance": 1.0,
+        "acceptance_pass_rate": 1.0,
+        "outcome_equivalence": 1.0,
+        "token_overhead": 0.056074766355140186,
+        "retrieval_latency_ms": 5,
+        "negative_control_pass_rate": 0.0,
+        "confidence_low": null,
+        "confidence_high": null,
+        "historical_dependency": true
+      },
+      "checkpoint_hash": "74d749aa5eb3a4c2bc82974ac1e093c70167bdf9ad5cef20996657a0d0056401",
+      "mode": "historical"
+    }
+  ],
+  "equivalence_claimed": false,
+  "live_agent_experiments": 0,
+  "latency_model": "1ms per retrieved item; input tokens are utf-8 bytes divided by 4"
+}

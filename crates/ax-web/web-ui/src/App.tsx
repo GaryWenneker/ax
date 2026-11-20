@@ -15,6 +15,7 @@ import PolicySyncPage from './pages/PolicySync';
 import UnresolvedPage from './pages/Unresolved';
 import SettingsPage from './pages/Settings';
 import LoggingPage from './pages/Logging';
+import SpecsPage from './pages/Specs';
 import SavingsPage from './pages/Savings';
 import PricesPage from './pages/Prices';
 import MemoryPage from './pages/Memory';
@@ -461,6 +462,7 @@ function AppShell() {
             {page === 'prices' && <PricesPage key={workspaceKey} />}
             {page === 'settings' && <SettingsPage key={workspaceKey} />}
             {page === 'logging' && <LoggingPage key={workspaceKey} />}
+            {page === 'specs' && <SpecsPage key={workspaceKey} />}
             {(page === 'policy-rules' || (page === 'policy-rule-edit' && editRuleId && !ruleEditMode)) && (
               <PolicyRulesPage
                 key={workspaceKey}

@@ -16,6 +16,19 @@ const REQUEST_TIMEOUT_SECS: u64 = 120;
 pub fn apply_pending_upgrade() {
     #[cfg(windows)]
     apply_pending_upgrade_windows();
+    refresh_cwd_ide_files();
+}
+
+/// After an upgrade, and on later ax commands in a project, rewrite managed
+/// IDE instruction files when the seeded Ax section has changed.
+fn refresh_cwd_ide_files() {
+    let Ok(cwd) = std::env::current_dir() else {
+        return;
+    };
+    if !cwd.join(".ax").is_dir() {
+        return;
+    }
+    let _ = ax_policy::seed_ide_agent_workflow(&cwd);
 }
 
 pub async fn run(

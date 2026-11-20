@@ -1085,6 +1085,12 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
                 inject.push('\n');
                 inject.push_str(&ax_section("nudge", &nudge));
             }
+            let spec_text =
+                ax_usage::spec_context_block(ax.db_pool(), ax.project_root(), &conversation).await;
+            if !spec_text.is_empty() {
+                inject.push('\n');
+                inject.push_str(&ax_section("spec", &spec_text));
+            }
         }
     }
 

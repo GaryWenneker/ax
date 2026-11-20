@@ -44,6 +44,7 @@ mod share_auth;
 mod ship;
 mod skill_catalog_api;
 mod sonar_proxy;
+mod specs;
 mod vault_folders;
 mod web_auth;
 mod workspace;

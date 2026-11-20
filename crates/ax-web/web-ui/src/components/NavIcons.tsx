@@ -13,6 +13,7 @@ type NavId =
   | 'sonar'
   | 'settings'
   | 'logging'
+  | 'specs'
   | 'policy-rules'
   | 'policy-skills'
   | 'policy-review'
@@ -33,6 +34,7 @@ const NAV_CODICONS: Record<NavId, string> = {
   sonar: 'shield',
   settings: 'settings-gear',
   logging: 'output',
+  specs: 'book',
   'policy-rules': 'law',
   'policy-skills': 'mortar-board',
   'policy-review': 'checklist',

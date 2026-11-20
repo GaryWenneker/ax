@@ -22,6 +22,8 @@ Call **`ax_preflight`** exactly once per turn **before all other work**. This is
 
 **Directive capture:** When the user states a durable rule (`je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule`), persist it. `ax_preflight` sets `directiveDetected` and returns a ready `captureProposal` (rule + `questions[]`) — ask each question, then call **`ax_policy_capture`** with `action: "save"` after explicit confirmation. Works even if the project has no policy yet (the first save bootstraps it, stored in ax.db). Never silently ignore such a directive.
 
+**Spec:** The approved spec is the agreement. Store a finished plan as a draft and do not treat capture as approval. Do not rewrite an approved spec because code drifted; record a draft and wait for review. A bound turn receives the spec id, approved revision, and hash from preflight. After implementation, check the spec again before calling the work done.
+
 ## Capability discovery
 
 ax is actively developed. **Do not rely on cached knowledge of ax features.** `ax_preflight` returns the latest matched rules, skills, and capabilities every call. When preflight returns tools or rules you haven't seen before, use them.
@@ -50,14 +52,30 @@ ax is actively developed. **Do not rely on cached knowledge of ax features.** `a
 | Rest of a cut reply | `ax_expand` (id from the footer) |
 | Build task context | `ax_context` |
 
-**Prefer MCP over shell:** When ax MCP is connected, call these tools directly — do **not** run `ax sync` / `ax lsp` / `ax ship --ci` / `ax policy index` / `ax remember` via the terminal. Shell CLI is only for DEGRADED mode or ops with no MCP tool (install, upgrade, web, share, ship --watch).
+**Prefer MCP over shell:** When ax MCP is connected, call these tools directly — do **not** run `ax sync` / `ax lsp` / `ax ship --ci` / `ax policy index` / `ax remember` via the terminal. Shell CLI is for CLI-only projects, DEGRADED mode, or ops with no MCP tool (install, upgrade, web, share, ship --watch).
 
 ## Version freshness
 
 If `ax_status` reports a stale index or outdated version, warn immediately and suggest `ax upgrade` or re-index.
 
+## CLI-only / MCP unavailable
+
+Prefer MCP when connected. When MCP is unavailable or the project is CLI-only (`ax install --mode cli-only`), use the CLI equivalents — do not skip the workflow:
+
+| Need | CLI |
+|---|---|
+| Turn start / policy | `ax preflight` or `ax turn begin` |
+| Code graph | `ax explore`, `ax query`, `ax node` |
+| Session notes | `ax session …` |
+| Pre-write guard | `ax policy guard <path>` |
+| Capture directive | `ax policy capture` |
+| Load skill body | `ax policy skill <name>` |
+| Re-index / memory | `ax sync`, `ax remember --trigger` / `ax recall --cue` / `ax history --depth archive` / `ax remember --confirm` |
+
+See `.agents/skills/ax-cli/SKILL.md` when present. Resume MCP tools as soon as the server is connected.
+
 ## Degraded mode
 
-MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`. Do not silently proceed without policy checks.
+MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`. Continue with the CLI graph/ops commands above — do not silently proceed without policy checks.
 
 Full guide: [Policy Engine](https://getax.wenneker.io/guides/policy-engine/).

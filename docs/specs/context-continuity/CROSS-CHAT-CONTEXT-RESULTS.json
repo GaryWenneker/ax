@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "1.0",
+  "status": "not_performed",
+  "experiments": 0,
+  "answerKey": null,
+  "arms": {
+    "originalChat": "not_performed",
+    "newChatWithExport": "not_performed",
+    "newChatWithoutExport": "not_performed"
+  },
+  "note": "Cross-chat retrieval and the functional comparison start only after the verifier is green. This file records that they have not been run. A passing exporter test is not evidence that a new chat continued the work."
+}

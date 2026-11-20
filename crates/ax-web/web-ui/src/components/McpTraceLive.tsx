@@ -9,6 +9,7 @@ import { ItemList, ItemRow } from './ui/PageLayout';
 import { liveClass, useFreshMarks } from '../lib/useLive';
 import { traceGroupLinks } from '../traceGroups';
 import { traceAge, traceDirection, traceDirectionLabel, traceRowSubtitle } from '../lib/calmRows';
+import { filledContinuityFieldsFromEntry, logRowSelection, type ContinuityDraft } from '../lib/continuity';
 import { loggingRowView, loggingToolLabel, traceSessionId } from '../lib/loggingPresentation';
 import { groupBySessionThenTurn } from '../logging/sessionTurnGroups';
 import {
@@ -88,6 +89,10 @@ const KIND_LABELS: Record<TraceKind, string> = {
 
 type Props = {
   variant?: 'page' | 'embedded';
+  /** False while the continuity panel is open: a row click must not open the side panel. */
+  rowOpensBlade?: boolean;
+  /** Fills the continuity panel from the clicked row while that panel is open. */
+  onContinuityRow?: (values: ContinuityDraft) => void;
 };
 
 const KIND_ICONS: Record<TraceKind, string> = {
@@ -333,7 +338,7 @@ async function exitBrowserFullscreen() {
  * Newest events render at the top; scroll down for older days.
  * Shared column list; tap a row for the compact Call Inspector.
  */
-export default function McpTraceLive({ variant = 'embedded' }: Props) {
+export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = true, onContinuityRow }: Props) {
   const [entries, setEntries] = useState<TraceEntry[]>([]);
   const [freshIds, markFresh] = useFreshMarks();
   const [live, setLive] = useState(false);
@@ -347,6 +352,9 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
   const [maximized, setMaximized] = useState(false);
   const [browserFs, setBrowserFs] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!rowOpensBlade) setSelectedId(null);
+  }, [rowOpensBlade]);
   const [cursorId, setCursorId] = useState<string | null>(null);
   const [path, setPath] = useState('<project>/.ax/mcp-verbose-YYYY-MM-DD.log');
   const [logDay, setLogDay] = useState('');
@@ -371,7 +379,14 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
   });
   const [dateFilter, setDateFilter] = useState('');
   const [toolFilter, setToolFilter] = useState('');
-  const [sessionFilter, setSessionFilter] = useState('');
+  const [sessionFilter, setSessionFilter] = useState(() => new URLSearchParams(window.location.search).get('session') ?? '');
+  useEffect(() => {
+    function syncSession() {
+      setSessionFilter(new URLSearchParams(window.location.search).get('session') ?? '');
+    }
+    window.addEventListener('popstate', syncSession);
+    return () => window.removeEventListener('popstate', syncSession);
+  }, []);
   const [query, setQuery] = useState('');
   /** Keep only rows with a promoted text option (prompt/query/text/…). */
   const [hasTextFilter, setHasTextFilter] = useState(() => {
@@ -976,10 +991,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
         e.preventDefault();
         const ids = visibleRowIds();
         const id = cursorId && ids.includes(cursorId) ? cursorId : ids[0];
-        if (id) {
-          setCursorId(id);
-          setSelectedId(id);
-        }
+        if (id) openEntry(id);
         return;
       }
       if (e.key === 'Escape') {
@@ -1020,6 +1032,9 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
     maximized,
     selectedId,
     cursorId,
+    rowOpensBlade,
+    onContinuityRow,
+    projectRoot,
     isPage,
     entries,
     visibleEntries,
@@ -1078,9 +1093,16 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
     setCursorId(ids[next]);
   }
 
+  function fillContinuity(id: string) {
+    if (rowOpensBlade || !onContinuityRow) return;
+    const entry = entries.find((item) => item.id === id);
+    if (entry) onContinuityRow(filledContinuityFieldsFromEntry(entry, entries, projectRoot));
+  }
+
   function openEntry(id: string) {
     setCursorId(id);
-    setSelectedId((open) => (open === id ? null : id));
+    setSelectedId((current) => logRowSelection(current, id, !rowOpensBlade));
+    fillContinuity(id);
   }
 
   async function toggleMaximize() {
@@ -1143,6 +1165,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
             </span>
           </div>
           <div className="mcp-trace-header-actions">
+            {isPage ? <div id="continuity-toolbar-slot" /> : null}
             <button
               type="button"
               className={`btn btn-compact mcp-trace-icon-btn mcp-trace-filters-toggle${

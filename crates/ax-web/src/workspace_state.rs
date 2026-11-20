@@ -155,6 +155,7 @@ impl WebHub {
             )
             .nest("/api/usage", crate::savings::router(hub.clone()))
             .nest("/api/memory", crate::memory::router_hub(hub.clone()))
+            .nest("/api/specs", crate::specs::router(hub.clone()))
             .nest("/api/neural", crate::neural::router(hub.clone()))
             .nest("/api/links", crate::links_api::router_hub(hub.clone()))
             .nest(

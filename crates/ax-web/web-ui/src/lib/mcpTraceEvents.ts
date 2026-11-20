@@ -1,3 +1,4 @@
+import { filledContinuityFieldsFromTrace, type ContinuityDraft } from './continuity';
 import {
   entryHasQueryPayload,
   entryHasTextPayload,
@@ -64,6 +65,7 @@ export type McpTraceStats = {
   projectLabel: string;
   projectRoot: string;
   path: string;
+  continuity: ContinuityDraft;
 };
 
 const EMPTY_COUNTS: Record<TraceKind, number> = {
@@ -136,6 +138,7 @@ export function computeMcpTraceStats(
     projectLabel: meta.projectLabel,
     projectRoot: meta.projectRoot,
     path: meta.path,
+    continuity: filledContinuityFieldsFromTrace(entries, meta.projectRoot),
   };
 }
 
@@ -161,6 +164,7 @@ export function emptyMcpTraceStats(): McpTraceStats {
     projectLabel: '—',
     projectRoot: '',
     path: '',
+    continuity: filledContinuityFieldsFromTrace([], ''),
   };
 }
 

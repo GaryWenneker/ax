@@ -46,6 +46,8 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 
 **Directive capture:** When the user states a durable rule — `je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule` — persist it. `ax_preflight` returns `directiveDetected` + a ready `captureProposal`; ask the questions it lists, then call `ax_policy_capture(action="save", rule)` (or CLI `ax policy capture --yes` after confirm) after the user confirms. This works even if the project has no policy yet (the first save bootstraps it). Never silently ignore such a directive.
 
+**Spec:** The approved spec is the agreement. Store a finished plan as a draft and do not treat capture as approval. Do not rewrite an approved spec because code drifted; record a draft and wait for review. A bound turn receives the spec id, approved revision, and hash from preflight. After implementation, check the spec again before calling the work done.
+
 **Capability discovery:** ax is actively developed. Do not rely on cached knowledge of ax features — `ax_preflight` returns the latest capabilities, rules, and skills each call. Use any new tools or rules it returns.
 
 **Version freshness:** Call `ax_status` at session start. If the index is stale or a newer version exists, warn the user and suggest `ax upgrade` or re-index.
@@ -75,6 +77,8 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 **Memory:** Working notes for this chat stay in `ax_session` / `ax session`. They do not go into the vault. A durable decision, fix, or convention is `ax_remember` / `ax remember` with a trigger name (`triggers` / `--trigger`). Before re-deriving, fetch that name with `ax_recall` `cue` / `ax recall --cue`. If the user names a trigger, that fetch comes before explore. Free-text recall is the fallback. Questions about old graph changes, logs, or past turns use `depth=archive` on `ax_recall` / `ax recall` and on `ax_history` / `ax history`. Preflight will not contain those hits. A candidate long-term memory is confirmed with `ax_remember` `action=confirm` / `ax remember --confirm`. The old engram stays.
 
 **Directive capture:** When the user states a durable rule — `je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule` — persist it. `ax_preflight` returns `directiveDetected` + a ready `captureProposal`; ask the questions it lists, then call `ax_policy_capture(action="save", rule)` (or CLI `ax policy capture --yes` after confirm) after the user confirms. Works even if the project has no policy yet (the first save bootstraps it). Never silently ignore such a directive.
+
+**Spec:** The approved spec is the agreement. Store a finished plan as a draft and do not treat capture as approval. Do not rewrite an approved spec because code drifted; record a draft and wait for review. A bound turn receives the spec id, approved revision, and hash from preflight. After implementation, check the spec again before calling the work done.
 
 **Capability discovery:** ax is actively developed. Do not rely on cached knowledge of ax features — `ax_preflight` returns the latest capabilities, rules, and skills each call. Use any new tools or rules it returns.
 
@@ -242,10 +246,6 @@ fn seed_mcp_callmcp_shape_rule(
     let rel = format!(".cursor/rules/{MCP_CALLMCP_SHAPE_FILE}");
 
     if target.exists() {
-        if !force {
-            result.record_skipped(rel);
-            return Ok(());
-        }
         let content = std::fs::read_to_string(&target)?;
         if !mcp_callmcp_shape_stale(&content) {
             result.record_skipped(rel);
@@ -279,10 +279,6 @@ fn seed_cursor_rule(
     let rel = format!(".cursor/rules/{CURSOR_RULE_FILE}");
 
     if target.exists() {
-        if !force {
-            result.record_skipped(rel);
-            return Ok(());
-        }
         let content = std::fs::read_to_string(&target)?;
         if !cursor_bootstrap_stale(&content) {
             result.record_skipped(rel);
@@ -346,10 +342,6 @@ fn seed_continue_rule(
     let rel = format!(".continue/rules/{CONTINUE_RULE_FILE}");
 
     if target.exists() {
-        if !force {
-            result.record_skipped(rel);
-            return Ok(());
-        }
         let content = std::fs::read_to_string(&target)?;
         if !continue_bootstrap_stale(&content) {
             result.record_skipped(rel);
@@ -388,10 +380,6 @@ fn seed_continue_mcp(
     let target = continue_mcp_path(project_root);
     let rel = format!(".continue/mcpServers/{CONTINUE_MCP_FILE}");
     if target.exists() {
-        if !force {
-            result.record_skipped(rel);
-            return Ok(());
-        }
         let content = std::fs::read_to_string(&target)?;
         if !continue_mcp_stale(&content) {
             result.record_skipped(rel);
@@ -420,10 +408,6 @@ fn write_if_missing_or_stale(
     force: bool,
 ) -> std::io::Result<()> {
     if path.exists() {
-        if !force {
-            result.record_skipped(rel);
-            return Ok(());
-        }
         let content = std::fs::read_to_string(path)?;
         let stale =
             !crate::seed::verify_content(&content).is_empty() || content.trim() != body.trim();
@@ -572,11 +556,6 @@ fn seed_cline_bootstrap(
         std::fs::write(&path, format!("{CLINE_RULE_BODY}\n"))?;
         note_ide(project_root, rel, force)?;
         record_upsert(result, rel, UpsertAction::Created);
-        return Ok(());
-    }
-
-    if !force {
-        result.record_skipped(rel);
         return Ok(());
     }
 
@@ -1252,6 +1231,60 @@ mod tests {
         assert!(result.updated.iter().any(|p| p.contains("ax.mdc")));
         let content = std::fs::read_to_string(path).unwrap();
         assert!(content.contains("ax_preflight"));
+    }
+
+    #[test]
+    fn an_update_refreshes_every_ide_file_without_force() {
+        let dir = tempdir().unwrap();
+        seed_ide_agent_workflow(dir.path()).unwrap();
+        let stale = "<!-- AX_START -->\n## ax\n\nCall `ax_preflight` exactly once per turn.\n<!-- AX_END -->\n";
+        for relative in [
+            "AGENTS.md",
+            "GEMINI.md",
+            ".windsurfrules",
+            ".github/copilot-instructions.md",
+            ".claude/CLAUDE.md",
+            ".clinerules",
+        ] {
+            let path = dir.path().join(relative);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(&path, stale).unwrap();
+        }
+        std::fs::write(
+            cursor_rule_path(dir.path()),
+            b"---\nstale\n---\nCall ax_preflight exactly once per turn.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            continue_rule_path(dir.path()),
+            b"---\nstale\n---\nCall ax_preflight exactly once per turn.\n",
+        )
+        .unwrap();
+        let claude_rule = dir.path().join(".claude/rules/ax.md");
+        std::fs::write(&claude_rule, b"# ax\n\nCall ax_preflight exactly once per turn.\n").unwrap();
+        let result = seed_ide_agent_workflow(dir.path()).unwrap();
+        assert!(result.updated.iter().any(|path| path == "AGENTS.md"));
+        assert!(result.updated.iter().any(|path| path.contains("ax.mdc")));
+        for path in [
+            dir.path().join("AGENTS.md"),
+            dir.path().join("GEMINI.md"),
+            dir.path().join(".windsurfrules"),
+            dir.path().join(".github/copilot-instructions.md"),
+            dir.path().join(".claude/CLAUDE.md"),
+            dir.path().join(".clinerules"),
+            cursor_rule_path(dir.path()),
+            continue_rule_path(dir.path()),
+            claude_rule,
+        ] {
+            let content = std::fs::read_to_string(&path).unwrap();
+            assert!(
+                content.contains("The approved spec is the agreement."),
+                "{}",
+                path.display()
+            );
+        }
     }
 
     #[test]

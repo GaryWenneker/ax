@@ -50,6 +50,7 @@ pub mod session_cmd;
 pub mod session_hook;
 pub mod share;
 pub mod ship;
+pub mod spec;
 pub mod skill_catalog;
 pub mod status;
 pub mod stop_hook;
