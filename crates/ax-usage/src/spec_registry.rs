@@ -90,6 +90,7 @@ pub async fn ensure_spec_schema(pool: &SqlitePool) -> Result<(), String> {
 
 /// Store a finished plan. A partial stream (`finished == false`) and an empty
 /// body write nothing. A turn that did not ask for a plan writes nothing.
+#[allow(clippy::too_many_arguments)]
 pub async fn capture_finished_plan(
     pool: &SqlitePool,
     project_id: &str,
@@ -135,6 +136,7 @@ pub async fn capture_finished_plan(
     Ok(Some(revision))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn on_turn_finished(
     pool: &SqlitePool,
     root: &Path,
@@ -531,6 +533,7 @@ async fn latest_with_body(
     .map_err(|error| error.to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn insert_revision(
     pool: &SqlitePool,
     spec_id: &str,
@@ -803,12 +806,14 @@ pub async fn list_specs(pool: &SqlitePool) -> Result<Vec<SpecListItem>, String> 
     Ok(items)
 }
 
+type RevisionColumns = (i64, String, String, String, String, Option<i64>, i64);
+
 pub async fn list_revisions(
     pool: &SqlitePool,
     spec_id: &str,
 ) -> Result<Vec<SpecHistoryRow>, String> {
     ensure_spec_schema(pool).await?;
-    let rows: Vec<(i64, String, String, String, String, Option<i64>, i64)> = sqlx::query_as(
+    let rows: Vec<RevisionColumns> = sqlx::query_as(
         "SELECT version, status, source, body, content_hash, based_on, created_at
          FROM spec_revisions WHERE spec_id = ?1 ORDER BY version",
     )

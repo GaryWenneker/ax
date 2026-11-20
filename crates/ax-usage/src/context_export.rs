@@ -129,6 +129,7 @@ pub fn validate_context_export(input: &ExportInput) -> ExportBundle {
     }
 }
 
+#[allow(dead_code)] // rendered coverage kept for the continuity report
 pub fn coverage_markdown(report: &CoverageReport) -> String {
     let blockers = if report.blockers.is_empty() {
         "None".to_string()
