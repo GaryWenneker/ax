@@ -38,10 +38,12 @@ export interface RouteState {
   skillEditMode?: boolean;
   origin?: string | null;
   projectId?: number | null;
-  /** Logging filter (`/logging?session=…`). */
+  /** Logging filter (`/logging?session=…`) and the same session on Memory. */
   session?: string | null;
   /** Memory search (`/memory?q=…`). */
   recallQuery?: string | null;
+  /** Open one spec (`/specs?spec=…`). */
+  specId?: string | null;
 }
 
 const VALID_PAGES: Page[] = [
@@ -163,6 +165,7 @@ export function parseLocation(loc: Location = window.location): RouteState & { v
     projectId: Number.isFinite(projectId) ? projectId : null,
     session: params.get('session'),
     recallQuery: params.get('q'),
+    specId: params.get('spec'),
   };
 }
 
@@ -188,8 +191,10 @@ export function buildPath(state: Partial<RouteState> & Pick<RouteState, 'page'>)
   if (state.page === 'unresolved' && state.kind) params.set('kind', state.kind);
   if (state.page === 'logging' && state.kind) params.set('kind', state.kind);
   if (state.page === 'logging' && state.session) params.set('session', state.session);
+  if (state.page === 'memory' && state.session) params.set('session', state.session);
   if (state.page === 'memory' && state.memoryId) params.set('memory', state.memoryId);
   if (state.page === 'memory' && state.recallQuery) params.set('q', state.recallQuery);
+  if (state.page === 'specs' && state.specId) params.set('spec', state.specId);
   if (state.page === 'sonar' && state.sonarTab === 'setup') params.set('tab', 'setup');
   const qs = params.toString();
   return qs ? `${base}?${qs}` : base;
@@ -209,6 +214,7 @@ export function navigateRoute(state: Partial<RouteState> & Pick<RouteState, 'pag
     projectId: state.projectId ?? null,
     session: state.session ?? null,
     recallQuery: state.recallQuery ?? null,
+    specId: state.specId ?? null,
   });
   const current = `${window.location.pathname}${window.location.search}`;
   if (current === path) return;

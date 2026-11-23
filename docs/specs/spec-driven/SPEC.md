@@ -2,6 +2,8 @@
 
 Status: approved by the user on 2026-11-20. The acceptance rows below are the contract that was re-checked after implementation.
 
+Successor for the hierarchy work: `docs/specs/spec-plan-context-overhaul/01-MASTER-SPEC.md`. This page stays the flat-registry contract. `hierarchy_v2` defaults off, so `ax spec` and `GET /api/specs` keep the behavior below until that flag is turned on. Turning it on does not rewrite these rows.
+
 The spec is the agreement between the user, the agent, and Ax. Code that drifts from an approved spec raises a review. An approved spec that changes names the code and tests that must move. Neither side rewrites the other on its own.
 
 ## Storage decision

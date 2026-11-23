@@ -82,6 +82,7 @@ export interface MemoryRow {
   created_at: number;
   updated_at: number;
   tier?: string;
+  session_id?: string;
 }
 
 export interface MemoryMatch extends MemoryRow {
@@ -114,10 +115,11 @@ export function fetchMemoryDiff(id: string, query: { path?: string; commit?: str
   return get<MemoryDiff>(`/memory/${encodeURIComponent(id)}/diff${qs ? `?${qs}` : ''}`);
 }
 
-export function fetchMemories(params: { limit?: number; offset?: number } = {}): Promise<{ memories: MemoryRow[]; total: number }> {
+export function fetchMemories(params: { limit?: number; offset?: number; session?: string } = {}): Promise<{ memories: MemoryRow[]; total: number }> {
   const sp = new URLSearchParams();
   if (params.limit != null) sp.set('limit', String(params.limit));
   if (params.offset != null) sp.set('offset', String(params.offset));
+  if (params.session) sp.set('session', params.session);
   const qs = sp.toString();
   return get<{ memories: MemoryRow[]; total: number }>(`/memory${qs ? `?${qs}` : ''}`);
 }

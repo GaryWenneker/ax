@@ -12,6 +12,7 @@ mod agent;
 mod agent_pty;
 mod browser_origin;
 mod changes;
+mod context_authority_api;
 mod context_budget_api;
 mod dav;
 mod docs_catalog;

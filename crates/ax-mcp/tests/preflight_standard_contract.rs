@@ -111,3 +111,71 @@ async fn embedded_preflight_ignores_obsolete_style_validation() {
         assert!(text.contains(POLICY));
     }
 }
+
+struct RestoreEnv(Vec<(&'static str, Option<std::ffi::OsString>)>);
+
+impl Drop for RestoreEnv {
+    fn drop(&mut self) {
+        for (key, previous) in self.0.drain(..) {
+            match previous {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+}
+
+async fn preflight_inject(ax: &mut Ax) -> String {
+    let out = ToolHandler::call_tool(
+        ax,
+        "ax_preflight",
+        json!({"session":"axs-other", "prompt":"show the plan", "context_reset":true}),
+    )
+    .await
+    .unwrap();
+    out["inject"].as_str().unwrap().to_string()
+}
+
+fn assert_live_plan(text: &str) {
+    assert!(text.contains("<ax_section name=\"spec\">"), "{text}");
+    assert!(text.contains("spec: queue-plan"), "{text}");
+    assert!(text.contains("approved: none"), "{text}");
+    assert!(text.contains("pointer: ax spec show queue-plan"), "{text}");
+    assert!(!text.contains("Keep the first job"), "{text}");
+}
+
+#[tokio::test]
+async fn a_live_plan_is_in_preflight_without_cache_or_index() {
+    let home = tempfile::tempdir().unwrap();
+    let _restore = RestoreEnv(vec![
+        ("AX_HOME_DIR", std::env::var_os("AX_HOME_DIR")),
+        ("AX_CONTEXT_CACHE", std::env::var_os("AX_CONTEXT_CACHE")),
+    ]);
+    std::env::set_var("AX_HOME_DIR", home.path());
+    let plans = home.path().join(".cursor").join("plans");
+    std::fs::create_dir_all(&plans).unwrap();
+    std::fs::write(
+        plans.join("queue.plan.md"),
+        "# Queue\n\nKeep the first job.\n",
+    )
+    .unwrap();
+    let (dir, mut ax) = fixture().await;
+    let turns = dir.path().join(".ax").join("turns");
+    std::fs::create_dir_all(&turns).unwrap();
+    std::fs::write(
+        turns.join("current.json"),
+        "{\"session_id\":\"cursor-live\"}\n",
+    )
+    .unwrap();
+
+    assert_live_plan(&preflight_inject(&mut ax).await);
+
+    sqlx::query("DROP TABLE files")
+        .execute(ax.db_pool())
+        .await
+        .unwrap();
+    assert_live_plan(&preflight_inject(&mut ax).await);
+
+    std::env::set_var("AX_CONTEXT_CACHE", "off");
+    assert_live_plan(&preflight_inject(&mut ax).await);
+}

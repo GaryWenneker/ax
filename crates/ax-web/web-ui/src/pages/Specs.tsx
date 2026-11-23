@@ -1,7 +1,24 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { createPortal } from 'react-dom';
+import Codicon from '../components/Codicon';
 import { ItemList } from '../components/ui/ItemList';
 import { ItemRow } from '../components/ui/PageLayout';
+import { formatUnifiedDiff, unifiedDiff } from '../lib/unifiedDiff';
+import {
+  hierarchySpecRows,
+  parseSpecPayload,
+  plansForSpec,
+  type HierarchyPlan,
+  type HierarchySpec,
+} from '../lib/hierarchyList';
+import { formatSpecDate, sortSpecs, specVersionLabel } from '../lib/specSort';
+import { linkedSessions } from '../lib/specSession';
 import { navigateRoute } from '../lib/routes';
+import ManifestAuthorityPanel from '../components/ManifestAuthorityPanel';
+import SpecsDetail, { type EditorMode, type SpecRevision } from './SpecsDetail';
+import SpecWorkspace, { NewPlanModal } from './SpecWorkspace';
+import { workspaceFromHierarchy, workspaceFromLegacy, type WorkspaceDoc } from '../lib/specWorkspace';
+import type { ListColumn } from '../components/ui/ListColumns';
 
 type SpecItem = {
   id: string;
@@ -13,20 +30,27 @@ type SpecItem = {
   latestStatus: string;
   revisionCount: number;
   kind: string;
-};
-
-type Revision = {
-  version: number;
-  status: string;
-  source: string;
-  body: string;
-  hash: string;
-  basedOn: number | null;
-  createdAt: number;
+  updatedAt?: number | null;
+  latestVersion?: number | null;
+  latestSource?: string | null;
+  latestBasedOn?: number | null;
 };
 
 type KindFilter = 'all' | 'plan' | 'spec';
 type StatusFilter = 'all' | 'draft' | 'approved' | 'change_requested';
+type BladeTab = 'agreement' | 'plans' | 'authority';
+type EditorTarget = 'spec' | 'plan';
+type SpecsView = 'workspace' | 'documents';
+
+const VIEWS: { id: SpecsView; label: string }[] = [
+  { id: 'workspace', label: 'Workspace' },
+  { id: 'documents', label: 'All documents' },
+];
+
+function initialView(): SpecsView {
+  if (typeof window === 'undefined') return 'workspace';
+  return new URLSearchParams(window.location.search).get('view') === 'documents' ? 'documents' : 'workspace';
+}
 
 const KIND_FILTERS: { id: KindFilter; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -41,150 +65,785 @@ const STATUS_FILTERS: { id: StatusFilter; label: string }[] = [
   { id: 'change_requested', label: 'Change requested' },
 ];
 
-function lineDiff(before: string, after: string): { added: string[]; removed: string[] } {
-  const previous = new Set(before.split('\n'));
-  const next = new Set(after.split('\n'));
-  return {
-    removed: before.split('\n').filter((line) => line.length > 0 && !next.has(line)),
-    added: after.split('\n').filter((line) => line.length > 0 && !previous.has(line)),
-  };
+const BLADE_TABS: { id: BladeTab; label: string }[] = [
+  { id: 'agreement', label: 'Agreement' },
+  { id: 'plans', label: 'Plans' },
+  { id: 'authority', label: 'Authority' },
+];
+
+const SPEC_COLUMNS: readonly ListColumn[] = [
+  { label: 'Title', minWidth: 180 },
+  { label: 'Path', minWidth: 72 },
+  { label: 'Version', minWidth: 260 },
+  { label: 'Logging', sortable: false, filterable: false, minWidth: 72 },
+  { label: 'Memory', sortable: false, filterable: false, minWidth: 72 },
+  { label: 'Updated', minWidth: 108 },
+  { label: 'Kind', minWidth: 56 },
+];
+
+const PAGE = 20;
+const WEB_SESSION = 'web-ui';
+const WEB_TURN = 'local';
+
+function stopRow(event: { stopPropagation: () => void }) {
+  event.stopPropagation();
+}
+
+function openLogging(event: MouseEvent<HTMLButtonElement>, id: string) {
+  event.preventDefault();
+  event.stopPropagation();
+  navigateRoute({ page: 'logging', session: id });
+}
+
+function openMemory(event: MouseEvent<HTMLButtonElement>, id: string) {
+  event.preventDefault();
+  event.stopPropagation();
+  navigateRoute({ page: 'memory', session: id });
+}
+
+function shortSession(id: string): string {
+  return id.length > 14 ? `${id.slice(0, 8)}…` : id;
+}
+
+function kindLabel(kind: string): string {
+  return kind === 'plan' ? 'Plan' : 'Spec';
+}
+
+function statusIcon(status: string): string {
+  if (status === 'approved') return 'check';
+  if (status === 'change_requested') return 'warning';
+  return 'edit';
+}
+
+function versionBadges(spec: SpecItem) {
+  const version = spec.latestVersion;
+  if (typeof version !== 'number' || version <= 0) return <span key="version" className="specs-col-version" />;
+  return (
+    <span key="version" className="specs-col-version">
+      <span className="page-item-badge">
+        <Codicon name="tag" className="badge-icon" />
+        v{version}
+      </span>
+      {spec.latestStatus && spec.latestStatus !== 'none' && (
+        <span className="page-item-badge">
+          <Codicon name={statusIcon(spec.latestStatus)} className="badge-icon" />
+          {spec.latestStatus.replace(/_/g, ' ')}
+        </span>
+      )}
+      {spec.latestSource && (
+        <span className="page-item-badge">
+          <Codicon name="git-commit" className="badge-icon" />
+          {spec.latestSource}
+        </span>
+      )}
+      {typeof spec.latestBasedOn === 'number' && (
+        <span className="page-item-badge">
+          <Codicon name="git-branch" className="badge-icon" />
+          v{spec.latestBasedOn}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function jumpColumn(ids: string[], kind: 'logging' | 'memory') {
+  if (kind === 'logging') {
+    return (
+      <span key="logging" className="specs-col-logging" onClick={stopRow}>
+        {ids.length === 0 && <span className="specs-jump-empty">—</span>}
+        {ids.map((id) => (
+          <button
+            key={id}
+            type="button"
+            className="specs-jump"
+            title={id}
+            aria-label={`Logging ${shortSession(id)}`}
+            onClick={(event) => openLogging(event, id)}
+          >
+            Logging
+          </button>
+        ))}
+      </span>
+    );
+  }
+  return (
+    <span key="memory" className="specs-col-memory" onClick={stopRow}>
+      {ids.length === 0 && <span className="specs-jump-empty">—</span>}
+      {ids.map((id) => (
+        <button
+          key={id}
+          type="button"
+          className="specs-jump"
+          title={id}
+          aria-label={`Memory ${shortSession(id)}`}
+          onClick={(event) => openMemory(event, id)}
+        >
+          Memory
+        </button>
+      ))}
+    </span>
+  );
+}
+
+function syncRoute(specId: string | null, planId: string | null, tab: BladeTab) {
+  const url = new URL(window.location.href);
+  if (!specId) {
+    url.searchParams.delete('spec');
+    url.searchParams.delete('plan');
+    url.searchParams.delete('tab');
+  } else {
+    url.searchParams.set('spec', specId);
+    if (planId) url.searchParams.set('plan', planId);
+    else url.searchParams.delete('plan');
+    if (tab === 'agreement') url.searchParams.delete('tab');
+    else url.searchParams.set('tab', tab);
+  }
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
 }
 
 export default function SpecsPage() {
   const [specs, setSpecs] = useState<SpecItem[]>([]);
+  const [hierarchy, setHierarchy] = useState<HierarchySpec[] | null>(null);
+  const [projectId, setProjectId] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
-  const [revisions, setRevisions] = useState<Revision[]>([]);
+  const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
+  const [bladeTab, setBladeTab] = useState<BladeTab>('agreement');
+  const [editorTarget, setEditorTarget] = useState<EditorTarget>('spec');
+  const [revisions, setRevisions] = useState<SpecRevision[]>([]);
   const [openVersion, setOpenVersion] = useState<number | null>(null);
+  const [baseChoice, setBaseChoice] = useState<number | null>(null);
   const [draftText, setDraftText] = useState('');
   const [dirty, setDirty] = useState(false);
-  const [revising, setRevising] = useState(false);
+  const [mode, setMode] = useState<EditorMode>('split');
   const [kindFilter, setKindFilter] = useState<KindFilter>('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [query, setQuery] = useState('');
+  const [shown, setShown] = useState(PAGE);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [closing, setClosing] = useState(false);
+  const [altTitle, setAltTitle] = useState('');
+  const [altBody, setAltBody] = useState('');
+  const [view, setView] = useState<SpecsView>(initialView());
+  const [newPlanOpen, setNewPlanOpen] = useState(false);
+  const loadToken = useRef(0);
+  const closeTimer = useRef<number | null>(null);
+  const pane = useRef<HTMLDivElement>(null);
+  const sentinel = useRef<HTMLDivElement>(null);
 
   async function load() {
-    const response = await fetch('/api/specs');
-    const data = await response.json();
-    setError(data.error ? String(data.error) : '');
-    setSpecs(Array.isArray(data.specs) ? data.specs : []);
+    try {
+      const response = await fetch('/api/specs');
+      const data = await response.json();
+      setError(data.error ? String(data.error) : '');
+      const parsed = parseSpecPayload(data);
+      if (parsed.mode === 'hierarchy') {
+        setHierarchy(parsed.nodes);
+        setProjectId(parsed.projectId);
+        setSpecs([]);
+      } else {
+        setHierarchy(null);
+        setProjectId('');
+        setSpecs(parsed.specs as SpecItem[]);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load specs');
+    }
   }
 
   useEffect(() => {
     void load();
   }, []);
 
-  function showVersion(rows: Revision[], version: number | null, keepText: boolean) {
+  function showVersion(rows: SpecRevision[], version: number | null, keepText: boolean) {
     setOpenVersion(version);
     const row = rows.find((item) => item.version === version);
     if (!row || keepText) return;
     setDraftText(row.body);
     setDirty(false);
-    setRevising(row.status === 'draft');
   }
 
   async function loadRevisions(id: string, version: number | null) {
+    const token = ++loadToken.current;
     setSelected(id);
-    const response = await fetch(`/api/specs/${encodeURIComponent(id)}/revisions`);
-    const data = await response.json();
-    if (data.error) setError(String(data.error));
-    const rows: Revision[] = Array.isArray(data.revisions) ? data.revisions : [];
-    setRevisions(rows);
-    const approved = rows.find((row) => row.status === 'approved');
-    const newest = rows.length > 0 ? rows[rows.length - 1].version : null;
-    const exists = version != null && rows.some((row) => row.version === version);
-    showVersion(rows, exists ? version : approved?.version ?? newest, false);
+    setEditorTarget('spec');
+    setSelectedPlan(null);
+    try {
+      const response = await fetch(`/api/specs/${encodeURIComponent(id)}/revisions`);
+      const data = await response.json();
+      if (token !== loadToken.current) return;
+      if (data.error) setError(String(data.error));
+      const rows: SpecRevision[] = Array.isArray(data.revisions) ? data.revisions : [];
+      setRevisions(rows);
+      const approved = rows.find((row) => row.status === 'approved');
+      const newest = rows.length > 0 ? rows[rows.length - 1].version : null;
+      const exists = version != null && rows.some((row) => row.version === version);
+      showVersion(rows, exists ? version : approved?.version ?? newest, false);
+    } catch (err) {
+      if (token !== loadToken.current) return;
+      setError(err instanceof Error ? err.message : 'Could not load revisions');
+    }
   }
 
-  async function openSpec(id: string) {
-    setNotice('');
-    await loadRevisions(id, null);
+  async function loadPlanRevisions(planId: string, version: number | null) {
+    const token = ++loadToken.current;
+    setSelectedPlan(planId);
+    setEditorTarget('plan');
+    setBladeTab('plans');
+    try {
+      const response = await fetch(`/api/specs/plan/${encodeURIComponent(planId)}/revisions`);
+      const data = await response.json();
+      if (token !== loadToken.current) return;
+      if (data.error) setError(String(data.error));
+      const rows: SpecRevision[] = Array.isArray(data.revisions) ? data.revisions : [];
+      setRevisions(rows);
+      const approved = rows.find((row) => row.status === 'approved');
+      const newest = rows.length > 0 ? rows[rows.length - 1].version : null;
+      const exists = version != null && rows.some((row) => row.version === version);
+      showVersion(rows, exists ? version : approved?.version ?? newest, false);
+    } catch (err) {
+      if (token !== loadToken.current) return;
+      setError(err instanceof Error ? err.message : 'Could not load plan revisions');
+    }
   }
+
+  function closeBlade() {
+    if (!selected || closing) return;
+    setClosing(true);
+    closeTimer.current = window.setTimeout(() => {
+      closeTimer.current = null;
+      setSelected(null);
+      setSelectedPlan(null);
+      setBladeTab('agreement');
+      setEditorTarget('spec');
+      setRevisions([]);
+      setOpenVersion(null);
+      setDirty(false);
+      setClosing(false);
+      setAltTitle('');
+      setAltBody('');
+      syncRoute(null, null, 'agreement');
+    }, 320);
+  }
+
+  function openSpec(id: string, tab: BladeTab = 'agreement', planId: string | null = null) {
+    if (closeTimer.current != null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+    if (selected === id && !closing && tab === bladeTab && planId === selectedPlan) {
+      closeBlade();
+      return;
+    }
+    setClosing(false);
+    setNotice('');
+    setBaseChoice(null);
+    setBladeTab(tab);
+    setAltTitle('');
+    setAltBody('');
+    if (planId) {
+      setSelected(id);
+      void loadPlanRevisions(planId, null);
+      syncRoute(id, planId, 'plans');
+      return;
+    }
+    void loadRevisions(id, null).then(() => {
+      syncRoute(id, null, tab);
+    });
+  }
+
+  useEffect(() => {
+    function openFromRoute() {
+      const searchParams = new URLSearchParams(window.location.search);
+      const id = searchParams.get('spec');
+      if (!id) return;
+      const plan = searchParams.get('plan');
+      const tabParam = searchParams.get('tab');
+      const tab: BladeTab =
+        plan ? 'plans' : tabParam === 'plans' || tabParam === 'authority' ? tabParam : 'agreement';
+      setClosing(false);
+      setSelected(id);
+      setBladeTab(tab);
+      if (plan) {
+        void loadPlanRevisions(plan, null);
+      } else {
+        void loadRevisions(id, null);
+      }
+    }
+    openFromRoute();
+    window.addEventListener('popstate', openFromRoute);
+    return () => window.removeEventListener('popstate', openFromRoute);
+  }, []);
+
+  useEffect(() => {
+    if (!selected || view !== 'documents') return undefined;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') closeBlade();
+    }
+    function onPointer(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest('.specs-blade, .specs-page .page-item, .ax-modal, .settings-select-menu')) return;
+      closeBlade();
+    }
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onPointer);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onPointer);
+    };
+  });
+
+  useEffect(() => () => {
+    if (closeTimer.current != null) window.clearTimeout(closeTimer.current);
+  }, []);
 
   function selectVersion(version: number) {
     showVersion(revisions, version, dirty);
   }
 
-  async function approve(version: number) {
-    if (!selected || dirty) return;
-    const response = await fetch(`/api/specs/${encodeURIComponent(selected)}/approve`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ version }),
-    });
-    const data = await response.json();
-    if (!data.ok) {
-      setError(String(data.error || 'Approval failed'));
+  function switchTab(tab: BladeTab) {
+    if (!selected) return;
+    if (dirty) {
+      setNotice('Discard or save unsaved changes before switching.');
       return;
     }
-    await load();
-    await loadRevisions(selected, Number(data.version));
-    setNotice(`Approved version ${data.version}. Earlier revisions stay in the history.`);
+    setBladeTab(tab);
+    if (tab === 'agreement') {
+      void loadRevisions(selected, null);
+      syncRoute(selected, null, tab);
+      return;
+    }
+    if (tab === 'plans') {
+      setSelectedPlan(null);
+      setEditorTarget('spec');
+      setRevisions([]);
+      setOpenVersion(null);
+      syncRoute(selected, null, tab);
+      return;
+    }
+    setSelectedPlan(null);
+    syncRoute(selected, null, tab);
+  }
+
+  async function approve(version: number) {
+    if (!selected || dirty || editorTarget !== 'spec') return;
+    try {
+      const response = await fetch(`/api/specs/${encodeURIComponent(selected)}/approve`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ version }),
+      });
+      const data = await response.json();
+      if (!data.ok) {
+        setError(String(data.error || 'Approval failed'));
+        return;
+      }
+      await load();
+      await loadRevisions(selected, Number(data.version));
+      setNotice(`Approved version ${data.version}. Earlier revisions stay in the history.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Approval failed');
+    }
   }
 
   async function save() {
     if (!selected || openVersion == null || !dirty) return;
-    const response = await fetch(`/api/specs/${encodeURIComponent(selected)}/revisions`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ basedOn: openVersion, body: draftText }),
-    });
-    const data = await response.json();
-    if (!data.ok) {
-      setError(String(data.error || 'Save failed'));
+    try {
+      if (editorTarget === 'plan' && selectedPlan) {
+        const response = await fetch('/api/specs/plan-revision', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            planId: selectedPlan,
+            basedOn: openVersion,
+            body: draftText,
+            sessionId: WEB_SESSION,
+            turnId: WEB_TURN,
+          }),
+        });
+        const data = await response.json();
+        if (!data.ok) {
+          setError(String(data.error || 'Save failed'));
+          return;
+        }
+        setDirty(false);
+        await load();
+        await loadPlanRevisions(selectedPlan, Number(data.planVersion));
+        setNotice(`Saved plan draft v${data.planVersion}. The previous body is still in the history.`);
+        return;
+      }
+      const response = await fetch(`/api/specs/${encodeURIComponent(selected)}/revisions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ basedOn: openVersion, body: draftText }),
+      });
+      const data = await response.json();
+      if (!data.ok) {
+        setError(String(data.error || 'Save failed'));
+        return;
+      }
+      setDirty(false);
+      await load();
+      await loadRevisions(selected, Number(data.version));
+      setNotice(`Saved draft v${data.version}. The previous body is still in the history.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save failed');
+    }
+  }
+
+  async function createAlternative(): Promise<boolean> {
+    if (!selected || !projectId || !altTitle.trim() || !altBody.trim()) return false;
+    const planId = `plan-${Date.now().toString(36)}`;
+    try {
+      const response = await fetch('/api/specs/alternative-plan', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          projectId,
+          specId: selected,
+          planId,
+          planTitle: altTitle.trim(),
+          planBody: altBody.trim(),
+          sessionId: WEB_SESSION,
+          turnId: WEB_TURN,
+        }),
+      });
+      const data = await response.json();
+      if (!data.ok) {
+        setError(String(data.error || 'Could not create plan'));
+        return false;
+      }
+      setAltTitle('');
+      setAltBody('');
+      await load();
+      await loadPlanRevisions(String(data.planId || planId), Number(data.planVersion) || 1);
+      setNotice(`Created plan ${data.planId || planId}.`);
+      syncRoute(selected, String(data.planId || planId), 'plans');
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not create plan');
+      return false;
+    }
+  }
+
+  function selectView(next: SpecsView) {
+    if (next === view) return;
+    if (dirty) {
+      setNotice('Discard or save unsaved changes before switching views.');
       return;
     }
-    setDirty(false);
-    await load();
-    await loadRevisions(selected, Number(data.version));
-    setNotice(`Saved draft v${data.version}. The previous body is still in the history.`);
+    setView(next);
+    const url = new URL(window.location.href);
+    if (next === 'documents') url.searchParams.set('view', 'documents');
+    else url.searchParams.delete('view');
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  }
+
+  function openWorkspaceDoc(doc: WorkspaceDoc) {
+    if (dirty) {
+      setNotice('Discard or save unsaved changes before opening another document.');
+      return;
+    }
+    setNotice('');
+    setBaseChoice(null);
+    setClosing(false);
+    if (doc.type === 'plan' && doc.parentSpecId) {
+      setSelected(doc.parentSpecId);
+      void loadPlanRevisions(doc.id, null);
+      syncRoute(doc.parentSpecId, doc.id, 'plans');
+      return;
+    }
+    void loadRevisions(doc.id, null);
+    syncRoute(doc.id, null, 'agreement');
   }
 
   const current = revisions.find((row) => row.version === openVersion);
   const currentIndex = revisions.findIndex((row) => row.version === openVersion);
-  const previous = currentIndex > 0 ? revisions[currentIndex - 1] : null;
-  const diff = current && previous ? lineDiff(previous.body, current.body) : null;
-  const canEdit = Boolean(current && (current.status === 'draft' || revising));
+  const older = currentIndex > 0 ? revisions.slice(0, currentIndex) : [];
+  const base = older.find((row) => row.version === baseChoice) ?? older[older.length - 1] ?? null;
+  const hunks = current && base ? unifiedDiff(base.body, current.body) : [];
+  const diffText = formatUnifiedDiff(hunks);
   const needle = query.trim().toLowerCase();
+  const hierarchyMode = hierarchy !== null;
+  const treeRows = hierarchy === null
+    ? null
+    : hierarchySpecRows(hierarchy).filter((row) => {
+        if (!needle) return true;
+        return `${row.title} ${row.specId}`.toLowerCase().includes(needle);
+      });
+  const openPlans: HierarchyPlan[] =
+    hierarchy && selected ? plansForSpec(hierarchy, selected) : [];
   const visible = specs.filter((spec) => {
     if (kindFilter === 'plan' && spec.kind !== 'plan') return false;
     if (kindFilter === 'spec' && spec.kind !== 'spec') return false;
     if (statusFilter !== 'all' && spec.latestStatus !== statusFilter) return false;
     if (!needle) return true;
-    const haystack = `${spec.title} ${spec.id} ${spec.path} ${spec.projectId} ${spec.sessions}`.toLowerCase();
+    const haystack = `${spec.title} ${spec.id} ${spec.path} ${spec.sessions}`.toLowerCase();
     return haystack.includes(needle);
   });
+  const ordered = sortSpecs(visible, 'newest');
+  const windowed = ordered.slice(0, shown);
+  useEffect(() => {
+    setShown(PAGE);
+  }, [kindFilter, statusFilter, query]);
+  useEffect(() => {
+    const node = sentinel.current;
+    const root = pane.current;
+    if (!node || !root) return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) setShown((count) => count + PAGE);
+    }, { root, rootMargin: '160px' });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [shown, ordered.length]);
+  const openItem = specs.find((item) => item.id === selected);
+  const bladeTitle = selectedPlan || openItem?.title || selected || 'Spec';
+  const bladeHost = typeof document !== 'undefined' ? document.querySelector('.workspace') : null;
+
+  function renderEditor(title: string) {
+    if (!current) return null;
+    const open = current;
+    return (
+      <SpecsDetail
+        title={title}
+        revisions={revisions}
+        current={open}
+        openVersion={openVersion}
+        older={older}
+        base={base}
+        mode={mode}
+        draftText={draftText}
+        dirty={dirty}
+        diffText={diffText}
+        onSelectVersion={selectVersion}
+        onBaseChoice={setBaseChoice}
+        onMode={setMode}
+        onDraft={(value) => {
+          setDraftText(value);
+          setDirty(value !== open.body);
+        }}
+        onSave={() => void save()}
+        onDiscard={() => {
+          setDraftText(open.body);
+          setDirty(false);
+        }}
+        onApprove={editorTarget === 'spec' ? (version) => void approve(version) : undefined}
+      />
+    );
+  }
+
+  const editorBody = bladeTab === 'agreement' || (bladeTab === 'plans' && selectedPlan) ? renderEditor(bladeTitle) : null;
+  const workspace = useMemo(
+    () => (hierarchy ? workspaceFromHierarchy(hierarchy) : workspaceFromLegacy(specs)),
+    [hierarchy, specs],
+  );
+  const openDocId = selectedPlan ?? selected;
+  const openDoc = openDocId ? workspace.all.find((doc) => doc.id === openDocId) ?? null : null;
+
+  const plansBody = bladeTab === 'plans' && !selectedPlan ? (
+    <div className="specs-plans-panel">
+      {openPlans.length === 0 ? (
+        <p role="status">No plans under this spec yet.</p>
+      ) : (
+        <ItemList className="calm-list specs-plan-list" listId="specs-plans" columns={[
+          { label: 'Plan', minWidth: 160 },
+          { label: 'Version', minWidth: 72 },
+        ]}>
+          {openPlans.map((plan) => (
+            <ItemRow
+              key={plan.planId}
+              variant="graph"
+              title={plan.planId}
+              selected={false}
+              portalColumns={[
+                <span key="version" className="specs-col-version">v{plan.latestVersion}</span>,
+              ]}
+              portalLabels={['Version']}
+              listValues={[plan.planId, plan.latestVersion]}
+              onClick={() => {
+                if (!selected) return;
+                void loadPlanRevisions(plan.planId, null);
+                syncRoute(selected, plan.planId, 'plans');
+              }}
+            />
+          ))}
+        </ItemList>
+      )}
+      <button type="button" className="btn btn-compact" disabled={!projectId} onClick={() => setNewPlanOpen(true)}>
+        <Codicon name="add" /> New plan
+      </button>
+    </div>
+  ) : null;
+  const newPlanModal = newPlanOpen ? (
+    <NewPlanModal
+      title={altTitle}
+      body={altBody}
+      onTitle={setAltTitle}
+      onBody={setAltBody}
+      onCreate={createAlternative}
+      onClose={() => setNewPlanOpen(false)}
+    />
+  ) : null;
+
+  const bladeContent =
+    !hierarchyMode
+      ? editorBody
+      : bladeTab === 'authority'
+        ? <ManifestAuthorityPanel />
+        : bladeTab === 'plans' && !selectedPlan
+          ? plansBody
+          : editorBody;
+
+  const bladeFrame = selected && bladeContent ? (
+    <aside className={`memory-blade specs-blade${closing ? ' specs-blade--closing' : ''}`} role="complementary" aria-label={bladeTitle}>
+      <div className="detail-header">
+        <span className="detail-title memory-blade-title">
+          <Codicon name={selectedPlan || openItem?.kind === 'plan' ? 'note' : 'book'} className="detail-title-icon" />
+          <span>{bladeTitle}</span>
+        </span>
+        <button type="button" className="detail-close" aria-label="Close" onClick={closeBlade}>
+          <Codicon name="close" />
+        </button>
+      </div>
+      {hierarchyMode && (
+        <div className="specs-blade-nav">
+          <nav className="specs-blade-tabs" aria-label="Spec sections">
+            {BLADE_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className="btn btn-compact"
+                aria-pressed={bladeTab === tab.id}
+                onClick={() => switchTab(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </nav>
+          {selectedPlan && (
+            <div className="specs-blade-crumb">
+              <button
+                type="button"
+                className="btn btn-compact"
+                onClick={() => {
+                  if (dirty) {
+                    setNotice('Discard or save unsaved changes before leaving the plan.');
+                    return;
+                  }
+                  setSelectedPlan(null);
+                  setEditorTarget('spec');
+                  setRevisions([]);
+                  setOpenVersion(null);
+                  setBladeTab('plans');
+                  if (selected) syncRoute(selected, null, 'plans');
+                }}
+              >
+                Spec
+              </button>
+              <span aria-hidden="true"> › </span>
+              <span>{selectedPlan}</span>
+            </div>
+          )}
+        </div>
+      )}
+      <div className="detail-body memory-blade-body">{bladeContent}</div>
+    </aside>
+  ) : null;
+  const blade = bladeFrame && bladeHost ? createPortal(bladeFrame, bladeHost) : bladeFrame;
+
+  const statusLines = (
+    <>
+      {error && <p role="alert">{error}</p>}
+      {notice && <p role="status">{notice}</p>}
+      {dirty && <p role="status">Unsaved changes</p>}
+    </>
+  );
 
   return (
-    <section className="page-stack specs-page">
-      <header className="page-hero">
-        <h1>Specs</h1>
-        <p>Approved specs stay the agreement. An edit is saved as the next draft.</p>
+    <section className={`page-stack specs-page${view === 'workspace' ? ' specs-page--ws' : ''}`}>
+      <header className="page-hero specs-hero">
+        <div>
+          <h1>Specs &amp; Plans</h1>
+          <p>
+            {view === 'workspace'
+              ? 'Specifications with the plans under them. An approved revision stays the agreement; an edit is saved as the next draft.'
+              : hierarchyMode
+                ? 'Open a spec first. Plans live under that agreement.'
+                : 'Approved specs stay the agreement. An edit is saved as the next draft.'}
+          </p>
+        </div>
+        <div className="specs-view-switch" role="group" aria-label="View">
+          {VIEWS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className="btn btn-compact"
+              aria-pressed={view === item.id}
+              onClick={() => selectView(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
       </header>
-      <div className="specs-filters" role="group" aria-label="Filter specs">
-        {KIND_FILTERS.map((filter) => (
-          <button
-            key={filter.id}
-            type="button"
-            className="btn btn-compact"
-            aria-pressed={kindFilter === filter.id}
-            onClick={() => setKindFilter(filter.id)}
-          >
-            {filter.label}
-          </button>
-        ))}
-        {STATUS_FILTERS.map((filter) => (
-          <button
-            key={filter.id}
-            type="button"
-            className="btn btn-compact"
-            aria-pressed={statusFilter === filter.id}
-            onClick={() => setStatusFilter(filter.id)}
-          >
-            {filter.label}
-          </button>
-        ))}
+      {view === 'workspace' ? (
+        <>
+          {statusLines}
+          <SpecWorkspace
+            workspace={workspace}
+            openDoc={openDoc}
+            revisions={revisions}
+            openVersion={openVersion}
+            editor={renderEditor(openDoc?.title ?? bladeTitle)}
+            canCreatePlan={Boolean(projectId)}
+            newPlanTitle={altTitle}
+            newPlanBody={altBody}
+            onNewPlanTitle={setAltTitle}
+            onNewPlanBody={setAltBody}
+            onCreatePlan={createAlternative}
+            onOpen={openWorkspaceDoc}
+            onOpenVersion={selectVersion}
+            onCompare={(version) => {
+              setBaseChoice(version);
+              setMode('diff');
+            }}
+          />
+        </>
+      ) : (
+      <>
+      {!hierarchyMode && <ManifestAuthorityPanel />}
+      <div className="specs-filters">
+        {!hierarchyMode && (
+          <>
+            <div className="specs-filter-group" role="group" aria-label="Kind">
+              {KIND_FILTERS.map((filter) => (
+                <button
+                  key={filter.id}
+                  type="button"
+                  className="btn btn-compact"
+                  aria-pressed={kindFilter === filter.id}
+                  onClick={() => setKindFilter(filter.id)}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+            <div className="specs-filter-group" role="group" aria-label="Status">
+              {STATUS_FILTERS.map((filter) => (
+                <button
+                  key={filter.id}
+                  type="button"
+                  className="btn btn-compact"
+                  aria-pressed={statusFilter === filter.id}
+                  onClick={() => setStatusFilter(filter.id)}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
         <label className="specs-search">
           Search
           <input
@@ -194,169 +853,100 @@ export default function SpecsPage() {
           />
         </label>
       </div>
-      {error && <p role="alert">{error}</p>}
-      {notice && <p role="status">{notice}</p>}
-      {dirty && <p role="status">Unsaved changes</p>}
-      {specs.length === 0 ? (
-        <p role="status">No specs stored yet. A finished plan file or a finished plan request appears here as a draft.</p>
-      ) : visible.length === 0 ? (
-        <p role="status">
-          No specs match these filters.
-          <button
-            type="button"
-            className="btn btn-compact"
-            onClick={() => {
-              setKindFilter('all');
-              setStatusFilter('all');
-              setQuery('');
-            }}
-          >
-            Clear filters
-          </button>
-        </p>
-      ) : (
-        <ItemList className="calm-list" listId="specs" columns={[{ label: 'Spec' }, { label: 'Path' }, { label: 'Status' }]}>
-          {visible.map((spec) => (
-            <ItemRow
-              key={spec.id}
-              variant="graph"
-              title={spec.title || spec.id}
-              subtitle={[spec.kind, spec.projectId, spec.sessions, spec.approvedVersion == null ? '' : `approved v${spec.approvedVersion}`].filter(Boolean).join(' · ')}
-              meta={spec.latestStatus}
-              selected={selected === spec.id}
-              listValues={[
-                spec.title || spec.id,
-                `${spec.path} ${spec.projectId} ${spec.sessions}`,
-                spec.latestStatus,
-              ]}
-              onClick={() => void openSpec(spec.id)}
-            />
-          ))}
-        </ItemList>
-      )}
-      {selected && (
-        <section aria-label="Revision history">
-          <h2>{selected}</h2>
-          <nav className="specs-session-links" aria-label="Bound sessions">
-            {(specs.find((item) => item.id === selected)?.sessions ?? '').split(/\s+/).filter(Boolean).map((id) => (
-              <span key={id} className="specs-session">
-                <span>{id}</span>
-                <a
-                  href={`/logging?session=${encodeURIComponent(id)}`}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    navigateRoute({ page: 'logging', session: id });
-                  }}
-                >
-                  Logging
-                </a>
-                <a
-                  href={`/memory?q=${encodeURIComponent(id)}`}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    navigateRoute({ page: 'memory', recallQuery: id });
-                  }}
-                >
-                  Memory
-                </a>
-              </span>
-            ))}
-          </nav>
-          {revisions.length === 0 ? (
-            <p role="status">No revisions for this spec.</p>
+      {statusLines}
+      <div className="specs-list-pane" ref={pane}>
+          {treeRows !== null ? (
+            treeRows.length === 0 ? (
+              <p role="status">No specs stored yet. A finished plan file or a finished plan request appears here as a draft.</p>
+            ) : (
+              <ItemList className="calm-list specs-list" listId="specs" columns={SPEC_COLUMNS}>
+                {treeRows.map((row) => (
+                  <ItemRow
+                    key={row.key}
+                    variant="graph"
+                    title={row.title}
+                    selected={selected === row.specId}
+                    portalColumns={[
+                      <span key="path" className="specs-col-path" title="No file">No file</span>,
+                      <span key="version" className="specs-col-version" />,
+                      jumpColumn([], 'logging'),
+                      jumpColumn([], 'memory'),
+                      <span key="updated" className="specs-col-updated" />,
+                      <span key="kind" className="page-item-badge">
+                        <Codicon name="book" className="badge-icon" />
+                        Spec
+                      </span>,
+                    ]}
+                    portalLabels={['Path', 'Version', 'Logging', 'Memory', 'Updated', 'Kind']}
+                    listValues={[row.title, 'No file', 0, '', '', 0, 'Spec']}
+                    onClick={() => void openSpec(row.specId)}
+                  />
+                ))}
+              </ItemList>
+            )
+          ) : specs.length === 0 ? (
+            <p role="status">No specs stored yet. A finished plan file or a finished plan request appears here as a draft.</p>
+          ) : visible.length === 0 ? (
+            <p role="status">
+              No specs match these filters.
+              <button
+                type="button"
+                className="btn btn-compact"
+                onClick={() => {
+                  setKindFilter('all');
+                  setStatusFilter('all');
+                  setQuery('');
+                }}
+              >
+                Clear filters
+              </button>
+            </p>
           ) : (
-            <ItemList className="calm-list" listId="spec-revisions" columns={[{ label: 'Version' }, { label: 'Source' }, { label: 'Status' }]}>
-              {revisions.map((row) => (
+            <>
+            <ItemList className="calm-list specs-list" listId="specs" columns={SPEC_COLUMNS}>
+              {windowed.map((spec) => {
+                const dateLabel = formatSpecDate(spec.updatedAt);
+                const versionLabel = specVersionLabel(spec);
+                const bound = linkedSessions(spec.sessions);
+                return (
                 <ItemRow
-                  key={row.version}
+                  key={spec.id}
                   variant="graph"
-                  title={`v${row.version}`}
-                  subtitle={row.source}
-                  meta={row.status}
-                  selected={openVersion === row.version}
-                  listValues={[`v${row.version}`, row.source, row.status]}
-                  onClick={() => selectVersion(row.version)}
+                  title={spec.title || spec.id}
+                  selected={selected === spec.id}
+                  portalColumns={[
+                    <span key="path" className="specs-col-path" title={spec.path || 'No file'}>{spec.path || 'No file'}</span>,
+                    versionBadges(spec),
+                    jumpColumn(bound, 'logging'),
+                    jumpColumn(bound, 'memory'),
+                    <span key="updated" className="specs-col-updated">{dateLabel}</span>,
+                    <span key="kind" className="page-item-badge">
+                      <Codicon name={spec.kind === 'plan' ? 'note' : 'book'} className="badge-icon" />
+                      {kindLabel(spec.kind)}
+                    </span>,
+                  ]}
+                  portalLabels={['Path', 'Version', 'Logging', 'Memory', 'Updated', 'Kind']}
+                  listValues={[
+                    spec.title || spec.id,
+                    spec.path || 'No file',
+                    versionLabel,
+                    bound.join(' '),
+                    bound.join(' '),
+                    spec.updatedAt ?? 0,
+                    kindLabel(spec.kind),
+                  ]}
+                  onClick={() => void openSpec(spec.id)}
                 />
-              ))}
+                );
+              })}
             </ItemList>
+            {shown < ordered.length && <div ref={sentinel} className="specs-scroll-sentinel" aria-hidden="true" />}
+            </>
           )}
-          {current && (
-            <article className="specs-revision">
-              <div className="specs-history-nav">
-                <button type="button" className="btn btn-compact" disabled={currentIndex <= 0} onClick={() => previous && selectVersion(previous.version)}>
-                  Previous
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-compact"
-                  disabled={currentIndex < 0 || currentIndex >= revisions.length - 1}
-                  onClick={() => selectVersion(revisions[currentIndex + 1].version)}
-                >
-                  Next
-                </button>
-                <p>
-                  v{current.version} · {current.status} · {current.source}
-                  {current.basedOn != null ? ` · based on v${current.basedOn}` : ''}
-                  {current.createdAt > 0 ? ` · ${new Date(current.createdAt).toLocaleString()}` : ''}
-                </p>
-              </div>
-              <p>Hash {current.hash}</p>
-              {diff && (diff.added.length > 0 || diff.removed.length > 0) && (
-                <div className="specs-diff" aria-label="Changes from the previous version">
-                  {diff.removed.map((line, index) => (
-                    <p key={`removed-${index}`} className="specs-diff-removed">- {line}</p>
-                  ))}
-                  {diff.added.map((line, index) => (
-                    <p key={`added-${index}`} className="specs-diff-added">+ {line}</p>
-                  ))}
-                </div>
-              )}
-              <label className="specs-editor-label">
-                Body
-                <textarea
-                  className="specs-editor"
-                  aria-label="Spec body"
-                  value={canEdit ? draftText : current.body}
-                  readOnly={!canEdit}
-                  onChange={(event) => {
-                    setDraftText(event.target.value);
-                    setDirty(event.target.value !== current.body);
-                  }}
-                />
-              </label>
-              <div className="specs-actions">
-                {current.status !== 'draft' && !revising && (
-                  <button type="button" className="btn btn-compact" onClick={() => { setRevising(true); setDraftText(current.body); setDirty(false); }}>
-                    Revise
-                  </button>
-                )}
-                {canEdit && (
-                  <button type="button" className="btn btn-compact" disabled={!dirty} onClick={() => void save()}>
-                    Save
-                  </button>
-                )}
-                {dirty && (
-                  <button
-                    type="button"
-                    className="btn btn-compact"
-                    onClick={() => {
-                      setDraftText(current.body);
-                      setDirty(false);
-                      setRevising(current.status === 'draft');
-                    }}
-                  >
-                    Discard
-                  </button>
-                )}
-                {current.status === 'draft' && !dirty && (
-                  <button type="button" className="btn btn-compact" onClick={() => void approve(current.version)}>
-                    Approve v{current.version}
-                  </button>
-                )}
-              </div>
-            </article>
-          )}
-        </section>
+      </div>
+      {blade}
+      {newPlanModal}
+      </>
       )}
     </section>
   );

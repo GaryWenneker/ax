@@ -358,6 +358,20 @@ impl ToolHandler {
                 Ok(json!({ "affected": affected }))
             }
             "ax_remember" => remember(ax, params).await,
+            "ax_spec_create" => spec_create(ax, params).await,
+            "ax_spec_plan" => spec_plan(ax, params).await,
+            "ax_spec_revise" => spec_revise(ax, params).await,
+            "ax_spec_amend" => spec_amend(ax, params).await,
+            "ax_spec_link" => spec_link(ax, params).await,
+            "ax_spec_select" => spec_select(ax, params).await,
+            "ax_spec_compare" => spec_compare(ax, params).await,
+            "ax_spec_tree" => spec_tree(ax, params).await,
+            "ax_spec_provenance" => spec_provenance(ax, params).await,
+            "ax_spec_approve" => spec_approve(ax, params).await,
+            "ax_spec_flag" => spec_flag(ax, params).await,
+            "ax_spec_review" => spec_review(ax).await,
+            "ax_spec_policy" => spec_policy(ax, params).await,
+            "ax_spec_compatibility" => spec_compatibility(ax, params).await,
             "ax_recall" => recall(ax, params).await,
             "ax_history" => history_tool(ax, params).await,
             "ax_expand" => expand_tool(ax, params).await,
@@ -1085,13 +1099,16 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
                 inject.push('\n');
                 inject.push_str(&ax_section("nudge", &nudge));
             }
-            let spec_text =
-                ax_usage::spec_context_block(ax.db_pool(), ax.project_root(), &conversation).await;
-            if !spec_text.is_empty() {
-                inject.push('\n');
-                inject.push_str(&ax_section("spec", &spec_text));
-            }
         }
+    }
+
+    let spec_text =
+        ax_usage::gated_preflight_block(ax.db_pool(), ax.project_root(), &chat_of(&params)).await;
+    if !spec_text.is_empty() {
+        if !inject.is_empty() {
+            inject.push('\n');
+        }
+        inject.push_str(&ax_section("spec", &spec_text));
     }
 
     if let Ok((decision, text)) = ax_usage::budget_check(Some(ax.project_root())).await {
@@ -1466,6 +1483,69 @@ fn session_policy_inject(
         },
     );
     (out.text, out.delivered)
+}
+
+async fn spec_create(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    Ok(ax_usage::create_hierarchy_from_json(ax.db_pool(), params).await)
+}
+
+async fn spec_plan(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    Ok(ax_usage::alternative_plan_from_json(ax.db_pool(), params).await)
+}
+
+async fn spec_amend(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    Ok(ax_usage::revise_spec_from_json(ax.db_pool(), params).await)
+}
+
+async fn spec_revise(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    Ok(ax_usage::revise_plan_from_json(ax.db_pool(), params).await)
+}
+
+async fn spec_link(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    Ok(ax_usage::link_session_from_json(ax.db_pool(), params).await)
+}
+
+async fn spec_select(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    Ok(ax_usage::select_plan_from_json(ax.db_pool(), params).await)
+}
+
+async fn spec_compare(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    Ok(ax_usage::compare_plan_from_json(ax.db_pool(), params).await)
+}
+
+async fn spec_tree(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    Ok(ax_usage::list_hierarchy_from_json(ax.db_pool(), params).await)
+}
+
+async fn spec_provenance(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    Ok(ax_usage::provenance_from_json(ax.db_pool(), params).await)
+}
+
+async fn spec_flag(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    Ok(ax_usage::hierarchy_flag_from_json(ax.db_pool(), params).await)
+}
+
+async fn spec_review(ax: &mut Ax) -> Result<Value, String> {
+    Ok(ax_usage::import_review_from_json(ax.db_pool()).await)
+}
+
+async fn spec_policy(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    Ok(ax_usage::link_policy_from_json(ax.db_pool(), params).await)
+}
+
+async fn spec_compatibility(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    Ok(ax_usage::confirm_compatibility_from_json(ax.db_pool(), params).await)
+}
+
+async fn spec_approve(ax: &mut Ax, mut params: Value) -> Result<Value, String> {
+    if let Some(object) = params.as_object_mut() {
+        object.insert("actorKind".into(), Value::String("agent".into()));
+    }
+    let path = ax_global_db::global_db_path().map_err(|error| error.to_string())?;
+    let membership = ax_global_db::open_and_init(&path)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(ax_usage::approve_from_json(ax.db_pool(), &membership, params).await)
 }
 
 async fn remember(ax: &mut Ax, params: Value) -> Result<Value, String> {
@@ -3010,6 +3090,143 @@ fn extra_tools() -> Vec<Value> {
             "name": "ax_neural_rollback",
             "description": "Select the previous promoted checksum. CLI: ax neural rollback",
             "inputSchema": { "type": "object", "properties": { "modelId": { "type": "string" } }, "required": ["modelId"] }
+        }),
+        json!({
+            "name": "ax_spec_create",
+            "description": "Create a specification and its first plan in one transaction. The same JSON is POST /api/specs/with-plan and `ax spec-create`. A repeat with the same spec, plan, session, and turn returns the first result.",
+            "inputSchema": { "type": "object", "properties": {
+                "projectId": { "type": "string" },
+                "specId": { "type": "string" },
+                "specTitle": { "type": "string" },
+                "specBody": { "type": "string" },
+                "planId": { "type": "string" },
+                "planTitle": { "type": "string" },
+                "planBody": { "type": "string" },
+                "sessionId": { "type": "string" },
+                "turnId": { "type": "string" },
+                "agentId": { "type": "string" }
+            }, "required": ["projectId", "specId", "specTitle", "specBody", "planId", "planTitle", "planBody", "sessionId", "turnId"] }
+        }),
+        json!({
+            "name": "ax_spec_plan",
+            "description": "Add another plan under an existing specification. Same JSON as POST /api/specs/alternative-plan and `ax spec-plan`.",
+            "inputSchema": { "type": "object", "properties": {
+                "projectId": { "type": "string" },
+                "specId": { "type": "string" },
+                "planId": { "type": "string" },
+                "planTitle": { "type": "string" },
+                "planBody": { "type": "string" },
+                "sessionId": { "type": "string" },
+                "turnId": { "type": "string" },
+                "agentId": { "type": "string" }
+            }, "required": ["projectId", "specId", "planId", "planTitle", "planBody", "sessionId", "turnId"] }
+        }),
+        json!({
+            "name": "ax_spec_revise",
+            "description": "Append a plan revision. Same JSON as POST /api/specs/plan-revision and `ax spec-revise`. A stale basedOn returns a conflict.",
+            "inputSchema": { "type": "object", "properties": {
+                "planId": { "type": "string" },
+                "basedOn": { "type": "integer" },
+                "body": { "type": "string" },
+                "sessionId": { "type": "string" },
+                "turnId": { "type": "string" },
+                "agentId": { "type": "string" }
+            },             "required": ["planId", "basedOn", "body", "sessionId", "turnId"] }
+        }),
+        json!({
+            "name": "ax_spec_amend",
+            "description": "Append a spec revision. The previous body stays. A stale basedOn returns conflict plus base, head, and incoming. Same JSON as POST /api/specs/spec-revision and `ax spec-amend`.",
+            "inputSchema": { "type": "object", "properties": {
+                "specId": { "type": "string" },
+                "basedOn": { "type": "integer" },
+                "body": { "type": "string" },
+                "sessionId": { "type": "string" },
+                "turnId": { "type": "string" }
+            }, "required": ["specId", "basedOn", "body", "sessionId", "turnId"] }
+        }),
+        json!({
+            "name": "ax_spec_link",
+            "description": "Link a session to a specification. Same JSON as POST /api/specs/session-link and `ax spec-link`. Repeating the link returns the same spec ids.",
+            "inputSchema": { "type": "object", "properties": {
+                "sessionId": { "type": "string" },
+                "specId": { "type": "string" }
+            }, "required": ["sessionId", "specId"] }
+        }),
+        json!({
+            "name": "ax_spec_select",
+            "description": "Select a plan version for a workstream. Same JSON as POST /api/specs/plan-selection and `ax spec-select`.",
+            "inputSchema": { "type": "object", "properties": {
+                "workstreamId": { "type": "string" },
+                "planId": { "type": "string" },
+                "planVersion": { "type": "integer" },
+                "sessionId": { "type": "string" },
+                "turnId": { "type": "string" }
+            }, "required": ["workstreamId", "planId", "planVersion", "sessionId", "turnId"] }
+        }),
+        json!({
+            "name": "ax_spec_compare",
+            "description": "Compare two revisions of one plan. Same JSON as POST /api/specs/plan-compare and `ax spec-compare`.",
+            "inputSchema": { "type": "object", "properties": {
+                "planId": { "type": "string" },
+                "left": { "type": "integer" },
+                "right": { "type": "integer" }
+            }, "required": ["planId", "left", "right"] }
+        }),
+        json!({
+            "name": "ax_spec_tree",
+            "description": "List specifications and their plans for one project. Same JSON as POST /api/specs/tree and `ax spec-tree`.",
+            "inputSchema": { "type": "object", "properties": {
+                "projectId": { "type": "string" }
+            }, "required": ["projectId"] }
+        }),
+        json!({
+            "name": "ax_spec_provenance",
+            "description": "Read the session, turn, and spec revision a plan revision was written against. Same JSON as POST /api/specs/provenance and `ax spec-provenance`.",
+            "inputSchema": { "type": "object", "properties": {
+                "planId": { "type": "string" },
+                "version": { "type": "integer" }
+            }, "required": ["planId", "version"] }
+        }),
+        json!({
+            "name": "ax_spec_approve",
+            "description": "Agents cannot approve. This tool always refuses. A human uses POST /api/specs/member-approval or `ax spec-approve`, and the role is read from membership.",
+            "inputSchema": { "type": "object", "properties": {
+                "projectId": { "type": "string" },
+                "artifactKind": { "type": "string" },
+                "artifactId": { "type": "string" },
+                "version": { "type": "integer" },
+                "actorMemberId": { "type": "string" },
+                "reason": { "type": "string" }
+            }, "required": ["projectId", "artifactKind", "artifactId", "version", "actorMemberId", "reason"] }
+        }),
+        json!({
+            "name": "ax_spec_flag",
+            "description": "Read or set hierarchy_v2. Omit enabled to read. Same JSON as POST /api/specs/flag and `ax spec-flag`. Off restores the flat list, the old preflight block, and spec capture.",
+            "inputSchema": { "type": "object", "properties": {
+                "enabled": { "type": "boolean" }
+            } }
+        }),
+        json!({
+            "name": "ax_spec_review",
+            "description": "List finished plans waiting for a parent spec. Same JSON as GET /api/specs/review and `ax spec-review`.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "ax_spec_policy",
+            "description": "Link a spec or plan to one policy revision by id. Stores the revision hash, not the policy body. Same JSON as POST /api/specs/policy-link and `ax spec-policy`.",
+            "inputSchema": { "type": "object", "properties": {
+                "artifactKind": { "type": "string" },
+                "artifactId": { "type": "string" },
+                "policyRevisionId": { "type": "integer" },
+                "contentHash": { "type": "string" }
+            },             "required": ["artifactKind", "artifactId", "policyRevisionId"] }
+        }),
+        json!({
+            "name": "ax_spec_compatibility",
+            "description": "Record that a plan selection was checked after its owning spec was approved with a new hash. Same JSON as POST /api/specs/compatibility and `ax spec-compatibility`.",
+            "inputSchema": { "type": "object", "properties": {
+                "selectionId": { "type": "string" }
+            }, "required": ["selectionId"] }
         }),
     ]
 }

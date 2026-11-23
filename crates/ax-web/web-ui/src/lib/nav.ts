@@ -22,8 +22,8 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { id: 'policy-rules', label: 'Rules' },
       { id: 'policy-skills', label: 'Skills' },
+      { id: 'specs', label: 'Specs & Plans' },
       { id: 'memory', label: 'Memory' },
-      { id: 'specs', label: 'Specs' },
       { id: 'policy-sync', label: 'Sync' },
       { id: 'policy-review', label: 'Review' },
     ],

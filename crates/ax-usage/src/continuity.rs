@@ -177,7 +177,9 @@ pub fn continuity_prompt(reference: &TestReference) -> Result<String, String> {
         reference.spec_version,
         reference.spec_hash.as_deref(),
     ) {
-        (Some(id), Some(version), Some(hash)) if !id.trim().is_empty() && !hash.trim().is_empty() => {
+        (Some(id), Some(version), Some(hash))
+            if !id.trim().is_empty() && !hash.trim().is_empty() =>
+        {
             format!("Spec: {id}@{version} {hash}\nPointer: ax spec show {id}@{version}\n")
         }
         _ => "Spec: none\n".into(),

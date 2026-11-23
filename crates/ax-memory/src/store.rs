@@ -1353,6 +1353,54 @@ pub async fn list(
     Ok((memories, total))
 }
 
+/// Memories stored for one session, newest first.
+pub async fn list_for_session(
+    pool: &SqlitePool,
+    session: &str,
+    limit: usize,
+    offset: usize,
+) -> Result<(Vec<MemoryRow>, i64), AxError> {
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memories WHERE session_id = ?")
+        .bind(session)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| db_err(pool, e))?;
+    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+        "{MEMORY_SELECT} WHERE session_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?"
+    ))
+    .bind(session)
+    .bind(limit as i64)
+    .bind(offset as i64)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| db_err(pool, e))?;
+    Ok((rows.into_iter().map(row_from_db).collect(), total))
+}
+
+/// Session id stored on each memory. Missing ids are omitted.
+pub async fn session_ids(
+    pool: &SqlitePool,
+    ids: &[String],
+) -> Result<std::collections::HashMap<String, String>, AxError> {
+    let mut found = std::collections::HashMap::new();
+    for chunk in ids.chunks(200) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let marks = vec!["?"; chunk.len()].join(", ");
+        let sql = format!("SELECT id, COALESCE(session_id, '') FROM memories WHERE id IN ({marks})");
+        let mut query = sqlx::query_as::<_, (String, String)>(&sql);
+        for id in chunk {
+            query = query.bind(id);
+        }
+        let rows = query.fetch_all(pool).await.map_err(|e| db_err(pool, e))?;
+        for (id, session) in rows {
+            found.insert(id, session);
+        }
+    }
+    Ok(found)
+}
+
 /// Lightweight title catalog for stable wiki-link disambiguation. Bodies, tags
 /// and file lists are fetched by ID only for selected targets.
 pub async fn link_catalog(pool: &SqlitePool) -> Result<Vec<MemoryRow>, AxError> {

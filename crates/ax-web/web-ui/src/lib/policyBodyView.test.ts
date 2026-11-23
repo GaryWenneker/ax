@@ -19,10 +19,11 @@ describe('policy body view', () => {
     assert.equal(loadBodyView(memoryStorage({ 'ax-web-policy-body-view': 'markdown' })), 'markdown');
     assert.equal(loadBodyView(memoryStorage({ 'ax-web-policy-body-view': 'preview' })), 'preview');
     assert.equal(loadBodyView(memoryStorage({ 'ax-web-policy-body-view': 'wysiwyg' })), 'wysiwyg');
+    assert.equal(loadBodyView(memoryStorage({ 'ax-web-policy-body-view': 'split' })), 'split');
   });
 
   it('falls back to preview for a junk value', () => {
-    assert.equal(loadBodyView(memoryStorage({ 'ax-web-policy-body-view': 'split' })), 'preview');
+    assert.equal(loadBodyView(memoryStorage({ 'ax-web-policy-body-view': 'sideways' })), 'preview');
   });
 
   it('remembers a saved choice', () => {

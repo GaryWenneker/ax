@@ -7,6 +7,7 @@ use uuid::Uuid;
 #[serde(rename_all = "lowercase")]
 pub enum MemberRole {
     Owner,
+    Approver,
     Admin,
     Member,
     Readonly,
@@ -61,6 +62,7 @@ impl MemberRole {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Owner => "owner",
+            Self::Approver => "approver",
             Self::Admin => "admin",
             Self::Member => "member",
             Self::Readonly => "readonly",
@@ -70,6 +72,7 @@ impl MemberRole {
     fn parse(value: &str) -> Result<Self> {
         match value {
             "owner" => Ok(Self::Owner),
+            "approver" => Ok(Self::Approver),
             "admin" => Ok(Self::Admin),
             "member" => Ok(Self::Member),
             "readonly" => Ok(Self::Readonly),
@@ -80,6 +83,14 @@ impl MemberRole {
     pub fn default_scopes(self) -> &'static [&'static str] {
         match self {
             Self::Owner => VALID_SCOPES,
+            Self::Approver => &[
+                "memory:read",
+                "memory:write",
+                "preflight:read",
+                "context:read",
+                "share:read",
+                "share:write",
+            ],
             Self::Admin => &[
                 "memory:read",
                 "memory:write",
@@ -264,9 +275,10 @@ pub async fn update_member_roles(
     let mut unique = roles.to_vec();
     unique.sort_by_key(|role| match role {
         MemberRole::Owner => 0,
-        MemberRole::Admin => 1,
-        MemberRole::Member => 2,
-        MemberRole::Readonly => 3,
+        MemberRole::Approver => 1,
+        MemberRole::Admin => 2,
+        MemberRole::Member => 3,
+        MemberRole::Readonly => 4,
     });
     unique.dedup();
     let strongest = unique[0];
@@ -1205,6 +1217,31 @@ pub async fn audit(
 mod tests {
     use super::*;
     use crate::open_and_init;
+
+    #[test]
+    fn approver_is_a_named_role_beside_owner() {
+        assert_eq!(MemberRole::parse("approver").unwrap(), MemberRole::Approver);
+        assert_eq!(MemberRole::Approver.as_str(), "approver");
+        assert!(MemberRole::Approver.permits("context:read"));
+        assert!(!MemberRole::Approver.permits("admin:team"));
+    }
+
+    #[tokio::test]
+    async fn an_approver_is_stored_and_is_not_the_last_owner() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_and_init(&dir.path().join("global.db")).await.unwrap();
+        bootstrap_owner(&pool, "owner", "Owner", None)
+            .await
+            .unwrap();
+        create_member(&pool, "ada", "Ada", None, MemberRole::Approver)
+            .await
+            .unwrap();
+        let members = list_members(&pool).await.unwrap();
+        let ada = members.iter().find(|member| member.id == "ada").unwrap();
+        assert_eq!(ada.role, MemberRole::Approver);
+        assert!(ada.roles.contains(&MemberRole::Approver));
+        assert!(delete_member(&pool, "owner").await.is_err());
+    }
 
     #[tokio::test]
     async fn multiple_roles_migrate_and_last_owner_stays_safe() {

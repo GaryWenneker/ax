@@ -7,7 +7,7 @@ import ReplicationSetup from './ReplicationSetup';
 import ModalShell from './ModalShell';
 import SettingsSelect from './ui/SettingsSelect';
 
-type Role = 'owner' | 'admin' | 'member' | 'readonly';
+type Role = 'owner' | 'approver' | 'admin' | 'member' | 'readonly';
 type Member = { id: string; display_name: string; email?: string | null; role: Role; roles?: Role[]; status: string; created_at: string; last_active_at?: string | null };
 type Client = { id: string; member_id: string; display_name: string; client_type: string; scopes: string[]; status: string; created_at: string; last_seen_at?: string | null };
 type Credential = { id: string; client_id: string; token_prefix: string; created_at: string; last_used_at?: string | null; revoked_at?: string | null };
@@ -18,6 +18,7 @@ type Confirmation = { title: string; description: string; label: string; action:
 
 const ROLES: { id: Role; label: string; description: string }[] = [
   { id: 'owner', label: 'Owner', description: 'Full control, including ownership.' },
+  { id: 'approver', label: 'Approver', description: 'Approve specifications and plans. Cannot manage the team.' },
   { id: 'admin', label: 'Admin', description: 'Manage people, clients and nodes.' },
   { id: 'member', label: 'Member', description: 'Use authorized clients to read and write.' },
   { id: 'readonly', label: 'Read-only', description: 'Query context and memory without changing data.' },

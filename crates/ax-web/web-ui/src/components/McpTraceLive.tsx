@@ -11,6 +11,7 @@ import { traceGroupLinks } from '../traceGroups';
 import { traceAge, traceDirection, traceDirectionLabel, traceRowSubtitle } from '../lib/calmRows';
 import { filledContinuityFieldsFromEntry, logRowSelection, type ContinuityDraft } from '../lib/continuity';
 import { loggingRowView, loggingToolLabel, traceSessionId } from '../lib/loggingPresentation';
+import { SessionHop } from './SessionHop';
 import { groupBySessionThenTurn } from '../logging/sessionTurnGroups';
 import {
   computeMcpTraceStats,
@@ -1140,6 +1141,7 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
         <div className="mcp-trace-toolbar">
           <div className="mcp-trace-toolbar-left">
             {isPage ? <h1 className="mcp-trace-heading">Logging</h1> : <span className="mcp-trace-title">Trace</span>}
+            {sessionFilter && <SessionHop session={sessionFilter} here="logging" />}
             <span className="mcp-trace-project-chip" title={`${projectRoot || projectLabel} · ${path}`}>
               <span className="mcp-trace-project-chip-label">Project</span>
               <strong className="mcp-trace-project-chip-name">{projectLabel}</strong>

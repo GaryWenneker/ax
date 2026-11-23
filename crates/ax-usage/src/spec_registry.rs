@@ -110,6 +110,16 @@ pub async fn capture_finished_plan(
         return Ok(None);
     }
     ensure_spec_schema(pool).await?;
+    if crate::spec_hierarchy::hierarchy_enabled(pool)
+        .await
+        .unwrap_or(false)
+    {
+        crate::spec_hierarchy::queue_finished_plan(
+            pool, project_id, spec_id, title, body, session_id, turn_id, source,
+        )
+        .await?;
+        return Ok(None);
+    }
     if let Some(existing) = revision_for_turn(pool, spec_id, session_id, turn_id).await? {
         bind_session(pool, session_id, spec_id).await?;
         return Ok(Some(existing));
@@ -350,8 +360,13 @@ pub async fn spec_context_block(pool: &SqlitePool, root: &Path, session_id: &str
         return "none".into();
     };
     let _ = import_workspace_plans(pool, root, "local").await;
-    let Ok(Some(spec_id)) = bound_spec(pool, session_id).await else {
-        return "none".into();
+    let spec_id = match bound_spec(pool, session_id).await {
+        Ok(Some(spec_id)) => spec_id,
+        Ok(None) => match live_bound_spec(pool, root).await {
+            Some(spec_id) => spec_id,
+            None => return "none".into(),
+        },
+        Err(_) => return "none".into(),
     };
     let Ok(Some(approved)) = approved_revision(pool, spec_id.as_str()).await else {
         return format!("spec: {spec_id}\napproved: none\npointer: ax spec show {spec_id}");
@@ -629,6 +644,13 @@ pub struct SpecListItem {
     pub kind: String,
     pub pointer_version: Option<i64>,
     pub pointer_hash: Option<String>,
+    pub updated_at: i64,
+    pub latest_version: i64,
+    pub latest_source: String,
+    pub latest_based_on: Option<i64>,
+    /// `plan` when any revision came from plan mode; `kind` can differ after an owner classification.
+    pub detected_kind: String,
+    pub plans: Vec<crate::spec_documents::ListedPlan>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -649,10 +671,7 @@ pub struct SpecHistoryRow {
     pub created_at: i64,
 }
 
-async fn pointer_pair(
-    pool: &SqlitePool,
-    spec_id: &str,
-) -> Result<Option<(i64, String)>, String> {
+async fn pointer_pair(pool: &SqlitePool, spec_id: &str) -> Result<Option<(i64, String)>, String> {
     let approved: Option<(i64, String)> = sqlx::query_as(
         "SELECT version, content_hash FROM spec_revisions
          WHERE spec_id = ?1 AND status = 'approved'
@@ -728,14 +747,24 @@ fn split_spec_ref(spec_ref: &str) -> Result<(String, Option<i64>), String> {
 
 pub async fn list_specs(pool: &SqlitePool) -> Result<Vec<SpecListItem>, String> {
     ensure_spec_schema(pool).await?;
-    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
-        "SELECT id, project_id, title, markdown_path FROM specs ORDER BY created_at DESC",
+    let rows: Vec<(String, String, String, String, i64)> = sqlx::query_as(
+        "SELECT id, project_id, title, markdown_path, updated_at FROM (
+             SELECT id, project_id, title, markdown_path,
+                    COALESCE(
+                        (SELECT MAX(created_at) FROM spec_revisions WHERE spec_id = specs.id),
+                        created_at
+                    ) AS updated_at
+             FROM specs
+         )
+         ORDER BY updated_at DESC, id ASC",
     )
     .fetch_all(pool)
     .await
     .map_err(|error| error.to_string())?;
+    let types = crate::spec_documents::document_types(pool).await?;
+    let mut plans = crate::spec_documents::plans_by_spec(pool).await?;
     let mut items = Vec::new();
-    for (id, project_id, title, markdown_path) in rows {
+    for (id, project_id, title, markdown_path, updated_at) in rows {
         let approved_version: Option<i64> = sqlx::query_scalar(
             "SELECT version FROM spec_revisions
              WHERE spec_id = ?1 AND status = 'approved'
@@ -745,14 +774,17 @@ pub async fn list_specs(pool: &SqlitePool) -> Result<Vec<SpecListItem>, String> 
         .fetch_optional(pool)
         .await
         .map_err(|error| error.to_string())?;
-        let latest_status: String = sqlx::query_scalar(
-            "SELECT status FROM spec_revisions WHERE spec_id = ?1 ORDER BY version DESC LIMIT 1",
+        let latest: Option<(i64, String, String, Option<i64>)> = sqlx::query_as(
+            "SELECT version, status, source, based_on
+             FROM spec_revisions WHERE spec_id = ?1
+             ORDER BY version DESC LIMIT 1",
         )
         .bind(&id)
         .fetch_optional(pool)
         .await
-        .map_err(|error| error.to_string())?
-        .unwrap_or_else(|| "none".into());
+        .map_err(|error| error.to_string())?;
+        let (latest_version, latest_status, latest_source, latest_based_on) =
+            latest.unwrap_or((0, "none".into(), String::new(), None));
         let revision_count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM spec_revisions WHERE spec_id = ?1")
                 .bind(&id)
@@ -784,11 +816,9 @@ pub async fn list_specs(pool: &SqlitePool) -> Result<Vec<SpecListItem>, String> 
         .fetch_one(pool)
         .await
         .map_err(|error| error.to_string())?;
-        let kind = if approved_version.is_none() && plan_count > 0 {
-            "plan"
-        } else {
-            "spec"
-        };
+        let detected = if plan_count > 0 { "plan" } else { "spec" };
+        let kind = types.get(&id).map(String::as_str).unwrap_or(detected);
+        let spec_plans = plans.remove(&id).unwrap_or_default();
         items.push(SpecListItem {
             id,
             project_id,
@@ -801,12 +831,18 @@ pub async fn list_specs(pool: &SqlitePool) -> Result<Vec<SpecListItem>, String> 
             kind: kind.into(),
             pointer_version: pointer.as_ref().map(|row| row.0),
             pointer_hash: pointer.map(|row| row.1),
+            updated_at,
+            latest_version,
+            latest_source,
+            latest_based_on,
+            detected_kind: detected.into(),
+            plans: spec_plans,
         });
     }
     Ok(items)
 }
 
-type RevisionColumns = (i64, String, String, String, String, Option<i64>, i64);
+pub(crate) type RevisionColumns = (i64, String, String, String, String, Option<i64>, i64);
 
 pub async fn list_revisions(
     pool: &SqlitePool,
@@ -901,7 +937,8 @@ pub async fn import_workspace_plans(
     project_id: &str,
 ) -> Result<usize, String> {
     let recent = recent_project_paths();
-    let (mut dirs, user_plans) = plan_directories(root, ax_utils::paths::home_dir().as_deref(), &recent);
+    let (mut dirs, user_plans) =
+        plan_directories(root, ax_utils::paths::home_dir().as_deref(), &recent);
     for extra in extra_user_plan_dirs() {
         if !dirs.iter().any(|dir| dir == &extra) {
             dirs.push(extra);
@@ -1010,7 +1047,10 @@ fn collect_plan_markdown(dir: &Path, out: &mut Vec<PathBuf>, depth: u8) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            let name = path.file_name().and_then(|value| value.to_str()).unwrap_or("");
+            let name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("");
             if SKIP_PLAN_DIRS.contains(&name) {
                 continue;
             }
@@ -1170,7 +1210,10 @@ fn recent_project_paths() -> Vec<PathBuf> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
         return Vec::new();
     };
-    let Some(recent) = value.pointer("/workspace/recent").and_then(|item| item.as_array()) else {
+    let Some(recent) = value
+        .pointer("/workspace/recent")
+        .and_then(|item| item.as_array())
+    else {
         return Vec::new();
     };
     recent
@@ -1185,6 +1228,15 @@ fn recent_project_paths() -> Vec<PathBuf> {
         })
         .take(20)
         .collect()
+}
+
+async fn live_bound_spec(pool: &SqlitePool, root: &Path) -> Option<String> {
+    for session_id in live_session_ids(root) {
+        if let Ok(Some(spec_id)) = bound_spec(pool, &session_id).await {
+            return Some(spec_id);
+        }
+    }
+    None
 }
 
 fn live_session_ids(root: &Path) -> Vec<String> {
@@ -1233,10 +1285,7 @@ fn newest_user_plan(files: &[PathBuf], user_plans_dir: Option<&Path>) -> Option<
         let Ok(modified) = std::fs::metadata(path).and_then(|meta| meta.modified()) else {
             continue;
         };
-        if newest
-            .as_ref()
-            .is_none_or(|(_, time)| modified >= *time)
-        {
+        if newest.as_ref().is_none_or(|(_, time)| modified >= *time) {
             newest = Some((path.clone(), modified));
         }
     }
@@ -1318,8 +1367,39 @@ fn now_ms() -> i64 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// Hold this for the whole test when it swaps `AX_HOME_DIR` or depends on the home it names.
+    pub(crate) static HOME_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+        std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+    pub(crate) struct IsolatedHome {
+        previous: Option<std::ffi::OsString>,
+        dir: tempfile::TempDir,
+    }
+
+    impl IsolatedHome {
+        pub(crate) fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let previous = std::env::var_os("AX_HOME_DIR");
+            std::env::set_var("AX_HOME_DIR", dir.path());
+            Self { previous, dir }
+        }
+
+        fn path(&self) -> &std::path::Path {
+            self.dir.path()
+        }
+    }
+
+    impl Drop for IsolatedHome {
+        fn drop(&mut self) {
+            match self.previous.clone() {
+                Some(value) => std::env::set_var("AX_HOME_DIR", value),
+                None => std::env::remove_var("AX_HOME_DIR"),
+            }
+        }
+    }
 
     struct Open {
         dir: tempfile::TempDir,
@@ -1594,11 +1674,57 @@ mod tests {
 
     #[tokio::test]
     async fn an_unbound_session_says_none() {
+        let _lock = HOME_LOCK.lock().await;
+        let _home = IsolatedHome::new();
         let open = open().await;
-        let pool = &open.pool;
-        let dir = &open.dir;
-        let context = spec_context_block(pool, dir.path(), "missing").await;
+        let context = spec_context_block(&open.pool, open.dir.path(), "missing").await;
         assert_eq!(context, "none");
+    }
+
+    #[tokio::test]
+    async fn an_approved_plan_file_stays_a_plan() {
+        let open = open().await;
+        let plans = open.dir.path().join(".cursor").join("plans");
+        std::fs::create_dir_all(&plans).unwrap();
+        std::fs::write(plans.join("queue.md"), "# Queue\n\nKeep the first job.\n").unwrap();
+        import_plan_mode_files(&open.pool, open.dir.path(), "ax")
+            .await
+            .unwrap();
+        approve_revision(&open.pool, open.dir.path(), "queue", 1, &[])
+            .await
+            .unwrap();
+        let specs = list_specs(&open.pool).await.unwrap();
+        assert_eq!(
+            specs.iter().find(|item| item.id == "queue").unwrap().kind,
+            "plan"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_live_session_plan_reaches_a_different_chat() {
+        let _lock = HOME_LOCK.lock().await;
+        let open = open().await;
+        let home = IsolatedHome::new();
+        let plans = home.path().join(".cursor").join("plans");
+        std::fs::create_dir_all(&plans).unwrap();
+        std::fs::write(
+            plans.join("queue.plan.md"),
+            "# Queue\n\nKeep the first job.\n",
+        )
+        .unwrap();
+        let turns = open.dir.path().join(".ax").join("turns");
+        std::fs::create_dir_all(&turns).unwrap();
+        std::fs::write(
+            turns.join("current.json"),
+            "{\"session_id\":\"cursor-live\"}\n",
+        )
+        .unwrap();
+        let context = spec_context_block(&open.pool, open.dir.path(), "axs-other").await;
+        assert!(
+            context.contains("spec: queue-plan\napproved: none\npointer: ax spec show queue-plan"),
+            "{context}"
+        );
+        assert!(!context.contains("Keep the first job"), "{context}");
     }
 
     #[tokio::test]
@@ -1633,6 +1759,8 @@ mod tests {
         assert_eq!(history[0].source, "plan_mode");
         assert!(history[0].body.contains("Keep the first price."));
         assert!(!dir.path().join("docs/specs/billing/SPEC.md").exists());
+        let _lock = HOME_LOCK.lock().await;
+        let _home = IsolatedHome::new();
         let context = spec_context_block(pool, dir.path(), "missing").await;
         assert_eq!(context, "none");
     }
@@ -1679,17 +1807,35 @@ mod tests {
         let pool = &open.pool;
         let dir = &open.dir;
         capture_finished_plan(
-            pool, "ax", "billing", "Billing", "make a plan", "one", "s", "t1", "turn", true,
+            pool,
+            "ax",
+            "billing",
+            "Billing",
+            "make a plan",
+            "one",
+            "s",
+            "t1",
+            "turn",
+            true,
         )
         .await
         .unwrap();
-        approve_revision(pool, dir.path(), "billing", 1, &[]).await.unwrap();
+        approve_revision(pool, dir.path(), "billing", 1, &[])
+            .await
+            .unwrap();
         let path = dir.path().join("docs/specs/billing/SPEC.md");
         let file_before = std::fs::read_to_string(&path).unwrap();
         let saved = save_revision(pool, "billing", 1, "two").await.unwrap();
         assert_eq!(saved.version, 2);
         assert_eq!(saved.status, "draft");
-        assert_eq!(approved_revision(pool, "billing").await.unwrap().unwrap().body, "one");
+        assert_eq!(
+            approved_revision(pool, "billing")
+                .await
+                .unwrap()
+                .unwrap()
+                .body,
+            "one"
+        );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), file_before);
         let history = list_revisions(pool, "billing").await.unwrap();
         assert_eq!(history.len(), 2);
@@ -1704,14 +1850,23 @@ mod tests {
         let plans = dir.path().join(".cursor").join("plans");
         std::fs::create_dir_all(&plans).unwrap();
         std::fs::write(plans.join("queue.md"), "# Queue\n\nKeep the first job.\n").unwrap();
-        import_plan_mode_files(pool, dir.path(), "ax").await.unwrap();
+        import_plan_mode_files(pool, dir.path(), "ax")
+            .await
+            .unwrap();
         let specs = list_specs(pool).await.unwrap();
-        assert_eq!(specs.iter().find(|item| item.id == "queue").unwrap().kind, "plan");
-        assert_eq!(specs.iter().find(|item| item.id == "billing").unwrap().kind, "spec");
+        assert_eq!(
+            specs.iter().find(|item| item.id == "queue").unwrap().kind,
+            "plan"
+        );
+        assert_eq!(
+            specs.iter().find(|item| item.id == "billing").unwrap().kind,
+            "spec"
+        );
     }
 
     #[tokio::test]
     async fn workspace_and_user_plans_keep_a_session() {
+        let _home = HOME_LOCK.lock().await;
         let open = open().await;
         let pool = &open.pool;
         let dir = &open.dir;
@@ -1742,7 +1897,10 @@ mod tests {
         .unwrap();
         std::fs::create_dir_all(home.path().join(".claude").join("plans")).unwrap();
         std::fs::write(
-            home.path().join(".claude").join("plans").join("claude.plan.md"),
+            home.path()
+                .join(".claude")
+                .join("plans")
+                .join("claude.plan.md"),
             "---\nname: Claude plan\n---\n\n# Claude\n\nKeep the home Claude plan.\n",
         )
         .unwrap();
@@ -1757,7 +1915,10 @@ mod tests {
             "---\nname: Edit spec history\noverview: keep both lines\n---\n\n# Edit spec history\n\nKeep the open plan.\nsession: axs_from_file\n",
         )
         .unwrap();
-        let older_file = std::fs::OpenOptions::new().write(true).open(&older).unwrap();
+        let older_file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&older)
+            .unwrap();
         older_file
             .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
             .unwrap();
@@ -1770,7 +1931,9 @@ mod tests {
                 && path.starts_with(dir.path())
         }));
         assert!(dirs.iter().any(|path| path.ends_with(
-            std::path::Path::new(".codeium").join("windsurf").join("plans")
+            std::path::Path::new(".codeium")
+                .join("windsurf")
+                .join("plans")
         )));
         assert!(dirs.iter().all(|path| path != Path::new("/")));
         assert!(dirs
@@ -1781,7 +1944,9 @@ mod tests {
         let cursor_plans = real_home.join(".cursor").join("plans");
         assert!(real_dirs.iter().any(|path| path == &cursor_plans));
         assert_eq!(real_user.as_deref(), Some(cursor_plans.as_path()));
-        assert!(real_dirs.iter().any(|path| path == &real_home.join(".claude").join("plans")));
+        assert!(real_dirs
+            .iter()
+            .any(|path| path == &real_home.join(".claude").join("plans")));
         assert!(real_dirs.iter().all(|path| !is_broad_root(path)));
         let stored = import_plan_dirs(pool, "ax", &dirs, user.as_deref(), &["axs_live".into()])
             .await
@@ -1793,7 +1958,10 @@ mod tests {
         assert_eq!(again, 6);
         let specs = list_specs(pool).await.unwrap();
         assert!(specs.iter().all(|item| item.id != "fragment"));
-        let claude = specs.iter().find(|item| item.title == "Claude plan").unwrap();
+        let claude = specs
+            .iter()
+            .find(|item| item.title == "Claude plan")
+            .unwrap();
         assert!(claude.sessions.contains(&format!("plan-{}", claude.id)));
         assert!(!claude.sessions.contains("axs_live"));
         assert!(specs.iter().any(|item| item.id == "review"));
@@ -1801,7 +1969,10 @@ mod tests {
             .iter()
             .find(|item| item.title == "Edit spec history")
             .unwrap();
-        assert!(open_spec.sessions.split_whitespace().any(|id| id == format!("plan-{}", open_spec.id)));
+        assert!(open_spec
+            .sessions
+            .split_whitespace()
+            .any(|id| id == format!("plan-{}", open_spec.id)));
         assert!(open_spec.sessions.contains("axs_from_file"));
         assert!(open_spec.sessions.contains("axs_live"));
         assert_eq!(list_revisions(pool, &open_spec.id).await.unwrap().len(), 1);
@@ -1820,9 +1991,52 @@ mod tests {
         let after = list_specs(pool).await.unwrap();
         let open_after = after.iter().find(|item| item.id == open_spec.id).unwrap();
         assert!(open_after.sessions.contains("axs_live"));
-        assert!(open_after.sessions.contains(&format!("plan-{}", open_spec.id)));
-        let body = show_spec(pool, &format!("{}@1", open_spec.id)).await.unwrap();
+        assert!(open_after
+            .sessions
+            .contains(&format!("plan-{}", open_spec.id)));
+        let body = show_spec(pool, &format!("{}@1", open_spec.id))
+            .await
+            .unwrap();
         assert!(body.contains("Keep the open plan."));
         assert!(!body.contains("A second line."));
+    }
+
+    #[tokio::test]
+    async fn the_list_uses_the_latest_revision_time_and_puts_the_newest_first() {
+        let open = open().await;
+        ensure_spec_schema(&open.pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO specs (id, project_id, title, markdown_path, created_at) VALUES
+             ('old', 'p', 'Old title', 'docs/specs/old/SPEC.md', 1000),
+             ('fresh', 'p', 'Fresh title', 'docs/specs/fresh/SPEC.md', 2000),
+             ('bare', 'p', 'Bare title', 'docs/specs/bare/SPEC.md', 9000)",
+        )
+        .execute(&open.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO spec_revisions
+             (spec_id, version, status, body, content_hash, source, based_on, created_at) VALUES
+             ('old', 1, 'draft', 'a', 'h', 'plan_mode', NULL, 4000),
+             ('old', 2, 'draft', 'a2', 'h2', 'edit', 1, 5000),
+             ('fresh', 1, 'draft', 'b', 'h', 'plan_mode', NULL, 3000)",
+        )
+        .execute(&open.pool)
+        .await
+        .unwrap();
+        let specs = list_specs(&open.pool).await.unwrap();
+        let ids: Vec<_> = specs.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(ids, vec!["bare", "old", "fresh"]);
+        assert_eq!(specs[0].updated_at, 9000);
+        assert_eq!(specs[0].latest_version, 0);
+        assert_eq!(specs[1].updated_at, 5000);
+        assert_eq!(specs[1].latest_version, 2);
+        assert_eq!(specs[1].latest_status, "draft");
+        assert_eq!(specs[1].latest_source, "edit");
+        assert_eq!(specs[1].latest_based_on, Some(1));
+        assert_eq!(specs[2].updated_at, 3000);
+        assert_eq!(specs[2].latest_version, 1);
+        assert_eq!(specs[2].latest_source, "plan_mode");
+        assert_eq!(specs[2].latest_based_on, None);
     }
 }

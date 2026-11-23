@@ -188,6 +188,25 @@ The [docs](https://getax.wenneker.io/) follow the same product. These are the pa
 
 Each indexed project gets a `.ax/` directory: `ax.db` (graph, FTS5, policy), `ax.json`, and `ship.toml`. Team rules and skills live in `.agents/` and reach the agent through MCP, not by reading those files on disk.
 
+Specifications are rows in that same project database, and `ax spec <id>` prints the stored body.
+
+In the Command Center, **Specs & Plans** opens as a workspace with three panes:
+
+- **Explorer:** specifications, with their plans nested under them.
+- **Document:** the open document's approved text and editor.
+- **Context & evidence:** the sessions bound to the document.
+
+Selecting a specification shows its plans. Documents with no stored parent wait under Needs review; no parent is guessed for them.
+
+| Command | What it does |
+|---|---|
+| `ax spec-create` | Stores a specification together with its first plan. |
+| `ax spec-plan` | Adds another plan under an existing specification. |
+| `ax spec-import` | Stores a specification that has no plan yet. |
+| `ax spec-classify` | Records an owner decision that documents are specifications or plans; older decisions stay as history. |
+
+A separate hierarchy mode stays off until `ax spec-flag on`, and `ax spec-flag off` restores the current list and capture. The commands are in the [CLI reference](https://getax.wenneker.io/reference/cli/#specifications-and-plans).
+
 Command Center (`ax web`) is the local UI for that project: rules and skills, memory, the graph, Logging, quality gates, and Settings. Optional sign-in, passkeys, and member roles are configured under Settings when you want a published web origin. Remote MCP adds authenticated HTTPS access. Replication shares an enrolled project’s graph, memory, and policy between a primary and replicas. A Cloudflare tunnel can publish the local Command Center without opening the ax port on the public internet. Those flows are documented on the pages linked above.
 
 Sharing a docs URL previews that page. The site build screenshots it and stamps the CLI source version from `Cargo.toml` on the card.

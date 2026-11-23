@@ -20,7 +20,7 @@ interface Props {
   fill?: boolean;
   /** Makes `[[links]]` in the preview clickable. */
   links?: ItemLinks | null;
-  /** Show only the source, the rich-text editor, or the preview. Omitted: source and preview side by side. */
+  /** Source, rich text, preview, or source beside preview. Omitted: source and preview side by side. */
   view?: BodyView;
   /** `kind:origin:id` of the item being edited; left out of the `[[` picker. */
   selfKey?: string;
@@ -38,13 +38,14 @@ export default function MarkdownEditor({ value, onChange, height = 520, fill = f
   const splitRef = useRef<HTMLDivElement>(null);
   const pct = loadMdEditPct();
   const preview = links ? wikiLinksToMarkdown(value, links.outgoing) : value;
-  const showEdit = activeView === undefined || activeView === 'markdown';
-  const showPreview = activeView === undefined || activeView === 'preview';
+  const split = activeView === undefined || activeView === 'split';
+  const showEdit = split || activeView === 'markdown';
+  const showPreview = split || activeView === 'preview';
 
   return (
     <div
       ref={splitRef}
-      className={`md-editor-wrap md-editor-split${activeView ? ' md-editor-split--single' : ''}${fill ? ' md-editor-wrap--fill' : ''}`}
+      className={`md-editor-wrap md-editor-split${split ? '' : ' md-editor-split--single'}${fill ? ' md-editor-wrap--fill' : ''}`}
       data-color-mode={colorMode}
       style={{ ['--md-edit-pct' as string]: `${pct}%`, height: fill ? undefined : height }}
     >
@@ -57,7 +58,7 @@ export default function MarkdownEditor({ value, onChange, height = 520, fill = f
           <WysiwygEditor value={value} onChange={onChange} selfKey={selfKey} />
         </div>
       )}
-      {!activeView && <MdPreviewResizeHandle containerRef={splitRef} />}
+      {split && <MdPreviewResizeHandle containerRef={splitRef} />}
       {showPreview && (
         <div className="md-editor-split-preview">
           <MarkdownPreview value={preview} onClick={links ? interceptLinkClick : undefined} />

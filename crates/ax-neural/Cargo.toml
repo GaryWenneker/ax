@@ -1,6 +1,6 @@
 [package]
 name = "ax-neural"
-version = "10.0.2"
+version = "10.1.0"
 edition = "2021"
 description = "Required Ax Neural Intelligence. Stays on without ax.json. Does not link an ML runtime by default."
 

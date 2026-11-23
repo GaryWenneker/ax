@@ -1875,6 +1875,87 @@ Not for daily use — invoked by agents, installers, or upgrade helpers.
 
 ---
 
+## Specifications and plans
+
+`ax spec <id>` prints the stored body (`id` or `id@version`). Specifications and plans can also be stored as separate rows. That hierarchy stays off until you turn it on, and turning it off restores the flat list and the previous capture path. Rows already written stay. Nothing is dropped.
+
+```bash
+ax spec billing-spec
+ax spec-flag
+ax spec-flag off
+```
+
+`ax spec-flag` with no value prints the flag. `on` and `off` set it. A JSON object such as `{"enabled":false}` is also accepted.
+
+While the flag is on, finished plan capture does not invent a parent spec. Those ids are listed by:
+
+```bash
+ax spec-review
+```
+
+Create a spec and its first plan in one request. The argument is the JSON body of `POST /api/specs/with-plan`. An empty plan is rejected. Repeating the same spec, plan, session, and turn returns the first pair.
+
+```bash
+ax spec-create '{"projectId":"ax","specId":"billing","specTitle":"Billing","specBody":"Charge the recorded amount.","planId":"ledger","planTitle":"Ledger","planBody":"Record the ledger.","sessionId":"session-1","turnId":"turn-1"}'
+```
+
+The same JSON contract is used by the HTTP routes and the MCP tools.
+
+```bash
+ax spec-plan '{"projectId":"ax","specId":"billing","planId":"ledger-alt","planTitle":"Other ledger","planBody":"Record it another way.","sessionId":"session-1","turnId":"turn-2"}'
+ax spec-revise '{"planId":"ledger","basedOn":1,"body":"Record the ledger, then check the total.","sessionId":"session-1","turnId":"turn-3"}'
+ax spec-amend '{"specId":"billing","basedOn":1,"body":"Charge the recorded amount, then reconcile.","sessionId":"session-1","turnId":"turn-2"}'
+ax spec-link '{"sessionId":"session-1","specId":"billing"}'
+ax spec-select '{"workstreamId":"ws-1","planId":"ledger","planVersion":1,"sessionId":"session-1","turnId":"turn-1"}'
+ax spec-compare '{"planId":"ledger","left":1,"right":2}'
+ax spec-tree '{"projectId":"ax"}'
+ax spec-provenance '{"planId":"ledger","version":1}'
+ax spec-policy '{"artifactKind":"spec","artifactId":"billing","policyRevisionId":1}'
+ax spec-compatibility '{"selectionId":"ws-billing:ledger:1:session-1:turn-1"}'
+```
+
+`ax spec-import` stores a specification that has no plan yet, as a draft that needs a plan.
+
+`ax spec-classify` records an owner decision that documents are specifications or plans. Pass either `ids` or `allPlanMode` (every document with a plan-mode revision). Each call adds rows, and earlier classifications stay as history. Specs & Plans lists a document by its newest classification and keeps the detected kind as `detectedKind`.
+
+Both commands have HTTP routes. There is no MCP tool for them yet.
+
+```bash
+ax spec-import '{"projectId":"ax","specId":"billing-rules","specTitle":"Billing rules","specBody":"Round to cents.","sessionId":"session-1","turnId":"turn-1"}'
+ax spec-classify '{"allPlanMode":true,"docType":"spec","actor":"owner","reason":"These plan-mode documents are specifications."}'
+```
+
+Approving a new spec body marks selections of plans written against the previous spec hash as `compatibility_review_required`. Other specs are left alone, and the plan text is not rewritten. `ax spec-compatibility` records that the selection was checked.
+
+`ax spec-policy` records which policy revision applies. A `body` field is rejected. The stored link has the revision id and content hash, not the rule text. Sending the same link again keeps the one row.
+
+A stale `basedOn` on `ax spec-revise` or `ax spec-amend` comes back as an error containing `conflict`, with `base` (the revision you named), `head` (the current revision), and `incoming` (the body that was not stored). Nothing is merged. An empty spec body is rejected. Approval reads the member's role. A `roles` field in the JSON is ignored. The command binds the active owner and forces the actor to be human.
+
+```bash
+ax spec-approve '{"projectId":"ax","artifactKind":"plan","artifactId":"ledger","version":1,"reason":"Ready to build."}'
+```
+
+| Route | CLI |
+|---|---|
+| `POST /api/specs/with-plan` | `ax spec-create` |
+| `POST /api/specs/alternative-plan` | `ax spec-plan` |
+| `POST /api/specs/import` | `ax spec-import` |
+| `POST /api/specs/classify` | `ax spec-classify` |
+| `POST /api/specs/plan-revision` | `ax spec-revise` |
+| `POST /api/specs/spec-revision` | `ax spec-amend` |
+| `POST /api/specs/session-link` | `ax spec-link` |
+| `POST /api/specs/plan-selection` | `ax spec-select` |
+| `POST /api/specs/plan-compare` | `ax spec-compare` |
+| `POST /api/specs/tree` | `ax spec-tree` |
+| `POST /api/specs/provenance` | `ax spec-provenance` |
+| `POST /api/specs/member-approval` | `ax spec-approve` |
+| `POST /api/specs/flag` | `ax spec-flag` |
+| `GET /api/specs/review` | `ax spec-review` |
+| `POST /api/specs/policy-link` | `ax spec-policy` |
+| `POST /api/specs/compatibility` | `ax spec-compatibility` |
+
+`GET /api/specs` stays the flat list while the flag is off. While the flag is on it returns the hierarchy and does not import legacy plan files. Failures use `{ "ok": false, "error": "..." }`.
+
 ## Quick reference
 
 ```bash
@@ -1905,6 +1986,11 @@ ax capture-git
 ax diff --base main --json
 ax test-impact --base main
 ax ship --watch --open
+
+# Specifications
+ax spec billing-spec
+ax spec-flag
+ax spec-review
 
 # Policy
 ax policy storage status

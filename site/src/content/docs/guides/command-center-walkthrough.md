@@ -27,6 +27,14 @@ Choose the intended project in the header before searching code, editing policy 
 
 Open **Rules** or **Skills**, select an item to read it, and edit only when you intend to change team policy. Use scope, tags and groups to narrow the list. The package actions export or compare policy bundles; **Review** is the queue for incoming policy, not a queue for graph or memory replication.
 
+**Specs & Plans** sits between Skills and Memory and opens as a workspace with three panes:
+
+- **Explorer (left):** specifications, with their plans nested under them. **Needs review** holds documents whose type or parent is not stored yet, such as plans captured from plan mode. No parent is guessed for them.
+- **Document (center):** the approved text, editing under **Content** (Markdown, WYSIWYG, Split, and Diff), and the version list under **History**.
+- **Context & evidence (right):** the sessions bound to the open document, each with Logging and Memory links. Evidence that is not indexed yet says so, instead of showing an empty history.
+
+**All documents** switches to the flat list. Below 1280 px the context panel becomes a drawer, and on a phone one pane shows at a time.
+
 Use **Memory** to recall a decision or convention. **New memory** opens a composer; **Capture from git** imports relevant history. **Sync docs catalog** refreshes documentation knowledge. Column filters apply to loaded rows; use the page search for broader retrieval.
 
 ![Rules and their scopes](/screenshots/cc-policy-rules-dark.png)
@@ -86,6 +94,7 @@ Open the hamburger menu to choose a page. **Filters** and **Sort and filter** op
 | `/policy/rules/edit` | Open the full rule editor | [Policy engine](/guides/policy-engine/) |
 | `/policy/skills` | Browse and maintain workflows | [Policy engine](/guides/policy-engine/) |
 | `/policy/skills/edit` | Open the full skill editor | [Policy engine](/guides/policy-engine/) |
+| `/specs` | Read and edit specs and plans, and open the linked session in Logging or Memory | [Command Center](/guides/command-center/) |
 | `/policy/match` | Test which policy matches a prompt | [Policy engine](/guides/policy-engine/) |
 | `/policy/review` | Compare and decide incoming policy | [Policy sharing](/guides/policy-sharing/) |
 | `/policy/sync` | Export/import the project's policy pack | [Policy engine](/guides/policy-engine/) |

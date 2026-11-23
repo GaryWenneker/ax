@@ -3,7 +3,7 @@ import {ColumnHeader, ColumnTools, ItemColumnContext, columnFromHeader, columnTe
 import type {ColumnValue} from '../../lib/columnModel';
 import {useColumnFit} from '../../hooks/useColumnFit';
 
-export function ItemList({ children, className = '', columns: suppliedColumns, listId = '' }: { children: ReactNode; className?: string; columns?: readonly ListColumn[]; listId?: string }) {
+export function ItemList({ children, className = '', columns: suppliedColumns, listId = '', rows = false }: { children: ReactNode; className?: string; columns?: readonly ListColumn[]; listId?: string; rows?: boolean }) {
   const trace = /mcp-trace-calm|mcp-blade-steps/.test(className);
   // Repository-owned rows expose presentation props or explicit raw listValues for typed sorting.
   const parts = Children.toArray(children);
@@ -21,6 +21,7 @@ export function ItemList({ children, className = '', columns: suppliedColumns, l
   // Without manual widths the columns fit their content client-side and fill the list exactly.
   const auto = useColumnFit(list, controls.key, columns.length, controls.minimums, controls.widths !== null, `${records.length}:${display.length}`);
   const fitted = controls.widths === null && auto.fit !== null;
+  if (rows) return <div className={`page-item-list${className ? ` ${className}` : ''}`}>{children}</div>;
   return <ItemColumnContext.Provider value={context}>
     <div className="column-list-container"><ColumnTools controls={controls} />
     <div ref={list} className={`page-item-list column-list${className ? ` ${className}` : ''}${controls.widths ? ' column-list--resized' : ''}${fitted ? ' column-list--fitted' : ''}${controls.sort || Object.values(controls.filters).some(v => v.trim()) ? ' column-list--custom-order' : ''}`} style={controls.style ?? auto.style}>

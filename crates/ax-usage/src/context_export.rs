@@ -1298,6 +1298,9 @@ mod tests {
             serde_json::json!(bundle.coverage.cross_chat_continuity)
         );
         assert_eq!(fixture["spec"], bundle.full["spec"]["availability"]);
-        assert_eq!(bundle.ready["spec"]["availability"], bundle.full["spec"]["availability"]);
+        assert_eq!(
+            bundle.ready["spec"]["availability"],
+            bundle.full["spec"]["availability"]
+        );
     }
 }

@@ -153,6 +153,10 @@ impl WebHub {
                 "/api/context-budget",
                 crate::context_budget_api::router(hub.clone()),
             )
+            .nest(
+                "/api/context-authority",
+                crate::context_authority_api::router(hub.clone()),
+            )
             .nest("/api/usage", crate::savings::router(hub.clone()))
             .nest("/api/memory", crate::memory::router_hub(hub.clone()))
             .nest("/api/specs", crate::specs::router(hub.clone()))

@@ -139,7 +139,7 @@ CREATE TABLE IF NOT EXISTS team_members (
     id TEXT PRIMARY KEY,
     display_name TEXT NOT NULL,
     email TEXT,
-    role TEXT NOT NULL CHECK(role IN ('owner', 'admin', 'member', 'readonly')),
+    role TEXT NOT NULL CHECK(role IN ('owner', 'approver', 'admin', 'member', 'readonly')),
     status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_active_at TIMESTAMP,
@@ -152,7 +152,7 @@ CREATE TABLE IF NOT EXISTS team_members (
 -- strongest-role compatibility projection for older client access code.
 CREATE TABLE IF NOT EXISTS member_roles (
     member_id TEXT NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
-    role TEXT NOT NULL CHECK(role IN ('owner', 'admin', 'member', 'readonly')),
+    role TEXT NOT NULL CHECK(role IN ('owner', 'approver', 'admin', 'member', 'readonly')),
     assigned_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (member_id, role)
 );

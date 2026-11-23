@@ -257,6 +257,69 @@ enum Commands {
     Node { name: Option<String> },
     /// Print a stored spec or plan body (`id` or `id@version`)
     Spec { spec: String },
+    /// Create a specification and its first plan. The argument is the JSON body of POST /api/specs/with-plan.
+    #[command(name = "spec-create")]
+    SpecCreate { body: String },
+    /// Add another plan under an existing specification. JSON body of POST /api/specs/alternative-plan.
+    #[command(name = "spec-plan")]
+    SpecPlan { body: String },
+    /// Import a specification that has no plan yet; it is stored as a draft that needs a plan. JSON body of POST /api/specs/import.
+    #[command(name = "spec-import")]
+    SpecImport { body: String },
+    /// Record an owner decision that documents are specs or plans, by ids or allPlanMode. JSON body of POST /api/specs/classify.
+    #[command(name = "spec-classify")]
+    SpecClassify { body: String },
+    /// Append a plan revision. JSON body of POST /api/specs/plan-revision.
+    #[command(name = "spec-revise")]
+    SpecRevise { body: String },
+    /// Append a spec revision. The previous body stays. JSON body of POST /api/specs/spec-revision.
+    #[command(name = "spec-amend")]
+    SpecAmend { body: String },
+    /// Link a session to a specification. JSON body of POST /api/specs/session-link.
+    #[command(name = "spec-link")]
+    SpecLink { body: String },
+    /// Select a plan version for a workstream. JSON body of POST /api/specs/plan-selection.
+    #[command(name = "spec-select")]
+    SpecSelect { body: String },
+    /// Compare two plan revisions. JSON body of POST /api/specs/plan-compare.
+    #[command(name = "spec-compare")]
+    SpecCompare { body: String },
+    /// List specifications and their plans. JSON body of POST /api/specs/tree.
+    #[command(name = "spec-tree")]
+    SpecTree { body: String },
+    /// Read the origin of one plan revision. JSON body of POST /api/specs/provenance.
+    #[command(name = "spec-provenance")]
+    SpecProvenance { body: String },
+    /// Approve a spec or plan revision. The role is read from membership, not from this JSON. Body of POST /api/specs/member-approval.
+    #[command(name = "spec-approve")]
+    SpecApprove { body: String },
+    /// Read or set hierarchy_v2. Pass on, off, or {"enabled":true}. Omit the value to print the current flag. POST /api/specs/flag.
+    #[command(name = "spec-flag")]
+    SpecFlag { value: Option<String> },
+    /// List finished plans waiting for a parent spec. GET /api/specs/review.
+    #[command(name = "spec-review")]
+    SpecReview,
+    /// Link a spec or plan to one policy revision. The policy body is not copied. JSON body of POST /api/specs/policy-link.
+    #[command(name = "spec-policy")]
+    SpecPolicy { body: String },
+    /// Record that a plan selection was checked after its spec changed. JSON body of POST /api/specs/compatibility.
+    #[command(name = "spec-compatibility")]
+    SpecCompatibility { body: String },
+    /// Parse a replay reference JSON without inventing provider chat ids.
+    #[command(name = "replay-reference")]
+    ReplayReference { body: String },
+    /// Start a replay run from a sealed context manifest id. Score stays not_tested until Plan C measures it.
+    #[command(name = "replay-run")]
+    ReplayRun { manifest_id: String },
+    /// Show a stored replay run receipt by id.
+    #[command(name = "replay-status")]
+    ReplayStatus { run_id: String },
+    /// Prepare Plan C pilot arm dirs and frozen-task.json. Does not claim a release gate.
+    #[command(name = "replay-pilot-prepare")]
+    ReplayPilotPrepare { dir: String },
+    /// Score a Plan C pilot bundle with the fixture adapter. Does not claim a release gate.
+    #[command(name = "replay-pilot-score")]
+    ReplayPilotScore { dir: String },
     /// List project files
     #[command(long_about = help_text::FILES_LONG)]
     Files {
@@ -2493,6 +2556,29 @@ async fn async_main() {
         },
         Some(Commands::Node { name }) => commands::node::run(name).await,
         Some(Commands::Spec { spec }) => commands::spec::show(spec).await,
+        Some(Commands::SpecCreate { body }) => commands::spec::create_from_json(body).await,
+        Some(Commands::SpecPlan { body }) => commands::spec::alternative_from_json(body).await,
+        Some(Commands::SpecImport { body }) => commands::spec::import_from_json(body).await,
+        Some(Commands::SpecClassify { body }) => commands::spec::classify_from_json(body).await,
+        Some(Commands::SpecRevise { body }) => commands::spec::revise_from_json(body).await,
+        Some(Commands::SpecAmend { body }) => commands::spec::revise_spec_from_json(body).await,
+        Some(Commands::SpecLink { body }) => commands::spec::link_from_json(body).await,
+        Some(Commands::SpecSelect { body }) => commands::spec::select_from_json(body).await,
+        Some(Commands::SpecCompare { body }) => commands::spec::compare_from_json(body).await,
+        Some(Commands::SpecTree { body }) => commands::spec::list_from_json(body).await,
+        Some(Commands::SpecProvenance { body }) => commands::spec::provenance_from_json(body).await,
+        Some(Commands::SpecApprove { body }) => commands::spec::approve_from_json(body).await,
+        Some(Commands::SpecFlag { value }) => commands::spec::flag_from_value(value).await,
+        Some(Commands::SpecReview) => commands::spec::review_queue().await,
+        Some(Commands::SpecPolicy { body }) => commands::spec::policy_from_json(body).await,
+        Some(Commands::SpecCompatibility { body }) => {
+            commands::spec::compatibility_from_json(body).await
+        }
+        Some(Commands::ReplayReference { body }) => commands::replay::reference(body).await,
+        Some(Commands::ReplayRun { manifest_id }) => commands::replay::run(manifest_id).await,
+        Some(Commands::ReplayStatus { run_id }) => commands::replay::status(run_id).await,
+        Some(Commands::ReplayPilotPrepare { dir }) => commands::replay::pilot_prepare(dir),
+        Some(Commands::ReplayPilotScore { dir }) => commands::replay::pilot_score(dir),
         Some(Commands::Files { format, json }) => commands::files::run(format, json).await,
         Some(Commands::Context { task }) => commands::context::run(task).await,
         Some(Commands::Preflight {
@@ -3684,6 +3770,27 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Memory { .. }) => Some("memory".into()),
         Some(Commands::Node { .. }) => Some("node".into()),
         Some(Commands::Spec { .. }) => Some("spec".into()),
+        Some(Commands::SpecCreate { .. }) => Some("spec-create".into()),
+        Some(Commands::SpecPlan { .. }) => Some("spec-plan".into()),
+        Some(Commands::SpecImport { .. }) => Some("spec-import".into()),
+        Some(Commands::SpecClassify { .. }) => Some("spec-classify".into()),
+        Some(Commands::SpecRevise { .. }) => Some("spec-revise".into()),
+        Some(Commands::SpecAmend { .. }) => Some("spec-amend".into()),
+        Some(Commands::SpecLink { .. }) => Some("spec-link".into()),
+        Some(Commands::SpecSelect { .. }) => Some("spec-select".into()),
+        Some(Commands::SpecCompare { .. }) => Some("spec-compare".into()),
+        Some(Commands::SpecTree { .. }) => Some("spec-tree".into()),
+        Some(Commands::SpecProvenance { .. }) => Some("spec-provenance".into()),
+        Some(Commands::SpecApprove { .. }) => Some("spec-approve".into()),
+        Some(Commands::SpecFlag { .. }) => Some("spec-flag".into()),
+        Some(Commands::SpecReview) => Some("spec-review".into()),
+        Some(Commands::SpecPolicy { .. }) => Some("spec-policy".into()),
+        Some(Commands::SpecCompatibility { .. }) => Some("spec-compatibility".into()),
+        Some(Commands::ReplayReference { .. }) => Some("replay-reference".into()),
+        Some(Commands::ReplayRun { .. }) => Some("replay-run".into()),
+        Some(Commands::ReplayStatus { .. }) => Some("replay-status".into()),
+        Some(Commands::ReplayPilotPrepare { .. }) => Some("replay-pilot-prepare".into()),
+        Some(Commands::ReplayPilotScore { .. }) => Some("replay-pilot-score".into()),
         Some(Commands::Files { .. }) => Some("files".into()),
         Some(Commands::Context { .. }) => Some("context".into()),
         Some(Commands::Preflight { .. }) => Some("preflight".into()),
@@ -3884,7 +3991,11 @@ mod neural_request_tests {
             (&["benchmark-abc"], "benchmark-abc", json!({})),
             (&["embed-bakeoff"], "embed-bakeoff", json!({})),
             (&["path-validate"], "path-validate", json!({})),
-            (&["learn"], "learn", json!({"seed":1,"validationRatio":0.25,"datasetVersion":"feedback-export","modelVersion":"rank-prior-1"})),
+            (
+                &["learn"],
+                "learn",
+                json!({"seed":1,"validationRatio":0.25,"datasetVersion":"feedback-export","modelVersion":"rank-prior-1"}),
+            ),
             (&["evaluate"], "evaluate", json!({})),
             (&["share"], "share", json!({})),
             (

@@ -71,8 +71,8 @@ pub use scope::{assert_scope, scope_paths};
 pub use search_text::normalize_search_text;
 pub use store::{
     apply_memory_filter, delete, effective_confidence, find_similar, fts_query_from_text, get,
-    link_catalog, link_memories, list, purge_memory, recall, recall_filtered, reindex_memory_fts,
-    remember, set_enabled, turn_rows, update, MEMORY_LINK_KINDS,
+    link_catalog, link_memories, list, list_for_session, purge_memory, recall, recall_filtered,
+    reindex_memory_fts, remember, session_ids, set_enabled, turn_rows, update, MEMORY_LINK_KINDS,
 };
 pub use sync::{
     default_shared_path, export_shared, import_shared, memory_sync_enabled, MemoryExportResult,

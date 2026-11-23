@@ -172,6 +172,7 @@ pub(crate) async fn pool() -> Result<sqlx::SqlitePool, String> {
 fn role(value: &str) -> Result<access::MemberRole, String> {
     match value {
         "owner" => Ok(access::MemberRole::Owner),
+        "approver" => Ok(access::MemberRole::Approver),
         "admin" => Ok(access::MemberRole::Admin),
         "member" => Ok(access::MemberRole::Member),
         "readonly" => Ok(access::MemberRole::Readonly),

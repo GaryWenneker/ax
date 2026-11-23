@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { conversationLinks } from '../memoryConversation';
 import { memoryListChanged } from '../memoryRefresh';
+import { SessionHop } from '../components/SessionHop';
 import { useLive, useNewKeys } from '../lib/useLive';
 import { createPortal } from 'react-dom';
 import {
@@ -90,6 +91,9 @@ export default function MemoryPage() {
   const [matches, setMatches] = useState<MemoryMatch[] | null>(null);
   const [total, setTotal] = useState(0);
   const [q, setQ] = usePersistedString('memory-q', '');
+  const [sessionFilter, setSessionFilter] = useState(
+    () => new URLSearchParams(window.location.search).get('session') ?? '',
+  );
   const [archiveOn, setArchiveOn] = useState(false);
   const [inboxFilter, setInboxFilter] = useState<'all' | 'stale' | 'foreign' | 'candidates'>('all');
   const [inboxIds, setInboxIds] = useState<Set<string>>(new Set());
@@ -112,7 +116,8 @@ export default function MemoryPage() {
   function loadAll() {
     setLoading(true);
     setError(null);
-    fetchMemories({ limit: 200 })
+    const session = sessionFilter;
+    fetchMemories({ limit: 200, session: session || undefined })
       .then((page) => {
         setMemories(page.memories);
         setTotal(page.total);
@@ -121,7 +126,10 @@ export default function MemoryPage() {
       .catch((e: Error) => { setError(e.message); setLoading(false); });
   }
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { loadAll(); }, [sessionFilter]);
+  useEffect(() => {
+    if (sessionFilter) setQ('');
+  }, [sessionFilter]);
   useEffect(() => {
     fetchMemoryHealth().then(setHealth).catch(() => setHealth(null));
   }, []);
@@ -143,8 +151,14 @@ export default function MemoryPage() {
     function syncFromRoute() {
       const id = parseLocation().memoryId;
       if (id) setSelectedId(id);
-      const recall = new URLSearchParams(window.location.search).get('q');
-      if (recall) setQ(recall);
+      const params = new URLSearchParams(window.location.search);
+      const session = params.get('session') ?? '';
+      setSessionFilter(session);
+      if (session) setQ('');
+      else {
+        const recall = params.get('q');
+        if (recall) setQ(recall);
+      }
     }
     syncFromRoute();
     window.addEventListener('popstate', syncFromRoute);
@@ -162,14 +176,15 @@ export default function MemoryPage() {
   useEffect(() => {
     function refreshQuietly() {
       if (document.hidden) return;
-      fetchMemories({ limit: 200 })
+      const session = new URLSearchParams(window.location.search).get('session') ?? '';
+      fetchMemories({ limit: 200, session: session || undefined })
         .then((page) => {
           setMemories((prev) => (memoryListChanged(prev, page.memories) ? page.memories : prev));
           setTotal(page.total);
         })
         .catch(() => {});
       const query = qRef.current.trim();
-      if (!query) return;
+      if (!query || session) return;
       recallMemories(query, 25, archiveRef.current ? 'archive' : 'hot')
         .then((r) => {
           if (qRef.current.trim() !== query) return;
@@ -188,6 +203,10 @@ export default function MemoryPage() {
   }, []);
 
   useEffect(() => {
+    if (sessionFilter) {
+      setMatches(null);
+      return;
+    }
     if (debounce.current) clearTimeout(debounce.current);
     if (!q.trim()) { setMatches(null); return; }
     debounce.current = setTimeout(() => {
@@ -196,7 +215,7 @@ export default function MemoryPage() {
         .catch((e: Error) => setError(e.message));
     }, 300);
     return () => { if (debounce.current) clearTimeout(debounce.current); };
-  }, [q, archiveOn]);
+  }, [q, archiveOn, sessionFilter]);
 
   async function runCaptureGit() {
     setCapturing(true);
@@ -277,8 +296,12 @@ export default function MemoryPage() {
     }
   }
 
-  const shown: Array<MemoryRow & { score?: number }> = (matches ?? memories).filter(
-    (m) => inboxFilter === 'all' || inboxIds.has(m.id),
+  const pool = sessionFilter ? memories : (matches ?? memories);
+  const typed = q.trim();
+  const sessionNeedle = sessionFilter && typed && typed !== sessionFilter ? typed.toLowerCase() : '';
+  const shown: Array<MemoryRow & { score?: number }> = pool.filter(
+    (m) => (inboxFilter === 'all' || inboxIds.has(m.id))
+      && (!sessionNeedle || `${m.title}\n${m.body}`.toLowerCase().includes(sessionNeedle)),
   );
   const archiveSearch = matches !== null && archiveOn;
   const convLinks = useMemo(() => conversationLinks(shown), [shown]);
@@ -527,6 +550,7 @@ export default function MemoryPage() {
           }
         >
           <FilterBar>
+            {sessionFilter && <SessionHop session={sessionFilter} here="memory" />}
             <input
               className="settings-input settings-input--grow"
               type="search"
@@ -817,6 +841,7 @@ function MemoryBlade({
           <Codicon name={KIND_ICONS[memory.kind] ?? 'note'} className="detail-title-icon" />
           <span>{headline}</span>
         </span>
+        <SessionHop session={memory.session_id ?? ''} here="memory" />
         <button type="button" className="detail-close" onClick={onClose} aria-label="Close">
           <Codicon name="close" />
         </button>

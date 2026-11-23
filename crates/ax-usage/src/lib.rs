@@ -3,6 +3,7 @@
 mod activity;
 mod budget;
 mod cache_status;
+pub mod context_authority;
 mod context_cache;
 mod context_export;
 mod context_plan;
@@ -19,9 +20,12 @@ mod period;
 mod pricing;
 mod pricing_fetch;
 mod pricing_sync;
+pub mod replay_validation;
 pub mod replication;
 mod reuse_cache;
 mod savings;
+mod spec_documents;
+mod spec_hierarchy;
 mod spec_registry;
 mod store;
 mod tokenizer;
@@ -124,6 +128,20 @@ pub use savings::{
     spawn_record_mcp_call, stash_cli_result, CallTokenDetail, ImportResult, McpCallRecord,
     SavingsAssumptions, SavingsEstimate, SavingsQuery, SavingsSummary, PREVIEW_MAX_BYTES,
 };
+pub use spec_hierarchy::{
+    alternative_plan_from_json, approve_artifact, approve_for_member, approve_from_json,
+    bind_approval_actor, capture_plan_draft, compare_plan_from_json,
+    confirm_compatibility_from_json, confirm_plan_compatibility, create_alternative_plan,
+    create_hierarchy_from_json, create_spec_with_plan, create_workstream, dry_run_legacy,
+    ensure_hierarchy_schema, gated_list, gated_preflight_block, hierarchy_enabled,
+    hierarchy_flag_from_json, import_review_from_json, import_review_ids, import_spec_without_plan,
+    link_policy_from_json, link_session, link_session_from_json, list_hierarchy_from_json,
+    list_plan_revisions, mark_execution_ready, provenance_from_json, revise_plan,
+    revise_plan_from_json, revise_spec, revise_spec_from_json, select_plan, select_plan_from_json,
+    selected_plans, set_hierarchy_flag, specs_for_session, ApprovalRequest, CreatedSpecPlan,
+    LegacyReport, NewAlternativePlan, NewSpecPlan, NewSpecWithoutPlan, NewWorkstream, PlanEdit,
+    PlanSelection,
+};
 pub use spec_registry::{
     approve_revision, approved_revision, capture_finished_plan, check_linked_files,
     delivered_version, ensure_spec_schema, import_plan_mode_files, import_workspace_plans,
@@ -131,6 +149,7 @@ pub use spec_registry::{
     save_revision, show_spec, spec_context_block, spec_pointer_for, sync_markdown, SpecHistoryRow,
     SpecListItem, SpecPointer, SpecRevision,
 };
+pub use spec_documents::{classify_documents_from_json, import_spec_from_json, ListedPlan};
 pub use store::{open_pool, usage_db_path};
 pub use tokenizer::{
     count_file_tokens, count_tokens, token_cache_status, tokenize_text, tokenizer_available,

@@ -8,6 +8,7 @@ import { loadBodyView, saveBodyView, type BodyView } from '../lib/policyBodyView
 const VIEWS: { id: BodyView; label: string; icon: string }[] = [
   { id: 'markdown', label: 'Markdown', icon: 'code' },
   { id: 'wysiwyg', label: 'WYSIWYG', icon: 'edit' },
+  { id: 'split', label: 'Split', icon: 'split-horizontal' },
   { id: 'preview', label: 'Preview', icon: 'open-preview' },
 ];
 

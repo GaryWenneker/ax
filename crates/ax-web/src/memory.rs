@@ -182,6 +182,8 @@ struct ListQuery {
     limit: usize,
     #[serde(default)]
     offset: usize,
+    #[serde(default)]
+    session: Option<String>,
 }
 
 fn default_limit() -> usize {
@@ -190,12 +192,46 @@ fn default_limit() -> usize {
 
 async fn handle_list(State(hub): State<WebHub>, Query(p): Query<ListQuery>) -> impl IntoResponse {
     let ws = hub.read().await;
-    match ax_memory::list(&ws.graph_pool, p.limit.min(500), p.offset).await {
-        Ok((memories, total)) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "memories": memories, "total": total })),
-        )
-            .into_response(),
+    let limit = p.limit.min(500);
+    let session = p
+        .session
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let listed = match session {
+        Some(session) => {
+            ax_memory::list_for_session(&ws.graph_pool, session, limit, p.offset).await
+        }
+        None => ax_memory::list(&ws.graph_pool, limit, p.offset).await,
+    };
+    match listed {
+        Ok((memories, total)) => {
+            let ids: Vec<String> = memories.iter().map(|memory| memory.id.clone()).collect();
+            let sessions = ax_memory::session_ids(&ws.graph_pool, &ids)
+                .await
+                .unwrap_or_default();
+            let memories: Vec<serde_json::Value> = memories
+                .into_iter()
+                .map(|memory| {
+                    let id = memory.id.clone();
+                    let mut value =
+                        serde_json::to_value(&memory).unwrap_or_else(|_| serde_json::json!({}));
+                    if let Some(object) = value.as_object_mut() {
+                        let session_id = sessions.get(&id).cloned().unwrap_or_default();
+                        object.insert(
+                            "session_id".to_string(),
+                            serde_json::Value::String(session_id),
+                        );
+                    }
+                    value
+                })
+                .collect();
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "memories": memories, "total": total })),
+            )
+                .into_response()
+        }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
