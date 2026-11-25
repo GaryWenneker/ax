@@ -1108,6 +1108,14 @@ impl QueryBuilder {
 
         let (source_stored_files, source_expected_files) = self.source_store_coverage().await?;
 
+        // Logical database size as SQLite sees it (includes pages still in the WAL).
+        let db_size_bytes: i64 = sqlx::query_scalar(
+            "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| self.sql_err(e))?;
+
         Ok(GraphStats {
             node_count,
             edge_count,
@@ -1118,7 +1126,7 @@ impl QueryBuilder {
             files_by_language,
             source_stored_files,
             source_expected_files,
-            db_size_bytes: 0,
+            db_size_bytes,
             last_updated,
             unresolved_ref_count: Some(unresolved_ref_count),
             resolution_total,
