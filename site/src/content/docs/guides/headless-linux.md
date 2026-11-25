@@ -63,10 +63,78 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/workspace" "ax
 
 The headless build indexes as fast as the full build: 20.6 seconds for 625 Rust files on a 14-core Apple silicon Mac, against 20.4 seconds for the full build. Most of that time goes to resolving references in SQLite, so keep the project's `.ax/` folder on the container's own disk or a volume. A bind mount from a macOS host made the same index take over two minutes. `slim/README.md` has the measurements.
 
-## Sandboxes and Container Apps
+## Test it remotely
 
-A Vercel Sandbox is a Linux VM, so copy the static binary in and run it next to the agent; the agent starts `ax serve --mcp` as its MCP server. On Azure Container Apps, run the image as a job against a mounted share or a cloned repository.
+The binary is static, so any Linux machine can run it. Build the one that matches the remote CPU: `slim/build.sh` builds for your container engine's own architecture, and `slim/build.sh linux/amd64` builds x86_64 (slow under emulation on an arm64 Mac). Check the remote side with `uname -m`: `x86_64` needs `ax-linux-x86_64`, `aarch64` needs `ax-linux-aarch64`.
 
-`ax mcp remote serve` listens on `127.0.0.1` only. Inside a container it is reachable from the same container or pod, not from Container Apps ingress directly.
+Keep the project and its `.ax/` folder on the machine's own disk. On a network or shared mount, SQLite's `fsync` makes indexing several times slower.
+
+### Vercel Sandbox
+
+A Vercel Sandbox is a Linux microVM (Ubuntu 26.04, internet access on by default), so the binary runs directly, without an image. Install the `sandbox` CLI and log in:
+
+```bash
+npm i -g sandbox
+```
+
+```bash
+sandbox login
+```
+
+Create a sandbox that stays up for 30 minutes and check its architecture:
+
+```bash
+sandbox create --name ax-test --timeout 30m
+```
+
+```bash
+sandbox exec ax-test -- uname -m
+```
+
+Copy in the matching binary and clone a project to index:
+
+```bash
+sandbox copy slim/dist/ax-linux-x86_64 ax-test:/vercel/ax
+```
+
+```bash
+sandbox exec ax-test -- chmod +x /vercel/ax
+```
+
+```bash
+sandbox exec ax-test -- git clone --depth 1 https://github.com/<owner>/<repo> /vercel/proj
+```
+
+Index, then ask the graph something:
+
+```bash
+sandbox exec -w /vercel/proj ax-test -- bash -c "time /vercel/ax init . && /vercel/ax status && /vercel/ax query main"
+```
+
+Check the MCP server over stdio. The reply lists the server info and its tools:
+
+```bash
+sandbox exec -w /vercel/proj ax-test -- bash -c 'printf "%s\n" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"t\",\"version\":\"1\"}}}" "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}" "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}" | /vercel/ax serve --mcp'
+```
+
+`sandbox connect ax-test` opens an interactive shell. When you are done, `sandbox stop ax-test` keeps a snapshot and `sandbox remove ax-test` deletes it. On the Hobby plan a session lasts at most 45 minutes.
+
+### Any Linux host over SSH
+
+```bash
+scp slim/dist/ax-linux-x86_64 user@host:ax
+```
+
+```bash
+ssh user@host 'chmod +x ax && cd <project> && ./ax init . && ./ax status'
+```
+
+### Azure Container Apps
+
+Push the image (tagged with a commit or version) to a registry the environment can pull from. Then create a manual job from the `ubuntu` target, which includes `git`, with a command such as `sh -c "git clone --depth 1 <repo> /tmp/p && cd /tmp/p && ax init . && ax query main"`. Start the job and read its output in the job's logs.
+
+## Limits
+
+An agent in a sandbox or container starts `ax serve --mcp` itself and talks to it over stdio. `ax mcp remote serve` listens on `127.0.0.1` only, so inside a container it is reachable from the same container or pod, not from Container Apps ingress directly.
 
 See `slim/README.md` in the repository for measured sizes and more run examples.

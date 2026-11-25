@@ -187,20 +187,39 @@ goes to `$HOME/.ax`. Mount a volume at `HOME` to keep it between runs.
 
 ### Vercel Sandbox
 
-A sandbox is a Linux VM, so the static binary runs directly; no image is
-needed. Upload `slim/dist/ax-linux-x86_64` (or `-aarch64`, matching
-`uname -m` in the sandbox) into the sandbox and put it on `PATH`:
+A sandbox is a Linux microVM (Ubuntu 26.04), so the static binary runs
+directly; no image is needed. With the `sandbox` CLI (`npm i -g sandbox`,
+then `sandbox login`):
 
 ```bash
-install -m 0755 ax-linux-x86_64 "$HOME/.local/bin/ax"
+sandbox create --name ax-test --timeout 30m
 ```
 
 ```bash
-ax init && ax status
+sandbox exec ax-test -- uname -m
 ```
 
-Point the agent's MCP configuration at `ax serve --mcp` (stdio), started in the
-project directory. The build never contacts the update server.
+```bash
+sandbox copy slim/dist/ax-linux-x86_64 ax-test:/vercel/ax
+```
+
+```bash
+sandbox exec ax-test -- chmod +x /vercel/ax
+```
+
+```bash
+sandbox exec ax-test -- git clone --depth 1 https://github.com/<owner>/<repo> /vercel/proj
+```
+
+```bash
+sandbox exec -w /vercel/proj ax-test -- bash -c "time /vercel/ax init . && /vercel/ax status"
+```
+
+Copy the binary that matches `uname -m`. Point the agent's MCP
+configuration at `ax serve --mcp` (stdio), started in the project directory.
+`sandbox remove ax-test` deletes the sandbox. The guide on the website
+(Guides → Headless Linux build) has the full walkthrough, including an MCP
+check.
 
 ### Azure Container Apps
 
