@@ -80,6 +80,8 @@ Measured from one build of this checkout (ax 10.1.0), sizes in bytes:
 | **Same plus `mimalloc` (the slim default), macOS arm64** | `… --features "minimal-grammars mimalloc"` | **31,277,024** (5.2× smaller) |
 | Slim default, Linux arm64, static musl, thin LTO | `AX_LTO=thin slim/build.sh` | 36,047,056 |
 | Slim default, Linux x86_64, static-pie musl, thin LTO | `AX_LTO=thin slim/build.sh linux/amd64` | 41,336,176 |
+| Release v10.1.1 `ax-slim-linux-arm64` (fat LTO, CI) | Release workflow `build-slim` | 33,163,280 |
+| Release v10.1.1 `ax-slim-linux-x64` (fat LTO, CI) | Release workflow `build-slim` | 37,821,680 |
 | Distroless image (`runtime` target) | `docker build -f slim/Dockerfile --build-arg AX_LTO=thin .` | 39.1 MB |
 | Ubuntu 26.04 image with `git` (`ubuntu` target) | `--target ubuntu` | 268.4 MB |
 

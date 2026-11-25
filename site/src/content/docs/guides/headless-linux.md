@@ -20,18 +20,18 @@ It keeps the CLI, MCP over stdio (`ax serve --mcp`), `ax mcp remote serve`, inde
 
 ## Size
 
-The headless binary is about five times smaller than the full ax. Sizes in megabytes (10⁶ bytes), measured from one build of ax 10.1.0:
+The headless binary is about five times smaller than the full ax. Sizes in megabytes (10⁶ bytes), from the v10.1.1 release:
 
 | Build | Size |
 |---|---|
 | Full ax, macOS arm64 | 161.7 MB |
-| Headless, macOS arm64 | 31.3 MB |
-| Headless, Linux arm64 (static) | 36.0 MB |
-| Headless, Linux x86_64 (static) | 41.3 MB |
-| Container image, distroless (`ax-slim:<version>`) | 39.1 MB |
-| Container image, Ubuntu 26.04 with `git` (`ax-slim:<version>-ubuntu`) | 268.4 MB |
+| Headless, macOS arm64 (local build) | 31.3 MB |
+| Headless, Linux arm64 (static) | 33.2 MB, 12.0 MB download |
+| Headless, Linux x86_64 (static) | 37.8 MB, 12.9 MB download |
+| Container image, distroless (`ax-slim:<version>`) | about 41 MB |
+| Container image, Ubuntu 26.04 with `git` (`ax-slim:<version>-ubuntu`) | about 268 MB |
 
-Most of the saving comes from leaving out the Command Center, the desktop client and the less common language grammars. Grammar parse tables make up most of a binary's data, so a headless build with every language (`AX_FEATURES=mimalloc slim/build.sh`) is about 71 MB. The Linux binaries above were built with thin LTO; the release builds use fat LTO and come out slightly smaller.
+Most of the saving comes from leaving out the Command Center, the desktop client and the less common language grammars. Grammar parse tables make up most of a binary's data, so a headless build with every language (`AX_FEATURES=mimalloc slim/build.sh`) is about 71 MB.
 
 Indexing is as fast as with the full build; see [Speed](#speed).
 
