@@ -211,9 +211,9 @@ Every release ships **six** prebuilt binaries. The shell installer picks the mat
 
 | Platform | Architectures | Install |
 |---|---|---|
-| Windows | x64, arm64 | PowerShell installer (`install.ps1`) or [getax CDN](https://getax.wenneker.io/releases/) |
-| macOS | x64 (Intel), arm64 (Apple Silicon) | shell installer (`install.sh`) or getax CDN |
-| Linux | x64, arm64 | shell installer or getax CDN |
+| Windows | x64, arm64 | PowerShell installer (`install.ps1`) or [GitHub Releases](https://github.com/GaryWenneker/ax/releases) |
+| macOS | x64 (Intel), arm64 (Apple Silicon) | shell installer (`install.sh`) or GitHub Releases |
+| Linux | x64, arm64 | shell installer or GitHub Releases |
 | WSL2 | x64, arm64 | **Use the Linux installer** inside WSL — `curl -fsSL https://getax.wenneker.io/install.sh \| sh` |
 | Linux, headless (sandboxes, containers) | x64, arm64 | `install-slim.sh` or `ghcr.io/garywenneker/ax-slim` images ([guide](/guides/headless-linux/)) |
 
@@ -289,7 +289,7 @@ npx @garywenneker/ax
 npm install -g @garywenneker/ax
 ```
 
-The npm package is a thin launcher: it fetches the prebuilt `ax` binary from [getax.wenneker.io](https://getax.wenneker.io/releases/) (public CDN) with GitHub Releases as fallback. See [npm README](https://github.com/GaryWenneker/ax/blob/main/docs/npm/README.md) for publish details.
+The npm package is a thin launcher: it fetches the prebuilt `ax` binary from [GitHub Releases](https://github.com/GaryWenneker/ax/releases), through getax.wenneker.io download links that redirect there. See [npm README](https://github.com/GaryWenneker/ax/blob/main/docs/npm/README.md) for publish details.
 
 ### Local dev upgrade (maintainers)
 
