@@ -2,7 +2,7 @@
 
 A smaller build of the same `ax` binary for Linux sandboxes and containers
 (Vercel Sandbox, Azure Container Apps, CI runners). It is not a fork: it is
-`crates/ax-cli` built with `--no-default-features --features minimal-grammars`
+`crates/ax-cli` built with `--no-default-features --features "minimal-grammars mimalloc"`
 and the size-focused `release-slim` profile. The normal ax distribution is
 unchanged.
 
@@ -30,19 +30,21 @@ but get no symbols or call edges. Those grammars are about 40 MB of parse
 tables. To keep every language, build without the feature:
 
 ```bash
-AX_FEATURES= slim/build.sh
+AX_FEATURES=mimalloc slim/build.sh
 ```
 
 ### Cargo features
 
-All on by default in `crates/ax-cli/Cargo.toml` except `minimal-grammars`:
+`web`, `desktop` and `self-update` are on by default in `crates/ax-cli/Cargo.toml`;
+the slim build turns them off and turns on the last two:
 
 | Feature | Controls |
 |---|---|
 | `web` | `ax-web` dependency: `web`, `share`, `ship --watch`, `server`, replication start-up |
 | `desktop` | `ax-desktop-client` dependency: `ax desktop` |
 | `self-update` | `ax upgrade` and the post-command update check |
-| `minimal-grammars` | off by default; links only the core grammars listed above |
+| `minimal-grammars` | links only the core grammars listed above |
+| `mimalloc` | uses mimalloc as the global allocator instead of the platform malloc |
 
 ## Size
 
@@ -53,20 +55,68 @@ Measured from one build of this checkout (ax 10.1.0), sizes in bytes:
 | Full ax, macOS arm64 | `cargo build --release -p ax-cli` | 161,708,128 |
 | Headless features only, macOS arm64 | `cargo build --release -p ax-cli --no-default-features` | 110,418,256 |
 | Headless, `release-slim`, all grammars, macOS arm64 | `cargo build --profile release-slim -p ax-cli --no-default-features` | 71,266,960 |
-| **Headless, `release-slim`, `minimal-grammars`, macOS arm64** | `cargo build --profile release-slim -p ax-cli --no-default-features --features minimal-grammars` | **31,157,504** (5.2× smaller) |
-| Same, Linux arm64, static musl, thin LTO | `AX_LTO=thin slim/build.sh` | 35,905,656 |
-| Same, Linux x86_64, static-pie musl, thin LTO | `AX_LTO=thin slim/build.sh linux/amd64` | 41,182,480 |
+| Headless, `release-slim`, `minimal-grammars`, macOS arm64 | `cargo build --profile release-slim -p ax-cli --no-default-features --features minimal-grammars` | 31,157,520 |
+| **Same plus `mimalloc` (the slim default), macOS arm64** | `… --features "minimal-grammars mimalloc"` | **31,277,024** (5.2× smaller) |
+| Slim default, Linux arm64, static musl, thin LTO | `AX_LTO=thin slim/build.sh` | 36,047,056 |
+| Slim default, Linux x86_64, static-pie musl, thin LTO | `AX_LTO=thin slim/build.sh linux/amd64` | 41,336,176 |
 | Distroless image (`runtime` target) | `docker build -f slim/Dockerfile --build-arg AX_LTO=thin .` | 39.1 MB |
 | Ubuntu 26.04 image with `git` (`ubuntu` target) | `--target ubuntu` | 268.4 MB |
 
 `release-slim` (workspace `Cargo.toml`) is `opt-level = "s"`, fat LTO,
-`codegen-units = 1`, `panic = "abort"` and stripped symbols. Trade-offs that
-were measured and not taken:
+`codegen-units = 1`, `panic = "abort"` and stripped symbols.
 
-- `opt-level = "z"` saves another 4.4 MB (26.8 MB) but indexing 625 Rust files
-  took 143 s instead of 78 s.
-- With `"s"`, the same index takes 78 s against 66 s for the full
-  `opt-level = 3` build.
+## Speed
+
+Benchmark: `ax index . --force` on a copy of this repository's `crates/`
+(625 Rust files, about 98,000 references to resolve), median of three runs.
+Wall, user and system seconds from `/usr/bin/time`.
+
+| Binary (macOS arm64, 14 cores) | Wall | User | Sys |
+|---|---|---|---|
+| Full ax, `--release` (`opt-level = 3`) | 20.4 | 11.1 | 15.4 |
+| Slim, `release-slim` (`opt-level = "s"`) | 20.6 | 11.3 | 15.5 |
+| Slim plus `mimalloc` (the slim default) | 20.3 | 11.0 | 15.3 |
+| Slim with `opt-level = "z"` | 23.0 | 14.5 | 15.5 |
+
+| Binary (Linux arm64 static musl, 4 vCPU container, project on the container's own disk) | Wall | User | Sys |
+|---|---|---|---|
+| Slim, musl malloc | 36.8 | 21.4 | 15.6 |
+| Slim plus `mimalloc` (the slim default) | 35.6 | 18.9 | 16.4 |
+
+Where the earlier gap came from: before this change, the same index took
+66 s with the full build, 78 s with `"s"` and 143 s with `"z"`. A profile
+(`sample` on macOS) showed most CPU time in regex compilation: the Laravel
+resolver in `ax-resolution` compiled two regexes for every reference it
+checked, in every project. Regex compilation is CPU-heavy and sensitive to the
+optimisation level, which is why `"s"` and `"z"` fell behind. Those regexes are
+now compiled once, which makes every build faster, the full one included.
+
+What is left is mostly reference resolution, which spends its time in SQLite
+(system time above user time; `pwrite`, `fsync` and `pread` lead the profile).
+Measured and not taken, because they did not pay off:
+
+- `opt-level = 3` for the C libraries (SQLite, sqlite-vec, tree-sitter,
+  zstd): 20.5 s, +0.8 MB.
+- The same plus `ax-resolution`, `ax-db`, `ax-extraction`, `ax-graph`, sqlx
+  and `regex-automata`: 20.3 s, +1.3 MB.
+- `opt-level = 3` for everything: 20.3 s, +7.2 MB.
+- `opt-level = "z"`: 4.4 MB smaller but 13% slower (more user CPU in parsing).
+
+`mimalloc` saves 12% user CPU in the musl container at a cost of 0.1 MB.
+On macOS the system allocator is already fast, so it makes no difference
+there.
+
+On a bind mount from macOS into the Podman VM, the same index took 124 s
+with either allocator: SQLite's `fsync` on the shared folder dominates. Keep
+the project (or at least `.ax/`) on the container's own disk or a volume.
+
+The x86_64 build targets the baseline `x86-64` CPU. Raising it (for example
+`-C target-cpu=x86-64-v3`) would only speed up CPU-bound parts, which are now
+a minority of indexing time, and would make the binary crash with an illegal
+instruction on hosts without AVX2. It was not measured, because the x86_64
+build here runs under emulation.
+
+## Memory
 
 Fat LTO needs about 6 GB of memory for the final link. In a smaller container
 VM, pass `AX_LTO=thin`; the Linux numbers above were built that way.
@@ -104,7 +154,7 @@ docker build -f slim/Dockerfile --target ubuntu -t "ax-slim:$(git rev-parse --sh
 Without containers, on a Linux host with Rust installed:
 
 ```bash
-cargo build --locked -p ax-cli --no-default-features --features minimal-grammars --profile release-slim
+cargo build --locked -p ax-cli --no-default-features --features "minimal-grammars mimalloc" --profile release-slim
 ```
 
 That binary links glibc dynamically. For a static binary add

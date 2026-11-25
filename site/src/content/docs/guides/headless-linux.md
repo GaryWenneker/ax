@@ -12,7 +12,7 @@ It keeps the CLI, MCP over stdio (`ax serve --mcp`), `ax mcp remote serve`, inde
 By default the headless build links only the core tree-sitter grammars: Rust, Python, Go, Java, JavaScript/JSX, TypeScript/TSX, C, PHP, Ruby, Lua, YAML, XML, Vue, Svelte, Astro, Properties, Liquid and Twig. Files in other languages (Kotlin, C#, C++, Swift, Dart, Scala, Luau, Objective-C, R, Razor, Pascal) are listed as files but get no symbols. Those grammars account for most of the binary size. To keep every language:
 
 ```bash
-AX_FEATURES= slim/build.sh
+AX_FEATURES=mimalloc slim/build.sh
 ```
 
 ## Build a static Linux binary
@@ -32,10 +32,10 @@ slim/build.sh linux/amd64
 Without containers, on a Linux machine with Rust:
 
 ```bash
-cargo build --locked -p ax-cli --no-default-features --features minimal-grammars --profile release-slim
+cargo build --locked -p ax-cli --no-default-features --features "minimal-grammars mimalloc" --profile release-slim
 ```
 
-`--no-default-features` turns off the `web`, `desktop` and `self-update` features of `ax-cli`; `minimal-grammars` links only the core grammars. The `release-slim` profile optimizes for size with fat LTO, one codegen unit, `panic = "abort"` and stripped symbols.
+`--no-default-features` turns off the `web`, `desktop` and `self-update` features of `ax-cli`; `minimal-grammars` links only the core grammars, and `mimalloc` replaces the platform allocator (musl's malloc is slow under parallel indexing). The `release-slim` profile optimizes for size with fat LTO, one codegen unit, `panic = "abort"` and stripped symbols.
 
 ## Container image
 
@@ -58,6 +58,10 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/workspace" "ax
 ```bash
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/workspace" "ax-slim:$(git rev-parse --short HEAD)" query "where is the config loaded"
 ```
+
+## Speed
+
+The headless build indexes as fast as the full build: 20.6 seconds for 625 Rust files on a 14-core Apple silicon Mac, against 20.4 seconds for the full build. Most of that time goes to resolving references in SQLite, so keep the project's `.ax/` folder on the container's own disk or a volume. A bind mount from a macOS host made the same index take over two minutes. `slim/README.md` has the measurements.
 
 ## Sandboxes and Container Apps
 

@@ -7,9 +7,10 @@
 FROM rust:1.100.0-alpine AS builder
 RUN apk add --no-cache build-base cmake perl file
 WORKDIR /build
-# Extra ax-cli features. `minimal-grammars` links only the core tree-sitter grammars
-# (see slim/README.md); pass `--build-arg AX_FEATURES=` to keep every language.
-ARG AX_FEATURES=minimal-grammars
+# Extra ax-cli features. `minimal-grammars` links only the core tree-sitter grammars and
+# `mimalloc` replaces musl's slower malloc (see slim/README.md). Pass
+# `--build-arg AX_FEATURES=mimalloc` to keep every language.
+ARG AX_FEATURES="minimal-grammars mimalloc"
 # Fat LTO needs about 6 GB of RAM for the final link; `--build-arg AX_LTO=thin` fits in 4 GB
 # at the cost of a slightly larger binary.
 ARG AX_LTO=fat

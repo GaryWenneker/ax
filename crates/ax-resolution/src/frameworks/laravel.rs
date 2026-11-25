@@ -1,6 +1,7 @@
 //! Laravel route extraction + Controller@method resolution — CG: frameworks/laravel.ts
 
 use std::path::Path;
+use std::sync::OnceLock;
 
 use ax_db::queries::QueryBuilder;
 use ax_types::{Language, Node, NodeKind, ReferenceKind, UnresolvedReference};
@@ -14,9 +15,14 @@ pub fn detect(project_root: &Path) -> bool {
     project_root.join("artisan").exists() || project_root.join("app/Http/Kernel.php").exists()
 }
 
+// These run once per unresolved reference during resolution, so the regexes are compiled once.
+fn cached(cell: &'static OnceLock<regex::Regex>, pattern: &str) -> &'static regex::Regex {
+    cell.get_or_init(|| regex::Regex::new(pattern).expect("laravel regex"))
+}
+
 pub fn claims_reference(name: &str) -> bool {
-    let re = regex::Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*Controller@\w+$").expect("controller re");
-    re.is_match(name)
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    cached(&RE, r"^[A-Za-z_][A-Za-z0-9_]*Controller@\w+$").is_match(name)
 }
 
 pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
@@ -158,14 +164,14 @@ pub async fn try_resolve_target(
 }
 
 fn parse_controller_method(name: &str) -> Option<(&str, &str)> {
-    let re = regex::Regex::new(r"^([A-Z][a-zA-Z]+Controller)@(\w+)$").expect("controller@method");
-    let cap = re.captures(name)?;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let cap = cached(&RE, r"^([A-Z][a-zA-Z]+Controller)@(\w+)$").captures(name)?;
     Some((cap.get(1)?.as_str(), cap.get(2)?.as_str()))
 }
 
 fn parse_model_call(name: &str) -> Option<(&str, &str)> {
-    let re = regex::Regex::new(r"^([A-Z][a-zA-Z]+)::(\w+)$").expect("model::method");
-    let cap = re.captures(name)?;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let cap = cached(&RE, r"^([A-Z][a-zA-Z]+)::(\w+)$").captures(name)?;
     Some((cap.get(1)?.as_str(), cap.get(2)?.as_str()))
 }
 
@@ -330,5 +336,18 @@ mod tests {
     fn claims_controller_reference() {
         assert!(claims_reference("UserController@index"));
         assert!(!claims_reference("index"));
+    }
+
+    #[test]
+    fn parses_controller_method_and_model_call() {
+        assert_eq!(
+            parse_controller_method("UserController@index"),
+            Some(("UserController", "index"))
+        );
+        assert_eq!(parse_controller_method("userController@index"), None);
+        assert_eq!(parse_controller_method("User@index"), None);
+        assert_eq!(parse_model_call("User::find"), Some(("User", "find")));
+        assert_eq!(parse_model_call("crate::module::item"), None);
+        assert_eq!(parse_model_call("User::find::more"), None);
     }
 }

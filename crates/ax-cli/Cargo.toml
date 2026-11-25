@@ -18,6 +18,8 @@ desktop = ["web", "dep:ax-desktop-client"]
 self-update = []
 ## Headless size option: link only the core tree-sitter grammars (see ax-extraction).
 minimal-grammars = ["ax-extraction/minimal-grammars"]
+## Use mimalloc as the global allocator (musl's malloc is slow under parallel indexing).
+mimalloc = ["dep:mimalloc"]
 ## Enable wasmtime extractor plugins (`.ax/plugins/*/plugin.toml` with `wasm =`).
 plugins-wasm = ["ax-extraction/plugins-wasm"]
 
@@ -73,5 +75,6 @@ zip = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
 regex = { workspace = true }
+mimalloc = { version = "0.1", optional = true, default-features = false }
 
 [dev-dependencies]
