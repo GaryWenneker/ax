@@ -93,6 +93,16 @@ curl -fsSL https://getax.wenneker.io/install.sh | sh
 
 Windows browsers identify Windows, rather than your WSL distribution. Select **WSL2** in the homepage installer when this is your development environment.
 
+### Linux sandboxes and containers (headless)
+
+For a Vercel Sandbox, an Azure Container Apps job, a CI runner or another machine without a screen, install the smaller headless build: CLI and MCP server, without the Command Center, desktop client or self-update.
+
+```bash
+curl -fsSL https://getax.wenneker.io/install-slim.sh | sh
+```
+
+See [Headless Linux build](/guides/headless-linux/) for options, container images and Azure Container Apps jobs.
+
 ### Windows
 
 Run in PowerShell:
@@ -197,7 +207,7 @@ Do this again in every other directory where you want ax. You do not run `ax ini
 
 ## Supported platforms
 
-Every release ships **six** prebuilt binaries. The shell installer picks the match for your OS and CPU.
+Every release ships **six** prebuilt binaries. The shell installer picks the match for your OS and CPU. Releases after v10.1.0 also ship two headless Linux binaries for sandboxes and containers.
 
 | Platform | Architectures | Install |
 |---|---|---|
@@ -205,6 +215,7 @@ Every release ships **six** prebuilt binaries. The shell installer picks the mat
 | macOS | x64 (Intel), arm64 (Apple Silicon) | shell installer (`install.sh`) or getax CDN |
 | Linux | x64, arm64 | shell installer or getax CDN |
 | WSL2 | x64, arm64 | **Use the Linux installer** inside WSL — `curl -fsSL https://getax.wenneker.io/install.sh \| sh` |
+| Linux, headless (sandboxes, containers) | x64, arm64 | `install-slim.sh` or `ghcr.io/garywenneker/ax-slim` images ([guide](/guides/headless-linux/)) |
 
 WSL2 notes:
 

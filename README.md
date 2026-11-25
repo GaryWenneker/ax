@@ -32,6 +32,9 @@ curl -fsSL https://getax.wenneker.io/install.sh | sh
 
 # Windows (PowerShell)
 irm https://getax.wenneker.io/install.ps1 | iex
+
+# Linux sandboxes and containers (headless CLI + MCP build)
+curl -fsSL https://getax.wenneker.io/install-slim.sh | sh
 ```
 
 Have Node? `npx @garywenneker/ax` downloads the native binary. Open a new terminal so `PATH` updates. WSL2 uses the Linux command inside WSL.

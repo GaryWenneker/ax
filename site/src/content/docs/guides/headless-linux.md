@@ -1,11 +1,74 @@
 ---
 title: Headless Linux build
-description: Build a smaller ax binary without the Command Center, desktop client or self-update, for Linux sandboxes and containers.
+description: Install or build a smaller ax binary without the Command Center, desktop client or self-update, for Linux sandboxes and containers.
 ---
 
 The headless build is the same `ax` binary without its graphical parts. It is meant for places with no screen and no browser: a Vercel Sandbox, an Azure Container Apps job, a CI runner. The regular ax download stays the full build.
 
 It keeps the CLI, MCP over stdio (`ax serve --mcp`), `ax mcp remote serve`, indexing, graph queries, policy, specs, sessions and the memory vault. It leaves out `ax web`, `ax share`, `ax desktop`, `ax ship --watch`, `ax upgrade` and `ax server`. The first five still parse and exit with a message that they are not part of this build; `ax server` is removed entirely.
+
+## What is in it
+
+| Included | Left out |
+|---|---|
+| CLI: `init`, `index`, `sync`, `watch`, `status`, `query`, `explore`, `node`, `callers`, `impact`, `report`, `insights`, … | `ax web` and `ax share` (embedded Command Center and its web assets) |
+| MCP over stdio (`ax serve --mcp`) and `ax mcp remote serve` (HTTP) | `ax desktop` (native desktop client) |
+| Policy, skills, specs, memory vault, sessions, `preflight` | `ax ship --watch` (dashboard) |
+| `ax ship --evaluate` / `--ci`, `diff`, `affected` (need `git`) | `ax upgrade` and the update notice |
+| Neural ranking (pure-Rust runtime) | `ax server` (standalone knowledge node) |
+| Core tree-sitter languages (see [Languages](#languages)) | Grammars for Kotlin, C#, C++, Swift, Dart, Scala, Luau, Objective-C, R, Razor and Pascal |
+
+## Size
+
+The headless binary is about five times smaller than the full ax. Sizes in megabytes (10⁶ bytes), measured from one build of ax 10.1.0:
+
+| Build | Size |
+|---|---|
+| Full ax, macOS arm64 | 161.7 MB |
+| Headless, macOS arm64 | 31.3 MB |
+| Headless, Linux arm64 (static) | 36.0 MB |
+| Headless, Linux x86_64 (static) | 41.3 MB |
+| Container image, distroless (`ax-slim:<version>`) | 39.1 MB |
+| Container image, Ubuntu 26.04 with `git` (`ax-slim:<version>-ubuntu`) | 268.4 MB |
+
+Most of the saving comes from leaving out the Command Center, the desktop client and the less common language grammars. Grammar parse tables make up most of a binary's data, so a headless build with every language (`AX_FEATURES=mimalloc slim/build.sh`) is about 71 MB. The Linux binaries above were built with thin LTO; the release builds use fat LTO and come out slightly smaller.
+
+Indexing is as fast as with the full build; see [Speed](#speed).
+
+## Install
+
+Releases published after v10.1.0 include static headless binaries for Linux x86_64 and arm64 (`ax-slim-linux-x64.tar.gz`, `ax-slim-linux-arm64.tar.gz`) and container images. The installer picks the newest release that has them, verifies the SHA-256 checksum and installs a single binary:
+
+```bash
+curl -fsSL https://getax.wenneker.io/install-slim.sh | sh
+```
+
+Without curl:
+
+```bash
+wget -qO- https://getax.wenneker.io/install-slim.sh | sh
+```
+
+As root it installs to `/usr/local/bin`, otherwise to `~/.local/bin`. Options: `--version vX.Y.Z` (or `AX_VERSION`) pins a release, `--bin-dir DIR` (or `AX_BIN_DIR`) picks the directory, and `--uninstall` removes the binary. Pass them after `sh -s --`:
+
+```bash
+curl -fsSL https://getax.wenneker.io/install-slim.sh | sh -s -- --bin-dir /opt/ax/bin
+```
+
+The installer does not touch agent configuration or create an `~/.ax` install tree, and the headless build never updates itself: run the installer again to upgrade. It refuses to replace a full ax at the same path unless you pass `--force`.
+
+Container images, for `linux/amd64` and `linux/arm64`, are tagged with the release version without the `v`:
+
+| Image | Contents |
+|---|---|
+| `ghcr.io/garywenneker/ax-slim:<version>` | distroless, non-root, no shell; default command `ax serve --mcp` |
+| `ghcr.io/garywenneker/ax-slim:<version>-ubuntu` | Ubuntu 26.04 with `git` and the `ax-index-repo` job entry point |
+
+To add ax to your own image, copy the binary from the published image:
+
+```dockerfile
+COPY --from=ghcr.io/garywenneker/ax-slim:<version> /usr/local/bin/ax /usr/local/bin/ax
+```
 
 ## Languages
 
@@ -17,7 +80,7 @@ AX_FEATURES=mimalloc slim/build.sh
 
 ## Build a static Linux binary
 
-The repository's `slim/` directory holds the Dockerfile and a build script. With Docker or Podman installed, run from the repository root:
+To build it yourself instead of installing a release: the repository's `slim/` directory holds the Dockerfile and a build script. With Docker or Podman installed, run from the repository root:
 
 ```bash
 slim/build.sh
@@ -38,6 +101,8 @@ cargo build --locked -p ax-cli --no-default-features --features "minimal-grammar
 `--no-default-features` turns off the `web`, `desktop` and `self-update` features of `ax-cli`; `minimal-grammars` links only the core grammars, and `mimalloc` replaces the platform allocator (musl's malloc is slow under parallel indexing). The `release-slim` profile optimizes for size with fat LTO, one codegen unit, `panic = "abort"` and stripped symbols.
 
 ## Container image
+
+To build the image from source:
 
 ```bash
 docker build -f slim/Dockerfile -t "ax-slim:$(git rev-parse --short HEAD)" .
@@ -65,7 +130,7 @@ The headless build indexes as fast as the full build: 20.6 seconds for 625 Rust 
 
 ## Test it remotely
 
-The binary is static, so any Linux machine can run it. Build the one that matches the remote CPU: `slim/build.sh` builds for your container engine's own architecture, and `slim/build.sh linux/amd64` builds x86_64 (slow under emulation on an arm64 Mac). Check the remote side with `uname -m`: `x86_64` needs `ax-linux-x86_64`, `aarch64` needs `ax-linux-aarch64`.
+The binary is static, so any Linux machine can run it. The installer picks the right architecture. To test a local build instead, copy the binary that matches `uname -m` on the remote side: `x86_64` needs `ax-linux-x86_64`, `aarch64` needs `ax-linux-aarch64` (`slim/build.sh linux/amd64` builds x86_64, slowly under emulation on an arm64 Mac).
 
 Keep the project and its `.ax/` folder on the machine's own disk. On a network or shared mount, SQLite's `fsync` makes indexing several times slower.
 
@@ -91,47 +156,63 @@ sandbox create --name ax-test --timeout 30m
 sandbox exec ax-test -- uname -m
 ```
 
-Copy in the matching binary and clone a project to index:
+Install ax with the installer. With `--sudo` it runs as root and lands in `/usr/local/bin`, which is on `PATH`:
 
 ```bash
-sandbox copy slim/dist/ax-linux-x86_64 ax-test:/vercel/ax
+sandbox exec --sudo ax-test -- sh -c "curl -fsSL https://getax.wenneker.io/install-slim.sh | sh"
 ```
 
-```bash
-sandbox exec ax-test -- chmod +x /vercel/ax
-```
+Clone a project, index it and ask the graph something:
 
 ```bash
 sandbox exec ax-test -- git clone --depth 1 https://github.com/<owner>/<repo> /vercel/proj
 ```
 
-Index, then ask the graph something:
-
 ```bash
-sandbox exec -w /vercel/proj ax-test -- bash -c "time /vercel/ax init . && /vercel/ax status && /vercel/ax query main"
+sandbox exec -w /vercel/proj ax-test -- bash -c "time ax init . && ax status && ax query main"
 ```
 
 Check the MCP server over stdio. The reply lists the server info and its tools:
 
 ```bash
-sandbox exec -w /vercel/proj ax-test -- bash -c 'printf "%s\n" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"t\",\"version\":\"1\"}}}" "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}" "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}" | /vercel/ax serve --mcp'
+sandbox exec -w /vercel/proj ax-test -- bash -c 'printf "%s\n" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"t\",\"version\":\"1\"}}}" "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}" "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}" | ax serve --mcp'
 ```
+
+With the `@vercel/sandbox` SDK, the same install is one command:
+
+```ts
+await sandbox.runCommand({
+  cmd: 'sh',
+  args: ['-c', 'curl -fsSL https://getax.wenneker.io/install-slim.sh | sh'],
+  sudo: true,
+});
+```
+
+To try a local build instead of a release, copy it in with `sandbox copy slim/dist/ax-linux-x86_64 ax-test:/vercel/ax` and run it as `/vercel/ax`.
 
 `sandbox connect ax-test` opens an interactive shell. When you are done, `sandbox stop ax-test` keeps a snapshot and `sandbox remove ax-test` deletes it. On the Hobby plan a session lasts at most 45 minutes.
 
 ### Any Linux host over SSH
 
 ```bash
-scp slim/dist/ax-linux-x86_64 user@host:ax
-```
-
-```bash
-ssh user@host 'chmod +x ax && cd <project> && ./ax init . && ./ax status'
+ssh user@host 'curl -fsSL https://getax.wenneker.io/install-slim.sh | sh && cd <project> && ~/.local/bin/ax init . && ~/.local/bin/ax status'
 ```
 
 ### Azure Container Apps
 
-Push the image (tagged with a commit or version) to a registry the environment can pull from. Then create a manual job from the `ubuntu` target, which includes `git`, with a command such as `sh -c "git clone --depth 1 <repo> /tmp/p && cd /tmp/p && ax init . && ax query main"`. Start the job and read its output in the job's logs.
+The `-ubuntu` image contains `ax-index-repo`, a job entry point that clones `AX_REPO_URL` (optionally `AX_REPO_REF`), runs `ax init` and then `AX_JOB_COMMAND` (default `ax status`). `slim/azure/create-job.sh` in the repository creates a manual Container Apps job around it, stores the repository URL as a job secret (so a URL with a token stays out of plain environment variables) and can start the first run. It needs the Azure CLI, logged in with `az login`:
+
+```bash
+slim/azure/create-job.sh --resource-group my-rg --environment my-env --location westeurope --repo https://github.com/<owner>/<repo> --version <version> --command "ax status && ax query main" --start
+```
+
+`--location` creates the environment when it does not exist yet. Running the script again updates the job. Follow the output with:
+
+```bash
+az containerapp job logs show --name ax-index --resource-group my-rg --container ax-index --follow
+```
+
+Without the script, create a job from `ghcr.io/garywenneker/ax-slim:<version>-ubuntu` with the command `ax-index-repo` and the environment variables above.
 
 ## Limits
 

@@ -1,0 +1,30 @@
+# syntax=docker/dockerfile:1.7
+# Runtime images built from a release's prebuilt static binaries (no compile step).
+# The build context holds amd64/ax and arm64/ax, unpacked from ax-slim-linux-x64.tar.gz and
+# ax-slim-linux-arm64.tar.gz. The Release workflow builds both targets for linux/amd64 and
+# linux/arm64 and pushes them to ghcr.io/garywenneker/ax-slim:<version>[-ubuntu].
+
+# Shell and git (`ax diff`, `ax affected`, `ax ship`, cloning a repo to index).
+FROM ubuntu:26.04 AS ubuntu
+ARG TARGETARCH
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 ax \
+    && mkdir -p /workspace && chown ax:ax /workspace
+COPY --chmod=0755 ${TARGETARCH}/ax /usr/local/bin/ax
+COPY --chmod=0755 ax-index-repo.sh /usr/local/bin/ax-index-repo
+USER ax
+WORKDIR /workspace
+ENV HOME=/home/ax AX_NO_UPDATE_CHECK=1
+ENTRYPOINT ["/usr/local/bin/ax"]
+CMD ["serve", "--mcp"]
+
+# Default: distroless static (CA certificates, non-root user, no shell).
+FROM gcr.io/distroless/static-debian12:nonroot AS runtime
+ARG TARGETARCH
+COPY --chmod=0755 ${TARGETARCH}/ax /usr/local/bin/ax
+WORKDIR /workspace
+ENV HOME=/home/nonroot AX_NO_UPDATE_CHECK=1
+ENTRYPOINT ["/usr/local/bin/ax"]
+CMD ["serve", "--mcp"]

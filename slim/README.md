@@ -6,6 +6,27 @@ A smaller build of the same `ax` binary for Linux sandboxes and containers
 and the size-focused `release-slim` profile. The normal ax distribution is
 unchanged.
 
+## Install
+
+Releases after v10.1.0 publish `ax-slim-linux-x64.tar.gz` and
+`ax-slim-linux-arm64.tar.gz` (in `SHA256SUMS`) and the images
+`ghcr.io/garywenneker/ax-slim:<version>` (distroless) and
+`ghcr.io/garywenneker/ax-slim:<version>-ubuntu` (with `git` and
+`ax-index-repo`), for `linux/amd64` and `linux/arm64`.
+
+```bash
+curl -fsSL https://getax.wenneker.io/install-slim.sh | sh
+```
+
+`install-slim.sh` (repository root, served from the website) resolves the
+newest release that has the asset for the host's CPU through the GitHub API,
+verifies the checksum and installs one binary to `/usr/local/bin` (root) or
+`~/.local/bin`. It works with curl or wget and needs `tar` and `sha256sum`
+(or `shasum`). Options: `--version`, `--bin-dir`, `--force` (replace a full ax)
+and `--uninstall`. The Release workflow builds the binaries natively on x64 and
+arm64 runners (`build-slim`) and pushes the images from those same binaries
+(`publish-slim-image`, `slim/Dockerfile.release`).
+
 ## What is in it
 
 | Included | Left out |
@@ -196,15 +217,7 @@ sandbox create --name ax-test --timeout 30m
 ```
 
 ```bash
-sandbox exec ax-test -- uname -m
-```
-
-```bash
-sandbox copy slim/dist/ax-linux-x86_64 ax-test:/vercel/ax
-```
-
-```bash
-sandbox exec ax-test -- chmod +x /vercel/ax
+sandbox exec --sudo ax-test -- sh -c "curl -fsSL https://getax.wenneker.io/install-slim.sh | sh"
 ```
 
 ```bash
@@ -212,35 +225,37 @@ sandbox exec ax-test -- git clone --depth 1 https://github.com/<owner>/<repo> /v
 ```
 
 ```bash
-sandbox exec -w /vercel/proj ax-test -- bash -c "time /vercel/ax init . && /vercel/ax status"
+sandbox exec -w /vercel/proj ax-test -- bash -c "time ax init . && ax status"
 ```
 
-Copy the binary that matches `uname -m`. Point the agent's MCP
-configuration at `ax serve --mcp` (stdio), started in the project directory.
-`sandbox remove ax-test` deletes the sandbox. The guide on the website
-(Guides → Headless Linux build) has the full walkthrough, including an MCP
-check.
+Point the agent's MCP configuration at `ax serve --mcp` (stdio), started in
+the project directory. `sandbox remove ax-test` deletes the sandbox. The guide
+on the website (Guides → Headless Linux build) has the full walkthrough,
+including an MCP check and the SDK call.
 
 ### Azure Container Apps
 
-Push the image (with a commit or version tag) to a registry the app can pull
-from, then run it as a job that indexes a mounted share (Azure Files) or a
-cloned repository:
+`slim/azure/create-job.sh` creates (or updates) a manual job from the
+`-ubuntu` image. The job runs `ax-index-repo` (`slim/ax-index-repo.sh`), which
+clones `AX_REPO_URL`, runs `ax init` and then `AX_JOB_COMMAND`. The repository
+URL is stored as a job secret.
 
 ```bash
-az containerapp job create --name ax-index --resource-group my-rg \
-  --environment my-env --trigger-type Manual \
-  --image "myregistry.azurecr.io/ax-slim:<commit>" \
-  --command "/usr/local/bin/ax" --args "index /workspace"
+slim/azure/create-job.sh --resource-group my-rg --environment my-env --location westeurope --repo https://github.com/<owner>/<repo> --version <version> --start
 ```
 
-Use the `ubuntu` target when the job needs `git` or a shell.
+```bash
+az containerapp job logs show --name ax-index --resource-group my-rg --container ax-index --follow
+```
 
 ## Limits
 
 - `ax mcp remote serve` binds to `127.0.0.1`. Inside a container it is
   reachable only from the same container or pod, so expose it through a
   sidecar proxy or tunnel; Container Apps ingress cannot reach it directly.
+- GHCR packages can start out private on their first publish. If Azure cannot
+  pull `ghcr.io/garywenneker/ax-slim`, set the package to public in its GitHub
+  package settings (or give the job registry credentials).
 - `panic = "abort"`: a panic in a background task ends the process instead of
   being contained. Run long-lived servers under a restart policy.
 - `jsonwebtoken`/`octocrab` still bring in `aws-lc-rs` next to `ring` (two
