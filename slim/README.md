@@ -8,7 +8,7 @@ unchanged.
 
 ## Install
 
-Releases after v10.1.0 publish `ax-slim-linux-x64.tar.gz` and
+Releases from v10.1.1 on publish `ax-slim-linux-x64.tar.gz` and
 `ax-slim-linux-arm64.tar.gz` (in `SHA256SUMS`) and the images
 `ghcr.io/garywenneker/ax-slim:<version>` (distroless) and
 `ghcr.io/garywenneker/ax-slim:<version>-ubuntu` (with `git` and

@@ -37,7 +37,7 @@ Indexing is as fast as with the full build; see [Speed](#speed).
 
 ## Install
 
-Releases published after v10.1.0 include static headless binaries for Linux x86_64 and arm64 (`ax-slim-linux-x64.tar.gz`, `ax-slim-linux-arm64.tar.gz`) and container images. The installer picks the newest release that has them, verifies the SHA-256 checksum and installs a single binary:
+Releases from v10.1.1 on include static headless binaries for Linux x86_64 and arm64 (`ax-slim-linux-x64.tar.gz`, `ax-slim-linux-arm64.tar.gz`) and container images. The installer picks the newest release that has them, verifies the SHA-256 checksum and installs a single binary:
 
 ```bash
 curl -fsSL https://getax.wenneker.io/install-slim.sh | sh

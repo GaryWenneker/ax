@@ -207,7 +207,7 @@ Do this again in every other directory where you want ax. You do not run `ax ini
 
 ## Supported platforms
 
-Every release ships **six** prebuilt binaries. The shell installer picks the match for your OS and CPU. Releases after v10.1.0 also ship two headless Linux binaries for sandboxes and containers.
+Every release ships **six** prebuilt binaries. The shell installer picks the match for your OS and CPU. From v10.1.1, releases also ship two headless Linux binaries for sandboxes and containers.
 
 | Platform | Architectures | Install |
 |---|---|---|
