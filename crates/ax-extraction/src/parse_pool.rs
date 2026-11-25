@@ -87,8 +87,11 @@ fn parse_file(
         return Ok(ExtractionResult::default());
     };
 
-    let ts_lang = ts_grammars::ts_language_for(task.language)
-        .ok_or_else(|| format!("no tree-sitter grammar for {:?}", task.language))?;
+    // Only `minimal-grammars` builds lack a grammar; treat those files like ones without an
+    // extractor instead of failing them.
+    let Some(ts_lang) = ts_grammars::ts_language_for(task.language) else {
+        return Ok(ExtractionResult::default());
+    };
     let mut parser = Parser::new();
     parser.set_language(&ts_lang).map_err(|e| e.to_string())?;
 

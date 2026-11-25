@@ -1,0 +1,18 @@
+# Build context for slim/Dockerfile (repository root). Keeps local build output,
+# web assets and the documentation site out of the context.
+.git
+.github
+target
+target-*
+**/target
+**/node_modules
+site
+crates/ax-web/web-ui
+**/.DS_Store
+**/.ax
+**/ax.db
+**/ax.db-*
+.env
+.env.*
+*.pem
+*.key

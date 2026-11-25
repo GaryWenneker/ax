@@ -125,8 +125,18 @@ pub async fn run(args: ShipArgs) -> Result<(), String> {
     }
 
     if watch {
-        ax_usage::log_ship(Some(&root), format!("start mode=watch port={port}"));
-        return ax_web::serve(root, port, open).await;
+        #[cfg(feature = "web")]
+        {
+            ax_usage::log_ship(Some(&root), format!("start mode=watch port={port}"));
+            return ax_web::serve(root, port, open).await;
+        }
+        #[cfg(not(feature = "web"))]
+        {
+            let _ = (port, open);
+            return Err(crate::commands::unavailable_in_headless_build(
+                "ax ship --watch",
+            ));
+        }
     }
 
     Err("usage: ax ship --watch | --evaluate | --ci | --draft".into())

@@ -91,6 +91,7 @@ The site is the product guide. This README follows that map.
 - [Token savings](https://getax.wenneker.io/guides/token-savings/)
 - [Smart Output](https://getax.wenneker.io/guides/smart-output/)
 - [Standalone server and replicas](https://getax.wenneker.io/guides/standalone-ax/)
+- [Headless Linux build](https://getax.wenneker.io/guides/headless-linux/) — a smaller CLI + MCP binary for sandboxes and containers (`slim/`)
 - [Remote MCP and OAuth](https://getax.wenneker.io/guides/remote-mcp/)
 - [Expose Command Center with Cloudflare](https://getax.wenneker.io/guides/cloudflare/)
 - [Agent budget](https://getax.wenneker.io/guides/budget/)

@@ -8,7 +8,16 @@ name = "ax"
 path = "src/main.rs"
 
 [features]
-default = []
+## The full distribution. A headless build (see `slim/`) uses `--no-default-features`.
+default = ["web", "desktop", "self-update"]
+## `ax web`, `ax share`, `ax ship --watch`, `ax server` and replication start-up (embedded Command Center).
+web = ["dep:ax-web"]
+## `ax desktop` native Command Center (wgpu/egui).
+desktop = ["web", "dep:ax-desktop-client"]
+## `ax upgrade` and the post-command update notice.
+self-update = []
+## Headless size option: link only the core tree-sitter grammars (see ax-extraction).
+minimal-grammars = ["ax-extraction/minimal-grammars"]
 ## Enable wasmtime extractor plugins (`.ax/plugins/*/plugin.toml` with `wasm =`).
 plugins-wasm = ["ax-extraction/plugins-wasm"]
 
@@ -21,8 +30,8 @@ ax-extraction = { workspace = true }
 ax-context = { workspace = true }
 ax-sync = { workspace = true }
 ax-mcp = { workspace = true }
-ax-web = { workspace = true }
-ax-desktop-client = { workspace = true }
+ax-web = { workspace = true, optional = true }
+ax-desktop-client = { workspace = true, optional = true }
 ax-graph = { workspace = true }
 ax-telemetry = { workspace = true }
 ax-usage = { workspace = true }

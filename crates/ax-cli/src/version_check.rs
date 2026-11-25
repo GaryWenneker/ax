@@ -218,10 +218,12 @@ fn cache_is_fresh(cache: &UpdateCheckCache) -> bool {
 }
 
 pub fn update_check_disabled() -> bool {
-    matches!(
-        std::env::var("AX_NO_UPDATE_CHECK").as_deref(),
-        Ok("1") | Ok("true") | Ok("yes")
-    ) || std::env::var("CI").as_deref() == Ok("true")
+    !cfg!(feature = "self-update")
+        || matches!(
+            std::env::var("AX_NO_UPDATE_CHECK").as_deref(),
+            Ok("1") | Ok("true") | Ok("yes")
+        )
+        || std::env::var("CI").as_deref() == Ok("true")
 }
 
 /// Fetch latest version from getax latest.txt (legacy fallback when GitHub is unreachable).

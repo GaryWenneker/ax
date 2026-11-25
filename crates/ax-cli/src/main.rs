@@ -5,15 +5,25 @@ const _AX_SHIP_MARKER: &str = "ax-ship-marker-v1";
 mod commands;
 mod help_text;
 mod installer;
+#[cfg(feature = "web")]
 use ax_web::server_config;
+#[cfg(feature = "web")]
 mod server_apply;
+#[cfg(feature = "web")]
 mod server_cli;
+#[cfg(feature = "web")]
 mod server_data;
+#[cfg(feature = "web")]
 mod server_exchange;
+#[cfg(feature = "web")]
 mod server_http;
+#[cfg(feature = "web")]
 mod server_replica;
+#[cfg(feature = "web")]
 mod server_snapshot;
+#[cfg(feature = "web")]
 use ax_web::server_discovery;
+#[cfg(feature = "web")]
 mod server_push;
 mod ui;
 mod version_check;
@@ -713,6 +723,7 @@ enum Commands {
         action: DocsCatalogAction,
     },
     /// Configure and inspect a standalone Ax node
+    #[cfg(feature = "web")]
     Server {
         #[command(subcommand)]
         action: ServerAction,
@@ -1132,6 +1143,7 @@ enum DocsCatalogAction {
     },
 }
 
+#[cfg(feature = "web")]
 #[derive(Subcommand)]
 enum ServerAction {
     /// Create a standalone node configuration (will never overwrite)
@@ -2341,6 +2353,7 @@ enum DaemonCommands {
 fn main() {
     // `ax desktop` must run on the OS main thread — winit panics on Windows if
     // EventLoop is created from the ax-main worker (see EventLoopBuilderExtWindows).
+    #[cfg(feature = "desktop")]
     if std::env::args().nth(1).as_deref() == Some("desktop") {
         run_desktop_on_os_main_thread();
         return;
@@ -2366,6 +2379,7 @@ fn main() {
     }
 }
 
+#[cfg(feature = "desktop")]
 fn run_desktop_on_os_main_thread() {
     ui::init_terminal();
     commands::upgrade::apply_pending_upgrade();
@@ -3162,9 +3176,12 @@ async fn async_main() {
             commands::daemon::run(path, act).await
         }
         Some(Commands::Web { path, port, open }) => commands::web::run(path, port, open).await,
+        #[cfg(feature = "desktop")]
         Some(Commands::Desktop { .. }) => {
             Err("internal: `ax desktop` must run on the OS main thread (handled in main())".into())
         }
+        #[cfg(not(feature = "desktop"))]
+        Some(Commands::Desktop { path, port, bind }) => commands::desktop::run(path, port, bind),
         Some(Commands::Share {
             path,
             port,
@@ -3555,6 +3572,7 @@ async fn async_main() {
                 json,
             } => commands::docs_catalog::run_sync(skip_wiki_pull, dry_run, json).await,
         },
+        #[cfg(feature = "web")]
         Some(Commands::Server { action }) => match action {
             ServerAction::Init {
                 config,
@@ -3612,9 +3630,7 @@ async fn async_main() {
                     match ax_mcp::remote::RemoteConfig::load(&config) {
                         Ok(config) => {
                             for project in &config.projects {
-                                if let Err(error) = ax_web::replication_setup::auto_start(&project.root).await {
-                                    tracing::warn!("replication automatic startup failed: {error}");
-                                }
+                                start_replication(&project.root).await;
                             }
                             ax_mcp::remote::serve(config, port, socket).await
                         }
@@ -3660,17 +3676,13 @@ async fn async_main() {
         },
         Some(Commands::Serve { mcp, daemon, path }) if mcp && daemon => {
             let root = commands::resolve_path(path);
-            if let Err(error) = ax_web::replication_setup::auto_start(&root).await {
-                tracing::warn!("replication automatic startup failed: {error}");
-            }
+            start_replication(&root).await;
             ax_mcp::run_daemon(root).await.map_err(|e| e.to_string())
         }
         Some(Commands::Serve { mcp, path, .. }) if mcp => {
             let root = path.map(std::path::PathBuf::from);
             if let Some(project) = ax_mcp::resolve_mcp_project_root(root.clone()) {
-                if let Err(error) = ax_web::replication_setup::auto_start(&project).await {
-                    tracing::warn!("replication automatic startup failed: {error}");
-                }
+                start_replication(&project).await;
             }
             ax_mcp::run_stdio_server(root)
                 .await
@@ -3727,6 +3739,17 @@ async fn async_main() {
         eprintln!("{}", ui::err_line(e));
         std::process::exit(1);
     }
+}
+
+/// Start configured knowledge replication for a project. Replication lives in
+/// ax-web, so headless builds without the `web` feature skip it.
+async fn start_replication(root: &std::path::Path) {
+    #[cfg(feature = "web")]
+    if let Err(error) = ax_web::replication_setup::auto_start(root).await {
+        tracing::warn!("replication automatic startup failed: {error}");
+    }
+    #[cfg(not(feature = "web"))]
+    let _ = root;
 }
 
 fn should_notify_update(cmd: &Option<Commands>) -> bool {
@@ -3826,6 +3849,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Agent { .. }) => Some("agent".into()),
         Some(Commands::Bootstrap { .. }) => Some("bootstrap".into()),
         Some(Commands::DocsCatalog { .. }) => Some("docs-catalog".into()),
+        #[cfg(feature = "web")]
         Some(Commands::Server { .. }) => Some("server".into()),
         Some(Commands::Global { .. }) => Some("global".into()),
         Some(Commands::Mcp { .. }) => Some("mcp".into()),

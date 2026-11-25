@@ -61,6 +61,7 @@ mod tests {
     use ax_types::Language;
 
     #[test]
+    #[cfg(not(feature = "minimal-grammars"))]
     fn extracts_csharp_symbols() {
         let source = r#"
 namespace VFPortal.Business {

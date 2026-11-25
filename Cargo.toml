@@ -114,3 +114,16 @@ ax-skill-catalog = { path = "crates/ax-skill-catalog" }
 ax-agent = { path = "crates/ax-agent" }
 ax-pi = { path = "crates/ax-pi" }
 ax-global-db = { path = "crates/ax-global-db" }
+
+# Size-focused profile for the headless build in `slim/`
+# (`cargo build -p ax-cli --no-default-features --profile release-slim`).
+# The normal `--release` distribution does not use it.
+[profile.release-slim]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+debug = false
+incremental = false

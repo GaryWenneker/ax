@@ -36,6 +36,12 @@ pub async fn run(
     check: bool,
     local: Option<String>,
 ) -> Result<(), String> {
+    if !cfg!(feature = "self-update") {
+        return Err(
+            "self-update is disabled in this headless ax build; rebuild or pull a newer image"
+                .into(),
+        );
+    }
     if check {
         if local.is_some() {
             return Err("--check is not supported with --local".into());

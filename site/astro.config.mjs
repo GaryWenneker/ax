@@ -182,6 +182,7 @@ export default defineConfig({
 						{ label: 'Token Savings', slug: 'guides/token-savings' },
 						{ label: 'Smart Output', slug: 'guides/smart-output' },
 						{ label: 'Standalone server & replicas', slug: 'guides/standalone-ax' },
+						{ label: 'Headless Linux build', slug: 'guides/headless-linux' },
 						{ label: 'Remote MCP & OAuth', slug: 'guides/remote-mcp' },
 						{ label: 'Cloudflare Tunnel', slug: 'guides/cloudflare' },
 						{ label: 'Agent budget', slug: 'guides/budget' },

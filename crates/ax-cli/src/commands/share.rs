@@ -11,15 +11,23 @@ pub async fn run(
 ) -> Result<(), String> {
     let root = resolve_path(path);
     let share_token = token.unwrap_or_else(|| Uuid::new_v4().to_string().replace('-', ""));
-    eprintln!("Starting shareable Command Center (read-only)…");
-    eprintln!("Tip: wrap with a tunnel for remote access, e.g.");
-    eprintln!("  cloudflared tunnel --url http://127.0.0.1:{port}");
-    ax_web::serve_with(ax_web::ServeOptions {
-        root,
-        port,
-        open,
-        bind,
-        share_token: Some(share_token),
-    })
-    .await
+    #[cfg(not(feature = "web"))]
+    {
+        let _ = (root, port, bind, open, share_token);
+        Err(crate::commands::unavailable_in_headless_build("ax share"))
+    }
+    #[cfg(feature = "web")]
+    {
+        eprintln!("Starting shareable Command Center (read-only)…");
+        eprintln!("Tip: wrap with a tunnel for remote access, e.g.");
+        eprintln!("  cloudflared tunnel --url http://127.0.0.1:{port}");
+        ax_web::serve_with(ax_web::ServeOptions {
+            root,
+            port,
+            open,
+            bind,
+            share_token: Some(share_token),
+        })
+        .await
+    }
 }

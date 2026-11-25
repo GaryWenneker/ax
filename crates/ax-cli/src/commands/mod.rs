@@ -69,6 +69,12 @@ pub mod web;
 
 use std::path::{Path, PathBuf};
 
+/// Error for a command that the headless build (`--no-default-features`, see `slim/`) leaves out.
+#[cfg(any(not(feature = "web"), not(feature = "desktop")))]
+pub fn unavailable_in_headless_build(command: &str) -> String {
+    format!("`{command}` is not included in this headless ax build; use the full ax distribution")
+}
+
 pub fn resolve_path(path: Option<String>) -> PathBuf {
     path.map(PathBuf::from)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))

@@ -6,6 +6,10 @@ edition = "2021"
 [features]
 default = []
 plugins-wasm = ["ax-plugins/wasm"]
+## Link only the core tree-sitter grammars (see `ts_grammars.rs`) so the linker drops the
+## rest. For size-constrained final binaries only (`ax-cli/minimal-grammars`, used by
+## `slim/`); library crates must not enable it.
+minimal-grammars = []
 
 [dependencies]
 ax-types = { workspace = true }
