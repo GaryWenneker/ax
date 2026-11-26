@@ -76,16 +76,34 @@ pub fn is_sqlite_busy(err: &sqlx::Error) -> bool {
 }
 
 /// Retry an async SQLite operation while the database is busy.
-pub async fn with_busy_retry<F, Fut, T>(mut op: F) -> Result<T, sqlx::Error>
+///
+/// Every attempt can itself wait up to [`busy_timeout`] inside SQLite, so the
+/// retries stop once that much time has passed in total. Twelve full waits
+/// used to add up to about 36 minutes, which looked like a hang.
+pub async fn with_busy_retry<F, Fut, T>(op: F) -> Result<T, sqlx::Error>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, sqlx::Error>>,
+{
+    with_busy_retry_for(busy_timeout(), op).await
+}
+
+/// [`with_busy_retry`] with an explicit total time budget.
+pub async fn with_busy_retry_for<F, Fut, T>(budget: Duration, mut op: F) -> Result<T, sqlx::Error>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, sqlx::Error>>,
 {
     const MAX_ATTEMPTS: u32 = 12;
+    let started = std::time::Instant::now();
     for attempt in 0..MAX_ATTEMPTS {
         match op().await {
             Ok(v) => return Ok(v),
-            Err(e) if is_sqlite_busy(&e) && attempt + 1 < MAX_ATTEMPTS => {
+            Err(e)
+                if is_sqlite_busy(&e)
+                    && attempt + 1 < MAX_ATTEMPTS
+                    && started.elapsed() < budget =>
+            {
                 let backoff = Duration::from_millis(40 * (attempt as u64 + 1).min(25));
                 tokio::time::sleep(backoff).await;
             }
@@ -93,6 +111,38 @@ where
         }
     }
     unreachable!("loop exits via return")
+}
+
+/// `journal_size_limit` for `ax.db`: the WAL file is cut back to this size
+/// after a checkpoint resets it.
+pub const WAL_SIZE_LIMIT_BYTES: i64 = 64 * 1024 * 1024;
+
+/// Checkpoint the WAL and truncate it to zero bytes, without waiting.
+///
+/// Runs with `busy_timeout = 0` on its own connection: when readers or a
+/// writer are active, SQLite falls back to a PASSIVE checkpoint instead of
+/// waiting for them, so MCP readers are never stalled. A plain TRUNCATE would
+/// wait up to the full busy timeout.
+pub async fn checkpoint_truncate_nowait(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let mut conn = pool.acquire().await?;
+    sqlx::query("PRAGMA busy_timeout = 0")
+        .execute(&mut *conn)
+        .await?;
+    let checkpoint = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&mut *conn)
+        .await;
+    let restore = sqlx::query(&format!(
+        "PRAGMA busy_timeout = {}",
+        busy_timeout().as_millis()
+    ))
+    .execute(&mut *conn)
+    .await;
+    match checkpoint {
+        Ok(_) => restore.map(|_| ()),
+        // Busy only means the checkpoint stopped early (PASSIVE result).
+        Err(e) if is_sqlite_busy(&e) => restore.map(|_| ()),
+        Err(e) => Err(e),
+    }
 }
 
 /// Database connection pool with ax schema.
@@ -126,6 +176,14 @@ impl Database {
                             sqlx::query("PRAGMA wal_autocheckpoint = 1000")
                                 .execute(&mut *conn)
                                 .await?;
+                            // Shrink the -wal file back to this size after a
+                            // checkpoint; a full index otherwise leaves a WAL
+                            // larger than the database itself.
+                            sqlx::query(&format!(
+                                "PRAGMA journal_size_limit = {WAL_SIZE_LIMIT_BYTES}"
+                            ))
+                            .execute(&mut *conn)
+                            .await?;
                             Ok(())
                         })
                     })
@@ -176,11 +234,7 @@ impl Database {
     pub async fn run_maintenance(&self) -> Result<(), AxError> {
         with_busy_retry(|| async {
             sqlx::query("ANALYZE").execute(&self.pool).await?;
-            // PASSIVE avoids blocking readers/writers; TRUNCATE can starve MCP under load.
-            sqlx::query("PRAGMA wal_checkpoint(PASSIVE)")
-                .execute(&self.pool)
-                .await?;
-            Ok(())
+            checkpoint_truncate_nowait(&self.pool).await
         })
         .await
         .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))
@@ -220,6 +274,24 @@ fn stat_inode(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn busy_retry_stops_at_its_time_budget() {
+        let started = std::time::Instant::now();
+        let mut calls = 0u32;
+        let res: Result<(), sqlx::Error> =
+            with_busy_retry_for(Duration::from_millis(100), || {
+                calls += 1;
+                async {
+                    tokio::time::sleep(Duration::from_millis(60)).await;
+                    Err(sqlx::Error::Protocol("database is locked".into()))
+                }
+            })
+            .await;
+        assert!(res.is_err());
+        assert!(calls < 12, "kept retrying past the budget: {calls} calls");
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
 
     #[test]
     fn busy_timeout_default_is_generous() {
