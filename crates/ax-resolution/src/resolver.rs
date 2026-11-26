@@ -3,9 +3,7 @@
 use std::collections::HashMap;
 
 use ax_db::queries::QueryBuilder;
-use ax_types::{
-    Edge, EdgeKind, IndexPhase, IndexProgress, Provenance, ReferenceKind, UnresolvedReference,
-};
+use ax_types::{Edge, IndexPhase, IndexProgress, Provenance, ReferenceKind, UnresolvedReference};
 
 use crate::c_fnptr_synthesizer::CFnptrSynthesizer;
 use crate::callback_synthesizer::CallbackSynthesizer;
@@ -168,6 +166,10 @@ impl ReferenceResolver {
             }
         }
 
+        // One transaction for all edges instead of one commit per reference.
+        // Only drop the unresolved rows once their edges are stored.
+        let edges: Vec<Edge> = result.resolved.iter().map(resolved_edge).collect();
+        queries.upsert_edges(&edges).await?;
         if let Err(e) = queries.delete_unresolved_refs_batch(&to_delete).await {
             tracing::warn!("failed to delete resolved refs: {}", e);
         }
@@ -227,20 +229,7 @@ impl ReferenceResolver {
             })
             .or_else(|| nodes.iter().find(|n| n.kind == ax_types::NodeKind::File))?;
 
-        let edge = Edge {
-            source: ref_.from_node_id.clone(),
-            target: target.id.clone(),
-            kind: EdgeKind::Imports,
-            metadata: None,
-            line: Some(ref_.line),
-            column: Some(ref_.column),
-            provenance: Some(Provenance::Heuristic),
-            confidence: Some(ax_types::EdgeConfidence::Inferred),
-        };
-        if queries.upsert_edge(&edge).await.is_err() {
-            return None;
-        }
-
+        // The edge is written later in one batch (see `resolved_edge`).
         Some(ResolvedRef {
             original: ref_.clone(),
             target_node_id: target.id.clone(),
@@ -290,5 +279,26 @@ fn unresolved_from_db(r: &UnresolvedReference) -> UnresolvedRef {
         file_path: r.file_path.clone().unwrap_or_default(),
         language: r.language.unwrap_or(ax_types::Language::Unknown),
         candidates: r.candidates.clone(),
+    }
+}
+
+/// The edge a resolution stands for. Fuzzy matches picked one of several
+/// plausible targets, so they are marked ambiguous.
+pub(crate) fn resolved_edge(resolved: &ResolvedRef) -> Edge {
+    let original = &resolved.original;
+    let confidence = if resolved.resolved_by == ResolvedBy::Fuzzy {
+        ax_types::EdgeConfidence::Ambiguous
+    } else {
+        ax_types::EdgeConfidence::Inferred
+    };
+    Edge {
+        source: original.from_node_id.clone(),
+        target: resolved.target_node_id.clone(),
+        kind: crate::name_matcher::reference_kind_to_edge(original.reference_kind),
+        metadata: None,
+        line: Some(original.line),
+        column: Some(original.column),
+        provenance: Some(Provenance::Heuristic),
+        confidence: Some(confidence),
     }
 }
