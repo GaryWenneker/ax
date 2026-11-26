@@ -62,3 +62,12 @@
   to = "https://github.com/GaryWenneker/ax/releases/download/:version/:splat"
   status = 302
   force = true
+
+# "Deploy to Azure" template (scripts/write-azure-template.mjs). The Azure portal fetches it
+# from the browser, so it needs CORS.
+[[headers]]
+  for = "/deploy/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Content-Type = "application/json; charset=utf-8"
+    Cache-Control = "public, max-age=300"

@@ -1,0 +1,185 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Headless ax (slim) as an Azure Container Apps job: clones a repository, indexes it with ax and runs a command. Same job as slim/azure/create-job.sh. The website serves a copy whose axVersion default is the newest release (site/scripts/write-azure-template.mjs)."
+  },
+  "parameters": {
+    "repoUrl": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Git URL of the repository to index. Stored as a job secret, so a URL with a token for a private repository stays out of plain environment variables."
+      }
+    },
+    "repoRef": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Branch or tag to index. Leave empty for the default branch."
+      }
+    },
+    "jobCommand": {
+      "type": "string",
+      "defaultValue": "ax status",
+      "metadata": {
+        "description": "Shell command to run in the indexed checkout, for example: ax status && ax query main"
+      }
+    },
+    "axVersion": {
+      "type": "string",
+      "defaultValue": "10.1.1",
+      "metadata": {
+        "description": "ax release without the leading v. The job runs ghcr.io/garywenneker/ax-slim:<version>-ubuntu."
+      }
+    },
+    "jobName": {
+      "type": "string",
+      "defaultValue": "ax-index",
+      "minLength": 2,
+      "maxLength": 32,
+      "metadata": {
+        "description": "Name of the Container Apps job (lowercase letters, digits and hyphens)."
+      }
+    },
+    "environmentName": {
+      "type": "string",
+      "defaultValue": "ax-env",
+      "minLength": 2,
+      "maxLength": 32,
+      "metadata": {
+        "description": "Name of the Container Apps environment. It is created in the selected resource group, or updated if it already exists there."
+      }
+    },
+    "cpu": {
+      "type": "string",
+      "defaultValue": "1.0",
+      "allowedValues": ["0.5", "1.0", "2.0"],
+      "metadata": {
+        "description": "vCPUs for the job container. Memory is twice this in GiB (1, 2 or 4 Gi)."
+      }
+    },
+    "replicaTimeout": {
+      "type": "int",
+      "defaultValue": 3600,
+      "minValue": 60,
+      "maxValue": 86400,
+      "metadata": {
+        "description": "Maximum run time of one execution in seconds."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Region for all resources. Defaults to the resource group's region."
+      }
+    }
+  },
+  "variables": {
+    "image": "[concat('ghcr.io/garywenneker/ax-slim:', parameters('axVersion'), '-ubuntu')]",
+    "workspaceName": "[concat(parameters('environmentName'), '-logs')]",
+    "memoryForCpu": {
+      "0.5": "1Gi",
+      "1.0": "2Gi",
+      "2.0": "4Gi"
+    },
+    "baseEnv": [
+      {
+        "name": "AX_REPO_URL",
+        "secretRef": "ax-repo-url"
+      },
+      {
+        "name": "AX_JOB_COMMAND",
+        "value": "[parameters('jobCommand')]"
+      }
+    ],
+    "refEnv": "[if(empty(parameters('repoRef')), json('[]'), createArray(createObject('name', 'AX_REPO_REF', 'value', parameters('repoRef'))))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2022-10-01",
+      "name": "[variables('workspaceName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "sku": {
+          "name": "PerGB2018"
+        },
+        "retentionInDays": 30
+      }
+    },
+    {
+      "type": "Microsoft.App/managedEnvironments",
+      "apiVersion": "2024-03-01",
+      "name": "[parameters('environmentName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName'))]"
+      ],
+      "properties": {
+        "appLogsConfiguration": {
+          "destination": "log-analytics",
+          "logAnalyticsConfiguration": {
+            "customerId": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName')), '2022-10-01').customerId]",
+            "sharedKey": "[listKeys(resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName')), '2022-10-01').primarySharedKey]"
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.App/jobs",
+      "apiVersion": "2024-03-01",
+      "name": "[parameters('jobName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]"
+      ],
+      "properties": {
+        "environmentId": "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]",
+        "configuration": {
+          "triggerType": "Manual",
+          "replicaTimeout": "[parameters('replicaTimeout')]",
+          "replicaRetryLimit": 0,
+          "manualTriggerConfig": {
+            "replicaCompletionCount": 1,
+            "parallelism": 1
+          },
+          "secrets": [
+            {
+              "name": "ax-repo-url",
+              "value": "[parameters('repoUrl')]"
+            }
+          ]
+        },
+        "template": {
+          "containers": [
+            {
+              "name": "[parameters('jobName')]",
+              "image": "[variables('image')]",
+              "command": ["ax-index-repo"],
+              "env": "[concat(variables('baseEnv'), variables('refEnv'))]",
+              "resources": {
+                "cpu": "[json(parameters('cpu'))]",
+                "memory": "[variables('memoryForCpu')[parameters('cpu')]]"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "image": {
+      "type": "string",
+      "value": "[variables('image')]"
+    },
+    "startCommand": {
+      "type": "string",
+      "value": "[concat('az containerapp job start --name ', parameters('jobName'), ' --resource-group ', resourceGroup().name)]"
+    },
+    "logsCommand": {
+      "type": "string",
+      "value": "[concat('az containerapp job logs show --name ', parameters('jobName'), ' --resource-group ', resourceGroup().name, ' --container ', parameters('jobName'), ' --follow')]"
+    }
+  }
+}

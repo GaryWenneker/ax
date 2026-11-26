@@ -200,7 +200,31 @@ ssh user@host 'curl -fsSL https://getax.wenneker.io/install-slim.sh | sh && cd <
 
 ### Azure Container Apps
 
-The `-ubuntu` image contains `ax-index-repo`, a job entry point that clones `AX_REPO_URL` (optionally `AX_REPO_REF`), runs `ax init` and then `AX_JOB_COMMAND` (default `ax status`). `slim/azure/create-job.sh` in the repository creates a manual Container Apps job around it, stores the repository URL as a job secret (so a URL with a token stays out of plain environment variables) and can start the first run. It needs the Azure CLI, logged in with `az login`:
+The `-ubuntu` image contains `ax-index-repo`, a job entry point that clones `AX_REPO_URL` (optionally `AX_REPO_REF`), runs `ax init` and then `AX_JOB_COMMAND` (default `ax status`).
+
+#### Deploy with one click
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fgetax.wenneker.io%2Fdeploy%2Fazure-slim.json)
+
+The button opens a custom deployment in the Azure portal. Pick a subscription and resource group, enter the repository URL, and choose **Review + create**. It creates:
+
+- a Log Analytics workspace (`<environment>-logs`) for the job's output;
+- a Container Apps environment (default `ax-env`);
+- a manual Container Apps job (default `ax-index`) running `ghcr.io/garywenneker/ax-slim:<version>-ubuntu` with the command `ax-index-repo`.
+
+The repository URL is stored as a job secret, so a URL with a token for a private repository stays out of plain environment variables. The version field defaults to the newest release. Other fields: branch or tag, the command to run after indexing, the job and environment names, CPU (0.5, 1 or 2 vCPU with twice that in GiB of memory) and the maximum run time. If the resource group already has an environment with the chosen name, the deployment updates it.
+
+The deployment does not start a run. Open the job in the portal and choose **Run now**, or use the `startCommand` and `logsCommand` from the deployment's **Outputs**:
+
+```bash
+az containerapp job start --name ax-index --resource-group my-rg
+```
+
+The template is `slim/azure/azuredeploy.json` in the repository; you can also deploy it with `az deployment group create --resource-group my-rg --template-file slim/azure/azuredeploy.json --parameters repoUrl=https://github.com/<owner>/<repo>`.
+
+#### Deploy from the command line
+
+`slim/azure/create-job.sh` in the repository creates a manual Container Apps job around it, stores the repository URL as a job secret (so a URL with a token stays out of plain environment variables) and can start the first run. It needs the Azure CLI, logged in with `az login`:
 
 ```bash
 slim/azure/create-job.sh --resource-group my-rg --environment my-env --location westeurope --repo https://github.com/<owner>/<repo> --version <version> --command "ax status && ax query main" --start
