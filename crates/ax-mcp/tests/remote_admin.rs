@@ -10,10 +10,11 @@ use axum::{
     http::{Request, StatusCode},
     Router,
 };
-use jsonwebtoken::jwk::JwkSet;
+use jsonwebtoken::{encode, jwk::JwkSet, Algorithm, EncodingKey, Header};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::sync::{Arc, Once};
+use std::sync::{Arc, Once, OnceLock};
+use std::time::Duration;
 use tower::ServiceExt;
 
 const CONTEXT_KEY: &str = "context-only-key";
@@ -123,12 +124,63 @@ fn base_config(projects: Vec<Project>, api_keys: Vec<ApiKey>) -> RemoteConfig {
 }
 
 async fn fixture() -> (tempfile::TempDir, Router) {
+    fixture_with(|state| state).await
+}
+
+struct Signing {
+    pem: String,
+    jwks: JwkSet,
+}
+
+fn signing() -> &'static Signing {
+    static SIGNING: OnceLock<Signing> = OnceLock::new();
+    SIGNING.get_or_init(|| {
+        use base64::Engine;
+        let key = openssl::rsa::Rsa::generate(2048).expect("test key");
+        let b64 = |n: Vec<u8>| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(n);
+        let (n, e) = (b64(key.n().to_vec()), b64(key.e().to_vec()));
+        let pem = String::from_utf8(
+            openssl::pkey::PKey::from_rsa(key)
+                .expect("pkey")
+                .private_key_to_pem_pkcs8()
+                .expect("pem"),
+        )
+        .expect("utf8");
+        let jwks = serde_json::from_value(
+            json!({"keys":[{"kty":"RSA","alg":"RS256","use":"sig","kid":"admin-test","n":n,"e":e}]}),
+        )
+        .expect("jwks");
+        Signing { pem, jwks }
+    })
+}
+
+/// An access token from the external provider for `subject` with `scope`.
+fn jwt(subject: &str, scope: &str) -> String {
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some("admin-test".into());
+    let exp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 3600;
+    encode(
+        &header,
+        &json!({"sub":subject,"iss":"https://issuer.example.com/","aud":"https://ax.example.com","exp":exp,"scope":scope}),
+        &EncodingKey::from_rsa_pem(signing().pem.as_bytes()).unwrap(),
+    )
+    .unwrap()
+}
+
+/// Two projects. alpha's subject "alpha" is an admin subject; "ann" may only
+/// write. beta has no admin subject.
+async fn fixture_with(adjust: impl FnOnce(RemoteState) -> RemoteState) -> (tempfile::TempDir, Router) {
     isolate_usage_db();
     let dir = tempfile::tempdir().unwrap();
-    let projects = vec![
-        project(dir.path(), "alpha").await,
-        project(dir.path(), "beta").await,
-    ];
+    let mut alpha = project(dir.path(), "alpha").await;
+    alpha.subjects.push("ann".into());
+    alpha.write_subjects.push("ann".into());
+    alpha.admin_subjects = vec!["alpha".into()];
+    let projects = vec![alpha, project(dir.path(), "beta").await];
     let mut config = base_config(
         projects,
         vec![
@@ -141,8 +193,8 @@ async fn fixture() -> (tempfile::TempDir, Router) {
     config.validate().unwrap();
     let config = Arc::new(config);
     let verifier =
-        TokenVerifier::with_keys(config.clone(), JwkSet { keys: vec![] }, reqwest::Client::new());
-    (dir, router(RemoteState::new(config, verifier)))
+        TokenVerifier::with_keys(config.clone(), signing().jwks.clone(), reqwest::Client::new());
+    (dir, router(adjust(RemoteState::new(config, verifier))))
 }
 
 async fn send(
@@ -560,9 +612,7 @@ async fn e7_logs_are_newest_first_paged_bounded_scoped_and_without_bodies() {
     assert!(!found.is_empty() && found.iter().all(|e| e["tool"] == "ax_search"));
 }
 
-#[tokio::test]
-async fn protected_resource_metadata_advertises_the_admin_scope() {
-    let (_dir, app) = fixture().await;
+async fn advertised_scopes(app: Router) -> Value {
     let response = app
         .oneshot(
             Request::get("/.well-known/oauth-protected-resource")
@@ -573,8 +623,190 @@ async fn protected_resource_metadata_advertises_the_admin_scope() {
         .unwrap();
     let bytes = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
     let body: Value = serde_json::from_slice(&bytes).unwrap();
+    body["scopes_supported"].clone()
+}
+
+#[tokio::test]
+async fn the_admin_scope_is_advertised_only_where_a_token_can_carry_it() {
+    // An external provider with an admin subject.
+    let (_dir, app) = fixture().await;
     assert_eq!(
-        body["scopes_supported"],
+        advertised_scopes(app).await,
         json!(["ax:context", "ax:write", "ax:admin"])
     );
+    // No admin subject (admin API keys need no OAuth scope): unchanged metadata.
+    isolate_usage_db();
+    let dir = tempfile::tempdir().unwrap();
+    let alpha = project(dir.path(), "alpha").await;
+    let mut config = base_config(vec![alpha], vec![key("adm", ADMIN_KEY, "alpha", true, true)]);
+    config.validate().unwrap();
+    let config = Arc::new(config);
+    let verifier =
+        TokenVerifier::with_keys(config.clone(), JwkSet { keys: vec![] }, reqwest::Client::new());
+    let app = router(RemoteState::new(config, verifier));
+    assert_eq!(advertised_scopes(app).await, json!(["ax:context", "ax:write"]));
+}
+
+#[tokio::test]
+async fn e1_the_non_admin_tool_list_is_the_admin_list_without_the_admin_tools() {
+    let (_dir, app) = fixture().await;
+    let list = |secret: &'static str| {
+        let app = app.clone();
+        async move {
+            let session = open(&app, "alpha", secret).await;
+            let (_, _, body) = send(
+                &app,
+                "alpha",
+                secret,
+                Some(&session),
+                json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
+            )
+            .await;
+            body["result"]["tools"].as_array().unwrap().clone()
+        }
+    };
+    let write = list(WRITE_KEY).await;
+    let admin: Vec<Value> = list(ADMIN_KEY)
+        .await
+        .into_iter()
+        .filter(|tool| !ADMIN_TOOLS.contains(&tool["name"].as_str().unwrap()))
+        .collect();
+    // Same definitions, schemas, annotations and order: the grant only adds.
+    assert_eq!(write, admin);
+}
+
+#[tokio::test]
+async fn e2_an_admin_subject_needs_the_scope_and_the_grant() {
+    let (_dir, app) = fixture().await;
+    let all = "ax:context ax:write ax:admin";
+    let admin = tool_names(&app, "alpha", &jwt("alpha", all)).await;
+    for tool in ADMIN_TOOLS {
+        assert!(admin.contains(&tool.to_string()), "{tool}");
+    }
+    let session = open(&app, "alpha", &jwt("alpha", all)).await;
+    let (status, body) = call(&app, "alpha", &jwt("alpha", all), &session, "ax_files", json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(text(&body).contains("lib.rs"), "{body}");
+
+    // The admin subject without the scope in the token.
+    let without_scope = jwt("alpha", "ax:context ax:write");
+    // A write subject that is not an admin subject, with the scope.
+    let not_granted = jwt("ann", all);
+    for token in [&without_scope, &not_granted] {
+        assert_eq!(tool_names(&app, "alpha", token).await, RECORDED_WRITE_LIST);
+        let session = open(&app, "alpha", token).await;
+        for tool in ADMIN_TOOLS {
+            let (status, _) = call(&app, "alpha", token, &session, tool, json!({})).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{tool}");
+        }
+    }
+    // beta has no admin subject at all.
+    let beta = jwt("beta", all);
+    assert_eq!(tool_names(&app, "beta", &beta).await, RECORDED_WRITE_LIST);
+}
+
+#[tokio::test]
+async fn policy_reload_is_the_only_policy_action_available_remotely() {
+    let (_dir, app) = fixture().await;
+    let session = open(&app, "alpha", ADMIN_KEY).await;
+    for action in ["restore", "history", "audit", "anything"] {
+        let (status, body) = call(
+            &app,
+            "alpha",
+            ADMIN_KEY,
+            &session,
+            "ax_policy_index",
+            json!({"action": action, "id": "english-only"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{action}");
+        assert_eq!(body["error"], "Only action=index is available remotely");
+    }
+    let (status, body) = call(&app, "alpha", ADMIN_KEY, &session, "ax_policy_index", json!({"action": 7})).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    for arguments in [json!({}), json!({"action": "index"})] {
+        let (status, body) = call(&app, "alpha", ADMIN_KEY, &session, "ax_policy_index", arguments).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    }
+    // Discovery shows the same restriction.
+    let (_, _, body) = send(
+        &app,
+        "alpha",
+        ADMIN_KEY,
+        Some(&session),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
+    )
+    .await;
+    let tool = body["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "ax_policy_index")
+        .unwrap()
+        .clone();
+    assert_eq!(tool["inputSchema"]["properties"]["action"]["enum"], json!(["index"]));
+    assert!(tool["inputSchema"]["properties"].get("id").is_none());
+}
+
+#[tokio::test]
+async fn an_index_run_finishes_after_its_request_timed_out() {
+    let (dir, app) = fixture_with(|state| state.with_admin_limits(Duration::from_millis(1), 4)).await;
+    let session = open(&app, "alpha", ADMIN_KEY).await;
+    std::fs::write(
+        dir.path().join("alpha/late.rs"),
+        "pub fn indexed_after_timeout() -> u32 { 9 }\n",
+    )
+    .unwrap();
+    let (status, body) = call(&app, "alpha", ADMIN_KEY, &session, "ax_index", json!({"force":true})).await;
+    assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
+    assert_eq!(body["error"], "The operation is still running on the server");
+    // The run was not dropped: the rebuilt index appears, on a fresh session too.
+    let other = open(&app, "alpha", CONTEXT_KEY).await;
+    let mut found = String::new();
+    for _ in 0..200 {
+        let (status, body) = call(
+            &app,
+            "alpha",
+            CONTEXT_KEY,
+            &other,
+            "ax_search",
+            json!({"query":"indexed_after_timeout"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        found = text(&body);
+        if found.contains("late.rs") && found.contains("indexed_after_timeout") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(found.contains("late.rs"), "{found}");
+    // The file lock was released: the same session can run again (it times out
+    // at once here, but is accepted rather than refused as busy or locked).
+    let (status, _) = call(&app, "alpha", ADMIN_KEY, &session, "ax_sync", json!({})).await;
+    assert!(
+        status == StatusCode::GATEWAY_TIMEOUT || status == StatusCode::OK,
+        "{status}"
+    );
+}
+
+#[tokio::test]
+async fn index_changing_calls_are_limited_and_reads_are_not() {
+    let (_dir, app) = fixture_with(|state| state.with_admin_limits(Duration::from_secs(60), 0)).await;
+    let session = open(&app, "alpha", ADMIN_KEY).await;
+    for (tool, arguments) in [
+        ("ax_sync", json!({})),
+        ("ax_index", json!({"force":true})),
+        ("ax_policy_index", json!({})),
+    ] {
+        let (status, body) = call(&app, "alpha", ADMIN_KEY, &session, tool, arguments).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{tool}");
+        assert_eq!(body["error"], "Too many index operations are running; try again later");
+    }
+    for tool in ["ax_files", "ax_logs", "ax_status"] {
+        let (status, body) = call(&app, "alpha", ADMIN_KEY, &session, tool, json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{tool}");
+        assert_ne!(body["result"]["isError"], json!(true), "{tool}: {body}");
+    }
 }

@@ -68,8 +68,12 @@ const ADMIN_TOOLS: &[&str] = &[
 ];
 const ADMIN_MUTATING_TOOLS: &[&str] = &["ax_sync", "ax_index", "ax_policy_index"];
 const TOOL_TIMEOUT: Duration = Duration::from_secs(120);
-/// A full index of a large project takes longer than a context query.
-const ADMIN_TOOL_TIMEOUT: Duration = Duration::from_secs(600);
+/// A full index of a large project takes longer than a context query. Kept
+/// under ten minutes so a client that waits ten minutes sees this answer.
+const ADMIN_TOOL_TIMEOUT: Duration = Duration::from_secs(570);
+/// Index-changing admin calls that may run or wait at the same time, across
+/// all projects. They hold a request slot for minutes; context calls must not starve.
+const ADMIN_MUTATION_SLOTS: usize = 4;
 
 struct Session {
     principal: String,
@@ -90,9 +94,13 @@ pub struct RemoteState {
     verifier: TokenVerifier,
     sessions: Arc<Mutex<HashMap<String, Session>>>,
     concurrency: Arc<Semaphore>,
-    /// One index-changing admin call per project at a time. Two sessions of this
-    /// process would otherwise wait on each other's database and file locks.
-    mutations: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    /// Per project: tool calls share this lock, an index-changing admin call
+    /// takes it alone. Sessions of one process would otherwise wait on each
+    /// other's database and file locks until those time out (a read may sync
+    /// changed files, so it can be a writer too).
+    mutations: Arc<Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>>,
+    admin_slots: Arc<Semaphore>,
+    admin_timeout: Duration,
     control: Option<String>,
     shutdown: Option<tokio::sync::watch::Sender<bool>>,
 }
@@ -105,9 +113,19 @@ impl RemoteState {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             concurrency: Arc::new(Semaphore::new(16)),
             mutations: Arc::new(Mutex::new(HashMap::new())),
+            admin_slots: Arc::new(Semaphore::new(ADMIN_MUTATION_SLOTS)),
+            admin_timeout: ADMIN_TOOL_TIMEOUT,
             control: None,
             shutdown: None,
         }
+    }
+
+    /// Overrides how long an admin call may take and how many index-changing
+    /// calls may be in flight. For tests and embedders with other limits.
+    pub fn with_admin_limits(mut self, timeout: Duration, mutation_slots: usize) -> Self {
+        self.admin_timeout = timeout;
+        self.admin_slots = Arc::new(Semaphore::new(mutation_slots));
+        self
     }
 }
 
@@ -170,7 +188,19 @@ async fn host_stop(State(state): State<RemoteState>, headers: HeaderMap) -> Resp
 }
 
 async fn metadata(State(state): State<RemoteState>) -> Response {
-    no_store(Json(json!({"resource":state.config.public_url, "authorization_servers":[state.config.oauth.issuer], "scopes_supported":[CONTEXT_SCOPE, WRITE_SCOPE, ADMIN_SCOPE], "bearer_methods_supported":["header"]})).into_response())
+    no_store(Json(json!({"resource":state.config.public_url, "authorization_servers":[state.config.oauth.issuer], "scopes_supported":scopes_supported(&state.config), "bearer_methods_supported":["header"]})).into_response())
+}
+
+/// `ax:admin` is advertised only where a token can carry it: an external
+/// provider with an admin subject. The built-in authorization server rejects
+/// scopes it does not issue, so a client that asks for every advertised scope
+/// must not be told about one it cannot get. API keys need no OAuth scope.
+fn scopes_supported(config: &RemoteConfig) -> Vec<&'static str> {
+    let mut scopes = vec![CONTEXT_SCOPE, WRITE_SCOPE];
+    if !config.oauth.built_in && config.projects.iter().any(|p| !p.admin_subjects.is_empty()) {
+        scopes.push(ADMIN_SCOPE);
+    }
+    scopes
 }
 
 fn no_store(mut response: Response) -> Response {
@@ -316,6 +346,16 @@ pub fn tool_permitted(name: &str, args: &Value, write: bool) -> bool {
     CONTEXT_TOOLS.contains(&name) || (write && WRITE_TOOLS.contains(&name))
 }
 
+async fn project_lock(state: &RemoteState, project: &str) -> Arc<tokio::sync::RwLock<()>> {
+    state
+        .mutations
+        .lock()
+        .await
+        .entry(project.to_owned())
+        .or_default()
+        .clone()
+}
+
 pub fn admin_tool_permitted(name: &str, admin: bool) -> bool {
     admin && ADMIN_TOOLS.contains(&name)
 }
@@ -351,7 +391,7 @@ async fn post(
         Ok(v) => v,
         Err(e) => return *e,
     };
-    let _permit = match state.concurrency.clone().try_acquire_owned() {
+    let permit = match state.concurrency.clone().try_acquire_owned() {
         Ok(p) => p,
         Err(_) => return error(StatusCode::TOO_MANY_REQUESTS, "Server is busy"),
     };
@@ -487,7 +527,8 @@ async fn post(
     let admin = principal.can_admin(&project);
     let mut timeout = TOOL_TIMEOUT;
     let mut mutation = None;
-    let mut engine = match tokio::time::timeout(Duration::from_secs(30), engine.lock()).await {
+    let mut shared = None;
+    let mut engine = match tokio::time::timeout(Duration::from_secs(30), engine.lock_owned()).await {
         Ok(e) => e,
         Err(_) => return error(StatusCode::TOO_MANY_REQUESTS, "Connection is busy"),
     };
@@ -512,17 +553,28 @@ async fn post(
             return error(StatusCode::FORBIDDEN, "Insufficient client scope");
         }
         if admin_tool_permitted(&name, admin) {
-            timeout = ADMIN_TOOL_TIMEOUT;
-            if ADMIN_MUTATING_TOOLS.contains(&name.as_str()) {
-                mutation = Some(
-                    state
-                        .mutations
-                        .lock()
-                        .await
-                        .entry(project.id.clone())
-                        .or_default()
-                        .clone(),
+            timeout = state.admin_timeout;
+            // Remotely this tool only re-imports the project's own policy files.
+            // Its other actions (restore, history, audit) can write or reveal
+            // policy that belongs to every project on this host.
+            if name == "ax_policy_index"
+                && args
+                    .get("action")
+                    .is_some_and(|action| action.as_str() != Some("index"))
+            {
+                return error(
+                    StatusCode::FORBIDDEN,
+                    "Only action=index is available remotely",
                 );
+            }
+            if ADMIN_MUTATING_TOOLS.contains(&name.as_str()) {
+                let Ok(slot) = state.admin_slots.clone().try_acquire_owned() else {
+                    return error(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "Too many index operations are running; try again later",
+                    );
+                };
+                mutation = Some((project_lock(&state, &project.id).await, slot));
             }
         } else if !tool_permitted(&name, &args, write) {
             if WRITE_TOOLS.contains(&name.as_str()) || name == "ax_policy_capture" {
@@ -643,6 +695,9 @@ async fn post(
         args["session"] = json!(chat);
         engine.current_chat = Some(chat);
         params["arguments"] = args;
+        if mutation.is_none() {
+            shared = Some(project_lock(&state, &project.id).await);
+        }
     }
     let durable_branch = request.params.as_ref().and_then(|params| {
         if params["name"] == "ax_durable" {
@@ -655,23 +710,47 @@ async fn post(
             None
         }
     });
-    let outcome = match tokio::time::timeout(timeout, async {
-        // Waiting for another admin's index run counts towards the timeout.
-        let _exclusive = match &mutation {
-            Some(lock) => Some(lock.lock().await),
-            None => None,
-        };
-        handle_request(
-            &mut engine.engine,
-            &request.method,
-            request.params.unwrap_or(Value::Null),
-        )
+    let method = request.method.clone();
+    let params = request.params.take().unwrap_or(Value::Null);
+    let outcome = if let Some((lock, slot)) = mutation {
+        // An index run must finish even when this request times out or the
+        // client goes away: a run dropped halfway leaves the index cleared and
+        // its file lock held. The task keeps the session and its request slot
+        // until it is done.
+        let task = tokio::spawn(async move {
+            let _held = (permit, slot);
+            let _exclusive = lock.write_owned().await;
+            let outcome = handle_request(&mut engine.engine, &method, params).await;
+            (outcome, engine)
+        });
+        match tokio::time::timeout(timeout, task).await {
+            Ok(Ok((outcome, guard))) => {
+                engine = guard;
+                outcome
+            }
+            Ok(Err(_)) => return error(StatusCode::INTERNAL_SERVER_ERROR, "Ax tool failed"),
+            Err(_) => {
+                return error(
+                    StatusCode::GATEWAY_TIMEOUT,
+                    "The operation is still running on the server",
+                )
+            }
+        }
+    } else {
+        let _permit = permit;
+        match tokio::time::timeout(timeout, async {
+            // Waiting for a running index counts towards the timeout.
+            let _shared = match &shared {
+                Some(lock) => Some(lock.read().await),
+                None => None,
+            };
+            handle_request(&mut engine.engine, &method, params).await
+        })
         .await
-    })
-    .await
-    {
-        Ok(outcome) => outcome,
-        Err(_) => return error(StatusCode::GATEWAY_TIMEOUT, "Ax tool timed out"),
+        {
+            Ok(outcome) => outcome,
+            Err(_) => return error(StatusCode::GATEWAY_TIMEOUT, "Ax tool timed out"),
+        }
     };
     if !outcome.verbose_lines.is_empty() {
         crate::verbose::append_verbose_log_file(&outcome.verbose_lines, Some(&project.root));
@@ -725,6 +804,14 @@ async fn post(
                     props.remove("projectPath");
                     props.remove("project_path");
                     props.remove("window_id");
+                    if name == "ax_policy_index" {
+                        // Discovery shows the one action that is allowed remotely.
+                        props.remove("id");
+                        if let Some(action) = props.get_mut("action") {
+                            action["enum"] = json!(["index"]);
+                            action["description"] = json!("Re-import the project's policy files");
+                        }
+                    }
                     if !write && policy_capture {
                         // Discovery reflects the same action-level write ACL as invocation.
                         if let Some(actions) = props
