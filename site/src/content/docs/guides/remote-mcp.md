@@ -64,6 +64,7 @@ Initialize each project normally with `ax init`. Create a private JSON configura
 - `issuer` must exactly match the access token's `iss`, including a significant trailing slash. The configured JWKS endpoint supplies public signing keys. This implementation accepts **RS256 JWT access tokens with `kid`**; opaque tokens and other algorithms are not supported.
 - `subjects` grants the named OAuth identities access to this project. No implicit access is granted to other signed-in users.
 - `write_subjects` must be a subset of `subjects`. Memory/policy writes additionally require the `ax:write` token scope.
+- `admin_subjects` (optional) must be a subset of `write_subjects`. See [Admin access](#admin-access).
 - `allowed_origins` accepts explicit HTTPS browser origins. Requests without an Origin header can still come from authenticated native clients; present foreign Origin headers are rejected.
 - Each root must already contain `.ax/ax.db`. Project IDs must be unique and URL-safe. Remote calls cannot override a root or switch the Command Center's current workspace.
 
@@ -263,6 +264,29 @@ An IDE that can securely supply a custom Bearer header can alternatively use a l
 
 This is not a valid literal key hash. Generate and store the original key outside version control. API-key access does not provide the browser login experience and is **not** the ChatGPT authentication route.
 
+## Admin access
+
+Management tools (re-index, sync, policy reload, file list, usage reports and the MCP call log) are not offered remotely unless a credential has the admin grant. The grant is explicit and per project:
+
+- **API key:** add `"admin": true`. The key must also have `"write": true`.
+- **External OAuth provider:** add the subject to the project's `admin_subjects` (it must also be in `write_subjects`) and issue the access token with the `ax:admin` scope next to `ax:context` and `ax:write`.
+
+```json
+{
+  "id": "ops-laptop",
+  "sha256": "REPLACE_WITH_64_HEX_CHARACTERS",
+  "projects": ["my-project"],
+  "write": true,
+  "admin": true
+}
+```
+
+A configuration that grants admin without write access is rejected at start-up. Both settings default to off, so an existing configuration file grants nothing new. Without the grant, the tool list and every response are the same as before, and a direct call to a management tool is refused.
+
+The built-in authorization server of a generated host issues `ax:context` and `ax:write` only; it cannot grant admin access. Use an API key for that.
+
+The discovery document lists `ax:admin` under `scopes_supported`. The tools and their limits are in the [MCP Server reference](/reference/mcp-server/#management-tools-over-remote-mcp). [ax-admin](/guides/remote-admin/) is the application that uses them.
+
 ## Connect ChatGPT
 
 Use the project URL, such as `https://ax.example.com/projects/my-project/mcp`, rather than the origin or local port.
@@ -282,7 +306,7 @@ ChatGPT's documented MCP authentication flow uses Authorization Code + PKCE. It 
 
 ## Tools, projects and conversations
 
-The remote server exposes graph/context retrieval, preflight, rules/skills, scoped conversation context and memory retrieval. `ax_remember` and policy-capture save need both `ax:write` and an explicit write grant. Index/sync, LSP, ship, global sharing and shell-running tools are unavailable remotely in this feature. Listing a smaller catalog does not authorize hidden tool calls: direct calls use the same permission checks. Protected tools advertise OAuth security schemes, and denied write calls return the MCP authentication challenge used by ChatGPT.
+The remote server exposes graph/context retrieval, preflight, rules/skills, scoped conversation context and memory retrieval. `ax_remember` and policy-capture save need both `ax:write` and an explicit write grant. Index, sync, policy reload, the file list, usage reports and the call log need the [admin grant](#admin-access). LSP, ship, global sharing and shell-running tools are unavailable remotely. Listing a smaller catalog does not authorize hidden tool calls: direct calls use the same permission checks. Protected tools advertise OAuth security schemes, and denied write calls return the MCP authentication challenge used by ChatGPT.
 
 Each transport session is bound to the authenticated principal and selected project. Project A's session cannot be used on project B or by another principal. Sessions are capped and expire after 30 minutes of inactivity.
 

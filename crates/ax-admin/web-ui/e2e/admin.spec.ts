@@ -17,6 +17,12 @@ const BETA_KEY = env('AX_E2E_BETA_KEY');
 
 const nav = (page: Page) => page.getByRole('navigation', { name: 'Main navigation' });
 
+// Documentation screenshots, written only when AX_E2E_SCREENSHOTS names a folder.
+async function shot(page: Page, name: string) {
+  const dir = process.env.AX_E2E_SCREENSHOTS;
+  if (dir) await page.screenshot({ path: `${dir}/${name}.png` });
+}
+
 async function fillConnection(page: Page, url: string, key: string, name = '') {
   await page.getByLabel('Address').fill(url);
   await page.getByRole('textbox', { name: 'API key' }).fill(key);
@@ -27,6 +33,7 @@ test('A1: first start shows only the connect screen', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByTestId('connect-screen')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Connect to an Ax environment' })).toBeVisible();
+  await shot(page, 'ax-admin-connect');
   await expect(nav(page)).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Connections' })).toHaveCount(0);
   // A deep link does not get past it either.
@@ -120,6 +127,7 @@ test('A6, E9: a second environment is added through the Connections button and s
   await page.getByRole('dialog').getByRole('option', { name: /Alpha admin/ }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Switch to this' }).click();
   await expect(page.getByRole('dialog').getByRole('status')).toHaveText('Switched to Alpha admin.');
+  await shot(page, 'ax-admin-connections');
   await page.getByRole('dialog').getByRole('button', { name: 'Close' }).last().click();
   await expect(page.getByTestId('access-level')).toHaveText('admin access');
 });
@@ -129,6 +137,7 @@ test('E6, E9: management pages run against the environment, and a rebuild asks f
   const sync = page.getByRole('region', { name: 'Sync' });
   await sync.getByRole('button', { name: 'Sync' }).click();
   await expect(sync.getByTestId('tool-result')).toContainText(/Synced \d+ file/);
+  await shot(page, 'ax-admin-operations');
 
   const rebuild = page.getByRole('region', { name: 'Rebuild index' });
   await rebuild.getByRole('button', { name: 'Rebuild' }).click();

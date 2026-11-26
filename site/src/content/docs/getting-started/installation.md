@@ -103,6 +103,16 @@ curl -fsSL https://getax.wenneker.io/install-slim.sh | sh
 
 See [Headless Linux build](/guides/headless-linux/) for options, container images and Azure Container Apps jobs.
 
+### ax-admin (separate application)
+
+`ax-admin` manages a remote Ax, including the headless build, from your own computer. It has its own installer and does not need `ax`:
+
+```bash
+curl -fsSL https://getax.wenneker.io/install-admin.sh | sh
+```
+
+On Windows use `irm https://getax.wenneker.io/install-admin.ps1 | iex`. See [Remote admin](/guides/remote-admin/).
+
 ### Windows
 
 Run in PowerShell:

@@ -285,6 +285,21 @@ slim/azure/create-job.sh --resource-group my-rg --environment my-env --location 
 az containerapp job logs show --name ax-index --resource-group my-rg --container ax-index --follow
 ```
 
+## Interface
+
+The headless build has no `ax web`. `ax-admin` is a separate application with the
+Command Center look that connects to `ax mcp remote serve` and to nothing else.
+It runs on your own computer, has its own installer and needs no `ax` there:
+
+```bash
+curl -fsSL https://getax.wenneker.io/install-admin.sh | sh
+```
+
+Index, sync, policy reload, the file list, usage reports and the MCP call log
+are offered to a credential with the admin grant: `"admin": true` on an API key
+in the remote MCP configuration (the key also needs `"write": true`). The guide
+on the website (Guides → Remote admin) covers connecting and the pages.
+
 ## Limits
 
 - `ax mcp remote serve` binds to `127.0.0.1`. Inside a container it is

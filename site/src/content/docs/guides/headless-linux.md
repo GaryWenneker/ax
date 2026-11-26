@@ -218,6 +218,16 @@ az containerapp job logs show --name ax-index --resource-group my-rg --container
 
 Without the script, create a job from `ghcr.io/garywenneker/ax-slim:<version>-ubuntu` with the command `ax-index-repo` and the environment variables above.
 
+## An interface for the headless build
+
+This build has no `ax web`. [ax-admin](/guides/remote-admin/) is a separate application that runs on your own computer and manages the environment through `ax mcp remote serve`. Install it there, not in the container:
+
+```bash
+curl -fsSL https://getax.wenneker.io/install-admin.sh | sh
+```
+
+Give an API key the [admin grant](/guides/remote-mcp/#admin-access) to re-index, sync and read the MCP call log from it.
+
 ## Limits
 
 An agent in a sandbox or container starts `ax serve --mcp` itself and talks to it over stdio. `ax mcp remote serve` listens on `127.0.0.1` only, so inside a container it is reachable from the same container or pod, not from Container Apps ingress directly.
