@@ -10,6 +10,8 @@ interface Props {
   editing?: Connection;
   submitLabel: string;
   onSaved: (connection: Connection) => void;
+  /** Saved connections may have changed in a way `onSaved` did not report. */
+  onChanged: () => void;
   onCancel?: () => void;
 }
 
@@ -23,7 +25,7 @@ function openTab(): Window | null {
 }
 
 /** Address and credentials for one Ax environment. Nothing is saved until the server accepts them. */
-export default function ConnectionForm({ editing, submitLabel, onSaved, onCancel }: Props) {
+export default function ConnectionForm({ editing, submitLabel, onSaved, onChanged, onCancel }: Props) {
   const ids = useId();
   const [input, setInput] = useState<ConnectionInput>(() =>
     editing
@@ -137,6 +139,7 @@ export default function ConnectionForm({ editing, submitLabel, onSaved, onCancel
         onConnected={onSaved}
         onFailed={(message) => { setSignIn(null); setNote({ kind: 'err', text: message, field: null }); }}
         onCancelled={() => setSignIn(null)}
+        onChanged={onChanged}
       />
     );
   }

@@ -817,6 +817,7 @@ async fn calls_do_not_queue_behind_a_running_index() {
     let (status, body) = call(&app, "alpha", CONTEXT_KEY, &session, "ax_status", json!({})).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body["error"], "This project is being re-indexed; try again when it is done");
+    assert_eq!(body["reindexing"], true);
     assert!(started.elapsed() < Duration::from_secs(10), "told quickly, not after minutes");
     // Listing tools needs no index, and the other project is not affected.
     let (status, _, _) = send(

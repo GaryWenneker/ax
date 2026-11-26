@@ -297,7 +297,8 @@ impl Remote {
             504 if json.as_ref().is_some_and(|v| v.get("error").is_some()) => {
                 return Err(McpError::Timeout)
             }
-            503 if json.as_ref().is_some_and(|v| v.get("error").is_some()) => {
+            // Ax marks this one too; a platform's own 503 is not an answer from Ax.
+            503 if json.as_ref().is_some_and(|v| v["reindexing"] == true) => {
                 return Err(McpError::Reindexing)
             }
             202 | 204 => {

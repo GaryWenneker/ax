@@ -131,7 +131,8 @@ async fn serve(app: Router) -> String {
 /// A sign-in backend driven by the test instead of a browser.
 #[derive(Default)]
 struct FakeLogins {
-    state: Mutex<Option<LoginState>>,
+    /// Where each attempt stands, by id. `set` moves the newest one.
+    states: Mutex<Vec<(String, LoginState)>>,
     token: Mutex<String>,
     /// (address, client id, write, admin) of every started sign-in.
     started: Mutex<Vec<(String, String, bool, bool)>>,
@@ -142,8 +143,14 @@ struct FakeLogins {
 }
 
 impl FakeLogins {
+    /// The browser's answer for the attempt that was started last.
     fn set(&self, state: LoginState) {
-        *self.state.lock().unwrap() = Some(state);
+        self.states.lock().unwrap().last_mut().expect("a started sign-in").1 = state;
+    }
+    /// The browser's answer for one attempt.
+    fn set_for(&self, id: &str, state: LoginState) {
+        let mut states = self.states.lock().unwrap();
+        states.iter_mut().find(|(attempt, _)| attempt == id).expect("a started sign-in").1 = state;
     }
     fn logged_out(&self) -> Vec<String> {
         self.logged_out.lock().unwrap().clone()
@@ -161,15 +168,19 @@ impl LoginBackend for FakeLogins {
         Box::pin(async move {
             let mut started = self.started.lock().unwrap();
             started.push((url.clone(), client_id, write, admin));
-            *self.state.lock().unwrap() = Some(LoginState::Pending);
+            let id = format!("attempt-{}", started.len());
+            self.states.lock().unwrap().push((id.clone(), LoginState::Pending));
             Ok(LoginStarted {
-                id: format!("attempt-{}", started.len()),
+                id,
                 authorization_url: format!("https://issuer.example.com/authorize?resource={url}"),
             })
         })
     }
-    fn status<'a>(&'a self, _id: &'a str) -> BoxFuture<'a, Option<LoginState>> {
-        Box::pin(async move { self.state.lock().unwrap().clone() })
+    fn status<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Option<LoginState>> {
+        Box::pin(async move {
+            let states = self.states.lock().unwrap();
+            states.iter().find(|(attempt, _)| attempt == id).map(|(_, state)| state.clone())
+        })
     }
     fn cancel<'a>(&'a self, _id: &'a str) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move {
@@ -967,6 +978,7 @@ async fn a10_browser_sign_in_saves_only_after_it_succeeds() {
     assert!(!admin.config_file().exists());
 
     // Signed in, but the server refuses the token: nothing saved, tokens dropped.
+    admin.logins.logged_out.lock().unwrap().clear();
     *admin.logins.token.lock().unwrap() = "a-token-the-server-refuses".to_owned();
     admin.call("POST", "/api/login", start.clone()).await;
     admin.logins.set(LoginState::Connected);
@@ -1103,6 +1115,25 @@ async fn a10_a_sign_in_the_page_never_saved_is_dropped_with_its_tokens() {
     assert_eq!(status, StatusCode::NOT_FOUND, "the attempt is gone");
     assert!(!admin.config_file().exists());
 
+    // A finishes with no page (tokens stored); B for the same address is open
+    // when A's grace period ends, so the tokens stay. B is then cancelled
+    // before the browser answers: that is the moment they are removed.
+    admin.logins.logged_out.lock().unwrap().clear();
+    let (_, first) = admin
+        .call("POST", "/api/login", json!({"url": url, "clientId": "native-client"}))
+        .await;
+    let (_, second) = admin
+        .call("POST", "/api/login", json!({"url": url, "clientId": "native-client"}))
+        .await;
+    admin.logins.set_for(first["id"].as_str().unwrap(), LoginState::Connected);
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert!(admin.logins.logged_out().is_empty(), "kept while the second attempt is open");
+    let (status, _) = admin
+        .call("DELETE", &format!("/api/login/{}", second["id"].as_str().unwrap()), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(admin.logins.logged_out(), std::slice::from_ref(&url));
+
     // A page that does save in time keeps its tokens.
     admin.logins.logged_out.lock().unwrap().clear();
     let (_, started) = admin
@@ -1185,6 +1216,7 @@ async fn a10_tokens_of_a_sign_in_nobody_keeps_are_removed() {
         .await;
     admin.logins.cancel_too_late.store(false, Ordering::SeqCst);
     let (_, second) = admin.call("POST", "/api/login", start.clone()).await;
+    admin.logins.set_for(first["id"].as_str().unwrap(), LoginState::Connected);
     admin.logins.set(LoginState::Connected);
     tokio::time::sleep(Duration::from_millis(1200)).await;
     assert!(admin.logins.logged_out().is_empty(), "the newer attempt keeps its tokens");
@@ -1454,8 +1486,13 @@ async fn the_servers_timeouts_and_busy_answers_are_told_apart() {
     // A gateway's own page is not an answer from Ax.
     assert_eq!(outcome(gateway_timeout, None).await, McpError::NotMcp(504));
     assert_eq!(
-        outcome(StatusCode::SERVICE_UNAVAILABLE, Some(json!({"error": "This project is being re-indexed; try again when it is done"}))).await,
+        outcome(StatusCode::SERVICE_UNAVAILABLE, Some(json!({"error": "This project is being re-indexed; try again when it is done", "reindexing": true}))).await,
         McpError::Reindexing
+    );
+    // A platform's own "service unavailable", even as JSON, is not that.
+    assert_eq!(
+        outcome(StatusCode::SERVICE_UNAVAILABLE, Some(json!({"error": "no healthy upstream"}))).await,
+        McpError::NotMcp(503)
     );
     assert_eq!(outcome(StatusCode::SERVICE_UNAVAILABLE, None).await, McpError::NotMcp(503));
     assert_eq!(outcome(StatusCode::TOO_MANY_REQUESTS, None).await, McpError::Busy);

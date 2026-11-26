@@ -42,6 +42,8 @@ async function addConnection(page: Page, url: string, key: string, name = '') {
   await expect(page.getByLabel('Address')).toBeFocused();
   await fillConnection(page, url, key, name);
   await page.getByRole('button', { name: 'Save and connect' }).click();
+  // Back in the list, the selected connection has the focus.
+  await expect(connections(page).getByRole('option', { selected: true })).toBeFocused();
 }
 
 async function search(page: Page, query: string) {
@@ -57,7 +59,7 @@ async function callCount(page: Page, tool: string): Promise<number> {
   await page.goto('/#/logging');
   await page.getByRole('searchbox', { name: 'Filter by tool' }).fill(tool);
   await page.getByRole('button', { name: 'Show', exact: true }).click();
-  await expect(page.getByText(`Newest first, only ${tool}.`)).toBeVisible();
+  await expect(page.getByText(`The latest calls of ${tool}.`)).toBeVisible();
   await expect(page.getByTestId('call-log').or(page.getByText('No calls recorded'))).toBeVisible();
   return page.getByTestId('call-log').locator('.page-item').count();
 }
@@ -220,7 +222,7 @@ test('a page that still shows another environment runs nothing and says why', as
   // This page still offers to rebuild "Alpha admin".
   await page.getByRole('region', { name: 'Rebuild index' }).getByRole('button', { name: 'Rebuild' }).click();
   await page.getByRole('dialog', { name: 'Rebuild index on Alpha admin?' }).getByRole('button', { name: 'Rebuild on Alpha admin' }).click();
-  await expect(page.getByRole('alert')).toHaveText(/Alpha read-only is the active environment now\. Reload to continue\. Nothing was run\./);
+  await expect(page.getByRole('alert')).toContainText('so this page now shows that one. Nothing was run.');
   await expect(page.getByTestId('active-name')).toHaveText('Alpha read-only');
   await expect(nav(page).getByRole('link', { name: 'Operations', exact: true })).toHaveCount(0);
 

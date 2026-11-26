@@ -31,7 +31,7 @@ export function useTool() {
     } catch (e) {
       if (e instanceof ApiError && e.code === 'connection_changed') {
         // This page is about to be replaced by the active environment's.
-        changed(`${e.message} Nothing was run.`);
+        changed('Another window switched ax-admin to a different environment, so this page now shows that one. Nothing was run.');
         return;
       }
       if (ticket === latest.current) {

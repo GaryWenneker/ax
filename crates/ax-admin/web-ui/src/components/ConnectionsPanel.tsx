@@ -24,6 +24,12 @@ export default function ConnectionsPanel({ connections, onClose, onChanged }: Pr
   const [note, setNote] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   const current = connections.find((c) => c.id === selected) ?? null;
+  // Coming back from a form or a question, the list takes the focus again.
+  const [returned, setReturned] = useState(false);
+  const backToList = () => {
+    setReturned(true);
+    setView({ kind: 'list' });
+  };
 
   const act = async (work: () => Promise<string>) => {
     if (busy) return;
@@ -49,18 +55,22 @@ export default function ConnectionsPanel({ connections, onClose, onChanged }: Pr
       <ModalShell
         title={view.kind === 'add' ? 'Add connection' : `Edit ${view.connection.name}`}
         subtitle="The address and credentials are checked before anything is saved."
-        onClose={() => setView({ kind: 'list' })}
+        onClose={() => backToList()}
         size="lg"
       >
         <ConnectionForm
           {...(view.kind === 'edit' ? { editing: view.connection } : {})}
           submitLabel={view.kind === 'add' ? 'Save and connect' : 'Save'}
-          onCancel={() => setView({ kind: 'list' })}
+          onCancel={() => backToList()}
+          onChanged={() => void onChanged()}
           onSaved={(connection) => {
-            setSelected(connection.id);
-            setView({ kind: 'list' });
-            setNote({ kind: 'ok', text: `${connection.name} is saved.` });
-            void onChanged();
+            // The list is shown once it contains the saved connection, so
+            // the focus can go to its row.
+            void onChanged().finally(() => {
+              setSelected(connection.id);
+              backToList();
+              setNote({ kind: 'ok', text: `${connection.name} is saved.` });
+            });
           }}
         />
       </ModalShell>
@@ -74,9 +84,9 @@ export default function ConnectionsPanel({ connections, onClose, onChanged }: Pr
         title={`Remove ${target.name}?`}
         message="Its saved credential is deleted from this computer. The environment itself is not changed."
         confirmLabel="Remove"
-        onCancel={() => setView({ kind: 'list' })}
+        onCancel={() => backToList()}
         onConfirm={() => {
-          setView({ kind: 'list' });
+          backToList();
           void act(async () => {
             await removeConnection(target.id);
             setSelected(null);
@@ -108,6 +118,7 @@ export default function ConnectionsPanel({ connections, onClose, onChanged }: Pr
       )}
       <OptionList
         label="Saved connections"
+        focusOnMount={returned}
         items={connections}
         keyOf={(connection) => connection.id}
         selected={selected}

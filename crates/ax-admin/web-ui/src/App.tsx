@@ -116,7 +116,7 @@ export default function App() {
           </div>
           <ErrorBoundary fallbackTitle="The connect form failed to render">
             <PageCard title="Connect to an Ax environment" description="Enter the address of the environment and credentials for it. You can add more environments afterwards.">
-              <ConnectionForm submitLabel="Connect" onSaved={reloadSoon} />
+              <ConnectionForm submitLabel="Connect" onSaved={reloadSoon} onChanged={reloadSoon} />
             </PageCard>
           </ErrorBoundary>
         </div>

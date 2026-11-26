@@ -141,7 +141,7 @@ MUTANTS = [
      "if self.pending.lock().await.values().any(|p| p.url == url) {", "if false {", ADMIN, "a10_tokens"),
     ("M40", "calls queue for minutes behind a running index", R_SERVER,
      "const PROJECT_WAIT: Duration = Duration::from_secs(2);",
-     "const PROJECT_WAIT: Duration = Duration::from_secs(600);", REMOTE, "calls_do_not_queue"),
+     "const PROJECT_WAIT: Duration = Duration::from_secs(30);", REMOTE, "calls_do_not_queue"),
     ("M41", "a proxy's timeout page is taken for a still-running index", MCP,
      "504 if json.as_ref().is_some_and(|v| v[\"running\"] == true) => {", "504 => {", ADMIN, "the_servers_timeouts"),
     ("M23", "E2: admin tools lack the admin scope in discovery", R_SERVER,

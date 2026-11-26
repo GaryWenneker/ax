@@ -777,9 +777,12 @@ async fn post(
             Some(lock) => match tokio::time::timeout(PROJECT_WAIT, lock.read_owned()).await {
                 Ok(guard) => Some(guard),
                 Err(_) => {
-                    let mut response = error(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "This project is being re-indexed; try again when it is done",
+                    let mut response = no_store(
+                        (
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            Json(json!({"error":"This project is being re-indexed; try again when it is done","reindexing":true})),
+                        )
+                            .into_response(),
                     );
                     response
                         .headers_mut()
@@ -1035,6 +1038,9 @@ pub async fn serve(
         .await
         .map_err(|e| e.to_string());
     // An index run that outlived its request finishes before the process ends.
+    if admin_running.try_write().is_err() {
+        eprintln!("ax: waiting for a running index operation to finish before stopping (up to {} seconds)", ADMIN_TOOL_TIMEOUT.as_secs());
+    }
     if tokio::time::timeout(ADMIN_TOOL_TIMEOUT, admin_running.write())
         .await
         .is_err()

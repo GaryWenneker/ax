@@ -1,4 +1,4 @@
-import { useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 
 interface Props<T> {
   label: string;
@@ -8,6 +8,8 @@ interface Props<T> {
   onSelect: (key: string) => void;
   /** Enter, or a double click. */
   onActivate?: (key: string) => void;
+  /** Put the focus on the selected row when the list appears. */
+  focusOnMount?: boolean;
   children: (item: T) => ReactNode;
 }
 
@@ -15,8 +17,16 @@ interface Props<T> {
  * A single-select list with one tab stop. Arrow keys, Home and End move the
  * selection; Tab leaves the list.
  */
-export default function OptionList<T>({ label, items, keyOf, selected, onSelect, onActivate, children }: Props<T>) {
+export default function OptionList<T>({ label, items, keyOf, selected, onSelect, onActivate, focusOnMount = false, children }: Props<T>) {
   const list = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!focusOnMount) return undefined;
+    // After the surrounding dialog has placed its own initial focus.
+    const timer = window.setTimeout(() => {
+      list.current?.querySelector<HTMLElement>('[tabindex="0"]')?.focus();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [focusOnMount]);
   const keys = items.map(keyOf);
   const current = selected !== null && keys.includes(selected) ? selected : keys[0] ?? null;
 

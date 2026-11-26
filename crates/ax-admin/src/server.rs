@@ -411,6 +411,10 @@ impl App {
     /// The client of the active connection.
     async fn active_remote(&self) -> Result<(SavedConnection, Arc<Remote>), ApiError> {
         for _ in 0..4 {
+            // The counters are noted before anything is read. A change that
+            // happens after this point, however quickly, makes the check at
+            // the end fail, so nothing read here can be cached stale.
+            let versions = self.remotes.lock().await.changes.clone();
             let connection = self
                 .store(|store| store.active().cloned())
                 .await?
@@ -421,13 +425,10 @@ impl App {
                         "Connect to an Ax environment first".into(),
                     )
                 })?;
-            let version = {
-                let remotes = self.remotes.lock().await;
-                if let Some(remote) = remotes.clients.get(&connection.id) {
-                    return Ok((connection, remote.clone()));
-                }
-                remotes.version(&connection.id)
-            };
+            let version = versions.get(&connection.id).copied().unwrap_or(0);
+            if let Some(remote) = self.remotes.lock().await.clients.get(&connection.id) {
+                return Ok((connection, remote.clone()));
+            }
             // Slow: the credential store may ask the user to unlock it.
             let url = project_url(&connection.url).map_err(internal)?;
             let remote = Arc::new(Remote::new(url, self.stored_tokens(&connection).await?)?);
@@ -454,6 +455,19 @@ impl App {
             })
         })
         .await
+    }
+
+    /// For the end of an attempt that stored nothing itself: an earlier attempt
+    /// for the same address may have left tokens that were kept only because
+    /// this one was still open. Having nothing to remove is the normal case.
+    async fn drop_leftover_sign_in(&self, url: &str) {
+        if self.pending.lock().await.values().any(|p| p.url == url) {
+            return;
+        }
+        if let Ok(false) = self.sign_in_is_used(url, None).await {
+            // "Not signed in" is the expected answer here.
+            let _ = self.logins.logout(url).await;
+        }
     }
 
     /// Forgets the tokens of a sign-in that no saved connection uses.
@@ -496,11 +510,13 @@ fn watch_sign_in(app: Arc<App>, id: String, url: String) {
                 }
                 Some(LoginState::Failed(_)) | None => {
                     app.pending.lock().await.remove(&id);
+                    app.drop_leftover_sign_in(&url).await;
                     return;
                 }
             }
         }
         app.pending.lock().await.remove(&id);
+        app.drop_leftover_sign_in(&url).await;
     });
 }
 
@@ -754,9 +770,9 @@ async fn start_login(State(app): State<Arc<App>>, body: axum::body::Bytes) -> Ap
         .start(url.to_string(), client_id.clone(), write, input.admin)
         .await
         .map_err(|e| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "sign_in_failed", e))?;
-    watch_sign_in(app.clone(), started.id.clone(), url.to_string());
-    let mut pending = app.pending.lock().await;
-    pending.insert(
+    // Recorded before its watcher starts: the watcher stops as soon as it
+    // does not find the attempt.
+    app.pending.lock().await.insert(
         started.id.clone(),
         PendingLogin {
             name,
@@ -765,6 +781,7 @@ async fn start_login(State(app): State<Arc<App>>, body: axum::body::Bytes) -> Ap
             write,
         },
     );
+    watch_sign_in(app.clone(), started.id.clone(), url.to_string());
     ok(json!({"id": started.id, "authorizationUrl": started.authorization_url}))
 }
 
@@ -851,6 +868,8 @@ async fn cancel_login(State(app): State<Arc<App>>, Path(id): Path<String>) -> Ap
         // Too late to stop: the browser already answered and the tokens are
         // being stored. Remove them when that has happened.
         abandon(app.clone(), id, login.url);
+    } else {
+        app.drop_leftover_sign_in(&login.url).await;
     }
     ok(json!({"cancelled": true}))
 }

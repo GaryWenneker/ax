@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { cancelLogin, completeLogin, loginStatus, removeConnection, type Connection, type StartedSignIn } from '../api';
+import { activateConnection, cancelLogin, completeLogin, listConnections, loginStatus, removeConnection, type Connection, type StartedSignIn } from '../api';
 import { waitForSignIn } from '../signIn';
 
 interface Props {
@@ -10,6 +10,18 @@ interface Props {
   onFailed: (message: string) => void;
   /** The user gave up; the form comes back. */
   onCancelled: () => void;
+  /** Saved connections may have changed without this view saying "connected". */
+  onChanged: () => void;
+}
+
+/**
+ * Cancelled in the very moment the connection was saved. Cancelling keeps
+ * nothing, so it is removed and the environment that was active before is
+ * active again. Whatever happens, the caller reloads and shows what is true.
+ */
+async function takeBack(saved: Connection, activeBefore: string | null): Promise<void> {
+  await removeConnection(saved.id);
+  if (activeBefore !== null && activeBefore !== saved.id) await activateConnection(activeBefore);
 }
 
 /** Cancels that are scheduled but not yet sent, by sign-in id. */
@@ -20,10 +32,10 @@ const pendingCancel = new Map<string, number>();
  * sign-in stands, one question at a time. Leaving this view in any way stops
  * asking and cancels the sign-in, so no tokens are stored for it afterwards.
  */
-export default function SignInWait({ signIn, blocked, onConnected, onFailed, onCancelled }: Props) {
-  const handlers = useRef({ onConnected, onFailed });
+export default function SignInWait({ signIn, blocked, onConnected, onFailed, onCancelled, onChanged }: Props) {
+  const handlers = useRef({ onConnected, onFailed, onChanged });
   useEffect(() => {
-    handlers.current = { onConnected, onFailed };
+    handlers.current = { onConnected, onFailed, onChanged };
   });
 
   useEffect(() => {
@@ -33,6 +45,8 @@ export default function SignInWait({ signIn, blocked, onConnected, onFailed, onC
     pendingCancel.delete(signIn.id);
     let stopped = false;
     let settled = false;
+    // Which environment is active now, in case a saved connection must be taken back.
+    const activeBefore = listConnections().then((list) => list.activeId, () => null);
     void waitForSignIn<Connection>({
       status: () => loginStatus(signIn.id),
       complete: () => completeLogin(signIn.id),
@@ -54,7 +68,13 @@ export default function SignInWait({ signIn, blocked, onConnected, onFailed, onC
         case 'stopped':
           // Cancelled in the moment the connection was saved: cancelling means
           // nothing is kept, so it is taken out again.
-          if (outcome.saved) removeConnection(outcome.saved.id).catch(() => undefined);
+          if (outcome.saved) {
+            const saved = outcome.saved;
+            void activeBefore
+              .then((before) => takeBack(saved, before))
+              .catch(() => undefined)
+              .finally(() => handlers.current.onChanged());
+          }
           break;
         default: {
           const unknown: never = outcome;

@@ -88,7 +88,8 @@ export function UsagePage({ tools }: { tools: readonly Tool[] }) {
   );
 }
 
-const LOG_COLUMNS = [{ label: 'Tool' }, { label: 'Call' }, { label: 'Result' }] as const;
+// "When" sorts on the time of the call, not on its text.
+const LOG_COLUMNS = [{ label: 'Tool' }, { label: 'When' }, { label: 'Result' }] as const;
 
 export function LoggingPage() {
   const { state, run } = useTool();
@@ -116,7 +117,7 @@ export function LoggingPage() {
     <Frame title="Logging" about="MCP calls handled by this environment for this project. It shows what was called and how it went, never the content.">
       <PageCard
         title="MCP call log"
-        description={applied ? `Newest first, only ${applied}.` : 'Newest first.'}
+        description={applied ? `The latest calls of ${applied}.` : 'The latest calls.'}
         footer={
           <div className="admin-actions">
             <button type="button" className="btn btn-secondary" disabled={busy || !older} onClick={() => load(applied, null)}>Newest</button>
@@ -143,6 +144,7 @@ export function LoggingPage() {
                   variant="graph"
                   static
                   title={entry.tool}
+                  listValues={[entry.tool, entry.at, entry.ok ? 'ok' : 'error']}
                   subtitle={`${new Date(entry.at).toLocaleString()} · ${entry.transport || 'mcp'} · ${entry.durationMs === null ? 'no duration' : `${entry.durationMs} ms`} · ${entry.responseTokens} tokens`}
                   badges={entry.ok ? <Badge icon="info" label="ok" tone="ok" /> : <Badge icon="error" label="error" tone="danger" />}
                 />
