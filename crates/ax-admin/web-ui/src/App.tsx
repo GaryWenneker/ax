@@ -1,21 +1,21 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Codicon from '@cc/components/Codicon';
 import { ErrorBoundary } from '@cc/components/ErrorBoundary';
 import { PageCard, PageLoading } from '@cc/components/ui/PageLayout';
-import { ApiError, listConnections, remoteInfo, type Connection, type RemoteInfo } from './api';
+import { listConnections, remoteInfo, type Connection, type RemoteInfo } from './api';
+import { ActiveConnectionContext, type ActiveConnection } from './activeConnection';
 import { SECTIONS, hasAdminAccess, pageFromHash, visiblePages, type PageId } from './pages';
 import ConnectionForm from './components/ConnectionForm';
 import ConnectionsPanel from './components/ConnectionsPanel';
-import { PageView } from './pages/Pages';
+import { PageView } from './pages/index';
 
 type Remote =
   | { state: 'loading' }
-  | { state: 'ready'; info: RemoteInfo }
+  | { state: 'ready'; info: RemoteInfo; connection: Connection }
   | { state: 'error'; message: string };
 
-function describe(e: unknown): string {
-  return e instanceof ApiError || e instanceof Error ? e.message : 'Something went wrong';
-}
+const describe = (e: unknown): string => (e instanceof Error ? e.message : 'Something went wrong');
+const NO_TOOLS: RemoteInfo['tools'] = [];
 
 export default function App() {
   const [connections, setConnections] = useState<Connection[] | null>(null);
@@ -23,28 +23,36 @@ export default function App() {
   const [remote, setRemote] = useState<Remote>({ state: 'loading' });
   const [panel, setPanel] = useState(false);
   const [hash, setHash] = useState(window.location.hash);
+  const latest = useRef(0);
+  const main = useRef<HTMLElement>(null);
 
-  const active = connections?.find((c) => c.active) ?? null;
-
+  // Loads the saved connections and the active environment. Only the newest
+  // call may change what is shown: an older, slower answer is dropped.
   const reload = useCallback(async () => {
+    const ticket = ++latest.current;
+    const current = () => ticket === latest.current;
     try {
       const list = await listConnections();
+      if (!current()) return;
       setConnections(list.connections);
       setStartupError(null);
+      if (list.connections.length === 0) setPanel(false);
       if (!list.activeId) return;
       setRemote({ state: 'loading' });
       try {
-        setRemote({ state: 'ready', info: await remoteInfo() });
+        const loaded = await remoteInfo();
+        if (current()) setRemote({ state: 'ready', ...loaded });
       } catch (e) {
-        setRemote({ state: 'error', message: describe(e) });
+        if (current()) setRemote({ state: 'error', message: describe(e) });
       }
     } catch (e) {
-      setStartupError(describe(e));
+      if (current()) setStartupError(describe(e));
     }
   }, []);
 
   useEffect(() => {
     void reload();
+    return () => { latest.current += 1; };
   }, [reload]);
 
   useEffect(() => {
@@ -53,21 +61,37 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  const tools = remote.state === 'ready' ? remote.info.tools : [];
+  // Pages, tools and names all come from the environment that answered, so
+  // they can never belong to two different environments.
+  const shown = remote.state === 'ready' ? remote.connection : connections?.find((c) => c.active) ?? null;
+  const tools = remote.state === 'ready' ? remote.info.tools : NO_TOOLS;
   const names = useMemo(() => tools.map((tool) => tool.name), [tools]);
   const pages = useMemo(() => visiblePages(names), [names]);
   const page: PageId = pageFromHash(hash, pages);
 
   useEffect(() => {
-    document.title = active ? `${active.name} · Ax Admin` : 'Ax Admin';
-  }, [active]);
+    document.title = shown ? `${shown.name} · Ax Admin` : 'Ax Admin';
+  }, [shown]);
+
+  // A new page starts at its heading for keyboard and screen-reader users.
+  const firstPage = useRef(true);
+  useEffect(() => {
+    if (firstPage.current) firstPage.current = false;
+    else main.current?.focus();
+  }, [page]);
+
+  const reloadSoon = useCallback(() => { void reload(); }, [reload]);
+  const active = useMemo<ActiveConnection | null>(
+    () => (remote.state === 'ready' ? { id: remote.connection.id, name: remote.connection.name, changed: reloadSoon } : null),
+    [remote, reloadSoon],
+  );
 
   if (startupError) {
     return (
       <div className="admin-connect">
         <div className="admin-connect-panel">
           <div className="settings-toast settings-toast--err" role="alert">{startupError}</div>
-          <div className="admin-actions"><button type="button" className="btn" onClick={() => void reload()}>Try again</button></div>
+          <div className="admin-actions"><button type="button" className="btn" onClick={reloadSoon}>Try again</button></div>
         </div>
       </div>
     );
@@ -85,15 +109,17 @@ export default function App() {
             <span className="ax-app-wordmark">Ax<span aria-hidden="true">_</span></span>
             <span>Admin</span>
           </div>
-          <PageCard title="Connect to an Ax environment" description="Enter the address of the environment and credentials for it. You can add more environments afterwards.">
-            <ConnectionForm submitLabel="Connect" onSaved={() => void reload()} />
-          </PageCard>
+          <ErrorBoundary fallbackTitle="The connect form failed to render">
+            <PageCard title="Connect to an Ax environment" description="Enter the address of the environment and credentials for it. You can add more environments afterwards.">
+              <ConnectionForm submitLabel="Connect" onSaved={reloadSoon} />
+            </PageCard>
+          </ErrorBoundary>
         </div>
       </main>
     );
   }
 
-  const admin = hasAdminAccess(names);
+  const access = hasAdminAccess(names) ? 'admin access' : names.includes('ax_remember') ? 'write access' : 'read access';
   return (
     <div className="app">
       <header className="titlebar">
@@ -103,7 +129,7 @@ export default function App() {
             <span>/ admin</span>
           </span>
           <div className="titlebar-tools">
-            <span className="admin-titlebar-current" title={active?.url}>{active?.name}</span>
+            <span className="admin-titlebar-current" title={shown?.url} data-testid="active-name">{shown?.name}</span>
             <button type="button" className="admin-titlebar-button" onClick={() => setPanel(true)} aria-haspopup="dialog">
               <Codicon name="plug" />
               Connections
@@ -120,12 +146,7 @@ export default function App() {
             <div key={section} className="nav-section">
               <div className="nav-section-label">{section}</div>
               {items.map((item) => (
-                <a
-                  key={item.id}
-                  href={`#/${item.id}`}
-                  className={`nav-item${item.id === page ? ' active' : ''}`}
-                  aria-current={item.id === page ? 'page' : undefined}
-                >
+                <a key={item.id} href={`#/${item.id}`} className={`nav-item${item.id === page ? ' active' : ''}`} aria-current={item.id === page ? 'page' : undefined}>
                   <Codicon name={item.icon} className="nav-icon" />
                   {item.label}
                 </a>
@@ -136,22 +157,24 @@ export default function App() {
       </nav>
 
       <div className="workspace">
-        <main className="container" id="main-content">
-          {remote.state === 'loading' && <PageLoading label={`Connecting to ${active?.name ?? 'the environment'}…`} />}
+        <main ref={main} className="container" id="main-content" tabIndex={-1}>
+          {remote.state === 'loading' && <PageLoading label={`Connecting to ${shown?.name ?? 'the environment'}…`} />}
           {remote.state === 'error' && (
             <div className="page settings-page">
               <div className="settings-toast settings-toast--err" role="alert">{remote.message}</div>
               <div className="admin-actions">
-                <button type="button" className="btn" onClick={() => void reload()}>Try again</button>
+                <button type="button" className="btn" onClick={reloadSoon}>Try again</button>
                 <button type="button" className="btn btn-secondary" onClick={() => setPanel(true)}>Open connections</button>
               </div>
             </div>
           )}
-          {remote.state === 'ready' && (
-            // A new connection or page starts from a clean page state.
-            <ErrorBoundary key={`${active?.id}:${page}`} fallbackTitle="This view failed to render">
-              <PageView page={page} tools={tools} />
-            </ErrorBoundary>
+          {active && (
+            <ActiveConnectionContext.Provider value={active}>
+              {/* A new environment or page starts from a clean page state. */}
+              <ErrorBoundary key={`${active.id}:${page}`} fallbackTitle="This view failed to render">
+                <PageView page={page} tools={tools} />
+              </ErrorBoundary>
+            </ActiveConnectionContext.Provider>
           )}
         </main>
       </div>
@@ -159,12 +182,12 @@ export default function App() {
       <footer className="statusbar status-bar" aria-label="Connection status">
         <div className="statusbar-inner">
           <div className="statusbar-left">
-            <span className="status-item"><Codicon name="server-environment" /> <span className="status-lbl">{active?.name}</span></span>
+            <span className="status-item"><Codicon name="server-environment" /> <span className="status-lbl">{shown?.name}</span></span>
             {remote.state === 'ready' && (
               <>
                 <span className="status-item"><span className="status-lbl">{remote.info.serverName || 'Ax'} {remote.info.serverVersion}</span></span>
                 <span className="status-item"><span className="status-lbl">{tools.length} tools</span></span>
-                <span className="status-item" data-testid="access-level"><span className="status-lbl">{admin ? 'admin access' : names.includes('ax_remember') ? 'write access' : 'read access'}</span></span>
+                <span className="status-item" data-testid="access-level"><span className="status-lbl">{access}</span></span>
               </>
             )}
             {remote.state === 'error' && <span className="status-item"><span className="status-lbl">not connected</span></span>}
@@ -175,7 +198,11 @@ export default function App() {
         </div>
       </footer>
 
-      {panel && <ConnectionsPanel connections={connections} onClose={() => setPanel(false)} onChanged={reload} />}
+      {panel && (
+        <ErrorBoundary fallbackTitle="The connections panel failed to render">
+          <ConnectionsPanel connections={connections} onClose={() => setPanel(false)} onChanged={reload} />
+        </ErrorBoundary>
+      )}
     </div>
   );
 }

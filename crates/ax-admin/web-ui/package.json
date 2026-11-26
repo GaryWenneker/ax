@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test": "node --experimental-strip-types --test src/markdownModel.test.ts src/pages.test.ts src/schemaForm.test.ts src/connectionInput.test.ts",
+    "typecheck": "tsc && tsc -p tsconfig.tools.json",
+    "test": "node --experimental-strip-types --test src/markdownModel.test.ts src/pages.test.ts src/schemaForm.test.ts src/connectionInput.test.ts src/signIn.test.ts src/remoteData.test.ts",
     "test:e2e": "playwright test"
   },
   "dependencies": {
@@ -16,6 +17,7 @@
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
+    "@types/node": "^22.20.7",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react-swc": "^4.3.3",

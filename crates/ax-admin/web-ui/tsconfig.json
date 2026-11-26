@@ -15,6 +15,11 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
+    // The Command Center sources imported through @cc are part of this program
+    // and are compiled with these options too. They do not pass
+    // noUncheckedIndexedAccess, exactOptionalPropertyTypes, noImplicitOverride or
+    // noImplicitReturns, so those stay at the Command Center's own settings.
+    // The sources in src/ are written to pass them (checked when they were added).
     "baseUrl": ".",
     "paths": {
       "@cc/*": ["../../ax-web/web-ui/src/*"],

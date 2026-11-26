@@ -17,7 +17,7 @@ export function parseInline(source: string): Inline[] {
   let last = 0;
   for (let match = pattern.exec(source); match; match = pattern.exec(source)) {
     if (match.index > last) parts.push({ kind: 'text', text: source.slice(last, match.index) });
-    parts.push(match[1] !== undefined ? { kind: 'code', text: match[1] } : { kind: 'strong', text: match[2] });
+    parts.push(match[1] !== undefined ? { kind: 'code', text: match[1] } : { kind: 'strong', text: match[2] ?? '' });
     last = pattern.lastIndex;
   }
   if (last < source.length) parts.push({ kind: 'text', text: source.slice(last) });
@@ -30,7 +30,15 @@ const BULLET = /^\s*[-*]\s+(.*)$/;
 const ORDERED = /^\s*\d+[.)]\s+(.*)$/;
 // "  12 | let x" or "12: let x": numbered source from the graph.
 const NUMBERED = /^\s*\d+\s*[|│:]\s?/;
-const TABLE_RULE = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+const RULE_CELL = /^:?-{3,}:?$/;
+
+/** The line under a table header: cells of dashes, such as "|---|:---:|". */
+function isTableRule(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed.includes('-')) return false;
+  const inner = trimmed.replace(/^\|/, '').replace(/\|$/, '');
+  return inner.split('|').every((cell) => RULE_CELL.test(cell.trim()));
+}
 
 function cells(line: string): Inline[][] {
   const trimmed = line.trim().replace(/^\|/, '').replace(/\|$/, '');
@@ -52,37 +60,37 @@ export function parseMarkdown(source: string): Block[] {
   };
   let i = 0;
   while (i < lines.length) {
-    const line = lines[i];
+    const line = lines[i] ?? '';
     const fence = FENCE.exec(line);
     if (fence) {
       flush();
       const body: string[] = [];
       i += 1;
-      while (i < lines.length && !FENCE.test(lines[i])) body.push(lines[i++]);
+      while (i < lines.length && !FENCE.test(lines[i] ?? '')) body.push(lines[i++] ?? '');
       i += 1; // closing fence, or the end of an unterminated block
-      blocks.push({ type: 'code', language: fence[1], text: body.join('\n') });
+      blocks.push({ type: 'code', language: fence[1] ?? '', text: body.join('\n') });
       continue;
     }
     const heading = HEADING.exec(line);
     if (heading) {
       flush();
-      blocks.push({ type: 'heading', level: heading[1].length, inline: parseInline(heading[2].trim()) });
+      blocks.push({ type: 'heading', level: (heading[1] ?? '#').length, inline: parseInline((heading[2] ?? '').trim()) });
       i += 1;
       continue;
     }
-    if (isTableRow(line) && i + 1 < lines.length && TABLE_RULE.test(lines[i + 1])) {
+    if (isTableRow(line) && i + 1 < lines.length && isTableRule(lines[i + 1] ?? '')) {
       flush();
       const header = cells(line);
       const rows: Inline[][][] = [];
       i += 2;
-      while (i < lines.length && isTableRow(lines[i])) rows.push(cells(lines[i++]));
+      while (i < lines.length && isTableRow(lines[i] ?? '')) rows.push(cells(lines[i++] ?? ''));
       blocks.push({ type: 'table', header, rows });
       continue;
     }
-    if (NUMBERED.test(line) && i + 1 < lines.length && NUMBERED.test(lines[i + 1])) {
+    if (NUMBERED.test(line) && i + 1 < lines.length && NUMBERED.test(lines[i + 1] ?? '')) {
       flush();
       const body: string[] = [];
-      while (i < lines.length && NUMBERED.test(lines[i])) body.push(lines[i++]);
+      while (i < lines.length && NUMBERED.test(lines[i] ?? '')) body.push(lines[i++] ?? '');
       blocks.push({ type: 'code', language: 'source', text: body.join('\n') });
       continue;
     }
@@ -93,7 +101,7 @@ export function parseMarkdown(source: string): Block[] {
       const pattern = bullet ? BULLET : ORDERED;
       const items: Inline[][] = [];
       for (let item = pattern.exec(lines[i] ?? ''); item; item = pattern.exec(lines[i] ?? '')) {
-        items.push(parseInline(item[1]));
+        items.push(parseInline(item[1] ?? ''));
         i += 1;
         if (i >= lines.length) break;
       }

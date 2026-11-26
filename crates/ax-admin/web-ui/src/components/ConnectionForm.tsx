@@ -1,16 +1,8 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent } from 'react';
 import { parseConnectionDetails } from '@cc/connectionTransfer';
-import {
-  ApiError,
-  cancelLogin,
-  createConnection,
-  loginStatus,
-  startLogin,
-  testConnection,
-  updateConnection,
-  type Connection,
-} from '../api';
-import { EMPTY_INPUT, inputError, suggestedName, type ConnectionInput } from '../connectionInput';
+import { createConnection, startLogin, testConnection, updateConnection, type Connection, type StartedSignIn } from '../api';
+import { EMPTY_INPUT, inputProblem, suggestedName, type ConnectionInput, type InputField } from '../connectionInput';
+import SignInWait from './SignInWait';
 
 interface Props {
   /** A saved connection to edit; absent for a new one. */
@@ -20,13 +12,13 @@ interface Props {
   onCancel?: () => void;
 }
 
-interface PendingLogin {
-  id: string;
-  authorizationUrl: string;
-}
+type Note = { kind: 'ok'; text: string } | { kind: 'err'; text: string; field: InputField | null };
 
-function message(e: unknown): string {
-  return e instanceof ApiError || e instanceof Error ? e.message : 'Something went wrong';
+const describe = (e: unknown): string => (e instanceof Error ? e.message : 'Something went wrong');
+
+/** Opens the sign-in page. A browser may refuse a tab that is not opened by the click itself. */
+function openTab(): Window | null {
+  return window.open('about:blank', '_blank');
 }
 
 /** Address and credentials for one Ax environment. Nothing is saved until the server accepts them. */
@@ -38,68 +30,42 @@ export default function ConnectionForm({ editing, submitLabel, onSaved, onCancel
       : EMPTY_INPUT,
   );
   const [busy, setBusy] = useState<'test' | 'save' | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [ok, setOk] = useState<string | null>(null);
-  const [pasting, setPasting] = useState(false);
-  const [pasted, setPasted] = useState('');
-  const [login, setLogin] = useState<PendingLogin | null>(null);
-  const saved = useRef(onSaved);
-  saved.current = onSaved;
+  const [note, setNote] = useState<Note | null>(null);
+  const [pasted, setPasted] = useState<string | null>(null);
+  const [signIn, setSignIn] = useState<{ started: StartedSignIn; blocked: boolean } | null>(null);
 
   const set = (patch: Partial<ConnectionInput>) => {
     setInput((current) => ({ ...current, ...patch }));
-    setError(null);
-    setOk(null);
+    setNote(null);
   };
+  const fail = (e: unknown) => setNote({ kind: 'err', text: describe(e), field: null });
 
-  // While the browser sign-in is open, ask once a second whether it finished.
-  useEffect(() => {
-    if (!login) return;
-    let stopped = false;
-    const timer = window.setInterval(async () => {
-      try {
-        const status = await loginStatus(login.id);
-        if (stopped || status.state === 'pending') return;
-        setLogin(null);
-        if (status.state === 'connected' && status.connection) saved.current(status.connection);
-        else setError(status.message ?? 'Sign-in failed.');
-      } catch (e) {
-        if (stopped) return;
-        setLogin(null);
-        setError(message(e));
-      }
-    }, 1000);
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-    };
-  }, [login]);
-
-  const keyAuth = () => (input.key.trim() ? { type: 'api_key' as const, key: input.key.trim() } : undefined);
   const oauthEdit = editing?.auth === 'oauth';
+  const key = input.key.trim();
+  const addressChanged = editing !== undefined && input.url.trim() !== editing.url;
 
   const check = (): boolean => {
-    const problem = oauthEdit ? null : inputError(input, Boolean(editing));
-    setError(problem);
-    setOk(null);
+    let problem = oauthEdit ? null : inputProblem(input, Boolean(editing));
+    // A saved key belongs to its address; another address needs its own key.
+    if (!problem && addressChanged && !key) problem = { field: 'key', message: 'Enter the key again to use another address.' };
+    setNote(problem ? { kind: 'err', text: problem.message, field: problem.field } : null);
     return problem === null;
   };
 
   const test = async () => {
     if (!check()) return;
-    if (input.mode === 'oauth' && !editing) {
-      setOk('The address looks right. Access is checked when you sign in.');
+    if (input.mode === 'oauth') {
+      setNote({ kind: 'ok', text: 'The address looks right. Access is checked when you sign in.' });
       return;
     }
     setBusy('test');
     try {
-      const auth = keyAuth();
-      const { info } = await testConnection(
-        editing && !auth ? { id: editing.id, url: input.url.trim() } : { name: input.name, url: input.url.trim(), auth },
-      );
-      setOk(`Connected to ${info.serverName || 'Ax'} ${info.serverVersion} with ${info.tools.length} tools.`);
+      const info = editing && !key
+        ? await testConnection({ id: editing.id })
+        : await testConnection({ name: input.name, url: input.url.trim(), auth: { type: 'api_key', key } });
+      setNote({ kind: 'ok', text: `Connected to ${info.serverName || 'Ax'} ${info.serverVersion} with ${info.tools.length} tools.` });
     } catch (e) {
-      setError(message(e));
+      fail(e);
     } finally {
       setBusy(null);
     }
@@ -108,33 +74,34 @@ export default function ConnectionForm({ editing, submitLabel, onSaved, onCancel
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!check()) return;
+    // Opened in the click itself; pointed at the sign-in page once it is known.
+    const tab = !editing && input.mode === 'oauth' ? openTab() : null;
     setBusy('save');
     try {
       if (editing) {
         const patch = oauthEdit
           ? { name: input.name }
-          : { name: input.name, url: input.url.trim(), auth: keyAuth() };
-        const { connection } = await updateConnection(editing.id, patch);
-        onSaved(connection);
+          : { name: input.name, ...(addressChanged ? { url: input.url.trim() } : {}), ...(key ? { auth: { type: 'api_key' as const, key } } : {}) };
+        onSaved(await updateConnection(editing.id, patch));
       } else if (input.mode === 'api_key') {
-        const { connection } = await createConnection({
-          name: input.name,
-          url: input.url.trim(),
-          auth: { type: 'api_key', key: input.key.trim() },
-        });
-        onSaved(connection);
+        onSaved(await createConnection({ name: input.name, url: input.url.trim(), auth: { type: 'api_key', key } }));
       } else {
         const started = await startLogin({
           name: input.name,
           url: input.url.trim(),
           clientId: input.clientId.trim(),
           write: input.write,
+          admin: input.admin,
         });
-        setLogin(started);
-        window.open(started.authorizationUrl, '_blank', 'noopener');
+        if (tab) {
+          tab.opener = null;
+          tab.location.replace(started.authorizationUrl);
+        }
+        setSignIn({ started, blocked: tab === null });
       }
     } catch (e) {
-      setError(message(e));
+      tab?.close();
+      fail(e);
     } finally {
       setBusy(null);
     }
@@ -142,45 +109,39 @@ export default function ConnectionForm({ editing, submitLabel, onSaved, onCancel
 
   const usePasted = () => {
     try {
-      const details = parseConnectionDetails(pasted.trim());
+      const details = parseConnectionDetails((pasted ?? '').trim());
       set({
         url: details.projectMcpUrl,
         clientId: details.nativeClientId ?? '',
-        mode: details.nativeClientId ? 'oauth' : input.mode,
+        ...(details.nativeClientId ? { mode: 'oauth' as const, key: '' } : {}),
       });
-      setPasting(false);
-      setPasted('');
+      setPasted(null);
     } catch (e) {
-      setError(message(e));
+      fail(e);
     }
   };
 
-  const stopLogin = async () => {
-    if (!login) return;
-    const id = login.id;
-    setLogin(null);
-    await cancelLogin(id).catch(() => undefined);
-  };
-
-  if (login) {
+  if (signIn) {
     return (
-      <div className="admin-form" role="status" aria-live="polite">
-        <p>Finish signing in in the browser tab that just opened. This page continues when the environment has granted access.</p>
-        <p className="admin-note">
-          No new tab? <a href={login.authorizationUrl} target="_blank" rel="noopener noreferrer">Open the sign-in page</a>.
-        </p>
-        <div className="admin-actions">
-          <button type="button" className="btn btn-secondary" onClick={() => void stopLogin()}>Cancel sign-in</button>
-        </div>
-      </div>
+      <SignInWait
+        signIn={signIn.started}
+        blocked={signIn.blocked}
+        onConnected={onSaved}
+        onFailed={(message) => { setSignIn(null); setNote({ kind: 'err', text: message, field: null }); }}
+        onCancelled={() => setSignIn(null)}
+      />
     );
   }
 
+  const noteId = `${ids}-note`;
+  const invalid = (field: InputField) =>
+    note?.kind === 'err' && note.field === field ? { 'aria-invalid': true, 'aria-describedby': noteId } : {};
   const placeholderName = suggestedName(input.url) || 'Production';
+
   return (
     <form className="admin-form" onSubmit={(e) => void submit(e)} noValidate aria-label={editing ? 'Edit connection' : 'New connection'}>
-      {error && <div className="settings-toast settings-toast--err" role="alert">{error}</div>}
-      {ok && <div className="settings-toast settings-toast--ok" role="status">{ok}</div>}
+      {note?.kind === 'err' && <div id={noteId} className="settings-toast settings-toast--err" role="alert">{note.text}</div>}
+      {note?.kind === 'ok' && <div className="settings-toast settings-toast--ok" role="status">{note.text}</div>}
 
       <div className="admin-field">
         <label htmlFor={`${ids}-url`}>Address</label>
@@ -196,24 +157,26 @@ export default function ConnectionForm({ editing, submitLabel, onSaved, onCancel
           disabled={oauthEdit}
           onChange={(e) => set({ url: e.target.value })}
           required
+          {...invalid('url')}
         />
         <span className="admin-field-hint">The project MCP address of the environment. It is the only way this application talks to it.</span>
       </div>
 
       {!editing && (
-        <div className="admin-field" role="radiogroup" aria-label="Credentials">
-          <span className="admin-field-label">Credentials</span>
+        <fieldset className="admin-field admin-fieldset">
+          <legend className="admin-field-label">Credentials</legend>
           <div className="admin-choice">
             <label>
               <input type="radio" name={`${ids}-mode`} checked={input.mode === 'api_key'} onChange={() => set({ mode: 'api_key' })} />
               API key
             </label>
             <label>
-              <input type="radio" name={`${ids}-mode`} checked={input.mode === 'oauth'} onChange={() => set({ mode: 'oauth' })} />
+              {/* The key is dropped when it is no longer the chosen credential. */}
+              <input type="radio" name={`${ids}-mode`} checked={input.mode === 'oauth'} onChange={() => set({ mode: 'oauth', key: '' })} />
               Browser sign-in
             </label>
           </div>
-        </div>
+        </fieldset>
       )}
 
       {input.mode === 'api_key' ? (
@@ -229,6 +192,7 @@ export default function ConnectionForm({ editing, submitLabel, onSaved, onCancel
             value={input.key}
             onChange={(e) => set({ key: e.target.value })}
             required={!editing}
+            {...invalid('key')}
           />
           <span className="admin-field-hint">Stored in this computer's credential store, never in a file. A key with the admin grant shows the management pages.</span>
         </div>
@@ -246,14 +210,21 @@ export default function ConnectionForm({ editing, submitLabel, onSaved, onCancel
               disabled={oauthEdit}
               onChange={(e) => set({ clientId: e.target.value })}
               required
+              {...invalid('clientId')}
             />
             <span className="admin-field-hint">The public client ID from the environment's connection details. It is not a password.</span>
           </div>
           {!editing && (
-            <label className="admin-choice">
-              <input type="checkbox" checked={input.write} onChange={(e) => set({ write: e.target.checked })} />
-              Also ask for write access (adding memories and rules)
-            </label>
+            <>
+              <label className="admin-choice">
+                <input type="checkbox" checked={input.write || input.admin} disabled={input.admin} onChange={(e) => set({ write: e.target.checked })} />
+                Also ask for write access (adding memories and rules)
+              </label>
+              <label className="admin-choice">
+                <input type="checkbox" checked={input.admin} onChange={(e) => set({ admin: e.target.checked })} />
+                Also ask for admin access (the management pages; your account needs the admin grant)
+              </label>
+            </>
           )}
         </>
       )}
@@ -268,21 +239,22 @@ export default function ConnectionForm({ editing, submitLabel, onSaved, onCancel
           placeholder={placeholderName}
           value={input.name}
           onChange={(e) => set({ name: e.target.value })}
+          {...invalid('name')}
         />
       </div>
 
-      {!editing && (pasting ? (
+      {!editing && (pasted !== null ? (
         <div className="admin-field">
           <label htmlFor={`${ids}-paste`}>Connection details copied from Ax</label>
-          <textarea id={`${ids}-paste`} className="settings-input" value={pasted} onChange={(e) => setPasted(e.target.value)} spellCheck={false} />
+          <textarea id={`${ids}-paste`} className="settings-input" value={pasted} onChange={(e) => setPasted(e.target.value)} spellCheck={false} autoFocus />
           <div className="admin-actions">
             <button type="button" className="btn btn-secondary" onClick={usePasted} disabled={!pasted.trim()}>Use these details</button>
-            <button type="button" className="btn btn-subtle" onClick={() => { setPasting(false); setPasted(''); }}>Cancel</button>
+            <button type="button" className="btn btn-subtle" onClick={() => setPasted(null)}>Cancel</button>
           </div>
         </div>
       ) : (
         <div className="admin-actions">
-          <button type="button" className="btn btn-subtle" onClick={() => setPasting(true)}>Paste connection details</button>
+          <button type="button" className="btn btn-subtle" onClick={() => setPasted('')}>Paste connection details</button>
         </div>
       ))}
 

@@ -12,7 +12,7 @@ test('a context-only server shows no management pages', () => {
 
 test('an admin grant adds the management pages', () => {
   const ids = visiblePages([...CONTEXT, ...ADMIN_TOOLS]).map((p) => p.id);
-  for (const id of ['operations', 'files', 'usage', 'logging']) assert.ok(ids.includes(id as never), id);
+  for (const id of ['operations', 'files', 'usage', 'logging'] as const) assert.ok(ids.includes(id), id);
   assert.equal(hasAdminAccess([...CONTEXT, 'ax_logs']), true);
 });
 
@@ -27,7 +27,7 @@ test('every admin tool belongs to a management page and to no other', () => {
   for (const tool of ADMIN_TOOLS) {
     const owners = PAGES.filter((p) => p.tools.includes(tool));
     assert.equal(owners.length, 1, tool);
-    assert.equal(owners[0].section, 'Management', tool);
+    assert.equal(owners[0]?.section, 'Management', tool);
   }
   const managed = PAGES.filter((p) => p.section === 'Management').flatMap((p) => p.tools);
   assert.deepEqual([...managed].sort(), [...ADMIN_TOOLS].sort());

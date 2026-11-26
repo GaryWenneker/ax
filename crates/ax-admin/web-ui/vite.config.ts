@@ -21,7 +21,15 @@ export default defineConfig({
   server: {
     fs: { allow: ['.', commandCenter] },
     proxy: {
-      '/api': { target: 'http://127.0.0.1:7080', changeOrigin: false },
+      // ax-admin answers only requests that name its own address. The proxy
+      // presents itself as that address and drops the dev server's Origin.
+      '/api': {
+        target: 'http://127.0.0.1:7080',
+        changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('proxyReq', (request) => request.removeHeader('origin'));
+        },
+      },
     },
   },
 });

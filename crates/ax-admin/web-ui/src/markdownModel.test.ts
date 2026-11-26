@@ -26,10 +26,16 @@ test('headings, lists and paragraphs', () => {
   assert.deepEqual(blocks.map((b) => b.type), ['heading', 'text', 'list', 'list']);
   assert.deepEqual(blocks[0], { type: 'heading', level: 1, inline: [{ kind: 'text', text: 'Status' }] });
   assert.deepEqual(blocks[1], { type: 'text', inline: [{ kind: 'text', text: 'Indexed 12 files.\nUp to date.' }] });
-  assert.equal(blocks[2].type === 'list' && blocks[2].ordered, false);
-  assert.equal(blocks[2].type === 'list' && blocks[2].items.length, 2);
-  assert.equal(blocks[3].type === 'list' && blocks[3].ordered, true);
-  assert.equal(blocks[3].type === 'list' && blocks[3].items.length, 2);
+  assert.deepEqual(blocks[2], {
+    type: 'list',
+    ordered: false,
+    items: [[{ kind: 'text', text: 'one' }], [{ kind: 'text', text: 'two ' }, { kind: 'code', text: 'x' }]],
+  });
+  assert.deepEqual(blocks[3], {
+    type: 'list',
+    ordered: true,
+    items: [[{ kind: 'text', text: 'first' }], [{ kind: 'text', text: 'second' }]],
+  });
 });
 
 test('fenced code keeps its text, also when the fence is never closed', () => {
@@ -49,22 +55,41 @@ test('numbered source lines become one source block', () => {
     { type: 'text', inline: [{ kind: 'text', text: 'done' }] },
   ]);
   // One numbered line alone is ordinary text ("3: see below").
-  assert.equal(parseMarkdown('3: see below\nnext')[0].type, 'text');
+  assert.equal(parseMarkdown('3: see below\nnext')[0]?.type, 'text');
 });
 
 test('tables need a rule line under the header', () => {
   const blocks = parseMarkdown('| Tool | ms |\n|---|---|\n| ax_sync | 12 |\n| `ax_index` | 900 |\n\ntail');
   assert.equal(blocks.length, 2);
-  const table = blocks[0];
-  assert.equal(table.type, 'table');
-  if (table.type !== 'table') return;
-  assert.deepEqual(table.header, [[{ kind: 'text', text: 'Tool' }], [{ kind: 'text', text: 'ms' }]]);
-  assert.equal(table.rows.length, 2);
-  assert.deepEqual(table.rows[1][0], [{ kind: 'code', text: 'ax_index' }]);
-  assert.equal(parseMarkdown('| not | a table |')[0].type, 'text');
+  assert.deepEqual(blocks[0], {
+    type: 'table',
+    header: [[{ kind: 'text', text: 'Tool' }], [{ kind: 'text', text: 'ms' }]],
+    rows: [
+      [[{ kind: 'text', text: 'ax_sync' }], [{ kind: 'text', text: '12' }]],
+      [[{ kind: 'code', text: 'ax_index' }], [{ kind: 'text', text: '900' }]],
+    ],
+  });
+  assert.equal(parseMarkdown('| not | a table |')[0]?.type, 'text');
 });
 
 test('empty and whitespace-only text produce no blocks', () => {
   assert.deepEqual(parseMarkdown(''), []);
   assert.deepEqual(parseMarkdown('\n \n\r\n'), []);
+});
+
+test('a long line of blanks under a table row is handled in linear time', () => {
+  const started = performance.now();
+  const blocks = parseMarkdown(`| a | b |\n${' '.repeat(400_000)}\n| c | d |`);
+  assert.ok(performance.now() - started < 500, 'parsing must not backtrack');
+  assert.equal(blocks.length, 2);
+  assert.ok(blocks.every((block) => block.type === 'text'));
+});
+
+test('table rule lines with alignment marks and missing outer bars are recognised', () => {
+  for (const rule of ['|---|---|', '| :--- | ---: |', '---|---', ':---:|:---:']) {
+    assert.equal(parseMarkdown(`| a | b |\n${rule}\n| 1 | 2 |`)[0]?.type, 'table', rule);
+  }
+  for (const notRule of ['| -- | -- |', '| a | b |', '|   |   |', '']) {
+    assert.notEqual(parseMarkdown(`| a | b |\n${notRule}\n| 1 | 2 |`)[0]?.type, 'table', notRule);
+  }
 });

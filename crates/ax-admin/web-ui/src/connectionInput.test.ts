@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { EMPTY_INPUT, addressError, inputError, suggestedName } from './connectionInput.ts';
+import { EMPTY_INPUT, addressError, inputError, inputProblem, suggestedName } from './connectionInput.ts';
 
 test('an address must be a project MCP address over https, or http on this computer', () => {
   for (const ok of [
@@ -58,4 +58,14 @@ test('the suggested name is host and project', () => {
   assert.equal(suggestedName('https://ax.example.com/projects/my-app/mcp'), 'ax.example.com / my-app');
   assert.equal(suggestedName('https://ax.example.com/'), 'ax.example.com');
   assert.equal(suggestedName('nope'), '');
+});
+
+test('each problem names the field it belongs to', () => {
+  const url = 'https://ax.example.com/projects/app/mcp';
+  assert.equal(inputProblem(EMPTY_INPUT)?.field, 'url');
+  assert.equal(inputProblem({ ...EMPTY_INPUT, url })?.field, 'key');
+  assert.equal(inputProblem({ ...EMPTY_INPUT, url, key: 'k', name: 'x'.repeat(81) })?.field, 'name');
+  assert.equal(inputProblem({ ...EMPTY_INPUT, url, mode: 'oauth' })?.field, 'clientId');
+  assert.equal(inputProblem({ ...EMPTY_INPUT, url: 'http://127.0.0.1:1/projects/a/mcp', mode: 'oauth', clientId: 'c' })?.field, 'url');
+  assert.equal(inputProblem({ ...EMPTY_INPUT, url, key: 'k' }), null);
 });

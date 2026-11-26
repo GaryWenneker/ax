@@ -82,6 +82,7 @@ ADMIN="$(wait_for "$WORK/admin.log" 'http://127\.0\.0\.1:[0-9]+')"
 export AX_ADMIN_URL="$ADMIN"
 export AX_E2E_ALPHA_URL="$REMOTE/projects/alpha/mcp"
 export AX_E2E_BETA_URL="$REMOTE/projects/beta/mcp"
+export AX_E2E_ALPHA_DIR="$WORK/alpha"
 export AX_E2E_CONTEXT_KEY="$CONTEXT_KEY" AX_E2E_ADMIN_KEY="$ADMIN_KEY" AX_E2E_BETA_KEY="$BETA_KEY"
 
 if [[ "$MODE" == "--serve" ]]; then

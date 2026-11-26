@@ -1,4 +1,9 @@
 // Calls to ax-admin's own loopback API. Keys go in; they never come back.
+// Every answer is checked before it is used: nothing here is cast on trust.
+import { toolsFrom, type Tool } from './remoteData';
+import type { SignInStatus } from './signIn';
+
+export type { Tool } from './remoteData';
 
 export interface Connection {
   id: string;
@@ -10,19 +15,11 @@ export interface Connection {
   active: boolean;
 }
 
-export interface Tool {
-  name: string;
-  description?: string;
-  inputSchema?: unknown;
-  annotations?: { readOnlyHint?: boolean };
-}
-
 export interface RemoteInfo {
   serverName: string;
   serverVersion: string;
   protocolVersion: string;
   tools: Tool[];
-  connection?: Connection;
 }
 
 export interface ToolResult {
@@ -32,8 +29,8 @@ export interface ToolResult {
 }
 
 export class ApiError extends Error {
-  code: string;
-  status: number;
+  readonly code: string;
+  readonly status: number;
   constructor(status: number, code: string, message: string) {
     super(message);
     this.status = status;
@@ -41,9 +38,47 @@ export class ApiError extends Error {
   }
 }
 
+type Fields = Record<string, unknown>;
+
+function fields(value: unknown): Fields {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Fields) : {};
+}
+
+function text(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function unexpected(): ApiError {
+  return new ApiError(0, 'unexpected_answer', 'ax-admin gave an unexpected answer. Reload this page.');
+}
+
+function connectionFrom(value: unknown): Connection {
+  const c = fields(value);
+  if (typeof c.id !== 'string' || typeof c.name !== 'string' || typeof c.url !== 'string') throw unexpected();
+  return {
+    id: c.id,
+    name: c.name,
+    url: c.url,
+    auth: c.auth === 'oauth' ? 'oauth' : 'api_key',
+    clientId: typeof c.clientId === 'string' ? c.clientId : null,
+    write: c.write === true,
+    active: c.active === true,
+  };
+}
+
+function infoFrom(value: unknown): RemoteInfo {
+  const info = fields(value);
+  return {
+    serverName: text(info.serverName),
+    serverVersion: text(info.serverVersion),
+    protocolVersion: text(info.protocolVersion),
+    tools: toolsFrom(info.tools),
+  };
+}
+
 let csrf = '';
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<Fields> {
   let response: Response;
   try {
     response = await fetch(`/api${path}`, {
@@ -52,7 +87,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
         ...(method === 'GET' ? {} : { 'x-ax-admin-csrf': csrf }),
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       cache: 'no-store',
     });
   } catch {
@@ -60,10 +95,15 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   const data: unknown = await response.json().catch(() => null);
   if (!response.ok) {
-    const error = (data ?? {}) as { code?: string; error?: string };
-    throw new ApiError(response.status, error.code ?? 'error', error.error ?? `Request failed (HTTP ${response.status})`);
+    const error = fields(data);
+    throw new ApiError(
+      response.status,
+      text(error.code) || 'error',
+      text(error.error) || `Request failed (HTTP ${response.status})`,
+    );
   }
-  return data as T;
+  if (typeof data !== 'object' || data === null) throw unexpected();
+  return fields(data);
 }
 
 export interface ConnectionList {
@@ -72,55 +112,75 @@ export interface ConnectionList {
 }
 
 export async function listConnections(): Promise<ConnectionList> {
-  const data = await request<ConnectionList & { csrf: string }>('GET', '/connections');
+  const data = await request('GET', '/connections');
+  if (typeof data.csrf !== 'string' || !Array.isArray(data.connections)) throw unexpected();
   csrf = data.csrf;
-  return { connections: data.connections, activeId: data.activeId };
+  return {
+    connections: data.connections.map(connectionFrom),
+    activeId: typeof data.activeId === 'string' ? data.activeId : null,
+  };
 }
 
 type KeyAuth = { type: 'api_key'; key: string };
 
-export function testConnection(input: { id?: string; name?: string; url?: string; auth?: KeyAuth }) {
-  return request<{ ok: true; info: RemoteInfo }>('POST', '/connections/test', input);
+/** Tests a saved connection as it is saved, or a new address and key. */
+export async function testConnection(input: { id: string } | { name: string; url: string; auth: KeyAuth }): Promise<RemoteInfo> {
+  return infoFrom((await request('POST', '/connections/test', input)).info);
 }
 
-export function createConnection(input: { name: string; url: string; auth: KeyAuth }) {
-  return request<{ connection: Connection; info: RemoteInfo }>('POST', '/connections', input);
+export async function createConnection(input: { name: string; url: string; auth: KeyAuth }): Promise<Connection> {
+  return connectionFrom((await request('POST', '/connections', input)).connection);
 }
 
-export function updateConnection(id: string, input: { name?: string; url?: string; auth?: KeyAuth }) {
-  return request<{ connection: Connection }>('PUT', `/connections/${encodeURIComponent(id)}`, input);
+export async function updateConnection(id: string, input: { name?: string; url?: string; auth?: KeyAuth }): Promise<Connection> {
+  return connectionFrom((await request('PUT', `/connections/${encodeURIComponent(id)}`, input)).connection);
 }
 
-export function removeConnection(id: string) {
-  return request<{ removed: string; activeId: string | null }>('DELETE', `/connections/${encodeURIComponent(id)}`);
+export async function removeConnection(id: string): Promise<void> {
+  await request('DELETE', `/connections/${encodeURIComponent(id)}`);
 }
 
-export function activateConnection(id: string) {
-  return request<{ activeId: string }>('POST', `/connections/${encodeURIComponent(id)}/activate`, {});
+export async function activateConnection(id: string): Promise<void> {
+  await request('POST', `/connections/${encodeURIComponent(id)}/activate`, {});
 }
 
-export function startLogin(input: { name: string; url: string; clientId: string; write: boolean }) {
-  return request<{ id: string; authorizationUrl: string }>('POST', '/login', input);
+export interface StartedSignIn {
+  id: string;
+  authorizationUrl: string;
 }
 
-export interface LoginStatus {
-  state: 'pending' | 'connected' | 'failed';
-  message?: string;
-  connection?: Connection;
+export async function startLogin(input: { name: string; url: string; clientId: string; write: boolean; admin: boolean }): Promise<StartedSignIn> {
+  const data = await request('POST', '/login', input);
+  if (typeof data.id !== 'string' || typeof data.authorizationUrl !== 'string') throw unexpected();
+  // Only ever opened as a web page.
+  if (!/^https:\/\//i.test(data.authorizationUrl)) throw unexpected();
+  return { id: data.id, authorizationUrl: data.authorizationUrl };
 }
 
-export function loginStatus(id: string) {
-  return request<LoginStatus>('GET', `/login/${encodeURIComponent(id)}`);
+export async function loginStatus(id: string): Promise<SignInStatus> {
+  const data = await request('GET', `/login/${encodeURIComponent(id)}`);
+  if (data.state === 'pending' || data.state === 'ready') return { state: data.state };
+  return { state: 'failed', message: text(data.message) || 'Sign-in failed.' };
 }
 
-export function cancelLogin(id: string) {
-  return request<{ cancelled: true }>('DELETE', `/login/${encodeURIComponent(id)}`);
+export async function completeLogin(id: string): Promise<{ state: 'connected'; connection: Connection } | { state: 'failed'; message: string }> {
+  const data = await request('POST', `/login/${encodeURIComponent(id)}/complete`, {});
+  if (data.state === 'connected') return { state: 'connected', connection: connectionFrom(data.connection) };
+  return { state: 'failed', message: text(data.message) || 'Sign-in failed.' };
 }
 
-export function remoteInfo() {
-  return request<RemoteInfo>('GET', '/remote/info');
+export async function cancelLogin(id: string): Promise<void> {
+  await request('DELETE', `/login/${encodeURIComponent(id)}`);
 }
 
-export function callTool(name: string, args: Record<string, unknown> = {}) {
-  return request<ToolResult>('POST', `/remote/tools/${encodeURIComponent(name)}`, { arguments: args });
+/** The active environment: what it is and which tools it offers this connection. */
+export async function remoteInfo(): Promise<{ info: RemoteInfo; connection: Connection }> {
+  const data = await request('GET', '/remote/info');
+  return { info: infoFrom(data), connection: connectionFrom(data.connection) };
+}
+
+/** Runs a tool for `connectionId`. Refused when another connection is active by now. */
+export async function callTool(connectionId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  const data = await request('POST', `/remote/tools/${encodeURIComponent(name)}`, { connection: connectionId, arguments: args });
+  return { text: text(data.text), structuredContent: data.structuredContent ?? null, isError: data.isError === true };
 }

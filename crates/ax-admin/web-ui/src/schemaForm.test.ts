@@ -24,8 +24,8 @@ test('fields follow the schema, required first, without the session id', () => {
     ['force', 'boolean', false],
     ['files', 'json', false],
   ]);
-  assert.deepEqual(fields[2].options, ['hot', 'archive']);
-  assert.equal(fields[1].description, 'Rows per page');
+  assert.deepEqual(fields[2]?.options, ['hot', 'archive']);
+  assert.equal(fields[1]?.description, 'Rows per page');
 });
 
 test('a missing or odd schema gives no fields', () => {

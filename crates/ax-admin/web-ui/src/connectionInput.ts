@@ -10,9 +10,11 @@ export interface ConnectionInput {
   key: string;
   clientId: string;
   write: boolean;
+  /** Also ask for admin access (the management pages). */
+  admin: boolean;
 }
 
-export const EMPTY_INPUT: ConnectionInput = { name: '', url: '', mode: 'api_key', key: '', clientId: '', write: false };
+export const EMPTY_INPUT: ConnectionInput = { name: '', url: '', mode: 'api_key', key: '', clientId: '', write: false, admin: false };
 
 function isLoopback(host: string): boolean {
   return host === 'localhost' || host === '[::1]' || /^127(\.\d{1,3}){3}$/.test(host);
@@ -40,20 +42,38 @@ export function addressError(value: string): string | null {
   return null;
 }
 
-/** With `keepStoredKey`, an empty key means "keep the saved one" (editing). */
-export function inputError(input: ConnectionInput, keepStoredKey = false): string | null {
+export type InputField = 'url' | 'key' | 'clientId' | 'name';
+
+export interface InputProblem {
+  field: InputField;
+  message: string;
+}
+
+/**
+ * The first thing wrong with the form, and the field it belongs to.
+ * With `keepStoredKey`, an empty key means "keep the saved one" (editing).
+ */
+export function inputProblem(input: ConnectionInput, keepStoredKey = false): InputProblem | null {
   const address = addressError(input.url);
-  if (address) return address;
-  if (input.name.trim().length > 80) return 'Use a name of at most 80 characters.';
+  if (address) return { field: 'url', message: address };
+  if (input.name.trim().length > 80) return { field: 'name', message: 'Use a name of at most 80 characters.' };
   if (input.mode === 'api_key') {
     const key = input.key.trim();
-    if (!key) return keepStoredKey ? null : 'Enter the API key for this environment.';
-    if (/\s/.test(key)) return 'The key contains spaces.';
+    if (!key) return keepStoredKey ? null : { field: 'key', message: 'Enter the API key for this environment.' };
+    if (/\s/.test(key)) return { field: 'key', message: 'The key contains spaces.' };
     return null;
   }
-  if (!input.clientId.trim()) return 'Enter the public client ID from the environment\'s connection details.';
-  if (new URL(input.url.trim()).protocol !== 'https:') return 'Browser sign-in needs an https:// address.';
+  if (!input.clientId.trim()) {
+    return { field: 'clientId', message: "Enter the public client ID from the environment's connection details." };
+  }
+  if (new URL(input.url.trim()).protocol !== 'https:') {
+    return { field: 'url', message: 'Browser sign-in needs an https:// address.' };
+  }
   return null;
+}
+
+export function inputError(input: ConnectionInput, keepStoredKey = false): string | null {
+  return inputProblem(input, keepStoredKey)?.message ?? null;
 }
 
 /** "host / project", the name used when none is given. */
