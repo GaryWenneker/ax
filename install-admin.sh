@@ -34,7 +34,7 @@ usage() {
 ax-admin installer for macOS and Linux (x86_64 and arm64).
 
   curl -fsSL https://getax.wenneker.io/install-admin.sh | sh
-  curl -fsSL https://getax.wenneker.io/install-admin.sh | sh -s -- --version v10.1.1
+  curl -fsSL https://getax.wenneker.io/install-admin.sh | sh -s -- --version v10.1.2
 
 Options (or environment variables):
   --version vX.Y.Z   AX_VERSION   install this release instead of the newest one

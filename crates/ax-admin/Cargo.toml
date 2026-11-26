@@ -1,6 +1,6 @@
 [package]
 name = "ax-admin"
-version = "10.1.1"
+version = "10.1.2"
 edition = "2021"
 description = "Standalone admin application for a remote Ax, connected through its remote MCP endpoint"
 

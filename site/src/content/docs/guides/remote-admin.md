@@ -41,7 +41,7 @@ Options for `install-admin.sh`: `--version vX.Y.Z`, `--bin-dir DIR` and `--unins
 
 ### Download without the installer
 
-Each Ax release that includes `ax-admin` publishes one archive per platform on [GitHub Releases](https://github.com/GaryWenneker/ax/releases), next to the `ax` archives and listed in the same `SHA256SUMS`:
+Releases from v10.1.2 on publish one `ax-admin` archive per platform on [GitHub Releases](https://github.com/GaryWenneker/ax/releases), next to the `ax` archives and listed in the same `SHA256SUMS`. The installers pick the newest release that has the archive for your platform.
 
 | Platform | File |
 |---|---|

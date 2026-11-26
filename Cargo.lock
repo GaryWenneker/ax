@@ -515,7 +515,7 @@ dependencies = [
 
 [[package]]
 name = "ax-admin"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-core",
  "ax-extraction",
@@ -543,7 +543,7 @@ dependencies = [
 
 [[package]]
 name = "ax-agent"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-installer",
  "ax-mcp",
@@ -561,7 +561,7 @@ dependencies = [
 
 [[package]]
 name = "ax-cli"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-agent",
  "ax-context",
@@ -619,7 +619,7 @@ dependencies = [
 
 [[package]]
 name = "ax-context"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-db",
  "ax-graph",
@@ -634,7 +634,7 @@ dependencies = [
 
 [[package]]
 name = "ax-core"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-context",
  "ax-db",
@@ -658,7 +658,7 @@ dependencies = [
 
 [[package]]
 name = "ax-db"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "anyhow",
  "ax-types",
@@ -676,7 +676,7 @@ dependencies = [
 
 [[package]]
 name = "ax-desktop-client"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "anyhow",
  "ax-web",
@@ -698,7 +698,7 @@ dependencies = [
 
 [[package]]
 name = "ax-docs-catalog"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-core",
  "ax-extraction",
@@ -715,7 +715,7 @@ dependencies = [
 
 [[package]]
 name = "ax-extraction"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "anyhow",
  "ax-db",
@@ -768,7 +768,7 @@ dependencies = [
 
 [[package]]
 name = "ax-git"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-db",
  "ax-types",
@@ -782,7 +782,7 @@ dependencies = [
 
 [[package]]
 name = "ax-global-db"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "anyhow",
  "ax-db",
@@ -799,7 +799,7 @@ dependencies = [
 
 [[package]]
 name = "ax-graph"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-db",
  "ax-types",
@@ -813,7 +813,7 @@ dependencies = [
 
 [[package]]
 name = "ax-installer"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-utils",
  "dirs",
@@ -824,7 +824,7 @@ dependencies = [
 
 [[package]]
 name = "ax-lsp"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-db",
  "ax-types",
@@ -839,7 +839,7 @@ dependencies = [
 
 [[package]]
 name = "ax-mcp"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "async-trait",
  "ax-context",
@@ -887,7 +887,7 @@ dependencies = [
 
 [[package]]
 name = "ax-memory"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-db",
  "ax-utils",
@@ -906,7 +906,7 @@ dependencies = [
 
 [[package]]
 name = "ax-neural"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-db",
  "ax-memory",
@@ -925,7 +925,7 @@ dependencies = [
 
 [[package]]
 name = "ax-pi"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-usage",
  "blake3",
@@ -939,7 +939,7 @@ dependencies = [
 
 [[package]]
 name = "ax-plugins"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-types",
  "ax-utils",
@@ -953,7 +953,7 @@ dependencies = [
 
 [[package]]
 name = "ax-policy"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-db",
  "ax-memory",
@@ -974,7 +974,7 @@ dependencies = [
 
 [[package]]
 name = "ax-quality"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-types",
  "ax-utils",
@@ -988,7 +988,7 @@ dependencies = [
 
 [[package]]
 name = "ax-reasoning"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-utils",
  "dirs",
@@ -1001,7 +1001,7 @@ dependencies = [
 
 [[package]]
 name = "ax-remote"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "async-trait",
  "ax-git",
@@ -1020,7 +1020,7 @@ dependencies = [
 
 [[package]]
 name = "ax-remote-client"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-utils",
  "axum",
@@ -1042,7 +1042,7 @@ dependencies = [
 
 [[package]]
 name = "ax-resolution"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "async-trait",
  "ax-db",
@@ -1059,7 +1059,7 @@ dependencies = [
 
 [[package]]
 name = "ax-share"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-memory",
  "ax-policy",
@@ -1079,7 +1079,7 @@ dependencies = [
 
 [[package]]
 name = "ax-ship"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "async-stream",
  "ax-core",
@@ -1107,7 +1107,7 @@ dependencies = [
 
 [[package]]
 name = "ax-skill-catalog"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "blake3",
  "flate2",
@@ -1123,7 +1123,7 @@ dependencies = [
 
 [[package]]
 name = "ax-smoke-tests"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-core",
  "ax-extraction",
@@ -1133,7 +1133,7 @@ dependencies = [
 
 [[package]]
 name = "ax-sync"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-types",
  "ax-utils",
@@ -1148,7 +1148,7 @@ dependencies = [
 
 [[package]]
 name = "ax-telemetry"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-utils",
  "dirs",
@@ -1162,7 +1162,7 @@ dependencies = [
 
 [[package]]
 name = "ax-tia"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-db",
  "ax-git",
@@ -1178,7 +1178,7 @@ dependencies = [
 
 [[package]]
 name = "ax-types"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -1186,7 +1186,7 @@ dependencies = [
 
 [[package]]
 name = "ax-usage"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "ax-db",
  "ax-utils",
@@ -1209,7 +1209,7 @@ dependencies = [
 
 [[package]]
 name = "ax-utils"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "anyhow",
  "ax-types",
@@ -1223,7 +1223,7 @@ dependencies = [
 
 [[package]]
 name = "ax-web"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "anyhow",
  "argon2",
@@ -6343,7 +6343,7 @@ dependencies = [
 
 [[package]]
 name = "ratatouille"
-version = "10.1.1"
+version = "10.1.2"
 dependencies = [
  "libc",
  "ratatui",

@@ -5,7 +5,7 @@
 #   irm https://getax.wenneker.io/install-admin.ps1 | iex
 #
 # With options, download the script first:
-#   .\install-admin.ps1 -Version v10.1.1
+#   .\install-admin.ps1 -Version v10.1.2
 #   .\install-admin.ps1 -Uninstall
 #
 # Environment: AX_VERSION, AX_ADMIN_INSTALL_DIR (default %LOCALAPPDATA%\ax-admin),
