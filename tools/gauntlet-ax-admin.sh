@@ -3,7 +3,7 @@
 # (docs/specs/ax-admin/SPEC.md). One command reruns every layer:
 #
 #   tools/gauntlet-ax-admin.sh              # all layers except mutation
-#   tools/gauntlet-ax-admin.sh --mutation   # also the 25 mutants (about 25 minutes)
+#   tools/gauntlet-ax-admin.sh --mutation   # also the hand-written mutants (about 35 minutes)
 #
 # Every layer fails the run when it fails. Nothing here is allowed to be skipped
 # silently: a tool that is missing is an error, not a pass.
@@ -43,7 +43,8 @@ cargo --version
 node --version
 
 step "L1 UI: install, types, unit tests, production build"
-(cd "$UI" && npm ci --no-audit --no-fund >/dev/null && npx tsc)
+(cd "$UI" && npm ci --no-audit --no-fund >/dev/null && npm run typecheck >/dev/null)
+echo "types ok (application, tests and browser story)"
 (cd "$UI" && show '^ℹ (tests|pass|fail)' npm test)
 (cd "$UI" && show 'built in|error' npx vite build)
 
@@ -54,15 +55,27 @@ step "L3 Rust tests: remote MCP (new admin tests and the existing suite)"
 show "$RESULT" cargo test -p ax-mcp --test remote_admin --test remote_mcp
 
 step "L4 Rust tests: full ax-mcp and ax-usage against the recorded baseline"
-# On the base commit one ax-mcp library test fails (see EVIDENCE). Zero NEW failures is the bar.
+# On the base commit two ax-mcp tests fail (see EVIDENCE). Zero NEW failures is the bar.
+FULL_LOG="$ROOT/target-dev/ax-admin-full-tests.log"
 set +e
-cargo test -p ax-mcp -p ax-usage --no-fail-fast 2>&1 | grep -E '^test .* FAILED$' | sort -u > "$ROOT/target-dev/ax-admin-failed.txt"
+cargo test -p ax-mcp -p ax-usage --no-fail-fast >"$FULL_LOG" 2>&1
 set -e
+# A build that fails runs no tests: that must not look like "no failures".
+if grep -qE '^error(\[E[0-9]+\])?: ' "$FULL_LOG" && grep -q 'could not compile' "$FULL_LOG"; then
+  grep -E '^error' "$FULL_LOG" | head -20; echo "FAIL: the test build did not compile"; exit 1
+fi
+BINARIES="$(grep -c '^test result:' "$FULL_LOG" || true)"
+[[ "$BINARIES" -ge 12 ]] || { echo "FAIL: only $BINARIES test binaries reported a result"; exit 1; }
+PASSED="$(grep '^test result:' "$FULL_LOG" | sed -E 's/.* ([0-9]+) passed.*/\1/' | paste -sd+ - | bc)"
+grep -E '^test .* FAILED$' "$FULL_LOG" | sort -u > "$ROOT/target-dev/ax-admin-failed.txt" || true
 cat "$ROOT/target-dev/ax-admin-failed.txt"
-BASELINE='test server::policy_integration::unchanged_catalog_and_memory_titles_are_sent_once_per_session ... FAILED'
-UNEXPECTED="$(grep -vxF "$BASELINE" "$ROOT/target-dev/ax-admin-failed.txt" || true)"
+cat > "$ROOT/target-dev/ax-admin-baseline.txt" <<'BASELINE'
+test preflight_returns_exact_indexed_manifest_line ... FAILED
+test server::policy_integration::unchanged_catalog_and_memory_titles_are_sent_once_per_session ... FAILED
+BASELINE
+UNEXPECTED="$(grep -vxFf "$ROOT/target-dev/ax-admin-baseline.txt" "$ROOT/target-dev/ax-admin-failed.txt" || true)"
 [[ -z "$UNEXPECTED" ]] || { echo "NEW failures:"; echo "$UNEXPECTED"; exit 1; }
-echo "no new failures"
+echo "$BINARIES test binaries, $PASSED tests passed, $(wc -l < "$ROOT/target-dev/ax-admin-failed.txt" | tr -d ' ') failed (all in the baseline), no new failures"
 
 step "L5 type check of ax-web and ax-cli after the client move (N2)"
 AX_SKIP_WEB_BUILD=1 show '^error|Finished' cargo check -p ax-web -p ax-cli
@@ -109,7 +122,7 @@ cmp install-admin.sh site/public/install-admin.sh
 cmp install-admin.ps1 site/public/install-admin.ps1
 echo "site/public copies match"
 
-step "L12 files are UTF-8 without BOM and secrets are absent"
+step "L12 changed files are UTF-8 without BOM"
 for f in $(git diff --name-only main...HEAD; git ls-files --others --exclude-standard); do
   [[ -f "$f" ]] || continue
   case "$f" in *.png|*.lock|*package-lock.json) continue ;; esac
@@ -122,7 +135,7 @@ step "L13 documentation site tests"
 (cd site && show '^ℹ (tests|pass|fail)' npm test)
 
 if [[ "$MUTATION" == 1 ]]; then
-  step "L14 mutation: self-test, then 25 mutants"
+  step "L14 mutation: self-test, then every mutant"
   python3 tools/ax_admin_mutants.py --self-test
   python3 tools/ax_admin_mutants.py
 else

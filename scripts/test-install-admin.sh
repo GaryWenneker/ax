@@ -56,6 +56,80 @@ grep -q "checksum mismatch" "$WORK/tamper.log" || { cat "$WORK/tamper.log" >&2; 
 cp "$WORK/good.tar.gz" "$RELEASES/$TAG/$ASSET"
 echo "ok tampered archive refused"
 
+# A download that does not run here leaves the working binary in place.
+BROKEN="$WORK/broken"
+mkdir -p "$BROKEN/ax-admin-$OS-$ARCH"
+printf '#!/bin/sh\nexit 3\n' > "$BROKEN/ax-admin-$OS-$ARCH/ax-admin"
+chmod 0755 "$BROKEN/ax-admin-$OS-$ARCH/ax-admin"
+(cd "$BROKEN" && tar -czf "$RELEASES/$TAG/$ASSET" "ax-admin-$OS-$ARCH")
+(cd "$RELEASES/$TAG" && printf '%s  %s\n' "$(sha "$ASSET")" "$ASSET" > SHA256SUMS)
+if run --version "$TAG" 2>"$WORK/broken.log"; then fail "a binary that does not run was installed"; fi
+grep -q "does not run on this host" "$WORK/broken.log" || { cat "$WORK/broken.log" >&2; fail "no does-not-run error"; }
+[[ "$(sha "$WORK/bin/ax-admin")" == "$BEFORE" ]] || fail "working binary was replaced by a broken one"
+[[ ! -e "$WORK/bin/ax-admin.new" ]] || fail "a staged file was left behind"
+cp "$WORK/good.tar.gz" "$RELEASES/$TAG/$ASSET"
+(cd "$RELEASES/$TAG" && printf '%s  %s\n' "$(sha "$ASSET")" "$ASSET" > SHA256SUMS)
+echo "ok unusable download refused"
+
+# Without --version the newest release that has the asset is found through the
+# GitHub API (a local stand-in here): drafts, prereleases and releases without
+# the asset are skipped.
+release() { # tag draft prerelease asset
+  printf '{"tag_name": "%s", "draft": %s, "prerelease": %s, "assets": [{"name": "%s", "size": 1}]}' "$1" "$2" "$3" "$4"
+}
+API_DIR="$WORK/api"
+mkdir -p "$API_DIR"
+release v9.9.9 false false ax-linux-x64.tar.gz > "$API_DIR/latest.json"
+release v9.9.9 false false ax-linux-x64.tar.gz > "$API_DIR/tag-v9.9.9.json"
+printf '[%s,%s,%s,%s,%s]' \
+  "$(release v9.9.9 false false ax-linux-x64.tar.gz)" \
+  "$(release v9.9.8 true false "$ASSET")" \
+  "$(release v9.9.7 false true "$ASSET")" \
+  "$(release v0.0.2 false false "$ASSET")" \
+  "$(release "$TAG" false false "$ASSET")" > "$API_DIR/list.json"
+API_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
+python3 - "$API_DIR" "$API_PORT" <<'PY' &
+import http.server, sys, pathlib
+root, port = pathlib.Path(sys.argv[1]), int(sys.argv[2])
+routes = {
+    "/repos/GaryWenneker/ax/releases/latest": "latest.json",
+    "/repos/GaryWenneker/ax/releases": "list.json",
+    "/repos/GaryWenneker/ax/releases/tags/v9.9.9": "tag-v9.9.9.json",
+}
+class Api(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        name = routes.get(self.path.split("?")[0])
+        if name is None:
+            self.send_error(404)
+            return
+        body = (root / name).read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *args):
+        pass
+http.server.HTTPServer(("127.0.0.1", port), Api).serve_forever()
+PY
+API_PID=$!
+trap 'kill "$API_PID" 2>/dev/null; rm -rf "$WORK"' EXIT
+for _ in $(seq 1 50); do curl -fs "http://127.0.0.1:$API_PORT/repos/GaryWenneker/ax/releases/latest" >/dev/null 2>&1 && break; sleep 0.1; done
+with_api() {
+  AX_ADMIN_DOWNLOAD_BASE="file://$RELEASES" AX_GITHUB_API="http://127.0.0.1:$API_PORT" GITHUB_TOKEN= GH_TOKEN= \
+    sh "$ROOT/install-admin.sh" --bin-dir "$WORK/bin" "$@"
+}
+mkdir -p "$RELEASES/v0.0.2"
+cp "$RELEASES/$TAG/$ASSET" "$RELEASES/$TAG/SHA256SUMS" "$RELEASES/v0.0.2/"
+rm -f "$WORK/bin/ax-admin"
+with_api 2>"$WORK/latest.log" || { cat "$WORK/latest.log" >&2; fail "install of the newest release"; }
+grep -q "installing ax-admin v0.0.2 " "$WORK/latest.log" || { cat "$WORK/latest.log" >&2; fail "did not choose v0.0.2"; }
+# A pinned release that exists but has no ax-admin asset is an error, not a silent switch.
+if with_api --version v9.9.9 2>"$WORK/pin.log"; then fail "a release without the asset was accepted"; fi
+grep -q "has no $ASSET" "$WORK/pin.log" || { cat "$WORK/pin.log" >&2; fail "no missing-asset error"; }
+BEFORE="$(sha "$WORK/bin/ax-admin")"
+echo "ok newest release resolved, pinned release without the asset refused"
+
 # A release without the asset in SHA256SUMS is refused.
 : > "$RELEASES/$TAG/SHA256SUMS"
 if run --version "$TAG" 2>"$WORK/nosum.log"; then fail "installed without a checksum entry"; fi

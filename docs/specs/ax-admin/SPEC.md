@@ -1,6 +1,6 @@
 # ax-admin: standalone remote admin application
 
-Status: draft, awaiting owner approval. No code has been written.
+Status: approved by the owner on 2026-11-26 ("Approve spec"). Changes made after approval are listed under "Revisions after approval" at the end; the text above that section is the approved text.
 
 ## Problem
 
@@ -333,3 +333,27 @@ OAuth server of a local ax, not an external provider.
   headless build and tests of E8; one real run of
   the built binary against a local remote MCP server; review loop; EVIDENCE
   at `docs/specs/ax-admin/EVIDENCE.md`.
+
+## Revisions after approval
+
+The approved text above is unchanged. Implementation and two independent
+reviews showed these points to be wrong or incomplete; each is listed here so
+the difference from the approved contract is visible. They await the owner's
+review.
+
+| # | Approved text | What is implemented, and why |
+|---|---|---|
+| V1 | "Protected-resource metadata advertises `ax:admin`." | Advertised only when an external provider is configured and a project has an admin subject. The built-in authorization server rejects scopes it does not issue, so advertising it to everyone would break clients that request every advertised scope (N1). |
+| V2 | `ax_policy_index` is exposed. | Only `action: "index"` is available remotely. The restore action writes global policy files on the host, which is outside "the pinned project" and "nothing that changes server configuration". |
+| V3 | "Index and sync take the existing `.ax/ax.lock`, so a second writer waits." | That lock alone is not enough inside one server process: two sessions stalled until a three-minute lock timeout. The remote server adds a per-project lock (tool calls share it, index-changing calls take it alone), a limit of four index-changing calls at once, and lets an index run finish after its request times out. |
+| V4 | Server gives admin calls 600 s (implied by E10). | 570 s on the server, 600 s in ax-admin, so the client sees the server's answer. All nine admin tools get the long client timeout, not only three. |
+| V5 | Local API table: `GET /api/login/{id}` polls and saves. | `GET` only reports; `POST /api/login/{id}/complete` saves and needs the request token (C3). |
+| V6 | `POST /api/remote/tools/{name}` takes arguments. | It also takes the connection id the page shows and refuses (409) when another connection is active, so a result cannot land under the wrong environment (A6). |
+| V7 | Edit: "PUT … Edit". | A saved key is sent only to the address it was saved for: changing the address requires the key again, and a saved connection is tested as saved. |
+| V8 | Remote failures were not given status codes. | 502 unreachable or not Ax, 504 timeout or still running, 429 busy, 422 refused by the environment. |
+| V9 | "each [operation] asks for confirmation" (page table) versus E9 naming only `ax_index`. | All three operations ask first and name the environment; the Tools page asks for the same three tools. |
+| V10 | "New dependencies: none outside …" | One development-only package was added to the UI, `@types/node`, to type-check the unit tests and the browser story. Test-only crates `futures-core` (already in the lock file) and `jsonwebtoken` were added as dev-dependencies of ax-admin. |
+| V11 | Browser sign-in asks for context and optionally write. | It can also ask for `ax:admin`, otherwise an admin subject could never reach the management pages through sign-in. A rejected token is refreshed for real (B3) through a small addition to the shared client code. |
+| V12 | Known limits: "browser sign-in is tested against the built-in OAuth server of a local ax". | Not done. The sign-in flow is tested with a stand-in backend; the real browser flow, token refresh and the OS credential store are not exercised by any automated test. |
+| V13 | Memory "Add memory" inline; Logging as a table. | "Add memory" and the durable store open in a dialog and the call log is a calm list, following the Command Center's `modal-forms` and `calm-lists` rules. |
+| V14 | "`structuredContent` as a collapsible tree". | Implemented as a tree that opens level by level (the first version showed formatted JSON). |

@@ -285,7 +285,9 @@ A configuration that grants admin without write access is rejected at start-up. 
 
 The built-in authorization server of a generated host issues `ax:context` and `ax:write` only; it cannot grant admin access. Use an API key for that.
 
-The discovery document lists `ax:admin` under `scopes_supported`. The tools and their limits are in the [MCP Server reference](/reference/mcp-server/#management-tools-over-remote-mcp). [ax-admin](/guides/remote-admin/) is the application that uses them.
+The discovery document lists `ax:admin` under `scopes_supported` only when an external provider is configured and at least one project has an admin subject. Otherwise it is unchanged, so a client that asks for every advertised scope keeps working.
+
+Remotely, `ax_policy_index` only re-imports the project's own policy files (`action: "index"`); its restore, history and audit actions are refused. An index run continues on the server when the request times out or the client disconnects. While it runs, other calls to that project wait; a server accepts four index-changing calls at once and answers 429 beyond that. The tools and their limits are in the [MCP Server reference](/reference/mcp-server/#management-tools-over-remote-mcp). [ax-admin](/guides/remote-admin/) is the application that uses them.
 
 ## Connect ChatGPT
 

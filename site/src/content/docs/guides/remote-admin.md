@@ -78,7 +78,9 @@ Paste a key whose SHA-256 hash is listed under `api_keys` in the server's remote
 
 Choose **Browser sign-in**, enter the public client ID of the environment and select **Sign in with browser**. Finish the sign-in in the tab that opens; `ax-admin` continues when access is granted, and saves the connection only then. **Paste connection details** accepts the text that **Copy connection details** produces in a Command Center and fills in the address and client ID.
 
-Browser sign-in needs an `https://` address. It uses the same sign-in as `ax mcp remote login` and shares its stored tokens for that address.
+Tick **Also ask for admin access** when your account has the admin grant and you want the management pages; it asks for write access as well. An environment whose authorization server does not issue the admin scope refuses such a sign-in, so leave it off there.
+
+Browser sign-in needs an `https://` address. It uses the same sign-in as `ax mcp remote login` and shares its stored tokens for that address: removing the connection in `ax-admin` also signs out `ax mcp remote` for that address on this computer. Closing or cancelling the sign-in before it finishes stores nothing.
 
 ## Several environments
 
@@ -87,7 +89,7 @@ The **Connections** button in the title bar is always visible. It lists the save
 - **Add connection**: another address and credentials.
 - **Switch to this**: make another environment the one you are looking at. The pages reload from that server.
 - **Test**: check a saved connection without retyping its key.
-- **Edit**: change the name, the address or the key. A changed address or key is checked before it replaces the saved one.
+- **Edit**: change the name, the address or the key. A changed key is checked before it replaces the saved one. A saved key is only ever sent to the address it was saved for, so another address needs its key entered again.
 - **Remove**: delete the connection and its stored credential from this computer. The environment itself is not changed.
 
 ![The Connections panel with saved environments](/screenshots/ax-admin-connections.png)
@@ -123,7 +125,7 @@ A key is never written to a file, a log or the browser, and the interface never 
 | Skills | `ax_skill` | Open a skill by name |
 | Memory | `ax_recall`, `ax_history`, `ax_remember` | Search memories and history. **Add memory** appears only with write access |
 | Sessions | `ax_session`, `ax_durable` | Working context and durable transcripts of this connection |
-| Operations | `ax_sync`, `ax_index`, `ax_policy_index` | Sync, rebuild the index, reload policy. A rebuild asks for confirmation |
+| Operations | `ax_sync`, `ax_index`, `ax_policy_index` | Sync, rebuild the index, reload policy. Each one asks first and names the environment |
 | Files | `ax_files` | Indexed files |
 | Usage | `ax_cost`, `ax_tool_economics`, `ax_budget`, `ax_optimization_advice` | Cost, tool economics, budget and advice |
 | Logging | `ax_logs` | MCP calls handled for this project: time, tool, result, duration, size |
@@ -131,7 +133,9 @@ A key is never written to a file, a log or the browser, and the interface never 
 
 Operations, Files, Usage and Logging are the management pages. They appear only when the connection has the admin grant. The status bar shows the access level of the active connection: read, write or admin.
 
-The **Tools** page runs any tool the server lists, including tools this version of `ax-admin` has no page for.
+The **Tools** page runs any tool the server lists, including tools this version of `ax-admin` has no page for. It asks first for the three tools that change the index.
+
+Every page belongs to the environment it was opened for. If another window switches `ax-admin` to a different environment, a page that still shows the old one refuses to run anything and reloads.
 
 ## Give a key the admin grant
 
@@ -154,7 +158,9 @@ For an external OAuth provider, list the subject under `admin_subjects` of the p
 - `ax-admin` cannot change server settings, edit rules or skills in an editor, edit specifications, show the graph canvas, or run ship, LSP or a shell command on the server. The remote MCP server offers no tools for those.
 - The built-in authorization server of a host set up from a Command Center issues context and write access only. Use an API key, or an external OAuth provider, for admin access.
 - `ax mcp remote serve` listens on `127.0.0.1`. Making it reachable over HTTPS (an ingress sidecar or a tunnel) stays part of deploying the environment. A static host such as Netlify cannot run Ax.
-- Index, sync and policy reload wait up to ten minutes for the server. Other calls wait just over two minutes.
+- Management calls wait up to ten minutes for the server; other calls just over two minutes. An index run that takes longer keeps running on the server: `ax-admin` then says the server is still working on it, and Status and Logging show when it is done.
+- While an index operation runs, other calls to the same project wait for it. One runs at a time per project, and a server accepts a few of them at once across all projects.
+- Reload policy re-imports the project's own policy files. Restoring removed rules and the policy history are not available remotely.
 
 ## Troubleshooting
 
@@ -167,3 +173,6 @@ For an external OAuth provider, list the subject under `admin_subjects` of the p
 | The address redirects somewhere else. | Enter the final address. Credentials are not sent to a redirect |
 | The server could not be reached. | DNS, network or TLS. Check the address from a terminal with `curl` |
 | The key for this connection is no longer in the OS credential store. | Edit the connection and enter the key again |
+| The server is still working on this. | An index run outlasted the wait. It continues on the server; look at Status or Logging in a moment |
+| Enter the key again to use another address. | A saved key is not sent to a different address. Type the key for the new address |
+| … is the active environment now. Reload to continue. | Another window switched environments. The page reloads for the active one |

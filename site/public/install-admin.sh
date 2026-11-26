@@ -150,7 +150,7 @@ resolve_version() {
     if printf '%s' "$json" | tags_with_asset | grep -qx "$VERSION"; then
       printf '%s\n' "$VERSION"; return 0
     fi
-    say "release $VERSION has no $ASSET; installing the newest release that has one"
+    die "release $VERSION has no $ASSET; leave out --version for the newest release that has one"
   fi
   json="$(api_get "releases/latest" || true)"
   tag="$(printf '%s' "$json" | tags_with_asset | head -n 1)"
@@ -182,9 +182,12 @@ mkdir -p "$BIN_DIR" 2>/dev/null || die "cannot create $BIN_DIR; run as root or p
 [ -w "$BIN_DIR" ] || die "$BIN_DIR is not writable; run as root (sudo) or pass --bin-dir"
 cp "$SRC" "$TARGET_BIN.new"
 chmod 0755 "$TARGET_BIN.new"
+# The working binary is replaced only by one that runs on this host.
+if ! "$TARGET_BIN.new" version >/dev/null 2>&1; then
+  rm -f "$TARGET_BIN.new"
+  die "the downloaded ax-admin does not run on this host; $TARGET_BIN was left as it was"
+fi
 mv -f "$TARGET_BIN.new" "$TARGET_BIN"
-
-"$TARGET_BIN" version >/dev/null 2>&1 || die "installed $TARGET_BIN but it does not run on this host"
 say "installed $("$TARGET_BIN" version 2>/dev/null)"
 case ":${PATH:-}:" in
   *":$BIN_DIR:"*) say "start it with: ax-admin" ;;

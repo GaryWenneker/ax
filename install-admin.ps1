@@ -31,15 +31,31 @@ $exe = Join-Path $binDir 'ax-admin.exe'
 
 function Say([string]$message) { Write-Host "ax-admin: $message" }
 
+# The user PATH is read and written unexpanded, so entries such as
+# %USERPROFILE%\bin stay as they are.
 function Get-UserPathEntries {
-  $path = [Environment]::GetEnvironmentVariable('Path', 'User')
+  $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment')
+  if (-not $key) { return @() }
+  try {
+    $path = $key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+  } finally {
+    $key.Dispose()
+  }
   if (-not $path) { return @() }
-  return @($path.Split(';') | Where-Object { $_ })
+  return @(([string]$path).Split(';') | Where-Object { $_ })
 }
 
 function Set-UserPathEntries([string[]]$entries) {
-  [Environment]::SetEnvironmentVariable('Path', ($entries -join ';'), 'User')
+  $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+  try {
+    $key.SetValue('Path', ($entries -join ';'), [Microsoft.Win32.RegistryValueKind]::ExpandString)
+  } finally {
+    $key.Dispose()
+  }
 }
+
+$onWindows = $env:OS -eq 'Windows_NT'
+
 
 if ($Uninstall) {
   if (Test-Path -LiteralPath $exe) {
@@ -48,11 +64,13 @@ if ($Uninstall) {
   } else {
     Say "nothing to remove at $exe"
   }
-  $entries = Get-UserPathEntries
-  $kept = @($entries | Where-Object { $_.TrimEnd('\') -ne $binDir.TrimEnd('\') })
-  if ($kept.Count -ne $entries.Count) {
-    Set-UserPathEntries $kept
-    Say "removed $binDir from the user PATH"
+  if ($onWindows) {
+    $entries = Get-UserPathEntries
+    $kept = @($entries | Where-Object { $_.TrimEnd('\') -ne $binDir.TrimEnd('\') })
+    if ($kept.Count -ne $entries.Count) {
+      Set-UserPathEntries $kept
+      Say "removed $binDir from the user PATH (open a new terminal to see it)"
+    }
   }
   Say 'saved connections and keys in Windows Credential Manager were left in place'
   return
@@ -114,6 +132,10 @@ try {
   $source = Join-Path (Join-Path $temp $name) 'ax-admin.exe'
   if (-not (Test-Path -LiteralPath $source)) { throw "archive $asset does not contain $name\ax-admin.exe" }
 
+  # The working program is replaced only by one that runs on this computer.
+  $installed = & $source version
+  if ($LASTEXITCODE -ne 0) { throw "the downloaded ax-admin does not run on this computer; $exe was left as it was" }
+
   New-Item -ItemType Directory -Path $binDir -Force | Out-Null
   $staged = "$exe.new"
   Copy-Item -LiteralPath $source -Destination $staged -Force
@@ -121,11 +143,12 @@ try {
 } finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }
-
-$installed = & $exe version
-if ($LASTEXITCODE -ne 0) { throw "installed $exe but it does not run on this computer" }
 Say "installed $installed"
 
+if (-not $onWindows) {
+  Say "run it as: $exe"
+  return
+}
 $entries = Get-UserPathEntries
 if (-not ($entries | Where-Object { $_.TrimEnd('\') -eq $binDir.TrimEnd('\') })) {
   Set-UserPathEntries ($entries + $binDir)

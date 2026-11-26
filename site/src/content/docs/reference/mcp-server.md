@@ -85,7 +85,7 @@ ax_logs({ "limit": 50, "tool": "ax_explore" })
 
 ### Management tools over remote MCP
 
-The remote MCP server offers context tools by default. A credential with the admin grant is additionally offered `ax_sync`, `ax_index`, `ax_policy_index`, `ax_files`, `ax_cost`, `ax_tool_economics`, `ax_budget`, `ax_optimization_advice` and `ax_logs`, whatever `AX_MCP_TOOLS` is set to. They act on the project of the connection only; a call cannot name another project path. One index-changing call (`ax_sync`, `ax_index`, `ax_policy_index`) runs per project at a time and a second one waits. These calls may take up to ten minutes. `ax_ship`, `ax_lsp` and `ax_diagnostics` stay unavailable remotely. See [Admin access](/guides/remote-mcp/#admin-access) and the [ax-admin guide](/guides/remote-admin/).
+The remote MCP server offers context tools by default. A credential with the admin grant is additionally offered `ax_sync`, `ax_index`, `ax_policy_index`, `ax_files`, `ax_cost`, `ax_tool_economics`, `ax_budget`, `ax_optimization_advice` and `ax_logs`, whatever `AX_MCP_TOOLS` is set to. They act on the project of the connection only; a call cannot name another project path. Remotely `ax_policy_index` accepts only `action: "index"`. One index-changing call (`ax_sync`, `ax_index`, `ax_policy_index`) runs per project at a time; a second one, and every other call to that project, waits for it. The server answers after at most 570 seconds with HTTP 504 while the run itself continues to its end, and accepts four index-changing calls at once (HTTP 429 beyond that). `ax_ship`, `ax_lsp` and `ax_diagnostics` stay unavailable remotely. See [Admin access](/guides/remote-mcp/#admin-access) and the [ax-admin guide](/guides/remote-admin/).
 
 ## Policy tools
 
