@@ -89,7 +89,8 @@ export function UsagePage({ tools }: { tools: readonly Tool[] }) {
 }
 
 // "When" sorts on the time of the call, not on its text.
-const LOG_COLUMNS = [{ label: 'Tool' }, { label: 'When' }, { label: 'Result' }] as const;
+// Its filter would match the raw time, not the text shown, so it has none.
+const LOG_COLUMNS = [{ label: 'Tool' }, { label: 'When', filterable: false }, { label: 'Result' }] as const;
 
 export function LoggingPage() {
   const { state, run } = useTool();

@@ -977,8 +977,12 @@ async fn a10_browser_sign_in_saves_only_after_it_succeeds() {
     assert_eq!(failed["state"], "failed");
     assert!(!admin.config_file().exists());
 
+    // Neither the cancelled nor the denied attempt stored anything, so neither
+    // may sign anything out: `ax mcp remote login` may be using this address.
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    assert!(admin.logins.logged_out().is_empty(), "{:?}", admin.logins.logged_out());
+
     // Signed in, but the server refuses the token: nothing saved, tokens dropped.
-    admin.logins.logged_out.lock().unwrap().clear();
     *admin.logins.token.lock().unwrap() = "a-token-the-server-refuses".to_owned();
     admin.call("POST", "/api/login", start.clone()).await;
     admin.logins.set(LoginState::Connected);

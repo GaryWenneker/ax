@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import ModalShell from '@cc/components/ModalShell';
 import Codicon from '@cc/components/Codicon';
+import { PageLoading } from '@cc/components/ui/PageLayout';
 import { activateConnection, removeConnection, testConnection, type Connection } from '../api';
 import Badge from './Badge';
 import ConfirmDialog from './ConfirmDialog';
@@ -14,7 +15,13 @@ interface Props {
   onChanged: () => Promise<void>;
 }
 
-type View = { kind: 'list' } | { kind: 'add' } | { kind: 'edit'; connection: Connection } | { kind: 'remove'; connection: Connection };
+type View =
+  | { kind: 'list' }
+  | { kind: 'add' }
+  | { kind: 'edit'; connection: Connection }
+  | { kind: 'remove'; connection: Connection }
+  /** A change was made; the list comes back when it has been loaded again. */
+  | { kind: 'working'; label: string };
 
 /** Saved environments: switch between them, add, edit, test and remove. */
 export default function ConnectionsPanel({ connections, onClose, onChanged }: Props) {
@@ -64,8 +71,10 @@ export default function ConnectionsPanel({ connections, onClose, onChanged }: Pr
           onCancel={() => backToList()}
           onChanged={() => void onChanged()}
           onSaved={(connection) => {
-            // The list is shown once it contains the saved connection, so
-            // the focus can go to its row.
+            // The form goes away at once, so it cannot be sent twice. The list
+            // comes back once it contains the saved connection, and the focus
+            // goes to its row.
+            setView({ kind: 'working', label: `${connection.name} is saved. Loading…` });
             void onChanged().finally(() => {
               setSelected(connection.id);
               backToList();
@@ -73,6 +82,14 @@ export default function ConnectionsPanel({ connections, onClose, onChanged }: Pr
             });
           }}
         />
+      </ModalShell>
+    );
+  }
+
+  if (view.kind === 'working') {
+    return (
+      <ModalShell title="Connections" onClose={onClose} size="lg">
+        <PageLoading label={view.label} />
       </ModalShell>
     );
   }
@@ -86,13 +103,15 @@ export default function ConnectionsPanel({ connections, onClose, onChanged }: Pr
         confirmLabel="Remove"
         onCancel={() => backToList()}
         onConfirm={() => {
-          backToList();
+          // The list comes back without the removed row, so the focus has a
+          // row to land on that stays.
+          setView({ kind: 'working', label: `Removing ${target.name}…` });
           void act(async () => {
             await removeConnection(target.id);
             setSelected(null);
             await onChanged();
             return `${target.name} is removed.`;
-          });
+          }).finally(backToList);
         }}
       />
     );

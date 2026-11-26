@@ -321,6 +321,8 @@ test('A7: removing connections deletes them, another one becomes active, and the
   // beta is active; removing it activates the first remaining connection.
   await remove(/beta/);
   await expect(connections(page).getByRole('option')).toHaveCount(2);
+  // The focus is on a row that is still there, not on the page body.
+  await expect(connections(page).locator('[role="option"][tabindex="0"]')).toBeFocused();
   await expect(connections(page).getByRole('option', { name: /Alpha read-only/ })).toContainText('active');
   await connections(page).getByRole('button', { name: 'Done' }).click();
   await expect(page.getByTestId('active-name')).toHaveText('Alpha read-only');

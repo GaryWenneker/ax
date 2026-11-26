@@ -74,6 +74,9 @@ pub struct App {
     /// How long a finished sign-in may wait to be saved before it is dropped.
     sign_in_grace: Duration,
     pending: Mutex<HashMap<String, PendingLogin>>,
+    /// Addresses with tokens from a finished sign-in that nobody saved, kept
+    /// because another attempt for the address was open at that moment.
+    leftovers: Mutex<std::collections::HashSet<String>>,
     csrf: String,
     port: u16,
 }
@@ -106,6 +109,7 @@ impl App {
             remotes: Mutex::new(Remotes::default()),
             sign_in_grace,
             pending: Mutex::new(HashMap::new()),
+            leftovers: Mutex::new(std::collections::HashSet::new()),
             csrf: format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple()),
             port,
         }))
@@ -457,23 +461,33 @@ impl App {
         .await
     }
 
-    /// For the end of an attempt that stored nothing itself: an earlier attempt
-    /// for the same address may have left tokens that were kept only because
-    /// this one was still open. Having nothing to remove is the normal case.
+    async fn sign_in_is_open(&self, url: &str) -> bool {
+        self.pending.lock().await.values().any(|p| p.url == url)
+    }
+
+    /// For the end of an attempt that stored nothing itself. Tokens are removed
+    /// only when ax-admin itself left them: an earlier attempt for this address
+    /// finished without being saved and was kept because this one was open.
+    /// Tokens that `ax mcp remote login` stored are never touched from here.
     async fn drop_leftover_sign_in(&self, url: &str) {
-        if self.pending.lock().await.values().any(|p| p.url == url) {
+        if !self.leftovers.lock().await.contains(url) || self.sign_in_is_open(url).await {
             return;
         }
+        self.leftovers.lock().await.remove(url);
         if let Ok(false) = self.sign_in_is_used(url, None).await {
-            // "Not signed in" is the expected answer here.
-            let _ = self.logins.logout(url).await;
+            if let Err(e) = self.logins.logout(url).await {
+                warn("tokens of an unfinished sign-in were not removed", &e);
+            }
         }
     }
 
-    /// Forgets the tokens of a sign-in that no saved connection uses.
+    /// Forgets the tokens of a sign-in that finished and that no saved
+    /// connection uses.
     async fn drop_unused_sign_in(&self, url: &str) {
         // A newer attempt for the same address may have just stored them.
-        if self.pending.lock().await.values().any(|p| p.url == url) {
+        // Remember that they are ours to remove when that attempt ends.
+        if self.sign_in_is_open(url).await {
+            self.leftovers.lock().await.insert(url.to_owned());
             return;
         }
         match self.sign_in_is_used(url, None).await {
@@ -853,6 +867,7 @@ async fn complete_login(State(app): State<Arc<App>>, Path(id): Path<String>) -> 
         return Err(e);
     }
     app.remotes.lock().await.clients.insert(connection.id.clone(), remote);
+    app.leftovers.lock().await.remove(&connection.url);
     ok(json!({
         "state": "connected",
         "connection": connection_json(&connection, Some(&connection.id)),
