@@ -9,6 +9,8 @@ const site = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dir = path.join(site, 'public/deploy/containers');
 const FILES = ['compose.yaml', 'Caddyfile', 'ax.env', 'ax-mcp.network', 'ax-mcp.container', 'ax-caddy.container'];
 const read = (name: string) => readFileSync(path.join(dir, name), 'utf8');
+/** Escapes every regular-expression metacharacter, so a value matches literally. */
+const literal = (text: string) => text.replace(/[\\^$.*+?()[\]{}|/-]/g, '\\$&');
 const release = readFileSync(path.join(site, 'public/releases/latest.txt'), 'utf8').trim().replace(/^v/, '');
 const serveRepo = readFileSync(path.join(site, '..', 'slim/ax-serve-repo.sh'), 'utf8');
 const guide = readFileSync(path.join(site, 'src/content/docs/guides/headless-linux.md'), 'utf8');
@@ -23,13 +25,13 @@ test('every container download exists as UTF-8 without a byte order mark', () =>
 
 test('images are pinned: ax to the published release, Caddy to an exact version', () => {
   const ax = `ghcr.io/garywenneker/ax-slim:${release}-server`;
-  assert.match(read('compose.yaml'), new RegExp(`image: ${ax.replace(/\./g, '\\.')}\\n`),
+  assert.match(read('compose.yaml'), new RegExp(`image: ${literal(ax)}\\n`),
     `compose.yaml must use ${ax}; update it when latest.txt moves to a new release`);
-  assert.match(read('ax-mcp.container'), new RegExp(`^Image=${ax.replace(/\./g, '\\.')}$`, 'm'),
+  assert.match(read('ax-mcp.container'), new RegExp(`^Image=${literal(ax)}$`, 'm'),
     `ax-mcp.container must use ${ax}`);
   const caddy = read('compose.yaml').match(/image: (docker\.io\/library\/caddy:\d+\.\d+\.\d+)\n/)?.[1];
   assert.ok(caddy, 'Caddy is pinned to an exact version in compose.yaml');
-  assert.match(read('ax-caddy.container'), new RegExp(`^Image=${caddy.replace(/\./g, '\\.')}$`, 'm'));
+  assert.match(read('ax-caddy.container'), new RegExp(`^Image=${literal(caddy)}$`, 'm'));
   for (const name of FILES) assert.doesNotMatch(read(name), /:latest\b|latest-server/, `${name} uses a latest tag`);
 });
 
@@ -72,7 +74,7 @@ test('ax.env sets only variables the server reads, and ships without a key', () 
 
 test('the headless Linux guide links every download', () => {
   for (const name of FILES) {
-    assert.match(guide, new RegExp(`\\(/deploy/containers/${name.replace(/\./g, '\\.')}\\)`), name);
+    assert.match(guide, new RegExp(`\\(/deploy/containers/${literal(name)}\\)`), name);
   }
   assert.match(guide, /^## Run it yourself with Docker or Podman$/m);
   assert.match(guide, /docker compose up -d/);
