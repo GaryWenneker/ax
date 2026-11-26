@@ -105,7 +105,9 @@ echo "ax-admin: $(printf '%s\n' "$TREE" | wc -l | tr -d ' ') crates, none of the
 step "L8 E8: headless build of ax with the admin extension"
 CARGO_TARGET_DIR="$HEADLESS_DIR" show '^error|Finished' cargo build --locked -p ax-cli --no-default-features --features "minimal-grammars mimalloc"
 HEADLESS_AX="$HEADLESS_DIR/debug/ax"
-"$HEADLESS_AX" web 2>&1 | grep -q "not included in this headless ax build" || { echo "FAIL: not a headless build"; exit 1; }
+# `ax web` exits with an error in the headless build; its message is the check.
+WEB_ANSWER="$("$HEADLESS_AX" web 2>&1 || true)"
+grep -q "not included in this headless ax build" <<<"$WEB_ANSWER" || { echo "FAIL: not a headless build"; exit 1; }
 echo "headless ax: $("$HEADLESS_AX" version | sed 's/\x1b\[[0-9;]*m//g')"
 
 step "L9 ax-admin binary with its embedded UI"
