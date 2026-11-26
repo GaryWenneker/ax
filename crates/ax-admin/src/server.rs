@@ -21,7 +21,7 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use subtle::ConstantTimeEq;
 use tokio::sync::Mutex;
@@ -32,6 +32,8 @@ pub const CSRF_HEADER: &str = "x-ax-admin-csrf";
 const MAX_BODY: usize = 256 * 1024;
 const LOGIN_TTL: Duration = Duration::from_secs(900);
 const ABANDON_POLL: Duration = Duration::from_millis(500);
+/// The page saves a finished sign-in within a second or two.
+const SIGN_IN_GRACE: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
 struct PendingLogin {
@@ -39,7 +41,26 @@ struct PendingLogin {
     url: String,
     client_id: String,
     write: bool,
-    started: Instant,
+}
+
+/// Cached clients, and a counter per connection that changes whenever its
+/// address or key changes. A client built from what was read before a change
+/// is not cached, so a key is never paired with an address it was not saved for.
+#[derive(Default)]
+struct Remotes {
+    clients: HashMap<String, Arc<Remote>>,
+    changes: HashMap<String, u64>,
+}
+
+impl Remotes {
+    fn version(&self, id: &str) -> u64 {
+        self.changes.get(id).copied().unwrap_or(0)
+    }
+    /// Forgets the client of a connection whose address or key is changing.
+    fn invalidate(&mut self, id: &str) {
+        *self.changes.entry(id.to_owned()).or_default() += 1;
+        self.clients.remove(id);
+    }
 }
 
 pub struct App {
@@ -47,10 +68,11 @@ pub struct App {
     store: Arc<std::sync::Mutex<Store>>,
     secrets: Arc<dyn SecretStore>,
     logins: Arc<dyn LoginBackend>,
-    /// One client per connection. The lock is held while a client is built and
-    /// while a connection's address or key changes, so no client is ever cached
-    /// with a key and an address that do not belong together.
-    remotes: Mutex<HashMap<String, Arc<Remote>>>,
+    /// One client per connection. The lock is only ever held for a moment:
+    /// nothing slow (network, credential store) happens under it.
+    remotes: Mutex<Remotes>,
+    /// How long a finished sign-in may wait to be saved before it is dropped.
+    sign_in_grace: Duration,
     pending: Mutex<HashMap<String, PendingLogin>>,
     csrf: String,
     port: u16,
@@ -65,11 +87,24 @@ impl App {
         logins: Arc<dyn LoginBackend>,
         port: u16,
     ) -> Result<Arc<Self>, String> {
+        Self::with_sign_in_grace(home, secrets, logins, port, SIGN_IN_GRACE)
+    }
+
+    /// Like `new`, with another wait before a finished sign-in that the page
+    /// never saved is dropped.
+    pub fn with_sign_in_grace(
+        home: PathBuf,
+        secrets: Arc<dyn SecretStore>,
+        logins: Arc<dyn LoginBackend>,
+        port: u16,
+        sign_in_grace: Duration,
+    ) -> Result<Arc<Self>, String> {
         Ok(Arc::new(Self {
             store: Arc::new(std::sync::Mutex::new(Store::open(&home)?)),
             secrets,
             logins,
-            remotes: Mutex::new(HashMap::new()),
+            remotes: Mutex::new(Remotes::default()),
+            sign_in_grace,
             pending: Mutex::new(HashMap::new()),
             csrf: format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple()),
             port,
@@ -108,6 +143,7 @@ impl From<McpError> for ApiError {
             McpError::Unreachable | McpError::Redirect | McpError::NotMcp(_) => StatusCode::BAD_GATEWAY,
             McpError::Timeout | McpError::StillRunning => StatusCode::GATEWAY_TIMEOUT,
             McpError::Busy => StatusCode::TOO_MANY_REQUESTS,
+            McpError::Reindexing => StatusCode::SERVICE_UNAVAILABLE,
             // The environment answered and said no.
             _ => StatusCode::UNPROCESSABLE_ENTITY,
         };
@@ -372,27 +408,41 @@ impl App {
         }
     }
 
-    /// The client of the active connection. The connection is read and its
-    /// client built under the `remotes` lock, which every change takes too.
+    /// The client of the active connection.
     async fn active_remote(&self) -> Result<(SavedConnection, Arc<Remote>), ApiError> {
-        let mut remotes = self.remotes.lock().await;
-        let connection = self
-            .store(|store| store.active().cloned())
-            .await?
-            .ok_or_else(|| {
-                ApiError(
-                    StatusCode::CONFLICT,
-                    "no_active_connection",
-                    "Connect to an Ax environment first".into(),
-                )
-            })?;
-        if let Some(remote) = remotes.get(&connection.id) {
-            return Ok((connection, remote.clone()));
+        for _ in 0..4 {
+            let connection = self
+                .store(|store| store.active().cloned())
+                .await?
+                .ok_or_else(|| {
+                    ApiError(
+                        StatusCode::CONFLICT,
+                        "no_active_connection",
+                        "Connect to an Ax environment first".into(),
+                    )
+                })?;
+            let version = {
+                let remotes = self.remotes.lock().await;
+                if let Some(remote) = remotes.clients.get(&connection.id) {
+                    return Ok((connection, remote.clone()));
+                }
+                remotes.version(&connection.id)
+            };
+            // Slow: the credential store may ask the user to unlock it.
+            let url = project_url(&connection.url).map_err(internal)?;
+            let remote = Arc::new(Remote::new(url, self.stored_tokens(&connection).await?)?);
+            let mut remotes = self.remotes.lock().await;
+            if remotes.version(&connection.id) == version {
+                remotes.clients.insert(connection.id.clone(), remote.clone());
+                return Ok((connection, remote));
+            }
+            // The connection changed meanwhile: read it again.
         }
-        let url = project_url(&connection.url).map_err(internal)?;
-        let remote = Arc::new(Remote::new(url, self.stored_tokens(&connection).await?)?);
-        remotes.insert(connection.id.clone(), remote.clone());
-        Ok((connection, remote))
+        Err(ApiError(
+            StatusCode::CONFLICT,
+            "connection_changing",
+            "This connection is being changed. Try again.".into(),
+        ))
     }
 
     /// Whether a saved connection (other than `except`) uses the sign-in for `url`.
@@ -408,6 +458,10 @@ impl App {
 
     /// Forgets the tokens of a sign-in that no saved connection uses.
     async fn drop_unused_sign_in(&self, url: &str) {
+        // A newer attempt for the same address may have just stored them.
+        if self.pending.lock().await.values().any(|p| p.url == url) {
+            return;
+        }
         match self.sign_in_is_used(url, None).await {
             Ok(true) => {}
             Ok(false) => {
@@ -418,6 +472,36 @@ impl App {
             Err(e) => warn("could not check whether a sign-in is still used", &e.2),
         }
     }
+}
+
+/// Follows one sign-in to its end. The page normally saves it within a second
+/// of the browser answering. If the page is gone by then (closed, reloaded,
+/// lost its connection to ax-admin), the attempt is dropped after a grace
+/// period and its tokens removed, so no sign-in is left behind unseen.
+fn watch_sign_in(app: Arc<App>, id: String, url: String) {
+    tokio::spawn(async move {
+        for _ in 0..(LOGIN_TTL.as_secs() * 2) {
+            // Saved or cancelled meanwhile: those paths clean up themselves.
+            if !app.pending.lock().await.contains_key(&id) {
+                return;
+            }
+            match app.logins.status(&id).await {
+                Some(LoginState::Pending) => tokio::time::sleep(ABANDON_POLL).await,
+                Some(LoginState::Connected) => {
+                    tokio::time::sleep(app.sign_in_grace).await;
+                    if app.pending.lock().await.remove(&id).is_some() {
+                        app.drop_unused_sign_in(&url).await;
+                    }
+                    return;
+                }
+                Some(LoginState::Failed(_)) | None => {
+                    app.pending.lock().await.remove(&id);
+                    return;
+                }
+            }
+        }
+        app.pending.lock().await.remove(&id);
+    });
 }
 
 /// A sign-in the user gave up on may still complete in the browser. Wait for
@@ -481,7 +565,6 @@ async fn create_connection(State(app): State<Arc<App>>, body: axum::body::Bytes)
         client_id: None,
         write: false,
     };
-    let mut remotes = app.remotes.lock().await;
     let secrets = app.secrets.clone();
     let id = connection.id.clone();
     blocking(move || secrets.set(&id, &key)).await?;
@@ -495,7 +578,7 @@ async fn create_connection(State(app): State<Arc<App>>, body: axum::body::Bytes)
         }
         return Err(e);
     }
-    remotes.insert(connection.id.clone(), remote);
+    app.remotes.lock().await.clients.insert(connection.id.clone(), remote);
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -511,8 +594,6 @@ async fn update_connection(
     body: axum::body::Bytes,
 ) -> Api {
     let input: ConnectionInput = parse(&body)?;
-    // Held to the end: no request builds a client from a half-applied change.
-    let mut remotes = app.remotes.lock().await;
     let saved = app.saved(&id).await?;
     let url = match input.url.as_deref() {
         Some(url) => project_url(url).map_err(bad_request)?,
@@ -541,6 +622,9 @@ async fn update_connection(
     if let Some(key) = &new_key {
         probe(url, Arc::new(StaticToken(key.clone()))).await?;
     }
+    // From here the key and the entry change. A client built in between is
+    // not cached (see `Remotes`), and none is left over afterwards.
+    app.remotes.lock().await.invalidate(&id);
     let previous_key = match &new_key {
         Some(key) => {
             let (secrets, id, key) = (app.secrets.clone(), id.clone(), key.clone());
@@ -579,17 +663,17 @@ async fn update_connection(
                     warn("the previous key of a connection could not be restored", &undo.2);
                 }
             }
+            app.remotes.lock().await.invalidate(&id);
             return Err(e);
         }
     };
-    // The cached client holds the old address and key.
-    remotes.remove(&id);
+    app.remotes.lock().await.invalidate(&id);
     ok(json!({"connection": connection_json(&updated, active.as_deref())}))
 }
 
 async fn remove_connection(State(app): State<Arc<App>>, Path(id): Path<String>) -> Api {
-    let mut remotes = app.remotes.lock().await;
     let saved = app.saved(&id).await?;
+    app.remotes.lock().await.invalidate(&id);
     // The credential goes first. If the entry cannot be removed afterwards it
     // is still listed, and removing it again works.
     match saved.auth {
@@ -613,7 +697,7 @@ async fn remove_connection(State(app): State<Arc<App>>, Path(id): Path<String>) 
         })
         .await?
         .map_err(internal)?;
-    remotes.remove(&id);
+    app.remotes.lock().await.invalidate(&id);
     ok(json!({"removed": id, "activeId": active}))
 }
 
@@ -670,17 +754,8 @@ async fn start_login(State(app): State<Arc<App>>, body: axum::body::Bytes) -> Ap
         .start(url.to_string(), client_id.clone(), write, input.admin)
         .await
         .map_err(|e| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "sign_in_failed", e))?;
+    watch_sign_in(app.clone(), started.id.clone(), url.to_string());
     let mut pending = app.pending.lock().await;
-    // An attempt nobody finished may still complete in the browser.
-    let expired: Vec<_> = pending
-        .iter()
-        .filter(|(_, p)| p.started.elapsed() >= LOGIN_TTL)
-        .map(|(id, p)| (id.clone(), p.url.clone()))
-        .collect();
-    for (id, url) in expired {
-        pending.remove(&id);
-        abandon(app.clone(), id, url);
-    }
     pending.insert(
         started.id.clone(),
         PendingLogin {
@@ -688,7 +763,6 @@ async fn start_login(State(app): State<Arc<App>>, body: axum::body::Bytes) -> Ap
             url: url.to_string(),
             client_id,
             write,
-            started: Instant::now(),
         },
     );
     ok(json!({"id": started.id, "authorizationUrl": started.authorization_url}))
@@ -745,7 +819,6 @@ async fn complete_login(State(app): State<Arc<App>>, Path(id): Path<String>) -> 
         write: login.write,
     };
     let url = project_url(&connection.url).map_err(internal)?;
-    let mut remotes = app.remotes.lock().await;
     let (remote, info) = match probe(url, app.logins.tokens(&connection.url)).await {
         Ok(v) => v,
         Err(e) => {
@@ -762,7 +835,7 @@ async fn complete_login(State(app): State<Arc<App>>, Path(id): Path<String>) -> 
         app.drop_unused_sign_in(&connection.url).await;
         return Err(e);
     }
-    remotes.insert(connection.id.clone(), remote);
+    app.remotes.lock().await.clients.insert(connection.id.clone(), remote);
     ok(json!({
         "state": "connected",
         "connection": connection_json(&connection, Some(&connection.id)),

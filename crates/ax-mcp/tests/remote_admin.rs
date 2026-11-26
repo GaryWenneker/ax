@@ -761,6 +761,7 @@ async fn an_index_run_finishes_after_its_request_timed_out() {
     let (status, body) = call(&app, "alpha", ADMIN_KEY, &session, "ax_index", json!({"force":true})).await;
     assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
     assert_eq!(body["error"], "The operation is still running on the server");
+    assert_eq!(body["running"], true);
     // The run was not dropped: the rebuilt index appears, on a fresh session too.
     let other = open(&app, "alpha", CONTEXT_KEY).await;
     let mut found = String::new();
@@ -774,7 +775,11 @@ async fn an_index_run_finishes_after_its_request_timed_out() {
             json!({"query":"indexed_after_timeout"}),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
+        // While the index still runs the project is busy; afterwards it answers.
+        assert!(
+            status == StatusCode::OK || status == StatusCode::SERVICE_UNAVAILABLE,
+            "{status} {body}"
+        );
         found = text(&body);
         if found.contains("late.rs") && found.contains("indexed_after_timeout") {
             break;
@@ -782,13 +787,53 @@ async fn an_index_run_finishes_after_its_request_timed_out() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(found.contains("late.rs"), "{found}");
-    // The file lock was released: the same session can run again (it times out
-    // at once here, but is accepted rather than refused as busy or locked).
-    let (status, _) = call(&app, "alpha", ADMIN_KEY, &session, "ax_sync", json!({})).await;
-    assert!(
-        status == StatusCode::GATEWAY_TIMEOUT || status == StatusCode::OK,
-        "{status}"
-    );
+    // The run released the project's file lock: another writer gets it at once.
+    let mut other_writer = ax_core::Ax::init(&dir.path().join("alpha")).await.unwrap();
+    let synced = tokio::time::timeout(
+        Duration::from_secs(20),
+        other_writer.sync(ax_extraction::orchestrator::IndexOptions::default(), None),
+    )
+    .await
+    .expect("the file lock is free");
+    assert!(synced.is_ok(), "{:?}", synced.err());
+}
+
+#[tokio::test]
+async fn calls_do_not_queue_behind_a_running_index() {
+    let handle = Arc::new(std::sync::Mutex::new(None));
+    let keep = handle.clone();
+    let (_dir, app) = fixture_with(move |state| {
+        *keep.lock().unwrap() = Some(state.clone());
+        state
+    })
+    .await;
+    let state: RemoteState = handle.lock().unwrap().take().unwrap();
+    let session = open(&app, "alpha", CONTEXT_KEY).await;
+    let beta_session = open(&app, "beta", BETA_KEY).await;
+
+    // alpha is being re-indexed.
+    let indexing = state.hold_project("alpha").await;
+    let started = std::time::Instant::now();
+    let (status, body) = call(&app, "alpha", CONTEXT_KEY, &session, "ax_status", json!({})).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["error"], "This project is being re-indexed; try again when it is done");
+    assert!(started.elapsed() < Duration::from_secs(10), "told quickly, not after minutes");
+    // Listing tools needs no index, and the other project is not affected.
+    let (status, _, _) = send(
+        &app,
+        "alpha",
+        CONTEXT_KEY,
+        Some(&session),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = call(&app, "beta", BETA_KEY, &beta_session, "ax_status", json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+
+    drop(indexing);
+    let (status, _) = call(&app, "alpha", CONTEXT_KEY, &session, "ax_status", json!({})).await;
+    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test]

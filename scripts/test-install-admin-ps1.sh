@@ -49,6 +49,21 @@ grep -q "checksum mismatch" "$WORK/tamper.log" || { cat "$WORK/tamper.log" >&2; 
 cmp -s "$EXE" "$BIN" || fail "binary changed after a refused download"
 echo "ok tampered archive refused"
 
+# A download that does not run here leaves the working program in place.
+for arch in x64 arm64; do
+  rm -rf "$WORK/broken" && mkdir -p "$WORK/broken/ax-admin-win32-$arch"
+  printf '#!/bin/sh\nexit 3\n' > "$WORK/broken/ax-admin-win32-$arch/ax-admin.exe"
+  chmod 0755 "$WORK/broken/ax-admin-win32-$arch/ax-admin.exe"
+  rm -f "$REL/ax-admin-win32-$arch.zip"
+  (cd "$WORK/broken" && zip -q -r "$REL/ax-admin-win32-$arch.zip" "ax-admin-win32-$arch")
+done
+(cd "$REL" && shasum -a 256 ax-admin-*.zip > SHA256SUMS)
+if run -Version "$TAG" >"$WORK/broken.log" 2>&1; then fail "a program that does not run was installed"; fi
+grep -q "does not run on this computer" "$WORK/broken.log" || { cat "$WORK/broken.log" >&2; fail "no does-not-run error"; }
+cmp -s "$EXE" "$BIN" || fail "the working program was replaced by a broken one"
+[[ ! -e "$EXE.new" ]] || fail "a staged file was left behind"
+echo "ok unusable download refused"
+
 run -Uninstall >/dev/null 2>&1 || fail "uninstall"
 [[ ! -e "$EXE" ]] || fail "ax-admin.exe still present after uninstall"
 echo "ok uninstall"

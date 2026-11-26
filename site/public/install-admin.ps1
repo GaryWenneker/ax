@@ -52,6 +52,17 @@ function Set-UserPathEntries([string[]]$entries) {
   } finally {
     $key.Dispose()
   }
+  # A direct registry write is not announced. Tell running programs (Explorer
+  # among them) that the environment changed, so a new terminal sees the PATH.
+  if (-not ('AxAdmin.Environment' -as [type])) {
+    Add-Type -Namespace AxAdmin -Name Environment -MemberDefinition @'
+[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+'@
+  }
+  $result = [UIntPtr]::Zero
+  # HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_ABORTIFHUNG, 5 seconds
+  [void][AxAdmin.Environment]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result)
 }
 
 $onWindows = $env:OS -eq 'Windows_NT'

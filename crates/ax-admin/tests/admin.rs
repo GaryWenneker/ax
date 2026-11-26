@@ -223,7 +223,19 @@ impl Admin {
         secrets: Arc<MemoryStore>,
         logins: Arc<FakeLogins>,
     ) -> Self {
-        let app = App::new(home.clone(), secrets.clone(), logins.clone(), PORT).unwrap();
+        Self::build_with_grace(home, guard, secrets, logins, Duration::from_secs(60)).await
+    }
+
+    /// `grace`: how long a finished sign-in may wait to be saved.
+    async fn build_with_grace(
+        home: PathBuf,
+        guard: Option<tempfile::TempDir>,
+        secrets: Arc<MemoryStore>,
+        logins: Arc<FakeLogins>,
+        grace: Duration,
+    ) -> Self {
+        let app =
+            App::with_sign_in_grace(home.clone(), secrets.clone(), logins.clone(), PORT, grace).unwrap();
         let mut admin = Self {
             home,
             _home_guard: guard,
@@ -1060,6 +1072,85 @@ async fn a10_a_finished_sign_in_is_saved_once_and_removed_with_its_tokens() {
 }
 
 #[tokio::test]
+async fn a10_a_sign_in_the_page_never_saved_is_dropped_with_its_tokens() {
+    let upstream = Upstream::start().await;
+    let guard = tempfile::tempdir().unwrap();
+    let admin = Admin::build_with_grace(
+        guard.path().join("home"),
+        None,
+        Arc::new(MemoryStore::default()),
+        Arc::new(FakeLogins::default()),
+        Duration::from_millis(300),
+    )
+    .await;
+    *admin.logins.token.lock().unwrap() = CONTEXT_KEY.to_owned();
+    let url = upstream.url("alpha");
+    // The page starts a sign-in and then goes away (closed, reloaded).
+    let (_, started) = admin
+        .call("POST", "/api/login", json!({"url": url, "clientId": "native-client"}))
+        .await;
+    let id = started["id"].as_str().unwrap().to_owned();
+    // The user finishes in the browser anyway: tokens are stored.
+    admin.logins.set(LoginState::Connected);
+    for _ in 0..50 {
+        if !admin.logins.logged_out().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(admin.logins.logged_out(), std::slice::from_ref(&url));
+    let (status, _) = admin.get(&format!("/api/login/{id}")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "the attempt is gone");
+    assert!(!admin.config_file().exists());
+
+    // A page that does save in time keeps its tokens.
+    admin.logins.logged_out.lock().unwrap().clear();
+    let (_, started) = admin
+        .call("POST", "/api/login", json!({"url": url, "clientId": "native-client"}))
+        .await;
+    admin.logins.set(LoginState::Connected);
+    let (_, done) = admin
+        .call("POST", &format!("/api/login/{}/complete", started["id"].as_str().unwrap()), json!({}))
+        .await;
+    assert_eq!(done["state"], "connected");
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert!(admin.logins.logged_out().is_empty());
+}
+
+#[tokio::test]
+async fn a_slow_environment_does_not_hold_up_the_others() {
+    let upstream = Upstream::start().await;
+    let admin = Admin::start().await;
+    let other = admin.add("Beta", &upstream.url("beta"), BETA_KEY).await;
+    admin.add("Alpha", &upstream.url("alpha"), CONTEXT_KEY).await;
+    // An address that takes seconds to say no.
+    let slow = serve(Router::new().fallback(|| async {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        StatusCode::UNAUTHORIZED
+    }))
+    .await;
+    let path = format!("/api/connections/{other}");
+    let edit = admin.call(
+        "PUT",
+        &path,
+        json!({"url": format!("{slow}/projects/beta/mcp"), "auth": {"type": "api_key", "key": "new-key"}}),
+    );
+    let work = async {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let started = std::time::Instant::now();
+        let (status, _) = admin.tool("ax_status", json!({})).await;
+        let (info_status, _) = admin.get("/api/remote/info").await;
+        (status, info_status, started.elapsed())
+    };
+    let ((edit_status, edit_body), (status, info_status, took)) = tokio::join!(edit, work);
+    assert_eq!(edit_status, StatusCode::UNPROCESSABLE_ENTITY, "{edit_body}");
+    assert_eq!((status, info_status), (StatusCode::OK, StatusCode::OK));
+    assert!(took < Duration::from_millis(1500), "the active environment answered in {took:?}");
+    // The refused edit changed nothing.
+    assert_eq!(admin.secrets.get(&other).unwrap().as_deref(), Some(BETA_KEY));
+}
+
+#[tokio::test]
 async fn a10_tokens_of_a_sign_in_nobody_keeps_are_removed() {
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
@@ -1084,6 +1175,27 @@ async fn a10_tokens_of_a_sign_in_nobody_keeps_are_removed() {
     }
     assert_eq!(admin.logins.logged_out(), std::slice::from_ref(&url));
     assert!(!admin.config_file().exists());
+
+    // A is cancelled too late, and B for the same address is started at once.
+    // When A's tokens turn up they may be B's: B is still waiting, so they stay.
+    admin.logins.logged_out.lock().unwrap().clear();
+    let (_, first) = admin.call("POST", "/api/login", start.clone()).await;
+    admin
+        .call("DELETE", &format!("/api/login/{}", first["id"].as_str().unwrap()), json!({}))
+        .await;
+    admin.logins.cancel_too_late.store(false, Ordering::SeqCst);
+    let (_, second) = admin.call("POST", "/api/login", start.clone()).await;
+    admin.logins.set(LoginState::Connected);
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert!(admin.logins.logged_out().is_empty(), "the newer attempt keeps its tokens");
+    let (_, saved) = admin
+        .call("POST", &format!("/api/login/{}/complete", second["id"].as_str().unwrap()), json!({}))
+        .await;
+    assert_eq!(saved["state"], "connected");
+    admin
+        .call("DELETE", &format!("/api/connections/{}", saved["connection"]["id"].as_str().unwrap()), json!({}))
+        .await;
+    admin.logins.logged_out.lock().unwrap().clear();
 
     // With a saved connection on that sign-in, a later attempt that fails or
     // is abandoned must not sign the saved one out.
@@ -1185,10 +1297,6 @@ async fn scripted(
         .with_state(script.clone());
     let base = serve(app).await;
     (script, format!("{base}/projects/alpha/mcp").parse().unwrap())
-}
-
-fn remote_for(url: url::Url) -> Remote {
-    remote(url)
 }
 
 fn remote(url: url::Url) -> Remote {
@@ -1318,33 +1426,39 @@ async fn b3_a_rejected_oauth_token_is_refreshed_once_and_an_api_key_is_not() {
 }
 
 #[tokio::test]
-async fn a_server_that_gave_up_waiting_is_reported_as_still_running() {
-    let gave_up = || {
-        (
-            StatusCode::GATEWAY_TIMEOUT,
-            axum::Json(json!({"error": "The operation is still running on the server"})),
-        )
-            .into_response()
-    };
-    let (_, url) = scripted(move |method, _, _, _| match method {
-        "initialize" => initialized("2025-11-25", "s"),
-        "tools/list" => tool_list(&["ax_index"]),
-        _ => gave_up(),
-    })
-    .await;
-    let remote = remote(url);
-    assert_eq!(remote.call_tool("ax_index", json!({})).await.unwrap_err(), McpError::StillRunning);
-    // A gateway's own 504 page is not an answer from Ax.
-    let (_, url) = scripted(|method, _, _, _| match method {
-        "initialize" => initialized("2025-11-25", "s"),
-        "tools/list" => tool_list(&["ax_index"]),
-        _ => (StatusCode::GATEWAY_TIMEOUT, "upstream timed out").into_response(),
-    })
-    .await;
+async fn the_servers_timeouts_and_busy_answers_are_told_apart() {
+    async fn outcome(status: StatusCode, body: Option<Value>) -> McpError {
+        let (_, url) = scripted(move |method, _, _, _| match method {
+            "initialize" => initialized("2025-11-25", "s"),
+            "tools/list" => tool_list(&["ax_index"]),
+            _ => match &body {
+                Some(body) => (status, axum::Json(body.clone())).into_response(),
+                None => (status, "upstream trouble").into_response(),
+            },
+        })
+        .await;
+        remote(url).call_tool("ax_index", json!({})).await.unwrap_err()
+    }
+    let gateway_timeout = StatusCode::GATEWAY_TIMEOUT;
+    // Only this answer means the work goes on.
     assert_eq!(
-        remote_for(url).call_tool("ax_index", json!({})).await.unwrap_err(),
-        McpError::NotMcp(504)
+        outcome(gateway_timeout, Some(json!({"error": "The operation is still running on the server", "running": true}))).await,
+        McpError::StillRunning
     );
+    // Ax gave up on the call itself.
+    assert_eq!(outcome(gateway_timeout, Some(json!({"error": "Ax tool timed out"}))).await, McpError::Timeout);
+    assert_eq!(
+        outcome(gateway_timeout, Some(json!({"error": "x", "running": false}))).await,
+        McpError::Timeout
+    );
+    // A gateway's own page is not an answer from Ax.
+    assert_eq!(outcome(gateway_timeout, None).await, McpError::NotMcp(504));
+    assert_eq!(
+        outcome(StatusCode::SERVICE_UNAVAILABLE, Some(json!({"error": "This project is being re-indexed; try again when it is done"}))).await,
+        McpError::Reindexing
+    );
+    assert_eq!(outcome(StatusCode::SERVICE_UNAVAILABLE, None).await, McpError::NotMcp(503));
+    assert_eq!(outcome(StatusCode::TOO_MANY_REQUESTS, None).await, McpError::Busy);
 }
 
 #[tokio::test]

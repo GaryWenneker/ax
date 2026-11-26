@@ -74,6 +74,10 @@ const ADMIN_TOOL_TIMEOUT: Duration = Duration::from_secs(570);
 /// Index-changing admin calls that may run or wait at the same time, across
 /// all projects. They hold a request slot for minutes; context calls must not starve.
 const ADMIN_MUTATION_SLOTS: usize = 4;
+/// How long a call waits for a running index of its project before it is
+/// told to come back later. Short, so waiting calls never use up the request
+/// slots that other projects need.
+const PROJECT_WAIT: Duration = Duration::from_secs(2);
 
 struct Session {
     principal: String,
@@ -101,6 +105,9 @@ pub struct RemoteState {
     mutations: Arc<Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>>,
     admin_slots: Arc<Semaphore>,
     admin_timeout: Duration,
+    /// Held (shared) by every index run, also after its request timed out.
+    /// Shutdown takes it alone, so a run is not cut off halfway.
+    admin_running: Arc<tokio::sync::RwLock<()>>,
     control: Option<String>,
     shutdown: Option<tokio::sync::watch::Sender<bool>>,
 }
@@ -115,9 +122,16 @@ impl RemoteState {
             mutations: Arc::new(Mutex::new(HashMap::new())),
             admin_slots: Arc::new(Semaphore::new(ADMIN_MUTATION_SLOTS)),
             admin_timeout: ADMIN_TOOL_TIMEOUT,
+            admin_running: Arc::new(tokio::sync::RwLock::new(())),
             control: None,
             shutdown: None,
         }
+    }
+
+    /// Takes a project's lock alone, as an index run does, until the guard is
+    /// dropped. For embedders that change a project's index themselves, and tests.
+    pub async fn hold_project(&self, project: &str) -> tokio::sync::OwnedRwLockWriteGuard<()> {
+        project_lock(self, project).await.write_owned().await
     }
 
     /// Overrides how long an admin call may take and how many index-changing
@@ -717,35 +731,68 @@ async fn post(
         // client goes away: a run dropped halfway leaves the index cleared and
         // its file lock held. The task keeps the session and its request slot
         // until it is done.
-        let task = tokio::spawn(async move {
-            let _held = (permit, slot);
+        let running = state.admin_running.clone().read_owned().await;
+        let mut task = tokio::spawn(async move {
+            let _held = (permit, slot, running);
             let _exclusive = lock.write_owned().await;
             let outcome = handle_request(&mut engine.engine, &method, params).await;
             (outcome, engine)
         });
-        match tokio::time::timeout(timeout, task).await {
+        match tokio::time::timeout(timeout, &mut task).await {
             Ok(Ok((outcome, guard))) => {
                 engine = guard;
                 outcome
             }
             Ok(Err(_)) => return error(StatusCode::INTERNAL_SERVER_ERROR, "Ax tool failed"),
             Err(_) => {
-                return error(
-                    StatusCode::GATEWAY_TIMEOUT,
-                    "The operation is still running on the server",
-                )
+                // Nobody waits for the answer any more; keep its trace.
+                let root = project.root.clone();
+                tokio::spawn(async move {
+                    match task.await {
+                        Ok((outcome, _session)) => {
+                            if !outcome.verbose_lines.is_empty() {
+                                crate::verbose::append_verbose_log_file(&outcome.verbose_lines, Some(&root));
+                            }
+                            if outcome.result.is_err() {
+                                ax_usage::log_workspace(Some(&root), "index operation failed after its request timed out via=remote-mcp");
+                            }
+                        }
+                        Err(_) => ax_usage::log_workspace(Some(&root), "index operation stopped unexpectedly via=remote-mcp"),
+                    }
+                });
+                return no_store(
+                    (
+                        StatusCode::GATEWAY_TIMEOUT,
+                        Json(json!({"error":"The operation is still running on the server","running":true})),
+                    )
+                        .into_response(),
+                );
             }
         }
     } else {
         let _permit = permit;
-        match tokio::time::timeout(timeout, async {
-            // Waiting for a running index counts towards the timeout.
-            let _shared = match &shared {
-                Some(lock) => Some(lock.read().await),
-                None => None,
-            };
-            handle_request(&mut engine.engine, &method, params).await
-        })
+        // A running index has the project to itself. Wait a moment for it,
+        // then say so instead of holding a request slot for minutes.
+        let _shared = match shared {
+            Some(lock) => match tokio::time::timeout(PROJECT_WAIT, lock.read_owned()).await {
+                Ok(guard) => Some(guard),
+                Err(_) => {
+                    let mut response = error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "This project is being re-indexed; try again when it is done",
+                    );
+                    response
+                        .headers_mut()
+                        .insert("retry-after", HeaderValue::from_static("5"));
+                    return response;
+                }
+            },
+            None => None,
+        };
+        match tokio::time::timeout(
+            timeout,
+            handle_request(&mut engine.engine, &method, params),
+        )
         .await
         {
             Ok(outcome) => outcome,
@@ -967,6 +1014,7 @@ pub async fn serve(
     );
     let (shutdown, mut receiver) = tokio::sync::watch::channel(false);
     let mut state = RemoteState::new(config, verifier);
+    let admin_running = state.admin_running.clone();
     if let Ok(control) = std::env::var("AX_REMOTE_HOST_CONTROL") {
         if control.len() < 32
             || control.len() > 4096
@@ -986,6 +1034,13 @@ pub async fn serve(
         })
         .await
         .map_err(|e| e.to_string());
+    // An index run that outlived its request finishes before the process ends.
+    if tokio::time::timeout(ADMIN_TOOL_TIMEOUT, admin_running.write())
+        .await
+        .is_err()
+    {
+        tracing::warn!("remote MCP stopped while an index operation was still running");
+    }
     heartbeat.abort();
     if let Err(error) =
         ax_global_db::remote_mcp_publications::stop_lease(&catalogue, &snapshot.id, &instance).await

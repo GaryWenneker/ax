@@ -52,6 +52,8 @@ pub enum McpError {
     UnknownTool(String),
     /// The server gave up waiting; an index run continues there.
     StillRunning,
+    /// The project is being re-indexed; the server asks to come back later.
+    Reindexing,
     /// The local credential could not be read or refreshed.
     Credential(String),
     Protocol(String),
@@ -72,6 +74,7 @@ impl McpError {
             Self::Rpc(..) => "server_error",
             Self::UnknownTool(_) => "unknown_tool",
             Self::StillRunning => "still_running",
+            Self::Reindexing => "reindexing",
             Self::Credential(_) => "credential_unavailable",
             Self::Protocol(_) => "protocol_error",
         }
@@ -91,6 +94,7 @@ impl McpError {
             Self::Rpc(_, message) => format!("The server reported an error: {message}"),
             Self::UnknownTool(name) => format!("The server does not offer {name} to this connection."),
             Self::StillRunning => "The server is still working on this. Look at Status or Logging in a moment.".into(),
+            Self::Reindexing => "The environment is re-indexing this project. Try again when it is done.".into(),
             Self::Credential(detail) => detail.clone(),
             Self::Protocol(detail) => format!("Unexpected answer from the server: {detail}"),
         }
@@ -285,9 +289,16 @@ impl Remote {
                 return Err(McpError::UnknownProject)
             }
             429 => return Err(McpError::Busy),
-            // Only Ax answers a timeout with a JSON error; a proxy's 504 is not MCP.
-            504 if json.as_ref().is_some_and(|v| v.get("error").is_some()) => {
+            // Ax marks the one timeout after which the work goes on. Its other
+            // timeouts dropped the call; a proxy's own 504 page is not MCP at all.
+            504 if json.as_ref().is_some_and(|v| v["running"] == true) => {
                 return Err(McpError::StillRunning)
+            }
+            504 if json.as_ref().is_some_and(|v| v.get("error").is_some()) => {
+                return Err(McpError::Timeout)
+            }
+            503 if json.as_ref().is_some_and(|v| v.get("error").is_some()) => {
+                return Err(McpError::Reindexing)
             }
             202 | 204 => {
                 return Ok(Reply {
@@ -515,6 +526,7 @@ mod tests {
             McpError::Rpc(-1, "x".into()),
             McpError::UnknownTool("ax_x".into()),
             McpError::StillRunning,
+            McpError::Reindexing,
             McpError::Credential("x".into()),
             McpError::Protocol("x".into()),
         ];
