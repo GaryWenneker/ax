@@ -968,7 +968,7 @@ async fn a10_browser_sign_in_saves_only_after_it_succeeds() {
     assert_eq!(refused["state"], "failed", "{refused}");
     assert_eq!(refused["message"], "The server rejected these credentials.");
     assert!(!admin.config_file().exists());
-    assert_eq!(admin.logins.logged_out(), [url.clone()]);
+    assert_eq!(admin.logins.logged_out(), std::slice::from_ref(&url));
     let (_, list) = admin.get("/api/connections").await;
     assert_eq!(list["connections"], json!([]));
 }
@@ -1082,7 +1082,7 @@ async fn a10_tokens_of_a_sign_in_nobody_keeps_are_removed() {
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert_eq!(admin.logins.logged_out(), [url.clone()]);
+    assert_eq!(admin.logins.logged_out(), std::slice::from_ref(&url));
     assert!(!admin.config_file().exists());
 
     // With a saved connection on that sign-in, a later attempt that fails or
