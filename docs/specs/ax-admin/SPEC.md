@@ -338,8 +338,9 @@ OAuth server of a local ax, not an external provider.
 
 The approved text above is unchanged. Implementation and two independent
 reviews showed these points to be wrong or incomplete; each is listed here so
-the difference from the approved contract is visible. They await the owner's
-review.
+the difference from the approved contract is visible. The owner accepted them
+on 2026-11-26 ("accepted"), together with keeping browser sign-in tokens in the
+store shared with `ax mcp remote login`. Results are in [EVIDENCE.md](EVIDENCE.md).
 
 | # | Approved text | What is implemented, and why |
 |---|---|---|
