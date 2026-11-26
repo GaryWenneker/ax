@@ -10,6 +10,8 @@ members = [
     "crates/ax-sync",
     "crates/ax-core",
     "crates/ax-mcp",
+    "crates/ax-remote-client",
+    "crates/ax-admin",
     "crates/ax-memory",
     "crates/ax-cli",
     "crates/ax-telemetry",
@@ -88,6 +90,7 @@ ax-context = { path = "crates/ax-context" }
 ax-sync = { path = "crates/ax-sync" }
 ax-core = { path = "crates/ax-core" }
 ax-mcp = { path = "crates/ax-mcp" }
+ax-remote-client = { path = "crates/ax-remote-client" }
 ax-memory = { path = "crates/ax-memory" }
 ax-web = { path = "crates/ax-web" }
 ax-desktop-client = { path = "crates/ax-desktop-client" }

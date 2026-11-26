@@ -514,6 +514,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "ax-admin"
+version = "10.1.1"
+dependencies = [
+ "ax-core",
+ "ax-extraction",
+ "ax-mcp",
+ "ax-remote-client",
+ "ax-utils",
+ "axum",
+ "clap",
+ "futures-core",
+ "hex",
+ "include_dir",
+ "jsonwebtoken",
+ "keyring",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "tempfile",
+ "tokio",
+ "tower",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "ax-agent"
 version = "10.1.1"
 dependencies = [
@@ -824,6 +852,7 @@ dependencies = [
  "ax-pi",
  "ax-policy",
  "ax-reasoning",
+ "ax-remote-client",
  "ax-ship",
  "ax-skill-catalog",
  "ax-sync",
@@ -987,6 +1016,28 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
+]
+
+[[package]]
+name = "ax-remote-client"
+version = "10.1.1"
+dependencies = [
+ "ax-utils",
+ "axum",
+ "fs2",
+ "hex",
+ "keyring",
+ "oauth2",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "tempfile",
+ "tokio",
+ "tower",
+ "url",
+ "uuid",
 ]
 
 [[package]]

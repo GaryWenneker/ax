@@ -8,6 +8,7 @@ base64 = "0.22"
 ax-types = { workspace = true }
 ax-utils = { workspace = true }
 ax-global-db = { workspace = true }
+ax-remote-client = { workspace = true }
 ax-core = { workspace = true }
 ax-policy = { workspace = true }
 ax-skill-catalog = { workspace = true }

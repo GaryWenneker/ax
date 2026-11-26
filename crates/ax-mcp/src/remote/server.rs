@@ -90,6 +90,9 @@ pub struct RemoteState {
     verifier: TokenVerifier,
     sessions: Arc<Mutex<HashMap<String, Session>>>,
     concurrency: Arc<Semaphore>,
+    /// One index-changing admin call per project at a time. Two sessions of this
+    /// process would otherwise wait on each other's database and file locks.
+    mutations: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     control: Option<String>,
     shutdown: Option<tokio::sync::watch::Sender<bool>>,
 }
@@ -101,6 +104,7 @@ impl RemoteState {
             verifier,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             concurrency: Arc::new(Semaphore::new(16)),
+            mutations: Arc::new(Mutex::new(HashMap::new())),
             control: None,
             shutdown: None,
         }
@@ -482,6 +486,7 @@ async fn post(
     let write = principal.can_write(&project);
     let admin = principal.can_admin(&project);
     let mut timeout = TOOL_TIMEOUT;
+    let mut mutation = None;
     let mut engine = match tokio::time::timeout(Duration::from_secs(30), engine.lock()).await {
         Ok(e) => e,
         Err(_) => return error(StatusCode::TOO_MANY_REQUESTS, "Connection is busy"),
@@ -508,6 +513,17 @@ async fn post(
         }
         if admin_tool_permitted(&name, admin) {
             timeout = ADMIN_TOOL_TIMEOUT;
+            if ADMIN_MUTATING_TOOLS.contains(&name.as_str()) {
+                mutation = Some(
+                    state
+                        .mutations
+                        .lock()
+                        .await
+                        .entry(project.id.clone())
+                        .or_default()
+                        .clone(),
+                );
+            }
         } else if !tool_permitted(&name, &args, write) {
             if WRITE_TOOLS.contains(&name.as_str()) || name == "ax_policy_capture" {
                 let auth = format!("Bearer resource_metadata=\"{}\", scope=\"{} {}\", error=\"insufficient_scope\"",
@@ -639,14 +655,19 @@ async fn post(
             None
         }
     });
-    let outcome = match tokio::time::timeout(
-        timeout,
+    let outcome = match tokio::time::timeout(timeout, async {
+        // Waiting for another admin's index run counts towards the timeout.
+        let _exclusive = match &mutation {
+            Some(lock) => Some(lock.lock().await),
+            None => None,
+        };
         handle_request(
             &mut engine.engine,
             &request.method,
             request.params.unwrap_or(Value::Null),
-        ),
-    )
+        )
+        .await
+    })
     .await
     {
         Ok(outcome) => outcome,
