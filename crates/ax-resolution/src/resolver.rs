@@ -76,6 +76,9 @@ impl ReferenceResolver {
             stats: ResolutionStats::default(),
         };
 
+        // Nothing below writes nodes until the edges are stored, so node
+        // lookups can be memoized for the whole loop.
+        let reads = queries.with_node_read_cache();
         for (i, db_ref) in refs.into_iter().enumerate() {
             if i > 0 && i % 500 == 0 {
                 if let Some(ref mut cb) = on_progress {
@@ -97,13 +100,13 @@ impl ReferenceResolver {
 
             let resolved = match ref_.reference_kind {
                 ReferenceKind::FunctionRef => {
-                    self.name_matcher.match_function_ref(queries, &ref_).await
+                    self.name_matcher.match_function_ref(&reads, &ref_).await
                 }
-                ReferenceKind::Imports => self.resolve_import_ref(queries, &ref_).await,
+                ReferenceKind::Imports => self.resolve_import_ref(&reads, &ref_).await,
                 _ => {
                     if let Some(r) = framework_resolve::try_resolve(
                         self.import_resolver.project_root(),
-                        queries,
+                        &reads,
                         &ref_,
                     )
                     .await
@@ -114,13 +117,13 @@ impl ReferenceResolver {
                             import_map.get(&(ref_.file_path.clone(), ref_.reference_name.clone()))
                         {
                             self.name_matcher
-                                .resolve_in_file(queries, &ref_, target_file)
+                                .resolve_in_file(&reads, &ref_, target_file)
                                 .await
                         } else {
-                            self.name_matcher.resolve_ref(queries, &ref_).await
+                            self.name_matcher.resolve_ref(&reads, &ref_).await
                         }
                     } else {
-                        self.name_matcher.resolve_ref(queries, &ref_).await
+                        self.name_matcher.resolve_ref(&reads, &ref_).await
                     }
                 }
             };
@@ -152,7 +155,7 @@ impl ReferenceResolver {
             let ref_ = unresolved_from_db(&db_ref);
             if let Some(r) = self
                 .name_matcher
-                .resolve_deferred_call(queries, &ref_)
+                .resolve_deferred_call(&reads, &ref_)
                 .await
             {
                 result.stats.resolved += 1;
