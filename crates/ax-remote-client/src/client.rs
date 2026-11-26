@@ -241,6 +241,32 @@ pub async fn start_login(
     client_id: String,
     write: bool,
 ) -> Result<LoginStart, String> {
+    start_login_scoped(url, client_id, write, false).await
+}
+
+/// The scope string of a sign-in. `ax:admin` is requested only on demand: an
+/// authorization server that does not issue it rejects the whole request.
+pub fn login_scope(write: bool, admin: bool) -> String {
+    let mut scope = String::from("ax:context");
+    if write || admin {
+        scope.push_str(" ax:write");
+    }
+    if admin {
+        scope.push_str(" ax:admin");
+    }
+    scope.push_str(" offline_access");
+    scope
+}
+
+/// Like `start_login`, optionally also asking for the admin scope (which needs
+/// write access and an admin grant on the server).
+pub async fn start_login_scoped(
+    url: String,
+    client_id: String,
+    write: bool,
+    admin: bool,
+) -> Result<LoginStart, String> {
+    let scope = login_scope(write, admin);
     if client_id.trim().is_empty() || client_id.len() > 2048 {
         return Err("A registered native OAuth client ID is required".into());
     }
@@ -273,14 +299,7 @@ pub async fn start_login(
         ("code_challenge", challenge.as_str()),
         ("code_challenge_method", "S256"),
         ("resource", &resource.resource),
-        (
-            "scope",
-            if write {
-                "ax:context ax:write offline_access"
-            } else {
-                "ax:context offline_access"
-            },
-        ),
+        ("scope", scope.as_str()),
     ]);
     let id = uuid::Uuid::new_v4().to_string();
     {
@@ -541,6 +560,16 @@ pub fn open_browser(url: &str) {
 }
 
 pub async fn access_token(url: &str) -> Result<String, String> {
+    token_for(url, false).await
+}
+
+/// A new access token from the refresh token, even when the stored one has not
+/// expired yet. Use after the server rejected the stored token.
+pub async fn refresh_access_token(url: &str) -> Result<String, String> {
+    token_for(url, true).await
+}
+
+async fn token_for(url: &str, force_refresh: bool) -> Result<String, String> {
     let url = url.to_owned();
     let lock_url = url.clone();
     let _refresh_lock = tokio::task::spawn_blocking(move || credentials::lock_refresh(&lock_url))
@@ -554,7 +583,7 @@ pub async fn access_token(url: &str) -> Result<String, String> {
     })
     .await
     .map_err(|_| "Credential lookup failed")??;
-    if connection.expires_at > credentials::now() + 30 {
+    if !force_refresh && connection.expires_at > credentials::now() + 30 {
         return Ok(tokens.access_token);
     }
     let refresh = tokens
@@ -799,6 +828,19 @@ mod tests {
         assert!(t.validate().is_ok());
         t.token_type = "mac".into();
         assert!(t.validate().is_err());
+    }
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::login_scope;
+
+    #[test]
+    fn the_admin_scope_is_requested_only_on_demand_and_implies_write() {
+        assert_eq!(login_scope(false, false), "ax:context offline_access");
+        assert_eq!(login_scope(true, false), "ax:context ax:write offline_access");
+        assert_eq!(login_scope(true, true), "ax:context ax:write ax:admin offline_access");
+        assert_eq!(login_scope(false, true), "ax:context ax:write ax:admin offline_access");
     }
 }
 

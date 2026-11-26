@@ -53,7 +53,8 @@ fn main() {
 }
 
 fn copy_dir(from: &Path, to: &Path) {
-    for entry in std::fs::read_dir(from).expect("read dist").flatten() {
+    for entry in std::fs::read_dir(from).expect("read dist") {
+        let entry = entry.expect("read UI file entry");
         let target = to.join(entry.file_name());
         if entry.path().is_dir() {
             std::fs::create_dir_all(&target).expect("create directory");

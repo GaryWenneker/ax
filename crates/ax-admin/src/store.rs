@@ -24,7 +24,7 @@ pub struct SavedConnection {
     pub write: bool,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 struct Data {
     #[serde(default)]
     active: Option<String>,
@@ -104,27 +104,28 @@ pub fn default_name(url: &Url) -> String {
     format!("{} / {project}", url.host_str().unwrap_or(""))
 }
 
+impl Data {
+    fn repair_active(&mut self) {
+        let known = |id: &String| self.connections.iter().any(|c| &c.id == id);
+        if !self.active.as_ref().is_some_and(known) {
+            self.active = self.connections.first().map(|c| c.id.clone());
+        }
+    }
+}
+
 impl Store {
     /// Opens `<dir>/connections.json`. A missing file is an empty store; an
     /// unreadable one is an error, so it is never overwritten by accident.
     pub fn open(dir: &Path) -> Result<Self, String> {
         let path = dir.join("connections.json");
-        let data = match std::fs::read_to_string(&path) {
+        let mut data: Data = match std::fs::read_to_string(&path) {
             Ok(text) => serde_json::from_str(&text)
                 .map_err(|_| format!("{} is not valid; fix or remove it", path.display()))?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Data::default(),
             Err(e) => return Err(format!("Cannot read {}: {e}", path.display())),
         };
-        let mut store = Self { path, data };
-        store.repair_active();
-        Ok(store)
-    }
-
-    fn repair_active(&mut self) {
-        let known = |id: &String| self.data.connections.iter().any(|c| &c.id == id);
-        if !self.data.active.as_ref().is_some_and(known) {
-            self.data.active = self.data.connections.first().map(|c| c.id.clone());
-        }
+        data.repair_active();
+        Ok(Self { path, data })
     }
 
     pub fn list(&self) -> &[SavedConnection] {
@@ -145,57 +146,63 @@ impl Store {
 
     /// Adds or replaces a connection and writes the file.
     pub fn upsert(&mut self, connection: SavedConnection, activate: bool) -> Result<(), String> {
+        let mut data = self.data.clone();
         let id = connection.id.clone();
-        match self.data.connections.iter_mut().find(|c| c.id == id) {
+        match data.connections.iter_mut().find(|c| c.id == id) {
             Some(existing) => *existing = connection,
-            None => self.data.connections.push(connection),
+            None => data.connections.push(connection),
         }
-        if activate || self.data.active.is_none() {
-            self.data.active = Some(id);
+        if activate || data.active.is_none() {
+            data.active = Some(id);
         }
-        self.save()
+        self.commit(data)
     }
 
     pub fn activate(&mut self, id: &str) -> Result<(), String> {
         if self.get(id).is_none() {
             return Err("Unknown connection".into());
         }
-        self.data.active = Some(id.to_owned());
-        self.save()
+        let mut data = self.data.clone();
+        data.active = Some(id.to_owned());
+        self.commit(data)
     }
 
     /// Removes a connection. When it was the active one, another becomes active.
     pub fn remove(&mut self, id: &str) -> Result<Option<SavedConnection>, String> {
-        let Some(index) = self.data.connections.iter().position(|c| c.id == id) else {
+        let mut data = self.data.clone();
+        let Some(index) = data.connections.iter().position(|c| c.id == id) else {
             return Ok(None);
         };
-        let removed = self.data.connections.remove(index);
-        self.repair_active();
-        self.save()?;
+        let removed = data.connections.remove(index);
+        data.repair_active();
+        self.commit(data)?;
         Ok(Some(removed))
     }
 
-    fn save(&self) -> Result<(), String> {
+    /// Memory changes only after the file was written, so what the
+    /// application shows is always what a restart would load.
+    fn commit(&mut self, data: Data) -> Result<(), String> {
         let parent = self.path.parent().ok_or("Invalid configuration path")?;
         std::fs::create_dir_all(parent).map_err(|e| format!("Cannot create {}: {e}", parent.display()))?;
         let temp = parent.join(format!("connections-{}.tmp", uuid::Uuid::new_v4()));
-        let bytes = serde_json::to_vec_pretty(&self.data).map_err(|e| e.to_string())?;
-        std::fs::write(&temp, bytes).map_err(|e| format!("Cannot write configuration: {e}"))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600))
-                .map_err(|e| format!("Cannot protect configuration: {e}"))?;
+        let bytes = serde_json::to_vec_pretty(&data).map_err(|e| e.to_string())?;
+        let written = (|| {
+            std::fs::write(&temp, bytes).map_err(|e| format!("Cannot write configuration: {e}"))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600))
+                    .map_err(|e| format!("Cannot protect configuration: {e}"))?;
+            }
+            // Replaces an existing file atomically, on Windows too.
+            std::fs::rename(&temp, &self.path).map_err(|e| format!("Cannot update configuration: {e}"))
+        })();
+        if written.is_err() {
+            let _ = std::fs::remove_file(&temp); // may never have been created
         }
-        // Windows rename cannot replace an existing file.
-        #[cfg(windows)]
-        if self.path.exists() {
-            std::fs::remove_file(&self.path).map_err(|e| format!("Cannot update configuration: {e}"))?;
-        }
-        std::fs::rename(&temp, &self.path).map_err(|e| {
-            let _ = std::fs::remove_file(&temp);
-            format!("Cannot update configuration: {e}")
-        })
+        written?;
+        self.data = data;
+        Ok(())
     }
 }
 
@@ -283,6 +290,24 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_save_changes_nothing_in_memory() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path()).unwrap();
+        store.upsert(connection("one"), true).unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        assert!(store.upsert(connection("two"), true).is_err());
+        assert!(store.remove("one").is_err());
+        assert!(store.upsert(SavedConnection { name: "renamed".into(), ..connection("one") }, false).is_err());
+        assert_eq!(store.list().len(), 1);
+        assert_eq!(store.list()[0].name, "one");
+        assert_eq!(store.active_id(), Some("one"));
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(Store::open(dir.path()).unwrap().list().len(), 1);
     }
 
     #[test]

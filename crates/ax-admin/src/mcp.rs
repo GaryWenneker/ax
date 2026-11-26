@@ -13,18 +13,22 @@ pub const PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26
 pub const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 /// The remote server gives a context tool 120 seconds.
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(130);
-/// Index, sync and policy import can run for minutes on a large project.
+/// The remote server gives every admin tool up to 570 seconds: an index of a
+/// large project, and reports over it, can run for minutes.
 pub const ADMIN_CALL_TIMEOUT: Duration = Duration::from_secs(600);
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
-const SLOW_ADMIN_TOOLS: &[&str] = &["ax_index", "ax_sync", "ax_policy_index"];
-
-pub fn call_timeout(tool: &str) -> Duration {
-    if SLOW_ADMIN_TOOLS.contains(&tool) {
-        ADMIN_CALL_TIMEOUT
-    } else {
-        CALL_TIMEOUT
-    }
-}
+/// The tools the remote server offers only with the admin grant.
+pub const ADMIN_TOOLS: &[&str] = &[
+    "ax_sync",
+    "ax_index",
+    "ax_policy_index",
+    "ax_files",
+    "ax_cost",
+    "ax_tool_economics",
+    "ax_budget",
+    "ax_optimization_advice",
+    "ax_logs",
+];
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum McpError {
@@ -46,6 +50,8 @@ pub enum McpError {
     /// A JSON-RPC error from the server.
     Rpc(i64, String),
     UnknownTool(String),
+    /// The server gave up waiting; an index run continues there.
+    StillRunning,
     /// The local credential could not be read or refreshed.
     Credential(String),
     Protocol(String),
@@ -65,6 +71,7 @@ impl McpError {
             Self::Busy => "server_busy",
             Self::Rpc(..) => "server_error",
             Self::UnknownTool(_) => "unknown_tool",
+            Self::StillRunning => "still_running",
             Self::Credential(_) => "credential_unavailable",
             Self::Protocol(_) => "protocol_error",
         }
@@ -83,6 +90,7 @@ impl McpError {
             Self::Busy => "The server is busy. Try again in a moment.".into(),
             Self::Rpc(_, message) => format!("The server reported an error: {message}"),
             Self::UnknownTool(name) => format!("The server does not offer {name} to this connection."),
+            Self::StillRunning => "The server is still working on this. Look at Status or Logging in a moment.".into(),
             Self::Credential(detail) => detail.clone(),
             Self::Protocol(detail) => format!("Unexpected answer from the server: {detail}"),
         }
@@ -116,6 +124,17 @@ pub struct Limits {
     pub call: Duration,
     pub admin_call: Duration,
     pub max_bytes: usize,
+}
+
+impl Limits {
+    /// How long a call to `tool` may take.
+    pub fn call_timeout(&self, tool: &str) -> Duration {
+        if ADMIN_TOOLS.contains(&tool) {
+            self.admin_call
+        } else {
+            self.call
+        }
+    }
 }
 
 impl Default for Limits {
@@ -266,6 +285,10 @@ impl Remote {
                 return Err(McpError::UnknownProject)
             }
             429 => return Err(McpError::Busy),
+            // Only Ax answers a timeout with a JSON error; a proxy's 504 is not MCP.
+            504 if json.as_ref().is_some_and(|v| v.get("error").is_some()) => {
+                return Err(McpError::StillRunning)
+            }
             202 | 204 => {
                 return Ok(Reply {
                     session: new_session,
@@ -448,11 +471,7 @@ impl Remote {
         if !self.offers(name).await? {
             return Err(McpError::UnknownTool(name.to_owned()));
         }
-        let timeout = if SLOW_ADMIN_TOOLS.contains(&name) {
-            self.limits.admin_call
-        } else {
-            self.limits.call
-        };
+        let timeout = self.limits.call_timeout(name);
         self.rpc(
             "tools/call",
             json!({"name": name, "arguments": arguments}),
@@ -468,13 +487,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn slow_admin_tools_get_ten_minutes_and_other_tools_do_not() {
+    fn admin_tools_get_ten_minutes_and_other_tools_do_not() {
+        let limits = Limits::default();
         assert_eq!(ADMIN_CALL_TIMEOUT, Duration::from_secs(600));
-        for tool in ["ax_index", "ax_sync", "ax_policy_index"] {
-            assert_eq!(call_timeout(tool), ADMIN_CALL_TIMEOUT, "{tool}");
+        assert_eq!(ADMIN_TOOLS.len(), 9);
+        for tool in ADMIN_TOOLS {
+            assert_eq!(limits.call_timeout(tool), ADMIN_CALL_TIMEOUT, "{tool}");
         }
-        for tool in ["ax_status", "ax_explore", "ax_logs", "ax_files", "ax_remember"] {
-            assert_eq!(call_timeout(tool), CALL_TIMEOUT, "{tool}");
+        for tool in ["ax_status", "ax_explore", "ax_remember", "ax_future_tool", ""] {
+            assert_eq!(limits.call_timeout(tool), CALL_TIMEOUT, "{tool}");
         }
         assert!(CALL_TIMEOUT < ADMIN_CALL_TIMEOUT);
     }
@@ -493,6 +514,7 @@ mod tests {
             McpError::Busy,
             McpError::Rpc(-1, "x".into()),
             McpError::UnknownTool("ax_x".into()),
+            McpError::StillRunning,
             McpError::Credential("x".into()),
             McpError::Protocol("x".into()),
         ];

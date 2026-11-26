@@ -133,21 +133,37 @@ async fn serve(app: Router) -> String {
 struct FakeLogins {
     state: Mutex<Option<LoginState>>,
     token: Mutex<String>,
+    /// (address, client id, write, admin) of every started sign-in.
+    started: Mutex<Vec<(String, String, bool, bool)>>,
+    /// The browser already answered: cancelling is refused.
+    cancel_too_late: std::sync::atomic::AtomicBool,
     cancelled: AtomicUsize,
     logged_out: Mutex<Vec<String>>,
+}
+
+impl FakeLogins {
+    fn set(&self, state: LoginState) {
+        *self.state.lock().unwrap() = Some(state);
+    }
+    fn logged_out(&self) -> Vec<String> {
+        self.logged_out.lock().unwrap().clone()
+    }
 }
 
 impl LoginBackend for FakeLogins {
     fn start(
         &self,
         url: String,
-        _client_id: String,
-        _write: bool,
+        client_id: String,
+        write: bool,
+        admin: bool,
     ) -> BoxFuture<'_, Result<LoginStarted, String>> {
         Box::pin(async move {
+            let mut started = self.started.lock().unwrap();
+            started.push((url.clone(), client_id, write, admin));
             *self.state.lock().unwrap() = Some(LoginState::Pending);
             Ok(LoginStarted {
-                id: "attempt-1".into(),
+                id: format!("attempt-{}", started.len()),
                 authorization_url: format!("https://issuer.example.com/authorize?resource={url}"),
             })
         })
@@ -157,6 +173,9 @@ impl LoginBackend for FakeLogins {
     }
     fn cancel<'a>(&'a self, _id: &'a str) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move {
+            if self.cancel_too_late.load(Ordering::SeqCst) {
+                return Err("Sign-in already completed or is verifying access".into());
+            }
             self.cancelled.fetch_add(1, Ordering::SeqCst);
             Ok(())
         })
@@ -282,6 +301,18 @@ impl Admin {
         body["connection"]["id"].as_str().unwrap().to_owned()
     }
 
+    /// Calls a tool the way the page does: for the connection it shows.
+    async fn tool(&self, name: &str, arguments: Value) -> (StatusCode, Value) {
+        let (_, list) = self.get("/api/connections").await;
+        let connection = list["activeId"].as_str().unwrap_or("none").to_owned();
+        self.call(
+            "POST",
+            &format!("/api/remote/tools/{name}"),
+            json!({"connection": connection, "arguments": arguments}),
+        )
+        .await
+    }
+
     async fn tool_names(&self) -> Vec<String> {
         let (status, body) = self.get("/api/remote/info").await;
         assert_eq!(status, StatusCode::OK, "{body}");
@@ -309,11 +340,14 @@ async fn a1_without_a_connection_the_remote_api_is_closed() {
     let (status, body) = admin.get("/api/remote/info").await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["code"], "no_active_connection");
-    let (status, body) = admin
-        .call("POST", "/api/remote/tools/ax_status", json!({}))
-        .await;
+    let (status, body) = admin.tool("ax_status", json!({})).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["code"], "no_active_connection");
+    // A call must say which connection it is for.
+    let (status, _) = admin
+        .call("POST", "/api/remote/tools/ax_status", json!({"arguments": {}}))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -381,18 +415,12 @@ async fn a3_a_valid_address_and_key_are_saved_activated_and_usable() {
     let names = admin.tool_names().await;
     assert!(names.contains(&"ax_status".to_string()));
 
-    let (status, result) = admin
-        .call("POST", "/api/remote/tools/ax_status", json!({"arguments": {}}))
+    let (status, result) = admin.tool("ax_status", json!({}))
         .await;
     assert_eq!(status, StatusCode::OK, "{result}");
     assert_eq!(result["isError"], false);
     assert!(result["text"].as_str().unwrap().contains("files"), "{result}");
-    let (_, found) = admin
-        .call(
-            "POST",
-            "/api/remote/tools/ax_search",
-            json!({"arguments": {"query": "remote_fixture"}}),
-        )
+    let (_, found) = admin.tool("ax_search", json!({"query": "remote_fixture"}))
         .await;
     assert!(found["text"].as_str().unwrap().contains("remote_fixture"), "{found}");
 }
@@ -462,7 +490,8 @@ async fn a5_unreachable_non_mcp_and_redirecting_addresses_are_distinct_errors() 
                     json!({"url": url, "auth": {"type": "api_key", "key": CONTEXT_KEY}}),
                 )
                 .await;
-            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+            // The environment could not be reached or something else answered.
+            assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
             body["code"].as_str().unwrap().to_owned()
         }
     };
@@ -543,27 +572,23 @@ async fn a6_switching_changes_which_server_answers() {
         "pub fn added_through_admin() -> u32 { 4 }\n",
     )
     .unwrap();
-    let (status, synced) = admin
-        .call("POST", "/api/remote/tools/ax_sync", json!({"arguments": {}}))
+    let (status, synced) = admin.tool("ax_sync", json!({}))
         .await;
     assert_eq!(status, StatusCode::OK, "{synced}");
     assert_eq!(synced["isError"], false, "{synced}");
-    let search = json!({"arguments": {"query": "added_through_admin"}});
-    let (_, found) = admin
-        .call("POST", "/api/remote/tools/ax_search", search.clone())
-        .await;
+    let search = json!({"query": "added_through_admin"});
+    let (_, found) = admin.tool("ax_search", search.clone()).await;
     assert!(found["text"].as_str().unwrap().contains("added.rs"), "{found}");
 
     // Back on beta: no admin tools, and alpha's symbol is not there.
     admin
         .call("POST", &format!("/api/connections/{beta}/activate"), json!({}))
         .await;
-    let (status, denied) = admin
-        .call("POST", "/api/remote/tools/ax_sync", json!({"arguments": {}}))
+    let (status, denied) = admin.tool("ax_sync", json!({}))
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(denied["code"], "unknown_tool");
-    let (_, found) = admin.call("POST", "/api/remote/tools/ax_search", search).await;
+    let (_, found) = admin.tool("ax_search", search).await;
     assert!(!found["text"].as_str().unwrap().contains("added.rs"), "{found}");
 
     let (status, body) = admin
@@ -655,18 +680,155 @@ async fn a8_editing_keeps_the_key_unless_a_new_one_is_given() {
     assert_eq!(admin.secrets.get(&id).unwrap().as_deref(), Some(ADMIN_KEY));
     assert!(admin.tool_names().await.contains(&"ax_index".to_string()));
 
-    // The stored key is tested against a changed address: alpha's key is not valid on beta.
-    let (status, body) = admin.call("PUT", &path, json!({"url": upstream.url("beta")})).await;
+    // Another address with a key the server there refuses: nothing changes.
+    let (status, body) = admin
+        .call(
+            "PUT",
+            &path,
+            json!({"url": upstream.url("beta"), "auth": {"type": "api_key", "key": ADMIN_KEY}}),
+        )
+        .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["code"], "forbidden");
     let (_, list) = admin.get("/api/connections").await;
     assert_eq!(list["connections"][0]["url"], upstream.url("alpha"));
+    // Another address with the right key for it.
+    let (status, body) = admin
+        .call(
+            "PUT",
+            &path,
+            json!({"url": upstream.url("beta"), "auth": {"type": "api_key", "key": BETA_KEY}}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(admin.secrets.get(&id).unwrap().as_deref(), Some(BETA_KEY));
+    assert!(!admin.tool_names().await.contains(&"ax_index".to_string()));
 
     // A saved connection can be tested without retyping its key.
     let (status, body) = admin
         .call("POST", "/api/connections/test", json!({"id": id}))
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+#[tokio::test]
+async fn a_saved_key_is_never_sent_to_another_address() {
+    let upstream = Upstream::start().await;
+    let admin = Admin::start().await;
+    let id = admin.add("Alpha", &upstream.url("alpha"), ADMIN_KEY).await;
+    // Somebody else's server, ready to record whatever it is sent.
+    let hits = Arc::new(Hits::default());
+    let other = serve(
+        Router::new()
+            .fallback(|state: State<Arc<Hits>>, headers: HeaderMap| async move {
+                record(state, headers).await;
+                StatusCode::UNAUTHORIZED
+            })
+            .with_state(hits.clone()),
+    )
+    .await;
+    let elsewhere = format!("{other}/projects/alpha/mcp");
+
+    for body in [
+        json!({"id": id, "url": elsewhere}),
+        json!({"id": id, "name": "x"}),
+        json!({"id": id, "auth": {"type": "api_key", "key": "another"}}),
+    ] {
+        let (status, response) = admin.call("POST", "/api/connections/test", body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
+    }
+    let (status, response) = admin
+        .call("PUT", &format!("/api/connections/{id}"), json!({"url": elsewhere}))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(response["error"], "Enter the key again to use another address");
+
+    assert_eq!(hits.count.load(Ordering::SeqCst), 0, "nothing was sent there");
+    assert!(hits.authorization.lock().unwrap().is_empty());
+    let (_, list) = admin.get("/api/connections").await;
+    assert_eq!(list["connections"][0]["url"], upstream.url("alpha"));
+    assert_eq!(admin.secrets.get(&id).unwrap().as_deref(), Some(ADMIN_KEY));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_failed_save_leaves_keys_and_connections_as_they_were() {
+    use std::os::unix::fs::PermissionsExt;
+    let upstream = Upstream::start().await;
+    let admin = Admin::start().await;
+    let id = admin.add("Alpha", &upstream.url("alpha"), CONTEXT_KEY).await;
+    let lock = |mode: u32| {
+        std::fs::set_permissions(&admin.home, std::fs::Permissions::from_mode(mode)).unwrap()
+    };
+
+    lock(0o500); // connections.json can no longer be replaced
+    // Editing: the new key is accepted by the server but the entry cannot be saved.
+    let (status, body) = admin
+        .call(
+            "PUT",
+            &format!("/api/connections/{id}"),
+            json!({"name": "Renamed", "auth": {"type": "api_key", "key": ADMIN_KEY}}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(admin.secrets.get(&id).unwrap().as_deref(), Some(CONTEXT_KEY), "old key restored");
+    // Adding: no key is left without an entry.
+    let (status, _) = admin
+        .call(
+            "POST",
+            "/api/connections",
+            json!({"url": upstream.url("beta"), "auth": {"type": "api_key", "key": BETA_KEY}}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(admin.secrets.len(), 1);
+    // Switching and removing fail without changing what is shown.
+    let (status, _) = admin
+        .call("DELETE", &format!("/api/connections/{id}"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let (_, list) = admin.get("/api/connections").await;
+    assert_eq!(list["connections"].as_array().unwrap().len(), 1);
+    assert_eq!(list["connections"][0]["name"], "Alpha");
+    assert_eq!(list["activeId"], id.as_str());
+
+    lock(0o700);
+    // The failed removal already deleted the key; removing again completes it.
+    let (status, _) = admin
+        .call("DELETE", &format!("/api/connections/{id}"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(admin.secrets.is_empty());
+    assert_eq!(admin.restart().await.get("/api/connections").await.1["connections"], json!([]));
+}
+
+#[tokio::test]
+async fn a_call_for_a_connection_that_is_no_longer_active_is_refused() {
+    let upstream = Upstream::start().await;
+    let admin = Admin::start().await;
+    let alpha = admin.add("Alpha admin", &upstream.url("alpha"), ADMIN_KEY).await;
+    let beta = admin.add("Beta", &upstream.url("beta"), BETA_KEY).await;
+    // This page still shows alpha, but another window made beta active.
+    for name in ["ax_status", "ax_index"] {
+        let (status, body) = admin
+            .call(
+                "POST",
+                &format!("/api/remote/tools/{name}"),
+                json!({"connection": alpha, "arguments": {}}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{name}");
+        assert_eq!(body["code"], "connection_changed");
+        assert_eq!(body["error"], "Beta is the active environment now. Reload to continue.");
+    }
+    let (status, _) = admin
+        .call(
+            "POST",
+            "/api/remote/tools/ax_status",
+            json!({"connection": beta, "arguments": {}}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test]
@@ -701,12 +863,23 @@ async fn a9_no_key_reaches_the_configuration_file_or_any_response() {
             json!({"url": upstream.url("beta"), "auth": {"type": "api_key", "key": "wrong-secret-key"}}),
         )
         .await;
-    admin
-        .call("POST", "/api/remote/tools/ax_status", json!({"arguments": {}}))
+    admin.tool("ax_status", json!({}))
         .await;
     admin
         .call("DELETE", &format!("/api/connections/{id}"), json!({}))
         .await;
+    // A browser sign-in: its token is a secret too.
+    *admin.logins.token.lock().unwrap() = CONTEXT_KEY.to_owned();
+    let (_, started) = admin
+        .call("POST", "/api/login", json!({"url": upstream.url("alpha"), "clientId": "native-client"}))
+        .await;
+    admin.logins.set(LoginState::Connected);
+    let complete = format!("/api/login/{}/complete", started["id"].as_str().unwrap());
+    admin.get(&complete.replace("/complete", "")).await;
+    let (_, done) = admin.call("POST", &complete, json!({})).await;
+    assert_eq!(done["state"], "connected");
+    admin.get("/api/remote/info").await;
+    admin.tool("ax_status", json!({})).await;
 
     let file = std::fs::read_to_string(admin.config_file()).unwrap();
     let responses = admin.seen.lock().unwrap().clone();
@@ -722,7 +895,12 @@ async fn a9_no_key_reaches_the_configuration_file_or_any_response() {
     for connection in saved["connections"].as_array().unwrap() {
         let mut fields: Vec<_> = connection.as_object().unwrap().keys().cloned().collect();
         fields.sort();
-        assert_eq!(fields, ["auth", "id", "name", "url", "write"]);
+        let expected: &[&str] = if connection["auth"] == "oauth" {
+            &["auth", "clientId", "id", "name", "url", "write"]
+        } else {
+            &["auth", "id", "name", "url", "write"]
+        };
+        assert_eq!(fields, expected);
     }
 }
 
@@ -731,58 +909,211 @@ async fn a10_browser_sign_in_saves_only_after_it_succeeds() {
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
     *admin.logins.token.lock().unwrap() = CONTEXT_KEY.to_owned();
+    let url = upstream.url("alpha");
 
-    // The fake backend answers on loopback; the real flow needs https.
-    let (status, body) = admin
-        .call(
-            "POST",
-            "/api/login",
-            json!({"url": upstream.url("alpha"), "clientId": "native-client"}),
-        )
-        .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["error"], "Browser sign-in needs an https:// address");
     let (status, _) = admin
-        .call(
-            "POST",
-            "/api/login",
-            json!({"url": "https://ax.example.com/projects/alpha/mcp", "clientId": " "}),
-        )
+        .call("POST", "/api/login", json!({"url": url, "clientId": " "}))
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = admin
+        .call("POST", "/api/login", json!({"url": "https://ax.example.com/", "clientId": "native"}))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(admin.logins.started.lock().unwrap().is_empty());
 
-    // Cancelled: nothing is saved.
-    let start = json!({"name": "Hosted", "url": "https://ax.example.com/projects/alpha/mcp", "clientId": "native-client", "write": true});
+    // Cancelled before the browser answered: nothing is saved or left behind.
+    let start = json!({"name": "Hosted", "url": url, "clientId": "native-client", "write": true});
     let (status, started) = admin.call("POST", "/api/login", start.clone()).await;
     assert_eq!(status, StatusCode::OK, "{started}");
+    assert_eq!(started["id"], "attempt-1");
     assert!(started["authorizationUrl"].as_str().unwrap().starts_with("https://issuer.example.com/authorize"));
+    assert_eq!(
+        admin.logins.started.lock().unwrap()[0],
+        (url.clone(), "native-client".to_string(), true, false)
+    );
     let (_, pending) = admin.get("/api/login/attempt-1").await;
     assert_eq!(pending["state"], "pending");
-    assert!(!admin.config_file().exists());
+    let (status, body) = admin.call("POST", "/api/login/attempt-1/complete", json!({})).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["code"], "sign_in_pending");
     let (status, _) = admin.call("DELETE", "/api/login/attempt-1", json!({})).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(admin.logins.cancelled.load(Ordering::SeqCst), 1);
     let (status, _) = admin.get("/api/login/attempt-1").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = admin.call("POST", "/api/login/attempt-1/complete", json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(!admin.config_file().exists());
 
-    // Failed: nothing is saved.
+    // Failed in the browser: nothing is saved.
     admin.call("POST", "/api/login", start.clone()).await;
-    *admin.logins.state.lock().unwrap() = Some(LoginState::Failed("Access was denied".into()));
-    let (_, failed) = admin.get("/api/login/attempt-1").await;
+    admin.logins.set(LoginState::Failed("Access was denied".into()));
+    let (_, failed) = admin.get("/api/login/attempt-2").await;
+    assert_eq!((failed["state"].as_str(), failed["message"].as_str()), (Some("failed"), Some("Access was denied")));
+    let (_, failed) = admin.call("POST", "/api/login/attempt-2/complete", json!({})).await;
     assert_eq!(failed["state"], "failed");
-    assert_eq!(failed["message"], "Access was denied");
     assert!(!admin.config_file().exists());
 
-    // Signed in, but the server refuses the token: nothing is saved, tokens are dropped.
+    // Signed in, but the server refuses the token: nothing saved, tokens dropped.
+    *admin.logins.token.lock().unwrap() = "a-token-the-server-refuses".to_owned();
     admin.call("POST", "/api/login", start.clone()).await;
-    *admin.logins.state.lock().unwrap() = Some(LoginState::Connected);
-    let (_, refused) = admin.get("/api/login/attempt-1").await;
-    assert_eq!(refused["state"], "failed", "{refused}");
+    admin.logins.set(LoginState::Connected);
+    // Asking where it stands changes nothing, however often.
+    for _ in 0..3 {
+        let (_, ready) = admin.get("/api/login/attempt-3").await;
+        assert_eq!(ready["state"], "ready");
+    }
     assert!(!admin.config_file().exists());
-    assert_eq!(admin.logins.logged_out.lock().unwrap().len(), 1);
+    let (_, refused) = admin.call("POST", "/api/login/attempt-3/complete", json!({})).await;
+    assert_eq!(refused["state"], "failed", "{refused}");
+    assert_eq!(refused["message"], "The server rejected these credentials.");
+    assert!(!admin.config_file().exists());
+    assert_eq!(admin.logins.logged_out(), [url.clone()]);
     let (_, list) = admin.get("/api/connections").await;
     assert_eq!(list["connections"], json!([]));
+}
+
+#[tokio::test]
+async fn a10_a_finished_sign_in_is_saved_once_and_removed_with_its_tokens() {
+    let upstream = Upstream::start().await;
+    let admin = Admin::start().await;
+    *admin.logins.token.lock().unwrap() = ADMIN_KEY.to_owned();
+    let url = upstream.url("alpha");
+
+    let (_, started) = admin
+        .call(
+            "POST",
+            "/api/login",
+            json!({"name": "Hosted", "url": url, "clientId": "native-client", "admin": true}),
+        )
+        .await;
+    // Asking for admin access asks for write access too.
+    assert_eq!(
+        admin.logins.started.lock().unwrap()[0],
+        (url.clone(), "native-client".to_string(), true, true)
+    );
+    admin.logins.set(LoginState::Connected);
+    let complete = format!("/api/login/{}/complete", started["id"].as_str().unwrap());
+    // Completing needs the request token like every other change.
+    let (status, _, _) = admin
+        .send(admin.request("POST", &complete).body(Body::empty()).unwrap())
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(!admin.config_file().exists());
+
+    let (status, done) = admin.call("POST", &complete, json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    assert_eq!(done["state"], "connected");
+    let connection = &done["connection"];
+    assert_eq!(connection["auth"], "oauth");
+    assert_eq!(connection["clientId"], "native-client");
+    assert_eq!(connection["write"], true);
+    assert_eq!(connection["active"], true);
+    let id = connection["id"].as_str().unwrap().to_owned();
+    // A second completion finds nothing to save.
+    let (status, _) = admin.call("POST", &complete, json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (_, list) = admin.get("/api/connections").await;
+    assert_eq!(list["connections"].as_array().unwrap().len(), 1);
+    assert!(admin.secrets.is_empty(), "a sign-in stores no API key");
+    assert!(admin.tool_names().await.contains(&"ax_logs".to_string()));
+    let (status, result) = admin.tool("ax_status", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+
+    // A sign-in belongs to one address and has no key to edit.
+    let path = format!("/api/connections/{id}");
+    for body in [
+        json!({"url": upstream.url("beta")}),
+        json!({"auth": {"type": "api_key", "key": BETA_KEY}}),
+    ] {
+        let (status, response) = admin.call("PUT", &path, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
+    }
+    let (status, renamed) = admin.call("PUT", &path, json!({"name": "Production"})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(renamed["connection"]["name"], "Production");
+
+    // After a restart the sign-in is still there, with what was asked for.
+    let admin = admin.restart().await;
+    let (_, list) = admin.get("/api/connections").await;
+    assert_eq!(list["connections"][0]["clientId"], "native-client");
+    assert_eq!(list["connections"][0]["name"], "Production");
+    let file = std::fs::read_to_string(admin.config_file()).unwrap();
+    assert!(!file.contains(ADMIN_KEY), "the token is not in the file");
+
+    // A second connection on the same sign-in keeps the tokens alive.
+    let (_, second) = admin
+        .call("POST", "/api/login", json!({"name": "Same sign-in", "url": url, "clientId": "native-client"}))
+        .await;
+    admin.logins.set(LoginState::Connected);
+    let second_complete = format!("/api/login/{}/complete", second["id"].as_str().unwrap());
+    let (_, second) = admin.call("POST", &second_complete, json!({})).await;
+    let second_id = second["connection"]["id"].as_str().unwrap().to_owned();
+    admin.call("DELETE", &path, json!({})).await;
+    assert!(admin.logins.logged_out().is_empty(), "still used by the other connection");
+    // Removing the last one signs out.
+    let (status, _) = admin
+        .call("DELETE", &format!("/api/connections/{second_id}"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(admin.logins.logged_out(), [url]);
+}
+
+#[tokio::test]
+async fn a10_tokens_of_a_sign_in_nobody_keeps_are_removed() {
+    let upstream = Upstream::start().await;
+    let admin = Admin::start().await;
+    *admin.logins.token.lock().unwrap() = CONTEXT_KEY.to_owned();
+    let url = upstream.url("alpha");
+    let start = json!({"url": url, "clientId": "native-client"});
+
+    // Cancel arrives after the browser answered: the tokens are stored a
+    // moment later, and removed again.
+    admin.logins.cancel_too_late.store(true, Ordering::SeqCst);
+    let (_, started) = admin.call("POST", "/api/login", start.clone()).await;
+    let id = started["id"].as_str().unwrap().to_owned();
+    let (status, _) = admin.call("DELETE", &format!("/api/login/{id}"), json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(admin.logins.logged_out().is_empty());
+    admin.logins.set(LoginState::Connected);
+    for _ in 0..40 {
+        if !admin.logins.logged_out().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(admin.logins.logged_out(), [url.clone()]);
+    assert!(!admin.config_file().exists());
+
+    // With a saved connection on that sign-in, a later attempt that fails or
+    // is abandoned must not sign the saved one out.
+    admin.logins.cancel_too_late.store(false, Ordering::SeqCst);
+    admin.logins.logged_out.lock().unwrap().clear();
+    let (_, kept) = admin.call("POST", "/api/login", start.clone()).await;
+    admin.logins.set(LoginState::Connected);
+    let (_, kept) = admin
+        .call("POST", &format!("/api/login/{}/complete", kept["id"].as_str().unwrap()), json!({}))
+        .await;
+    assert_eq!(kept["state"], "connected");
+    // The next attempt signs in, but the server now refuses the token.
+    let (_, again) = admin.call("POST", "/api/login", start.clone()).await;
+    *admin.logins.token.lock().unwrap() = "a-token-the-server-refuses".to_owned();
+    admin.logins.set(LoginState::Connected);
+    let (_, refused) = admin
+        .call("POST", &format!("/api/login/{}/complete", again["id"].as_str().unwrap()), json!({}))
+        .await;
+    assert_eq!(refused["state"], "failed");
+    // And one that is cancelled too late.
+    admin.logins.cancel_too_late.store(true, Ordering::SeqCst);
+    let (_, late) = admin.call("POST", "/api/login", start).await;
+    admin.logins.set(LoginState::Connected);
+    admin
+        .call("DELETE", &format!("/api/login/{}", late["id"].as_str().unwrap()), json!({}))
+        .await;
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert!(admin.logins.logged_out().is_empty(), "the saved connection keeps its tokens");
+    let (_, list) = admin.get("/api/connections").await;
+    assert_eq!(list["connections"].as_array().unwrap().len(), 1);
 }
 
 // ----------------------------------------------------------------- MCP client
@@ -854,6 +1185,10 @@ async fn scripted(
         .with_state(script.clone());
     let base = serve(app).await;
     (script, format!("{base}/projects/alpha/mcp").parse().unwrap())
+}
+
+fn remote_for(url: url::Url) -> Remote {
+    remote(url)
 }
 
 fn remote(url: url::Url) -> Remote {
@@ -983,6 +1318,36 @@ async fn b3_a_rejected_oauth_token_is_refreshed_once_and_an_api_key_is_not() {
 }
 
 #[tokio::test]
+async fn a_server_that_gave_up_waiting_is_reported_as_still_running() {
+    let gave_up = || {
+        (
+            StatusCode::GATEWAY_TIMEOUT,
+            axum::Json(json!({"error": "The operation is still running on the server"})),
+        )
+            .into_response()
+    };
+    let (_, url) = scripted(move |method, _, _, _| match method {
+        "initialize" => initialized("2025-11-25", "s"),
+        "tools/list" => tool_list(&["ax_index"]),
+        _ => gave_up(),
+    })
+    .await;
+    let remote = remote(url);
+    assert_eq!(remote.call_tool("ax_index", json!({})).await.unwrap_err(), McpError::StillRunning);
+    // A gateway's own 504 page is not an answer from Ax.
+    let (_, url) = scripted(|method, _, _, _| match method {
+        "initialize" => initialized("2025-11-25", "s"),
+        "tools/list" => tool_list(&["ax_index"]),
+        _ => (StatusCode::GATEWAY_TIMEOUT, "upstream timed out").into_response(),
+    })
+    .await;
+    assert_eq!(
+        remote_for(url).call_tool("ax_index", json!({})).await.unwrap_err(),
+        McpError::NotMcp(504)
+    );
+}
+
+#[tokio::test]
 async fn b4_b5_only_listed_tools_are_called_and_unknown_listed_tools_work() {
     let (script, url) = scripted(|method, _, _, request| match method {
         "initialize" => initialized("2025-11-25", "s"),
@@ -1015,7 +1380,7 @@ async fn b4_b5_only_listed_tools_are_called_and_unknown_listed_tools_work() {
     assert_eq!(script.count("tools/call"), 1);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn b6_slow_and_oversized_answers_are_errors() {
     let limits = Limits {
         handshake: Duration::from_millis(300),
@@ -1040,7 +1405,7 @@ async fn b6_slow_and_oversized_answers_are_errors() {
     // Tool calls: the context timeout applies to ax_status, the longer one to ax_index.
     let (_, url) = scripted(|method, _, _, request| match method {
         "initialize" => initialized("2025-11-25", "s"),
-        "tools/list" => tool_list(&["ax_status", "ax_index"]),
+        "tools/list" => tool_list(&["ax_status", "ax_index", "ax_files"]),
         _ => {
             let name = request["params"]["name"].as_str().unwrap().to_owned();
             std::thread::sleep(Duration::from_millis(700));
@@ -1051,6 +1416,7 @@ async fn b6_slow_and_oversized_answers_are_errors() {
     let remote = Remote::with_limits(url, tokens(), limits).unwrap();
     assert_eq!(remote.call_tool("ax_status", json!({})).await.unwrap_err(), McpError::Timeout);
     assert!(remote.call_tool("ax_index", json!({})).await.is_ok());
+    assert!(remote.call_tool("ax_files", json!({})).await.is_ok());
 
     // An answer larger than the limit, with and without a Content-Length.
     let (_, url) = scripted(|method, _, _, _| match method {
@@ -1165,6 +1531,7 @@ async fn c3_changes_need_the_request_token() {
         ("POST", format!("/api/connections/{id}/activate")),
         ("POST", "/api/login".to_string()),
         ("DELETE", "/api/login/attempt-1".to_string()),
+        ("POST", "/api/login/attempt-1/complete".to_string()),
         ("POST", "/api/remote/tools/ax_status".to_string()),
     ];
     for (method, path) in &routes {
@@ -1202,7 +1569,7 @@ async fn c4_responses_are_never_cached() {
             .await;
         check(&headers, path);
     }
-    admin.add("Alpha", &upstream.url("alpha"), CONTEXT_KEY).await;
+    let id = admin.add("Alpha", &upstream.url("alpha"), CONTEXT_KEY).await;
     let (_, headers, _) = admin
         .send(admin.request("GET", "/api/remote/info").body(Body::empty()).unwrap())
         .await;
@@ -1212,7 +1579,8 @@ async fn c4_responses_are_never_cached() {
             admin
                 .request("POST", "/api/remote/tools/ax_status")
                 .header(CSRF_HEADER, &admin.csrf)
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"connection": id, "arguments": {}}).to_string()))
                 .unwrap(),
         )
         .await;

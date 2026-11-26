@@ -31,7 +31,9 @@ static UI: Dir<'_> = include_dir!("$OUT_DIR/admin_dist");
 pub const CSRF_HEADER: &str = "x-ax-admin-csrf";
 const MAX_BODY: usize = 256 * 1024;
 const LOGIN_TTL: Duration = Duration::from_secs(900);
+const ABANDON_POLL: Duration = Duration::from_millis(500);
 
+#[derive(Clone)]
 struct PendingLogin {
     name: String,
     url: String,
@@ -41,9 +43,13 @@ struct PendingLogin {
 }
 
 pub struct App {
-    store: Mutex<Store>,
+    /// File-backed, so it is only touched on the blocking pool (`App::store`).
+    store: Arc<std::sync::Mutex<Store>>,
     secrets: Arc<dyn SecretStore>,
     logins: Arc<dyn LoginBackend>,
+    /// One client per connection. The lock is held while a client is built and
+    /// while a connection's address or key changes, so no client is ever cached
+    /// with a key and an address that do not belong together.
     remotes: Mutex<HashMap<String, Arc<Remote>>>,
     pending: Mutex<HashMap<String, PendingLogin>>,
     csrf: String,
@@ -60,7 +66,7 @@ impl App {
         port: u16,
     ) -> Result<Arc<Self>, String> {
         Ok(Arc::new(Self {
-            store: Mutex::new(Store::open(&home)?),
+            store: Arc::new(std::sync::Mutex::new(Store::open(&home)?)),
             secrets,
             logins,
             remotes: Mutex::new(HashMap::new()),
@@ -98,10 +104,20 @@ impl From<McpError> for ApiError {
     fn from(e: McpError) -> Self {
         let status = match e {
             McpError::UnknownTool(_) => StatusCode::NOT_FOUND,
+            // The environment could not be reached, or something else answered.
+            McpError::Unreachable | McpError::Redirect | McpError::NotMcp(_) => StatusCode::BAD_GATEWAY,
+            McpError::Timeout | McpError::StillRunning => StatusCode::GATEWAY_TIMEOUT,
+            McpError::Busy => StatusCode::TOO_MANY_REQUESTS,
+            // The environment answered and said no.
             _ => StatusCode::UNPROCESSABLE_ENTITY,
         };
         Self(status, e.code(), e.message())
     }
+}
+
+/// A local failure that leaves something behind. Never contains a secret.
+fn warn(what: &str, error: &str) {
+    eprintln!("ax-admin: {what}: {error}");
 }
 
 fn bad_request(message: impl Into<String>) -> ApiError {
@@ -181,6 +197,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/connections/{id}/activate", post(activate_connection))
         .route("/login", post(start_login))
         .route("/login/{id}", get(login_status).delete(cancel_login))
+        .route("/login/{id}/complete", post(complete_login))
         .route("/remote/info", get(remote_info))
         .route("/remote/tools/{name}", post(call_tool))
         .fallback(|| async {
@@ -242,12 +259,13 @@ fn connection_json(connection: &SavedConnection, active: Option<&str>) -> Value 
 }
 
 async fn list_connections(State(app): State<Arc<App>>) -> Api {
-    let store = app.store.lock().await;
-    let active = store.active_id();
+    let (connections, active) = app
+        .store(|store| (store.list().to_vec(), store.active_id().map(str::to_owned)))
+        .await?;
     ok(json!({
         "csrf": app.csrf,
         "activeId": active,
-        "connections": store.list().iter().map(|c| connection_json(c, active)).collect::<Vec<_>>(),
+        "connections": connections.iter().map(|c| connection_json(c, active.as_deref())).collect::<Vec<_>>(),
     }))
 }
 
@@ -313,12 +331,26 @@ async fn probe(url: url::Url, tokens: Arc<dyn TokenSource>) -> Result<(Arc<Remot
 }
 
 impl App {
+    /// Runs `work` on the saved connections, off the async threads.
+    async fn store<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&mut Store) -> T + Send + 'static,
+    ) -> Result<T, ApiError> {
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            // A panic elsewhere cannot leave the store half-changed: it only
+            // changes after a successful write.
+            let mut guard = store.lock().unwrap_or_else(|e| e.into_inner());
+            work(&mut guard)
+        })
+        .await
+        .map_err(|_| internal("Configuration task failed"))
+    }
+
     async fn saved(&self, id: &str) -> Result<SavedConnection, ApiError> {
-        self.store
-            .lock()
-            .await
-            .get(id)
-            .cloned()
+        let id = id.to_owned();
+        self.store(move |store| store.get(&id).cloned())
+            .await?
             .ok_or_else(unknown_connection)
     }
 
@@ -340,50 +372,93 @@ impl App {
         }
     }
 
-    async fn remote(&self, connection: &SavedConnection) -> Result<Arc<Remote>, ApiError> {
-        if let Some(remote) = self.remotes.lock().await.get(&connection.id) {
-            return Ok(remote.clone());
+    /// The client of the active connection. The connection is read and its
+    /// client built under the `remotes` lock, which every change takes too.
+    async fn active_remote(&self) -> Result<(SavedConnection, Arc<Remote>), ApiError> {
+        let mut remotes = self.remotes.lock().await;
+        let connection = self
+            .store(|store| store.active().cloned())
+            .await?
+            .ok_or_else(|| {
+                ApiError(
+                    StatusCode::CONFLICT,
+                    "no_active_connection",
+                    "Connect to an Ax environment first".into(),
+                )
+            })?;
+        if let Some(remote) = remotes.get(&connection.id) {
+            return Ok((connection, remote.clone()));
         }
         let url = project_url(&connection.url).map_err(internal)?;
-        let remote = Arc::new(Remote::new(url, self.stored_tokens(connection).await?)?);
-        self.remotes
-            .lock()
-            .await
-            .insert(connection.id.clone(), remote.clone());
-        Ok(remote)
-    }
-
-    async fn active_remote(&self) -> Result<(SavedConnection, Arc<Remote>), ApiError> {
-        let connection = self.store.lock().await.active().cloned().ok_or_else(|| {
-            ApiError(
-                StatusCode::CONFLICT,
-                "no_active_connection",
-                "Connect to an Ax environment first".into(),
-            )
-        })?;
-        let remote = self.remote(&connection).await?;
+        let remote = Arc::new(Remote::new(url, self.stored_tokens(&connection).await?)?);
+        remotes.insert(connection.id.clone(), remote.clone());
         Ok((connection, remote))
     }
+
+    /// Whether a saved connection (other than `except`) uses the sign-in for `url`.
+    async fn sign_in_is_used(&self, url: &str, except: Option<&str>) -> Result<bool, ApiError> {
+        let (url, except) = (url.to_owned(), except.map(str::to_owned));
+        self.store(move |store| {
+            store.list().iter().any(|c| {
+                c.auth == AuthKind::Oauth && c.url == url && Some(c.id.as_str()) != except.as_deref()
+            })
+        })
+        .await
+    }
+
+    /// Forgets the tokens of a sign-in that no saved connection uses.
+    async fn drop_unused_sign_in(&self, url: &str) {
+        match self.sign_in_is_used(url, None).await {
+            Ok(true) => {}
+            Ok(false) => {
+                if let Err(e) = self.logins.logout(url).await {
+                    warn("tokens of an unused sign-in were not removed", &e);
+                }
+            }
+            Err(e) => warn("could not check whether a sign-in is still used", &e.2),
+        }
+    }
+}
+
+/// A sign-in the user gave up on may still complete in the browser. Wait for
+/// its outcome and remove the tokens it stored, so nothing is left behind.
+fn abandon(app: Arc<App>, id: String, url: String) {
+    tokio::spawn(async move {
+        for _ in 0..(LOGIN_TTL.as_secs() * 2) {
+            match app.logins.status(&id).await {
+                Some(LoginState::Pending) => tokio::time::sleep(ABANDON_POLL).await,
+                Some(LoginState::Connected) => {
+                    app.drop_unused_sign_in(&url).await;
+                    return;
+                }
+                Some(LoginState::Failed(_)) | None => return,
+            }
+        }
+    });
 }
 
 async fn test_connection(State(app): State<Arc<App>>, body: axum::body::Bytes) -> Api {
     let input: ConnectionInput = parse(&body)?;
-    let (url, tokens): (url::Url, Arc<dyn TokenSource>) = match (&input.id, input.auth) {
-        // A saved connection, optionally with a changed address.
-        (Some(id), None) => {
-            let saved = app.saved(id).await?;
-            let url = project_url(input.url.as_deref().unwrap_or(&saved.url)).map_err(bad_request)?;
+    let (url, tokens): (url::Url, Arc<dyn TokenSource>) = match input.id {
+        // A saved credential is only ever sent to the address it was saved for.
+        Some(id) => {
+            if input.url.is_some() || input.auth.is_some() || input.name.is_some() {
+                return Err(bad_request(
+                    "A saved connection is tested as it is saved. To try another address or key, enter both.",
+                ));
+            }
+            let saved = app.saved(&id).await?;
+            let url = project_url(&saved.url).map_err(internal)?;
             (url, app.stored_tokens(&saved).await?)
         }
-        (_, auth) => {
+        None => {
             let url = project_url(input.url.as_deref().unwrap_or("")).map_err(bad_request)?;
-            (url, Arc::new(StaticToken(api_key(auth)?)))
+            let key = api_key(input.auth)?;
+            // The form reports the same input errors for Test as for Save.
+            connection_name(input.name, &url)?;
+            (url, Arc::new(StaticToken(key)))
         }
     };
-    // The form reports the same input errors for Test as for Save.
-    if input.name.is_some() {
-        connection_name(input.name, &url)?;
-    }
     let (_, info) = probe(url, tokens).await?;
     ok(json!({"ok": true, "info": info_json(&info)}))
 }
@@ -406,16 +481,21 @@ async fn create_connection(State(app): State<Arc<App>>, body: axum::body::Bytes)
         client_id: None,
         write: false,
     };
+    let mut remotes = app.remotes.lock().await;
     let secrets = app.secrets.clone();
     let id = connection.id.clone();
     blocking(move || secrets.set(&id, &key)).await?;
-    if let Err(e) = app.store.lock().await.upsert(connection.clone(), true) {
+    let saved = connection.clone();
+    if let Err(e) = app.store(move |store| store.upsert(saved, true)).await.and_then(|r| r.map_err(internal)) {
+        // Without its entry the key would be unreachable: take it out again.
         let secrets = app.secrets.clone();
         let id = connection.id.clone();
-        let _ = blocking(move || secrets.delete(&id)).await;
-        return Err(internal(e));
+        if let Err(undo) = blocking(move || secrets.delete(&id)).await {
+            warn("the key of a connection that could not be saved was not removed", &undo.2);
+        }
+        return Err(e);
     }
-    app.remotes.lock().await.insert(connection.id.clone(), remote);
+    remotes.insert(connection.id.clone(), remote);
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -431,6 +511,8 @@ async fn update_connection(
     body: axum::body::Bytes,
 ) -> Api {
     let input: ConnectionInput = parse(&body)?;
+    // Held to the end: no request builds a client from a half-applied change.
+    let mut remotes = app.remotes.lock().await;
     let saved = app.saved(&id).await?;
     let url = match input.url.as_deref() {
         Some(url) => project_url(url).map_err(bad_request)?,
@@ -446,71 +528,107 @@ async fn update_connection(
         Some(auth) => Some(api_key(Some(auth))?),
         None => None,
     };
+    // A saved key belongs to the address it was saved for. It is never sent
+    // to another address; the user enters the key for the new one.
+    if url_changed && new_key.is_none() {
+        return Err(bad_request("Enter the key again to use another address"));
+    }
     let mut updated = saved.clone();
     updated.url = url.to_string();
     if let Some(name) = input.name {
         updated.name = connection_name(Some(name), &url)?;
     }
-    if url_changed || new_key.is_some() {
-        let tokens: Arc<dyn TokenSource> = match &new_key {
-            Some(key) => Arc::new(StaticToken(key.clone())),
-            None => app.stored_tokens(&saved).await?,
-        };
-        probe(url, tokens).await?;
+    if let Some(key) = &new_key {
+        probe(url, Arc::new(StaticToken(key.clone()))).await?;
     }
-    if let Some(key) = new_key {
-        let secrets = app.secrets.clone();
-        let id = id.clone();
-        blocking(move || secrets.set(&id, &key)).await?;
-    }
-    let mut store = app.store.lock().await;
-    store.upsert(updated.clone(), false).map_err(internal)?;
-    let active = store.active_id().map(str::to_owned);
-    drop(store);
+    let previous_key = match &new_key {
+        Some(key) => {
+            let (secrets, id, key) = (app.secrets.clone(), id.clone(), key.clone());
+            Some(
+                blocking(move || {
+                    let previous = secrets.get(&id)?;
+                    secrets.set(&id, &key)?;
+                    Ok(previous)
+                })
+                .await?,
+            )
+        }
+        None => None,
+    };
+    let to_save = updated.clone();
+    let result = app
+        .store(move |store| {
+            store
+                .upsert(to_save, false)
+                .map(|()| store.active_id().map(str::to_owned))
+        })
+        .await
+        .and_then(|r| r.map_err(internal));
+    let active = match result {
+        Ok(active) => active,
+        Err(e) => {
+            // The entry still names the old address: put its key back.
+            if let Some(previous) = previous_key {
+                let (secrets, id) = (app.secrets.clone(), id.clone());
+                let undo = blocking(move || match previous {
+                    Some(key) => secrets.set(&id, &key),
+                    None => secrets.delete(&id),
+                })
+                .await;
+                if let Err(undo) = undo {
+                    warn("the previous key of a connection could not be restored", &undo.2);
+                }
+            }
+            return Err(e);
+        }
+    };
     // The cached client holds the old address and key.
-    app.remotes.lock().await.remove(&id);
+    remotes.remove(&id);
     ok(json!({"connection": connection_json(&updated, active.as_deref())}))
 }
 
 async fn remove_connection(State(app): State<Arc<App>>, Path(id): Path<String>) -> Api {
-    let removed = app
-        .store
-        .lock()
-        .await
-        .remove(&id)
-        .map_err(internal)?
-        .ok_or_else(unknown_connection)?;
-    app.remotes.lock().await.remove(&id);
-    match removed.auth {
+    let mut remotes = app.remotes.lock().await;
+    let saved = app.saved(&id).await?;
+    // The credential goes first. If the entry cannot be removed afterwards it
+    // is still listed, and removing it again works.
+    match saved.auth {
         AuthKind::ApiKey => {
-            let secrets = app.secrets.clone();
-            let id = id.clone();
-            blocking(move || secrets.delete(&id)).await?;
+            let (secrets, key_id) = (app.secrets.clone(), id.clone());
+            blocking(move || secrets.delete(&key_id)).await?;
         }
         AuthKind::Oauth => {
             // Another saved connection may use the same sign-in.
-            let shared = app
-                .store
-                .lock()
-                .await
-                .list()
-                .iter()
-                .any(|c| c.auth == AuthKind::Oauth && c.url == removed.url);
-            if !shared {
-                app.logins.logout(&removed.url).await.map_err(internal)?;
+            if !app.sign_in_is_used(&saved.url, Some(&id)).await? {
+                app.logins.logout(&saved.url).await.map_err(internal)?;
             }
         }
     }
-    let active = app.store.lock().await.active_id().map(str::to_owned);
+    let remove_id = id.clone();
+    let active = app
+        .store(move |store| {
+            store
+                .remove(&remove_id)
+                .map(|_| store.active_id().map(str::to_owned))
+        })
+        .await?
+        .map_err(internal)?;
+    remotes.remove(&id);
     ok(json!({"removed": id, "activeId": active}))
 }
 
 async fn activate_connection(State(app): State<Arc<App>>, Path(id): Path<String>) -> Api {
-    let mut store = app.store.lock().await;
-    if store.get(&id).is_none() {
+    let target = id.clone();
+    let found = app
+        .store(move |store| match store.get(&target) {
+            Some(_) => store.activate(&target).map(|()| true),
+            None => Ok(false),
+        })
+        .await?
+        .map_err(internal)?;
+    if !found {
         return Err(unknown_connection());
     }
-    store.activate(&id).map_err(internal)?;
     ok(json!({"activeId": id}))
 }
 
@@ -523,14 +641,22 @@ struct LoginInput {
     client_id: String,
     #[serde(default)]
     write: bool,
+    /// Also ask for the admin scope (the management pages).
+    #[serde(default)]
+    admin: bool,
+}
+
+fn unknown_sign_in() -> ApiError {
+    ApiError(
+        StatusCode::NOT_FOUND,
+        "unknown_sign_in",
+        "This sign-in is no longer active. Start again.".into(),
+    )
 }
 
 async fn start_login(State(app): State<Arc<App>>, body: axum::body::Bytes) -> Api {
     let input: LoginInput = parse(&body)?;
     let url = project_url(&input.url).map_err(bad_request)?;
-    if url.scheme() != "https" {
-        return Err(bad_request("Browser sign-in needs an https:// address"));
-    }
     let client_id = input.client_id.trim().to_owned();
     if client_id.is_empty() || client_id.len() > 512 || client_id.chars().any(char::is_control) {
         return Err(bad_request(
@@ -538,91 +664,121 @@ async fn start_login(State(app): State<Arc<App>>, body: axum::body::Bytes) -> Ap
         ));
     }
     let name = connection_name(input.name, &url)?;
+    let write = input.write || input.admin;
     let started = app
         .logins
-        .start(url.to_string(), client_id.clone(), input.write)
+        .start(url.to_string(), client_id.clone(), write, input.admin)
         .await
         .map_err(|e| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "sign_in_failed", e))?;
     let mut pending = app.pending.lock().await;
-    pending.retain(|_, p| p.started.elapsed() < LOGIN_TTL);
+    // An attempt nobody finished may still complete in the browser.
+    let expired: Vec<_> = pending
+        .iter()
+        .filter(|(_, p)| p.started.elapsed() >= LOGIN_TTL)
+        .map(|(id, p)| (id.clone(), p.url.clone()))
+        .collect();
+    for (id, url) in expired {
+        pending.remove(&id);
+        abandon(app.clone(), id, url);
+    }
     pending.insert(
         started.id.clone(),
         PendingLogin {
             name,
             url: url.to_string(),
             client_id,
-            write: input.write,
+            write,
             started: Instant::now(),
         },
     );
     ok(json!({"id": started.id, "authorizationUrl": started.authorization_url}))
 }
 
+/// Reports where a sign-in stands. It changes nothing; `complete_login` saves.
 async fn login_status(State(app): State<Arc<App>>, Path(id): Path<String>) -> Api {
     if !app.pending.lock().await.contains_key(&id) {
-        return Err(ApiError(
-            StatusCode::NOT_FOUND,
-            "unknown_sign_in",
-            "This sign-in is no longer active. Start again.".into(),
-        ));
+        return Err(unknown_sign_in());
     }
     match app.logins.status(&id).await {
         Some(LoginState::Pending) => ok(json!({"state": "pending"})),
-        Some(LoginState::Connected) => {
-            // Taken out first, so two polls cannot save the connection twice.
-            let Some(login) = app.pending.lock().await.remove(&id) else {
-                return ok(json!({"state": "pending"}));
-            };
-            let connection = SavedConnection {
-                id: uuid::Uuid::new_v4().to_string(),
-                name: login.name,
-                url: login.url,
-                auth: AuthKind::Oauth,
-                client_id: Some(login.client_id),
-                write: login.write,
-            };
-            let url = project_url(&connection.url).map_err(internal)?;
-            let probed = probe(url, app.logins.tokens(&connection.url)).await;
-            let (remote, info) = match probed {
-                Ok(v) => v,
-                Err(e) => {
-                    let _ = app.logins.logout(&connection.url).await;
-                    return ok(json!({"state": "failed", "message": e.2}));
-                }
-            };
-            app.store
-                .lock()
-                .await
-                .upsert(connection.clone(), true)
-                .map_err(internal)?;
-            app.remotes.lock().await.insert(connection.id.clone(), remote);
-            ok(json!({
-                "state": "connected",
-                "connection": connection_json(&connection, Some(&connection.id)),
-                "info": info_json(&info),
-            }))
-        }
-        Some(LoginState::Failed(message)) => {
-            app.pending.lock().await.remove(&id);
-            ok(json!({"state": "failed", "message": message}))
-        }
-        None => {
-            app.pending.lock().await.remove(&id);
-            ok(json!({"state": "failed", "message": "The sign-in expired. Start again."}))
-        }
+        Some(LoginState::Connected) => ok(json!({"state": "ready"})),
+        Some(LoginState::Failed(message)) => ok(json!({"state": "failed", "message": message})),
+        None => ok(json!({"state": "failed", "message": "The sign-in expired. Start again."})),
     }
 }
 
-async fn cancel_login(State(app): State<Arc<App>>, Path(id): Path<String>) -> Api {
-    if app.pending.lock().await.remove(&id).is_none() {
-        return Err(ApiError(
-            StatusCode::NOT_FOUND,
-            "unknown_sign_in",
-            "This sign-in is no longer active.".into(),
-        ));
+/// Saves the connection of a finished sign-in, once the server accepts its token.
+async fn complete_login(State(app): State<Arc<App>>, Path(id): Path<String>) -> Api {
+    let state = match app.pending.lock().await.get(&id) {
+        Some(_) => app.logins.status(&id).await,
+        None => return Err(unknown_sign_in()),
+    };
+    let failed = |message: String| ok(json!({"state": "failed", "message": message}));
+    match state {
+        Some(LoginState::Pending) => {
+            return Err(ApiError(
+                StatusCode::CONFLICT,
+                "sign_in_pending",
+                "The sign-in is not finished yet".into(),
+            ))
+        }
+        Some(LoginState::Failed(message)) => {
+            app.pending.lock().await.remove(&id);
+            return failed(message);
+        }
+        None => {
+            app.pending.lock().await.remove(&id);
+            return failed("The sign-in expired. Start again.".into());
+        }
+        Some(LoginState::Connected) => {}
     }
-    // Already finished or expired attempts have nothing left to cancel.
-    let _ = app.logins.cancel(&id).await;
+    // Taken out first, so two requests cannot save the connection twice.
+    let Some(login) = app.pending.lock().await.remove(&id) else {
+        return Err(unknown_sign_in());
+    };
+    let connection = SavedConnection {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: login.name,
+        url: login.url,
+        auth: AuthKind::Oauth,
+        client_id: Some(login.client_id),
+        write: login.write,
+    };
+    let url = project_url(&connection.url).map_err(internal)?;
+    let mut remotes = app.remotes.lock().await;
+    let (remote, info) = match probe(url, app.logins.tokens(&connection.url)).await {
+        Ok(v) => v,
+        Err(e) => {
+            app.drop_unused_sign_in(&connection.url).await;
+            return failed(e.2);
+        }
+    };
+    let to_save = connection.clone();
+    if let Err(e) = app
+        .store(move |store| store.upsert(to_save, true))
+        .await
+        .and_then(|r| r.map_err(internal))
+    {
+        app.drop_unused_sign_in(&connection.url).await;
+        return Err(e);
+    }
+    remotes.insert(connection.id.clone(), remote);
+    ok(json!({
+        "state": "connected",
+        "connection": connection_json(&connection, Some(&connection.id)),
+        "info": info_json(&info),
+    }))
+}
+
+async fn cancel_login(State(app): State<Arc<App>>, Path(id): Path<String>) -> Api {
+    let Some(login) = app.pending.lock().await.remove(&id) else {
+        return Err(unknown_sign_in());
+    };
+    if app.logins.cancel(&id).await.is_err() {
+        // Too late to stop: the browser already answered and the tokens are
+        // being stored. Remove them when that has happened.
+        abandon(app.clone(), id, login.url);
+    }
     ok(json!({"cancelled": true}))
 }
 
@@ -637,6 +793,8 @@ async fn remote_info(State(app): State<Arc<App>>) -> Api {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CallInput {
+    /// The connection the page shows. A call for another one is refused.
+    connection: String,
     #[serde(default)]
     arguments: Option<Value>,
 }
@@ -646,16 +804,20 @@ async fn call_tool(
     Path(name): Path<String>,
     body: axum::body::Bytes,
 ) -> Api {
-    let input: CallInput = if body.is_empty() {
-        CallInput { arguments: None }
-    } else {
-        parse(&body)?
-    };
+    let input: CallInput = parse(&body)?;
     let arguments = input.arguments.unwrap_or_else(|| json!({}));
     if !arguments.is_object() {
         return Err(bad_request("Tool arguments must be an object"));
     }
-    let (_, remote) = app.active_remote().await?;
+    let (connection, remote) = app.active_remote().await?;
+    // Another window may have switched environments since this page loaded.
+    if connection.id != input.connection {
+        return Err(ApiError(
+            StatusCode::CONFLICT,
+            "connection_changed",
+            format!("{} is the active environment now. Reload to continue.", connection.name),
+        ));
+    }
     let result = remote.call_tool(&name, arguments).await?;
     let text = result
         .get("content")

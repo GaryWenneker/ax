@@ -74,7 +74,10 @@ async fn serve(port: u16, open: bool) -> Result<(), String> {
     }
     axum::serve(listener, router(app))
         .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+            if tokio::signal::ctrl_c().await.is_err() {
+                // Without a signal handler, keep serving until the process is killed.
+                std::future::pending::<()>().await;
+            }
         })
         .await
         .map_err(|e| e.to_string())

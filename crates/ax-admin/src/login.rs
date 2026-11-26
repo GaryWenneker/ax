@@ -19,8 +19,14 @@ pub enum LoginState {
 }
 
 pub trait LoginBackend: Send + Sync {
-    fn start(&self, url: String, client_id: String, write: bool)
-        -> BoxFuture<'_, Result<LoginStarted, String>>;
+    /// `admin` also asks for the admin scope (which implies write access).
+    fn start(
+        &self,
+        url: String,
+        client_id: String,
+        write: bool,
+        admin: bool,
+    ) -> BoxFuture<'_, Result<LoginStarted, String>>;
     /// `None` when the attempt is unknown or has expired.
     fn status<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Option<LoginState>>;
     fn cancel<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<(), String>>;
@@ -34,9 +40,16 @@ pub struct BrowserLogin;
 struct StoredTokens(String);
 
 impl TokenSource for StoredTokens {
-    fn token(&self, _after_rejection: bool) -> TokenFuture<'_> {
-        // Refreshes the access token when it is about to expire.
-        Box::pin(ax_remote_client::client::access_token(&self.0))
+    fn token(&self, after_rejection: bool) -> TokenFuture<'_> {
+        Box::pin(async move {
+            if after_rejection {
+                // The server refused the stored token: get a new one now.
+                ax_remote_client::client::refresh_access_token(&self.0).await
+            } else {
+                // Refreshes by itself when the token is about to expire.
+                ax_remote_client::client::access_token(&self.0).await
+            }
+        })
     }
     fn refreshable(&self) -> bool {
         true
@@ -49,9 +62,12 @@ impl LoginBackend for BrowserLogin {
         url: String,
         client_id: String,
         write: bool,
+        admin: bool,
     ) -> BoxFuture<'_, Result<LoginStarted, String>> {
         Box::pin(async move {
-            let started = ax_remote_client::client::start_login(url, client_id, write).await?;
+            // Discovery refuses anything but an https:// address.
+            let started =
+                ax_remote_client::client::start_login_scoped(url, client_id, write, admin).await?;
             Ok(LoginStarted {
                 id: started.id,
                 authorization_url: started.authorization_url,
