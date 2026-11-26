@@ -1435,6 +1435,12 @@ enum RemoteMcpAction {
             help = "Local TCP port; 0 selects a free port"
         )]
         port: u16,
+        #[arg(
+            long,
+            default_value = "127.0.0.1",
+            help = "Listen address; use 0.0.0.0 only behind an HTTPS ingress or proxy (containers)"
+        )]
+        bind: std::net::IpAddr,
         #[arg(long, help = "Optional stable Unix socket upstream for Cloudflare")]
         socket: Option<std::path::PathBuf>,
     },
@@ -3630,13 +3636,13 @@ async fn async_main() {
                         Err(error) => Err(error),
                     }
                 }
-                RemoteMcpAction::Serve { config, port, socket } => {
+                RemoteMcpAction::Serve { config, port, bind, socket } => {
                     match ax_mcp::remote::RemoteConfig::load(&config) {
                         Ok(config) => {
                             for project in &config.projects {
                                 start_replication(&project.root).await;
                             }
-                            ax_mcp::remote::serve(config, port, socket).await
+                            ax_mcp::remote::serve_on(config, bind, port, socket).await
                         }
                         Err(error) => Err(error),
                     }

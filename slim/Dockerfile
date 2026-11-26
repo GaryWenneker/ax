@@ -40,6 +40,7 @@ RUN apt-get update \
     && mkdir -p /workspace && chown ax:ax /workspace
 COPY --from=builder /out/ax /usr/local/bin/ax
 COPY --chmod=0755 slim/ax-index-repo.sh /usr/local/bin/ax-index-repo
+COPY --chmod=0755 slim/ax-serve-repo.sh /usr/local/bin/ax-serve-repo
 USER ax
 WORKDIR /workspace
 ENV HOME=/home/ax AX_NO_UPDATE_CHECK=1

@@ -1,26 +1,34 @@
-// Publish the "Deploy to Azure" template for the headless (slim) build.
-// Copies ../slim/azure/azuredeploy.json to public/deploy/azure-slim.json with the axVersion
-// default set to the newest release from public/releases/latest.txt, so the button on
-// Guides → Headless Linux build always offers the current image.
+// Publish the "Deploy to Azure" templates for the headless (slim) build.
+// Copies each ../slim/azure template to public/deploy/ with the axVersion default set to the
+// newest release from public/releases/latest.txt, so the buttons on Guides → Headless Linux
+// build always offer the current image.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const source = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'slim', 'azure', 'azuredeploy.json');
+export const templates = {
+	'azure-slim.json': 'azuredeploy.json',
+	'azure-slim-server.json': 'azuredeploy-server.json',
+};
+
+const sourceDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'slim', 'azure');
 const latestFile = join(process.cwd(), 'public', 'releases', 'latest.txt');
-const target = join(process.cwd(), 'public', 'deploy', 'azure-slim.json');
+const targetDir = join(process.cwd(), 'public', 'deploy');
 
 const version = readFileSync(latestFile, 'utf8').trim().replace(/^v/, '');
 if (!/^\d+\.\d+\.\d+$/.test(version)) {
 	console.error(`${latestFile}: expected vX.Y.Z, got "${version}"`);
 	process.exit(1);
 }
-const template = JSON.parse(readFileSync(source, 'utf8'));
-if (!template.parameters?.axVersion) {
-	console.error(`${source} has no axVersion parameter`);
-	process.exit(1);
+mkdirSync(targetDir, { recursive: true });
+for (const [published, source] of Object.entries(templates)) {
+	const path = join(sourceDir, source);
+	const template = JSON.parse(readFileSync(path, 'utf8'));
+	if (!template.parameters?.axVersion) {
+		console.error(`${path} has no axVersion parameter`);
+		process.exit(1);
+	}
+	template.parameters.axVersion.defaultValue = version;
+	writeFileSync(join(targetDir, published), `${JSON.stringify(template, null, 2)}\n`);
+	console.log(`deploy/${published}: ax-slim ${version}`);
 }
-template.parameters.axVersion.defaultValue = version;
-mkdirSync(dirname(target), { recursive: true });
-writeFileSync(target, `${JSON.stringify(template, null, 2)}\n`);
-console.log(`deploy/azure-slim.json: ax-slim ${version}`);

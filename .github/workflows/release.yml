@@ -265,6 +265,7 @@ jobs:
           cp dist/ax-slim-linux-arm64/ax image/arm64/ax
           cp slim/Dockerfile.release image/Dockerfile
           cp slim/ax-index-repo.sh image/ax-index-repo.sh
+          cp slim/ax-serve-repo.sh image/ax-serve-repo.sh
       - name: Image name and version tag
         id: image
         env:
@@ -286,7 +287,9 @@ jobs:
           target: runtime
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.image.outputs.name }}:${{ steps.image.outputs.version }}
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ steps.image.outputs.version }}
+            ${{ steps.image.outputs.name }}:latest
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=Headless ax (CLI + MCP server) for Linux containers
@@ -298,7 +301,9 @@ jobs:
           target: ubuntu
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.image.outputs.name }}:${{ steps.image.outputs.version }}-ubuntu
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ steps.image.outputs.version }}-ubuntu
+            ${{ steps.image.outputs.name }}:latest-ubuntu
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=Headless ax (CLI + MCP server) with git, for Linux containers
