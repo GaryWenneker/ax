@@ -1,0 +1,13 @@
+---
+import { cloudDeploys } from '../lib/cloud-deploy.mjs';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const servers = cloudDeploys.filter((d) => d.kind === 'MCP server');
+---
+<nav class="ax-cloud-deploy" data-ax-reveal aria-label="Deploy the headless build to the cloud">
+  <a class="ax-cloud-deploy-title" href={base + '/guides/headless-linux/#deploy-to-the-cloud'}>Deploy headless</a>
+  {servers.map((d) => (
+    <a class="ax-cloud-deploy-button" href={d.url} target="_blank" rel="noopener noreferrer" data-ax-deploy={d.id}>
+      {d.label} <span aria-hidden="true">↗</span>
+    </a>
+  ))}
+</nav>

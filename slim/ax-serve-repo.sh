@@ -26,6 +26,7 @@ case "$key" in *[!A-Za-z0-9._~+/=-]*) die "AX_API_KEY may only contain letters, 
 public="${AX_PUBLIC_URL:-}"
 if [ -z "$public" ]; then
   if [ -n "${RENDER_EXTERNAL_URL:-}" ]; then public="$RENDER_EXTERNAL_URL"
+  elif [ -n "${RENDER_EXTERNAL_HOSTNAME:-}" ]; then public="https://$RENDER_EXTERNAL_HOSTNAME"
   elif [ -n "${KOYEB_PUBLIC_DOMAIN:-}" ]; then public="https://$KOYEB_PUBLIC_DOMAIN"
   elif [ -n "${RAILWAY_PUBLIC_DOMAIN:-}" ]; then public="https://$RAILWAY_PUBLIC_DOMAIN"
   elif [ -n "${CONTAINER_APP_NAME:-}" ] && [ -n "${CONTAINER_APP_ENV_DNS_SUFFIX:-}" ]; then

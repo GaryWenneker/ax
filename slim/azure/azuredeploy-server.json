@@ -43,7 +43,7 @@
       "type": "string",
       "defaultValue": "10.1.1",
       "metadata": {
-        "description": "ax release without the leading v. The app runs ghcr.io/garywenneker/ax-slim:<version>-ubuntu."
+        "description": "ax release without the leading v. The app runs ghcr.io/garywenneker/ax-slim:<version>-server."
       }
     },
     "appName": {
@@ -81,7 +81,7 @@
     }
   },
   "variables": {
-    "image": "[concat('ghcr.io/garywenneker/ax-slim:', parameters('axVersion'), '-ubuntu')]",
+    "image": "[concat('ghcr.io/garywenneker/ax-slim:', parameters('axVersion'), '-server')]",
     "workspaceName": "[concat(parameters('environmentName'), '-logs')]",
     "environmentId": "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]",
     "memoryForCpu": {
@@ -178,7 +178,6 @@
             {
               "name": "ax",
               "image": "[variables('image')]",
-              "command": ["ax-serve-repo"],
               "env": "[concat(variables('baseEnv'), createArray(createObject('name', 'AX_PUBLIC_URL', 'value', concat('https://', parameters('appName'), '.', reference(variables('environmentId'), '2024-03-01').defaultDomain))), variables('refEnv'))]",
               "resources": {
                 "cpu": "[json(parameters('cpu'))]",

@@ -857,7 +857,9 @@ pub async fn serve_on(
     }
     let result = axum::serve(listener, router(state))
         .with_graceful_shutdown(async move {
-            tokio::select! {_=tokio::signal::ctrl_c()=>{},_=receiver.changed()=>{}}
+            // Container platforms stop with SIGTERM; shutting down cleanly releases the
+            // publication lease so a restarted container can start at once.
+            tokio::select! {_=tokio::signal::ctrl_c()=>{},_=terminate()=>{},_=receiver.changed()=>{}}
         })
         .await
         .map_err(|e| e.to_string());
@@ -877,6 +879,21 @@ pub async fn serve_on(
         let _ = tokio::fs::remove_file(path).await;
     }
     result
+}
+
+#[cfg(unix)]
+async fn terminate() {
+    match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+        Ok(mut signal) => {
+            signal.recv().await;
+        }
+        Err(_) => std::future::pending::<()>().await,
+    }
+}
+
+#[cfg(not(unix))]
+async fn terminate() {
+    std::future::pending::<()>().await
 }
 
 #[cfg(unix)]

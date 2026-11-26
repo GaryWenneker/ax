@@ -308,6 +308,20 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=Headless ax (CLI + MCP server) with git, for Linux containers
             org.opencontainers.image.version=${{ steps.image.outputs.version }}
+      - name: Push server image (ax-serve-repo entry point)
+        uses: docker/build-push-action@v6
+        with:
+          context: image
+          target: server
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ steps.image.outputs.version }}-server
+            ${{ steps.image.outputs.name }}:latest-server
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=Headless ax as a hosted remote MCP server for one repository
+            org.opencontainers.image.version=${{ steps.image.outputs.version }}
 
   build-docs:
     needs: [prepare, release]

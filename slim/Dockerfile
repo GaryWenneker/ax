@@ -47,6 +47,12 @@ ENV HOME=/home/ax AX_NO_UPDATE_CHECK=1
 ENTRYPOINT ["/usr/local/bin/ax"]
 CMD ["serve", "--mcp"]
 
+# Hosted remote MCP server: ax-serve-repo clones AX_REPO_URL, indexes it and serves it on
+# $PORT (see slim/ax-serve-repo.sh). No command needed on Render, Koyeb or Container Apps.
+FROM ubuntu AS server
+ENTRYPOINT ["/usr/local/bin/ax-serve-repo"]
+CMD []
+
 # Default runtime: distroless static (CA certificates, non-root user, no shell).
 FROM gcr.io/distroless/static-debian12:nonroot AS runtime
 COPY --from=builder /out/ax /usr/local/bin/ax
