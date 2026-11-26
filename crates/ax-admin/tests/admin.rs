@@ -1138,6 +1138,37 @@ async fn a10_a_sign_in_the_page_never_saved_is_dropped_with_its_tokens() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(admin.logins.logged_out(), std::slice::from_ref(&url));
 
+    // Both attempts end unsaved: the first is kept for the second, the second
+    // is then dropped with the tokens. After that the address is forgotten, so
+    // a later cancelled attempt cannot sign out tokens that came from elsewhere
+    // (`ax mcp remote login`) in the meantime.
+    admin.logins.logged_out.lock().unwrap().clear();
+    let (_, first) = admin
+        .call("POST", "/api/login", json!({"url": url, "clientId": "native-client"}))
+        .await;
+    admin
+        .call("POST", "/api/login", json!({"url": url, "clientId": "native-client"}))
+        .await;
+    admin.logins.set_for(first["id"].as_str().unwrap(), LoginState::Connected);
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    admin.logins.set(LoginState::Connected);
+    for _ in 0..40 {
+        if !admin.logins.logged_out().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(admin.logins.logged_out(), std::slice::from_ref(&url));
+    admin.logins.logged_out.lock().unwrap().clear();
+    let (_, later) = admin
+        .call("POST", "/api/login", json!({"url": url, "clientId": "native-client"}))
+        .await;
+    admin
+        .call("DELETE", &format!("/api/login/{}", later["id"].as_str().unwrap()), json!({}))
+        .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(admin.logins.logged_out().is_empty(), "a later cancelled attempt signs nothing out");
+
     // A page that does save in time keeps its tokens.
     admin.logins.logged_out.lock().unwrap().clear();
     let (_, started) = admin

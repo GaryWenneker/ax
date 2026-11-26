@@ -490,6 +490,8 @@ impl App {
             self.leftovers.lock().await.insert(url.to_owned());
             return;
         }
+        // Decided here and now: nothing of this address is left for later.
+        self.leftovers.lock().await.remove(url);
         match self.sign_in_is_used(url, None).await {
             Ok(true) => {}
             Ok(false) => {
