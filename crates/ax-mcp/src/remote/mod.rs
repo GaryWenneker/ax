@@ -9,4 +9,4 @@ pub mod server;
 
 pub use ax_remote_client::{client, credentials};
 pub use config::RemoteConfig;
-pub use server::serve;
+pub use server::{serve, serve_on};

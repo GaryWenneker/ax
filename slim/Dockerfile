@@ -40,11 +40,18 @@ RUN apt-get update \
     && mkdir -p /workspace && chown ax:ax /workspace
 COPY --from=builder /out/ax /usr/local/bin/ax
 COPY --chmod=0755 slim/ax-index-repo.sh /usr/local/bin/ax-index-repo
+COPY --chmod=0755 slim/ax-serve-repo.sh /usr/local/bin/ax-serve-repo
 USER ax
 WORKDIR /workspace
 ENV HOME=/home/ax AX_NO_UPDATE_CHECK=1
 ENTRYPOINT ["/usr/local/bin/ax"]
 CMD ["serve", "--mcp"]
+
+# Hosted remote MCP server: ax-serve-repo clones AX_REPO_URL, indexes it and serves it on
+# $PORT (see slim/ax-serve-repo.sh). No command needed on Render, Koyeb or Container Apps.
+FROM ubuntu AS server
+ENTRYPOINT ["/usr/local/bin/ax-serve-repo"]
+CMD []
 
 # Default runtime: distroless static (CA certificates, non-root user, no shell).
 FROM gcr.io/distroless/static-debian12:nonroot AS runtime

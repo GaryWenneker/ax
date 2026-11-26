@@ -951,17 +951,35 @@ async fn delete(
 }
 
 pub async fn bind(port: u16) -> Result<tokio::net::TcpListener, String> {
-    tokio::net::TcpListener::bind(("127.0.0.1", port))
+    bind_on(std::net::Ipv4Addr::LOCALHOST.into(), port).await
+}
+
+/// Bind the listener on an explicit address. Loopback is the default; a container behind a
+/// platform's HTTPS ingress (Container Apps, Render, Koyeb, Cloud Run) passes `0.0.0.0`.
+pub async fn bind_on(host: std::net::IpAddr, port: u16) -> Result<tokio::net::TcpListener, String> {
+    tokio::net::TcpListener::bind((host, port))
         .await
         .map_err(|e| format!("Cannot bind remote MCP listener: {e}"))
 }
 
-pub async fn serve(
+pub async fn serve(config: RemoteConfig, port: u16, socket: Option<PathBuf>) -> Result<(), String> {
+    serve_on(config, std::net::Ipv4Addr::LOCALHOST.into(), port, socket).await
+}
+
+pub async fn serve_on(
     mut config: RemoteConfig,
+    host: std::net::IpAddr,
     port: u16,
     socket: Option<PathBuf>,
 ) -> Result<(), String> {
     config.validate()?;
+    if !host.is_loopback() {
+        // Plain HTTP on a non-loopback address is only safe behind TLS termination.
+        tracing::warn!(
+            "remote MCP listens on {host}:{port}; expose it only through an HTTPS proxy or ingress for {}",
+            config.public_url
+        );
+    }
     // Register only validated public metadata, even if later network startup fails.
     let snapshot = super::publications::register(&config, None, None).await?;
     let catalogue =
@@ -970,7 +988,7 @@ pub async fn serve(
             .map_err(|e| e.to_string())?;
     let config = Arc::new(config);
     let verifier = TokenVerifier::discover(config.clone()).await?;
-    let listener = bind(port).await?;
+    let listener = bind_on(host, port).await?;
     let addr = listener.local_addr().map_err(|e| e.to_string())?;
     let bridge = start_socket_bridge(socket.as_deref(), addr).await?;
     let instance =
@@ -1033,7 +1051,9 @@ pub async fn serve(
     }
     let result = axum::serve(listener, router(state))
         .with_graceful_shutdown(async move {
-            tokio::select! {_=tokio::signal::ctrl_c()=>{},_=receiver.changed()=>{}}
+            // Container platforms stop with SIGTERM; shutting down cleanly releases the
+            // publication lease so a restarted container can start at once.
+            tokio::select! {_=tokio::signal::ctrl_c()=>{},_=terminate()=>{},_=receiver.changed()=>{}}
         })
         .await
         .map_err(|e| e.to_string());
@@ -1063,6 +1083,21 @@ pub async fn serve(
         let _ = tokio::fs::remove_file(path).await;
     }
     result
+}
+
+#[cfg(unix)]
+async fn terminate() {
+    match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+        Ok(mut signal) => {
+            signal.recv().await;
+        }
+        Err(_) => std::future::pending::<()>().await,
+    }
+}
+
+#[cfg(not(unix))]
+async fn terminate() {
+    std::future::pending::<()>().await
 }
 
 #[cfg(unix)]
@@ -1176,6 +1211,26 @@ mod socket_tests {
         assert!(response.ends_with("ready"), "{response}");
         bridge.abort();
         upstream.abort();
+    }
+}
+
+#[cfg(test)]
+mod bind_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn default_bind_stays_on_loopback() {
+        let listener = bind(0).await.unwrap();
+        assert!(listener.local_addr().unwrap().ip().is_loopback());
+    }
+
+    #[tokio::test]
+    async fn explicit_bind_uses_the_given_address() {
+        let any: std::net::IpAddr = "0.0.0.0".parse().unwrap();
+        let listener = bind_on(any, 0).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        assert_eq!(addr.ip(), any);
+        assert_ne!(addr.port(), 0);
     }
 }
 

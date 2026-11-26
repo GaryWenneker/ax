@@ -1,0 +1,23 @@
+# Render Blueprint for the "Deploy to Render" button (Guides → Headless Linux build on the
+# website). It runs the headless ax server image as a hosted remote MCP server: ax-serve-repo clones
+# AX_REPO_URL, indexes it and serves https://<service>.onrender.com/projects/project/mcp.
+# Clients send `Authorization: Bearer <AX_API_KEY>`; Render generates the key, and it is shown
+# under the service's Environment tab. See slim/ax-serve-repo.sh for every variable.
+services:
+  - type: web
+    name: ax-mcp
+    runtime: image
+    image:
+      url: ghcr.io/garywenneker/ax-slim:latest-server
+    plan: starter
+    healthCheckPath: /health
+    autoDeployTrigger: off
+    envVars:
+      - key: AX_REPO_URL
+        sync: false
+      - key: AX_API_KEY
+        generateValue: true
+      - key: AX_API_KEY_WRITE
+        value: "0"
+      - key: AX_PROJECT_ID
+        value: project

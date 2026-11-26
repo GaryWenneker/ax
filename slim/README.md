@@ -12,7 +12,9 @@ Releases from v10.1.1 on publish `ax-slim-linux-x64.tar.gz` and
 `ax-slim-linux-arm64.tar.gz` (in `SHA256SUMS`) and the images
 `ghcr.io/garywenneker/ax-slim:<version>` (distroless) and
 `ghcr.io/garywenneker/ax-slim:<version>-ubuntu` (with `git` and
-`ax-index-repo`), for `linux/amd64` and `linux/arm64`.
+`ax-index-repo`) and `ghcr.io/garywenneker/ax-slim:<version>-server` (the same
+with `ax-serve-repo` as entry point), for `linux/amd64` and `linux/arm64`. The
+newest release is also tagged `latest`, `latest-ubuntu` and `latest-server`.
 
 ```bash
 curl -fsSL https://getax.wenneker.io/install-slim.sh | sh
@@ -270,8 +272,45 @@ the project directory. `sandbox remove ax-test` deletes the sandbox. The guide
 on the website (Guides → Headless Linux build) has the full walkthrough,
 including an MCP check and the SDK call.
 
+### Hosted remote MCP server (Azure, Render, Koyeb)
+
+`ax-serve-repo` (`slim/ax-serve-repo.sh`, the entry point of the `-server`
+image and also in `-ubuntu`) clones
+`AX_REPO_URL`, runs `ax init`, writes a remote configuration that grants
+`AX_API_KEY` (stored only as its SHA-256) and runs
+`ax mcp remote serve --bind 0.0.0.0 --port $PORT`. Clients connect to
+`https://<service>/projects/project/mcp` with `Authorization: Bearer <key>`.
+The public URL comes from `AX_PUBLIC_URL` or is detected on Render, Koyeb,
+Railway and Azure Container Apps. The website's guide (Deploy to the cloud) has
+the buttons:
+
+- Azure: `slim/azure/azuredeploy-server.json` (always-on Container App).
+- Render: `render.yaml` at the repository root.
+- Build the image locally with `docker build -f slim/Dockerfile --target server .`
+- Koyeb: a deploy URL with the image, command and variables
+  (`site/src/lib/cloud-deploy.mjs`).
+
+Locally, the same container:
+
+```bash
+docker run --rm -p 8080:8080 -e AX_REPO_URL=https://github.com/<owner>/<repo> -e AX_API_KEY="$(openssl rand -hex 32)" -e AX_PUBLIC_URL=https://ax.example.com ghcr.io/garywenneker/ax-slim:latest-server
+```
+
 ### Azure Container Apps
 
+**One click:** the website's guide (Guides → Headless Linux build) has a
+*Deploy to Azure* button. It opens `slim/azure/azuredeploy.json` in the Azure
+portal; the site serves a copy at `/deploy/azure-slim.json` whose `axVersion`
+default is the newest release (`site/scripts/write-azure-template.mjs`, run by
+`npm run build`). The template creates a Log Analytics workspace, a Container
+Apps environment and the same manual job as the script below; it does not start
+a run. The same template from the CLI:
+
+```bash
+az deployment group create --resource-group my-rg --template-file slim/azure/azuredeploy.json --parameters repoUrl=https://github.com/<owner>/<repo>
+```
+
+**Script:**
 `slim/azure/create-job.sh` creates (or updates) a manual job from the
 `-ubuntu` image. The job runs `ax-index-repo` (`slim/ax-index-repo.sh`), which
 clones `AX_REPO_URL`, runs `ax init` and then `AX_JOB_COMMAND`. The repository
@@ -302,9 +341,9 @@ on the website (Guides → Remote admin) covers connecting and the pages.
 
 ## Limits
 
-- `ax mcp remote serve` binds to `127.0.0.1`. Inside a container it is
-  reachable only from the same container or pod, so expose it through a
-  sidecar proxy or tunnel; Container Apps ingress cannot reach it directly.
+- `ax mcp remote serve` binds to `127.0.0.1` unless you pass `--bind`. It
+  serves plain HTTP, so use `--bind 0.0.0.0` only behind an HTTPS ingress or
+  proxy (as `ax-serve-repo` does).
 - GHCR packages can start out private on their first publish. If Azure cannot
   pull `ghcr.io/garywenneker/ax-slim`, set the package to public in its GitHub
   package settings (or give the job registry credentials).

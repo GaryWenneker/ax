@@ -101,7 +101,11 @@ For a Vercel Sandbox, an Azure Container Apps job, a CI runner or another machin
 curl -fsSL https://getax.wenneker.io/install-slim.sh | sh
 ```
 
-See [Headless Linux build](/guides/headless-linux/) for options, container images and Azure Container Apps jobs.
+To run it in the cloud without installing anything locally, deploy it as a hosted remote MCP server for one repository:
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fgetax.wenneker.io%2Fdeploy%2Fazure-slim-server.json) [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/GaryWenneker/ax) [![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?type=docker&name=ax-mcp&image=ghcr.io%2Fgarywenneker%2Fax-slim%3Alatest-server&ports=8080%3Bhttp%3B%2F&env%5BPORT%5D=8080&env%5BAX_REPO_URL%5D=https%3A%2F%2Fgithub.com%2FOWNER%2FREPO&env%5BAX_API_KEY%5D=CHANGE_ME&env%5BAX_PROJECT_ID%5D=project)
+
+See [Deploy to the cloud](/guides/headless-linux/#deploy-to-the-cloud) for what each button creates and the API key it needs, and [Headless Linux build](/guides/headless-linux/) for options, container images, an Azure job that indexes once, and Vercel Sandbox.
 
 ### ax-admin (separate application)
 
