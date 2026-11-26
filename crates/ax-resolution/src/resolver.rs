@@ -70,6 +70,7 @@ impl ReferenceResolver {
         let import_map = build_import_map(&refs, &self.import_resolver);
 
         let mut deferred_refs: Vec<UnresolvedReference> = Vec::new();
+        let mut to_delete: Vec<UnresolvedReference> = Vec::new();
 
         let mut result = ResolutionResult {
             resolved: vec![],
@@ -131,9 +132,7 @@ impl ReferenceResolver {
                 let method = format!("{:?}", r.resolved_by);
                 *result.stats.by_method.entry(method).or_insert(0) += 1;
                 result.resolved.push(r);
-                if let Err(e) = queries.delete_unresolved_ref(&db_ref).await {
-                    tracing::warn!("failed to delete resolved ref: {}", e);
-                }
+                to_delete.push(db_ref);
             } else {
                 result.stats.unresolved += 1;
                 result.unresolved.push(ref_);
@@ -162,15 +161,16 @@ impl ReferenceResolver {
                 let method = format!("{:?}", r.resolved_by);
                 *result.stats.by_method.entry(method).or_insert(0) += 1;
                 result.resolved.push(r);
-                if let Err(e) = queries.delete_unresolved_ref(&db_ref).await {
-                    tracing::warn!("failed to delete resolved ref: {}", e);
-                }
+                to_delete.push(db_ref);
             } else {
                 result.stats.unresolved += 1;
                 result.unresolved.push(ref_);
             }
         }
 
+        if let Err(e) = queries.delete_unresolved_refs_batch(&to_delete).await {
+            tracing::warn!("failed to delete resolved refs: {}", e);
+        }
         self.callback_synth
             .synthesize(self.import_resolver.project_root(), queries, scope)
             .await?;

@@ -957,6 +957,40 @@ impl QueryBuilder {
         Ok(())
     }
 
+    /// Delete many resolved references in one transaction.
+    ///
+    /// Deleting them one by one costs one commit (and one WAL append) per
+    /// reference, which dominated indexing time on large projects.
+    pub async fn delete_unresolved_refs_batch(
+        &self,
+        refs: &[UnresolvedReference],
+    ) -> Result<(), AxError> {
+        if refs.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self.pool.begin().await.map_err(|e| self.sql_err(e))?;
+        for ref_ in refs {
+            sqlx::query(
+                r#"
+                DELETE FROM unresolved_refs
+                WHERE from_node_id = ? AND reference_name = ? AND reference_kind = ?
+                  AND line = ? AND col = ? AND file_path = ?
+                "#,
+            )
+            .bind(&ref_.from_node_id)
+            .bind(&ref_.reference_name)
+            .bind(ref_.reference_kind.as_str())
+            .bind(ref_.line)
+            .bind(ref_.column)
+            .bind(ref_.file_path.as_deref().unwrap_or(""))
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| self.sql_err(e))?;
+        }
+        tx.commit().await.map_err(|e| self.sql_err(e))?;
+        Ok(())
+    }
+
     pub async fn count_unresolved_refs(&self) -> Result<i64, AxError> {
         sqlx::query_scalar("SELECT COUNT(*) FROM unresolved_refs")
             .fetch_one(&self.pool)
