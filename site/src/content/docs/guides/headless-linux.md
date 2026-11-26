@@ -273,6 +273,65 @@ Not offered as a button: Vercel and Netlify do not run containers (use [Vercel S
 
 To index once and run a command instead of serving, use the [Azure Container Apps job](#deploy-with-one-click).
 
+## Run it yourself with Docker or Podman
+
+On your own server or VM, the same `-server` image runs with [Caddy](https://caddyserver.com/) in front of it. Caddy gets an HTTPS certificate for your domain on its own, which the server needs because it only accepts an `https://` address.
+
+| File | Use |
+|---|---|
+| [`compose.yaml`](/deploy/containers/compose.yaml) | Docker Compose or Podman Compose: the ax server and Caddy |
+| [`Caddyfile`](/deploy/containers/Caddyfile) | HTTPS for `AX_PUBLIC_URL`, forwarded to the ax container |
+| [`ax.env`](/deploy/containers/ax.env) | Your settings: public address, repository and API key |
+| [`ax-mcp.container`](/deploy/containers/ax-mcp.container) | Podman Quadlet: the ax server as a systemd service |
+| [`ax-caddy.container`](/deploy/containers/ax-caddy.container) | Podman Quadlet: Caddy as a systemd service |
+| [`ax-mcp.network`](/deploy/containers/ax-mcp.network) | Podman Quadlet: the network both containers share |
+
+Before you start, point your domain's DNS at the host and open ports 80 and 443. The files pin the ax release they were published with and an exact Caddy version; change the image version in them to upgrade.
+
+### Docker or Podman Compose
+
+```bash
+mkdir ax-mcp && cd ax-mcp
+for f in compose.yaml Caddyfile ax.env; do curl -fsSLO "https://getax.wenneker.io/deploy/containers/$f"; done
+```
+
+Edit `ax.env`: set `AX_PUBLIC_URL` to your domain (`https://ax.example.com`), `AX_REPO_URL` to the repository and `AX_API_KEY` to the output of `openssl rand -hex 32`. Then start it:
+
+```bash
+docker compose up -d
+```
+
+With Podman:
+
+```bash
+podman compose up -d
+```
+
+`docker compose logs -f ax` shows the clone and the index. The server is ready when it prints `serving https://…/projects/project/mcp`.
+
+### Podman as a systemd service
+
+Quadlet turns the three unit files into systemd services that start at boot (rootless shown):
+
+```bash
+mkdir -p ~/.config/containers/systemd ~/.config/ax-mcp
+cd ~/.config/containers/systemd
+for f in ax-mcp.container ax-caddy.container ax-mcp.network; do curl -fsSLO "https://getax.wenneker.io/deploy/containers/$f"; done
+cd ~/.config/ax-mcp
+for f in Caddyfile ax.env; do curl -fsSLO "https://getax.wenneker.io/deploy/containers/$f"; done
+```
+
+Edit `~/.config/ax-mcp/ax.env` as above. Rootless Podman may bind ports 80 and 443 only after `sudo sysctl net.ipv4.ip_unprivileged_port_start=80`; to keep services running after you log out, run `sudo loginctl enable-linger "$USER"`. Then start it:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user start ax-caddy
+```
+
+Starting `ax-caddy` starts `ax-mcp` and the network first. `journalctl --user -u ax-mcp -f` shows the clone and the index.
+
+Clients connect to `https://<your domain>/projects/project/mcp` with `Authorization: Bearer <AX_API_KEY>`, the same as for the cloud buttons above. To try it on your own computer, set `AX_PUBLIC_URL=https://localhost`: Caddy then uses its own local certificate, which clients do not trust until you add Caddy's root certificate.
+
 ## An interface for the headless build
 
 This build has no `ax web`. [ax-admin](/guides/remote-admin/) is a separate application that runs on your own computer and manages the environment through `ax mcp remote serve`. Install it there, not in the container:

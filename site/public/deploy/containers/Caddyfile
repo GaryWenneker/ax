@@ -1,0 +1,5 @@
+# HTTPS in front of the ax remote MCP server. The site address is AX_PUBLIC_URL from
+# ax.env; Caddy gets and renews the certificate for that domain on its own.
+{$AX_PUBLIC_URL} {
+	reverse_proxy ax:8080
+}

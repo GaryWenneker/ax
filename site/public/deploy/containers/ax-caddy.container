@@ -1,0 +1,26 @@
+# Podman Quadlet: Caddy in front of the ax remote MCP server, for automatic HTTPS.
+# Copy next to ax-mcp.container and ax-mcp.network in ~/.config/containers/systemd/.
+# Rootless Podman can bind ports 80 and 443 only after:
+#   sudo sysctl net.ipv4.ip_unprivileged_port_start=80
+[Unit]
+Description=Caddy HTTPS proxy for the ax remote MCP server
+Requires=ax-mcp.service
+After=ax-mcp.service
+
+[Container]
+ContainerName=ax-caddy
+Image=docker.io/library/caddy:2.10.2
+EnvironmentFile=%h/.config/ax-mcp/ax.env
+Network=ax-mcp.network
+PublishPort=80:80
+PublishPort=443:443
+PublishPort=443:443/udp
+Volume=%h/.config/ax-mcp/Caddyfile:/etc/caddy/Caddyfile:ro,Z
+Volume=ax-caddy-data:/data
+Volume=ax-caddy-config:/config
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

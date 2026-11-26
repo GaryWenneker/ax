@@ -1,0 +1,4 @@
+# Podman Quadlet: the network that ax-mcp.container and ax-caddy.container share.
+# Copy to ~/.config/containers/systemd/ (rootless) or /etc/containers/systemd/ (root).
+[Network]
+NetworkName=ax-mcp
