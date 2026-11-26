@@ -39,6 +39,27 @@ The installer puts one binary, `ax-admin`, in `/usr/local/bin` (as root) or `~/.
 
 Options for `install-admin.sh`: `--version vX.Y.Z`, `--bin-dir DIR` and `--uninstall`. For `install-admin.ps1`: `-Version vX.Y.Z` and `-Uninstall`. Run the installer again to upgrade. Uninstalling removes the binary and leaves saved connections and keys in place.
 
+### Download without the installer
+
+Each Ax release that includes `ax-admin` publishes one archive per platform on [GitHub Releases](https://github.com/GaryWenneker/ax/releases), next to the `ax` archives and listed in the same `SHA256SUMS`:
+
+| Platform | File |
+|---|---|
+| Windows x64 | `ax-admin-win32-x64.zip` |
+| Windows arm64 | `ax-admin-win32-arm64.zip` |
+| macOS Apple Silicon | `ax-admin-darwin-arm64.tar.gz` |
+| macOS Intel | `ax-admin-darwin-x64.tar.gz` |
+| Linux x64 | `ax-admin-linux-x64.tar.gz` |
+| Linux arm64 | `ax-admin-linux-arm64.tar.gz` |
+
+The newest one is always at this address (replace the file name):
+
+```text
+https://github.com/GaryWenneker/ax/releases/latest/download/ax-admin-linux-x64.tar.gz
+```
+
+Each archive holds one folder with the `ax-admin` program (`ax-admin.exe` on Windows). Check the download against `SHA256SUMS` of the same release, unpack it and put the program in a folder on your `PATH`. The binaries are not code-signed: macOS and Windows may ask you to confirm the first start.
+
 To build from source instead (Node.js and Rust required):
 
 ```bash

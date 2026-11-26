@@ -228,6 +228,7 @@ Every release ships **six** prebuilt binaries. The shell installer picks the mat
 | Windows | x64, arm64 | PowerShell installer (`install.ps1`) or [GitHub Releases](https://github.com/GaryWenneker/ax/releases) |
 | macOS | x64 (Intel), arm64 (Apple Silicon) | shell installer (`install.sh`) or GitHub Releases |
 | Linux | x64, arm64 | shell installer or GitHub Releases |
+| ax-admin (separate application) | Windows, macOS, Linux; x64 and arm64 | `install-admin.sh` / `install-admin.ps1` or GitHub Releases ([guide](/guides/remote-admin/#install)) |
 | WSL2 | x64, arm64 | **Use the Linux installer** inside WSL — `curl -fsSL https://getax.wenneker.io/install.sh \| sh` |
 | Linux, headless (sandboxes, containers) | x64, arm64 | `install-slim.sh` or `ghcr.io/garywenneker/ax-slim` images ([guide](/guides/headless-linux/)) |
 
