@@ -418,8 +418,11 @@ async fn e4_configuration_without_admin_fields_loads_and_grants_nothing() {
     assert!(config.projects[0].admin_subjects.is_empty());
     assert!(!config.api_keys[0].admin);
     // Serializing an admin-free configuration stays readable by a server without the extension.
-    let text = serde_json::to_string(&config).unwrap();
-    assert!(!text.contains("admin"), "{text}");
+    // Only the field names are checked: the project root is a temporary path that may
+    // itself contain "admin" (the Windows CI account is "runneradmin").
+    let saved = serde_json::to_value(&config).unwrap();
+    assert!(saved["projects"][0].get("admin_subjects").is_none(), "{saved}");
+    assert!(saved["api_keys"][0].get("admin").is_none(), "{saved}");
 }
 
 #[tokio::test]
