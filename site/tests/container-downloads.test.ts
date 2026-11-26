@@ -78,4 +78,7 @@ test('the headless Linux guide links every download', () => {
   assert.match(guide, /docker compose up -d/);
   assert.match(guide, /podman compose up -d/);
   assert.match(guide, /systemctl --user start ax-caddy/);
+  // Rootless Podman refuses ports below 1024 under Compose as well as under Quadlet.
+  const compose = guide.split('### Docker or Podman Compose')[1]?.split('### Podman as a systemd service')[0] ?? '';
+  assert.match(compose, /net\.ipv4\.ip_unprivileged_port_start=80/);
 });

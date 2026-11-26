@@ -307,7 +307,7 @@ With Podman:
 podman compose up -d
 ```
 
-`docker compose logs -f ax` shows the clone and the index. The server is ready when it prints `serving https://…/projects/project/mcp`.
+Rootless Podman may bind ports 80 and 443 only after `sudo sysctl net.ipv4.ip_unprivileged_port_start=80` (add the setting to `/etc/sysctl.d/` to keep it after a reboot). `docker compose logs -f ax` shows the clone and the index. The server is ready when it prints `serving https://…/projects/project/mcp`.
 
 ### Podman as a systemd service
 
