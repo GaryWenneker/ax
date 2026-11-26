@@ -24,6 +24,7 @@ pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 
 pub const CONTEXT_SCOPE: &str = "ax:context";
 pub const WRITE_SCOPE: &str = "ax:write";
+pub const ADMIN_SCOPE: &str = "ax:admin";
 
 #[derive(Clone, Debug)]
 pub struct Principal {
@@ -32,6 +33,7 @@ pub struct Principal {
     pub scopes: HashSet<String>,
     pub key_projects: Vec<String>,
     pub key_write: bool,
+    pub key_admin: bool,
 }
 
 impl Principal {
@@ -48,6 +50,15 @@ impl Principal {
             && match &self.subject {
                 Some(sub) => project.write_subjects.contains(sub),
                 None => self.key_write,
+            }
+    }
+    /// Admin tools need write access, the admin scope and an explicit admin grant.
+    pub fn can_admin(&self, project: &Project) -> bool {
+        self.can_write(project)
+            && self.scopes.contains(ADMIN_SCOPE)
+            && match &self.subject {
+                Some(sub) => project.admin_subjects.contains(sub),
+                None => self.key_admin,
             }
     }
 }
@@ -107,12 +118,16 @@ impl TokenVerifier {
                 if key.write {
                     scopes.insert(WRITE_SCOPE.to_string());
                 }
+                if key.admin {
+                    scopes.insert(ADMIN_SCOPE.to_string());
+                }
                 return Ok(Principal {
                     id: format!("key:{}", key.id),
                     subject: None,
                     scopes,
                     key_projects: key.projects.clone(),
                     key_write: key.write,
+                    key_admin: key.admin,
                 });
             }
         }
@@ -155,6 +170,7 @@ impl TokenVerifier {
             scopes: claims.scope.split_whitespace().map(str::to_owned).collect(),
             key_projects: Vec::new(),
             key_write: false,
+            key_admin: false,
         })
     }
 }
@@ -182,6 +198,66 @@ async fn fetch_keys(client: &reqwest::Client, url: &str) -> Result<JwkSet, Strin
         bytes.extend_from_slice(&chunk);
     }
     serde_json::from_slice(&bytes).map_err(|_| "Invalid OAuth signing keys".into())
+}
+
+#[cfg(test)]
+mod admin_grant {
+    use super::*;
+
+    fn project(admin_subjects: &[&str]) -> Project {
+        Project {
+            id: "alpha".into(),
+            root: "/tmp/alpha".into(),
+            subjects: vec!["ann".into(), "bob".into()],
+            write_subjects: vec!["ann".into(), "bob".into()],
+            admin_subjects: admin_subjects.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    fn principal(subject: Option<&str>, scopes: &[&str], key_write: bool, key_admin: bool) -> Principal {
+        Principal {
+            id: "test".into(),
+            subject: subject.map(str::to_owned),
+            scopes: scopes.iter().map(|s| s.to_string()).collect(),
+            key_projects: vec!["alpha".into()],
+            key_write,
+            key_admin,
+        }
+    }
+
+    const ALL: &[&str] = &[CONTEXT_SCOPE, WRITE_SCOPE, ADMIN_SCOPE];
+
+    #[test]
+    fn a_key_needs_the_scope_the_grant_and_write_access() {
+        let project = project(&[]);
+        assert!(principal(None, ALL, true, true).can_admin(&project));
+        // The admin scope alone is not a grant.
+        assert!(!principal(None, ALL, true, false).can_admin(&project));
+        // The grant without the scope is not enough either.
+        assert!(!principal(None, &[CONTEXT_SCOPE, WRITE_SCOPE], true, true).can_admin(&project));
+        // Admin never exists without write access.
+        assert!(!principal(None, ALL, false, true).can_admin(&project));
+        assert!(!principal(None, &[CONTEXT_SCOPE, ADMIN_SCOPE], true, true).can_admin(&project));
+        // A key for another project has no access at all.
+        let mut other = principal(None, ALL, true, true);
+        other.key_projects = vec!["beta".into()];
+        assert!(!other.can_admin(&project));
+    }
+
+    #[test]
+    fn a_subject_needs_the_scope_and_a_place_in_admin_subjects() {
+        let project = project(&["ann"]);
+        assert!(principal(Some("ann"), ALL, false, false).can_admin(&project));
+        // bob may write but is not an admin subject.
+        assert!(principal(Some("bob"), ALL, false, false).can_write(&project));
+        assert!(!principal(Some("bob"), ALL, false, false).can_admin(&project));
+        // ann without the admin scope in her token.
+        assert!(!principal(Some("ann"), &[CONTEXT_SCOPE, WRITE_SCOPE], false, false).can_admin(&project));
+        // The key flag means nothing for a subject.
+        assert!(!principal(Some("bob"), ALL, true, true).can_admin(&project));
+        // An unknown subject.
+        assert!(!principal(Some("eve"), ALL, false, false).can_admin(&project));
+    }
 }
 
 #[cfg(test)]

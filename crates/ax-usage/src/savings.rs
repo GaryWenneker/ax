@@ -495,6 +495,101 @@ pub async fn record_mcp_call(record: McpCallRecord) -> Result<(), String> {
     }
 }
 
+/// One row of the MCP call log as shown to an administrator. It carries no
+/// argument, prompt or response text: only what was called and how it went.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpCallLogEntry {
+    pub id: i64,
+    /// Unix time in milliseconds.
+    pub at: i64,
+    pub tool: String,
+    pub transport: String,
+    pub ok: bool,
+    pub duration_ms: Option<i64>,
+    pub response_chars: i64,
+    pub response_tokens: i64,
+}
+
+pub const MCP_CALL_LOG_DEFAULT_LIMIT: i64 = 100;
+pub const MCP_CALL_LOG_MAX_LIMIT: i64 = 500;
+
+/// Clamp a requested page size to `1..=MCP_CALL_LOG_MAX_LIMIT`.
+pub fn mcp_call_log_limit(requested: Option<i64>) -> i64 {
+    requested
+        .unwrap_or(MCP_CALL_LOG_DEFAULT_LIMIT)
+        .clamp(1, MCP_CALL_LOG_MAX_LIMIT)
+}
+
+/// Latest MCP calls of one project, newest first. `before` continues after an
+/// earlier page (pass the smallest `id` it returned).
+pub async fn recent_mcp_calls(
+    project: &str,
+    limit: Option<i64>,
+    before: Option<i64>,
+    tool: Option<&str>,
+) -> Result<Vec<McpCallLogEntry>, String> {
+    let pool = open_pool().await.map_err(|e| e.to_string())?;
+    type Row = (i64, i64, String, String, i64, Option<i64>, i64, i64);
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT id, created_at, tool, transport, ok, duration_ms, response_chars, response_tokens_est
+         FROM mcp_call_log
+         WHERE project = ?1 AND (?2 IS NULL OR id < ?2) AND (?3 IS NULL OR tool = ?3)
+         ORDER BY id DESC LIMIT ?4",
+    )
+    .bind(project)
+    .bind(before)
+    .bind(tool)
+    .bind(mcp_call_log_limit(limit))
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, at, tool, transport, ok, duration_ms, response_chars, response_tokens)| {
+                McpCallLogEntry {
+                    id,
+                    at,
+                    tool,
+                    transport,
+                    ok: ok != 0,
+                    duration_ms,
+                    response_chars,
+                    response_tokens,
+                }
+            },
+        )
+        .collect())
+}
+
+/// Markdown table of a call-log page.
+pub fn format_mcp_call_log(entries: &[McpCallLogEntry]) -> String {
+    let mut text = format!("MCP call log: {} call(s), newest first\n", entries.len());
+    if !entries.is_empty() {
+        text.push_str(
+            "\n| Time (UTC) | Tool | Transport | Result | ms | Tokens |\n|---|---|---|---|---|---|\n",
+        );
+    }
+    for entry in entries {
+        let time = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(entry.at)
+            .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+            .unwrap_or_default();
+        let duration = entry
+            .duration_ms
+            .map(|ms| ms.to_string())
+            .unwrap_or_else(|| "-".into());
+        text.push_str(&format!(
+            "| {time} | {} | {} | {} | {duration} | {} |\n",
+            entry.tool,
+            entry.transport,
+            if entry.ok { "ok" } else { "error" },
+            entry.response_tokens
+        ));
+    }
+    text
+}
+
 pub fn spawn_record_mcp_call(record: McpCallRecord) {
     tokio::spawn(async move {
         if let Err(err) = record_mcp_call(record).await {

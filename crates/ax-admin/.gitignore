@@ -1,0 +1,3 @@
+web-ui/dist/
+web-ui/test-results/
+web-ui/playwright-report/

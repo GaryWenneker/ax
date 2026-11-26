@@ -1,8 +1,15 @@
-//! Cross-process file lock using ax.lock (PID stamped, stale recovery).
+//! Cross-process file lock using ax.lock (PID stamped).
 //!
 //! Index/sync writers wait for the lock instead of failing immediately, so a
 //! concurrent `ax sync`, MCP catch-up, or sync --watch does not surface as
 //! `database is locked` / LockUnavailable under normal contention.
+//!
+//! The lock is an advisory `flock` on one stable file. The file is never
+//! deleted: unlinking it while another process holds the lock lets a third
+//! process create a new inode and lock that one, so two writers would run at
+//! once. The kernel drops the lock when its holder exits (also after
+//! `kill -9`), so a leftover file never blocks anyone. The PID inside is only
+//! for messages and `ax unlock`.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -34,32 +41,25 @@ impl FileLock {
         &self.path
     }
 
-    /// Clear a stale lock file before attempting to acquire (safe to call always).
-    pub fn prepare(&self) {
-        if self.file.is_none() {
-            let _ = clear_stale_lock(&self.path);
-        }
-    }
+    /// Kept for API compatibility; a leftover lock file needs no cleanup.
+    pub fn prepare(&self) {}
 
     /// Wait up to [`DEFAULT_LOCK_WAIT`] for an exclusive lock.
     pub fn acquire(&mut self) -> Result<(), AxError> {
         self.acquire_wait(DEFAULT_LOCK_WAIT)
     }
 
-    /// Wait up to `timeout` for an exclusive lock, clearing stale PIDs between attempts.
+    /// Wait up to `timeout` for an exclusive lock.
     pub fn acquire_wait(&mut self, timeout: Duration) -> Result<(), AxError> {
         if self.file.is_some() {
             return Ok(());
         }
-        self.prepare();
         let deadline = Instant::now() + timeout;
         let mut attempt = 0u32;
         loop {
             match self.try_acquire_once() {
                 Ok(()) => return Ok(()),
                 Err(AxError::LockUnavailable(_)) => {
-                    // Holder may have crashed since the last check.
-                    let _ = clear_stale_lock(&self.path);
                     if Instant::now() >= deadline {
                         return Err(self.lock_unavailable_error());
                     }
@@ -101,6 +101,12 @@ impl FileLock {
 
         match file.try_lock_exclusive() {
             Ok(()) => {
+                // An older ax may have unlinked the path after we opened it. A
+                // lock on an unlinked inode excludes nobody, so try again.
+                if !same_file(&file, &self.path) {
+                    let _ = file.unlock();
+                    return Err(self.lock_unavailable_error());
+                }
                 stamp_pid(&file)?;
                 self.file = Some(file);
                 Ok(())
@@ -132,8 +138,12 @@ impl FileLock {
         AxError::LockUnavailable(hint)
     }
 
+    /// Unlock if this instance holds the lock. Never touches a lock it does
+    /// not hold, and never deletes the file.
     pub fn release(&mut self) -> Result<(), AxError> {
         if let Some(file) = self.file.take() {
+            // Clear the PID first so `ax unlock` and messages do not name us.
+            let _ = file.set_len(0);
             file.unlock().map_err(|e| {
                 AxError::File(crate::errors::FileError::with_path(
                     e.to_string(),
@@ -141,7 +151,6 @@ impl FileLock {
                 ))
             })?;
         }
-        let _ = std::fs::remove_file(&self.path);
         Ok(())
     }
 
@@ -156,18 +165,36 @@ impl Drop for FileLock {
     }
 }
 
-/// Remove lock file when the holder PID is dead, missing, or unreadable.
+/// Clear a leftover PID from a lock file nobody holds. Returns true when the
+/// file existed and was free.
+///
+/// Whether the lock is held is decided by `flock` itself, not by the PID: a
+/// PID from another container's PID namespace, or a missing `kill` binary,
+/// must never make a live lock look stale. The file is never deleted.
 pub fn clear_stale_lock(lock_path: &Path) -> bool {
-    if !lock_path.exists() {
+    let Ok(file) = OpenOptions::new().read(true).write(true).open(lock_path) else {
+        return false;
+    };
+    if file.try_lock_exclusive().is_err() {
         return false;
     }
-    match read_lock_pid(lock_path) {
-        Some(pid) if is_pid_alive(pid) => false,
-        Some(_) | None => {
-            let _ = std::fs::remove_file(lock_path);
-            true
-        }
+    let _ = file.set_len(0);
+    let _ = file.unlock();
+    true
+}
+
+#[cfg(unix)]
+fn same_file(file: &File, path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (file.metadata(), std::fs::metadata(path)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
     }
+}
+
+#[cfg(not(unix))]
+fn same_file(_file: &File, path: &Path) -> bool {
+    path.exists()
 }
 
 fn read_lock_pid(path: &Path) -> Option<u32> {
@@ -190,26 +217,56 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn clear_stale_lock_removes_dead_pid() {
+    fn clear_stale_lock_clears_unheld_file_without_deleting_it() {
         let dir = std::env::temp_dir().join(format!("ax-file-lock-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let lock = dir.join("ax.lock");
         fs::write(&lock, "999999999\n").unwrap();
         assert!(clear_stale_lock(&lock));
-        assert!(!lock.exists());
+        assert!(lock.exists());
+        assert_eq!(fs::read_to_string(&lock).unwrap(), "");
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// A held lock is never cleared, whatever PID the file names (another
+    /// container's PID namespace, or no `kill` binary in a distroless image).
+    #[cfg(unix)]
     #[test]
-    fn clear_stale_lock_keeps_live_pid() {
-        let dir = std::env::temp_dir().join(format!("ax-file-lock-live-{}", std::process::id()));
+    fn clear_stale_lock_keeps_held_lock_with_foreign_pid() {
+        let dir = std::env::temp_dir().join(format!("ax-file-lock-held-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
+        let mut holder = FileLock::new(&dir);
+        holder.acquire().unwrap();
         let lock = dir.join("ax.lock");
-        fs::write(&lock, format!("{}\n", std::process::id())).unwrap();
+        fs::write(&lock, "999999999").unwrap();
         assert!(!clear_stale_lock(&lock));
         assert!(lock.exists());
+        drop(holder);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Dropping a `FileLock` that never acquired must not delete the holder's
+    /// file; before the fix the next writer then locked a fresh inode.
+    #[cfg(unix)]
+    #[test]
+    fn dropping_unheld_lock_keeps_the_holders_lock() {
+        let dir = std::env::temp_dir().join(format!("ax-file-lock-drop-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let mut holder = FileLock::new(&dir);
+        holder.acquire().unwrap();
+        drop(FileLock::new(&dir));
+        let mut bystander = FileLock::new(&dir);
+        let _ = bystander.release();
+        drop(bystander);
+        assert!(dir.join("ax.lock").exists());
+        let mut writer = FileLock::new(&dir);
+        let err = writer.acquire_wait(Duration::from_millis(200)).unwrap_err();
+        assert!(matches!(err, AxError::LockUnavailable(_)), "{err:?}");
+        drop(holder);
+        writer.acquire_wait(Duration::from_secs(2)).unwrap();
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -431,11 +431,22 @@ pub async fn run_quick_check(db_path: &Path, force: bool) -> Result<(), String> 
     } else if report
         .findings
         .iter()
+        .any(|item| item.code == "writers_active")
+        || report.findings.iter().all(|item| is_transient(&item.code))
+    {
+        // Another process is writing, or only the WAL still holds frames
+        // (normal while any connection is open; PASSIVE checkpoints never
+        // shrink the file). Neither is damage: recording an incident here
+        // switched the watcher off until `ax db repair`. Check again next time.
+        return Ok(());
+    } else if report
+        .findings
+        .iter()
         .any(|item| is_rebuildable(&item.code))
         && !report
             .findings
             .iter()
-            .any(|item| item.code == "not_a_database" || item.code == "writers_active")
+            .any(|item| item.code == "not_a_database")
     {
         repair_rebuildable_indexes(db_path).await?;
     } else {
@@ -456,6 +467,11 @@ const REBUILDABLE: &[&str] = &[
 
 pub fn is_rebuildable(code: &str) -> bool {
     REBUILDABLE.contains(&code)
+}
+
+/// Findings that describe a busy or not yet checkpointed database, not damage.
+pub fn is_transient(code: &str) -> bool {
+    matches!(code, "wal_uncheckpointed" | "writers_active")
 }
 
 /// Rebuilds derived indexes only. Memories, edges, file contents, and unresolved

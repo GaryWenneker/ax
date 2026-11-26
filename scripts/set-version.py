@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sets one version on every workspace crate and on the Command Center web UI package.
+"""Sets one version on every workspace crate and on both web UI packages (Command Center, ax-admin).
 
   python3 scripts/set-version.py 10.1.0
 
@@ -41,10 +41,11 @@ def main() -> None:
         sys.exit("FAIL: no crates found")
     for path in crates:
         set_crate(path, version)
-    ui = ROOT / "crates/ax-web/web-ui"
-    set_package(ui / "package.json", version, lock=False)
-    set_package(ui / "package-lock.json", version, lock=True)
-    print(f"set {version} on {len(crates)} crates and the web UI package")
+    # ax-admin is released together with ax and carries the same version.
+    for ui in (ROOT / "crates/ax-web/web-ui", ROOT / "crates/ax-admin/web-ui"):
+        set_package(ui / "package.json", version, lock=False)
+        set_package(ui / "package-lock.json", version, lock=True)
+    print(f"set {version} on {len(crates)} crates and the two web UI packages")
 
 
 if __name__ == "__main__":

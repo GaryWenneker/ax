@@ -1,0 +1,119 @@
+import { useEffect, useRef } from 'react';
+import { activateConnection, cancelLogin, completeLogin, listConnections, loginStatus, removeConnection, type Connection, type StartedSignIn } from '../api';
+import { waitForSignIn } from '../signIn';
+
+interface Props {
+  signIn: StartedSignIn;
+  /** The sign-in page did not open by itself (the browser blocked the new tab). */
+  blocked: boolean;
+  onConnected: (connection: Connection) => void;
+  onFailed: (message: string) => void;
+  /** The user gave up; the form comes back. */
+  onCancelled: () => void;
+  /** Saved connections may have changed without this view saying "connected". */
+  onChanged: () => void;
+}
+
+/**
+ * Cancelled in the very moment the connection was saved. Cancelling keeps
+ * nothing, so it is removed and the environment that was active before is
+ * active again. Whatever happens, the caller reloads and shows what is true.
+ */
+async function takeBack(saved: Connection, activeBefore: string | null): Promise<void> {
+  await removeConnection(saved.id);
+  if (activeBefore !== null && activeBefore !== saved.id) await activateConnection(activeBefore);
+}
+
+/** Cancels that are scheduled but not yet sent, by sign-in id. */
+const pendingCancel = new Map<string, number>();
+
+/**
+ * Shown while the user signs in in another tab. It asks ax-admin where the
+ * sign-in stands, one question at a time. Leaving this view in any way stops
+ * asking and cancels the sign-in, so no tokens are stored for it afterwards.
+ */
+export default function SignInWait({ signIn, blocked, onConnected, onFailed, onCancelled, onChanged }: Props) {
+  const handlers = useRef({ onConnected, onFailed, onChanged });
+  useEffect(() => {
+    handlers.current = { onConnected, onFailed, onChanged };
+  });
+
+  useEffect(() => {
+    // React's development mode mounts, unmounts and mounts again: a cancel
+    // that was only just scheduled for this sign-in is withdrawn.
+    window.clearTimeout(pendingCancel.get(signIn.id));
+    pendingCancel.delete(signIn.id);
+    let stopped = false;
+    let settled = false;
+    // Which environment is active now, in case a saved connection must be taken back.
+    const activeBefore = listConnections().then((list) => list.activeId, () => null);
+    void waitForSignIn<Connection>({
+      status: () => loginStatus(signIn.id),
+      complete: () => completeLogin(signIn.id),
+      pause: () => new Promise((resolve) => window.setTimeout(resolve, 1000)),
+      stopped: () => stopped,
+    }).then((outcome) => {
+      switch (outcome.state) {
+        case 'connected':
+          settled = true;
+          handlers.current.onConnected(outcome.connection);
+          break;
+        case 'failed':
+          settled = true;
+          // The attempt may still be alive in ax-admin (a lost request, for
+          // one). Cancelling one that already ended is refused, harmlessly.
+          cancelLogin(signIn.id).catch(() => undefined);
+          handlers.current.onFailed(outcome.message);
+          break;
+        case 'stopped':
+          // Cancelled in the moment the connection was saved: cancelling means
+          // nothing is kept, so it is taken out again.
+          if (outcome.saved) {
+            const saved = outcome.saved;
+            void activeBefore
+              .then((before) => takeBack(saved, before))
+              .catch(() => undefined)
+              .finally(() => handlers.current.onChanged());
+          }
+          break;
+        default: {
+          const unknown: never = outcome;
+          return unknown;
+        }
+      }
+      return undefined;
+    });
+    // Closing or reloading the page runs no cleanup; tell ax-admin on the way out.
+    const leaving = () => { if (!settled) cancelLogin(signIn.id, true).catch(() => undefined); };
+    window.addEventListener('pagehide', leaving);
+    return () => {
+      window.removeEventListener('pagehide', leaving);
+      stopped = true;
+      // Closed or cancelled while waiting: tell ax-admin, which also removes
+      // tokens if the browser finishes later. Nothing to do once it settled.
+      if (settled) return;
+      const id = signIn.id;
+      pendingCancel.set(id, window.setTimeout(() => {
+        pendingCancel.delete(id);
+        // Already finished or expired: ax-admin answers "not found", which is fine.
+        cancelLogin(id).catch(() => undefined);
+      }, 0));
+    };
+  }, [signIn.id]);
+
+  return (
+    <div className="admin-form" role="status" aria-live="polite">
+      <p>
+        {blocked
+          ? 'Your browser did not open the sign-in page. Open it with the link below; this page continues when the environment has granted access.'
+          : 'Finish signing in in the browser tab that just opened. This page continues when the environment has granted access.'}
+      </p>
+      <p className="admin-note">
+        <a href={signIn.authorizationUrl} target="_blank" rel="noopener noreferrer">Open the sign-in page</a>
+      </p>
+      <div className="admin-actions">
+        <button type="button" className="btn btn-secondary" autoFocus onClick={onCancelled}>Cancel sign-in</button>
+      </div>
+    </div>
+  );
+}

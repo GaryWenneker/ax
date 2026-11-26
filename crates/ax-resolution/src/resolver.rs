@@ -3,9 +3,7 @@
 use std::collections::HashMap;
 
 use ax_db::queries::QueryBuilder;
-use ax_types::{
-    Edge, EdgeKind, IndexPhase, IndexProgress, Provenance, ReferenceKind, UnresolvedReference,
-};
+use ax_types::{Edge, IndexPhase, IndexProgress, Provenance, ReferenceKind, UnresolvedReference};
 
 use crate::c_fnptr_synthesizer::CFnptrSynthesizer;
 use crate::callback_synthesizer::CallbackSynthesizer;
@@ -70,6 +68,7 @@ impl ReferenceResolver {
         let import_map = build_import_map(&refs, &self.import_resolver);
 
         let mut deferred_refs: Vec<UnresolvedReference> = Vec::new();
+        let mut to_delete: Vec<UnresolvedReference> = Vec::new();
 
         let mut result = ResolutionResult {
             resolved: vec![],
@@ -77,6 +76,9 @@ impl ReferenceResolver {
             stats: ResolutionStats::default(),
         };
 
+        // Nothing below writes nodes until the edges are stored, so node
+        // lookups can be memoized for the whole loop.
+        let reads = queries.with_node_read_cache();
         for (i, db_ref) in refs.into_iter().enumerate() {
             if i > 0 && i % 500 == 0 {
                 if let Some(ref mut cb) = on_progress {
@@ -98,13 +100,13 @@ impl ReferenceResolver {
 
             let resolved = match ref_.reference_kind {
                 ReferenceKind::FunctionRef => {
-                    self.name_matcher.match_function_ref(queries, &ref_).await
+                    self.name_matcher.match_function_ref(&reads, &ref_).await
                 }
-                ReferenceKind::Imports => self.resolve_import_ref(queries, &ref_).await,
+                ReferenceKind::Imports => self.resolve_import_ref(&reads, &ref_).await,
                 _ => {
                     if let Some(r) = framework_resolve::try_resolve(
                         self.import_resolver.project_root(),
-                        queries,
+                        &reads,
                         &ref_,
                     )
                     .await
@@ -115,13 +117,13 @@ impl ReferenceResolver {
                             import_map.get(&(ref_.file_path.clone(), ref_.reference_name.clone()))
                         {
                             self.name_matcher
-                                .resolve_in_file(queries, &ref_, target_file)
+                                .resolve_in_file(&reads, &ref_, target_file)
                                 .await
                         } else {
-                            self.name_matcher.resolve_ref(queries, &ref_).await
+                            self.name_matcher.resolve_ref(&reads, &ref_).await
                         }
                     } else {
-                        self.name_matcher.resolve_ref(queries, &ref_).await
+                        self.name_matcher.resolve_ref(&reads, &ref_).await
                     }
                 }
             };
@@ -131,9 +133,7 @@ impl ReferenceResolver {
                 let method = format!("{:?}", r.resolved_by);
                 *result.stats.by_method.entry(method).or_insert(0) += 1;
                 result.resolved.push(r);
-                if let Err(e) = queries.delete_unresolved_ref(&db_ref).await {
-                    tracing::warn!("failed to delete resolved ref: {}", e);
-                }
+                to_delete.push(db_ref);
             } else {
                 result.stats.unresolved += 1;
                 result.unresolved.push(ref_);
@@ -155,22 +155,27 @@ impl ReferenceResolver {
             let ref_ = unresolved_from_db(&db_ref);
             if let Some(r) = self
                 .name_matcher
-                .resolve_deferred_call(queries, &ref_)
+                .resolve_deferred_call(&reads, &ref_)
                 .await
             {
                 result.stats.resolved += 1;
                 let method = format!("{:?}", r.resolved_by);
                 *result.stats.by_method.entry(method).or_insert(0) += 1;
                 result.resolved.push(r);
-                if let Err(e) = queries.delete_unresolved_ref(&db_ref).await {
-                    tracing::warn!("failed to delete resolved ref: {}", e);
-                }
+                to_delete.push(db_ref);
             } else {
                 result.stats.unresolved += 1;
                 result.unresolved.push(ref_);
             }
         }
 
+        // One transaction for all edges instead of one commit per reference.
+        // Only drop the unresolved rows once their edges are stored.
+        let edges: Vec<Edge> = result.resolved.iter().map(resolved_edge).collect();
+        queries.upsert_edges(&edges).await?;
+        if let Err(e) = queries.delete_unresolved_refs_batch(&to_delete).await {
+            tracing::warn!("failed to delete resolved refs: {}", e);
+        }
         self.callback_synth
             .synthesize(self.import_resolver.project_root(), queries, scope)
             .await?;
@@ -227,20 +232,7 @@ impl ReferenceResolver {
             })
             .or_else(|| nodes.iter().find(|n| n.kind == ax_types::NodeKind::File))?;
 
-        let edge = Edge {
-            source: ref_.from_node_id.clone(),
-            target: target.id.clone(),
-            kind: EdgeKind::Imports,
-            metadata: None,
-            line: Some(ref_.line),
-            column: Some(ref_.column),
-            provenance: Some(Provenance::Heuristic),
-            confidence: Some(ax_types::EdgeConfidence::Inferred),
-        };
-        if queries.upsert_edge(&edge).await.is_err() {
-            return None;
-        }
-
+        // The edge is written later in one batch (see `resolved_edge`).
         Some(ResolvedRef {
             original: ref_.clone(),
             target_node_id: target.id.clone(),
@@ -290,5 +282,26 @@ fn unresolved_from_db(r: &UnresolvedReference) -> UnresolvedRef {
         file_path: r.file_path.clone().unwrap_or_default(),
         language: r.language.unwrap_or(ax_types::Language::Unknown),
         candidates: r.candidates.clone(),
+    }
+}
+
+/// The edge a resolution stands for. Fuzzy matches picked one of several
+/// plausible targets, so they are marked ambiguous.
+pub(crate) fn resolved_edge(resolved: &ResolvedRef) -> Edge {
+    let original = &resolved.original;
+    let confidence = if resolved.resolved_by == ResolvedBy::Fuzzy {
+        ax_types::EdgeConfidence::Ambiguous
+    } else {
+        ax_types::EdgeConfidence::Inferred
+    };
+    Edge {
+        source: original.from_node_id.clone(),
+        target: resolved.target_node_id.clone(),
+        kind: crate::name_matcher::reference_kind_to_edge(original.reference_kind),
+        metadata: None,
+        line: Some(original.line),
+        column: Some(original.column),
+        provenance: Some(Provenance::Heuristic),
+        confidence: Some(confidence),
     }
 }

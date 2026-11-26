@@ -70,6 +70,8 @@ Opt-in per the section above (e.g. `AX_MCP_TOOLS=all` or `lsp,ship`). Mirror hig
 | `ax_policy_index` | Re-index / import rules and skills from `.agents/` (`force` optional) |
 | `ax_diagnostics` | Correlate editor/linter diagnostics with the graph |
 
+| `ax_logs` | Read-only MCP call log of this project, newest first: time, tool, transport, outcome, duration and response size. No arguments or result bodies. `limit` (default 100, maximum 500), `before` (the previous page's `nextBefore`) and `tool` (only that tool) are optional |
+
 `ax_sync` is **not** in this list — it is advertised by default, because `prefer-mcp-ops` requires agents to call it after edits rather than running `ax sync` in a shell.
 
 ```json
@@ -78,7 +80,12 @@ ax_index({ "force": true })
 ax_lsp({ "action": "enrich", "limit": 200 })
 ax_ship({ "mode": "ci" })
 ax_policy_index({ "force": true })
+ax_logs({ "limit": 50, "tool": "ax_explore" })
 ```
+
+### Management tools over remote MCP
+
+The remote MCP server offers context tools by default. A credential with the admin grant is additionally offered `ax_sync`, `ax_index`, `ax_policy_index`, `ax_files`, `ax_cost`, `ax_tool_economics`, `ax_budget`, `ax_optimization_advice` and `ax_logs`, whatever `AX_MCP_TOOLS` is set to. They act on the project of the connection only; a call cannot name another project path. Remotely `ax_policy_index` accepts only `action: "index"`. One index-changing call (`ax_sync`, `ax_index`, `ax_policy_index`) runs per project at a time; a second one waits for it, and other calls to that project get HTTP 503 with `Retry-After` until it is done. The server answers after at most 570 seconds with HTTP 504 and `"running": true` while the run itself continues to its end, and accepts four index-changing calls at once (HTTP 429 beyond that). `ax_ship`, `ax_lsp` and `ax_diagnostics` stay unavailable remotely. See [Admin access](/guides/remote-mcp/#admin-access) and the [ax-admin guide](/guides/remote-admin/).
 
 ## Policy tools
 

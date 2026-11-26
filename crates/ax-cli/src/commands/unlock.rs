@@ -21,12 +21,14 @@ pub async fn run(path: Option<String>) -> Result<(), String> {
         println!("{}", info_line(format!("Stopped {killed} ax process(es)")));
     }
 
-    if holder.is_some() {
-        ax_utils::clear_stale_lock(&lock_path);
-    }
-
-    if lock_path.exists() {
-        std::fs::remove_file(&lock_path).map_err(|e| e.to_string())?;
+    // The lock file is never deleted (that would let two writers lock two
+    // different inodes); clearing it only works when nobody holds the lock.
+    if lock_path.exists() && !ax_utils::clear_stale_lock(&lock_path) {
+        let who = holder.map(|p| format!(" by PID {p}")).unwrap_or_default();
+        return Err(format!(
+            "{} is still held{who}, possibly by a process in another container or user; stop it first",
+            lock_path.display()
+        ));
     }
 
     println!(

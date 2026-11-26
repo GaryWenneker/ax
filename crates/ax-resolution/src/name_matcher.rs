@@ -5,7 +5,7 @@ use std::num::NonZeroUsize;
 use lru::LruCache;
 
 use ax_db::queries::QueryBuilder;
-use ax_types::{Edge, EdgeKind, Node, Provenance, ReferenceKind};
+use ax_types::{EdgeKind, Node, ReferenceKind};
 
 use crate::types::{ResolvedBy, ResolvedRef, UnresolvedRef};
 
@@ -53,7 +53,7 @@ impl NameMatcher {
             nodes
         };
 
-        self.commit_resolution(queries, ref_, &candidates[0], ResolvedBy::ExactMatch)
+        self.commit_resolution(ref_, &candidates[0], ResolvedBy::ExactMatch)
             .await
     }
 
@@ -96,7 +96,7 @@ impl NameMatcher {
         if callable.is_empty() {
             return None;
         }
-        self.commit_resolution(queries, ref_, &callable[0], ResolvedBy::Import)
+        self.commit_resolution(ref_, &callable[0], ResolvedBy::Import)
             .await
     }
 
@@ -123,7 +123,7 @@ impl NameMatcher {
         if func_nodes.is_empty() {
             return None;
         }
-        self.commit_resolution(queries, ref_, &func_nodes[0], ResolvedBy::FunctionRef)
+        self.commit_resolution(ref_, &func_nodes[0], ResolvedBy::FunctionRef)
             .await
     }
 
@@ -175,7 +175,7 @@ impl NameMatcher {
         });
         if let Some(target) = method_node {
             return self
-                .commit_resolution(queries, ref_, target, ResolvedBy::ExactMatch)
+                .commit_resolution(ref_, target, ResolvedBy::ExactMatch)
                 .await;
         }
         None
@@ -225,7 +225,7 @@ impl NameMatcher {
                 });
                 if let Some(target) = method_node {
                     return self
-                        .commit_resolution(queries, ref_, target, ResolvedBy::ExactMatch)
+                        .commit_resolution(ref_, target, ResolvedBy::ExactMatch)
                         .await;
                 }
             }
@@ -233,32 +233,14 @@ impl NameMatcher {
         None
     }
 
+    /// Build the resolution. The edge is written later in one batch by
+    /// `ReferenceResolver::resolve_all` (see `resolved_edge`).
     async fn commit_resolution(
         &self,
-        queries: &QueryBuilder,
         ref_: &UnresolvedRef,
         target: &Node,
         resolved_by: ResolvedBy,
     ) -> Option<ResolvedRef> {
-        // Fuzzy name matches picked one of several plausible targets → ambiguous.
-        let confidence = if resolved_by == ResolvedBy::Fuzzy {
-            ax_types::EdgeConfidence::Ambiguous
-        } else {
-            ax_types::EdgeConfidence::Inferred
-        };
-        let edge = Edge {
-            source: ref_.from_node_id.clone(),
-            target: target.id.clone(),
-            kind: reference_kind_to_edge(ref_.reference_kind),
-            metadata: None,
-            line: Some(ref_.line),
-            column: Some(ref_.column),
-            provenance: Some(Provenance::Heuristic),
-            confidence: Some(confidence),
-        };
-        if queries.upsert_edge(&edge).await.is_err() {
-            return None;
-        }
         Some(ResolvedRef {
             original: ref_.clone(),
             target_node_id: target.id.clone(),
@@ -268,7 +250,7 @@ impl NameMatcher {
     }
 }
 
-fn reference_kind_to_edge(kind: ReferenceKind) -> EdgeKind {
+pub(crate) fn reference_kind_to_edge(kind: ReferenceKind) -> EdgeKind {
     match kind {
         ReferenceKind::Calls => EdgeKind::Calls,
         ReferenceKind::Imports => EdgeKind::Imports,

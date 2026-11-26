@@ -127,7 +127,11 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/workspace" "ax
 
 ## Speed
 
-The headless build indexes as fast as the full build: 20.6 seconds for 625 Rust files on a 14-core Apple silicon Mac, against 20.4 seconds for the full build. Most of that time goes to resolving references in SQLite, so keep the project's `.ax/` folder on the container's own disk or a volume. A bind mount from a macOS host made the same index take over two minutes. `slim/README.md` has the measurements.
+The headless build indexes as fast as the full build. In ax 10.1.1, a 660-file Rust project took 20.6 seconds on a 14-core Apple silicon Mac (20.4 seconds with the full build). Since then, reference resolution batches its database writes and caches node lookups, which brings the same index to 7.0 seconds, with the same graph. A one-file `ax sync` takes about half a second.
+
+Keep the project's `.ax/` folder on the container's own disk or a volume. A bind mount from a macOS host made the same index take over two minutes, and network filesystems such as Azure Files do not give SQLite reliable locks. `slim/README.md` has the measurements.
+
+Several ax processes can share one project: an index, `ax sync`, the MCP server and CLI queries. Writers wait for each other through `.ax/ax.lock`, which the system releases when a process dies, so a stopped container never leaves a lock behind that needs `ax unlock`.
 
 ## Test it remotely
 
@@ -268,6 +272,16 @@ The container pulls `ghcr.io/garywenneker/ax-slim:<version>-server`; Render and 
 Not offered as a button: Vercel and Netlify do not run containers (use [Vercel Sandbox](#vercel-sandbox) instead), Google Cloud Run's button builds from a Dockerfile rather than running a published image, and a Railway button needs a template created in Railway's dashboard. On Railway, a service from the `latest-server` image works the same way.
 
 To index once and run a command instead of serving, use the [Azure Container Apps job](#deploy-with-one-click).
+
+## An interface for the headless build
+
+This build has no `ax web`. [ax-admin](/guides/remote-admin/) is a separate application that runs on your own computer and manages the environment through `ax mcp remote serve`. Install it there, not in the container:
+
+```bash
+curl -fsSL https://getax.wenneker.io/install-admin.sh | sh
+```
+
+It connects to a hosted server from the section above with that server's address and `AX_API_KEY`. To re-index, sync and read the MCP call log from it, the key needs the [admin grant](/guides/remote-mcp/#admin-access) in the server's remote MCP configuration; the configuration that `ax-serve-repo` writes does not grant it.
 
 ## Limits
 

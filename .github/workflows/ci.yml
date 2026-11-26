@@ -87,6 +87,29 @@ jobs:
       - name: Clippy (deny warnings)
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+  admin-ui:
+    name: ax-admin-interface
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/ax-admin/web-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/ax-admin/web-ui/package-lock.json
+      - run: npm ci
+      - name: Type-check the application, its tests and the browser story
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Production build
+        run: npm run build
+
   remote-settings:
     name: frontend-build-and-browser
     needs: changes

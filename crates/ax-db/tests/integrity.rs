@@ -822,6 +822,42 @@ async fn a_passing_quick_check_clears_the_incident() {
     cleanup(&root);
 }
 
+/// A killed process leaves WAL frames behind. The forced quick check after an
+/// unclean shutdown must not treat that as damage and block writers.
+#[tokio::test]
+async fn a_wal_left_by_a_killed_process_does_not_block_writers() {
+    let root = temp_root("killed-wal");
+    let path = db_path(&root);
+    let db = Database::open(&path).await.unwrap();
+    let mut conn = db.pool().acquire().await.unwrap();
+    sqlx::query("PRAGMA wal_autocheckpoint = 0")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO memories (id, title, body, created_at, updated_at) VALUES ('m1', 'Kept title', 'body', 1, 1)",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    let snap = root.join(".ax").join("killed.db");
+    std::fs::copy(&path, &snap).unwrap();
+    for suffix in ["-wal", "-shm"] {
+        let from = PathBuf::from(format!("{}{suffix}", path.display()));
+        if from.is_file() {
+            std::fs::copy(&from, PathBuf::from(format!("{}{suffix}", snap.display()))).unwrap();
+        }
+    }
+    drop(conn);
+    db.close().await;
+    let wal = PathBuf::from(format!("{}-wal", snap.display()));
+    assert!(std::fs::metadata(&wal).expect("wal").len() > 32);
+
+    run_quick_check(&snap, true).await.unwrap();
+    assert!(!writers_blocked(&snap));
+    cleanup(&root);
+}
+
 #[tokio::test]
 async fn an_unclean_shutdown_checks_even_when_the_daily_stamp_is_fresh() {
     let root = temp_root("unclean");

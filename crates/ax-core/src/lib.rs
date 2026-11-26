@@ -153,7 +153,6 @@ impl Ax {
         let root = project_root.clone();
         let config = ProjectConfig::load(&root);
         let ax_dir = get_ax_dir(&root);
-        ax_utils::clear_stale_lock(&ax_dir.join("ax.lock"));
         let file_lock = FileLock::new(&ax_dir);
         let pool = db.pool().clone();
         let mut ax = Self {
@@ -247,8 +246,9 @@ impl Ax {
                     None,
                     &mut on_progress,
                 )
-                .await?;
-                Ok(result)
+                .await
+                // No `?`: the file lock below must be released on errors too.
+                .map(|_| result)
             }
             Err(e) => Err(e),
         };
@@ -284,7 +284,7 @@ impl Ax {
             .await;
         let result = match result {
             Ok(sync) => {
-                if sync.had_changes() {
+                let finalized = if sync.had_changes() {
                     finalize_after_extract(
                         &mut self.resolver,
                         &self.queries,
@@ -294,9 +294,13 @@ impl Ax {
                         Some(&sync.affected_files),
                         &mut on_progress,
                     )
-                    .await?;
-                }
-                Ok(IndexResult {
+                    .await
+                    .map(|_| ())
+                } else {
+                    Ok(())
+                };
+                // No `?`: the file lock below must be released on errors too.
+                finalized.map(|()| IndexResult {
                     files_indexed: sync.files_indexed + sync.files_removed,
                     duration_ms: sync.duration_ms,
                 })
@@ -374,8 +378,9 @@ impl Ax {
                     Some(paths),
                     on_progress,
                 )
-                .await?;
-                Ok(result)
+                .await
+                // No `?`: the file lock below must be released on errors too.
+                .map(|_| result)
             }
             Err(e) => Err(e),
         };

@@ -193,11 +193,17 @@ pub fn is_pid_alive(pid: u32) -> bool {
 
     #[cfg(unix)]
     {
-        std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+        // Signal 0 checks existence without spawning `kill`, which minimal
+        // images (distroless) do not ship. EPERM means it exists but belongs
+        // to another user.
+        let Ok(pid) = libc::pid_t::try_from(pid) else {
+            return false;
+        };
+        // SAFETY: kill(2) with signal 0 sends nothing; it only checks the PID.
+        if unsafe { libc::kill(pid, 0) } == 0 {
+            return true;
+        }
+        std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
 }
 

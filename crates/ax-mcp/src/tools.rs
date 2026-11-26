@@ -41,6 +41,16 @@ impl ToolHandler {
         json!({ "tools": tools })
     }
 
+    /// Definitions of the named tools from the full catalog, ignoring the
+    /// `AX_MCP_TOOLS` discovery filter. Unknown names are skipped.
+    pub fn tool_definitions(names: &[&str]) -> Vec<Value> {
+        let catalog = extra_tools();
+        names
+            .iter()
+            .filter_map(|name| catalog.iter().find(|tool| tool["name"] == *name).cloned())
+            .collect()
+    }
+
     pub async fn call_tool(ax: &mut Ax, name: &str, params: Value) -> Result<Value, String> {
         crate::request_context::validate(ax.project_root(), &params)?;
         match name {
@@ -68,6 +78,7 @@ impl ToolHandler {
             }
             "ax_status" => status(ax).await,
             "ax_budget" => budget_tool(ax).await,
+            "ax_logs" => logs_tool(ax, params).await,
             "ax_index" => index_tool(ax, params).await,
             "ax_sync" => sync_tool(ax).await,
             "ax_lsp" => lsp_tool(ax, params).await,
@@ -442,6 +453,30 @@ async fn pi_optimization_tool(ax: &Ax, _params: Value) -> Result<Value, String> 
 
 async fn pi_cost_tool(ax: &Ax, params: Value) -> Result<Value, String> {
     pi_economics_tool(ax, params).await
+}
+
+/// Read-only page of this project's MCP call log. No arguments or result bodies.
+async fn logs_tool(ax: &Ax, params: Value) -> Result<Value, String> {
+    let limit = ax_usage::mcp_call_log_limit(params.get("limit").and_then(Value::as_i64));
+    let before = params.get("before").and_then(Value::as_i64);
+    let tool = params
+        .get("tool")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty());
+    let project = ax.project_root().display().to_string();
+    let entries = ax_usage::recent_mcp_calls(&project, Some(limit), before, tool).await?;
+    let text = ax_usage::format_mcp_call_log(&entries);
+    // A full page may have older rows behind it; a short page is the end.
+    let next_before = (entries.len() as i64 == limit)
+        .then(|| entries.last().map(|entry| entry.id))
+        .flatten();
+    Ok(json!({
+        "text": text,
+        "entries": entries,
+        "limit": limit,
+        "nextBefore": next_before,
+    }))
 }
 
 async fn budget_tool(ax: &Ax) -> Result<Value, String> {
@@ -2699,6 +2734,18 @@ fn extra_tools() -> Vec<Value> {
             "name": "ax_budget",
             "description": "Local budget decision (allow, warn, or deny). Does not block a provider API call. deny is advice for an integration that asked.",
             "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "ax_logs",
+            "description": "Read-only MCP call log of this project, newest first: time, tool, transport, outcome, duration and response size. Contains no arguments or result bodies.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "number", "description": "Rows per page (default 100, maximum 500)" },
+                    "before": { "type": "number", "description": "Continue after an earlier page: pass its nextBefore" },
+                    "tool": { "type": "string", "description": "Only calls of this tool, for example ax_explore" }
+                }
+            }
         }),
         json!({
             "name": "ax_index",

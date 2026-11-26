@@ -122,6 +122,8 @@ pub use reuse_cache::{
     HOOK_SESSION_MAX_AGE, SESSION_CONTEXT_TOKENS,
 };
 pub use savings::{
+    format_mcp_call_log, mcp_call_log_limit, recent_mcp_calls, McpCallLogEntry, MCP_CALL_LOG_DEFAULT_LIMIT,
+    MCP_CALL_LOG_MAX_LIMIT,
     cli_mcp_tool, current_assumptions, estimate_savings, flush_cli_call, import_agent_logs,
     is_savings_eligible_tool, parse_cursor_hook_model, parse_cursor_hook_session_id,
     query_call_token_detail, query_savings_summary, record_mcp_call, record_session_model_tag,

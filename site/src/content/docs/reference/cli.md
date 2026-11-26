@@ -2004,6 +2004,35 @@ ax upgrade
 ax upgrade --local
 ```
 
+## `ax-admin`
+
+`ax-admin` is a separate program with its own installer. It manages a remote Ax through that environment's remote MCP address and serves its interface on this computer only. See the [ax-admin guide](/guides/remote-admin/).
+
+```bash
+ax-admin
+```
+
+```bash
+ax-admin --port 0 --no-open
+```
+
+```bash
+ax-admin connections
+```
+
+```bash
+ax-admin version
+```
+
+| Option or command | Meaning |
+|---|---|
+| `--port N` | Loopback port for the interface (default 7080; `0` picks a free port and prints it) |
+| `--no-open` | Do not open the browser |
+| `connections` | List saved connections: name, address and kind of credential. Never keys |
+| `version` | Print the version |
+
+`AX_ADMIN_HOME` selects the folder that holds `connections.json` (default `~/.ax-admin`).
+
 ## `ax server sync`, `apply` and `run`
 
 An enrolled Replica contributes native and locally edited knowledge to the configured Primary and receives the combined cluster snapshot. Empty peers and omitted records cannot delete existing local data. Conflicting origins use separate IDs; prior accepted revisions remain retained. Both nodes must support protocol 3. Full graph, indexed source, logs and project-scoped conversation history travel in verified chunks alongside the knowledge exchange.

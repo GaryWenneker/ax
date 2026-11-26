@@ -238,6 +238,7 @@ pub(crate) async fn setup(
                 root: root.to_owned(),
                 subjects: vec!["local-owner".into()],
                 write_subjects: vec![],
+                admin_subjects: vec![],
             }],
             api_keys: vec![],
             allowed_origins: vec![],

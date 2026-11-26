@@ -184,6 +184,7 @@ export default defineConfig({
 						{ label: 'Standalone server & replicas', slug: 'guides/standalone-ax' },
 						{ label: 'Headless Linux build', slug: 'guides/headless-linux' },
 						{ label: 'Remote MCP & OAuth', slug: 'guides/remote-mcp' },
+						{ label: 'Remote admin (ax-admin)', slug: 'guides/remote-admin' },
 						{ label: 'Cloudflare Tunnel', slug: 'guides/cloudflare' },
 						{ label: 'Agent budget', slug: 'guides/budget' },
 						{ label: 'Pi integration', slug: 'guides/pi' },

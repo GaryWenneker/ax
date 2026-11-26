@@ -1,13 +1,12 @@
 //! Authenticated remote MCP and native browser sign-in. Stdio remains unchanged.
 pub mod auth;
-pub mod client;
 pub mod config;
-pub mod credentials;
 pub mod export;
 pub mod oauth;
 pub mod probe;
 pub mod publications;
 pub mod server;
 
+pub use ax_remote_client::{client, credentials};
 pub use config::RemoteConfig;
 pub use server::{serve, serve_on};

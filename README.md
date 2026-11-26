@@ -35,6 +35,9 @@ irm https://getax.wenneker.io/install.ps1 | iex
 
 # Linux sandboxes and containers (headless CLI + MCP build)
 curl -fsSL https://getax.wenneker.io/install-slim.sh | sh
+
+# ax-admin: separate admin application for a remote Ax (macOS / Linux; Windows: install-admin.ps1)
+curl -fsSL https://getax.wenneker.io/install-admin.sh | sh
 ```
 
 Have Node? `npx @garywenneker/ax` downloads the native binary. Open a new terminal so `PATH` updates. WSL2 uses the Linux command inside WSL.
@@ -96,6 +99,7 @@ The site is the product guide. This README follows that map.
 - [Standalone server and replicas](https://getax.wenneker.io/guides/standalone-ax/)
 - [Headless Linux build](https://getax.wenneker.io/guides/headless-linux/) — a smaller CLI + MCP binary for sandboxes and containers (`slim/`)
 - [Remote MCP and OAuth](https://getax.wenneker.io/guides/remote-mcp/)
+- [Remote admin (ax-admin)](https://getax.wenneker.io/guides/remote-admin/) — a standalone interface that manages any Ax, also the headless build, through its remote MCP address
 - [Expose Command Center with Cloudflare](https://getax.wenneker.io/guides/cloudflare/)
 - [Agent budget](https://getax.wenneker.io/guides/budget/)
 - [Pi integration](https://getax.wenneker.io/guides/pi/)

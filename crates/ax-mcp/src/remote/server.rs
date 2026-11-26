@@ -1,5 +1,5 @@
 use super::{
-    auth::{bearer_token, Principal, TokenVerifier, CONTEXT_SCOPE, WRITE_SCOPE},
+    auth::{bearer_token, Principal, TokenVerifier, ADMIN_SCOPE, CONTEXT_SCOPE, WRITE_SCOPE},
     config::{Project, RemoteConfig},
 };
 use crate::{engine::McpEngine, server::handle_request, transport::JsonRpcRequest};
@@ -53,6 +53,31 @@ const CONTEXT_TOOLS: &[&str] = &[
     "ax_policy_capture",
 ];
 const WRITE_TOOLS: &[&str] = &["ax_remember"];
+/// Management tools. Listed and callable only with `ax:admin` and an explicit
+/// admin grant on the project (see `Principal::can_admin`).
+const ADMIN_TOOLS: &[&str] = &[
+    "ax_sync",
+    "ax_index",
+    "ax_policy_index",
+    "ax_files",
+    "ax_cost",
+    "ax_tool_economics",
+    "ax_budget",
+    "ax_optimization_advice",
+    "ax_logs",
+];
+const ADMIN_MUTATING_TOOLS: &[&str] = &["ax_sync", "ax_index", "ax_policy_index"];
+const TOOL_TIMEOUT: Duration = Duration::from_secs(120);
+/// A full index of a large project takes longer than a context query. Kept
+/// under ten minutes so a client that waits ten minutes sees this answer.
+const ADMIN_TOOL_TIMEOUT: Duration = Duration::from_secs(570);
+/// Index-changing admin calls that may run or wait at the same time, across
+/// all projects. They hold a request slot for minutes; context calls must not starve.
+const ADMIN_MUTATION_SLOTS: usize = 4;
+/// How long a call waits for a running index of its project before it is
+/// told to come back later. Short, so waiting calls never use up the request
+/// slots that other projects need.
+const PROJECT_WAIT: Duration = Duration::from_secs(2);
 
 struct Session {
     principal: String,
@@ -73,6 +98,16 @@ pub struct RemoteState {
     verifier: TokenVerifier,
     sessions: Arc<Mutex<HashMap<String, Session>>>,
     concurrency: Arc<Semaphore>,
+    /// Per project: tool calls share this lock, an index-changing admin call
+    /// takes it alone. Sessions of one process would otherwise wait on each
+    /// other's database and file locks until those time out (a read may sync
+    /// changed files, so it can be a writer too).
+    mutations: Arc<Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>>,
+    admin_slots: Arc<Semaphore>,
+    admin_timeout: Duration,
+    /// Held (shared) by every index run, also after its request timed out.
+    /// Shutdown takes it alone, so a run is not cut off halfway.
+    admin_running: Arc<tokio::sync::RwLock<()>>,
     control: Option<String>,
     shutdown: Option<tokio::sync::watch::Sender<bool>>,
 }
@@ -84,9 +119,27 @@ impl RemoteState {
             verifier,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             concurrency: Arc::new(Semaphore::new(16)),
+            mutations: Arc::new(Mutex::new(HashMap::new())),
+            admin_slots: Arc::new(Semaphore::new(ADMIN_MUTATION_SLOTS)),
+            admin_timeout: ADMIN_TOOL_TIMEOUT,
+            admin_running: Arc::new(tokio::sync::RwLock::new(())),
             control: None,
             shutdown: None,
         }
+    }
+
+    /// Takes a project's lock alone, as an index run does, until the guard is
+    /// dropped. For embedders that change a project's index themselves, and tests.
+    pub async fn hold_project(&self, project: &str) -> tokio::sync::OwnedRwLockWriteGuard<()> {
+        project_lock(self, project).await.write_owned().await
+    }
+
+    /// Overrides how long an admin call may take and how many index-changing
+    /// calls may be in flight. For tests and embedders with other limits.
+    pub fn with_admin_limits(mut self, timeout: Duration, mutation_slots: usize) -> Self {
+        self.admin_timeout = timeout;
+        self.admin_slots = Arc::new(Semaphore::new(mutation_slots));
+        self
     }
 }
 
@@ -149,7 +202,19 @@ async fn host_stop(State(state): State<RemoteState>, headers: HeaderMap) -> Resp
 }
 
 async fn metadata(State(state): State<RemoteState>) -> Response {
-    no_store(Json(json!({"resource":state.config.public_url, "authorization_servers":[state.config.oauth.issuer], "scopes_supported":[CONTEXT_SCOPE, WRITE_SCOPE], "bearer_methods_supported":["header"]})).into_response())
+    no_store(Json(json!({"resource":state.config.public_url, "authorization_servers":[state.config.oauth.issuer], "scopes_supported":scopes_supported(&state.config), "bearer_methods_supported":["header"]})).into_response())
+}
+
+/// `ax:admin` is advertised only where a token can carry it: an external
+/// provider with an admin subject. The built-in authorization server rejects
+/// scopes it does not issue, so a client that asks for every advertised scope
+/// must not be told about one it cannot get. API keys need no OAuth scope.
+fn scopes_supported(config: &RemoteConfig) -> Vec<&'static str> {
+    let mut scopes = vec![CONTEXT_SCOPE, WRITE_SCOPE];
+    if !config.oauth.built_in && config.projects.iter().any(|p| !p.admin_subjects.is_empty()) {
+        scopes.push(ADMIN_SCOPE);
+    }
+    scopes
 }
 
 fn no_store(mut response: Response) -> Response {
@@ -262,6 +327,7 @@ async fn authorize(
             scopes,
             key_projects: Vec::new(),
             key_write: false,
+            key_admin: false,
         }
     } else {
         state
@@ -292,6 +358,20 @@ pub fn tool_permitted(name: &str, args: &Value, write: bool) -> bool {
         return write;
     }
     CONTEXT_TOOLS.contains(&name) || (write && WRITE_TOOLS.contains(&name))
+}
+
+async fn project_lock(state: &RemoteState, project: &str) -> Arc<tokio::sync::RwLock<()>> {
+    state
+        .mutations
+        .lock()
+        .await
+        .entry(project.to_owned())
+        .or_default()
+        .clone()
+}
+
+pub fn admin_tool_permitted(name: &str, admin: bool) -> bool {
+    admin && ADMIN_TOOLS.contains(&name)
 }
 
 fn client_tool_permitted(
@@ -325,7 +405,7 @@ async fn post(
         Ok(v) => v,
         Err(e) => return *e,
     };
-    let _permit = match state.concurrency.clone().try_acquire_owned() {
+    let permit = match state.concurrency.clone().try_acquire_owned() {
         Ok(p) => p,
         Err(_) => return error(StatusCode::TOO_MANY_REQUESTS, "Server is busy"),
     };
@@ -458,7 +538,11 @@ async fn post(
         return rpc(request.id, Err(("Method not found", -32601)));
     }
     let write = principal.can_write(&project);
-    let mut engine = match tokio::time::timeout(Duration::from_secs(30), engine.lock()).await {
+    let admin = principal.can_admin(&project);
+    let mut timeout = TOOL_TIMEOUT;
+    let mut mutation = None;
+    let mut shared = None;
+    let mut engine = match tokio::time::timeout(Duration::from_secs(30), engine.lock_owned()).await {
         Ok(e) => e,
         Err(_) => return error(StatusCode::TOO_MANY_REQUESTS, "Connection is busy"),
     };
@@ -482,7 +566,31 @@ async fn post(
         if !client_tool_permitted(client.as_ref(), &name, &args) {
             return error(StatusCode::FORBIDDEN, "Insufficient client scope");
         }
-        if !tool_permitted(&name, &args, write) {
+        if admin_tool_permitted(&name, admin) {
+            timeout = state.admin_timeout;
+            // Remotely this tool only re-imports the project's own policy files.
+            // Its other actions (restore, history, audit) can write or reveal
+            // policy that belongs to every project on this host.
+            if name == "ax_policy_index"
+                && args
+                    .get("action")
+                    .is_some_and(|action| action.as_str() != Some("index"))
+            {
+                return error(
+                    StatusCode::FORBIDDEN,
+                    "Only action=index is available remotely",
+                );
+            }
+            if ADMIN_MUTATING_TOOLS.contains(&name.as_str()) {
+                let Ok(slot) = state.admin_slots.clone().try_acquire_owned() else {
+                    return error(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "Too many index operations are running; try again later",
+                    );
+                };
+                mutation = Some((project_lock(&state, &project.id).await, slot));
+            }
+        } else if !tool_permitted(&name, &args, write) {
             if WRITE_TOOLS.contains(&name.as_str()) || name == "ax_policy_capture" {
                 let auth = format!("Bearer resource_metadata=\"{}\", scope=\"{} {}\", error=\"insufficient_scope\"",
                     state.config.metadata_url(), CONTEXT_SCOPE, WRITE_SCOPE);
@@ -601,6 +709,9 @@ async fn post(
         args["session"] = json!(chat);
         engine.current_chat = Some(chat);
         params["arguments"] = args;
+        if mutation.is_none() {
+            shared = Some(project_lock(&state, &project.id).await);
+        }
     }
     let durable_branch = request.params.as_ref().and_then(|params| {
         if params["name"] == "ax_durable" {
@@ -613,18 +724,83 @@ async fn post(
             None
         }
     });
-    let outcome = match tokio::time::timeout(
-        Duration::from_secs(120),
-        handle_request(
-            &mut engine.engine,
-            &request.method,
-            request.params.unwrap_or(Value::Null),
-        ),
-    )
-    .await
-    {
-        Ok(outcome) => outcome,
-        Err(_) => return error(StatusCode::GATEWAY_TIMEOUT, "Ax tool timed out"),
+    let method = request.method.clone();
+    let params = request.params.take().unwrap_or(Value::Null);
+    let outcome = if let Some((lock, slot)) = mutation {
+        // An index run must finish even when this request times out or the
+        // client goes away: a run dropped halfway leaves the index cleared and
+        // its file lock held. The task keeps the session and its request slot
+        // until it is done.
+        let running = state.admin_running.clone().read_owned().await;
+        let mut task = tokio::spawn(async move {
+            let _held = (permit, slot, running);
+            let _exclusive = lock.write_owned().await;
+            let outcome = handle_request(&mut engine.engine, &method, params).await;
+            (outcome, engine)
+        });
+        match tokio::time::timeout(timeout, &mut task).await {
+            Ok(Ok((outcome, guard))) => {
+                engine = guard;
+                outcome
+            }
+            Ok(Err(_)) => return error(StatusCode::INTERNAL_SERVER_ERROR, "Ax tool failed"),
+            Err(_) => {
+                // Nobody waits for the answer any more; keep its trace.
+                let root = project.root.clone();
+                tokio::spawn(async move {
+                    match task.await {
+                        Ok((outcome, _session)) => {
+                            if !outcome.verbose_lines.is_empty() {
+                                crate::verbose::append_verbose_log_file(&outcome.verbose_lines, Some(&root));
+                            }
+                            if outcome.result.is_err() {
+                                ax_usage::log_workspace(Some(&root), "index operation failed after its request timed out via=remote-mcp");
+                            }
+                        }
+                        Err(_) => ax_usage::log_workspace(Some(&root), "index operation stopped unexpectedly via=remote-mcp"),
+                    }
+                });
+                return no_store(
+                    (
+                        StatusCode::GATEWAY_TIMEOUT,
+                        Json(json!({"error":"The operation is still running on the server","running":true})),
+                    )
+                        .into_response(),
+                );
+            }
+        }
+    } else {
+        let _permit = permit;
+        // A running index has the project to itself. Wait a moment for it,
+        // then say so instead of holding a request slot for minutes.
+        let _shared = match shared {
+            Some(lock) => match tokio::time::timeout(PROJECT_WAIT, lock.read_owned()).await {
+                Ok(guard) => Some(guard),
+                Err(_) => {
+                    let mut response = no_store(
+                        (
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            Json(json!({"error":"This project is being re-indexed; try again when it is done","reindexing":true})),
+                        )
+                            .into_response(),
+                    );
+                    response
+                        .headers_mut()
+                        .insert("retry-after", HeaderValue::from_static("5"));
+                    return response;
+                }
+            },
+            None => None,
+        };
+        match tokio::time::timeout(
+            timeout,
+            handle_request(&mut engine.engine, &method, params),
+        )
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(_) => return error(StatusCode::GATEWAY_TIMEOUT, "Ax tool timed out"),
+        }
     };
     if !outcome.verbose_lines.is_empty() {
         crate::verbose::append_verbose_log_file(&outcome.verbose_lines, Some(&project.root));
@@ -643,12 +819,20 @@ async fn post(
                         &Value::Null,
                     )
             });
+            if admin {
+                // The local catalog hides heavy tools unless AX_MCP_TOOLS lists them.
+                // An admin grant is the opt-in here, so take them from the full catalog.
+                tools.extend(crate::tools::ToolHandler::tool_definitions(ADMIN_TOOLS));
+            }
             for tool in tools {
                 let name = tool["name"].as_str().unwrap_or("").to_owned();
+                let admin_tool = ADMIN_TOOLS.contains(&name.as_str());
                 let requires_write =
                     WRITE_TOOLS.contains(&name.as_str()) || (write && name == "ax_policy_capture");
                 let policy_capture = name == "ax_policy_capture";
-                let scopes = if requires_write {
+                let scopes = if admin_tool {
+                    vec![CONTEXT_SCOPE, WRITE_SCOPE, ADMIN_SCOPE]
+                } else if requires_write {
                     vec![CONTEXT_SCOPE, WRITE_SCOPE]
                 } else {
                     vec![CONTEXT_SCOPE]
@@ -656,6 +840,7 @@ async fn post(
                 tool["securitySchemes"] = json!([{"type":"oauth2", "scopes":scopes}]);
                 tool["_meta"]["securitySchemes"] = tool["securitySchemes"].clone();
                 let read_only = !requires_write
+                    && !ADMIN_MUTATING_TOOLS.contains(&name.as_str())
                     && !matches!(
                         name.as_str(),
                         "ax_session" | "ax_durable" | "ax_stash" | "ax_policy_capture"
@@ -669,6 +854,14 @@ async fn post(
                     props.remove("projectPath");
                     props.remove("project_path");
                     props.remove("window_id");
+                    if name == "ax_policy_index" {
+                        // Discovery shows the one action that is allowed remotely.
+                        props.remove("id");
+                        if let Some(action) = props.get_mut("action") {
+                            action["enum"] = json!(["index"]);
+                            action["description"] = json!("Re-import the project's policy files");
+                        }
+                    }
                     if !write && policy_capture {
                         // Discovery reflects the same action-level write ACL as invocation.
                         if let Some(actions) = props
@@ -842,6 +1035,7 @@ pub async fn serve_on(
     );
     let (shutdown, mut receiver) = tokio::sync::watch::channel(false);
     let mut state = RemoteState::new(config, verifier);
+    let admin_running = state.admin_running.clone();
     if let Ok(control) = std::env::var("AX_REMOTE_HOST_CONTROL") {
         if control.len() < 32
             || control.len() > 4096
@@ -863,6 +1057,16 @@ pub async fn serve_on(
         })
         .await
         .map_err(|e| e.to_string());
+    // An index run that outlived its request finishes before the process ends.
+    if admin_running.try_write().is_err() {
+        eprintln!("ax: waiting for a running index operation to finish before stopping (up to {} seconds)", ADMIN_TOOL_TIMEOUT.as_secs());
+    }
+    if tokio::time::timeout(ADMIN_TOOL_TIMEOUT, admin_running.write())
+        .await
+        .is_err()
+    {
+        tracing::warn!("remote MCP stopped while an index operation was still running");
+    }
     heartbeat.abort();
     if let Err(error) =
         ax_global_db::remote_mcp_publications::stop_lease(&catalogue, &snapshot.id, &instance).await

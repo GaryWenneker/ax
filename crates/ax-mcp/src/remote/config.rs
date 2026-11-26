@@ -3,7 +3,6 @@ use std::{
     collections::HashSet,
     path::{Path, PathBuf},
 };
-use url::Url;
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -34,6 +33,9 @@ pub struct Project {
     pub subjects: Vec<String>,
     #[serde(default)]
     pub write_subjects: Vec<String>,
+    /// Subjects that may call the remote admin tools. Must also be write subjects.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub admin_subjects: Vec<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -45,21 +47,12 @@ pub struct ApiKey {
     pub projects: Vec<String>,
     #[serde(default)]
     pub write: bool,
+    /// Grants the remote admin tools (index, sync, logs). Requires `write`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub admin: bool,
 }
 
-pub fn https_url(value: &str) -> Result<Url, String> {
-    let url = Url::parse(value).map_err(|_| "Invalid HTTPS URL".to_string())?;
-    if url.scheme() != "https"
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
-        return Err("Expected an HTTPS URL without credentials, query or fragment".into());
-    }
-    Ok(url)
-}
+pub use ax_remote_client::https_url;
 
 impl RemoteConfig {
     pub fn load(path: &Path) -> Result<Self, String> {
@@ -111,6 +104,9 @@ impl RemoteConfig {
             if p.write_subjects.iter().any(|s| !p.subjects.contains(s)) {
                 return Err("Write subjects must also have context access".into());
             }
+            if p.admin_subjects.iter().any(|s| !p.write_subjects.contains(s)) {
+                return Err("Admin subjects must also have write access".into());
+            }
         }
         let mut keys = HashSet::new();
         for key in &self.api_keys {
@@ -122,6 +118,9 @@ impl RemoteConfig {
                 || key.projects.iter().any(|p| !ids.contains(p))
             {
                 return Err("Invalid API key hash, ID or project grant".into());
+            }
+            if key.admin && !key.write {
+                return Err("Admin API keys must also have write access".into());
             }
         }
         for origin in &self.allowed_origins {

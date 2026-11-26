@@ -107,6 +107,16 @@ To run it in the cloud without installing anything locally, deploy it as a hoste
 
 See [Deploy to the cloud](/guides/headless-linux/#deploy-to-the-cloud) for what each button creates and the API key it needs, and [Headless Linux build](/guides/headless-linux/) for options, container images, an Azure job that indexes once, and Vercel Sandbox.
 
+### ax-admin (separate application)
+
+`ax-admin` manages a remote Ax, including the headless build, from your own computer. It has its own installer and does not need `ax`:
+
+```bash
+curl -fsSL https://getax.wenneker.io/install-admin.sh | sh
+```
+
+On Windows use `irm https://getax.wenneker.io/install-admin.ps1 | iex`. See [Remote admin](/guides/remote-admin/).
+
 ### Windows
 
 Run in PowerShell:
@@ -211,13 +221,14 @@ Do this again in every other directory where you want ax. You do not run `ax ini
 
 ## Supported platforms
 
-Every release ships **six** prebuilt binaries. The shell installer picks the match for your OS and CPU. From v10.1.1, releases also ship two headless Linux binaries for sandboxes and containers.
+Every release ships **six** prebuilt binaries. The shell installer picks the match for your OS and CPU. From v10.1.1, releases also ship two headless Linux binaries for sandboxes and containers. From v10.1.2, releases also ship `ax-admin` for the same six platforms.
 
 | Platform | Architectures | Install |
 |---|---|---|
-| Windows | x64, arm64 | PowerShell installer (`install.ps1`) or [getax CDN](https://getax.wenneker.io/releases/) |
-| macOS | x64 (Intel), arm64 (Apple Silicon) | shell installer (`install.sh`) or getax CDN |
-| Linux | x64, arm64 | shell installer or getax CDN |
+| Windows | x64, arm64 | PowerShell installer (`install.ps1`) or [GitHub Releases](https://github.com/GaryWenneker/ax/releases) |
+| macOS | x64 (Intel), arm64 (Apple Silicon) | shell installer (`install.sh`) or GitHub Releases |
+| Linux | x64, arm64 | shell installer or GitHub Releases |
+| ax-admin (separate application) | Windows, macOS, Linux; x64 and arm64 | `install-admin.sh` / `install-admin.ps1` or GitHub Releases ([guide](/guides/remote-admin/#install)) |
 | WSL2 | x64, arm64 | **Use the Linux installer** inside WSL — `curl -fsSL https://getax.wenneker.io/install.sh \| sh` |
 | Linux, headless (sandboxes, containers) | x64, arm64 | `install-slim.sh` or `ghcr.io/garywenneker/ax-slim` images ([guide](/guides/headless-linux/)) |
 
@@ -293,7 +304,7 @@ npx @garywenneker/ax
 npm install -g @garywenneker/ax
 ```
 
-The npm package is a thin launcher: it fetches the prebuilt `ax` binary from [getax.wenneker.io](https://getax.wenneker.io/releases/) (public CDN) with GitHub Releases as fallback. See [npm README](https://github.com/GaryWenneker/ax/blob/main/docs/npm/README.md) for publish details.
+The npm package is a thin launcher: it fetches the prebuilt `ax` binary from [GitHub Releases](https://github.com/GaryWenneker/ax/releases), through getax.wenneker.io download links that redirect there. See [npm README](https://github.com/GaryWenneker/ax/blob/main/docs/npm/README.md) for publish details.
 
 ### Local dev upgrade (maintainers)
 

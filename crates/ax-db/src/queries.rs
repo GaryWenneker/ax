@@ -12,11 +12,52 @@ use ax_utils::errors::{AxError, DatabaseError};
 
 pub struct QueryBuilder {
     pool: SqlitePool,
+    node_cache: Option<std::sync::Arc<NodeReadCache>>,
+}
+
+/// Memoized `get_nodes_by_name` / `get_nodes_by_file` results.
+///
+/// Only for a phase that reads nodes many times and writes none, such as the
+/// reference-resolution loop: each lookup otherwise costs a round trip to the
+/// SQLite worker thread, tens of thousands of times per index.
+#[derive(Default)]
+struct NodeReadCache {
+    by_name: std::sync::Mutex<HashMap<String, Vec<Node>>>,
+    by_file: std::sync::Mutex<HashMap<String, Vec<Node>>>,
+}
+
+/// Entries per map before the cache starts over, to bound memory on huge projects.
+const NODE_CACHE_MAX_ENTRIES: usize = 50_000;
+
+fn cache_get(map: &std::sync::Mutex<HashMap<String, Vec<Node>>>, key: &str) -> Option<Vec<Node>> {
+    map.lock().ok()?.get(key).cloned()
+}
+
+fn cache_put(map: &std::sync::Mutex<HashMap<String, Vec<Node>>>, key: String, nodes: &[Node]) {
+    if let Ok(mut map) = map.lock() {
+        if map.len() >= NODE_CACHE_MAX_ENTRIES {
+            map.clear();
+        }
+        map.insert(key, nodes.to_vec());
+    }
 }
 
 impl QueryBuilder {
     pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            node_cache: None,
+        }
+    }
+
+    /// A query builder on the same pool that memoizes node lookups by name and
+    /// by file. Use it only while no nodes are written; writes through it do
+    /// not invalidate the cache.
+    pub fn with_node_read_cache(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+            node_cache: Some(std::sync::Arc::new(NodeReadCache::default())),
+        }
     }
 
     pub fn pool(&self) -> &SqlitePool {
@@ -524,21 +565,45 @@ impl QueryBuilder {
     }
 
     pub async fn get_nodes_by_file(&self, file_path: &str) -> Result<Vec<Node>, AxError> {
+        if let Some(hit) = self
+            .node_cache
+            .as_ref()
+            .and_then(|c| cache_get(&c.by_file, file_path))
+        {
+            return Ok(hit);
+        }
         let rows = sqlx::query_as::<_, NodeRow>("SELECT * FROM nodes WHERE file_path = ?")
             .bind(file_path)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| self.sql_err(e))?;
-        Ok(rows.into_iter().map(|r| r.into_node()).collect())
+        let nodes: Vec<Node> = rows.into_iter().map(|r| r.into_node()).collect();
+        if let Some(c) = &self.node_cache {
+            cache_put(&c.by_file, file_path.to_string(), &nodes);
+        }
+        Ok(nodes)
     }
 
     pub async fn get_nodes_by_name(&self, name: &str) -> Result<Vec<Node>, AxError> {
+        // SQLite's lower() folds ASCII only, so the cache key does the same.
+        let key = name.to_ascii_lowercase();
+        if let Some(hit) = self
+            .node_cache
+            .as_ref()
+            .and_then(|c| cache_get(&c.by_name, &key))
+        {
+            return Ok(hit);
+        }
         let rows = sqlx::query_as::<_, NodeRow>("SELECT * FROM nodes WHERE lower(name) = lower(?)")
             .bind(name)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| self.sql_err(e))?;
-        Ok(rows.into_iter().map(|r| r.into_node()).collect())
+        let nodes: Vec<Node> = rows.into_iter().map(|r| r.into_node()).collect();
+        if let Some(c) = &self.node_cache {
+            cache_put(&c.by_name, key, &nodes);
+        }
+        Ok(nodes)
     }
 
     pub async fn get_outgoing_edges(
@@ -954,6 +1019,40 @@ impl QueryBuilder {
         .execute(&self.pool)
         .await
         .map_err(|e| self.sql_err(e))?;
+        Ok(())
+    }
+
+    /// Delete many resolved references in one transaction.
+    ///
+    /// Deleting them one by one costs one commit (and one WAL append) per
+    /// reference, which dominated indexing time on large projects.
+    pub async fn delete_unresolved_refs_batch(
+        &self,
+        refs: &[UnresolvedReference],
+    ) -> Result<(), AxError> {
+        if refs.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self.pool.begin().await.map_err(|e| self.sql_err(e))?;
+        for ref_ in refs {
+            sqlx::query(
+                r#"
+                DELETE FROM unresolved_refs
+                WHERE from_node_id = ? AND reference_name = ? AND reference_kind = ?
+                  AND line = ? AND col = ? AND file_path = ?
+                "#,
+            )
+            .bind(&ref_.from_node_id)
+            .bind(&ref_.reference_name)
+            .bind(ref_.reference_kind.as_str())
+            .bind(ref_.line)
+            .bind(ref_.column)
+            .bind(ref_.file_path.as_deref().unwrap_or(""))
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| self.sql_err(e))?;
+        }
+        tx.commit().await.map_err(|e| self.sql_err(e))?;
         Ok(())
     }
 
