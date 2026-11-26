@@ -101,6 +101,24 @@ Wall, user and system seconds from `/usr/bin/time`.
 | Slim plus `mimalloc` (the slim default) | 20.3 | 11.0 | 15.3 |
 | Slim with `opt-level = "z"` | 23.0 | 14.5 | 15.5 |
 
+The measurements above are for ax 10.1.1. After 10.1.1, reference resolution
+no longer commits once per reference and no longer queries SQLite for every
+lookup. The same benchmark (660 indexed files, slim default, macOS arm64,
+median of three; edge, node and unresolved rows identical to 10.1.1):
+
+| Change | Wall | User | Sys | Peak RSS |
+|---|---|---|---|---|
+| ax 10.1.1 | 20.6 | 11.3 | 15.2 | 224 MB |
+| Resolved references deleted in one transaction | 17.4 | 10.3 | 12.9 | |
+| Resolved edges written in one transaction | 14.3 | 9.4 | 10.6 | |
+| Node lookups memoized during resolution | **7.0** | 4.3 | 3.7 | 266 MB |
+
+A one-file `ax sync` stays at 0.5 s. With an MCP server attached, the WAL
+left after a full index went from 13.8 MB to 0.75 MB (`wal_checkpoint(TRUNCATE)`
+without waiting, `journal_size_limit` 64 MB). These changes are in shared
+crates, so the full build gets them too. The Linux container numbers below
+are from 10.1.1 and were not re-measured.
+
 | Binary (Linux arm64 static musl, 4 vCPU container, project on the container's own disk) | Wall | User | Sys |
 |---|---|---|---|
 | Slim, musl malloc | 36.8 | 21.4 | 15.6 |
@@ -114,8 +132,10 @@ checked, in every project. Regex compilation is CPU-heavy and sensitive to the
 optimisation level, which is why `"s"` and `"z"` fell behind. Those regexes are
 now compiled once, which makes every build faster, the full one included.
 
-What is left is mostly reference resolution, which spends its time in SQLite
-(system time above user time; `pwrite`, `fsync` and `pread` lead the profile).
+In 10.1.1, what was left was mostly reference resolution, which spent its
+time in SQLite (system time above user time; `pwrite`, `fsync` and `pread`
+led the profile): one commit and several queries per reference. That is the
+part the table above removes.
 Measured and not taken, because they did not pay off:
 
 - `opt-level = 3` for the C libraries (SQLite, sqlite-vec, tree-sitter,
@@ -138,6 +158,21 @@ The x86_64 build targets the baseline `x86-64` CPU. Raising it (for example
 a minority of indexing time, and would make the binary crash with an illegal
 instruction on hosts without AVX2. It was not measured, because the x86_64
 build here runs under emulation.
+
+## Concurrency
+
+Several ax processes can share one project's `.ax/`: an indexer, `ax sync`,
+the MCP server, the watcher and CLI queries. Writers take `.ax/ax.lock`, an
+advisory `flock` on a file that is never deleted, so the kernel releases it
+when a process dies (also after `kill -9` or a stopped container) and a
+leftover file never blocks anyone. Readers use SQLite's WAL and do not wait
+for writers. `scripts/slim-concurrency.sh [AX_BINARY] PROJECT_DIR` checks this
+across processes: reads during an index, a second writer waiting for the
+first, and a new writer right after `kill -9`.
+
+Keep `.ax/` on a local disk or a container volume. SQLite's WAL needs shared
+memory and working file locks, which network filesystems (Azure Files/SMB,
+NFS) do not reliably provide.
 
 ## Memory
 

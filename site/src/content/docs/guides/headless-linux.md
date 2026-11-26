@@ -126,7 +126,11 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/workspace" "ax
 
 ## Speed
 
-The headless build indexes as fast as the full build: 20.6 seconds for 625 Rust files on a 14-core Apple silicon Mac, against 20.4 seconds for the full build. Most of that time goes to resolving references in SQLite, so keep the project's `.ax/` folder on the container's own disk or a volume. A bind mount from a macOS host made the same index take over two minutes. `slim/README.md` has the measurements.
+The headless build indexes as fast as the full build. In ax 10.1.1, a 660-file Rust project took 20.6 seconds on a 14-core Apple silicon Mac (20.4 seconds with the full build). Since then, reference resolution batches its database writes and caches node lookups, which brings the same index to 7.0 seconds, with the same graph. A one-file `ax sync` takes about half a second.
+
+Keep the project's `.ax/` folder on the container's own disk or a volume. A bind mount from a macOS host made the same index take over two minutes, and network filesystems such as Azure Files do not give SQLite reliable locks. `slim/README.md` has the measurements.
+
+Several ax processes can share one project: an index, `ax sync`, the MCP server and CLI queries. Writers wait for each other through `.ax/ax.lock`, which the system releases when a process dies, so a stopped container never leaves a lock behind that needs `ax unlock`.
 
 ## Test it remotely
 

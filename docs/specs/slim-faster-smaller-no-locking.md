@@ -4,6 +4,27 @@ Status: **DRAFT — not approved.** This is a research result and a proposal. No
 
 Scope: the headless build (`ax-cli --no-default-features --features "minimal-grammars mimalloc"`, profile `release-slim`). Most fixes live in shared crates, so the full build benefits too.
 
+## Implementation status (2026-11-26)
+
+The user asked to start executing the plan. The plan stays a draft and has not been approved as a spec. Implemented on `main`, not pushed:
+
+| Item | Commit | Result | Verified by |
+|---|---|---|---|
+| L1, L2, L3 | `eca86af4` | `ax.lock` is never deleted; stale detection asks `flock`, not the PID; `kill(2)` instead of spawning `kill`; lock released on finalize errors | new unit tests (fail on 10.1.1 code); `scripts/slim-concurrency.sh` FAILs on 10.1.1, PASSes now |
+| L5 | `9785608b` | busy or unflushed WAL no longer records an incident that switches the watcher off | new integration test (fails before, passes after) |
+| F1 | `1677d2a6` | 20.6 → 17.4 s | identical edge, node and unresolved-row hashes |
+| F2 + L4 | `c1ed3dd1` | WAL after index with MCP attached 13.8 → 0.75 MB; busy retries capped at one busy timeout in total | unit test for the retry budget; WAL measured |
+| F3, step 1 | `57fc5156` | resolved edges in one transaction: 17.4 → 14.3 s | identical hashes |
+| F3, step 2 | `3049db34` | node lookups memoized in the resolve loop: 14.3 → **7.0 s**, peak RSS 224 → 266 MB | identical hashes |
+
+Not done:
+- **L4 `BEGIN IMMEDIATE`** for the read-then-write transactions in `ax-usage`, `ax-global-db` and `ax-mcp/remote/oauth.rs`: off the index path; with L1 fixed, the reproduced 517 error no longer occurs.
+- **L6** (network filesystems): open decision 3. Docs now say to keep `.ax/` on local disk.
+- **L7** (MCP catch-up sync holding the engine mutex): follow-up. It changes daemon start-up ordering and needs an MCP-level test.
+- **S1, S3, S4, S5**: decisions for the user (download format, GitHub features, time zones, languages).
+- **S2**: dropped, see the table.
+- **Linux container measurements**: not re-run, because Podman storage on the build machine is damaged.
+
 ## Measurement setup
 
 - Machine: macOS, Apple silicon, 14 cores, 48 GB.
@@ -27,7 +48,7 @@ Scope: the headless build (`ax-cli --no-default-features --features "minimal-gra
 | L6 | Detect network and shared filesystems and do not use WAL there | locking | prevents "database is locked" and corruption on Azure Files/NFS | medium | do, with a clear message |
 | F3 | Resolve against an in-memory symbol index instead of one SQLite round trip per lookup | speed | estimated resolution 13 s → 2–4 s, total ~17 s → ~7 s (not measured) | medium | do after F1, behind tests |
 | L7 | MCP: tool calls must not wait for a catch-up sync | locking | removes multi-second tool stalls at daemon start | medium | do |
-| S2 | Drop `aws-lc-rs` (one TLS crypto backend) | size | ~0.5–0.8 MB (estimate from bloat) | low | do |
+| S2 | Drop `aws-lc-rs` (one TLS crypto backend) | size | ~0.5–0.8 MB (estimate from bloat) | — | **dropped**: `ax mcp remote serve` verifies RS256 tokens; jsonwebtoken's only other backend pulls in the `rsa` crate (RUSTSEC-2023-0071) and is not clearly smaller |
 | S3 | Optional `github` feature (octocrab) | size | ~0.6–1.0 MB (estimate) | low; costs GitHub PR features | your decision |
 | S4 | Drop or gate `chrono-tz` | size | ~1 MB (estimate) | low | do, if time zones are not needed in slim |
 | S5 | Grammar sets per use (for example without Ruby and PHP) | size | Ruby 2.1 MB + PHP 2.1 MB of parse tables (measured per archive) | low; costs languages | your decision |
