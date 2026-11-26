@@ -29,7 +29,8 @@ function Operation({ tool, title, about, args = NO_ARGS, button }: { tool: strin
       <h3>{title}</h3>
       <p>{about}</p>
       <div className="admin-actions">
-        <button type="button" className="btn" disabled={state.status === 'loading'} onClick={() => setAsking(true)}>{button}</button>
+        {/* Stays focusable while running, so focus returning from the question has a place to land. */}
+        <button type="button" className="btn" aria-disabled={state.status === 'loading'} onClick={() => { if (state.status !== 'loading') setAsking(true); }}>{button}</button>
       </div>
       <ToolResultView state={state} />
       {asking && (
@@ -87,6 +88,8 @@ export function UsagePage({ tools }: { tools: readonly Tool[] }) {
   );
 }
 
+const LOG_COLUMNS = [{ label: 'Tool' }, { label: 'Call' }, { label: 'Result' }] as const;
+
 export function LoggingPage() {
   const { state, run } = useTool();
   const [draft, setDraft] = useState('');
@@ -133,7 +136,7 @@ export function LoggingPage() {
           <PageEmpty title="No calls recorded" />
         ) : (
           <div className="admin-list admin-list--tall" data-testid="call-log">
-            <ItemList className="calm-list" rows>
+            <ItemList className="calm-list" listId="ax-admin-call-log" columns={LOG_COLUMNS}>
               {page.entries.map((entry) => (
                 <ItemRow
                   key={entry.id}

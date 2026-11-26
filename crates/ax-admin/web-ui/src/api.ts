@@ -78,7 +78,7 @@ function infoFrom(value: unknown): RemoteInfo {
 
 let csrf = '';
 
-async function request(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<Fields> {
+async function request(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown, keepalive = false): Promise<Fields> {
   let response: Response;
   try {
     response = await fetch(`/api${path}`, {
@@ -89,6 +89,7 @@ async function request(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, 
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       cache: 'no-store',
+      keepalive,
     });
   } catch {
     throw new ApiError(0, 'admin_unreachable', 'ax-admin is not running. Start it again and reload this page.');
@@ -169,8 +170,9 @@ export async function completeLogin(id: string): Promise<{ state: 'connected'; c
   return { state: 'failed', message: text(data.message) || 'Sign-in failed.' };
 }
 
-export async function cancelLogin(id: string): Promise<void> {
-  await request('DELETE', `/login/${encodeURIComponent(id)}`);
+/** `leaving`: the page is going away; the request must outlive it. */
+export async function cancelLogin(id: string, leaving = false): Promise<void> {
+  await request('DELETE', `/login/${encodeURIComponent(id)}`, undefined, leaving);
 }
 
 /** The active environment: what it is and which tools it offers this connection. */

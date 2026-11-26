@@ -4,8 +4,11 @@ import { createContext, useContext } from 'react';
 export interface ActiveConnection {
   id: string;
   name: string;
-  /** Another environment became active elsewhere: load the application again. */
-  changed: () => void;
+  /**
+   * Another environment became active elsewhere and a call was refused: load
+   * the application again and show `message` so the user knows why.
+   */
+  changed: (message: string) => void;
 }
 
 export const ActiveConnectionContext = createContext<ActiveConnection | null>(null);

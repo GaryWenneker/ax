@@ -1,7 +1,8 @@
-import { useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { parseConnectionDetails } from '@cc/connectionTransfer';
 import { createConnection, startLogin, testConnection, updateConnection, type Connection, type StartedSignIn } from '../api';
 import { EMPTY_INPUT, inputProblem, suggestedName, type ConnectionInput, type InputField } from '../connectionInput';
+import CredentialFields from './CredentialFields';
 import SignInWait from './SignInWait';
 
 interface Props {
@@ -33,6 +34,13 @@ export default function ConnectionForm({ editing, submitLabel, onSaved, onCancel
   const [note, setNote] = useState<Note | null>(null);
   const [pasted, setPasted] = useState<string | null>(null);
   const [signIn, setSignIn] = useState<{ started: StartedSignIn; blocked: boolean } | null>(null);
+  // The form takes the focus when it appears: on first start, when the panel
+  // switches to it, and when it comes back after a sign-in that did not finish.
+  const first = useRef<HTMLInputElement>(null);
+  const showing = signIn === null;
+  useEffect(() => {
+    if (showing) first.current?.focus();
+  }, [showing]);
 
   const set = (patch: Partial<ConnectionInput>) => {
     setInput((current) => ({ ...current, ...patch }));
@@ -155,6 +163,7 @@ export default function ConnectionForm({ editing, submitLabel, onSaved, onCancel
           placeholder="https://ax.example.com/projects/my-project/mcp"
           value={input.url}
           disabled={oauthEdit}
+          ref={oauthEdit ? undefined : first}
           onChange={(e) => set({ url: e.target.value })}
           required
           {...invalid('url')}
@@ -179,55 +188,7 @@ export default function ConnectionForm({ editing, submitLabel, onSaved, onCancel
         </fieldset>
       )}
 
-      {input.mode === 'api_key' ? (
-        <div className="admin-field">
-          <label htmlFor={`${ids}-key`}>API key</label>
-          <input
-            id={`${ids}-key`}
-            className="settings-input settings-input--mono"
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder={editing ? 'Leave empty to keep the saved key' : ''}
-            value={input.key}
-            onChange={(e) => set({ key: e.target.value })}
-            required={!editing}
-            {...invalid('key')}
-          />
-          <span className="admin-field-hint">Stored in this computer's credential store, never in a file. A key with the admin grant shows the management pages.</span>
-        </div>
-      ) : (
-        <>
-          <div className="admin-field">
-            <label htmlFor={`${ids}-client`}>Client ID</label>
-            <input
-              id={`${ids}-client`}
-              className="settings-input settings-input--mono"
-              type="text"
-              autoComplete="off"
-              spellCheck={false}
-              value={input.clientId}
-              disabled={oauthEdit}
-              onChange={(e) => set({ clientId: e.target.value })}
-              required
-              {...invalid('clientId')}
-            />
-            <span className="admin-field-hint">The public client ID from the environment's connection details. It is not a password.</span>
-          </div>
-          {!editing && (
-            <>
-              <label className="admin-choice">
-                <input type="checkbox" checked={input.write || input.admin} disabled={input.admin} onChange={(e) => set({ write: e.target.checked })} />
-                Also ask for write access (adding memories and rules)
-              </label>
-              <label className="admin-choice">
-                <input type="checkbox" checked={input.admin} onChange={(e) => set({ admin: e.target.checked })} />
-                Also ask for admin access (the management pages; your account needs the admin grant)
-              </label>
-            </>
-          )}
-        </>
-      )}
+      <CredentialFields ids={ids} input={input} set={set} editing={editing !== undefined} locked={oauthEdit} invalid={invalid} />
 
       <div className="admin-field">
         <label htmlFor={`${ids}-name`}>Name <span className="admin-field-hint">(optional)</span></label>
@@ -237,6 +198,7 @@ export default function ConnectionForm({ editing, submitLabel, onSaved, onCancel
           type="text"
           maxLength={80}
           placeholder={placeholderName}
+          ref={oauthEdit ? first : undefined}
           value={input.name}
           onChange={(e) => set({ name: e.target.value })}
           {...invalid('name')}

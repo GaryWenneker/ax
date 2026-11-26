@@ -46,6 +46,12 @@ step "L1 UI: install, types, unit tests, production build"
 (cd "$UI" && npm ci --no-audit --no-fund >/dev/null && npm run typecheck >/dev/null)
 echo "types ok (application, tests and browser story)"
 (cd "$UI" && show '^ℹ (tests|pass|fail)' npm test)
+# A Playwright assertion that is not awaited checks nothing and fails nobody.
+FLOATING='^[[:space:]]*expect\(.*\)\.(not\.)?(toHaveCount|toBeVisible|toHaveText|toContainText|toHaveAttribute|toBeFocused)\('
+if grep -nE "$FLOATING" "$UI/e2e/"*.spec.ts; then echo "FAIL: assertion without await"; exit 1; fi
+# Negative control: the pattern finds the mistake it is there for.
+printf "  expect(page.getByText('x')).toHaveCount(0);\n" | grep -qE "$FLOATING" || { echo "FAIL: the await check cannot fail"; exit 1; }
+echo "browser story: every locator assertion is awaited"
 (cd "$UI" && show 'built in|error' npx vite build)
 
 step "L2 Rust tests: ax-admin, ax-remote-client"

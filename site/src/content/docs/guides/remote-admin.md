@@ -94,6 +94,10 @@ The **Connections** button in the title bar is always visible. It lists the save
 
 ![The Connections panel with saved environments](/screenshots/ax-admin-connections.png)
 
+The Logging page shows what the environment was asked, never the content:
+
+![The MCP call log of an environment](/screenshots/ax-admin-logging.png)
+
 After a restart, `ax-admin` opens the environment that was active last.
 
 List the saved connections from a terminal (names and addresses only):
@@ -159,7 +163,8 @@ For an external OAuth provider, list the subject under `admin_subjects` of the p
 - The built-in authorization server of a host set up from a Command Center issues context and write access only. Use an API key, or an external OAuth provider, for admin access.
 - `ax mcp remote serve` listens on `127.0.0.1`. Making it reachable over HTTPS (an ingress sidecar or a tunnel) stays part of deploying the environment. A static host such as Netlify cannot run Ax.
 - Management calls wait up to ten minutes for the server; other calls just over two minutes. An index run that takes longer keeps running on the server: `ax-admin` then says the server is still working on it, and Status and Logging show when it is done.
-- While an index operation runs, other calls to the same project wait for it. One runs at a time per project, and a server accepts a few of them at once across all projects.
+- While an index operation runs, other calls to the same project are told that the project is being re-indexed and to try again; they do not queue. One index operation runs at a time per project, and a server accepts a few of them at once across all projects.
+- A browser sign-in that finishes while no page is waiting for it (the page was closed or reloaded) is dropped after a minute, together with its tokens. Start the sign-in again from the form.
 - Reload policy re-imports the project's own policy files. Restoring removed rules and the policy history are not available remotely.
 
 ## Troubleshooting
@@ -174,5 +179,6 @@ For an external OAuth provider, list the subject under `admin_subjects` of the p
 | The server could not be reached. | DNS, network or TLS. Check the address from a terminal with `curl` |
 | The key for this connection is no longer in the OS credential store. | Edit the connection and enter the key again |
 | The server is still working on this. | An index run outlasted the wait. It continues on the server; look at Status or Logging in a moment |
+| The environment is re-indexing this project. | An index operation has the project to itself. Try again when it is done |
 | Enter the key again to use another address. | A saved key is not sent to a different address. Type the key for the new address |
 | … is the active environment now. Reload to continue. | Another window switched environments. The page reloads for the active one |

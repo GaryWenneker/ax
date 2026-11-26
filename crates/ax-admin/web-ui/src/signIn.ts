@@ -10,7 +10,8 @@ export type SignInStatus =
 export type SignInOutcome<Connection> =
   | { state: 'connected'; connection: Connection }
   | { state: 'failed'; message: string }
-  | { state: 'stopped' };
+  /** Nobody waits any more. `saved` is a connection that was saved just before. */
+  | { state: 'stopped'; saved: Connection | null };
 
 export interface SignInSteps<Connection> {
   /** Where the sign-in stands. Reads only. */
@@ -25,21 +26,27 @@ export interface SignInSteps<Connection> {
 
 export async function waitForSignIn<Connection>(steps: SignInSteps<Connection>): Promise<SignInOutcome<Connection>> {
   for (;;) {
-    if (steps.stopped()) return { state: 'stopped' };
+    if (steps.stopped()) return { state: 'stopped', saved: null };
     let status: SignInStatus;
     try {
       status = await steps.status();
     } catch (e) {
       return { state: 'failed', message: e instanceof Error ? e.message : 'Sign-in failed.' };
     }
-    if (steps.stopped()) return { state: 'stopped' };
+    if (steps.stopped()) return { state: 'stopped', saved: null };
     if (status.state === 'failed') return status;
     if (status.state === 'ready') {
+      let done: Awaited<ReturnType<SignInSteps<Connection>['complete']>>;
       try {
-        return await steps.complete();
+        done = await steps.complete();
       } catch (e) {
+        if (steps.stopped()) return { state: 'stopped', saved: null };
         return { state: 'failed', message: e instanceof Error ? e.message : 'Sign-in failed.' };
       }
+      // Stopped while the connection was being saved: say so, with what was
+      // saved, so the caller can take it back. No "connected" for a view that is gone.
+      if (steps.stopped()) return { state: 'stopped', saved: done.state === 'connected' ? done.connection : null };
+      return done;
     }
     await steps.pause();
   }

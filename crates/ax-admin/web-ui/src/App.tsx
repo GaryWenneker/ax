@@ -23,6 +23,7 @@ export default function App() {
   const [remote, setRemote] = useState<Remote>({ state: 'loading' });
   const [panel, setPanel] = useState(false);
   const [hash, setHash] = useState(window.location.hash);
+  const [notice, setNotice] = useState<string | null>(null);
   const latest = useRef(0);
   const main = useRef<HTMLElement>(null);
 
@@ -81,9 +82,13 @@ export default function App() {
   }, [page]);
 
   const reloadSoon = useCallback(() => { void reload(); }, [reload]);
+  const environmentChanged = useCallback((message: string) => {
+    setNotice(message);
+    void reload();
+  }, [reload]);
   const active = useMemo<ActiveConnection | null>(
-    () => (remote.state === 'ready' ? { id: remote.connection.id, name: remote.connection.name, changed: reloadSoon } : null),
-    [remote, reloadSoon],
+    () => (remote.state === 'ready' ? { id: remote.connection.id, name: remote.connection.name, changed: environmentChanged } : null),
+    [remote, environmentChanged],
   );
 
   if (startupError) {
@@ -158,6 +163,12 @@ export default function App() {
 
       <div className="workspace">
         <main ref={main} className="container" id="main-content" tabIndex={-1}>
+          {notice && (
+            <div className="settings-toast settings-toast--warn admin-notice" role="alert">
+              <span>{notice}</span>
+              <button type="button" className="btn btn-subtle" onClick={() => setNotice(null)}>Dismiss</button>
+            </div>
+          )}
           {remote.state === 'loading' && <PageLoading label={`Connecting to ${shown?.name ?? 'the environment'}…`} />}
           {remote.state === 'error' && (
             <div className="page settings-page">
@@ -200,7 +211,7 @@ export default function App() {
 
       {panel && (
         <ErrorBoundary fallbackTitle="The connections panel failed to render">
-          <ConnectionsPanel connections={connections} onClose={() => setPanel(false)} onChanged={reload} />
+          <ConnectionsPanel connections={connections} onClose={() => setPanel(false)} onChanged={async () => { setNotice(null); await reload(); }} />
         </ErrorBoundary>
       )}
     </div>

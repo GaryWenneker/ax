@@ -29,7 +29,11 @@ export function useTool() {
       const result = await callTool(id, name, args);
       if (ticket === latest.current) setState({ status: 'done', result });
     } catch (e) {
-      if (e instanceof ApiError && e.code === 'connection_changed') changed();
+      if (e instanceof ApiError && e.code === 'connection_changed') {
+        // This page is about to be replaced by the active environment's.
+        changed(`${e.message} Nothing was run.`);
+        return;
+      }
       if (ticket === latest.current) {
         setState({ status: 'error', message: e instanceof Error ? e.message : 'The call failed' });
       }

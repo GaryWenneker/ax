@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { PageEmpty, PageLoading } from '@cc/components/ui/PageLayout';
 import type { ToolResult } from '../api';
 import type { ToolState } from '../useTool';
@@ -11,14 +11,15 @@ function hasData(data: unknown): boolean {
 }
 
 const Result = memo(function Result({ result }: { result: ToolResult }) {
+  const [showData, setShowData] = useState(false);
   return (
     <div className={`admin-result${result.isError ? ' admin-result--error' : ''}`} data-testid="tool-result" data-outcome={result.isError ? 'error' : 'ok'}>
       {result.isError && <div className="settings-toast settings-toast--err" role="alert">The server reported an error for this call.</div>}
       {result.text ? <Markdown text={result.text} /> : <PageEmpty title="The server returned no text" />}
       {hasData(result.structuredContent) && (
-        <details className="admin-json">
+        <details className="admin-json" open={showData} onToggle={(event) => setShowData(event.currentTarget.open)}>
           <summary>Structured data</summary>
-          <JsonTree value={result.structuredContent} />
+          {showData && <JsonTree value={result.structuredContent} />}
         </details>
       )}
     </div>

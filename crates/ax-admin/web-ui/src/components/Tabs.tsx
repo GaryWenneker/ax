@@ -15,17 +15,21 @@ interface Props {
   children: ReactNode;
 }
 
-/** Tabs with one tab stop; Left, Right, Home and End move between them. */
+/**
+ * Tabs with one tab stop. Left, Right, Home and End move the focus; Enter,
+ * Space or a click chooses the tab. Choosing may ask the server something, so
+ * passing over a tab does not choose it.
+ */
 export default function Tabs({ name, label, tabs, active, onChange, children }: Props) {
   const bar = useRef<HTMLDivElement>(null);
   const go = (to: number) => {
     const tab = tabs[(to + tabs.length) % tabs.length];
     if (!tab) return;
-    onChange(tab.id);
     bar.current?.querySelector<HTMLElement>(`#${CSS.escape(`${name}-tab-${tab.id}`)}`)?.focus();
   };
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const at = tabs.findIndex((tab) => tab.id === active);
+    const focused = document.activeElement?.id ?? '';
+    const at = Math.max(0, tabs.findIndex((tab) => `${name}-tab-${tab.id}` === focused));
     switch (event.key) {
       case 'ArrowRight': go(at + 1); break;
       case 'ArrowLeft': go(at - 1); break;
@@ -54,7 +58,7 @@ export default function Tabs({ name, label, tabs, active, onChange, children }: 
           </button>
         ))}
       </div>
-      <div id={`${name}-panel`} role="tabpanel" aria-labelledby={`${name}-tab-${active}`}>
+      <div id={`${name}-panel`} role="tabpanel" aria-labelledby={`${name}-tab-${active}`} tabIndex={0}>
         {children}
       </div>
     </>

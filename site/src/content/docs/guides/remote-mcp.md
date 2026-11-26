@@ -287,7 +287,7 @@ The built-in authorization server of a generated host issues `ax:context` and `a
 
 The discovery document lists `ax:admin` under `scopes_supported` only when an external provider is configured and at least one project has an admin subject. Otherwise it is unchanged, so a client that asks for every advertised scope keeps working.
 
-Remotely, `ax_policy_index` only re-imports the project's own policy files (`action: "index"`); its restore, history and audit actions are refused. An index run continues on the server when the request times out or the client disconnects. While it runs, other calls to that project wait; a server accepts four index-changing calls at once and answers 429 beyond that. The tools and their limits are in the [MCP Server reference](/reference/mcp-server/#management-tools-over-remote-mcp). [ax-admin](/guides/remote-admin/) is the application that uses them.
+Remotely, `ax_policy_index` only re-imports the project's own policy files (`action: "index"`); its restore, history and audit actions are refused. An index run continues on the server when the request times out or the client disconnects; the 504 answer for that case carries `"running": true`. While it runs, other calls to that project get HTTP 503 with `Retry-After` after a two-second wait instead of queueing, so other projects keep their request slots. A server accepts four index-changing calls at once and answers 429 beyond that. On shutdown the server waits for a running index operation. The tools and their limits are in the [MCP Server reference](/reference/mcp-server/#management-tools-over-remote-mcp). [ax-admin](/guides/remote-admin/) is the application that uses them.
 
 ## Connect ChatGPT
 

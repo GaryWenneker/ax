@@ -53,7 +53,7 @@ export function QueryCard({ title, description, tool, argument, placeholder, idl
   );
 }
 
-/** A tool without input that runs when the page opens. `args` must be a constant. */
+/** A tool without input that runs when the page opens, and again when `args` change in value. */
 export function AutoCard({ title, description, tool, args = NO_ARGS }: {
   title: string;
   description: string;
@@ -61,15 +61,18 @@ export function AutoCard({ title, description, tool, args = NO_ARGS }: {
   args?: Record<string, unknown>;
 }) {
   const { state, run } = useTool();
+  // Compared by value, so a caller may pass a new but equal object each render.
+  const argsText = JSON.stringify(args);
+  const stable = useMemo(() => JSON.parse(argsText) as Record<string, unknown>, [argsText]);
   useEffect(() => {
-    void run(tool, args);
-  }, [run, tool, args]);
+    void run(tool, stable);
+  }, [run, tool, stable]);
   return (
     <PageCard
       title={title}
       description={description}
       footer={
-        <button type="button" className="btn btn-secondary" disabled={state.status === 'loading'} onClick={() => void run(tool, args)}>
+        <button type="button" className="btn btn-secondary" disabled={state.status === 'loading'} onClick={() => void run(tool, stable)}>
           <Codicon name="refresh" /> Refresh
         </button>
       }
@@ -117,6 +120,7 @@ export function SchemaForm({ tool, submit = 'Run', confirm }: { tool: Tool; subm
   const { state, run } = useTool();
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
+    if (state.status === 'loading') return;
     try {
       const args = argumentsFromValues(fields, values);
       setProblem(null);
@@ -163,7 +167,8 @@ export function SchemaForm({ tool, submit = 'Run', confirm }: { tool: Tool; subm
           );
         })}
         <div className="admin-actions">
-          <button type="submit" className="btn" disabled={state.status === 'loading'}>{submit}</button>
+          {/* Stays focusable while running, so focus returning from the question has a place to land. */}
+          <button type="submit" className="btn" aria-disabled={state.status === 'loading'}>{submit}</button>
         </div>
       </form>
       <ToolResultView state={state} />

@@ -134,3 +134,5 @@ a.nav-item:focus-visible { outline: 1px solid var(--accent-text); outline-offset
 .admin-tool-head { padding: var(--card-pad-y) var(--card-pad-x) 0; }
 .admin-tool-head h3 { font-size: 14px; color: var(--text-hi); font-family: var(--font-mono); }
 .admin-tool-head p { margin-top: 4px; color: var(--text-dim); font-size: var(--fs-sm); }
+.admin-notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 var(--content-pad-x) 8px; }
+[aria-disabled="true"].btn { opacity: 0.55; cursor: default; }

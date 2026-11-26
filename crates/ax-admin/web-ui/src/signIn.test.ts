@@ -63,12 +63,27 @@ test('a failed sign-in and a failed request both end with their message', async 
 test('once stopped it asks nothing more and saves nothing', async () => {
   const h = harness([{ state: 'pending' }, { state: 'ready' }]);
   h.steps.pause = async () => { h.log.push('pause'); h.stop(); };
-  assert.deepEqual(await waitForSignIn(h.steps), { state: 'stopped' });
+  assert.deepEqual(await waitForSignIn(h.steps), { state: 'stopped', saved: null });
   assert.deepEqual(h.log, ['status', 'pause']);
   // Stopped while a question was in flight: its "ready" answer is not acted on.
   const late = harness([{ state: 'ready' }]);
   const outcome = waitForSignIn(late.steps);
   late.stop();
-  assert.deepEqual(await outcome, { state: 'stopped' });
+  assert.deepEqual(await outcome, { state: 'stopped', saved: null });
   assert.ok(!late.log.includes('complete'));
+});
+
+test('stopped while the connection is being saved: the saved connection is handed back, not announced', async () => {
+  const h = harness([{ state: 'ready' }], 40);
+  const outcome = waitForSignIn(h.steps);
+  // The user cancels during the slow completion.
+  setTimeout(() => h.stop(), 20);
+  assert.deepEqual(await outcome, { state: 'stopped', saved: 'saved' });
+  assert.deepEqual(h.log, ['status', 'complete']);
+});
+
+test('stopped while a completion fails is still just stopped', async () => {
+  const h = harness([{ state: 'ready' }]);
+  h.steps.complete = async () => { h.stop(); throw new Error('lost'); };
+  assert.deepEqual(await waitForSignIn(h.steps), { state: 'stopped', saved: null });
 });

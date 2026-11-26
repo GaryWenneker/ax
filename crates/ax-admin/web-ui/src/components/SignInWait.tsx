@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { cancelLogin, completeLogin, loginStatus, type Connection, type StartedSignIn } from '../api';
+import { cancelLogin, completeLogin, loginStatus, removeConnection, type Connection, type StartedSignIn } from '../api';
 import { waitForSignIn } from '../signIn';
 
 interface Props {
@@ -39,11 +39,35 @@ export default function SignInWait({ signIn, blocked, onConnected, onFailed, onC
       pause: () => new Promise((resolve) => window.setTimeout(resolve, 1000)),
       stopped: () => stopped,
     }).then((outcome) => {
-      settled = outcome.state !== 'stopped';
-      if (outcome.state === 'connected') handlers.current.onConnected(outcome.connection);
-      else if (outcome.state === 'failed') handlers.current.onFailed(outcome.message);
+      switch (outcome.state) {
+        case 'connected':
+          settled = true;
+          handlers.current.onConnected(outcome.connection);
+          break;
+        case 'failed':
+          settled = true;
+          // The attempt may still be alive in ax-admin (a lost request, for
+          // one). Cancelling one that already ended is refused, harmlessly.
+          cancelLogin(signIn.id).catch(() => undefined);
+          handlers.current.onFailed(outcome.message);
+          break;
+        case 'stopped':
+          // Cancelled in the moment the connection was saved: cancelling means
+          // nothing is kept, so it is taken out again.
+          if (outcome.saved) removeConnection(outcome.saved.id).catch(() => undefined);
+          break;
+        default: {
+          const unknown: never = outcome;
+          return unknown;
+        }
+      }
+      return undefined;
     });
+    // Closing or reloading the page runs no cleanup; tell ax-admin on the way out.
+    const leaving = () => { if (!settled) cancelLogin(signIn.id, true).catch(() => undefined); };
+    window.addEventListener('pagehide', leaving);
     return () => {
+      window.removeEventListener('pagehide', leaving);
       stopped = true;
       // Closed or cancelled while waiting: tell ax-admin, which also removes
       // tokens if the browser finishes later. Nothing to do once it settled.
