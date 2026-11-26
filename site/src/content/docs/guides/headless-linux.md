@@ -57,12 +57,13 @@ curl -fsSL https://getax.wenneker.io/install-slim.sh | sh -s -- --bin-dir /opt/a
 
 The installer does not touch agent configuration or create an `~/.ax` install tree, and the headless build never updates itself: run the installer again to upgrade. It refuses to replace a full ax at the same path unless you pass `--force`.
 
-Container images, for `linux/amd64` and `linux/arm64`, are tagged with the release version without the `v`:
+Container images, for `linux/amd64` and `linux/arm64`, are tagged with the release version without the `v`, and the newest release also as `latest`, `latest-ubuntu` and `latest-server`:
 
 | Image | Contents |
 |---|---|
 | `ghcr.io/garywenneker/ax-slim:<version>` | distroless, non-root, no shell; default command `ax serve --mcp` |
 | `ghcr.io/garywenneker/ax-slim:<version>-ubuntu` | Ubuntu 26.04 with `git` and the `ax-index-repo` job entry point |
+| `ghcr.io/garywenneker/ax-slim:<version>-server` | the same, with `ax-serve-repo` as entry point: a hosted remote MCP server ([Deploy to the cloud](#deploy-to-the-cloud)) |
 
 To add ax to your own image, copy the binary from the published image:
 
@@ -238,8 +239,38 @@ az containerapp job logs show --name ax-index --resource-group my-rg --container
 
 Without the script, create a job from `ghcr.io/garywenneker/ax-slim:<version>-ubuntu` with the command `ax-index-repo` and the environment variables above.
 
+## Deploy to the cloud
+
+These buttons run the headless build as a hosted **remote MCP server** for one repository. The `-server` image's entry point, `ax-serve-repo`, clones the repository, runs `ax init` and starts `ax mcp remote serve --bind 0.0.0.0 --port $PORT` behind the platform's HTTPS ingress. Agents and IDEs then connect to:
+
+```text
+https://<your service>/projects/project/mcp
+Authorization: Bearer <AX_API_KEY>
+```
+
+| Platform | Button | What it creates |
+|---|---|---|
+| Azure Container Apps | [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fgetax.wenneker.io%2Fdeploy%2Fazure-slim-server.json) | Log Analytics workspace, Container Apps environment and an always-on Container App with HTTPS ingress. The MCP URL is in the deployment's **Outputs**. |
+| Render | [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/GaryWenneker/ax) | A web service from `render.yaml` in the repository (plan `starter`). Render generates `AX_API_KEY`; copy it from the service's **Environment** tab. |
+| Koyeb | [![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?type=docker&name=ax-mcp&image=ghcr.io%2Fgarywenneker%2Fax-slim%3Alatest-server&ports=8080%3Bhttp%3B%2F&env%5BPORT%5D=8080&env%5BAX_REPO_URL%5D=https%3A%2F%2Fgithub.com%2FOWNER%2FREPO&env%5BAX_API_KEY%5D=CHANGE_ME&env%5BAX_PROJECT_ID%5D=project) | A web service from the image. Replace `AX_REPO_URL` and `AX_API_KEY` in the form before you deploy; the placeholder key is rejected on purpose. |
+
+Every deployment asks for:
+
+- **`AX_REPO_URL`**: the git URL to serve. For a private repository, include a read-only token in the URL. Azure stores it as a secret.
+- **`AX_API_KEY`**: the bearer key clients send, at least 32 characters (letters, digits and `._~+/=-`). Generate one with `openssl rand -hex 32`. Only its SHA-256 is written to the server configuration.
+
+Optional variables: `AX_REPO_REF` (branch or tag), `AX_API_KEY_WRITE=1` (let the key write memories and policy; read-only otherwise), `AX_PROJECT_ID` (the `project` part of the URL) and `AX_PUBLIC_URL`. The public URL is detected on Azure Container Apps, Render, Koyeb and Railway; set it yourself anywhere else.
+
+The checkout and index live on the container's disk. A restart or redeploy clones and indexes again, so the first requests after a start wait for `ax init`. In this headless build nobody can approve browser (OAuth) sign-ins, because that happens in the Command Center: the API key is the only way in.
+
+The container pulls `ghcr.io/garywenneker/ax-slim:<version>-server`; Render and Koyeb use the `latest-server` tag, and Azure lets you pick a version.
+
+Not offered as a button: Vercel and Netlify do not run containers (use [Vercel Sandbox](#vercel-sandbox) instead), Google Cloud Run's button builds from a Dockerfile rather than running a published image, and a Railway button needs a template created in Railway's dashboard. On Railway, a service from the `latest-server` image works the same way.
+
+To index once and run a command instead of serving, use the [Azure Container Apps job](#deploy-with-one-click).
+
 ## Limits
 
-An agent in a sandbox or container starts `ax serve --mcp` itself and talks to it over stdio. `ax mcp remote serve` listens on `127.0.0.1` only, so inside a container it is reachable from the same container or pod, not from Container Apps ingress directly.
+An agent in a sandbox or container usually starts `ax serve --mcp` itself and talks to it over stdio. `ax mcp remote serve` listens on `127.0.0.1` by default; pass `--bind 0.0.0.0` only behind an HTTPS ingress or proxy, as `ax-serve-repo` does. It serves plain HTTP.
 
 See `slim/README.md` in the repository for measured sizes and more run examples.

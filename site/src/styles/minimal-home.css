@@ -109,3 +109,9 @@ html[data-ax-motion='paused'] .ax-landing .ax-install-command{transition:none}
 html[data-ax-motion='paused'] .ax-landing .ax-download-primary[data-copied="true"]::after{animation:none;opacity:0}
 html[data-ax-motion='paused'] .ax-landing .ax-download-primary[data-copied="true"]::before,html[data-ax-motion='paused'] .ax-landing .ax-install-command button[data-copied="true"]::before,html[data-ax-motion='paused'] .ax-landing .ax-install-command button[data-copied="true"]::after{animation:none;opacity:0}
 @media(prefers-reduced-motion:reduce){html:not([data-ax-motion='running']) .ax-landing .ax-download-primary[data-copied="true"]::before,html:not([data-ax-motion='running']) .ax-landing .ax-download-primary[data-copied="true"]::after,html:not([data-ax-motion='running']) .ax-landing .ax-install-command button[data-copied="true"]::before,html:not([data-ax-motion='running']) .ax-landing .ax-install-command button[data-copied="true"]::after{animation:none;opacity:0}}
+.ax-landing .ax-cloud-deploy{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin-top:12px;font:11px/1.5 'IBM Plex Mono',monospace;color:#828e81}
+.ax-landing .ax-cloud-deploy-title{color:#b4c6a9;text-decoration:underline;text-underline-offset:3px;margin-right:4px}
+.ax-landing .ax-cloud-deploy-title:hover{color:var(--ax-lime)}
+.ax-landing .ax-cloud-deploy-button{border:1px solid #343b35;border-radius:7px;padding:3px 9px;background:rgba(12,15,13,.76);color:#edf0e9;text-decoration:none;transition:border-color .2s ease}
+.ax-landing .ax-cloud-deploy-button:hover,.ax-landing .ax-cloud-deploy-button:focus-visible{border-color:var(--ax-lime);color:var(--ax-lime)}
+@media(max-width:600px){.ax-landing .ax-cloud-deploy{margin-top:8px;font-size:10px;gap:5px 6px}.ax-landing .ax-cloud-deploy-button{padding:2px 7px}}

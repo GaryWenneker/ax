@@ -10,4 +10,4 @@ pub mod publications;
 pub mod server;
 
 pub use config::RemoteConfig;
-pub use server::serve;
+pub use server::{serve, serve_on};
