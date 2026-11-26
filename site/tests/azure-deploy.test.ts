@@ -8,7 +8,8 @@ import { join } from 'node:path';
 const site = join(import.meta.dirname, '..');
 const script = join(site, 'scripts', 'write-azure-template.mjs');
 const source = JSON.parse(readFileSync(join(site, '..', 'slim', 'azure', 'azuredeploy.json'), 'utf8'));
-const guide = readFileSync(join(site, 'src', 'content', 'docs', 'guides', 'headless-linux.md'), 'utf8');
+const docs = join(site, 'src', 'content', 'docs');
+const pages = ['guides/headless-linux.md', 'getting-started/installation.md'];
 
 function generate(latest: string) {
 	const dir = mkdtempSync(join(tmpdir(), 'ax-azure-'));
@@ -41,7 +42,10 @@ test('template runs the ubuntu image with ax-index-repo and keeps the repo URL s
 	for (const cpu of source.parameters.cpu.allowedValues) assert.ok(source.variables.memoryForCpu[cpu], cpu);
 });
 
-test('guide links the Deploy to Azure button to the served template', () => {
+test('docs link the Deploy to Azure button to the served template', () => {
 	const url = 'https://getax.wenneker.io/deploy/azure-slim.json';
-	assert.ok(guide.includes(`https://portal.azure.com/#create/Microsoft.Template/uri/${encodeURIComponent(url)}`));
+	for (const page of pages) {
+		const text = readFileSync(join(docs, page), 'utf8');
+		assert.ok(text.includes(`https://portal.azure.com/#create/Microsoft.Template/uri/${encodeURIComponent(url)}`), page);
+	}
 });

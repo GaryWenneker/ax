@@ -101,7 +101,11 @@ For a Vercel Sandbox, an Azure Container Apps job, a CI runner or another machin
 curl -fsSL https://getax.wenneker.io/install-slim.sh | sh
 ```
 
-See [Headless Linux build](/guides/headless-linux/) for options, container images and Azure Container Apps jobs.
+To run it in the cloud without installing anything locally, deploy it as an Azure Container Apps job that clones a repository, indexes it and runs a command:
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fgetax.wenneker.io%2Fdeploy%2Fazure-slim.json)
+
+See [Headless Linux build](/guides/headless-linux/#deploy-with-one-click) for what the button creates, and for options, container images and Vercel Sandbox.
 
 ### Windows
 
