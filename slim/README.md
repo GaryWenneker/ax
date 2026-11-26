@@ -237,6 +237,19 @@ including an MCP check and the SDK call.
 
 ### Azure Container Apps
 
+**One click:** the website's guide (Guides → Headless Linux build) has a
+*Deploy to Azure* button. It opens `slim/azure/azuredeploy.json` in the Azure
+portal; the site serves a copy at `/deploy/azure-slim.json` whose `axVersion`
+default is the newest release (`site/scripts/write-azure-template.mjs`, run by
+`npm run build`). The template creates a Log Analytics workspace, a Container
+Apps environment and the same manual job as the script below; it does not start
+a run. The same template from the CLI:
+
+```bash
+az deployment group create --resource-group my-rg --template-file slim/azure/azuredeploy.json --parameters repoUrl=https://github.com/<owner>/<repo>
+```
+
+**Script:**
 `slim/azure/create-job.sh` creates (or updates) a manual job from the
 `-ubuntu` image. The job runs `ax-index-repo` (`slim/ax-index-repo.sh`), which
 clones `AX_REPO_URL`, runs `ax init` and then `AX_JOB_COMMAND`. The repository
