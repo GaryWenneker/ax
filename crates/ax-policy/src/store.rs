@@ -755,9 +755,6 @@ fn write_utf8(path: &Path, content: &str) -> Result<(), String> {
 pub async fn open_rw_pool(db_path: &Path) -> Result<sqlx::SqlitePool, AxError> {
     use sqlx::sqlite::SqlitePoolOptions;
 
-    if let Some(ax_dir) = db_path.parent() {
-        ax_utils::clear_stale_lock(&ax_dir.join("ax.lock"));
-    }
     let opts = ax_db::connect_options(db_path, false);
     let timeout = ax_db::busy_timeout();
     let timeout_ms = timeout.as_millis() as i64;

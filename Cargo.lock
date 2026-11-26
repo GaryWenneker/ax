@@ -1164,6 +1164,7 @@ dependencies = [
  "ax-types",
  "dirs",
  "fs2",
+ "libc",
  "thiserror 1.0.69",
  "tokio",
  "tracing",

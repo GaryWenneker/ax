@@ -185,9 +185,7 @@ pub async fn restart_daemon(project_root: &Path) -> Result<DaemonRestartReport, 
     release_daemon_lock(&pid_path);
 
     let lock_path = get_ax_dir(project_root).join("ax.lock");
-    let had_lock = lock_path.exists();
-    ax_utils::clear_stale_lock(&lock_path);
-    let cleared_ax_lock = had_lock && !lock_path.exists();
+    let cleared_ax_lock = ax_utils::clear_stale_lock(&lock_path);
 
     // Give the OS a beat to release named pipes / sockets after kill.
     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
