@@ -381,6 +381,11 @@ async fn e5_admin_calls_cannot_select_another_project_root() {
                 call(&app, "alpha", ADMIN_KEY, &session, tool, json!({ field: beta })).await;
             assert_eq!(status, StatusCode::OK, "{tool}");
             assert_eq!(body["error"]["code"], json!(-32602), "{tool} {field}: {body}");
+            assert_eq!(
+                body["error"]["message"],
+                "Project and policy session are selected by the authenticated connection",
+                "{tool} {field}"
+            );
         }
     }
 }

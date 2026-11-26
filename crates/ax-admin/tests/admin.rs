@@ -789,9 +789,11 @@ async fn a10_browser_sign_in_saves_only_after_it_succeeds() {
 
 /// A scripted MCP server. `reply` sees the JSON-RPC method, how many times it
 /// was called before, and the request headers.
+type Reply = Box<dyn Fn(&str, usize, &HeaderMap, &Value) -> Response + Send + Sync>;
+
 struct Script {
     calls: Mutex<Vec<(String, HeaderMap)>>,
-    reply: Box<dyn Fn(&str, usize, &HeaderMap, &Value) -> Response + Send + Sync>,
+    reply: Reply,
 }
 
 impl Script {

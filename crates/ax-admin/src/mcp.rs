@@ -343,12 +343,11 @@ impl Remote {
         // The server acknowledges this notification with 202. A server that
         // ignores it still works, so only authentication problems are fatal.
         let ready = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
-        match self
+        if let Err(e @ (McpError::Rejected | McpError::Forbidden(_))) = self
             .post(token, Some(&session), &ready, self.limits.handshake)
             .await
         {
-            Err(e @ (McpError::Rejected | McpError::Forbidden(_))) => return Err(e),
-            _ => {}
+            return Err(e);
         }
         Ok(session)
     }
