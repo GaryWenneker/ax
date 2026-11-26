@@ -50,7 +50,7 @@ export default defineConfig({
   function onKey(e){if(e.key==='Escape')close()}
   document.addEventListener('click',function(e){
     var t=e.target;
-    if(t.tagName==='IMG'&&t.closest('.sl-markdown-content')){
+    if(t.tagName==='IMG'&&t.closest('.sl-markdown-content')&&!t.closest('a')){
       e.preventDefault();open(t.src,t.alt);
     }
   });

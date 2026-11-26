@@ -252,11 +252,23 @@ https://<your service>/projects/project/mcp
 Authorization: Bearer <AX_API_KEY>
 ```
 
-| Platform | Button | What it creates |
-|---|---|---|
-| Azure Container Apps | [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fgetax.wenneker.io%2Fdeploy%2Fazure-slim-server.json) | Log Analytics workspace, Container Apps environment and an always-on Container App with HTTPS ingress. The MCP URL is in the deployment's **Outputs**. |
-| Render | [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/GaryWenneker/ax) | A web service from `render.yaml` in the repository (plan `starter`). Render generates `AX_API_KEY`; copy it from the service's **Environment** tab. |
-| Koyeb | [![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?type=docker&name=ax-mcp&image=ghcr.io%2Fgarywenneker%2Fax-slim%3Alatest-server&ports=8080%3Bhttp%3B%2F&env%5BPORT%5D=8080&env%5BAX_REPO_URL%5D=https%3A%2F%2Fgithub.com%2FOWNER%2FREPO&env%5BAX_API_KEY%5D=CHANGE_ME&env%5BAX_PROJECT_ID%5D=project) | A web service from the image. Replace `AX_REPO_URL` and `AX_API_KEY` in the form before you deploy; the placeholder key is rejected on purpose. |
+### Azure Container Apps
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fgetax.wenneker.io%2Fdeploy%2Fazure-slim-server.json)
+
+Log Analytics workspace, Container Apps environment and an always-on Container App with HTTPS ingress. The MCP URL is in the deployment's **Outputs**.
+
+### Render
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/GaryWenneker/ax)
+
+A web service from `render.yaml` in the repository (plan `starter`). Render generates `AX_API_KEY`; copy it from the service's **Environment** tab.
+
+### Koyeb
+
+[![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?type=docker&name=ax-mcp&image=ghcr.io%2Fgarywenneker%2Fax-slim%3Alatest-server&ports=8080%3Bhttp%3B%2F&env%5BPORT%5D=8080&env%5BAX_REPO_URL%5D=https%3A%2F%2Fgithub.com%2FOWNER%2FREPO&env%5BAX_API_KEY%5D=CHANGE_ME&env%5BAX_PROJECT_ID%5D=project)
+
+A web service from the image. Replace `AX_REPO_URL` and `AX_API_KEY` in the form before you deploy; the placeholder key is rejected on purpose.
 
 Every deployment asks for:
 
@@ -272,6 +284,65 @@ The container pulls `ghcr.io/garywenneker/ax-slim:<version>-server`; Render and 
 Not offered as a button: Vercel and Netlify do not run containers (use [Vercel Sandbox](#vercel-sandbox) instead), Google Cloud Run's button builds from a Dockerfile rather than running a published image, and a Railway button needs a template created in Railway's dashboard. On Railway, a service from the `latest-server` image works the same way.
 
 To index once and run a command instead of serving, use the [Azure Container Apps job](#deploy-with-one-click).
+
+## Run it yourself with Docker or Podman
+
+On your own server or VM, the same `-server` image runs with [Caddy](https://caddyserver.com/) in front of it. Caddy gets an HTTPS certificate for your domain on its own, which the server needs because it only accepts an `https://` address.
+
+| File | Use |
+|---|---|
+| [`compose.yaml`](/deploy/containers/compose.yaml) | Docker Compose or Podman Compose: the ax server and Caddy |
+| [`Caddyfile`](/deploy/containers/Caddyfile) | HTTPS for `AX_PUBLIC_URL`, forwarded to the ax container |
+| [`ax.env`](/deploy/containers/ax.env) | Your settings: public address, repository and API key |
+| [`ax-mcp.container`](/deploy/containers/ax-mcp.container) | Podman Quadlet: the ax server as a systemd service |
+| [`ax-caddy.container`](/deploy/containers/ax-caddy.container) | Podman Quadlet: Caddy as a systemd service |
+| [`ax-mcp.network`](/deploy/containers/ax-mcp.network) | Podman Quadlet: the network both containers share |
+
+Before you start, point your domain's DNS at the host and open ports 80 and 443. The files pin the ax release they were published with and an exact Caddy version; change the image version in them to upgrade.
+
+### Docker or Podman Compose
+
+```bash
+mkdir ax-mcp && cd ax-mcp
+for f in compose.yaml Caddyfile ax.env; do curl -fsSLO "https://getax.wenneker.io/deploy/containers/$f"; done
+```
+
+Edit `ax.env`: set `AX_PUBLIC_URL` to your domain (`https://ax.example.com`), `AX_REPO_URL` to the repository and `AX_API_KEY` to the output of `openssl rand -hex 32`. Then start it:
+
+```bash
+docker compose up -d
+```
+
+With Podman:
+
+```bash
+podman compose up -d
+```
+
+Rootless Podman may bind ports 80 and 443 only after `sudo sysctl net.ipv4.ip_unprivileged_port_start=80` (add the setting to `/etc/sysctl.d/` to keep it after a reboot). `docker compose logs -f ax` shows the clone and the index. The server is ready when it prints `serving https://…/projects/project/mcp`.
+
+### Podman as a systemd service
+
+Quadlet turns the three unit files into systemd services that start at boot (rootless shown):
+
+```bash
+mkdir -p ~/.config/containers/systemd ~/.config/ax-mcp
+cd ~/.config/containers/systemd
+for f in ax-mcp.container ax-caddy.container ax-mcp.network; do curl -fsSLO "https://getax.wenneker.io/deploy/containers/$f"; done
+cd ~/.config/ax-mcp
+for f in Caddyfile ax.env; do curl -fsSLO "https://getax.wenneker.io/deploy/containers/$f"; done
+```
+
+Edit `~/.config/ax-mcp/ax.env` as above. Rootless Podman may bind ports 80 and 443 only after `sudo sysctl net.ipv4.ip_unprivileged_port_start=80`; to keep services running after you log out, run `sudo loginctl enable-linger "$USER"`. Then start it:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user start ax-caddy
+```
+
+Starting `ax-caddy` starts `ax-mcp` and the network first. `journalctl --user -u ax-mcp -f` shows the clone and the index.
+
+Clients connect to `https://<your domain>/projects/project/mcp` with `Authorization: Bearer <AX_API_KEY>`, the same as for the cloud buttons above. To try it on your own computer, set `AX_PUBLIC_URL=https://localhost`: Caddy then uses its own local certificate, which clients do not trust until you add Caddy's root certificate.
 
 ## An interface for the headless build
 

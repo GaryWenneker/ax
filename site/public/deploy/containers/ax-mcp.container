@@ -1,0 +1,24 @@
+# Podman Quadlet: the ax remote MCP server as a systemd service.
+# Copy to ~/.config/containers/systemd/ with ax-mcp.network and ax-caddy.container,
+# put ax.env and Caddyfile in ~/.config/ax-mcp/, then:
+#   systemctl --user daemon-reload && systemctl --user start ax-caddy
+# Guide: https://getax.wenneker.io/guides/headless-linux/
+[Unit]
+Description=ax headless remote MCP server
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=ax
+# The ax release this file was published with. Change the version to upgrade.
+Image=ghcr.io/garywenneker/ax-slim:10.1.2-server
+EnvironmentFile=%h/.config/ax-mcp/ax.env
+Network=ax-mcp.network
+
+[Service]
+Restart=always
+# The first start pulls the image, clones the repository and indexes it.
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target

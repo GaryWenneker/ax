@@ -3,7 +3,11 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { releaseAssets, getReleaseAsset, getDefaultArch, mountMinimalDownload } from '../src/scripts/minimal-download.ts';
+import { existsSync } from 'node:fs';
+import {
+  releaseAssets, getReleaseAsset, getDefaultArch, mountMinimalDownload,
+  installProducts, installerCommand, platformFor, type Product,
+} from '../src/scripts/minimal-download.ts';
 
 const site = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p: string) => readFileSync(path.join(site, p), 'utf8');
@@ -68,7 +72,7 @@ test('installer offers commands with manual OS selection and keeps optional rele
   assert.match(download, /data-ax-install-copy/);
   assert.match(download, /<button[^>]*data-ax-download/);
   assert.doesNotMatch(download, /releases\/latest\/download|Download for/);
-  assert.match(read('src/scripts/minimal-download.ts'), /writeText\(installerCommand\(selected\)\)/);
+  assert.match(read('src/scripts/minimal-download.ts'), /const command = installerCommand\(selected, chosen\);[\s\S]*writeText\(command\)/);
   assert.equal(new Set(Object.values(releaseAssets).flatMap(assets => Object.values(assets))).size, 6);
   assert.equal(getReleaseAsset('macos', 'arm64'), 'https://github.com/GaryWenneker/ax/releases/latest/download/ax-darwin-arm64.tar.gz');
   assert.equal(getReleaseAsset('linux', 'x64'), 'https://github.com/GaryWenneker/ax/releases/latest/download/ax-linux-x64.tar.gz');
@@ -76,6 +80,137 @@ test('installer offers commands with manual OS selection and keeps optional rele
   assert.equal(getReleaseAsset('wsl2', 'x64'), getReleaseAsset('linux', 'x64'));
   assert.equal(getDefaultArch('macos'), 'arm64');
   assert.equal(getDefaultArch('windows'), 'x64');
+});
+
+test('homepage installer offers Ax, headless Linux and the admin app with their own commands', () => {
+  assert.deepEqual(Object.keys(installProducts), ['ax', 'slim', 'admin']);
+  assert.deepEqual(installProducts.ax.platforms, ['macos', 'linux', 'windows', 'wsl2']);
+  assert.deepEqual(installProducts.slim.platforms, ['linux']);
+  assert.deepEqual(installProducts.admin.platforms, ['macos', 'linux', 'windows']);
+  assert.equal(installerCommand('macos'), 'curl -fsSL https://getax.wenneker.io/install.sh | sh');
+  assert.equal(installerCommand('windows', 'ax'), 'irm https://getax.wenneker.io/install.ps1 | iex');
+  assert.equal(installerCommand('linux', 'slim'), 'curl -fsSL https://getax.wenneker.io/install-slim.sh | sh');
+  assert.equal(installerCommand('macos', 'admin'), 'curl -fsSL https://getax.wenneker.io/install-admin.sh | sh');
+  assert.equal(installerCommand('linux', 'admin'), 'curl -fsSL https://getax.wenneker.io/install-admin.sh | sh');
+  assert.equal(installerCommand('windows', 'admin'), 'irm https://getax.wenneker.io/install-admin.ps1 | iex');
+  // Every command points at an installer the site actually serves.
+  for (const product of Object.keys(installProducts) as Product[]) {
+    for (const os of installProducts[product].platforms) {
+      const file = installerCommand(os, product).match(/getax\.wenneker\.io\/([\w.-]+)/)?.[1];
+      assert.ok(file && existsSync(path.join(site, 'public', file)), `${product}/${os}: ${file}`);
+    }
+  }
+  // A platform the product does not support moves to one it does.
+  assert.equal(platformFor('slim', 'macos'), 'linux');
+  assert.equal(platformFor('slim', 'windows'), 'linux');
+  assert.equal(platformFor('admin', 'wsl2'), 'linux');
+  assert.equal(platformFor('admin', 'windows'), 'windows');
+  assert.equal(platformFor('ax', 'wsl2'), 'wsl2');
+  assert.equal(platformFor('slim', null), 'linux');
+  assert.equal(platformFor('ax', null), null);
+  assert.equal(installProducts.ax.guide, '/getting-started/installation/');
+  assert.equal(installProducts.slim.guide, '/guides/headless-linux/');
+  assert.equal(installProducts.admin.guide, '/guides/remote-admin/');
+  for (const product of ['ax', 'slim', 'admin']) {
+    assert.match(download, new RegExp(`data-ax-product=\\{?["']?${product}|id:\\s*'${product}'`));
+  }
+  assert.match(download, /data-ax-product=/);
+  assert.match(download, /data-ax-guide/);
+  // Without the extension Vite bundles the stale compiled minimal-download.js next to the source.
+  assert.match(download, /import \{ mountMinimalDownload \} from '\.\.\/scripts\/minimal-download\.ts';/);
+  assert.match(css, /\.ax-platform-options button\[hidden\]\{display:none/);
+});
+
+test('choosing a product limits the platforms, keeps the menu open and copies its own command', async () => {
+  const copied: string[] = [];
+  type El = {
+    sel: string; dataset: Record<string, string>; hidden: boolean; textContent: string; innerHTML: string;
+    href: string; attrs: Record<string, string>; kids: El[]; on: Map<string, (() => void)[]>;
+    classList: { add: () => void; remove: () => void; contains: () => boolean };
+    setAttribute: (n: string, v: string) => void; getAttribute: (n: string) => string | undefined;
+    addEventListener: (t: string, fn: () => void) => void; contains: (n: unknown) => boolean;
+    querySelector: (s: string) => El | null; querySelectorAll: (s: string) => El[];
+  };
+  function el(sel: string, dataset: Record<string, string> = {}): El {
+    const e: El = {
+      sel, dataset, hidden: sel === '[data-ax-install-panel]' || sel === '[data-ax-platform-panel]',
+      textContent: '', innerHTML: '', href: '', attrs: {}, kids: [], on: new Map(),
+      classList: { add() {}, remove() {}, contains: () => false },
+      setAttribute(n, v) { e.attrs[n] = v; },
+      getAttribute(n) { return e.attrs[n]; },
+      addEventListener(t, fn) { e.on.set(t, [...(e.on.get(t) ?? []), fn]); },
+      contains(n) { return n === e || e.kids.some(k => k.contains(n)); },
+      querySelector(s) { return e.querySelectorAll(s)[0] ?? null; },
+      querySelectorAll(s) {
+        const out: El[] = [];
+        const visit = (k: El) => { if (k.sel === s) out.push(k); k.kids.forEach(visit); };
+        e.kids.forEach(visit);
+        return out;
+      },
+    };
+    return e;
+  }
+  const root = el('[data-ax-downloader]');
+  const parts = Object.fromEntries([
+    'data-ax-download', 'data-ax-download-label', 'data-ax-main-icon', 'data-ax-platform-label',
+    'data-ax-platform-toggle', 'data-ax-platform-panel', 'data-ax-platform-help', 'data-ax-install-panel',
+    'data-ax-install-code', 'data-ax-install-instruction', 'data-ax-install-copy', 'data-ax-install-status',
+    'data-ax-guide',
+  ].map(name => [name, el(`[${name}]`)]));
+  const products = ['ax', 'slim', 'admin'].map(p => el('[data-ax-product]', { axProduct: p }));
+  const platforms = ['macos', 'linux', 'windows', 'wsl2'].map(os => el('[data-ax-os]', { axOs: os }));
+  root.kids.push(...Object.values(parts), ...products, ...platforms);
+  const click = (e: El) => (e.on.get('click') ?? []).forEach(fn => fn());
+  const previous = { document: globalThis.document, window: globalThis.window, navigator: globalThis.navigator, Node: globalThis.Node };
+  const set = (name: string, value: unknown) => Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
+  set('Node', class {});
+  set('navigator', { clipboard: { writeText: async (t: string) => { copied.push(t); } }, platform: 'MacIntel', userAgent: 'Mozilla/5.0 (Macintosh)', maxTouchPoints: 0 });
+  set('document', { documentElement: { dataset: {} }, addEventListener() {}, querySelector: (s: string) => (s === '[data-ax-downloader]' ? root : null) });
+  set('window', { setTimeout: () => 0, clearTimeout() {}, matchMedia: () => ({ matches: false }) });
+  try {
+    mountMinimalDownload();
+    const [ax, slim, admin] = products;
+    const [macos, linux, windows, wsl2] = platforms;
+    assert.equal(ax.attrs['aria-pressed'], 'true');
+    assert.equal(parts['data-ax-install-code'].textContent, 'curl -fsSL https://getax.wenneker.io/install.sh | sh');
+    assert.equal(parts['data-ax-guide'].href, '/getting-started/installation/');
+
+    click(parts['data-ax-platform-toggle']);
+    click(slim);
+    assert.equal(parts['data-ax-platform-panel'].hidden, false, 'choosing a product keeps the menu open');
+    assert.equal(slim.attrs['aria-pressed'], 'true');
+    assert.equal(ax.attrs['aria-pressed'], 'false');
+    assert.deepEqual(platforms.map(b => b.hidden), [true, false, true, true]);
+    assert.equal(linux.attrs['aria-pressed'], 'true');
+    assert.equal(parts['data-ax-install-code'].textContent, 'curl -fsSL https://getax.wenneker.io/install-slim.sh | sh');
+    assert.match(parts['data-ax-download-label'].textContent, /headless Linux/i);
+    assert.equal(parts['data-ax-guide'].href, '/guides/headless-linux/');
+    assert.equal(copied.length, 0, 'choosing a product does not copy yet');
+
+    click(admin);
+    assert.deepEqual(platforms.map(b => b.hidden), [false, false, false, true]);
+    assert.equal(linux.attrs['aria-pressed'], 'true', 'Linux stays selected because ax-admin supports it');
+    click(windows);
+    await Promise.resolve();
+    assert.equal(parts['data-ax-platform-panel'].hidden, true);
+    assert.deepEqual(copied, ['irm https://getax.wenneker.io/install-admin.ps1 | iex']);
+    assert.equal(parts['data-ax-install-code'].textContent, 'irm https://getax.wenneker.io/install-admin.ps1 | iex');
+    assert.equal(parts['data-ax-download-label'].textContent, 'Copied');
+    click(admin);
+    assert.equal(parts['data-ax-download-label'].textContent, 'Copy ax-admin Windows install command');
+    assert.equal(parts['data-ax-guide'].href, '/guides/remote-admin/');
+
+    click(ax);
+    assert.deepEqual(platforms.map(b => b.hidden), [false, false, false, false]);
+    click(macos);
+    await Promise.resolve();
+    assert.equal(copied.at(-1), 'curl -fsSL https://getax.wenneker.io/install.sh | sh');
+    click(ax);
+    assert.equal(parts['data-ax-download-label'].textContent, 'Copy macOS install command');
+    void wsl2;
+  } finally {
+    for (const [k, v] of Object.entries(previous)) set(k, v);
+  }
 });
 
 test('copied install popup closes for another choice and fades out after 1.5 seconds', async () => {

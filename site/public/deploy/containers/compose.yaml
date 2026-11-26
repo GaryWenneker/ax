@@ -1,0 +1,35 @@
+# ax headless remote MCP server for one repository, with automatic HTTPS (Caddy).
+# Works with Docker Compose and Podman Compose. Put this file, Caddyfile and ax.env
+# in one folder, fill in ax.env, then run:
+#
+#   docker compose up -d        # or: podman compose up -d
+#
+# Agents connect to <AX_PUBLIC_URL>/projects/<AX_PROJECT_ID>/mcp with
+# "Authorization: Bearer <AX_API_KEY>". Guide: https://getax.wenneker.io/guides/headless-linux/
+name: ax-mcp
+
+services:
+  ax:
+    # The ax release this file was published with. Change the version to upgrade.
+    image: ghcr.io/garywenneker/ax-slim:10.1.2-server
+    env_file: ax.env
+    restart: unless-stopped
+
+  caddy:
+    image: docker.io/library/caddy:2.10.2
+    env_file: ax.env
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro,z
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - ax
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:
