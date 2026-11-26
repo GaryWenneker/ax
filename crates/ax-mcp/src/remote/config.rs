@@ -34,6 +34,9 @@ pub struct Project {
     pub subjects: Vec<String>,
     #[serde(default)]
     pub write_subjects: Vec<String>,
+    /// Subjects that may call the remote admin tools. Must also be write subjects.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub admin_subjects: Vec<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -45,6 +48,9 @@ pub struct ApiKey {
     pub projects: Vec<String>,
     #[serde(default)]
     pub write: bool,
+    /// Grants the remote admin tools (index, sync, logs). Requires `write`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub admin: bool,
 }
 
 pub fn https_url(value: &str) -> Result<Url, String> {
@@ -111,6 +117,9 @@ impl RemoteConfig {
             if p.write_subjects.iter().any(|s| !p.subjects.contains(s)) {
                 return Err("Write subjects must also have context access".into());
             }
+            if p.admin_subjects.iter().any(|s| !p.write_subjects.contains(s)) {
+                return Err("Admin subjects must also have write access".into());
+            }
         }
         let mut keys = HashSet::new();
         for key in &self.api_keys {
@@ -122,6 +131,9 @@ impl RemoteConfig {
                 || key.projects.iter().any(|p| !ids.contains(p))
             {
                 return Err("Invalid API key hash, ID or project grant".into());
+            }
+            if key.admin && !key.write {
+                return Err("Admin API keys must also have write access".into());
             }
         }
         for origin in &self.allowed_origins {

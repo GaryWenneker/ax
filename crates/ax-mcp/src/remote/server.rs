@@ -1,5 +1,5 @@
 use super::{
-    auth::{bearer_token, Principal, TokenVerifier, CONTEXT_SCOPE, WRITE_SCOPE},
+    auth::{bearer_token, Principal, TokenVerifier, ADMIN_SCOPE, CONTEXT_SCOPE, WRITE_SCOPE},
     config::{Project, RemoteConfig},
 };
 use crate::{engine::McpEngine, server::handle_request, transport::JsonRpcRequest};
@@ -53,6 +53,23 @@ const CONTEXT_TOOLS: &[&str] = &[
     "ax_policy_capture",
 ];
 const WRITE_TOOLS: &[&str] = &["ax_remember"];
+/// Management tools. Listed and callable only with `ax:admin` and an explicit
+/// admin grant on the project (see `Principal::can_admin`).
+const ADMIN_TOOLS: &[&str] = &[
+    "ax_sync",
+    "ax_index",
+    "ax_policy_index",
+    "ax_files",
+    "ax_cost",
+    "ax_tool_economics",
+    "ax_budget",
+    "ax_optimization_advice",
+    "ax_logs",
+];
+const ADMIN_MUTATING_TOOLS: &[&str] = &["ax_sync", "ax_index", "ax_policy_index"];
+const TOOL_TIMEOUT: Duration = Duration::from_secs(120);
+/// A full index of a large project takes longer than a context query.
+const ADMIN_TOOL_TIMEOUT: Duration = Duration::from_secs(600);
 
 struct Session {
     principal: String,
@@ -149,7 +166,7 @@ async fn host_stop(State(state): State<RemoteState>, headers: HeaderMap) -> Resp
 }
 
 async fn metadata(State(state): State<RemoteState>) -> Response {
-    no_store(Json(json!({"resource":state.config.public_url, "authorization_servers":[state.config.oauth.issuer], "scopes_supported":[CONTEXT_SCOPE, WRITE_SCOPE], "bearer_methods_supported":["header"]})).into_response())
+    no_store(Json(json!({"resource":state.config.public_url, "authorization_servers":[state.config.oauth.issuer], "scopes_supported":[CONTEXT_SCOPE, WRITE_SCOPE, ADMIN_SCOPE], "bearer_methods_supported":["header"]})).into_response())
 }
 
 fn no_store(mut response: Response) -> Response {
@@ -262,6 +279,7 @@ async fn authorize(
             scopes,
             key_projects: Vec::new(),
             key_write: false,
+            key_admin: false,
         }
     } else {
         state
@@ -292,6 +310,10 @@ pub fn tool_permitted(name: &str, args: &Value, write: bool) -> bool {
         return write;
     }
     CONTEXT_TOOLS.contains(&name) || (write && WRITE_TOOLS.contains(&name))
+}
+
+pub fn admin_tool_permitted(name: &str, admin: bool) -> bool {
+    admin && ADMIN_TOOLS.contains(&name)
 }
 
 fn client_tool_permitted(
@@ -458,6 +480,8 @@ async fn post(
         return rpc(request.id, Err(("Method not found", -32601)));
     }
     let write = principal.can_write(&project);
+    let admin = principal.can_admin(&project);
+    let mut timeout = TOOL_TIMEOUT;
     let mut engine = match tokio::time::timeout(Duration::from_secs(30), engine.lock()).await {
         Ok(e) => e,
         Err(_) => return error(StatusCode::TOO_MANY_REQUESTS, "Connection is busy"),
@@ -482,7 +506,9 @@ async fn post(
         if !client_tool_permitted(client.as_ref(), &name, &args) {
             return error(StatusCode::FORBIDDEN, "Insufficient client scope");
         }
-        if !tool_permitted(&name, &args, write) {
+        if admin_tool_permitted(&name, admin) {
+            timeout = ADMIN_TOOL_TIMEOUT;
+        } else if !tool_permitted(&name, &args, write) {
             if WRITE_TOOLS.contains(&name.as_str()) || name == "ax_policy_capture" {
                 let auth = format!("Bearer resource_metadata=\"{}\", scope=\"{} {}\", error=\"insufficient_scope\"",
                     state.config.metadata_url(), CONTEXT_SCOPE, WRITE_SCOPE);
@@ -614,7 +640,7 @@ async fn post(
         }
     });
     let outcome = match tokio::time::timeout(
-        Duration::from_secs(120),
+        timeout,
         handle_request(
             &mut engine.engine,
             &request.method,
@@ -643,12 +669,20 @@ async fn post(
                         &Value::Null,
                     )
             });
+            if admin {
+                // The local catalog hides heavy tools unless AX_MCP_TOOLS lists them.
+                // An admin grant is the opt-in here, so take them from the full catalog.
+                tools.extend(crate::tools::ToolHandler::tool_definitions(ADMIN_TOOLS));
+            }
             for tool in tools {
                 let name = tool["name"].as_str().unwrap_or("").to_owned();
+                let admin_tool = ADMIN_TOOLS.contains(&name.as_str());
                 let requires_write =
                     WRITE_TOOLS.contains(&name.as_str()) || (write && name == "ax_policy_capture");
                 let policy_capture = name == "ax_policy_capture";
-                let scopes = if requires_write {
+                let scopes = if admin_tool {
+                    vec![CONTEXT_SCOPE, WRITE_SCOPE, ADMIN_SCOPE]
+                } else if requires_write {
                     vec![CONTEXT_SCOPE, WRITE_SCOPE]
                 } else {
                     vec![CONTEXT_SCOPE]
@@ -656,6 +690,7 @@ async fn post(
                 tool["securitySchemes"] = json!([{"type":"oauth2", "scopes":scopes}]);
                 tool["_meta"]["securitySchemes"] = tool["securitySchemes"].clone();
                 let read_only = !requires_write
+                    && !ADMIN_MUTATING_TOOLS.contains(&name.as_str())
                     && !matches!(
                         name.as_str(),
                         "ax_session" | "ax_durable" | "ax_stash" | "ax_policy_capture"

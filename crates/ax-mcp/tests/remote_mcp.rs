@@ -42,6 +42,7 @@ async fn fixture() -> (tempfile::TempDir, Router, Arc<RemoteConfig>) {
             root,
             subjects: vec![id.into()],
             write_subjects: vec![id.into()],
+            admin_subjects: vec![],
         });
     }
     let mut config = RemoteConfig {
@@ -57,6 +58,7 @@ async fn fixture() -> (tempfile::TempDir, Router, Arc<RemoteConfig>) {
             sha256: hex::encode(Sha256::digest(b"test-ide-key")),
             projects: vec!["alpha".into()],
             write: false,
+            admin: false,
         }],
         allowed_origins: vec![],
     };

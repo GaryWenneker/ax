@@ -24,6 +24,7 @@ pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 
 pub const CONTEXT_SCOPE: &str = "ax:context";
 pub const WRITE_SCOPE: &str = "ax:write";
+pub const ADMIN_SCOPE: &str = "ax:admin";
 
 #[derive(Clone, Debug)]
 pub struct Principal {
@@ -32,6 +33,7 @@ pub struct Principal {
     pub scopes: HashSet<String>,
     pub key_projects: Vec<String>,
     pub key_write: bool,
+    pub key_admin: bool,
 }
 
 impl Principal {
@@ -48,6 +50,15 @@ impl Principal {
             && match &self.subject {
                 Some(sub) => project.write_subjects.contains(sub),
                 None => self.key_write,
+            }
+    }
+    /// Admin tools need write access, the admin scope and an explicit admin grant.
+    pub fn can_admin(&self, project: &Project) -> bool {
+        self.can_write(project)
+            && self.scopes.contains(ADMIN_SCOPE)
+            && match &self.subject {
+                Some(sub) => project.admin_subjects.contains(sub),
+                None => self.key_admin,
             }
     }
 }
@@ -107,12 +118,16 @@ impl TokenVerifier {
                 if key.write {
                     scopes.insert(WRITE_SCOPE.to_string());
                 }
+                if key.admin {
+                    scopes.insert(ADMIN_SCOPE.to_string());
+                }
                 return Ok(Principal {
                     id: format!("key:{}", key.id),
                     subject: None,
                     scopes,
                     key_projects: key.projects.clone(),
                     key_write: key.write,
+                    key_admin: key.admin,
                 });
             }
         }
@@ -155,6 +170,7 @@ impl TokenVerifier {
             scopes: claims.scope.split_whitespace().map(str::to_owned).collect(),
             key_projects: Vec::new(),
             key_write: false,
+            key_admin: false,
         })
     }
 }

@@ -147,6 +147,8 @@ impl OAuthStore {
             subject: None,
             key_projects: vec![row.get("project")],
             key_write: scopes.contains(WRITE_SCOPE),
+            // The built-in authorization server issues context and write scopes only.
+            key_admin: false,
             scopes,
         })
     }
@@ -384,6 +386,7 @@ mod tests {
                     root: ".".into(),
                     subjects: vec!["owner".into()],
                     write_subjects: vec![],
+                    admin_subjects: vec![],
                 }],
                 api_keys: vec![],
                 allowed_origins: vec![],
