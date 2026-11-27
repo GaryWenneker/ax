@@ -135,6 +135,8 @@ ax-admin connections
 | API keys | The operating system's credential store: macOS Keychain, Windows Credential Manager or the Linux Secret Service |
 | Browser sign-in tokens | The same credential store, shared with `ax mcp remote login` |
 
+Several ax-admin processes may share one folder (for example two `--port` values): each change is made to `connections.json` as it is on disk at that moment, under a lock, so one process never drops a connection another one saved.
+
 A key is never written to a file, a log or the browser, and the interface never shows a saved key. There is no plaintext fallback: when the credential store is unavailable, saving a connection fails with a message.
 
 ## Pages
