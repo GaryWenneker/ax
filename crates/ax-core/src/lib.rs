@@ -1133,9 +1133,11 @@ async fn finalize_after_extract(
     }
     // The doc and contract passes rescan the whole project. A scoped run
     // needs them only when it touched such a file; links from docs into
-    // re-extracted code are carried over by the orchestrator.
-    let touched =
-        |is_kind: fn(&str) -> bool| scope.is_some_and(|paths| paths.iter().any(|p| is_kind(p)));
+    // re-extracted code are carried over by the orchestrator. A read-path
+    // resync never runs them: the next sync or watch batch does.
+    let touched = |is_kind: fn(&str) -> bool| {
+        !read_path && scope.is_some_and(|paths| paths.iter().any(|p| is_kind(p)))
+    };
     if project_wide || touched(ax_extraction::markdown::is_doc_path) {
         report_optimizing(on_progress, "markdown docs");
         let docs_indexed =
@@ -1273,6 +1275,59 @@ mod read_path_tests {
                 "file-change capture".to_string(),
                 "graph versions".to_string(),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_read_path_resync_of_a_contract_or_doc_skips_the_rescans() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("openapi.yaml"),
+            "openapi: 3.0.0\ninfo:\n  title: a\n  version: '1'\npaths: {}\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("README.md"), "# A\n").unwrap();
+        let mut ax = Ax::init(root).await.unwrap();
+        let quiet = IndexOptions {
+            quiet: true,
+            ..IndexOptions::default()
+        };
+        ax.index_all(quiet.clone(), None).await.unwrap();
+        std::fs::write(
+            root.join("openapi.yaml"),
+            "openapi: 3.0.0\ninfo:\n  title: b\n  version: '2'\npaths: {}\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("README.md"), "# B\n").unwrap();
+
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let capture = Arc::clone(&seen);
+        let mut progress: Option<Box<dyn FnMut(IndexProgress) + Send>> =
+            Some(Box::new(move |event: IndexProgress| {
+                if event.phase == ax_types::IndexPhase::Optimizing {
+                    if let Some(label) = event.file_path {
+                        capture.lock().unwrap().push(label);
+                    }
+                }
+            }));
+        let mutex = Arc::clone(&ax.index_mutex);
+        let _guard = mutex.lock().await;
+        ax.index_files_locked(
+            &["openapi.yaml".to_string(), "README.md".to_string()],
+            quiet,
+            &mut progress,
+            SOURCE_RESYNC_FILE_LOCK_WAIT,
+            true,
+        )
+        .await
+        .unwrap();
+        let labels = seen.lock().unwrap().clone();
+        assert!(
+            !labels
+                .iter()
+                .any(|l| l == "contracts" || l == "markdown docs"),
+            "read path ran a project-wide rescan: {labels:?}"
         );
     }
 }
