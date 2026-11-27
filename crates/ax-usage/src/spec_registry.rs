@@ -248,37 +248,16 @@ pub async fn approve_revision(
     let revision = revision(pool, spec_id, version)
         .await?
         .ok_or_else(|| format!("spec {spec_id} has no version {version}"))?;
-    sqlx::query(
-        "UPDATE spec_revisions SET status = 'superseded'
-         WHERE spec_id = ?1 AND status = 'approved' AND version != ?2",
-    )
-    .bind(spec_id)
-    .bind(version)
-    .execute(pool)
-    .await
-    .map_err(|error| error.to_string())?;
-    sqlx::query(
-        "UPDATE spec_revisions SET status = 'approved' WHERE spec_id = ?1 AND version = ?2",
-    )
-    .bind(spec_id)
-    .bind(version)
-    .execute(pool)
-    .await
-    .map_err(|error| error.to_string())?;
     let path = markdown_path(pool, spec_id).await?;
-    let absolute = root.join(&path);
-    if let Some(parent) = absolute.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    // Seal each path once, hashed before anything is written.
+    let mut seals: Vec<String> = Vec::new();
+    for linked in linked_files {
+        if !seals.contains(linked) {
+            seals.push(linked.clone());
+        }
     }
-    std::fs::write(&absolute, format!("{}\n", revision.body)).map_err(|error| error.to_string())?;
-    sqlx::query("DELETE FROM spec_file_seals WHERE spec_id = ?1")
-        .bind(spec_id)
-        .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
-    let mut seals: Vec<String> = linked_files.to_vec();
     for named in paths_named_in(&revision.body) {
-        if seals.iter().any(|path| path == &named) {
+        if seals.contains(&named) {
             continue;
         }
         if named.split('/').count() < 2 || named.contains("..") {
@@ -288,10 +267,44 @@ pub async fn approve_revision(
             seals.push(named);
         }
     }
-    for linked in &seals {
-        let hash = std::fs::read(root.join(linked))
-            .map(|bytes| hash_bytes(&bytes))
-            .unwrap_or_else(|_| "missing".into());
+    let sealed: Vec<(String, String)> = seals
+        .into_iter()
+        .map(|linked| {
+            let hash = std::fs::read(root.join(&linked))
+                .map(|bytes| hash_bytes(&bytes))
+                .unwrap_or_else(|_| "missing".into());
+            (linked, hash)
+        })
+        .collect();
+    // All database changes commit together, and only after the Markdown copy
+    // was replaced; a failure at any step leaves the previous approval as is.
+    let mut tx = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|error| error.to_string())?;
+    sqlx::query(
+        "UPDATE spec_revisions SET status = 'superseded'
+         WHERE spec_id = ?1 AND status = 'approved' AND version != ?2",
+    )
+    .bind(spec_id)
+    .bind(version)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query(
+        "UPDATE spec_revisions SET status = 'approved' WHERE spec_id = ?1 AND version = ?2",
+    )
+    .bind(spec_id)
+    .bind(version)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query("DELETE FROM spec_file_seals WHERE spec_id = ?1")
+        .bind(spec_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| error.to_string())?;
+    for (linked, hash) in &sealed {
         sqlx::query(
             "INSERT INTO spec_file_seals (spec_id, path, content_hash, sealed_version)
              VALUES (?1, ?2, ?3, ?4)",
@@ -300,10 +313,13 @@ pub async fn approve_revision(
         .bind(linked)
         .bind(hash)
         .bind(version)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|error| error.to_string())?;
     }
+    ax_utils::atomic_write(&root.join(&path), format!("{}\n", revision.body).as_bytes())
+        .map_err(|error| format!("write {path}: {error}"))?;
+    tx.commit().await.map_err(|error| error.to_string())?;
     revision_row(pool, spec_id, version).await
 }
 
@@ -2382,6 +2398,61 @@ pub(crate) mod tests {
             .unwrap();
         let context = spec_context_block(pool, dir.path(), "s").await;
         assert!(context.contains("drift: unknown"), "{context}");
+    }
+
+    async fn draft_billing(pool: &SqlitePool) {
+        capture_finished_plan(
+            pool,
+            "ax",
+            "billing",
+            "Billing",
+            "make a plan",
+            "Keep the ledger.",
+            "s",
+            "t1",
+            "turn",
+            true,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn approving_with_a_duplicate_linked_file_stores_one_seal() {
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/a.rs"), "fn a() {}\n").unwrap();
+        draft_billing(pool).await;
+        let links = ["src/a.rs".to_string(), "src/a.rs".to_string()];
+        let approved = approve_revision(pool, dir.path(), "billing", 1, &links)
+            .await
+            .unwrap();
+        assert_eq!(approved.status, "approved");
+        let seals: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM spec_file_seals WHERE spec_id = 'billing'")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        assert_eq!(seals, 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_markdown_write_leaves_the_revision_unapproved() {
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        draft_billing(pool).await;
+        // A file where the spec folder should be makes the write fail.
+        std::fs::create_dir_all(dir.path().join("docs/specs")).unwrap();
+        std::fs::write(dir.path().join("docs/specs/billing"), "not a folder").unwrap();
+        assert!(approve_revision(pool, dir.path(), "billing", 1, &[])
+            .await
+            .is_err());
+        let status = revision(pool, "billing", 1).await.unwrap().unwrap().status;
+        assert_eq!(status, "draft");
+        assert_eq!(approved_revision(pool, "billing").await.unwrap(), None);
     }
 
     #[tokio::test]
