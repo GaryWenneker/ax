@@ -1968,6 +1968,11 @@ enum PolicyCommands {
         path: Option<String>,
         #[arg(long, help = "Vendor subdirectory name under .ax/policy/vendored/")]
         name: Option<String>,
+        #[arg(
+            long,
+            help = "Replace local rules and skills that differ from the remote copy"
+        )]
+        force: bool,
     },
     /// Export database policy to .mdc / SKILL.md files
     Export {
@@ -3236,8 +3241,13 @@ async fn async_main() {
         Some(Commands::Policy { action }) => match action {
             PolicyCommands::Index { path, force } => commands::policy::run_index(path, force).await,
             PolicyCommands::Import { path } => commands::policy::run_import(path).await,
-            PolicyCommands::Pull { url, path, name } => {
-                commands::policy::run_pull(url, path, name).await
+            PolicyCommands::Pull {
+                url,
+                path,
+                name,
+                force,
+            } => {
+                commands::policy::run_pull(url, path, name, force).await
             }
             PolicyCommands::Export { path, out } => commands::policy::run_export(path, out).await,
             PolicyCommands::Match {

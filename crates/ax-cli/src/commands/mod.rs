@@ -38,6 +38,7 @@ pub mod node;
 pub mod offload;
 pub mod path;
 pub mod policy;
+pub mod policy_pull;
 pub mod policy_share;
 pub mod preflight;
 pub mod pricing;

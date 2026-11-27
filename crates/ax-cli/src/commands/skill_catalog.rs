@@ -747,13 +747,20 @@ async fn reindex(root: &Path) {
     }
 }
 
+/// Shallow-clone `url`. The URL comes after `--` so git never reads it as an option.
 fn git_clone(url: &str, reference: Option<&str>, dest: &Path) -> Result<(), String> {
+    if url.trim().is_empty() || url.starts_with('-') {
+        return Err(format!("not a git URL: {url}"));
+    }
     let mut cmd = Command::new("git");
     cmd.arg("clone").arg("--depth").arg("1");
     if let Some(reference) = reference {
+        if reference.starts_with('-') {
+            return Err(format!("not a git ref: {reference}"));
+        }
         cmd.arg("--branch").arg(reference);
     }
-    cmd.arg(url).arg(dest);
+    cmd.arg("--").arg(url).arg(dest);
     let output = cmd.output().map_err(|e| format!("git clone: {e}"))?;
     if !output.status.success() {
         return Err(format!(
@@ -848,4 +855,23 @@ fn encode(value: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn git_clone_refuses_a_url_that_looks_like_an_option() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = git_clone("--upload-pack=true", None, &tmp.path().join("x")).unwrap_err();
+        assert!(err.contains("not a git URL"), "{err}");
+        let err = git_clone(
+            "https://example.com/r.git",
+            Some("-x"),
+            &tmp.path().join("y"),
+        )
+        .unwrap_err();
+        assert!(err.contains("not a git ref"), "{err}");
+    }
 }

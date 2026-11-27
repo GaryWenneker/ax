@@ -1370,12 +1370,19 @@ ax policy dedup --json
 
 ### `ax policy pull <git-url> [path]`
 
-Clone a remote git policy registry into `.ax/policy/vendored/<name>/`, copy `rules/` and `skills/` into the project policy tree, and re-index.
+Clone a remote git policy registry into `.ax/policy/vendored/<name>/`, merge its `rules/*.mdc` and `skills/<name>/` into the project's agents folder (`.agents/` unless `policy.agentsDir` says otherwise), and re-index.
+
+- The new clone replaces the vendored copy only after `git clone` succeeded; a failed clone keeps the previous copy.
+- A local rule or skill with the same name that differs from the remote one is kept and reported. Pass `--force` to replace it. Identical items are left alone.
+- Symlinks in the remote repository are never followed or copied, and a `rules/` or `skills/` folder that resolves outside the clone is refused.
+- A remote tree larger than 5,000 files, 50 MB or 16 nested folders is refused before anything is written.
+- A URL that starts with `-` is refused.
 
 | Argument / flag | Type | Description |
 |---|---|---|
 | `git-url` | required | HTTPS or SSH git URL |
 | `--name` | string | Vendor subdirectory name (default: repo name) |
+| `--force` | bool | Replace local rules and skills that differ from the remote copy |
 
 ```bash
 ax policy pull https://github.com/acme/ax-org-policy.git
