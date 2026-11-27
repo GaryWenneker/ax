@@ -106,5 +106,35 @@ class PagesDeployment(unittest.TestCase):
                     self.assertTrue(gated(name), f"{path.name}: job '{name}' deploys Pages from any branch")
 
 
+class ActionPins(unittest.TestCase):
+    USES = re.compile(r"^\s*-?\s*uses:\s*(\S+)(.*)$")
+
+    def test_every_action_is_pinned_to_a_commit(self) -> None:
+        for path in WORKFLOWS:
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                m = self.USES.match(line)
+                if not m or m.group(1).startswith(("./", "docker://")):
+                    continue
+                ref = m.group(1).rsplit("@", 1)
+                where = f"{path.name}:{number} {m.group(1)}"
+                self.assertEqual(len(ref), 2, f"{where}: no ref")
+                self.assertRegex(ref[1], r"^[0-9a-f]{40}$", f"{where}: pin to a full commit SHA")
+                self.assertRegex(m.group(2), r"#\s*\S+", f"{where}: name the version in a trailing comment")
+
+    def test_dependabot_updates_pinned_actions(self) -> None:
+        text = (ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+        self.assertIn('package-ecosystem: "github-actions"', text)
+
+
+class Permissions(unittest.TestCase):
+    def test_multi_job_workflows_grant_write_only_per_job(self) -> None:
+        for path in WORKFLOWS:
+            text = path.read_text(encoding="utf-8")
+            if len(jobs(text)) < 2:
+                continue
+            top = "\n".join(_top_level_block(text, "permissions"))
+            self.assertNotRegex(top, r":\s*write", f"{path.name}: move write permissions to the jobs that need them")
+
+
 if __name__ == "__main__":
     unittest.main()
