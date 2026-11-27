@@ -254,7 +254,7 @@ ax query auth --json
 
 ### `ax explore [query…]`
 
-Natural-language explore — same output shape as the `ax_explore` MCP tool. Optional BYO LLM offload via `ax offload`.
+Natural-language explore — same output shape as the `ax_explore` MCP tool. Optional BYO LLM offload via `ax offload` rewrites the text answer; `--json` prints the structured result and never calls the offload API.
 
 | Argument / flag | Type | Description |
 |---|---|---|
@@ -1217,7 +1217,7 @@ ax cursor auth use enterprise
 
 ### `ax offload`
 
-Configure optional LLM offload for `ax explore` (BYO OpenAI-compatible API). Stored in `~/.ax/config.json`.
+Configure optional LLM offload for `ax explore` (BYO OpenAI-compatible API). Stored in `~/.ax/config.json`. Offload is off until `set-endpoint` switches it on; `ax init` only prints the command when it finds a provider key in the environment.
 
 #### `ax offload status`
 

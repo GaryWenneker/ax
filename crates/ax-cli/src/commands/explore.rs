@@ -40,17 +40,18 @@ pub async fn run(query: Vec<String>, json: bool) -> Result<(), String> {
         .file_name()
         .and_then(|n| n.to_str())
         .map(str::to_string);
-    let meta = Some(ExploreOffloadMeta {
-        source: "cli_explore",
-        project,
-    });
     let printed = if json {
-        let _ = maybe_synthesize_explore(&query_text, &raw, meta).await;
+        // The JSON output is the structured result; an offload answer would be discarded,
+        // so the explore text is not sent anywhere.
         let printed = serde_json::to_string_pretty(&result).unwrap_or_default();
         println!("{printed}");
         trace.finish_ok(&raw);
         printed
     } else {
+        let meta = Some(ExploreOffloadMeta {
+            source: "cli_explore",
+            project,
+        });
         let out = maybe_synthesize_explore(&query_text, &raw, meta).await;
         println!("{out}");
         trace.finish_ok(&out);

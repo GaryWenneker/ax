@@ -157,7 +157,9 @@ A few things to know:
 
 ## LLM offload (`"offload"`)
 
-Stored in `~/.ax/config.json` under a separate `"offload"` key. Lets ax delegate heavy reasoning queries to an OpenAI-compatible API:
+Stored in `~/.ax/config.json` under a separate `"offload"` key. Lets ax delegate heavy reasoning queries to an OpenAI-compatible API.
+
+Offload is off until you switch it on. When it is on, `ax explore` sends the explore text, which contains numbered project source, to that API. `ax init` never switches it on: when it finds a provider key such as `OPENAI_API_KEY` in the environment, it only prints the `ax offload set-endpoint` command that would. `ax explore --json` prints the structured result and never calls the offload API. Turn offload on with `ax offload set-endpoint <url> --key-env <VAR>` and off with `ax offload clear`.
 
 ```json
 {
