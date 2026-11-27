@@ -453,8 +453,23 @@ struct ChatBody {
 
 async fn handle_chat_stream(
     State(hub): State<WebHub>,
+    headers: HeaderMap,
     Json(body): Json<ChatBody>,
 ) -> impl IntoResponse {
+    // A chat run starts an agent with tool access in the project, like the
+    // terminal, so only the local browser may start one.
+    if !crate::dav::mount::allowed(&headers, hub.readonly) {
+        let error = if hub.readonly {
+            "Read-only mode"
+        } else {
+            "Only the local browser on this machine can run the agent"
+        };
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "ok": false, "error": error })),
+        )
+            .into_response();
+    }
     let cfg = load_agents_config();
     let agent = body.agent.clone().unwrap_or_else(|| {
         cfg.preferred_external
@@ -642,6 +657,24 @@ fn sse_from_channel(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
+/// Read-only mode refuses every agent request that is not a read, so a new
+/// handler cannot forget the check.
+async fn refuse_writes_when_readonly(
+    State(hub): State<WebHub>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let read = req.method() == axum::http::Method::GET || req.method() == axum::http::Method::HEAD;
+    if hub.readonly && !read {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "ok": false, "error": "Read-only mode" })),
+        )
+            .into_response();
+    }
+    next.run(req).await
+}
+
 pub fn router_hub(hub: WebHub) -> Router {
     let terminal = Router::new()
         .route("/pty/ws", get(crate::agent_pty::handle_pty_ws))
@@ -672,5 +705,9 @@ pub fn router_hub(hub: WebHub) -> Router {
         )
         .route("/chat/stream", post(handle_chat_stream))
         .merge(terminal)
+        .layer(axum::middleware::from_fn_with_state(
+            hub.clone(),
+            refuse_writes_when_readonly,
+        ))
         .with_state(hub)
 }
