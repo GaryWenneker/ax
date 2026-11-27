@@ -55,7 +55,7 @@ struct InstallBody {
 fn refuse_install(hub: &WebHub, headers: &HeaderMap) -> Option<axum::response::Response> {
     let error = if hub.readonly {
         "Read-only mode"
-    } else if !crate::dav::mount::allowed(headers, false) {
+    } else if !crate::dav::mount::allowed(headers, false, hub.port) {
         "Only the local browser on this machine can install ax into IDEs"
     } else {
         return None;
@@ -461,7 +461,7 @@ async fn handle_chat_stream(
 ) -> impl IntoResponse {
     // A chat run starts an agent with tool access in the project, like the
     // terminal, so only the local browser may start one.
-    if !crate::dav::mount::allowed(&headers, hub.readonly) {
+    if !crate::dav::mount::allowed(&headers, hub.readonly, hub.port) {
         let error = if hub.readonly {
             "Read-only mode"
         } else {

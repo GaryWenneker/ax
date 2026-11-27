@@ -134,9 +134,21 @@ fn is_loopback_host(host: &str) -> bool {
     matches!(bare, "127.0.0.1" | "localhost" | "::1")
 }
 
+/// Port of the web UI's Vite dev server, which forwards `/api` to Command Center.
+const VITE_DEV_PORT: u16 = 5173;
+
+/// A page origin that belongs to Command Center: a loopback host on its own
+/// `port`. `dev` (debug builds) also accepts the Vite dev server's port.
+fn origin_allowed(origin: &str, port: u16, dev: bool) -> bool {
+    crate::browser_origin::browser_origin_allowed(Some(origin), port)
+        || (dev && crate::browser_origin::browser_origin_allowed(Some(origin), VITE_DEV_PORT))
+}
+
 /// Only the local user's own browser may mount: a loopback socket peer with no
-/// proxy in between, and no share sessions, LAN clients, or foreign pages.
-pub fn allowed(headers: &HeaderMap, readonly: bool) -> bool {
+/// proxy in between, a loopback `Host`, and, when the browser names the page's
+/// origin, a Command Center page on `port`. Share sessions, LAN clients and
+/// pages from other sites or other local servers are refused.
+pub fn allowed(headers: &HeaderMap, readonly: bool, port: u16) -> bool {
     if readonly || !crate::local_owner::local_peer(headers) {
         return false;
     }
@@ -149,10 +161,7 @@ pub fn allowed(headers: &HeaderMap, readonly: bool) -> bool {
     }
     match header("origin") {
         None => true,
-        Some(origin) => origin
-            .strip_prefix("http://")
-            .or_else(|| origin.strip_prefix("https://"))
-            .is_some_and(is_loopback_host),
+        Some(origin) => origin_allowed(origin, port, cfg!(debug_assertions)),
     }
 }
 
@@ -471,7 +480,7 @@ async fn blocking(
     headers: &HeaderMap,
     f: impl FnOnce(u16) -> Result<Status, MountError> + Send + 'static,
 ) -> Response {
-    if !allowed(headers, hub.readonly) {
+    if !allowed(headers, hub.readonly, hub.port) {
         return StatusCode::FORBIDDEN.into_response();
     }
     let port = hub.port;

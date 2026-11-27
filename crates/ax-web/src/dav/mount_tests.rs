@@ -138,30 +138,56 @@ fn b7_linux_commands() {
 #[test]
 fn n1_loopback_only() {
     // Loopback headers alone are not enough: the socket peer must be local.
-    assert!(!allowed(&headers(&[("host", "127.0.0.1:7070")]), false));
-    assert!(allowed(&local(&[("host", "127.0.0.1:7070")]), false));
-    assert!(allowed(&local(&[("host", "localhost")]), false));
-    assert!(allowed(&local(&[("host", "[::1]:7070")]), false));
+    assert!(!allowed(
+        &headers(&[("host", "127.0.0.1:7070")]),
+        false,
+        7070
+    ));
+    assert!(allowed(&local(&[("host", "127.0.0.1:7070")]), false, 7070));
+    assert!(allowed(&local(&[("host", "localhost")]), false, 7070));
+    assert!(allowed(&local(&[("host", "[::1]:7070")]), false, 7070));
     assert!(allowed(
         &local(&[
             ("host", "127.0.0.1:7070"),
-            ("origin", "http://localhost:5173")
+            ("origin", "http://localhost:7070")
         ]),
-        false
+        false,
+        7070
     ));
-    assert!(!allowed(&local(&[("host", "127.0.0.1:7070")]), true));
-    assert!(!allowed(&local(&[]), false));
-    assert!(!allowed(&local(&[("host", "192.168.1.5:7070")]), false));
-    assert!(!allowed(&local(&[("host", "127.0.0.1.evil.com")]), false));
+    assert!(!allowed(&local(&[("host", "127.0.0.1:7070")]), true, 7070));
+    assert!(!allowed(&local(&[]), false, 7070));
+    assert!(!allowed(
+        &local(&[("host", "192.168.1.5:7070")]),
+        false,
+        7070
+    ));
+    assert!(!allowed(
+        &local(&[("host", "127.0.0.1.evil.com")]),
+        false,
+        7070
+    ));
     assert!(!allowed(
         &local(&[("host", "127.0.0.1:7070"), ("origin", "https://evil.com")]),
-        false
+        false,
+        7070
     ));
     assert!(!allowed(
         &local(&[
             ("host", "127.0.0.1:7070"),
             ("origin", "http://localhost.evil.com")
         ]),
-        false
+        false,
+        7070
     ));
+}
+
+#[test]
+fn n1_origin_must_be_command_center() {
+    assert!(origin_allowed("http://127.0.0.1:7070", 7070, false));
+    assert!(origin_allowed("http://[::1]:7070", 7070, false));
+    assert!(!origin_allowed("http://localhost:3000", 7070, false));
+    assert!(!origin_allowed("http://localhost:5173", 7070, false));
+    assert!(origin_allowed("http://localhost:5173", 7070, true));
+    assert!(!origin_allowed("http://localhost:3000", 7070, true));
+    assert!(!origin_allowed("http://evil.example:7070", 7070, true));
 }

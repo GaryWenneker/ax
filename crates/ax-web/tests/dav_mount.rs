@@ -186,3 +186,33 @@ async fn n1_foreign_host_origin_and_readonly_are_403() {
     let (status, _) = send(&ro, "POST", "/api/dav/mount", &[LOCAL, JSON], "{}").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn n1_page_on_another_local_port_is_403() {
+    // Another web server on this computer (a dev server, a local tool) is not Command Center.
+    let (_d, app) = fixture(false).await;
+    let other = [LOCAL, ("origin", "http://localhost:3000"), JSON];
+    let (status, _) = send(&app, "POST", "/api/dav/mount", &other, "{}").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = send(
+        &app,
+        "POST",
+        "/api/agent/install",
+        &other,
+        r#"{"targets":[]}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = send(
+        &app,
+        "PROPFIND",
+        "/ax/folders/",
+        &[LOCAL, ("origin", "http://localhost:3000"), ("Depth", "1")],
+        "",
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let own = [LOCAL, ("origin", "http://127.0.0.1:7070"), JSON];
+    let (status, body) = send(&app, "GET", "/api/dav/mount", &own, "").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}

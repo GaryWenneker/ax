@@ -24,7 +24,7 @@ async fn open_app(readonly: bool) -> (tempfile::TempDir, Router) {
     ax_db::Database::open(&root.join(".ax").join("ax.db"))
         .await
         .unwrap();
-    let hub = WebHub::open(root, readonly, 0).await.unwrap();
+    let hub = WebHub::open(root, readonly, 7070).await.unwrap();
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
