@@ -16,8 +16,16 @@ pub const WORKING_CONTEXT_SENTENCE: &str =
 pub const SESSION_ID_SENTENCE: &str =
     "Pass the `session` id from `<ax_chat>` to every ax call in this chat";
 
+/// The memory procedure as a literal, so the instruction blocks below can
+/// embed it with `concat!` instead of repeating the text.
+macro_rules! memory_procedure {
+    () => {
+        "Working notes for this chat stay in `ax_session` / `ax session`. They do not go into the vault. A durable decision, fix, or convention is `ax_remember` / `ax remember` with a trigger name (`triggers` / `--trigger`). Before re-deriving, fetch that name with `ax_recall` `cue` / `ax recall --cue`. If the user names a trigger, that fetch comes before explore. Free-text recall is the fallback. Questions about old graph changes, logs, or past turns use `depth=archive` on `ax_recall` / `ax recall` and on `ax_history` / `ax history`. Preflight will not contain those hits. A candidate long-term memory is confirmed with `ax_remember` `action=confirm` / `ax remember --confirm`. The old engram stays."
+    };
+}
+
 /// The memory procedure every MCP bootstrap surface teaches, verbatim.
-pub const MEMORY_PROCEDURE_SENTENCE: &str = "Working notes for this chat stay in `ax_session` / `ax session`. They do not go into the vault. A durable decision, fix, or convention is `ax_remember` / `ax remember` with a trigger name (`triggers` / `--trigger`). Before re-deriving, fetch that name with `ax_recall` `cue` / `ax recall --cue`. If the user names a trigger, that fetch comes before explore. Free-text recall is the fallback. Questions about old graph changes, logs, or past turns use `depth=archive` on `ax_recall` / `ax recall` and on `ax_history` / `ax history`. Preflight will not contain those hits. A candidate long-term memory is confirmed with `ax_remember` `action=confirm` / `ax remember --confirm`. The old engram stays.";
+pub const MEMORY_PROCEDURE_SENTENCE: &str = memory_procedure!();
 
 const MISSING_MEMORY_PROCEDURE: &str = "missing memory procedure";
 
@@ -37,12 +45,15 @@ const CONTINUE_MCP_FILE: &str = "ax.json";
 const CONTINUE_MCP_BODY: &str = include_str!("../templates/ide/continue/mcp-ax.json");
 const CLINE_RULE_BODY: &str = include_str!("../templates/ide/cline/clinerules.md");
 
-const CLAUDE_INSTRUCTIONS_BLOCK: &str = r#"<!-- AX_START -->
+const CLAUDE_INSTRUCTIONS_BLOCK: &str = concat!(
+    r#"<!-- AX_START -->
 ## ax
 
 Call `ax_preflight` exactly once per turn **before all other work** whenever the ax MCP server is available. Full workflow: see `.claude/rules/ax.md`.
 
-**Memory:** Working notes for this chat stay in `ax_session` / `ax session`. They do not go into the vault. A durable decision, fix, or convention is `ax_remember` / `ax remember` with a trigger name (`triggers` / `--trigger`). Before re-deriving, fetch that name with `ax_recall` `cue` / `ax recall --cue`. If the user names a trigger, that fetch comes before explore. Free-text recall is the fallback. Questions about old graph changes, logs, or past turns use `depth=archive` on `ax_recall` / `ax recall` and on `ax_history` / `ax history`. Preflight will not contain those hits. A candidate long-term memory is confirmed with `ax_remember` `action=confirm` / `ax remember --confirm`. The old engram stays.
+**Memory:** "#,
+    memory_procedure!(),
+    r#"
 
 **Directive capture:** When the user states a durable rule — `je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule` — persist it. `ax_preflight` returns `directiveDetected` + a ready `captureProposal`; ask the questions it lists, then call `ax_policy_capture(action="save", rule)` (or CLI `ax policy capture --yes` after confirm) after the user confirms. This works even if the project has no policy yet (the first save bootstraps it). Never silently ignore such a directive.
 
@@ -55,9 +66,11 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 **CLI-only / MCP unavailable:** Prefer MCP when connected. When MCP is unavailable or the project is CLI-only, use CLI equivalents — do not skip the workflow: `ax preflight` (or `ax turn begin`), `ax explore` / `ax query` / `ax node`, `ax policy guard <path>`, `ax policy capture` / `ax policy skill`, `ax session` / `ax turn`, `ax sync`, `ax remember --trigger` / `ax recall --cue` / `ax history --depth archive` / `ax remember --confirm`. See `.agents/skills/ax-cli/SKILL.md` when present.
 
 MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`; continue with CLI graph/ops commands — do not proceed silently.
-<!-- AX_END -->"#;
+<!-- AX_END -->"#
+);
 
-const AGENTS_INSTRUCTIONS_BLOCK: &str = r#"<!-- AX_START -->
+const AGENTS_INSTRUCTIONS_BLOCK: &str = concat!(
+    r#"<!-- AX_START -->
 ## ax
 
 Call `ax_preflight` exactly once per turn **before all other work** whenever the `user-ax` MCP server is available. Team policy arrives via MCP inject — do not Read `.agents/` or `.ax/policy/` files when ax MCP tools are available.
@@ -74,7 +87,9 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 
 **Working context:** Record a durable fact, file, symbol, decision, or open question with `ax_session` (actions `add`, `update`, `compact`, `clear`, `fork`, `handoff`). Preflight shows `<ax_working_context>`; pass its hash as `known_context` and an unchanged snapshot comes back as one line. Pass the `session` id from `<ax_chat>` to every ax call in this chat; a preflight without it starts a new chat. A changed index marks it stale; `compact` confirms the notes against the current index. fork copies these notes to a new session. handoff starts a new session from the note you send. The old session stays readable, and the graph cache is not copied. `ax_durable` stores this chat's transcript, documents, and checkpointed tasks.
 
-**Memory:** Working notes for this chat stay in `ax_session` / `ax session`. They do not go into the vault. A durable decision, fix, or convention is `ax_remember` / `ax remember` with a trigger name (`triggers` / `--trigger`). Before re-deriving, fetch that name with `ax_recall` `cue` / `ax recall --cue`. If the user names a trigger, that fetch comes before explore. Free-text recall is the fallback. Questions about old graph changes, logs, or past turns use `depth=archive` on `ax_recall` / `ax recall` and on `ax_history` / `ax history`. Preflight will not contain those hits. A candidate long-term memory is confirmed with `ax_remember` `action=confirm` / `ax remember --confirm`. The old engram stays.
+**Memory:** "#,
+    memory_procedure!(),
+    r#"
 
 **Directive capture:** When the user states a durable rule — `je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule` — persist it. `ax_preflight` returns `directiveDetected` + a ready `captureProposal`; ask the questions it lists, then call `ax_policy_capture(action="save", rule)` (or CLI `ax policy capture --yes` after confirm) after the user confirms. Works even if the project has no policy yet (the first save bootstraps it). Never silently ignore such a directive.
 
@@ -89,7 +104,8 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 **CLI-only / MCP unavailable:** Prefer MCP when connected. When MCP is unavailable or the project is CLI-only, use CLI equivalents — do not skip the workflow: `ax preflight` (or `ax turn begin`), `ax explore` / `ax query` / `ax node`, `ax policy guard <path>`, `ax policy capture` / `ax policy skill`, `ax session` / `ax turn`, `ax sync`, `ax remember --trigger` / `ax recall --cue` / `ax history --depth archive` / `ax remember --confirm`. See `.agents/skills/ax-cli/SKILL.md` when present.
 
 Run preflight exactly once per turn. MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`; continue with CLI graph/ops commands — do not proceed silently.
-<!-- AX_END -->"#;
+<!-- AX_END -->"#
+);
 
 const GEMINI_INSTRUCTIONS_BLOCK: &str = AGENTS_INSTRUCTIONS_BLOCK;
 const COPILOT_INSTRUCTIONS_BLOCK: &str = AGENTS_INSTRUCTIONS_BLOCK;
@@ -223,7 +239,7 @@ fn remove_legacy_cursor_rule(project_root: &Path, result: &mut IdeSeedResult) {
 }
 
 fn cursor_bootstrap_stale(content: &str) -> bool {
-    !crate::seed::verify_content(content).is_empty() || content.trim() != CURSOR_RULE_BODY.trim()
+    bootstrap_stale(content, CURSOR_RULE_BODY)
 }
 
 fn mcp_callmcp_shape_rule_path(project_root: &Path) -> PathBuf {
@@ -231,79 +247,7 @@ fn mcp_callmcp_shape_rule_path(project_root: &Path) -> PathBuf {
 }
 
 fn mcp_callmcp_shape_stale(content: &str) -> bool {
-    content.trim() != MCP_CALLMCP_SHAPE_BODY.trim()
-}
-
-fn seed_mcp_callmcp_shape_rule(
-    project_root: &Path,
-    result: &mut IdeSeedResult,
-    force: bool,
-) -> std::io::Result<()> {
-    let cursor_rules = cursor_rules_dir(project_root);
-    std::fs::create_dir_all(&cursor_rules)?;
-
-    let target = mcp_callmcp_shape_rule_path(project_root);
-    let rel = format!(".cursor/rules/{MCP_CALLMCP_SHAPE_FILE}");
-
-    if target.exists() {
-        let content = std::fs::read_to_string(&target)?;
-        if !mcp_callmcp_shape_stale(&content) {
-            result.record_skipped(rel);
-            return Ok(());
-        }
-        std::fs::write(&target, MCP_CALLMCP_SHAPE_BODY.as_bytes())?;
-        result.record_updated(rel);
-        return Ok(());
-    }
-
-    if ide_removed(project_root, &rel, force)? {
-        result.record_skipped(rel);
-        return Ok(());
-    }
-    std::fs::write(&target, MCP_CALLMCP_SHAPE_BODY.as_bytes())?;
-    note_ide(project_root, &rel, force)?;
-    result.record_created(rel);
-    Ok(())
-}
-
-fn seed_cursor_rule(
-    project_root: &Path,
-    result: &mut IdeSeedResult,
-    force: bool,
-) -> std::io::Result<()> {
-    let cursor_rules = cursor_rules_dir(project_root);
-    std::fs::create_dir_all(&cursor_rules)?;
-    remove_legacy_cursor_rule(project_root, result);
-
-    let target = cursor_rule_path(project_root);
-    let rel = format!(".cursor/rules/{CURSOR_RULE_FILE}");
-
-    if target.exists() {
-        let content = std::fs::read_to_string(&target)?;
-        if !cursor_bootstrap_stale(&content) {
-            result.record_skipped(rel);
-            return Ok(());
-        }
-        std::fs::write(&target, CURSOR_RULE_BODY.as_bytes())?;
-        result.record_updated(rel);
-        return Ok(());
-    }
-
-    if bootstrap_already_present(&cursor_rules) {
-        result.record_skipped(format!(
-            "{rel} (another .cursor/rules/*.mdc already contains ax_preflight bootstrap)"
-        ));
-        return Ok(());
-    }
-
-    if ide_removed(project_root, &rel, force)? {
-        result.record_skipped(rel);
-        return Ok(());
-    }
-    std::fs::write(&target, CURSOR_RULE_BODY.as_bytes())?;
-    note_ide(project_root, &rel, force)?;
-    result.record_created(rel);
-    Ok(())
+    differs_from_template(content, MCP_CALLMCP_SHAPE_BODY)
 }
 
 fn continue_rules_dir(project_root: &Path) -> PathBuf {
@@ -323,113 +267,139 @@ fn continue_mcp_path(project_root: &Path) -> PathBuf {
 }
 
 fn continue_bootstrap_stale(content: &str) -> bool {
-    !crate::seed::verify_content(content).is_empty() || content.trim() != CONTINUE_RULE_BODY.trim()
+    bootstrap_stale(content, CONTINUE_RULE_BODY)
 }
 
-fn continue_mcp_stale(content: &str) -> bool {
-    content.trim() != CONTINUE_MCP_BODY.trim()
+/// A bootstrap rule is stale when it fails the bootstrap checks or differs
+/// from its template.
+fn bootstrap_stale(content: &str, body: &str) -> bool {
+    !crate::seed::verify_content(content).is_empty() || differs_from_template(content, body)
 }
 
-fn seed_continue_rule(
-    project_root: &Path,
-    result: &mut IdeSeedResult,
-    force: bool,
-) -> std::io::Result<()> {
-    let continue_rules = continue_rules_dir(project_root);
-    std::fs::create_dir_all(&continue_rules)?;
-
-    let target = continue_rule_path(project_root);
-    let rel = format!(".continue/rules/{CONTINUE_RULE_FILE}");
-
-    if target.exists() {
-        let content = std::fs::read_to_string(&target)?;
-        if !continue_bootstrap_stale(&content) {
-            result.record_skipped(rel);
-            return Ok(());
-        }
-        std::fs::write(&target, CONTINUE_RULE_BODY.as_bytes())?;
-        result.record_updated(rel);
-        return Ok(());
-    }
-
-    if bootstrap_already_present_ext(&continue_rules, "md") {
-        result.record_skipped(format!(
-            "{rel} (another .continue/rules/*.md already contains ax_preflight bootstrap)"
-        ));
-        return Ok(());
-    }
-
-    if ide_removed(project_root, &rel, force)? {
-        result.record_skipped(rel);
-        return Ok(());
-    }
-    std::fs::write(&target, CONTINUE_RULE_BODY.as_bytes())?;
-    note_ide(project_root, &rel, force)?;
-    result.record_created(rel);
-    Ok(())
+fn differs_from_template(content: &str, body: &str) -> bool {
+    content.trim() != body.trim()
 }
 
-/// Project-scoped Continue MCP server so teammates on Continue pick up ax without a global install.
-fn seed_continue_mcp(
-    project_root: &Path,
-    result: &mut IdeSeedResult,
-    force: bool,
-) -> std::io::Result<()> {
-    let dir = continue_mcp_dir(project_root);
-    std::fs::create_dir_all(&dir)?;
-    let target = continue_mcp_path(project_root);
-    let rel = format!(".continue/mcpServers/{CONTINUE_MCP_FILE}");
-    if target.exists() {
-        let content = std::fs::read_to_string(&target)?;
-        if !continue_mcp_stale(&content) {
-            result.record_skipped(rel);
-            return Ok(());
-        }
-        std::fs::write(&target, CONTINUE_MCP_BODY.as_bytes())?;
-        result.record_updated(rel);
-        return Ok(());
-    }
-    if ide_removed(project_root, &rel, force)? {
-        result.record_skipped(rel);
-        return Ok(());
-    }
-    std::fs::write(&target, CONTINUE_MCP_BODY.as_bytes())?;
-    note_ide(project_root, &rel, force)?;
-    result.record_created(rel);
-    Ok(())
+/// What happens to a seeded file that exists and is stale.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OnDrift {
+    /// ax owns the whole file: rewrite it from the template.
+    Refresh,
+    /// The user may adapt the file (for example the Continue MCP command
+    /// path): keep it, and rewrite it only with `force`.
+    KeepUnlessForced,
 }
 
+/// One file that ax seeds as a whole (not a marked block in a shared file).
+struct DedicatedFile {
+    path: PathBuf,
+    rel: String,
+    body: &'static str,
+    stale: fn(&str, &str) -> bool,
+    on_drift: OnDrift,
+    /// `(folder, extension)`: do not create the file when another file of
+    /// that type in the folder already carries the ax bootstrap.
+    present_elsewhere: Option<(&'static str, &'static str)>,
+}
+
+/// Create a missing dedicated file (unless the user removed it on purpose or
+/// another file already carries the bootstrap) and refresh a stale one per
+/// its [`OnDrift`] policy.
 fn write_if_missing_or_stale(
     project_root: &Path,
-    path: &Path,
-    body: &str,
-    rel: &str,
+    file: &DedicatedFile,
     result: &mut IdeSeedResult,
     force: bool,
 ) -> std::io::Result<()> {
-    if path.exists() {
-        let content = std::fs::read_to_string(path)?;
-        let stale =
-            !crate::seed::verify_content(&content).is_empty() || content.trim() != body.trim();
-        if !stale {
+    let rel = file.rel.as_str();
+    if file.path.exists() {
+        let content = std::fs::read_to_string(&file.path)?;
+        if !(file.stale)(&content, file.body) {
             result.record_skipped(rel);
             return Ok(());
         }
-        std::fs::write(path, body.as_bytes())?;
+        if file.on_drift == OnDrift::KeepUnlessForced && !force {
+            result.record_skipped(format!("{rel} (edited; kept, use --force to replace)"));
+            return Ok(());
+        }
+        std::fs::write(&file.path, file.body.as_bytes())?;
         result.record_updated(rel);
         return Ok(());
+    }
+    if let Some((folder, ext)) = file.present_elsewhere {
+        if bootstrap_already_present_ext(&project_root.join(folder), ext) {
+            result.record_skipped(format!(
+                "{rel} (another {folder}/*.{ext} already contains ax_preflight bootstrap)"
+            ));
+            return Ok(());
+        }
     }
     if ide_removed(project_root, rel, force)? {
         result.record_skipped(rel);
         return Ok(());
     }
-    if let Some(parent) = path.parent() {
+    if let Some(parent) = file.path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, body.as_bytes())?;
+    std::fs::write(&file.path, file.body.as_bytes())?;
     note_ide(project_root, rel, force)?;
     result.record_created(rel);
     Ok(())
+}
+
+/// Every dedicated file, in seeding order.
+fn dedicated_files(project_root: &Path) -> Vec<DedicatedFile> {
+    vec![
+        DedicatedFile {
+            path: cursor_rule_path(project_root),
+            rel: format!(".cursor/rules/{CURSOR_RULE_FILE}"),
+            body: CURSOR_RULE_BODY,
+            stale: bootstrap_stale,
+            on_drift: OnDrift::Refresh,
+            present_elsewhere: Some((".cursor/rules", "mdc")),
+        },
+        DedicatedFile {
+            path: mcp_callmcp_shape_rule_path(project_root),
+            rel: format!(".cursor/rules/{MCP_CALLMCP_SHAPE_FILE}"),
+            body: MCP_CALLMCP_SHAPE_BODY,
+            stale: differs_from_template,
+            on_drift: OnDrift::Refresh,
+            present_elsewhere: None,
+        },
+        DedicatedFile {
+            path: continue_rule_path(project_root),
+            rel: format!(".continue/rules/{CONTINUE_RULE_FILE}"),
+            body: CONTINUE_RULE_BODY,
+            stale: bootstrap_stale,
+            on_drift: OnDrift::Refresh,
+            present_elsewhere: Some((".continue/rules", "md")),
+        },
+        // Project-scoped Continue MCP server so teammates on Continue pick up
+        // ax without a global install.
+        DedicatedFile {
+            path: continue_mcp_path(project_root),
+            rel: format!(".continue/mcpServers/{CONTINUE_MCP_FILE}"),
+            body: CONTINUE_MCP_BODY,
+            stale: differs_from_template,
+            on_drift: OnDrift::KeepUnlessForced,
+            present_elsewhere: None,
+        },
+        DedicatedFile {
+            path: claude_rule_path(project_root),
+            rel: format!(".claude/rules/{CLAUDE_RULE_FILE}"),
+            body: CLAUDE_RULE_BODY,
+            stale: bootstrap_stale,
+            on_drift: OnDrift::Refresh,
+            present_elsewhere: None,
+        },
+    ]
+}
+
+fn claude_rule_path(project_root: &Path) -> PathBuf {
+    project_root
+        .join(".claude")
+        .join("rules")
+        .join(CLAUDE_RULE_FILE)
 }
 
 fn seed_claude_bootstrap(
@@ -437,20 +407,6 @@ fn seed_claude_bootstrap(
     result: &mut IdeSeedResult,
     force: bool,
 ) -> std::io::Result<()> {
-    let rule_path = project_root
-        .join(".claude")
-        .join("rules")
-        .join(CLAUDE_RULE_FILE);
-    let rule_rel = format!(".claude/rules/{CLAUDE_RULE_FILE}");
-    write_if_missing_or_stale(
-        project_root,
-        &rule_path,
-        CLAUDE_RULE_BODY,
-        &rule_rel,
-        result,
-        force,
-    )?;
-
     seed_marked_file(
         project_root,
         &project_root.join(".claude").join("CLAUDE.md"),
@@ -688,18 +644,21 @@ pub fn seed_ide_agent_workflow(project_root: &Path) -> std::io::Result<IdeSeedRe
 }
 
 /// Seed IDE bootstrap files. Shared instruction files (`AGENTS.md`, `.clinerules`, …) only get
-/// their marked ax block replaced or appended; text outside it is kept. With `force=true`, stale
-/// ax-managed templates may be rewritten.
+/// their marked ax block replaced or appended; text outside it is kept. Files ax owns as a whole
+/// (`.cursor/rules/ax.mdc`, `.continue/rules/ax.md`, `.claude/rules/ax.md`, …) are refreshed
+/// from their template whenever they drift, with or without `force`. The Continue MCP config
+/// (`.continue/mcpServers/ax.json`) is one users adapt, so an edited copy is kept unless
+/// `force` is set. `force` also re-creates files the user deleted on purpose.
 pub fn seed_ide_agent_workflow_with_force(
     project_root: &Path,
     force: bool,
 ) -> std::io::Result<IdeSeedResult> {
     prepare_ide_history(project_root)?;
     let mut result = IdeSeedResult::default();
-    seed_cursor_rule(project_root, &mut result, force)?;
-    seed_mcp_callmcp_shape_rule(project_root, &mut result, force)?;
-    seed_continue_rule(project_root, &mut result, force)?;
-    seed_continue_mcp(project_root, &mut result, force)?;
+    remove_legacy_cursor_rule(project_root, &mut result);
+    for file in dedicated_files(project_root) {
+        write_if_missing_or_stale(project_root, &file, &mut result, force)?;
+    }
     seed_claude_bootstrap(project_root, &mut result, force)?;
     seed_agents_bootstrap(project_root, &mut result)?;
     seed_gemini_bootstrap(project_root, &mut result)?;
@@ -832,16 +791,10 @@ fn verify_continue_mcp(project_root: &Path) -> InstructionCheck {
             optional: false,
         };
     }
+    // Users may adapt this file (another command path, extra args), so only
+    // a missing ax serve entry counts as a problem, not a difference from the
+    // template.
     let content = std::fs::read_to_string(&path).unwrap_or_default();
-    if continue_mcp_stale(&content) {
-        return InstructionCheck {
-            label,
-            path,
-            ok: false,
-            issues: vec!["MCP config drifts from embedded template".into()],
-            optional: false,
-        };
-    }
     if !content.contains("\"ax\"") || !content.contains("serve") || !content.contains("--mcp") {
         return InstructionCheck {
             label,
@@ -1334,7 +1287,37 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("serve"));
         assert!(content.contains("--mcp"));
-        assert!(!continue_mcp_stale(&content));
+        assert!(!differs_from_template(&content, CONTINUE_MCP_BODY));
+    }
+
+    #[test]
+    fn an_edited_continue_mcp_config_is_kept_unless_forced() {
+        let dir = tempdir().unwrap();
+        seed_ide_agent_workflow(dir.path()).unwrap();
+        let path = continue_mcp_path(dir.path());
+        let edited = r#"{
+  "name": "ax",
+  "type": "stdio",
+  "command": "/opt/tools/ax",
+  "args": ["serve", "--mcp", "--path", "."]
+}
+"#;
+        std::fs::write(&path, edited).unwrap();
+
+        seed_ide_agent_workflow(dir.path()).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+        let check = verify_continue_mcp(dir.path());
+        assert!(check.ok, "{:?}", check.issues);
+
+        seed_ide_agent_workflow_with_force(dir.path(), true).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), CONTINUE_MCP_BODY);
+    }
+
+    #[test]
+    fn instruction_blocks_carry_the_shared_memory_sentence() {
+        for block in [CLAUDE_INSTRUCTIONS_BLOCK, AGENTS_INSTRUCTIONS_BLOCK] {
+            assert_eq!(block.matches(MEMORY_PROCEDURE_SENTENCE).count(), 1);
+        }
     }
 
     #[test]

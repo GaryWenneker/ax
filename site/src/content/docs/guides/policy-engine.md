@@ -554,7 +554,7 @@ On every `ax policy pack import` (including the post-merge hook), ax:
 
 1. Indexes shared rules/skills into the local policy store
 2. Re-seeds **all** IDE bootstrap files (`.cursor/rules/ax.mdc`, `.continue/rules/ax.md`, Claude, AGENTS.md, …)
-3. Writes Continue MCP at `.continue/mcpServers/ax.json` (project-scoped, commit-friendly) and refreshes MCP for any other detected agents
+3. Writes Continue MCP at `.continue/mcpServers/ax.json` (project-scoped, commit-friendly) and refreshes MCP for any other detected agents. An edited `.continue/mcpServers/ax.json` (for example another `command` path) is kept; `ax policy sync --fix --force` replaces it with the template. Files ax owns as a whole, such as `.cursor/rules/ax.mdc`, are refreshed when they drift.
 
 Colleagues only need `ax` on PATH and their IDE open on the project. Continue is included in init seeding (`ax init` / `ax policy sync --fix`).
 
