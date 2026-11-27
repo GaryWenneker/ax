@@ -16,11 +16,11 @@ use super::types::*;
 /// ship commands) may take before the client
 /// gives up; the server keeps working either way.
 const LONG_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
-/// Time allowed to open a connection, for ordinary requests and streams.
 /// Most events a live SSE stream (MCP trace, ship events) holds for a page
 /// that is not reading it. When the buffer is full the stream thread waits,
 /// so a hidden page cannot grow memory without limit.
 pub const STREAM_BUFFER: usize = 256;
+/// Time allowed to open a connection, for ordinary requests and streams.
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[derive(Clone)]
