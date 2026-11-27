@@ -29,6 +29,7 @@ import {
   type MemoryRow,
 } from '../api';
 import Codicon from '../components/Codicon';
+import { recallStillApplies } from '../lib/recallGate';
 import ImageLightbox from '../components/ImageLightbox';
 import { MemoryDiffHover } from '../components/MemoryDiffHover';
 import MarkdownPreview from '../components/MarkdownPreview';
@@ -195,6 +196,7 @@ export default function MemoryPage() {
   loadedCountRef.current = memories.length;
   const archiveRef = useRef(archiveOn);
   archiveRef.current = archiveOn;
+  const currentRecallInputs = () => ({ q: qRef.current, archive: archiveRef.current, session: sessionFilterRef.current });
   const refreshRef = useRef<() => void>(() => {});
   useLive('memory', () => refreshRef.current());
   const fresh = useNewKeys(loading ? null : memories.map((m) => m.id));
@@ -214,9 +216,10 @@ export default function MemoryPage() {
         .catch(() => {});
       const query = qRef.current.trim();
       if (!query || session) return;
-      recallMemories(query, 25, archiveRef.current ? 'archive' : 'hot')
+      const sent = { q: query, archive: archiveRef.current, session: '' };
+      recallMemories(query, 25, sent.archive ? 'archive' : 'hot')
         .then((r) => {
-          if (qRef.current.trim() !== query) return;
+          if (!recallStillApplies(sent, currentRecallInputs())) return;
           setMatches((prev) => (prev && !memoryListChanged(prev, r.matches) ? prev : r.matches));
         })
         .catch(() => {});
@@ -238,10 +241,15 @@ export default function MemoryPage() {
     }
     if (debounce.current) clearTimeout(debounce.current);
     if (!q.trim()) { setMatches(null); return; }
+    const sent = { q, archive: archiveOn, session: '' };
     debounce.current = setTimeout(() => {
       recallMemories(q, 25, archiveOn ? 'archive' : 'hot')
-        .then((r) => setMatches(r.matches))
-        .catch((e: Error) => setError(e.message));
+        .then((r) => {
+          if (recallStillApplies(sent, currentRecallInputs())) setMatches(r.matches);
+        })
+        .catch((e: Error) => {
+          if (recallStillApplies(sent, currentRecallInputs())) setError(e.message);
+        });
     }, 300);
     return () => { if (debounce.current) clearTimeout(debounce.current); };
   }, [q, archiveOn, sessionFilter]);
