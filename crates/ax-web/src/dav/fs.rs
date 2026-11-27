@@ -236,6 +236,22 @@ async fn stored_delete_tree(pool: &SqlitePool, path: &str) -> FsResult<u64> {
     Ok(res.rows_affected())
 }
 
+/// The most memories the vault shows as pages (newest first).
+const MEMORY_PAGE_LIMIT: i64 = 100_000;
+
+/// `key -> updated_at` from a two-column query. A failed query reads as no
+/// times (pages then show time 0), as a single lookup does.
+async fn updated_by_key(
+    pool: &SqlitePool,
+    sql: &'static str,
+) -> FsResult<std::collections::HashMap<String, i64>> {
+    let rows: Vec<(String, i64)> = sqlx::query_as(sql)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+    Ok(rows.into_iter().collect())
+}
+
 /// A `dav_files` row without its contents.
 struct StoredMeta {
     path: String,
@@ -447,19 +463,46 @@ impl DavVault {
             .unwrap_or(0)
     }
 
+    async fn policy_pool_and_root(&self) -> (SqlitePool, std::path::PathBuf) {
+        let ws = self.hub.read().await;
+        (
+            ws.policy.store.pool().clone(),
+            ws.policy.store.project_root().to_path_buf(),
+        )
+    }
+
     async fn memories(&self) -> FsResult<Vec<ax_memory::MemoryRow>> {
         let pool = self.memory_pool().await;
-        let (rows, _) = ax_memory::list(&pool, 100_000, 0).await.map_err(db_err)?;
+        let (rows, _) = ax_memory::list(&pool, MEMORY_PAGE_LIMIT as usize, 0)
+            .await
+            .map_err(db_err)?;
         Ok(rows)
     }
 
+    /// The memory a page stem names. A stem depends on every title, so this
+    /// reads the titles of the rows [`Self::memories`] lists but loads only
+    /// the matching memory in full.
     async fn memory_for_stem(&self, stem: &str) -> FsResult<Option<ax_memory::MemoryRow>> {
-        let rows = self.memories().await?;
-        let id = pages::memory_stems(&rows)
+        let pool = self.memory_pool().await;
+        let keys: Vec<(String, String, i64)> = sqlx::query_as(
+            "SELECT id, title, created_at FROM memories ORDER BY updated_at DESC LIMIT ?",
+        )
+        .bind(MEMORY_PAGE_LIMIT)
+        .fetch_all(&pool)
+        .await
+        .map_err(db_err)?;
+        let entries: Vec<(&str, &str, i64)> = keys
+            .iter()
+            .map(|(id, title, created)| (id.as_str(), title.as_str(), *created))
+            .collect();
+        let Some(id) = ax_policy::links::unique_stems(&entries)
             .into_iter()
             .find(|(_, s)| s == stem)
-            .map(|(id, _)| id);
-        Ok(id.and_then(|id| rows.into_iter().find(|m| m.id == id)))
+            .map(|(id, _)| id)
+        else {
+            return Ok(None);
+        };
+        ax_memory::get(&pool, &id).await.map_err(db_err)
     }
 
     async fn global_item(&self, area: Area, stem: &str) -> FsResult<Option<GlobalItem>> {
@@ -586,40 +629,41 @@ impl DavVault {
         let mut out = BTreeMap::new();
         let stems: Vec<String> = match area {
             Area::Rules => {
-                let ws = self.hub.read().await;
-                ws.policy
-                    .store
-                    .list_rules()
-                    .await
-                    .map_err(db_err)?
-                    .into_iter()
-                    .map(|r| r.id)
-                    .collect()
+                // One list query and one timestamp query build every page,
+                // the same pages `saved_page` serves for an indexed rule.
+                let (pool, root) = self.policy_pool_and_root().await;
+                let rows = ax_policy::index::list_rules(&pool).await.map_err(db_err)?;
+                let updated =
+                    updated_by_key(&pool, "SELECT id, updated_at FROM policy_rules").await?;
+                for row in &rows {
+                    let len = pages::rule_page(&ax_policy::rule_row_to_doc(row, &root)).len();
+                    let ms = updated.get(&row.id).copied().unwrap_or(0);
+                    out.insert(format!("{}.md", row.id), Meta::file(len, ms));
+                }
+                Vec::new()
             }
             Area::Skills => {
-                let ws = self.hub.read().await;
-                let mut names: Vec<String> = ws
-                    .policy
-                    .store
-                    .list_skills()
-                    .await
-                    .map_err(db_err)?
-                    .into_iter()
-                    .map(|s| s.name)
-                    .collect();
-                let root = ws.policy.store.project_root().to_path_buf();
-                drop(ws);
-                for name in disk_skill_names(&root) {
-                    if !names.iter().any(|existing| existing == &name) {
-                        names.push(name);
-                    }
+                let (pool, root) = self.policy_pool_and_root().await;
+                let rows = ax_policy::index::list_skills(&pool).await.map_err(db_err)?;
+                let updated =
+                    updated_by_key(&pool, "SELECT name, updated_at FROM policy_skills").await?;
+                for row in &rows {
+                    let len = pages::skill_page(&ax_policy::skill_row_to_doc(row, &root)).len();
+                    let ms = updated.get(&row.name).copied().unwrap_or(0);
+                    out.insert(format!("{}.md", row.name), Meta::file(len, ms));
                 }
-                names
+                // Skill folders on disk without a database row are read one by one.
+                disk_skill_names(&root)
+                    .into_iter()
+                    .filter(|name| !rows.iter().any(|r| &r.name == name))
+                    .collect()
             }
             Area::Memories => {
                 let rows = self.memories().await?;
+                let by_id: std::collections::HashMap<&str, &ax_memory::MemoryRow> =
+                    rows.iter().map(|m| (m.id.as_str(), m)).collect();
                 for (id, stem) in pages::memory_stems(&rows) {
-                    if let Some(m) = rows.iter().find(|m| m.id == id) {
+                    if let Some(m) = by_id.get(id.as_str()) {
                         let len = pages::memory_page(m).len();
                         out.insert(format!("{stem}.md"), Meta::file(len, m.updated_at));
                     }

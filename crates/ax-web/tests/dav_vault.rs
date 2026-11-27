@@ -816,3 +816,81 @@ async fn n8_move_folder_replaces_destination_and_moves_every_row() {
         StatusCode::NOT_FOUND
     );
 }
+
+/// A listing reports the same size and page set that GET serves, for every
+/// page area, and same-title memories resolve to their own page by stem.
+#[tokio::test]
+async fn listings_match_pages_and_duplicate_memory_titles_resolve() {
+    let fx = fixture().await;
+    assert_eq!(
+        put(&fx.app, "/dav/skills/deploy.md", "Deploy steps.")
+            .await
+            .status,
+        StatusCode::CREATED
+    );
+    let second = {
+        let ws = fx.hub.read().await;
+        ax_memory::remember(
+            &ws.graph_pool,
+            ax_memory::RememberInput {
+                title: "Use SQLite".into(),
+                body: "The second memory with this title.".into(),
+                kind: Some("decision".into()),
+                tags: vec![],
+                files: vec![],
+                source: None,
+            },
+        )
+        .await
+        .unwrap()
+    };
+    let page = get(&fx.app, "/dav/memories/Use%20SQLite%20(2).md").await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    assert!(
+        page.body.contains(&format!("id: {}", second.id)),
+        "{}",
+        page.body
+    );
+    assert!(page.body.contains("The second memory with this title."));
+    let first = get(&fx.app, "/dav/memories/Use%20SQLite.md").await;
+    assert!(first.body.contains("SQLite is the source of truth."));
+    assert_eq!(
+        get(&fx.app, "/dav/memories/Use%20SQLite%20(3).md")
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+
+    for (dir, pages) in [
+        ("rules", vec!["english-only.md"]),
+        ("skills", vec!["deploy.md"]),
+        ("memories", vec!["Use%20SQLite.md", "Use%20SQLite%20(2).md"]),
+    ] {
+        let listed = propfind(&fx.app, &format!("/dav/{dir}/")).await;
+        assert_eq!(listed.status, StatusCode::MULTI_STATUS, "{}", listed.body);
+        for name in pages {
+            let page = get(&fx.app, &format!("/dav/{dir}/{name}")).await;
+            assert_eq!(page.status, StatusCode::OK, "{dir}/{name}");
+            let one = send(
+                &fx.app,
+                "PROPFIND",
+                &format!("/dav/{dir}/{name}"),
+                &[("Depth", "0")],
+                Body::empty(),
+            )
+            .await;
+            let len = format!("getcontentlength>{}<", page.body.len());
+            assert!(one.body.contains(&len), "stat {dir}/{name}: {}", one.body);
+            let at = listed
+                .body
+                .find(&format!(
+                    "/dav/{dir}/{}<",
+                    name.replace('(', "%28").replace(')', "%29")
+                ))
+                .unwrap_or_else(|| panic!("{dir}/{name} not listed: {}", listed.body));
+            let entry = &listed.body[at..];
+            let entry = &entry[..entry.find("</D:response>").unwrap_or(entry.len())];
+            assert!(entry.contains(&len), "list {dir}/{name}: {entry}");
+        }
+    }
+}
