@@ -85,7 +85,7 @@ ax policy share sync          # pull
 ax policy share sync --push   # push
 ```
 
-Git must be on `PATH`. ax shallow-clones the repo, copies `policy/shared/` and `memory/shared.jsonl` if present, then imports into the local policy store. Push does a full clone, writes the pack under `subpath`, commits, and pushes (retrying once with `pull --rebase` on a non-fast-forward).
+Git must be on `PATH`. ax shallow-clones the repo, copies `policy/shared/` and `memory/shared.jsonl` if present, then imports into the local policy store. Push does a full clone, writes the pack under `subpath`, commits, and pushes (retrying once with `pull --rebase` on a non-fast-forward). `repoUrl` must be an `https`, `http`, `ssh`, `git` or `file` URL, an scp-like `user@host:path`, or an absolute local path; a value starting with `-` or using another transport is refused. `subpath` must be a relative path inside the repository (no leading `/`, no `..`, no link that points outside the clone), and `branch` must be a plain branch name.
 
 #### GitLab behind Bridge-managed SSH keys (e.g. `gitlab.hosted-tools.com`)
 
