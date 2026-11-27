@@ -377,14 +377,7 @@ pub async fn bootstrap_sonar(
     )
     .await?;
 
-    let token_path = sonar_token_path(project_root);
-    if let Some(parent) = token_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&token_path, format!("{token}\n")).map_err(|e| e.to_string())?;
-
-    std::env::set_var(&config.token_env, &token);
-    let token_env_set = set_user_env_var(&config.token_env, &token);
+    let (token_path, token_env_set) = persist_token(project_root, &config.token_env, &token)?;
 
     let message = if projects_created > 0 {
         format!("Created {projects_created} SonarQube project(s) and saved scanner token.")
@@ -558,13 +551,7 @@ pub async fn ensure_sonar_token(
     )
     .await?;
 
-    let token_path = sonar_token_path(project_root);
-    if let Some(parent) = token_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&token_path, format!("{token}\n")).map_err(|e| e.to_string())?;
-    std::env::set_var(&config.token_env, &token);
-    let _ = set_user_env_var(&config.token_env, &token);
+    persist_token(project_root, &config.token_env, &token)?;
     Ok(())
 }
 
@@ -636,14 +623,7 @@ pub async fn regenerate_sonar_token(
     )
     .await?;
 
-    let token_path = sonar_token_path(project_root);
-    if let Some(parent) = token_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&token_path, format!("{token}\n")).map_err(|e| e.to_string())?;
-
-    std::env::set_var(&config.token_env, &token);
-    let token_env_set = set_user_env_var(&config.token_env, &token);
+    let (token_path, token_env_set) = persist_token(project_root, &config.token_env, &token)?;
 
     Ok(SonarBootstrapResult {
         project_created: false,
@@ -1227,21 +1207,103 @@ fn basic_auth(user: &str, password: &str) -> String {
     format!("Basic {}", STANDARD.encode(format!("{user}:{password}")))
 }
 
+/// Saves the scanner token to `.ax/sonar.token` (owner read/write only on
+/// Unix, replaced atomically) and, on Windows, to the user environment.
+/// The running process environment is never changed: callers read the
+/// token back with [`read_sonar_token`], which prefers the file. Returns the
+/// token path and whether the user environment variable was set.
+fn persist_token(
+    project_root: &Path,
+    token_env: &str,
+    token: &str,
+) -> Result<(PathBuf, bool), String> {
+    let token_path = sonar_token_path(project_root);
+    write_private_file(&token_path, format!("{token}\n").as_bytes())
+        .map_err(|e| format!("could not save {}: {e}", token_path.display()))?;
+    Ok((token_path, set_user_env_var(token_env, token)))
+}
+
+/// Writes `bytes` to a temporary file created with mode 0600 next to
+/// `path`, then renames it over `path`, so the secret is never readable by
+/// other users, not even briefly.
+fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "secret".into());
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = dir.join(format!(".{name}.{}.{seq}.tmp", std::process::id()));
+    let result = (|| {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut f = opts.open(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+const USER_ENV_NAME_VAR: &str = "AX_USER_ENV_NAME";
+const USER_ENV_VALUE_VAR: &str = "AX_USER_ENV_VALUE";
+
+/// Whether `name` is a plain environment variable name
+/// (`[A-Za-z_][A-Za-z0-9_]*`).
+fn is_env_var_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// The PowerShell command that stores `name=value` in the Windows user
+/// environment. The name and value reach the script through the child's
+/// environment, never through the command line, so neither can change the
+/// script and the token does not show up in process listings. Returns
+/// `None` when `name` is not a plain variable name.
+fn user_env_command(name: &str, value: &str) -> Option<std::process::Command> {
+    if !is_env_var_name(name) {
+        return None;
+    }
+    let script = format!(
+        "[Environment]::SetEnvironmentVariable($env:{USER_ENV_NAME_VAR}, $env:{USER_ENV_VALUE_VAR}, 'User')"
+    );
+    let mut cmd = std::process::Command::new("powershell");
+    cmd.args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .env(USER_ENV_NAME_VAR, name)
+        .env(USER_ENV_VALUE_VAR, value);
+    Some(cmd)
+}
+
 fn set_user_env_var(name: &str, value: &str) -> bool {
-    #[cfg(windows)]
-    {
-        let script = format!("[Environment]::SetEnvironmentVariable('{name}', '{value}', 'User')");
-        return std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+    if !cfg!(windows) {
+        return false;
     }
-    #[cfg(not(windows))]
-    {
-        let _ = (name, value);
-        false
-    }
+    let Some(mut cmd) = user_env_command(name, value) else {
+        tracing::warn!(
+            token_env = name,
+            "sonar.token_env is not a plain variable name; not storing the token in the user environment"
+        );
+        return false;
+    };
+    cmd.status().map(|s| s.success()).unwrap_or(false)
 }
 
 /// Host URL reachable from a scanner container (Podman/Docker on Windows/macOS).
@@ -1260,6 +1322,85 @@ pub fn scanner_host_url(host: &str) -> String {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn persist_token_writes_the_file_and_leaves_the_process_environment_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let name = "AX_QUALITY_TEST_PERSIST_TOKEN_ENV";
+        let (path, _) = persist_token(dir.path(), name, "squ_secret").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "squ_secret\n");
+        assert_eq!(
+            read_sonar_token(dir.path(), name).as_deref(),
+            Some("squ_secret")
+        );
+        assert!(
+            std::env::var_os(name).is_none(),
+            "the token must not be exported into this process"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persist_token_file_is_readable_by_the_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = sonar_token_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // An older token file with wide permissions is tightened too.
+        std::fs::write(&path, "old\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        persist_token(dir.path(), "AX_QUALITY_TEST_PERSIST_MODE", "squ_new").unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "squ_new\n");
+    }
+
+    #[test]
+    fn user_env_command_refuses_names_that_are_not_plain_identifiers() {
+        for bad in [
+            "X','1','User'); Start-Process calc; #",
+            "",
+            "1ABC",
+            "A B",
+            "A-B",
+            "A$B",
+        ] {
+            assert!(user_env_command(bad, "v").is_none(), "{bad:?}");
+        }
+        assert!(user_env_command("SONAR_TOKEN", "v").is_some());
+        assert!(user_env_command("_sonar1", "v").is_some());
+    }
+
+    #[test]
+    fn user_env_command_keeps_name_and_value_off_the_command_line() {
+        let cmd = user_env_command("SONAR_TOKEN", "squ_it's'secret").unwrap();
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            args.iter()
+                .all(|a| !a.contains("squ_") && !a.contains("SONAR_TOKEN")),
+            "{args:?}"
+        );
+        let envs: HashMap<String, String> = cmd
+            .get_envs()
+            .filter_map(|(k, v)| {
+                Some((
+                    k.to_string_lossy().into_owned(),
+                    v?.to_string_lossy().into_owned(),
+                ))
+            })
+            .collect();
+        assert_eq!(
+            envs.get(USER_ENV_NAME_VAR).map(String::as_str),
+            Some("SONAR_TOKEN")
+        );
+        assert_eq!(
+            envs.get(USER_ENV_VALUE_VAR).map(String::as_str),
+            Some("squ_it's'secret")
+        );
+    }
 
     #[cfg(windows)]
     #[test]
