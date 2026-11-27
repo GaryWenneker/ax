@@ -638,6 +638,10 @@ impl SonarClient {
             if !result.passed {
                 combined.passed = false;
                 combined.status = result.status.clone();
+            } else if combined.passed && combined.status == "OK" {
+                // A passing WARN (or a neutral NONE) is still reported, so a
+                // warning is not shown as a clean OK.
+                combined.status = result.status.clone();
             }
             combined.conditions.extend(result.conditions);
         }
@@ -1342,6 +1346,105 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn a_warn_gate_passes_and_keeps_its_conditions() {
+        let sonar = MockSonar::start(|path, _| {
+            if path.starts_with("/api/ce/component") {
+                (200, "{\"queue\":[]}".into())
+            } else {
+                (
+                    200,
+                    "{\"projectStatus\":{\"status\":\"WARN\",\"conditions\":[{\"metricKey\":\"coverage\",\"status\":\"WARN\",\"actualValue\":\"71.0\"}]}}".into(),
+                )
+            }
+        })
+        .await;
+        let root = tempfile::tempdir().unwrap();
+        let gate = client_for(&sonar.host)
+            .fetch_quality_gate(root.path(), &[])
+            .await
+            .unwrap();
+        assert_eq!(gate.status, "WARN");
+        assert!(gate.passed);
+        assert_eq!(gate.conditions.len(), 1);
+        assert_eq!(gate.conditions[0].metric_key, "coverage");
+        assert_eq!(gate.conditions[0].status, "WARN");
+        assert_eq!(gate.conditions[0].actual_value, "71.0");
+    }
+
+    #[tokio::test]
+    async fn a_gate_api_error_is_unknown_and_not_passed() {
+        for snapshot in [false, true] {
+            let sonar = MockSonar::start(|path, _| {
+                if path.starts_with("/api/ce/component") {
+                    (200, "{\"queue\":[]}".into())
+                } else {
+                    (500, "{}".into())
+                }
+            })
+            .await;
+            let root = tempfile::tempdir().unwrap();
+            let client = client_for(&sonar.host);
+            let gate = if snapshot {
+                client.fetch_quality_gate_snapshot(root.path(), &[]).await
+            } else {
+                client.fetch_quality_gate(root.path(), &[]).await
+            }
+            .unwrap();
+            assert_eq!(gate.status, "UNKNOWN", "snapshot={snapshot}");
+            assert!(!gate.passed, "snapshot={snapshot}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_multi_repo_gate_reads_every_repo_key_and_fails_on_one_error() {
+        let sonar = MockSonar::start(|path, _| {
+            if path.starts_with("/api/ce/component") {
+                (200, "{\"queue\":[]}".into())
+            } else if path.contains("projectKey=ax-b") {
+                (200, gate_body("ERROR"))
+            } else {
+                (200, gate_body("OK"))
+            }
+        })
+        .await;
+        let root = tempfile::tempdir().unwrap();
+        let repos = vec!["a".to_string(), "b".to_string()];
+        let gate = client_for(&sonar.host)
+            .fetch_quality_gate(root.path(), &repos)
+            .await
+            .unwrap();
+        assert_eq!(gate.status, "ERROR");
+        assert!(!gate.passed);
+        let gate_calls: Vec<String> = sonar
+            .hits()
+            .into_iter()
+            .filter(|p| p.starts_with("/api/qualitygates/project_status"))
+            .collect();
+        assert_eq!(
+            gate_calls,
+            vec![
+                "/api/qualitygates/project_status?projectKey=ax-a".to_string(),
+                "/api/qualitygates/project_status?projectKey=ax-b".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_disabled_client_skips_the_gate() {
+        let client = SonarClient::new(SonarConfig {
+            enabled: false,
+            ..SonarConfig::default()
+        });
+        let root = tempfile::tempdir().unwrap();
+        let gate = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(client.fetch_quality_gate(root.path(), &[]))
+            .unwrap();
+        assert_eq!(gate.status, "SKIPPED");
+        assert!(gate.passed);
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_scanner_that_writes_a_lot_of_output_still_finishes() {
@@ -1412,15 +1515,31 @@ mod tests {
             "ContosoPortal/src/Bar.cs".into(),
         ];
         let targets = build_scan_targets("Contoso", &repos, &files, false);
-        assert_eq!(targets.len(), 2);
-        assert!(targets.iter().all(|t| t.sources != "FabrikamTeams"));
-        let web = targets.iter().find(|t| t.sources == "Contoso-Web").unwrap();
-        assert!(web.inclusions.contains("Foo.cs"));
-        let contoso = targets
+        let summary: Vec<(&str, &str, &str)> = targets
             .iter()
-            .find(|t| t.sources == "ContosoPortal")
-            .unwrap();
-        assert!(contoso.inclusions.contains("Bar.cs"));
+            .map(|t| {
+                (
+                    t.project_key.as_str(),
+                    t.sources.as_str(),
+                    t.inclusions.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                (
+                    "Contoso-Contoso-Web",
+                    "Contoso-Web",
+                    "Contoso-Web/src/Foo.cs"
+                ),
+                (
+                    "Contoso-ContosoPortal",
+                    "ContosoPortal",
+                    "ContosoPortal/src/Bar.cs"
+                ),
+            ]
+        );
     }
 
     #[test]
