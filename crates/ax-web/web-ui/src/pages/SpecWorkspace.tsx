@@ -62,6 +62,11 @@ const STATUS_ICON: Record<string, string> = {
   superseded: 'history',
 };
 
+/** The widths at which styles/25-specs.css turns each side panel into a
+ *  drawer; specWorkspacePage.test.ts keeps the two in step. */
+const EXPLORER_DRAWER_QUERY = '(max-width: 899px)';
+const CONTEXT_DRAWER_QUERY = '(max-width: 1280px)';
+
 function statusLabel(status: string): string {
   return status === 'unknown' ? 'Status not loaded' : status.replace(/_/g, ' ');
 }
@@ -237,7 +242,7 @@ export default function SpecWorkspace({
   }
 
   function togglePanel(panel: 'explorer' | 'context') {
-    const drawerWidth = panel === 'explorer' ? '(max-width: 900px)' : '(max-width: 1280px)';
+    const drawerWidth = panel === 'explorer' ? EXPLORER_DRAWER_QUERY : CONTEXT_DRAWER_QUERY;
     if (window.matchMedia(drawerWidth).matches) {
       setDrawer((current) => (current === panel ? null : panel));
       return;
