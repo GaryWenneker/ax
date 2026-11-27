@@ -17,6 +17,10 @@ use super::types::*;
 /// gives up; the server keeps working either way.
 const LONG_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 /// Time allowed to open a connection, for ordinary requests and streams.
+/// Most events a live SSE stream (MCP trace, ship events) holds for a page
+/// that is not reading it. When the buffer is full the stream thread waits,
+/// so a hidden page cannot grow memory without limit.
+pub const STREAM_BUFFER: usize = 256;
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[derive(Clone)]
@@ -426,7 +430,7 @@ impl ApiClient {
     }
 
     pub fn stream_ship_events(&self) -> Receiver<Result<serde_json::Value, String>> {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(STREAM_BUFFER);
         let client = self.clone();
         thread::spawn(move || {
             loop {
@@ -508,7 +512,7 @@ impl ApiClient {
     }
 
     pub fn stream_mcp_trace(&self) -> Receiver<Result<(String, String), String>> {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(STREAM_BUFFER);
         let client = self.clone();
         thread::spawn(move || loop {
             let res = match client
@@ -610,6 +614,45 @@ mod timeout_tests {
         assert_eq!(first.1, "first");
         let second = rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
         assert_eq!(second.1, "second", "stream was cut and reconnected");
+    }
+
+    fn flood(mut s: TcpStream) {
+        read_request(&mut s);
+        let _ = s.write_all(
+            b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n",
+        );
+        for i in 0..5_000 {
+            if write!(s, "event: line\ndata: {{\"n\":{i}}}\n\n").is_err() {
+                return;
+            }
+        }
+        let _ = s.flush();
+        thread::sleep(Duration::from_secs(5));
+    }
+
+    fn queued<T>(rx: &Receiver<T>) -> usize {
+        thread::sleep(Duration::from_millis(800));
+        std::iter::from_fn(|| rx.try_recv().ok()).count()
+    }
+
+    #[test]
+    fn unread_mcp_trace_stream_stays_bounded() {
+        let client = ApiClient::new(serve(flood));
+        let rx = client.stream_mcp_trace();
+        let n = queued(&rx);
+        assert!(n > 0, "stream delivered nothing");
+        // Draining frees slots while the stream thread refills them, so allow some slack.
+        assert!(n <= 2 * STREAM_BUFFER, "{n} events queued while unread");
+    }
+
+    #[test]
+    fn unread_ship_event_stream_stays_bounded() {
+        let client = ApiClient::new(serve(flood));
+        let rx = client.stream_ship_events();
+        let n = queued(&rx);
+        assert!(n > 0, "stream delivered nothing");
+        // Draining frees slots while the stream thread refills them, so allow some slack.
+        assert!(n <= 2 * STREAM_BUFFER, "{n} events queued while unread");
     }
 
     #[test]
