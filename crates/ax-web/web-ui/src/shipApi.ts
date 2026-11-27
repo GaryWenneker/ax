@@ -160,6 +160,18 @@ export function saveShipConfig(config: ShipConfig): Promise<{ ok: boolean }> {
   return request('/config', { method: 'PUT', body: JSON.stringify(config) });
 }
 
+/**
+ * Save one change to the stored ship.toml: read the config the server has, apply
+ * `change`, and write the result. Unsaved edits elsewhere on the page are not sent.
+ * Nothing is written when the stored config cannot be read.
+ */
+export async function updateShipConfig(change: (stored: ShipConfig) => ShipConfig): Promise<ShipConfig> {
+  const { config } = await fetchShipConfig();
+  const next = change(config);
+  await saveShipConfig(next);
+  return next;
+}
+
 export interface ReviewLanguageChoice {
   code: string;
   name: string;

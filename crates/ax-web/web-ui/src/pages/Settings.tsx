@@ -28,6 +28,7 @@ import {
   fetchShipConfig,
   saveReviewLanguage,
   saveShipConfig,
+  updateShipConfig,
   type ReviewLanguageChoice,
   type ShipConfig,
 } from '../shipApi';
@@ -118,7 +119,11 @@ export default function SettingsPage() {
   const mobile = useMobile();
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [config, setConfig] = useState<ShipConfig>(DEFAULT_CONFIG);
+  /** The ship config load has finished, whether or not it worked. */
   const [configLoaded, setConfigLoaded] = useState(false);
+  /** The ship config was read from the server. Until then `config` holds built-in
+   *  defaults, so nothing that writes ship.toml may run. */
+  const [configOk, setConfigOk] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -168,6 +173,7 @@ export default function SettingsPage() {
           quality_gate: { ...DEFAULT_CONFIG.quality_gate, ...d.config.quality_gate },
           sonar: { ...DEFAULT_CONFIG.sonar, ...d.config.sonar },
         });
+        setConfigOk(true);
         setConfigLoaded(true);
         try {
           const budget = await fetch('/api/context-budget/').then((res) => res.json()) as { tokens?: number | null };
@@ -193,15 +199,12 @@ export default function SettingsPage() {
   }, []);
 
   async function setUiSavings(show_savings: boolean) {
-    const next = {
-      ...config,
-      ui: { ...(config.ui ?? {}), show_savings },
-    };
-    setConfig(next);
+    if (!configOk) return;
+    setConfig((c) => ({ ...c, ui: { ...(c.ui ?? {}), show_savings } }));
     setErr(null);
     setMsg(null);
     try {
-      await saveShipConfig(next);
+      await updateShipConfig((c) => ({ ...c, ui: { ...(c.ui ?? {}), show_savings } }));
       window.dispatchEvent(
         new CustomEvent('ax-ship-config-updated', { detail: { show_savings } }),
       );
@@ -231,16 +234,13 @@ export default function SettingsPage() {
   }
 
   async function setUiTimezone(timezone: string) {
+    if (!configOk) return;
     const prev = config.ui?.timezone ?? '';
-    const next = {
-      ...config,
-      ui: { ...(config.ui ?? {}), timezone },
-    };
-    setConfig(next);
+    setConfig((c) => ({ ...c, ui: { ...(c.ui ?? {}), timezone } }));
     setErr(null);
     setMsg(null);
     try {
-      await saveShipConfig(next);
+      await updateShipConfig((c) => ({ ...c, ui: { ...(c.ui ?? {}), timezone } }));
       window.dispatchEvent(
         new CustomEvent('ax-ship-config-updated', { detail: { timezone } }),
       );
@@ -259,6 +259,7 @@ export default function SettingsPage() {
   }
 
   async function save(nextConfig: ShipConfig = config) {
+    if (!configOk) return;
     setBusy('save');
     setErr(null);
     setMsg(null);
@@ -385,6 +386,7 @@ export default function SettingsPage() {
               <Toggle
                 label="Show Savings page"
                 checked={config.ui?.show_savings ?? config.ui?.show_tokens ?? true}
+                disabled={!!busy || !configOk}
                 onChange={setUiSavings}
               />
             </SettingRow>
@@ -396,7 +398,7 @@ export default function SettingsPage() {
               <SettingsSelect
                 className="settings-select"
                 value={config.ui?.timezone ?? ''}
-                disabled={!!busy || !configLoaded}
+                disabled={!!busy || !configOk}
                 aria-label="Timezone for Logging timestamps"
                 onChange={(e) => void setUiTimezone(e.target.value)}
               >
@@ -433,7 +435,7 @@ export default function SettingsPage() {
               <input
                 className="settings-input"
                 value={config.ship.target_branch}
-                disabled={!configLoaded || !!busy}
+                disabled={!configOk || !!busy}
                 onChange={(e) =>
                   setConfig({ ...config, ship: { ...config.ship, target_branch: e.target.value } })
                 }
@@ -462,7 +464,7 @@ export default function SettingsPage() {
                 className="settings-input settings-input--narrow"
                 type="number"
                 value={config.ship.web_port}
-                disabled={commandCenterLive || !!busy}
+                disabled={commandCenterLive || !!busy || !configOk}
                 onChange={(e) =>
                   setConfig({ ...config, ship: { ...config.ship, web_port: Number(e.target.value) } })
                 }
@@ -473,7 +475,7 @@ export default function SettingsPage() {
               <input
                 className="settings-input settings-input--wide"
                 value={config.quality_gate.tests.runner}
-                disabled={!!busy}
+                disabled={!!busy || !configOk}
                 onChange={(e) =>
                   setConfig({
                     ...config,
@@ -487,7 +489,7 @@ export default function SettingsPage() {
               <SettingsSelect
                 className="settings-select"
                 value={config.quality_gate.index_mode ?? 'incremental'}
-                disabled={!!busy}
+                disabled={!!busy || !configOk}
                 onChange={(e) =>
                   setConfig({
                     ...config,
@@ -526,7 +528,7 @@ export default function SettingsPage() {
               <SettingsSelect
                 className="settings-select"
                 value={config.remote.provider}
-                disabled={!!busy}
+                disabled={!!busy || !configOk}
                 onChange={(e) => setConfig({ ...config, remote: { ...config.remote, provider: e.target.value } })}
               >
                 <option value="azure_devops">Azure DevOps</option>
@@ -540,7 +542,7 @@ export default function SettingsPage() {
                   <input
                     className="settings-input"
                     value={az.org}
-                    disabled={!!busy}
+                    disabled={!!busy || !configOk}
                     onChange={(e) =>
                       setConfig({
                         ...config,
@@ -554,7 +556,7 @@ export default function SettingsPage() {
                   <input
                     className="settings-input"
                     value={az.project}
-                    disabled={!!busy}
+                    disabled={!!busy || !configOk}
                     onChange={(e) =>
                       setConfig({
                         ...config,
@@ -568,7 +570,7 @@ export default function SettingsPage() {
                   <input
                     className="settings-input settings-input--wide settings-input--mono"
                     value={az.repo_id}
-                    disabled={!!busy}
+                    disabled={!!busy || !configOk}
                     onChange={(e) =>
                       setConfig({
                         ...config,
@@ -582,7 +584,7 @@ export default function SettingsPage() {
                   <input
                     className="settings-input settings-input--mono"
                     value={az.token_env}
-                    disabled={!!busy}
+                    disabled={!!busy || !configOk}
                     onChange={(e) =>
                       setConfig({
                         ...config,
@@ -596,7 +598,7 @@ export default function SettingsPage() {
           </div>
 
           <div className="settings-card-footer">
-            <button type="button" className="btn primary" disabled={!!busy} onClick={() => void save()}>
+            <button type="button" className="btn primary" disabled={!!busy || !configOk} onClick={() => void save()}>
               {busy === 'save' ? <BusyLabel label="Saving…" /> : 'Save settings'}
             </button>
           </div>
