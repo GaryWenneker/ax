@@ -414,7 +414,9 @@ async fn exchange_login(
         .map_err(|_| "Cannot exchange authorization code")?;
     let token: TokenResponse = bounded_json(response).await?;
     token.validate()?;
-    verify_connection(client, &url, &token.access_token).await?;
+    verify_connection(client, &url, &token.access_token)
+        .await
+        .map_err(Verify::into_message)?;
     Ok((
         Connection {
             url,
@@ -451,8 +453,6 @@ async fn exchange_refresh(
         .map_err(|_| "Cannot refresh remote credentials")?;
     let response: TokenResponse = bounded_json(response).await?;
     response.validate()?;
-    // A refresh may revoke a project's grant; verify it before reporting renewal.
-    verify_connection(client, &connection.url, &response.access_token).await?;
     Ok((
         Connection {
             expires_at: credentials::now() + response.expires_in,
@@ -487,23 +487,50 @@ impl TokenResponse {
     }
 }
 
-async fn verify_connection(client: &reqwest::Client, url: &str, token: &str) -> Result<(), String> {
+/// Why a token could not be shown to reach the project.
+#[derive(Debug)]
+enum Verify {
+    /// The server answered 401 or 403: this account has no access.
+    Denied,
+    /// The server could not answer now (transport error, 5xx, 429, a bad reply).
+    Unavailable(String),
+}
+
+impl Verify {
+    fn into_message(self) -> String {
+        match self {
+            Verify::Denied => {
+                "OAuth succeeded but this account cannot access the selected Ax project".into()
+            }
+            Verify::Unavailable(message) => message,
+        }
+    }
+}
+
+async fn verify_connection(client: &reqwest::Client, url: &str, token: &str) -> Result<(), Verify> {
     let response = client.post(url).bearer_auth(token).header("accept", "application/json, text/event-stream")
         .json(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"ax-login","version":env!("CARGO_PKG_VERSION")}}}))
-        .send().await.map_err(|_| "Cannot verify authenticated MCP access")?;
-    if !response.status().is_success() {
-        return Err(
-            "OAuth succeeded but this account cannot access the selected Ax project".into(),
-        );
+        .send().await.map_err(|_| Verify::Unavailable("Cannot verify authenticated MCP access".into()))?;
+    let status = response.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(Verify::Denied);
+    }
+    if !status.is_success() {
+        return Err(Verify::Unavailable(format!(
+            "Cannot verify MCP access: the server returned HTTP {}",
+            status.as_u16()
+        )));
     }
     let session = response
         .headers()
         .get("mcp-session-id")
         .and_then(|h| h.to_str().ok())
         .map(str::to_owned);
-    let value: Value = bounded_json(response).await?;
+    let value: Value = bounded_json(response).await.map_err(Verify::Unavailable)?;
     if value.get("result").is_none() {
-        return Err("Remote MCP initialization failed".into());
+        return Err(Verify::Unavailable(
+            "Remote MCP initialization failed".into(),
+        ));
     }
     if let Some(session) = session {
         let _ = client
@@ -607,12 +634,35 @@ async fn token_for(url: &str, force_refresh: bool) -> Result<String, String> {
         .refresh_token
         .ok_or("Sign-in expired; reconnect to Ax")?;
     let client = http_client()?;
-    let (updated, tokens) = exchange_refresh(&client, connection, refresh).await?;
+    renew(&client, connection, refresh, credentials::save).await
+}
+
+/// Redeem `refresh`, store the new tokens with `save` and return the new access token.
+///
+/// The provider may rotate the refresh token, so the new tokens are stored as soon
+/// as it answers, before the project is checked. Only a 401 or 403 from the MCP
+/// server fails the renewal; when the server is briefly unavailable the new
+/// access token is returned and the request that needs it reports the outage.
+async fn renew<F>(
+    client: &reqwest::Client,
+    connection: Connection,
+    refresh: String,
+    save: F,
+) -> Result<String, String>
+where
+    F: FnOnce(Connection, &Tokens) -> Result<(), String> + Send + 'static,
+{
+    let url = connection.url.clone();
+    let (updated, tokens) = exchange_refresh(client, connection, refresh).await?;
     let token = tokens.access_token.clone();
-    tokio::task::spawn_blocking(move || credentials::save(updated, &tokens))
+    tokio::task::spawn_blocking(move || save(updated, &tokens))
         .await
         .map_err(|_| "Credential update failed")??;
-    Ok(token)
+    // A refresh may revoke a project's grant; report that instead of a renewal.
+    match verify_connection(client, &url, &token).await {
+        Err(Verify::Denied) => Err(Verify::Denied.into_message()),
+        Ok(()) | Err(Verify::Unavailable(_)) => Ok(token),
+    }
 }
 
 /// Removes the sign-in for `url` for every user and revokes its tokens.
@@ -995,5 +1045,90 @@ mod exchange_tests {
         .await;
         assert!(denied.err().unwrap().contains("cannot access"));
         task.abort();
+    }
+
+    type Saved = Arc<std::sync::Mutex<Vec<(Connection, Option<String>)>>>;
+
+    fn recorder() -> (
+        Saved,
+        impl FnOnce(Connection, &Tokens) -> Result<(), String> + Send + 'static,
+    ) {
+        let saved: Saved = Arc::default();
+        let sink = saved.clone();
+        (saved, move |connection: Connection, tokens: &Tokens| {
+            sink.lock()
+                .unwrap()
+                .push((connection, tokens.refresh_token.clone()));
+            Ok(())
+        })
+    }
+
+    fn connection_to(base: &str, project: &str) -> Connection {
+        Connection {
+            url: format!("{base}/projects/{project}/mcp"),
+            client_id: "native".into(),
+            issuer: "https://issuer.example/".into(),
+            resource: "https://ax.example.com".into(),
+            token_endpoint: format!("{base}/token"),
+            revocation_endpoint: None,
+            expires_at: 1,
+            users: vec![credentials::USER_AX.into()],
+        }
+    }
+
+    async fn provider_with_mcp_status(status: StatusCode) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new().route("/token", post(token_endpoint)).route(
+            "/projects/demo/mcp",
+            post(move || async move { (status, Json(json!({"error":"busy"}))) }),
+        );
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (base, task)
+    }
+
+    #[tokio::test]
+    async fn a_rotated_refresh_token_is_kept_when_the_server_is_briefly_unavailable() {
+        for status in [
+            StatusCode::SERVICE_UNAVAILABLE,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::GATEWAY_TIMEOUT,
+        ] {
+            let (base, task) = provider_with_mcp_status(status).await;
+            let (saved, save) = recorder();
+            let token = renew(
+                &http_client().unwrap(),
+                connection_to(&base, "demo"),
+                "refresh-one".into(),
+                save,
+            )
+            .await;
+            assert_eq!(token.as_deref(), Ok("access-two"), "{status}");
+            let saved = saved.lock().unwrap();
+            assert_eq!(saved.len(), 1, "{status}");
+            assert_eq!(saved[0].1.as_deref(), Some("refresh-two"));
+            assert!(saved[0].0.expires_at > credentials::now());
+            task.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn a_revoked_grant_is_reported_but_the_rotated_refresh_token_is_still_stored() {
+        for status in [StatusCode::UNAUTHORIZED, StatusCode::FORBIDDEN] {
+            let (base, task) = provider_with_mcp_status(status).await;
+            let (saved, save) = recorder();
+            let result = renew(
+                &http_client().unwrap(),
+                connection_to(&base, "demo"),
+                "refresh-one".into(),
+                save,
+            )
+            .await;
+            assert!(result.unwrap_err().contains("cannot access"), "{status}");
+            assert_eq!(saved.lock().unwrap()[0].1.as_deref(), Some("refresh-two"));
+            task.abort();
+        }
     }
 }
