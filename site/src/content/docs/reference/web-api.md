@@ -234,6 +234,11 @@ Interactive human sessions use an opaque, HttpOnly, SameSite cookie. Passkeys ar
 
 Authentication may be disabled for trusted local installations; remote Command Center data access stays protected. Configure `AX_WEB_AUTH_ORIGIN` to the exact stable HTTPS origin used for passkeys; localhost development is supported. Browser clients must not send credentials to a different host.
 
+With sign-in on, every `/api` request needs a session, and the gate applies the member's role:
+
+- **Changes** (any method other than `GET` and `HEAD`, and every WebSocket) need a role that may write; a Read-only member gets 403. A change from another computer must carry an `Origin` that is this server's own page: `AX_WEB_AUTH_ORIGIN` when it is set, otherwise the request's `Host` over HTTPS (or over HTTP when no proxy reports `X-Forwarded-Proto: https`). Any other `Origin`, including a sibling subdomain, or none at all, gets 403.
+- **Management and this computer** need Admin or Owner: `/api/agent` (IDE installs, agent chat and the agent terminal), `/api/workspace`, `/api/lsp`, `/api/dav/mount`, `/api/auth/microsoft`, `/api/remote-mcp`, `/api/access`, `/api/ops`, `/api/ship`, `/api/plugins`, `/api/policy/share`, `/api/vault` and `/api/actions`.
+
 ## Team, clients and replication access
 
 These endpoints enforce the local-owner session or a client credential with the corresponding `admin:team`, `admin:clients` or `admin:nodes` scope. Mutations are rejected in read-only mode. Local browser mutations use the CSRF value from `/api/access/session` in `X-Ax-Access-Csrf`. Token values are returned only when created/revealed; keep them out of logs and screenshots. A client credential acts with the role of the member it belongs to, so only an Owner can create, issue, rotate or change the scopes of a client that belongs to an Owner; anyone else gets 403.

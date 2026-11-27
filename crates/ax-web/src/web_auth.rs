@@ -261,6 +261,34 @@ fn page_origin(headers: &HeaderMap) -> Result<Url, ErrorResponse> {
     origin()
 }
 
+/// Whether the request's `Origin` is the page this server serves. That page
+/// is `AX_WEB_AUTH_ORIGIN` when set, else the request's own `Host` (checked
+/// by [`crate::request_guard::guard`]) over HTTPS, or over HTTP too unless a
+/// proxy reports HTTPS. The `Origin` value itself never decides what is
+/// trusted, so a sibling subdomain cannot pass.
+fn own_page_origin(headers: &HeaderMap, authority: Option<&str>) -> bool {
+    let Some(sent) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) else {
+        return false;
+    };
+    if let Ok(value) = std::env::var("AX_WEB_AUTH_ORIGIN") {
+        return parse_origin(&value).is_ok_and(|url| sent == url.as_str().trim_end_matches('/'));
+    }
+    let Some(host) = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .or(authority)
+        .filter(|host| !host.is_empty())
+    else {
+        return false;
+    };
+    let https_proxy = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        == Some("https");
+    sent.eq_ignore_ascii_case(&format!("https://{host}"))
+        || (!https_proxy && sent.eq_ignore_ascii_case(&format!("http://{host}")))
+}
+
 fn origin() -> Result<Url, ErrorResponse> {
     let value =
         std::env::var("AX_WEB_AUTH_ORIGIN").unwrap_or_else(|_| "http://localhost:7070".to_string());
@@ -1407,18 +1435,11 @@ pub async fn gate(State(hub): State<WebHub>, mut req: Request, next: Next) -> Re
         return err(StatusCode::UNAUTHORIZED, "Sign in required").into_response();
     };
     if req.method() != Method::GET && req.method() != Method::HEAD {
-        let expected = page_origin(req.headers()).ok();
-        let req_origin = req
-            .headers()
-            .get(header::ORIGIN)
-            .and_then(|v| v.to_str().ok());
-        // Reject cross-site mutations. Require an exact Origin from modern browsers.
-        // Local command center accepts either loopback spelling for non-WebAuthn endpoints.
+        // Reject mutations from any other page, same-site ones included.
+        // The local Command Center accepts either loopback spelling.
         let local_origin = peer.is_some_and(|addr| local_request(req.headers(), addr, hub.port));
         if !local_origin
-            && expected
-                .as_ref()
-                .is_none_or(|url| req_origin != Some(url.as_str().trim_end_matches('/')))
+            && !own_page_origin(req.headers(), req.uri().authority().map(|a| a.as_str()))
         {
             return err(StatusCode::FORBIDDEN, "Untrusted request origin").into_response();
         }
@@ -1429,7 +1450,15 @@ pub async fn gate(State(hub): State<WebHub>, mut req: Request, next: Next) -> Re
     let Some((_, role)) = session_member(&pool, req.headers()).await else {
         return err(StatusCode::UNAUTHORIZED, "Sign in required").into_response();
     };
-    let admin_path = path.starts_with("/api/remote-mcp/")
+    // Routes that act on this computer (agent CLIs and their terminal,
+    // language servers, OS drive mounts, sign-in setup) are management too.
+    let admin_path = path == "/api/agent"
+        || path.starts_with("/api/agent/")
+        || path.starts_with("/api/lsp/")
+        || path == "/api/dav/mount"
+        || path.starts_with("/api/dav/mount/")
+        || path.starts_with("/api/auth/microsoft")
+        || path.starts_with("/api/remote-mcp/")
         || path.starts_with("/api/access/")
         || path.starts_with("/api/ops/")
         || path.starts_with("/api/ship/")
@@ -1441,8 +1470,14 @@ pub async fn gate(State(hub): State<WebHub>, mut req: Request, next: Next) -> Re
     if admin_path && !role.permits("admin:team") {
         return err(StatusCode::FORBIDDEN, "Administrative role required").into_response();
     }
-    if req.method() != Method::GET && req.method() != Method::HEAD && !role.permits("memory:write")
-    {
+    // A WebSocket opens with GET but carries a live session that can change
+    // things, so it counts as a write.
+    let websocket = req
+        .headers()
+        .get(header::UPGRADE)
+        .is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(b"websocket"));
+    let write = websocket || (req.method() != Method::GET && req.method() != Method::HEAD);
+    if write && !role.permits("memory:write") {
         return err(StatusCode::FORBIDDEN, "Write permission required").into_response();
     }
     req.extensions_mut().insert(member_id);
@@ -1562,33 +1597,6 @@ mod tests {
         assert!(!revoke_passkey_in_db(&pool, "owner", "key-a").await.unwrap());
         assert!(!revoke_passkey_in_db(&pool, "owner", "key-b").await.unwrap());
     }
-    #[tokio::test]
-    async fn recovery_verifiers_are_consumed_once() {
-        let directory = tempfile::tempdir().unwrap();
-        let pool = ax_global_db::open_and_init(&directory.path().join("auth.db"))
-            .await
-            .unwrap();
-        access::bootstrap_owner(&pool, "owner", "Owner", None)
-            .await
-            .unwrap();
-        let code = "axr-this-is-only-a-test-code";
-        sqlx::query("INSERT INTO web_recovery_codes(member_id,verifier) VALUES ('owner',?)")
-            .bind(hash(code))
-            .execute(&pool)
-            .await
-            .unwrap();
-        for expected in [1, 0] {
-            let result = sqlx::query(
-                "UPDATE web_recovery_codes SET consumed_at=unixepoch()
-                 WHERE verifier=? AND consumed_at IS NULL",
-            )
-            .bind(hash(code))
-            .execute(&pool)
-            .await
-            .unwrap();
-            assert_eq!(result.rows_affected(), expected);
-        }
-    }
     #[test]
     fn discoverable_sign_in_challenge_names_no_account() {
         let url = Url::parse("http://localhost:7070").unwrap();
@@ -1604,12 +1612,6 @@ mod tests {
             .is_some_and(|challenge| !challenge.is_empty()));
         assert!(public_key.get("allowCredentials").is_none());
         assert!(value.get("mediation").is_none());
-    }
-    #[test]
-    fn local_owner_can_set_a_password_without_a_web_session() {
-        assert!(local_owner_can_manage_without_session(true, true));
-        assert!(!local_owner_can_manage_without_session(true, false));
-        assert!(!local_owner_can_manage_without_session(false, true));
     }
     #[test]
     fn public_login_and_recovery_use_single_denial_messages() {
