@@ -1061,7 +1061,7 @@ Daily model price sync from [OpenRouter](https://openrouter.ai/models) (no API k
 | `sync` | Fetch today's prices (`--force` re-fetches even if already synced) |
 | `status` | Last sync, row counts |
 | `list` | Latest OpenRouter rates (`--json`) |
-| `history <model>` | Daily series for a model id/substring (`--days`, `--json`) |
+| `history <model>` | Daily series for the one catalog model that best matches the id or name, over the last `--days` calendar days (`--json`) |
 
 ```bash
 ax pricing sync

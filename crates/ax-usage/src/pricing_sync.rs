@@ -506,24 +506,27 @@ pub async fn price_history(
 ) -> Result<Vec<PricingHistoryPoint>, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
     let days = days.clamp(1, 365);
-    let like = format!("%{model}%");
     let source = source.unwrap_or(SOURCE_OPENROUTER);
+    let Some(model_id) = resolve_catalog_model(&pool, source, model).await? else {
+        return Ok(Vec::new());
+    };
+    let since = (Local::now().date_naive() - chrono::Duration::days(days - 1))
+        .format("%Y-%m-%d")
+        .to_string();
     type Row = (String, String, f64, f64, Option<f64>);
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT date, source, input_per_mtok, output_per_mtok, blended_3_to_1
          FROM model_price_daily
-         WHERE source = ? AND (model_id LIKE ? OR display_name LIKE ?)
-         ORDER BY date DESC
-         LIMIT ?",
+         WHERE source = ? AND model_id = ? AND date >= ?
+         ORDER BY date ASC",
     )
     .bind(source)
-    .bind(&like)
-    .bind(&like)
-    .bind(days)
+    .bind(&model_id)
+    .bind(&since)
     .fetch_all(&pool)
     .await
     .map_err(|e| e.to_string())?;
-    let mut out: Vec<PricingHistoryPoint> = rows
+    Ok(rows
         .into_iter()
         .map(
             |(date, source, input_per_mtok, output_per_mtok, blended_3_to_1)| PricingHistoryPoint {
@@ -534,9 +537,43 @@ pub async fn price_history(
                 blended_3_to_1,
             },
         )
-        .collect();
-    out.reverse();
-    Ok(out)
+        .collect())
+}
+
+/// Resolve a requested model name to one catalog `model_id` of `source`, using
+/// the same matcher as cost pricing; the display name counts as a second key.
+/// Ties go to the alphabetically first id so the answer is stable.
+async fn resolve_catalog_model(
+    pool: &SqlitePool,
+    source: &str,
+    model: &str,
+) -> Result<Option<String>, String> {
+    let lowered = model.trim().to_ascii_lowercase();
+    if lowered.is_empty() {
+        return Ok(None);
+    }
+    let ids: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT model_id, MAX(display_name) FROM model_price_daily
+         WHERE source = ? GROUP BY model_id ORDER BY model_id",
+    )
+    .bind(source)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let mut best: Option<((u8, usize), String)> = None;
+    for (id, display) in ids {
+        let by_id = crate::pricing::catalog_match_score(&lowered, &id);
+        let by_name = display
+            .as_deref()
+            .and_then(|d| crate::pricing::catalog_match_score(&lowered, d));
+        let Some(score) = by_id.max(by_name) else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(s, _)| score > *s) {
+            best = Some((score, id));
+        }
+    }
+    Ok(best.map(|(_, id)| id))
 }
 
 pub async fn list_coding_agents(days: i64) -> Result<Vec<CodingAgentRow>, String> {
@@ -748,6 +785,52 @@ mod tests {
         assert!(status.synced_today);
     }
 
+    fn days_ago(n: i64) -> String {
+        (Local::now().date_naive() - chrono::Duration::days(n))
+            .format("%Y-%m-%d")
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn price_history_is_one_model_over_calendar_days() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let db = temp_db("histone");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+        let pool = open_pool().await.expect("pool");
+        let rows = parse_openrouter_models(&json!({
+            "data": [
+                {
+                    "id": "anthropic/claude-sonnet-4",
+                    "name": "Claude Sonnet 4",
+                    "pricing": { "prompt": "0.000003", "completion": "0.000015" }
+                },
+                {
+                    "id": "anthropic/claude-sonnet-4.5",
+                    "name": "Claude Sonnet 4.5",
+                    "pricing": { "prompt": "0.000005", "completion": "0.000025" }
+                }
+            ]
+        }));
+        for n in 0..5 {
+            upsert_prices(&pool, &days_ago(n), SOURCE_OPENROUTER, &rows)
+                .await
+                .unwrap();
+        }
+        let exact = price_history("claude-sonnet-4", None, 3).await.unwrap();
+        let wildcard = price_history("%", None, 30).await.unwrap();
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(&db);
+
+        // Three calendar days of one model, oldest first.
+        assert_eq!(exact.len(), 3, "{exact:?}");
+        assert!(exact.iter().all(|p| (p.input_per_mtok - 3.0).abs() < 1e-9));
+        assert_eq!(exact[0].date, days_ago(2));
+        assert_eq!(exact[2].date, days_ago(0));
+        // `%` is not a wildcard.
+        assert!(wildcard.is_empty(), "{wildcard:?}");
+    }
+
     #[tokio::test]
     async fn upsert_and_history() {
         let _guard = USAGE_ENV_LOCK.lock().await;
@@ -756,6 +839,7 @@ mod tests {
         std::env::set_var("AX_USAGE_DB", &db);
 
         let pool = open_pool().await.expect("pool");
+        let (yesterday, today) = (days_ago(1), days_ago(0));
         let body = json!({
             "data": [{
                 "id": "anthropic/claude-sonnet-4",
@@ -764,10 +848,10 @@ mod tests {
             }]
         });
         let rows = parse_openrouter_models(&body);
-        upsert_prices(&pool, "2026-07-25", SOURCE_OPENROUTER, &rows)
+        upsert_prices(&pool, &yesterday, SOURCE_OPENROUTER, &rows)
             .await
             .unwrap();
-        upsert_prices(&pool, "2026-07-26", SOURCE_OPENROUTER, &rows)
+        upsert_prices(&pool, &today, SOURCE_OPENROUTER, &rows)
             .await
             .unwrap();
 
@@ -785,14 +869,14 @@ mod tests {
                 "evaluations": { "artificial_analysis_coding_index": 55.0 }
             }]
         }));
-        upsert_prices(&pool, "2026-07-26", SOURCE_ARTIFICIAL_ANALYSIS, &aa_prices)
+        upsert_prices(&pool, &today, SOURCE_ARTIFICIAL_ANALYSIS, &aa_prices)
             .await
             .unwrap();
-        upsert_benchmarks(&pool, "2026-07-26", SOURCE_ARTIFICIAL_ANALYSIS, &aa_benches)
+        upsert_benchmarks(&pool, &today, SOURCE_ARTIFICIAL_ANALYSIS, &aa_benches)
             .await
             .unwrap();
 
-        let found = lookup_price_as_of("claude-sonnet-4", "2026-07-26")
+        let found = lookup_price_as_of("claude-sonnet-4", &today)
             .await
             .unwrap()
             .expect("price");
