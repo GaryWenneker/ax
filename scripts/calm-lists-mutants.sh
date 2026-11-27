@@ -77,7 +77,6 @@ mutant "M16 selected title not brighter" src/index.css '.page-item--selected .pa
   color: #cccccc;' run_ui
 mutant "M17 lists bounce and chain scroll" src/index.css ':is(.memory-vault-list, .mcp-trace-scroller) { overscroll-behavior: none; }' '' run_ui
 mutant "M18 inner Logging list traps the wheel" src/index.css '.mcp-trace-scroller .page-item-list.mcp-trace-calm { overflow: visible; overscroll-behavior: auto; }' '' run_ui
-mutant "M18 inner Logging list traps the wheel" src/index.css '.mcp-trace-scroller .page-item-list.mcp-trace-calm { overflow: visible; overscroll-behavior: auto; }' '' run_ui
 # docs/specs/logging-blade.md
 mutant "M19 detail opens without the blade class" src/components/McpTraceLive.tsx 'className={`memory-blade mcp-blade mcp-blade--${selected.kind}`}' 'className={`mcp-blade mcp-blade--${selected.kind}`}' run_ui
 mutant "M20 step badges lose kind colors" src/index.css ':is(html, html[data-ax-theme]) .mcp-blade-steps .page-item-badge.mcp-kind-badge {' '.no-such-steps .page-item-badge.mcp-kind-badge {' run_ui
