@@ -11,6 +11,8 @@ html:has(body.ax-landing),body.ax-landing{height:100svh;overflow:hidden}
 .ax-landing .ax-header{height:90px;min-height:75px;display:flex;align-items:center;justify-content:space-between;padding:0 clamp(27px,4.5vw,80px)}
 .ax-landing .ax-wordmark{font-size:29px;font-weight:700;line-height:1;letter-spacing:-.085em}
 .ax-landing .ax-wordmark span,.ax-landing .ax-hero-brand span{color:var(--ax-lime)}
+.ax-landing .ax-wordmark{display:inline-flex;color:var(--ax-ink)}
+.ax-landing .ax-wordmark .ax-mark,.ax-landing .ax-display-word .ax-mark{display:block;height:.76em;width:auto}
 .ax-landing .ax-navigation{display:flex;gap:35px;align-items:center}
 .ax-landing .ax-navigation a{color:#c4c9c3;font:500 11px/1.4 'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:.1em;transition:color .2s ease}
 .ax-landing .ax-navigation a:hover{color:var(--ax-lime)}
