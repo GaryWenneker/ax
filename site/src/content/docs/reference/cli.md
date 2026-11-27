@@ -1940,7 +1940,7 @@ Approving a new spec body marks selections of plans written against the previous
 
 `ax spec-policy` records which policy revision applies. A `body` field is rejected. The stored link has the revision id and content hash, not the rule text. Sending the same link again keeps the one row.
 
-A stale `basedOn` on `ax spec-revise` or `ax spec-amend` comes back as an error containing `conflict`, with `base` (the revision you named), `head` (the current revision), and `incoming` (the body that was not stored). Nothing is merged. An empty spec body is rejected. Approval reads the member's role. A `roles` field in the JSON is ignored. The command binds the active owner and forces the actor to be human.
+A stale `basedOn` on `ax spec-revise` or `ax spec-amend` comes back as an error containing `conflict`, with `base` (the revision you named), `head` (the current revision), and `incoming` (the body that was not stored). Nothing is merged. An empty spec body is rejected. Approval reads the member's role. A `roles` field in the JSON is ignored. The command binds the active owner and forces the actor to be human, so it only runs in an interactive terminal: it shows what will be approved and in whose name, and records the approval only after you type `approve`. Run without a terminal (an agent's shell tool, a script, a pipe), it is refused before anything is read. Approve in the Command Center when you are not at a terminal.
 
 ```bash
 ax spec-approve '{"projectId":"ax","artifactKind":"plan","artifactId":"ledger","version":1,"reason":"Ready to build."}'

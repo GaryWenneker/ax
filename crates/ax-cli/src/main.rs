@@ -304,7 +304,7 @@ enum Commands {
     /// Read the origin of one plan revision. JSON body of POST /api/specs/provenance.
     #[command(name = "spec-provenance")]
     SpecProvenance { body: String },
-    /// Approve a spec or plan revision. The role is read from membership, not from this JSON. Body of POST /api/specs/member-approval.
+    /// Approve a spec or plan revision as the project owner. Needs an interactive terminal and a typed confirmation. The role is read from membership, not from this JSON. Body of POST /api/specs/member-approval.
     #[command(name = "spec-approve")]
     SpecApprove { body: String },
     /// Read or set hierarchy_v2. Pass on, off, or {"enabled":true}. Omit the value to print the current flag. POST /api/specs/flag.
