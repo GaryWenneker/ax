@@ -199,13 +199,8 @@ async fn fetch_latest_via_api(
     token: Option<&str>,
 ) -> Result<String, String> {
     let api = format!("https://api.github.com/repos/{repo}/releases/latest");
-    let mut req = client
-        .get(&api)
-        .header("Accept", "application/vnd.github+json");
-    if let Some(t) = token {
-        req = req.header("Authorization", format!("Bearer {t}"));
-    }
-    let resp = req
+    let resp = github_get(client, &api, token)
+        .header("Accept", "application/vnd.github+json")
         .send()
         .await
         .map_err(|e| format!("could not reach GitHub API: {e}"))?;
@@ -399,7 +394,7 @@ fn parse_cdn_latest(text: &str) -> Result<String, String> {
 pub async fn resolve_latest_version(repo: &str, use_gh_cli: bool) -> Result<String, String> {
     let client = http_client()?;
     let token = github_token_async(use_gh_cli).await;
-    collect_latest_candidates(&client, repo, token.as_deref())
+    collect_latest_candidates(&client, repo, token.as_deref(), None)
         .await
         .into_iter()
         .next()
@@ -419,13 +414,16 @@ pub async fn resolve_latest_installable_version(
     let token_ref = token.as_deref();
     let asset_name = format!("ax-{bundle}.{ext}");
 
-    if let Ok(tag) =
-        resolve_installable_from_github_api(&client, repo, &asset_name, token_ref).await
-    {
-        return Ok(tag);
+    let releases = fetch_releases_with_assets(&client, repo, token_ref).await;
+    if let Ok(list) = &releases {
+        if let Some(tag) = newest_release_with_asset(list, &asset_name) {
+            return Ok(tag);
+        }
     }
 
-    let candidates = collect_latest_candidates(&client, repo, token_ref).await;
+    // The release list was already fetched (or failed): do not request it again.
+    let listed = releases.map(release_tags).unwrap_or_default();
+    let candidates = collect_latest_candidates(&client, repo, token_ref, Some(listed)).await;
 
     for tag in &candidates {
         if release_asset_exists(&client, repo, tag, bundle, ext, token_ref).await {
@@ -438,42 +436,44 @@ pub async fn resolve_latest_installable_version(
     ))
 }
 
-async fn resolve_installable_from_github_api(
-    client: &reqwest::Client,
-    repo: &str,
-    asset_name: &str,
-    token: Option<&str>,
-) -> Result<String, String> {
-    let releases = fetch_releases_with_assets(client, repo, token).await?;
-    let mut tags: Vec<String> = releases
-        .into_iter()
+/// Newest release that ships `asset_name`.
+fn newest_release_with_asset(releases: &[ReleaseAssets], asset_name: &str) -> Option<String> {
+    let tags = releases
+        .iter()
         .filter(|r| r.assets.iter().any(|a| a == asset_name))
-        .map(|r| r.tag)
+        .map(|r| r.tag.clone())
         .collect();
-    tags = unique_tags_desc(tags);
-    tags.into_iter()
-        .next()
-        .ok_or_else(|| format!("no GitHub release ships {asset_name}"))
+    unique_tags_desc(tags).into_iter().next()
 }
 
+fn release_tags(releases: Vec<ReleaseAssets>) -> Vec<String> {
+    releases.into_iter().map(|r| r.tag).collect()
+}
+
+#[derive(Debug, PartialEq)]
 struct ReleaseAssets {
     tag: String,
     assets: Vec<String>,
 }
 
+/// GET with the optional GitHub token as a bearer `Authorization` header.
+fn github_get(client: &reqwest::Client, url: &str, token: Option<&str>) -> reqwest::RequestBuilder {
+    let req = client.get(url);
+    match token {
+        Some(t) => req.header("Authorization", format!("Bearer {t}")),
+        None => req,
+    }
+}
+
+/// The single fetch of the repository's release list (newest 30).
 async fn fetch_releases_with_assets(
     client: &reqwest::Client,
     repo: &str,
     token: Option<&str>,
 ) -> Result<Vec<ReleaseAssets>, String> {
     let api = format!("https://api.github.com/repos/{repo}/releases?per_page=30");
-    let mut req = client
-        .get(&api)
-        .header("Accept", "application/vnd.github+json");
-    if let Some(t) = token {
-        req = req.header("Authorization", format!("Bearer {t}"));
-    }
-    let resp = req
+    let resp = github_get(client, &api, token)
+        .header("Accept", "application/vnd.github+json")
         .send()
         .await
         .map_err(|e| format!("could not reach GitHub API: {e}"))?;
@@ -482,35 +482,40 @@ async fn fetch_releases_with_assets(
     }
 
     let body: Vec<serde_json::Value> = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(body
-        .iter()
-        .filter(|r| !r.get("draft").and_then(|v| v.as_bool()).unwrap_or(false))
-        .filter(|r| {
-            !r.get("prerelease")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-        })
+    Ok(parse_releases(&body))
+}
+
+/// Published releases from a `/releases` body: drafts and pre-releases are skipped.
+fn parse_releases(body: &[serde_json::Value]) -> Vec<ReleaseAssets> {
+    let flag =
+        |r: &serde_json::Value, key: &str| r.get(key).and_then(|v| v.as_bool()) == Some(true);
+    body.iter()
+        .filter(|r| !flag(r, "draft") && !flag(r, "prerelease"))
         .filter_map(|r| {
-            let tag = r.get("tag_name")?.as_str()?;
+            let tag = normalize_version(r.get("tag_name")?.as_str()?);
+            if tag.is_empty() {
+                return None;
+            }
             let assets = r
-                .get("assets")?
-                .as_array()?
-                .iter()
-                .filter_map(|a| a.get("name").and_then(|n| n.as_str()))
-                .map(String::from)
-                .collect();
-            Some(ReleaseAssets {
-                tag: normalize_version(tag),
-                assets,
-            })
+                .get("assets")
+                .and_then(|a| a.as_array())
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|a| a.get("name").and_then(|n| n.as_str()))
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(ReleaseAssets { tag, assets })
         })
-        .collect())
+        .collect()
 }
 
 async fn collect_latest_candidates(
     client: &reqwest::Client,
     repo: &str,
     token_ref: Option<&str>,
+    listed: Option<Vec<String>>,
 ) -> Vec<String> {
     let mut candidates = Vec::new();
 
@@ -527,8 +532,13 @@ async fn collect_latest_candidates(
         candidates.push(v);
     }
 
-    if let Ok(list) = fetch_release_tags(client, repo, token_ref).await {
-        candidates.extend(list);
+    match listed {
+        Some(list) => candidates.extend(list),
+        None => {
+            if let Ok(list) = fetch_releases_with_assets(client, repo, token_ref).await {
+                candidates.extend(release_tags(list));
+            }
+        }
     }
 
     // Legacy CDN pointer — only when GitHub did not return anything.
@@ -539,41 +549,6 @@ async fn collect_latest_candidates(
     }
 
     unique_tags_desc(candidates)
-}
-
-async fn fetch_release_tags(
-    client: &reqwest::Client,
-    repo: &str,
-    token: Option<&str>,
-) -> Result<Vec<String>, String> {
-    let api = format!("https://api.github.com/repos/{repo}/releases?per_page=30");
-    let mut req = client
-        .get(&api)
-        .header("Accept", "application/vnd.github+json");
-    if let Some(t) = token {
-        req = req.header("Authorization", format!("Bearer {t}"));
-    }
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| format!("could not reach GitHub API: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("GitHub API returned HTTP {}", resp.status()));
-    }
-
-    let body: Vec<serde_json::Value> = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(body
-        .iter()
-        .filter(|r| !r.get("draft").and_then(|v| v.as_bool()).unwrap_or(false))
-        .filter(|r| {
-            !r.get("prerelease")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-        })
-        .filter_map(|r| r.get("tag_name").and_then(|v| v.as_str()))
-        .map(normalize_version)
-        .filter(|s| !s.is_empty())
-        .collect())
 }
 
 /// Distinct release tags, highest version first. Tags that are not release
@@ -613,11 +588,11 @@ async fn release_asset_exists(
 
 async fn head_ok(client: &reqwest::Client, url: &str, token: Option<&str>) -> bool {
     // GitHub release URLs redirect to S3 signed URLs that often reject HEAD — use a 1-byte GET.
-    let mut req = client.get(url).header("Range", "bytes=0-0");
-    if let Some(t) = token {
-        req = req.header("Authorization", format!("Bearer {t}"));
-    }
-    match req.send().await {
+    match github_get(client, url, token)
+        .header("Range", "bytes=0-0")
+        .send()
+        .await
+    {
         Ok(resp) => {
             resp.status().is_success() || resp.status() == reqwest::StatusCode::PARTIAL_CONTENT
         }
@@ -869,6 +844,44 @@ mod tests {
             gh_auth_token("/nonexistent/gh", Duration::from_secs(5)),
             None
         );
+    }
+
+    #[test]
+    fn parse_releases_skips_drafts_and_prereleases_and_keeps_assetless_releases() {
+        let body: Vec<serde_json::Value> = serde_json::from_str(
+            r#"[
+                {"tag_name": "v3.0.0", "draft": true, "assets": [{"name": "ax-linux-x64.tar.gz"}]},
+                {"tag_name": "v2.9.0-rc.1", "prerelease": true, "assets": []},
+                {"tag_name": "2.8.0", "assets": [{"name": "ax-linux-x64.tar.gz"}, {"name": "SHA256SUMS"}]},
+                {"tag_name": "v2.8.1"},
+                {"tag_name": ""},
+                {"name": "no tag"}
+            ]"#,
+        )
+        .unwrap();
+        let releases = parse_releases(&body);
+        assert_eq!(
+            releases,
+            vec![
+                ReleaseAssets {
+                    tag: "v2.8.0".into(),
+                    assets: vec!["ax-linux-x64.tar.gz".into(), "SHA256SUMS".into()],
+                },
+                ReleaseAssets {
+                    tag: "v2.8.1".into(),
+                    assets: vec![],
+                },
+            ]
+        );
+        assert_eq!(
+            newest_release_with_asset(&releases, "ax-linux-x64.tar.gz").as_deref(),
+            Some("v2.8.0")
+        );
+        assert_eq!(
+            newest_release_with_asset(&releases, "ax-win32-x64.zip"),
+            None
+        );
+        assert_eq!(release_tags(releases), vec!["v2.8.0", "v2.8.1"]);
     }
 
     #[test]
