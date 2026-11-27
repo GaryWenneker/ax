@@ -471,29 +471,51 @@ fn skill_satisfies_require(skills: &[crate::types::PolicySkillRow], name: &str) 
     })
 }
 
-/// File names that usually hold secrets: `.env` and `.env.*` (except the
-/// `.example`, `.sample` and `.template` files meant to be committed), private
-/// SSH keys, key and certificate stores, and `secrets.*` / `credentials*`
-/// files. Takes the lower-cased project-relative path.
+/// File names that usually hold secrets. Takes the lower-cased
+/// project-relative path and looks at the file name only:
+/// - `.env`, `.env.*` and names ending in `.env`;
+/// - private SSH keys and key or certificate stores;
+/// - names with `secrets` or `credentials` as a whole word (split on `-`,
+///   `_` and `.`), such as `secrets.json`, `aws-credentials.json` or
+///   `.aws/credentials`, unless the name ends in a source-code or
+///   documentation extension (`credentials_form.tsx`, `secrets-handling.md`).
+///
+/// Committed templates are not secrets: any of these names with an
+/// `example`, `sample`, `template` or `dist` part (`.env.example`,
+/// `example.env`, `aws-credentials.example.json`) stays writable.
 fn is_sensitive_path(rel_lc: &str) -> bool {
-    let name = rel_lc.rsplit('/').next().unwrap_or(rel_lc);
-    if name == ".env" {
-        return true;
-    }
-    if let Some(variant) = name.strip_prefix(".env.") {
-        return !matches!(variant, "example" | "sample" | "template" | "dist");
-    }
     const KEY_FILES: &[&str] = &["id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"];
     const KEY_EXTENSIONS: &[&str] = &[".pem", ".key", ".p12", ".pfx", ".jks", ".keystore"];
-    let stem = name
-        .trim_start_matches('.')
-        .split('.')
-        .next()
-        .unwrap_or(name);
-    KEY_FILES.contains(&name)
-        || KEY_EXTENSIONS.iter().any(|ext| name.ends_with(ext))
-        || stem == "secrets"
-        || stem == "credentials"
+    const TEMPLATE_PARTS: &[&str] = &["example", "sample", "template", "dist"];
+    const SECRET_WORDS: &[&str] = &["secrets", "credentials"];
+    // Extensions of files that talk about secrets rather than hold them.
+    const CODE_OR_DOC_EXTENSIONS: &[&str] = &[
+        "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "go", "java", "kt", "rb", "php", "cs",
+        "c", "h", "cpp", "hpp", "swift", "scala", "vue", "svelte", "astro", "html", "css", "scss",
+        "md", "mdx", "rst", "adoc",
+    ];
+
+    let name = rel_lc.rsplit('/').next().unwrap_or(rel_lc);
+    if KEY_FILES.contains(&name) || KEY_EXTENSIONS.iter().any(|ext| name.ends_with(ext)) {
+        return true;
+    }
+    let parts: Vec<&str> = name.split('.').filter(|p| !p.is_empty()).collect();
+    if parts.iter().any(|p| TEMPLATE_PARTS.contains(p)) {
+        return false;
+    }
+    if name == ".env" || name.starts_with(".env.") || name.ends_with(".env") {
+        return true;
+    }
+    let extension = if parts.len() > 1 {
+        parts.last().copied()
+    } else {
+        None
+    };
+    if extension.is_some_and(|ext| CODE_OR_DOC_EXTENSIONS.contains(&ext)) {
+        return false;
+    }
+    name.split(['-', '_', '.'])
+        .any(|word| SECRET_WORDS.contains(&word))
 }
 
 fn has_utf8_bom(bytes: &[u8]) -> bool {
@@ -1172,6 +1194,14 @@ mod tests {
             "tls/server.key",
             ".aws/credentials",
             "credentials.json",
+            "prod.env",
+            "production.env",
+            "docker/app.env",
+            "aws-credentials.json",
+            "gcp_credentials.json",
+            "credentials-prod.yaml",
+            "config/app.secrets.toml",
+            "deploy/db_secrets",
         ] {
             let result = guard_operation(&pool, root, &root.join(blocked), GuardOp::Delete, None)
                 .await
@@ -1184,6 +1214,12 @@ mod tests {
             "docs/secrets-handling.md",
             ".ssh/id_rsa.pub",
             "src/keyboard.rs",
+            "example.env",
+            "app.sample.env",
+            "aws-credentials.example.json",
+            "src/secrets_view.ts",
+            "src/environment.rs",
+            "docs/credentialsmanager.json",
         ] {
             let result = guard_operation(&pool, root, &root.join(allowed), GuardOp::Delete, None)
                 .await
