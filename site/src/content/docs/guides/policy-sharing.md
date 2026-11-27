@@ -98,21 +98,9 @@ Some managed/SSO-fronted GitLab instances (e.g. `gitlab.hosted-tools.com`) don't
 
 #### GitLab behind an SSO gate (no Bridge-style portal, no working git/SSH)
 
-If your GitLab instance forces SSH and git-HTTP through a browser SSO login (so a plain `git clone`/`push` can never authenticate headlessly) and has no separate SSH key portal like the above, add a personal or project access token instead:
+If your GitLab instance forces SSH and git-HTTP through a browser SSO login (so a plain `git clone`/`push` can never authenticate headlessly) and has no separate SSH key portal like the above, add a personal or project access token instead: enter it in Command Center **Settings → Remote policy share → API token**. The token is stored on your machine in `~/.ax/auth/git-share.json` (readable by you only), keyed by `repoUrl`. It is never written to `ax.json`, which is usually committed, and the settings API never returns it: it only reports `hasToken: true`. Saving with an empty token keeps the stored one; **Remove token** (API: `"clearToken": true`) deletes it.
 
-```json
-{
-  "share": {
-    "provider": "github",
-    "github": {
-      "repoUrl": "https://gitlab.example.com/team/ax-policy",
-      "branch": "main",
-      "subpath": ".ax",
-      "token": "glpat-xxxxxxxxxxxxxxxxxxxx"
-    }
-  }
-}
-```
+A `token` left in an older `ax.json` still works; the next save from Command Center moves it to `~/.ax/auth/git-share.json` and removes it from `ax.json`.
 
 When `token` is set (and `repoUrl` is http/https), ax uses GitLab's `/api/v4` REST API instead of raw git — no SSH key or git credential needed.
 
@@ -141,8 +129,7 @@ Manage in Command Center **Settings → Remote policy share** (auto-saves to `ax
     "github": {
       "repoUrl": "",
       "branch": "main",
-      "subpath": ".ax",
-      "token": ""
+      "subpath": ".ax"
     }
   }
 }
@@ -155,7 +142,7 @@ Manage in Command Center **Settings → Remote policy share** (auto-saves to `ax
 | `importMode` | `review` (stage pending), `merge` (apply without review), or `force` (overwrite conflicts) |
 | `autoSyncMinutes` | Hint for Command Center auto-sync interval (default `15`) |
 | `content.rules` / `skills` / `memory` | Which remote artifacts to import |
-| `github.token` | Optional. GitLab personal/project access token. When set on an http(s) `repoUrl`, sync uses that host's `/api/v4` REST API instead of raw `git` — for instances where SSH/git-HTTP is forced through SSO **and there's no separate SSH key/identity portal**. Leave blank to use normal `git` credentials. Command Center hides this field when `repoUrl` matches `gitlab.hosted-tools.com`, since that instance requires Bridge-managed SSH instead. |
+| `github.token` | Optional, write-only. GitLab personal/project access token, stored in `~/.ax/auth/git-share.json` and never in `ax.json`. When set on an http(s) `repoUrl`, sync uses that host's `/api/v4` REST API instead of raw `git` — for instances where SSH/git-HTTP is forced through SSO **and there's no separate SSH key/identity portal**. Leave blank to use normal `git` credentials. Command Center hides this field when `repoUrl` matches `gitlab.hosted-tools.com`, since that instance requires Bridge-managed SSH instead. |
 
 Show this project's config:
 

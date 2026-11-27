@@ -436,6 +436,7 @@ mod tests {
             branch: "main".to_string(),
             subpath: ".ax".to_string(),
             token: token.to_string(),
+            ..Default::default()
         }
     }
 

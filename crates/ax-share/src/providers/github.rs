@@ -266,6 +266,7 @@ mod tests {
             branch: "main".to_string(),
             subpath: ".ax".to_string(),
             token: String::new(),
+            ..Default::default()
         };
 
         let pack_src = TempDir::new().unwrap();
@@ -297,6 +298,7 @@ mod tests {
             branch: "main".to_string(),
             subpath: ".ax".to_string(),
             token: String::new(),
+            ..Default::default()
         };
 
         let pack_src = TempDir::new().unwrap();
@@ -320,6 +322,7 @@ mod tests {
             branch: "main".to_string(),
             subpath: ".ax".to_string(),
             token: String::new(),
+            ..Default::default()
         };
         let pack_src = TempDir::new().unwrap();
         let err = push_github(&config, pack_src.path(), None).unwrap_err();
