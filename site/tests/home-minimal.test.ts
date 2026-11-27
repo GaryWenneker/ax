@@ -33,34 +33,39 @@ test('Oxanium is bundled and used for the heading, not loaded from Google Fonts'
   assert.doesNotMatch(page, /fonts\.googleapis\.com|fonts\.gstatic\.com/);
 });
 
-test('CMY interference fades horizontally from the edge and uses continuous tile loops', () => {
-  assert.match(home, /ax-halftone-screen-three/);
-  for (const pitch of ['26px 26px', '26.8px 26.8px', '25.4px 25.4px']) assert.ok(css.includes(pitch));
-  for (const ink of ['#00ffff', '#ff00ff', '#ffff00']) assert.ok(css.includes(ink));
-  assert.match(css, /mix-blend-mode:multiply/);
-  assert.match(css, /\.ax-halftone-grid::after\{[^}]*color-mix\(in srgb,var\(--ax-lime\) 82%,transparent\)[^}]*mix-blend-mode:color/);
-  assert.match(css, /mask-image:linear-gradient\(90deg,transparent 0%,transparent 18%,rgba\(0,0,0,\.22\) 36%,#000 58%,#000 100%\)/);
-  assert.match(css, /\.ax-halftone-sharp\{[^}]*filter:blur\(\.4px\)/);
-  assert.doesNotMatch(css, /infinite alternate/);
-  assert.match(css, /animation:ax-moire-breath 24s ease-in-out infinite/);
-  assert.match(css, /@keyframes ax-moire-breath\{0%,100%\{filter:blur\(4px\)\}50%\{filter:blur\(1\.2px\)\}\}/);
-  assert.match(css, /animation:ax-moire-spin 240s linear infinite reverse/);
-  assert.match(css, /animation:ax-moire-spin 320s linear infinite/);
-  assert.match(css, /@keyframes ax-moire-spin\{to\{transform:rotate\(1turn\)\}\}/);
-  assert.doesNotMatch(css, /translate3d/);
-  assert.match(css, /prefers-reduced-motion:reduce\)\{html:not\(\[data-ax-motion='running'\]\)/);
-  assert.match(css, /data-ax-motion='paused'\] \.ax-landing \.ax-halftone-grid\{animation-play-state:paused/);
+test('homepage backdrop is the violet silk ring, not the CMY moiré', () => {
+  const ring = read('src/components/SilkRing.astro');
+  const script = read('src/scripts/silk-ring.ts');
+  assert.match(home, /<SilkRing\s*\/>/);
+  assert.doesNotMatch(home, /ax-halftone/);
+  assert.match(ring, /class="ax-silk" data-ax-silk-root aria-hidden="true"/);
+  assert.match(ring, /data-ax-silk-fog/);
+  assert.match(ring, /mountSilkRing\(root\)/);
+  assert.match(ring, /astro:before-swap/);
+  for (const ink of ['#6d28d9', '#7c3aed', '#a78bfa', '#d946ef', '#c4b5fd']) assert.ok(script.includes(ink));
+  // Motion: the visible Pause motion control and hidden tabs stop the loop on a still frame.
+  assert.match(script, /html\.dataset\.axMotion === 'paused' \|\| document\.hidden/);
+  assert.match(script, /addEventListener\('ax:motion', sync\)/);
+  assert.match(script, /new ResizeObserver\(onResize\)/);
   assert.match(home, /<MotionControl\s*\/>/);
-  assert.match(css, /animation-delay:-11s/);
-  assert.match(css, /animation-delay:-15\.5s/);
-  assert.doesNotMatch(css, /border-radius:50%|ax-halftone-rosette/);
-  assert.doesNotMatch(css, /@keyframes ax-moire-magenta\{0%,100%\{/);
-  assert.doesNotMatch(css, /@keyframes ax-moire-yellow\{0%,100%\{/);
+  // The ring fades out toward the copy so text keeps its contrast.
+  assert.match(css, /\.ax-landing \.ax-silk\{[^}]*pointer-events:none;mask-image:linear-gradient\(90deg,transparent 0%,transparent 30%/);
+  assert.match(css, /@media\(max-width:899px\)\{\.ax-landing \.ax-silk\{opacity:\.55;mask-image:linear-gradient\(180deg/);
+  assert.doesNotMatch(css, /ax-halftone-soft|ax-halftone-sharp|ax-moire-breath/);
   assert.match(css, /\.ax-install-command\{[^}]*position:absolute[^}]*backdrop-filter:blur\(18px\)/);
   assert.doesNotMatch(css, /data-ax-install-panel\]:not\(\[hidden\]\).*overflow-y:auto/);
-  assert.match(css, /@media\(max-width:600px\)\{[^\n]*\.ax-halftone\{inset:-18%;opacity:\.32\}/);
   assert.match(css, /prefers-reduced-motion:reduce/);
   assert.doesNotMatch(css, /background-image:\s*url\(/);
+});
+
+test('silk ring layout keeps the ring clear of the copy on each breakpoint', async () => {
+  const { ringLayout, makeSparks } = await import('../src/scripts/silk-ring.ts');
+  assert.deepEqual(ringLayout(375, 812), { fx: 0.92, fy: 0.16, r: 0.5 });
+  assert.deepEqual(ringLayout(768, 1024), { fx: 0.9, fy: 0.3, r: 0.44 });
+  const desktop = ringLayout(1440, 900);
+  assert.equal(desktop.fx, 0.76);
+  assert.ok(desktop.r <= 0.4);
+  assert.deepEqual(makeSparks(5), makeSparks(5));
 });
 
 test('installer offers commands with manual OS selection and keeps optional release assets', () => {
