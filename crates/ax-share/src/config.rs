@@ -390,13 +390,15 @@ fn edited_json_object(
                         ),
                     ))
                 }
-                Err(error) => return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
+                Err(error) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
                         "{} is not valid JSON ({error}); fix it and try again (it was not changed)",
                         path.display()
                     ),
-                )),
+                    ))
+                }
             }
         }
         _ => serde_json::json!({}),
