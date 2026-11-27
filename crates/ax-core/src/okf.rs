@@ -131,14 +131,6 @@ impl OkfConfig {
         cfg
     }
 
-    pub fn out_dir_abs(&self, project_root: &Path) -> PathBuf {
-        project_root.join(&self.out_dir)
-    }
-
-    pub fn wiki_local_abs(&self, project_root: &Path) -> PathBuf {
-        project_root.join(&self.azdo_wiki.local)
-    }
-
     /// `outDir` under the project root; refuses absolute paths, `..` and
     /// links that lead outside the project.
     pub fn out_dir_checked(&self, project_root: &Path) -> Result<PathBuf, String> {
@@ -1060,6 +1052,22 @@ mod tests {
         let n = sample_node("fn:a", "a", NodeKind::Function);
         assert!(export_okf_bundle(&root, &[n], &[], &OkfExportOptions::default()).is_err());
         assert!(!tmp.path().join("escaped").exists());
+    }
+
+    #[test]
+    fn out_dir_checked_refuses_absolute_and_parent_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("proj");
+        std::fs::create_dir_all(&root).unwrap();
+        for bad in ["/abs/okf", "../x", "a/../../x"] {
+            let body = serde_json::json!({ "okf": { "outDir": bad } }).to_string();
+            std::fs::write(root.join("ax.json"), body).unwrap();
+            let cfg = OkfConfig::load(&root);
+            assert!(cfg.out_dir_checked(&root).is_err(), "{bad} was accepted");
+        }
+        std::fs::write(root.join("ax.json"), r#"{"okf":{"outDir":"docs/okf"}}"#).unwrap();
+        let cfg = OkfConfig::load(&root);
+        assert_eq!(cfg.out_dir_checked(&root).unwrap(), root.join("docs/okf"));
     }
 
     #[test]

@@ -41,7 +41,10 @@ fn forbidden_readonly() -> axum::response::Response {
 struct OkfConfigResponse {
     enabled: bool,
     out_dir: String,
+    /// Empty when `outDir` is refused (see `out_dir_error`).
     out_dir_abs: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    out_dir_error: Option<String>,
     kinds: Vec<String>,
     auto_export_on_sync: bool,
     wiki_enabled: bool,
@@ -54,14 +57,21 @@ struct OkfConfigResponse {
 async fn handle_config(State(hub): State<WebHub>) -> impl IntoResponse {
     let ws = hub.read().await;
     let cfg = OkfConfig::load(&ws.project_root);
-    let out_abs = cfg.out_dir_abs(&ws.project_root);
-    let bundle_exists = out_abs.join("index.md").is_file();
+    let checked = cfg.out_dir_checked(&ws.project_root);
+    let bundle_exists = checked
+        .as_ref()
+        .is_ok_and(|dir| dir.join("index.md").is_file());
+    let (out_dir_abs, out_dir_error) = match checked {
+        Ok(dir) => (dir.display().to_string(), None),
+        Err(e) => (String::new(), Some(e)),
+    };
     (
         StatusCode::OK,
         Json(OkfConfigResponse {
             enabled: cfg.enabled,
             out_dir: cfg.out_dir.clone(),
-            out_dir_abs: out_abs.display().to_string(),
+            out_dir_abs,
+            out_dir_error,
             kinds: cfg.kinds.clone(),
             auto_export_on_sync: cfg.auto_export_on_sync,
             wiki_enabled: cfg.azdo_wiki.enabled,
@@ -128,8 +138,12 @@ async fn handle_export(
 async fn handle_validate(State(hub): State<WebHub>) -> impl IntoResponse {
     let ws = hub.read().await;
     let cfg = OkfConfig::load(&ws.project_root);
-    let out_dir = cfg.out_dir_abs(&ws.project_root);
+    let out_dir = cfg.out_dir_checked(&ws.project_root);
     drop(ws);
+    let out_dir = match out_dir {
+        Ok(dir) => dir,
+        Err(e) => return err(StatusCode::BAD_REQUEST, e),
+    };
 
     match validate_okf_bundle(&out_dir) {
         Ok(report) => (
@@ -166,8 +180,12 @@ async fn handle_publish(
     let ws = hub.read().await;
     let root = ws.project_root.clone();
     let cfg = OkfConfig::load(&root);
-    let bundle_dir = cfg.out_dir_abs(&root);
+    let bundle_dir = cfg.out_dir_checked(&root);
     drop(ws);
+    let bundle_dir = match bundle_dir {
+        Ok(dir) => dir,
+        Err(e) => return err(StatusCode::BAD_REQUEST, e),
+    };
 
     if !cfg.azdo_wiki.enabled {
         return err(

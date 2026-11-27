@@ -29,7 +29,7 @@ pub async fn run(args: ExportOkfArgs) -> Result<(), String> {
     let out_dir = match &out_override {
         Some(p) if p.is_absolute() => p.clone(),
         Some(p) => root.join(p),
-        None => cfg.out_dir_abs(&root),
+        None => cfg.out_dir_checked(&root)?,
     };
 
     ax_usage::log_cli(

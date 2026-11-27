@@ -212,6 +212,8 @@ export interface OkfConfigInfo {
   enabled: boolean;
   outDir: string;
   outDirAbs: string;
+  /** Set when `outDir` is refused (absolute, `..` or a link out of the project). */
+  outDirError?: string;
   kinds: string[];
   autoExportOnSync: boolean;
   wikiEnabled: boolean;
