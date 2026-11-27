@@ -520,8 +520,9 @@ pub fn store_report(root: &Path, report: &SkillAuditReport) -> Result<(), String
     fs::create_dir_all(&base).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(report).map_err(|e| e.to_string())?;
     let stamp = report.audited_at.replace(':', "");
-    fs::write(base.join(format!("{stamp}.json")), &json).map_err(|e| e.to_string())?;
-    fs::write(base.join("latest.json"), json).map_err(|e| e.to_string())
+    ax_utils::atomic_write(&base.join(format!("{stamp}.json")), json.as_bytes())
+        .map_err(|e| e.to_string())?;
+    ax_utils::atomic_write(&base.join("latest.json"), json.as_bytes()).map_err(|e| e.to_string())
 }
 
 pub fn load_latest(root: &Path, name: &str) -> Result<Option<SkillAuditReport>, String> {
@@ -536,6 +537,13 @@ pub fn load_latest(root: &Path, name: &str) -> Result<Option<SkillAuditReport>, 
 }
 
 pub fn list_latest(root: &Path) -> Result<Vec<AuditSummary>, String> {
+    Ok(latest_reports(root)?.iter().map(summarize).collect())
+}
+
+/// Every readable `latest.json` under `root`, sorted by name. An entry that
+/// does not load (a folder that is not a skill name, a truncated or older
+/// report) is logged and skipped so it cannot hide the others.
+fn latest_reports(root: &Path) -> Result<Vec<SkillAuditReport>, String> {
     if !root.exists() {
         return Ok(Vec::new());
     }
@@ -547,13 +555,18 @@ pub fn list_latest(root: &Path) -> Result<Vec<AuditSummary>, String> {
         if name == "_candidates" || name.starts_with('.') {
             continue;
         }
-        if !entry.file_type().map_err(|e| e.to_string())?.is_dir() {
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
             continue;
         }
-        let Some(report) = load_latest(root, &name)? else {
-            continue;
-        };
-        out.push(summarize(&report));
+        match load_latest(root, &name) {
+            Ok(Some(report)) => out.push(report),
+            Ok(None) => {}
+            Err(err) => tracing::warn!(
+                audit = %entry.path().display(),
+                error = %err,
+                "skipping an audit report that does not load"
+            ),
+        }
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
@@ -895,15 +908,12 @@ fn push_open(root: &Path, blocks: &mut Vec<String>, extra: &mut Vec<String>) -> 
     if !root.exists() {
         return Ok(());
     }
-    for summary in list_latest(root)? {
-        let Some(report) = load_latest(root, &summary.name)? else {
-            continue;
-        };
+    for report in latest_reports(root)? {
         if report.candidate || !needs_edit(&report) {
             continue;
         }
         if blocks.len() >= 8 {
-            extra.push(summary.name);
+            extra.push(report.name);
             continue;
         }
         let file = if report.edit_file.is_empty() {
@@ -1305,6 +1315,46 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].name, "pdf");
         assert!(listed[0].verdict.is_none());
+    }
+
+    #[test]
+    fn one_bad_audit_entry_does_not_hide_the_others() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("pdf");
+        write_skill(&dir, SHORT);
+        let report = audit_directory(&dir).unwrap();
+        let project = root.path().join("project");
+        let audits = project.join(".ax").join("skill-audits");
+        store_report(&audits, &report).unwrap();
+        // A truncated latest.json and a folder whose name is not a skill name.
+        fs::create_dir_all(audits.join("broken")).unwrap();
+        fs::write(audits.join("broken").join("latest.json"), "{\"version\":").unwrap();
+        fs::create_dir_all(audits.join("Bad_Name")).unwrap();
+        fs::write(audits.join("Bad_Name").join("latest.json"), "{}").unwrap();
+        let listed = list_latest(&audits).unwrap();
+        assert_eq!(
+            listed.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            vec!["pdf"]
+        );
+        let briefs = project_briefs(&project).unwrap();
+        assert!(briefs.contains("name=\"pdf\""), "{briefs}");
+    }
+
+    #[test]
+    fn store_report_leaves_no_temp_files() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("pdf");
+        write_skill(&dir, SHORT);
+        let report = audit_directory(&dir).unwrap();
+        let audits = root.path().join("audits");
+        store_report(&audits, &report).unwrap();
+        store_report(&audits, &report).unwrap();
+        let names: Vec<String> = fs::read_dir(audits.join("pdf"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(names.iter().all(|n| n.ends_with(".json")), "{names:?}");
+        assert!(names.contains(&"latest.json".to_string()));
     }
 
     #[test]
