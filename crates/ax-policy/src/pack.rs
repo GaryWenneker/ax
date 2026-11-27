@@ -17,7 +17,9 @@ use ax_utils::errors::AxError;
 
 use crate::config::load_policy_config;
 use crate::index::{index_policy, list_rules, list_skills, rule_row_to_doc, skill_row_to_doc};
-use crate::parse::{parse_rule_file, parse_skill_file, serialize_rule, serialize_skill};
+use crate::parse::{
+    is_kebab_case, parse_rule_file, parse_skill_file, serialize_rule, serialize_skill,
+};
 use crate::paths::{
     ax_dir_from_project, pending_rules_dir, pending_skills_dir, rule_file, rules_dir, shared_dir,
     skill_file, skills_dir, SKILL_FILENAME,
@@ -66,6 +68,10 @@ pub struct PackImportResult {
     pub skills_pending: usize,
     pub skipped: usize,
     pub conflicts: usize,
+    /// Pack entries that were not imported, each with the file and the reason
+    /// (unparsable frontmatter, or an id or name that differs from the manifest).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub invalid: Vec<String>,
 }
 
 #[derive(Debug, Default, serde::Serialize)]
@@ -143,6 +149,59 @@ fn write_utf8(path: &Path, content: &str) -> Result<(), AxError> {
     std::fs::write(path, content.as_bytes()).map_err(|e| AxError::Other(e.to_string()))
 }
 
+/// Removes what an earlier export wrote (`rules/`, `skills/`,
+/// `manifest.json`) so the new export starts clean. Anything else in the
+/// folder is left alone. A folder that exists, is not empty and holds no pack
+/// manifest is refused: the export never deletes files it did not write.
+fn clear_previous_pack(pack_root: &Path) -> Result<(), AxError> {
+    let meta = match std::fs::symlink_metadata(pack_root) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(AxError::Other(format!(
+                "cannot read pack folder {}: {e}",
+                pack_root.display()
+            )))
+        }
+    };
+    if !meta.is_dir() {
+        return Err(AxError::Other(format!(
+            "{} is not a folder; choose an empty folder or an existing policy pack",
+            pack_root.display()
+        )));
+    }
+    let manifest_path = pack_root.join("manifest.json");
+    let is_pack = std::fs::read_to_string(&manifest_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<PackManifest>(&raw).ok())
+        .is_some();
+    if !is_pack {
+        let mut entries = std::fs::read_dir(pack_root).map_err(|e| {
+            AxError::Other(format!("cannot read pack folder {}: {e}", pack_root.display()))
+        })?;
+        if entries.next().is_some() {
+            return Err(AxError::Other(format!(
+                "{} is not a policy pack (no manifest.json) and is not empty; \
+                 choose an empty folder or an existing pack",
+                pack_root.display()
+            )));
+        }
+        return Ok(());
+    }
+    for sub in ["rules", "skills"] {
+        let dir = pack_root.join(sub);
+        match std::fs::symlink_metadata(&dir) {
+            Ok(m) if m.is_dir() => std::fs::remove_dir_all(&dir),
+            Ok(_) => std::fs::remove_file(&dir),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
+        }
+        .map_err(|e| AxError::Other(format!("cannot clear {}: {e}", dir.display())))?;
+    }
+    std::fs::remove_file(&manifest_path)
+        .map_err(|e| AxError::Other(format!("cannot clear {}: {e}", manifest_path.display())))
+}
+
 /// Export shareable rules/skills into `.ax/policy/shared/`.
 pub async fn export_pack(
     pool: &SqlitePool,
@@ -155,10 +214,7 @@ pub async fn export_pack(
         .unwrap_or_else(|| default_pack_path(project_root));
     let rules_out = pack_root.join("rules");
     let skills_out = pack_root.join("skills");
-    // Clear previous pack contents for a clean export.
-    if pack_root.exists() {
-        let _ = std::fs::remove_dir_all(&pack_root);
-    }
+    clear_previous_pack(&pack_root)?;
     std::fs::create_dir_all(&rules_out).map_err(|e| AxError::Other(e.to_string()))?;
     std::fs::create_dir_all(&skills_out).map_err(|e| AxError::Other(e.to_string()))?;
 
@@ -321,6 +377,12 @@ pub async fn import_pack_with_origin(
     let ax_dir = ax_dir_from_project(project_root);
 
     for meta in &manifest.rules {
+        if !is_kebab_case(&meta.id) {
+            result
+                .invalid
+                .push(format!("rule `{}`: manifest id must be kebab-case", meta.id));
+            continue;
+        }
         let path = pack_root.join("rules").join(format!("{}.mdc", meta.id));
         if !path.is_file() {
             result.skipped += 1;
@@ -328,6 +390,15 @@ pub async fn import_pack_with_origin(
         }
         let raw = std::fs::read_to_string(&path).map_err(|e| AxError::Other(e.to_string()))?;
         let mut doc = parse_rule_file(&path, &raw).map_err(|e| AxError::Other(e.error))?;
+        if doc.frontmatter.id != meta.id {
+            result.invalid.push(format!(
+                "{}: frontmatter id `{}` does not match manifest id `{}`",
+                path.display(),
+                doc.frontmatter.id,
+                meta.id
+            ));
+            continue;
+        }
         let pack_hash = content_hash(&raw);
 
         match local_rule_map.get(&meta.id) {
@@ -359,6 +430,12 @@ pub async fn import_pack_with_origin(
     }
 
     for meta in &manifest.skills {
+        if !is_kebab_case(&meta.id) {
+            result
+                .invalid
+                .push(format!("skill `{}`: manifest name must be kebab-case", meta.id));
+            continue;
+        }
         let path = pack_root.join("skills").join(&meta.id).join(SKILL_FILENAME);
         if !path.is_file() {
             result.skipped += 1;
@@ -366,6 +443,15 @@ pub async fn import_pack_with_origin(
         }
         let raw = std::fs::read_to_string(&path).map_err(|e| AxError::Other(e.to_string()))?;
         let mut doc = parse_skill_file(&path, &raw).map_err(|e| AxError::Other(e.error))?;
+        if doc.frontmatter.name != meta.id {
+            result.invalid.push(format!(
+                "{}: frontmatter name `{}` does not match manifest name `{}`",
+                path.display(),
+                doc.frontmatter.name,
+                meta.id
+            ));
+            continue;
+        }
         let pack_hash = content_hash(&raw);
 
         match local_skill_map.get(&meta.id) {
@@ -562,6 +648,166 @@ async fn write_pending_with_origin(
     })
     .await
     .map_err(|e| AxError::Other(e.to_string()))?
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+
+    async fn pool() -> SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        ax_db::schema::apply_initial_schema(&pool).await.unwrap();
+        ax_db::migrations::run_migrations(&pool, 0).await.unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn export_refuses_a_folder_that_is_not_a_pack() {
+        let root = tempfile::tempdir().unwrap();
+        let out = root.path().join("documents");
+        std::fs::create_dir_all(out.join("notes")).unwrap();
+        std::fs::write(out.join("notes/keep.txt"), "mine\n").unwrap();
+        std::fs::write(out.join("report.md"), "mine\n").unwrap();
+        let pool = pool().await;
+
+        let err = export_pack(&pool, root.path(), "shared", Some(&out))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not a policy pack"), "{err}");
+        assert_eq!(std::fs::read_to_string(out.join("notes/keep.txt")).unwrap(), "mine\n");
+        assert_eq!(std::fs::read_to_string(out.join("report.md")).unwrap(), "mine\n");
+        assert!(!out.join("manifest.json").exists());
+    }
+
+    #[tokio::test]
+    async fn export_into_an_existing_pack_replaces_only_pack_contents() {
+        let root = tempfile::tempdir().unwrap();
+        let out = root.path().join("pack");
+        let pool = pool().await;
+        export_pack(&pool, root.path(), "shared", Some(&out))
+            .await
+            .unwrap();
+        std::fs::write(out.join("rules/stale.mdc"), "old\n").unwrap();
+        std::fs::write(out.join("README.md"), "about this pack\n").unwrap();
+
+        export_pack(&pool, root.path(), "shared", Some(&out))
+            .await
+            .unwrap();
+        assert!(!out.join("rules/stale.mdc").exists());
+        assert!(out.join("manifest.json").is_file());
+        assert_eq!(
+            std::fs::read_to_string(out.join("README.md")).unwrap(),
+            "about this pack\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn export_into_an_empty_or_new_folder_works() {
+        let root = tempfile::tempdir().unwrap();
+        let pool = pool().await;
+        let empty = root.path().join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        export_pack(&pool, root.path(), "shared", Some(&empty))
+            .await
+            .unwrap();
+        assert!(empty.join("manifest.json").is_file());
+        let fresh = root.path().join("fresh/pack");
+        export_pack(&pool, root.path(), "shared", Some(&fresh))
+            .await
+            .unwrap();
+        assert!(fresh.join("manifest.json").is_file());
+    }
+}
+
+#[cfg(test)]
+mod import_id_tests {
+    use super::*;
+
+    async fn project_with_local_policy() -> (tempfile::TempDir, SqlitePool) {
+        let root = tempfile::tempdir().unwrap();
+        let agents = root.path().join(".agents");
+        std::fs::create_dir_all(agents.join("rules")).unwrap();
+        std::fs::create_dir_all(agents.join("skills/deploy")).unwrap();
+        std::fs::write(
+            agents.join("rules/english-only.mdc"),
+            "---\nid: english-only\nlevel: CRITICAL\nalwaysApply: true\n---\nLocal rule\n",
+        )
+        .unwrap();
+        std::fs::write(
+            agents.join("skills/deploy/SKILL.md"),
+            "---\nname: deploy\ndescription: Local deploy\n---\nLocal skill\n",
+        )
+        .unwrap();
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        ax_db::schema::apply_initial_schema(&pool).await.unwrap();
+        ax_db::migrations::run_migrations(&pool, 0).await.unwrap();
+        index_policy(&pool, root.path(), false).await.unwrap();
+        (root, pool)
+    }
+
+    fn write_mismatched_pack(pack: &Path) {
+        std::fs::create_dir_all(pack.join("rules")).unwrap();
+        std::fs::create_dir_all(pack.join("skills/new-skill")).unwrap();
+        std::fs::write(
+            pack.join("rules/new-rule.mdc"),
+            "---\nid: english-only\nlevel: INFO\nalwaysApply: true\n---\nHijacked rule\n",
+        )
+        .unwrap();
+        std::fs::write(
+            pack.join("skills/new-skill/SKILL.md"),
+            "---\nname: deploy\ndescription: Hijacked\n---\nHijacked skill\n",
+        )
+        .unwrap();
+        let manifest = serde_json::json!({
+            "schemaVersion": 1, "exportedAt": 1, "tag": "shared",
+            "rules": [{"id": "new-rule", "contentHash": "", "updatedAt": 1, "kind": "rule"}],
+            "skills": [{"id": "new-skill", "contentHash": "", "updatedAt": 1, "kind": "skill"}],
+        });
+        std::fs::write(pack.join("manifest.json"), manifest.to_string()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_entry_whose_file_names_another_id_cannot_overwrite_it() {
+        let (root, pool) = project_with_local_policy().await;
+        let pack = root.path().join("team-pack");
+        write_mismatched_pack(&pack);
+
+        let result = import_pack_with_options(&pool, root.path(), Some(&pack), false, Some(false))
+            .await
+            .unwrap();
+        assert_eq!((result.rules_added, result.skills_added), (0, 0));
+        assert_eq!(result.invalid.len(), 2, "{:?}", result.invalid);
+        assert!(result.invalid[0].contains("english-only"), "{:?}", result.invalid);
+        let rules = list_rules(&pool).await.unwrap();
+        let rule = rules.iter().find(|r| r.id == "english-only").unwrap();
+        assert_eq!(rule.body.trim(), "Local rule");
+        assert_eq!(rule.level, "CRITICAL");
+        let skills = list_skills(&pool).await.unwrap();
+        let skill = skills.iter().find(|s| s.name == "deploy").unwrap();
+        assert_eq!(skill.body.trim(), "Local skill");
+    }
+
+    #[tokio::test]
+    async fn a_mismatched_entry_is_not_staged_for_review_either() {
+        let (root, pool) = project_with_local_policy().await;
+        let pack = root.path().join("team-pack");
+        write_mismatched_pack(&pack);
+
+        let result = import_pack_with_options(&pool, root.path(), Some(&pack), false, Some(true))
+            .await
+            .unwrap();
+        assert_eq!((result.rules_pending, result.skills_pending), (0, 0));
+        assert_eq!(result.invalid.len(), 2);
+        assert!(crate::list_pending(root.path()).unwrap().is_empty());
+    }
 }
 
 #[cfg(test)]

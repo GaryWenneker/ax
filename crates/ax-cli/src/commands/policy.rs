@@ -1346,6 +1346,9 @@ pub async fn run_pack_import(
             result.skipped,
             result.conflicts
         );
+        for invalid in &result.invalid {
+            eprintln!("Not imported: {invalid}");
+        }
         println!("IDE bootstrap refreshed (all agents) + MCP for detected agents.");
     }
     Ok(())

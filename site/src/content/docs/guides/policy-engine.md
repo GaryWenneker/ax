@@ -436,6 +436,10 @@ ax policy pack import
 ax policy pack status
 ```
 
+`ax policy pack export --out <folder>` writes the pack somewhere else. The folder must be new, empty, or an earlier pack (it holds a `manifest.json`). Export replaces only `rules/`, `skills/` and `manifest.json` there and leaves other files alone; any other non-empty folder is refused.
+
+On import, each manifest entry must match the file it points to: a rule whose frontmatter `id` (or a skill whose `name`) differs from its manifest entry is skipped and listed under `invalid`, so a pack cannot overwrite a different local item under another name.
+
 Set `"policySync": true` in project `ax.json` so git hooks run export on post-commit and import on post-merge (run `ax sync` once after enabling).
 
 ### Built-in packs
