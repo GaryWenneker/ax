@@ -327,3 +327,124 @@ async fn incremental_index_keeps_project_wide_resolution_stats() {
 
     ax.destroy().await.unwrap();
 }
+
+type Labels = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+type Progress = Option<Box<dyn FnMut(ax_types::IndexProgress) + Send>>;
+
+fn optimizing_labels() -> (Labels, Progress) {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let capture = std::sync::Arc::clone(&seen);
+    let progress = Box::new(move |event: ax_types::IndexProgress| {
+        if event.phase == ax_types::IndexPhase::Optimizing {
+            if let Some(label) = event.file_path {
+                capture.lock().expect("progress").push(label);
+            }
+        }
+    }) as Box<dyn FnMut(ax_types::IndexProgress) + Send>;
+    (seen, Some(progress))
+}
+
+async fn doc_links_to(ax: &Ax, symbol: &str) -> Vec<String> {
+    let hits = ax
+        .search_nodes(symbol, &ax_types::SearchOptions::default())
+        .await
+        .unwrap();
+    let mut sources = Vec::new();
+    for hit in hits.iter().filter(|h| h.node.name == symbol) {
+        for edge in ax.queries().get_incoming_edges(&hit.node.id).await.unwrap() {
+            if edge.source.starts_with("doc:") {
+                sources.push(edge.source);
+            }
+        }
+    }
+    sources
+}
+
+async fn docs_project(root: &Path) -> Ax {
+    write(
+        root,
+        "src/app.ts",
+        "export function greetUser(name: string) { return name; }\n",
+    );
+    write(
+        root,
+        "src/util.ts",
+        "export function addNumbers(a: number, b: number) { return a + b; }\n",
+    );
+    write(root, "README.md", "# Demo\n\nCall `greetUser` to say hi.\n");
+    let mut ax = Ax::init(root).await.unwrap();
+    ax.index_all(quiet_opts(), None).await.unwrap();
+    ax
+}
+
+#[tokio::test]
+async fn scoped_index_of_a_code_file_skips_project_wide_passes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ax = docs_project(dir.path()).await;
+    write(
+        dir.path(),
+        "src/util.ts",
+        "export function addNumbers(a: number, b: number) { return b + a; }\n",
+    );
+    let (seen, mut progress) = optimizing_labels();
+    ax.index_files(&["src/util.ts".into()], quiet_opts(), &mut progress)
+        .await
+        .unwrap();
+    let labels = seen.lock().expect("progress").clone();
+    assert!(
+        !labels
+            .iter()
+            .any(|l| l == "markdown docs" || l == "contracts"),
+        "a code-only change must not rescan every doc and contract: {labels:?}"
+    );
+    assert!(
+        labels.iter().any(|l| l == "SQLite optimize"),
+        "a scoped run uses the light maintenance step: {labels:?}"
+    );
+    ax.destroy().await.unwrap();
+}
+
+#[tokio::test]
+async fn doc_links_survive_a_scoped_reindex_of_the_code_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ax = docs_project(dir.path()).await;
+    assert_eq!(doc_links_to(&ax, "greetUser").await, vec!["doc:README.md"]);
+
+    write(
+        dir.path(),
+        "src/app.ts",
+        "export function greetUser(name: string) { return `hi ${name}`; }\n",
+    );
+    ax.index_files(&["src/app.ts".into()], quiet_opts(), &mut None)
+        .await
+        .unwrap();
+    assert_eq!(
+        doc_links_to(&ax, "greetUser").await,
+        vec!["doc:README.md"],
+        "re-extracting the code file must keep the doc's link to it"
+    );
+    ax.destroy().await.unwrap();
+}
+
+#[tokio::test]
+async fn scoped_index_of_a_doc_file_relinks_docs() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ax = docs_project(dir.path()).await;
+    write(
+        dir.path(),
+        "README.md",
+        "# Demo\n\nCall `addNumbers` to add.\n",
+    );
+    let (seen, mut progress) = optimizing_labels();
+    ax.index_files(&["README.md".into()], quiet_opts(), &mut progress)
+        .await
+        .unwrap();
+    assert!(seen
+        .lock()
+        .expect("progress")
+        .iter()
+        .any(|l| l == "markdown docs"));
+    assert_eq!(doc_links_to(&ax, "addNumbers").await, vec!["doc:README.md"]);
+    assert!(doc_links_to(&ax, "greetUser").await.is_empty());
+    ax.destroy().await.unwrap();
+}

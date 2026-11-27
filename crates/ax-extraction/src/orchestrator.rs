@@ -615,6 +615,9 @@ impl ExtractionOrchestrator {
                     file_path: Some(file_path.clone()),
                 });
             }
+            // Doc and contract links into this file are rebuilt only by the
+            // project-wide doc pass, so carry them over the re-extract.
+            let doc_edges = queries.get_doc_edges_into_file(&file_path).await?;
             // Keeps file_contents: the text was stored above and the hash we are
             // about to write must stay paired with it.
             queries.clear_file_for_reindex(&file_path).await?;
@@ -622,6 +625,13 @@ impl ExtractionOrchestrator {
                 Ok(extraction) => {
                     queries.upsert_nodes(&extraction.nodes).await?;
                     queries.upsert_edges(&extraction.edges).await?;
+                    let kept_ids: std::collections::HashSet<&str> =
+                        extraction.nodes.iter().map(|n| n.id.as_str()).collect();
+                    let kept_doc_edges: Vec<_> = doc_edges
+                        .into_iter()
+                        .filter(|e| kept_ids.contains(e.target.as_str()))
+                        .collect();
+                    queries.upsert_edges(&kept_doc_edges).await?;
                     let mut refs: Vec<ax_types::UnresolvedReference> = Vec::new();
                     for ref_ in &extraction.unresolved_references {
                         let mut r = ref_.clone();

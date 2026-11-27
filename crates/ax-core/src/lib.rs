@@ -243,7 +243,10 @@ impl Ax {
                     &self.db,
                     &self.project_root,
                     &index_opts.exclude,
-                    None,
+                    FinalizeRun {
+                        scope: None,
+                        read_path: false,
+                    },
                     &mut on_progress,
                 )
                 .await
@@ -291,7 +294,10 @@ impl Ax {
                         &self.db,
                         &self.project_root,
                         &index_opts.exclude,
-                        Some(&sync.affected_files),
+                        FinalizeRun {
+                            scope: Some(&sync.affected_files),
+                            read_path: false,
+                        },
                         &mut on_progress,
                     )
                     .await
@@ -346,6 +352,7 @@ impl Ax {
             opts,
             on_progress,
             ax_utils::file_lock::DEFAULT_LOCK_WAIT,
+            false,
         )
         .await
     }
@@ -353,13 +360,15 @@ impl Ax {
     /// Re-index `paths`, assuming the caller already holds `index_mutex`.
     ///
     /// `lock_wait` bounds the on-disk lock acquisition so a read-path caller
-    /// cannot hang behind another process's long index.
+    /// cannot hang behind another process's long index. `read_path` skips the
+    /// project-wide memory passes after the re-extract and resolve.
     async fn index_files_locked(
         &mut self,
         paths: &[String],
         opts: IndexOptions,
         on_progress: &mut Option<Box<dyn FnMut(IndexProgress) + Send>>,
         lock_wait: std::time::Duration,
+        read_path: bool,
     ) -> Result<IndexResult, ax_utils::errors::AxError> {
         self.file_lock.acquire_wait(lock_wait)?;
         let index_opts = self.merge_index_opts(&opts);
@@ -375,7 +384,10 @@ impl Ax {
                     &self.db,
                     &self.project_root,
                     &index_opts.exclude,
-                    Some(paths),
+                    FinalizeRun {
+                        scope: Some(paths),
+                        read_path,
+                    },
                     on_progress,
                 )
                 .await
@@ -391,10 +403,12 @@ impl Ax {
     /// Re-index paths whose stored source drifted from the working tree, so the
     /// next graph read can serve verified-fresh snippets.
     ///
-    /// Best-effort and strictly bounded: if either lock is busy, or the re-index
-    /// fails, this returns `false` and the caller serves stale-labelled text.
-    /// Blocking here would turn a read into an unbounded wait, and reads are on
-    /// the agent's critical path.
+    /// Best-effort: if either lock is busy, or the re-index fails, this returns
+    /// `false` and the caller serves stale-labelled text. Both lock waits are
+    /// bounded, and once the locks are held the work is limited to the stale
+    /// files: re-extract, resolve, light SQLite maintenance and change capture.
+    /// Doc and contract rescans and the memory passes are left to the next
+    /// sync or watch batch.
     async fn try_resync_source(&mut self, paths: &[String]) -> bool {
         if paths.is_empty() {
             return false;
@@ -417,6 +431,7 @@ impl Ax {
                 },
                 &mut no_progress,
                 SOURCE_RESYNC_FILE_LOCK_WAIT,
+                true,
             )
             .await;
         drop(guard);
@@ -1073,22 +1088,33 @@ fn report_optimizing(on_progress: &mut Option<Box<dyn FnMut(IndexProgress) + Sen
     }
 }
 
+/// What a finalize pass covers.
+#[derive(Clone, Copy)]
+struct FinalizeRun<'a> {
+    /// `None` (or empty) for a project-wide run; otherwise the touched paths.
+    scope: ax_resolution::ResolutionScope<'a>,
+    /// A read-path resync: skip the project-wide memory passes.
+    read_path: bool,
+}
+
 async fn finalize_after_extract(
     resolver: &mut ReferenceResolver,
     queries: &QueryBuilder,
     db: &Database,
     project_root: &Path,
     exclude: &[String],
-    scope: ax_resolution::ResolutionScope<'_>,
+    run: FinalizeRun<'_>,
     on_progress: &mut Option<Box<dyn FnMut(IndexProgress) + Send>>,
 ) -> Result<(), ax_utils::errors::AxError> {
+    let FinalizeRun { scope, read_path } = run;
+    let project_wide = scope.is_none_or(|paths| paths.is_empty());
     let _ = ax_resolution::prune_stale_unresolved_refs(queries).await?;
     let resolution = resolver
         .resolve_all(queries, scope, on_progress.as_mut())
         .await?;
     // A scoped run counts only the references of the files it touched, so
     // only a project-wide run may replace the project-wide totals.
-    if scope.is_none_or(|paths| paths.is_empty()) {
+    if project_wide {
         queries
             .set_metadata("resolution_total", &resolution.stats.total.to_string())
             .await?;
@@ -1105,20 +1131,34 @@ async fn finalize_after_extract(
             )
             .await?;
     }
-    report_optimizing(on_progress, "markdown docs");
-    let docs_indexed =
-        ax_extraction::markdown::index_markdown(project_root, queries, exclude).await?;
-    queries
-        .set_metadata("docs_indexed", &docs_indexed.to_string())
-        .await?;
-    report_optimizing(on_progress, "contracts");
-    let contracts_indexed =
-        ax_extraction::contracts::index_contracts(project_root, queries, exclude).await?;
-    queries
-        .set_metadata("contracts_indexed", &contracts_indexed.to_string())
-        .await?;
-    report_optimizing(on_progress, "SQLite maintenance");
-    db.run_maintenance().await?;
+    // The doc and contract passes rescan the whole project. A scoped run
+    // needs them only when it touched such a file; links from docs into
+    // re-extracted code are carried over by the orchestrator.
+    let touched =
+        |is_kind: fn(&str) -> bool| scope.is_some_and(|paths| paths.iter().any(|p| is_kind(p)));
+    if project_wide || touched(ax_extraction::markdown::is_doc_path) {
+        report_optimizing(on_progress, "markdown docs");
+        let docs_indexed =
+            ax_extraction::markdown::index_markdown(project_root, queries, exclude).await?;
+        queries
+            .set_metadata("docs_indexed", &docs_indexed.to_string())
+            .await?;
+    }
+    if project_wide || touched(ax_extraction::contracts::may_be_contract_path) {
+        report_optimizing(on_progress, "contracts");
+        let contracts_indexed =
+            ax_extraction::contracts::index_contracts(project_root, queries, exclude).await?;
+        queries
+            .set_metadata("contracts_indexed", &contracts_indexed.to_string())
+            .await?;
+    }
+    if project_wide {
+        report_optimizing(on_progress, "SQLite maintenance");
+        db.run_maintenance().await?;
+    } else {
+        report_optimizing(on_progress, "SQLite optimize");
+        db.run_light_maintenance().await?;
+    }
     queries
         .set_metadata("extraction_version", EXTRACTION_VERSION)
         .await?;
@@ -1146,6 +1186,11 @@ async fn finalize_after_extract(
             tracing::warn!("graph version capture failed: {error}");
         }
     }
+    // A read-path resync only refreshes stale source for the current read;
+    // the project-wide memory passes run with the next sync or watch batch.
+    if read_path {
+        return Ok(());
+    }
     report_optimizing(on_progress, "graph episodes");
     if let Err(error) = ax_memory::capture_graph_episodes(db.pool()).await {
         tracing::warn!("graph episode capture failed: {error}");
@@ -1171,4 +1216,63 @@ async fn finalize_after_extract(
         tracing::warn!("memory re-embed failed: {error}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod read_path_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_read_path_resync_skips_project_wide_passes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("src/app.ts"),
+            "export function a() { return 1; }\n",
+        )
+        .unwrap();
+        let mut ax = Ax::init(root).await.unwrap();
+        let quiet = IndexOptions {
+            quiet: true,
+            ..IndexOptions::default()
+        };
+        ax.index_all(quiet.clone(), None).await.unwrap();
+        std::fs::write(
+            root.join("src/app.ts"),
+            "export function b() { return 2; }\n",
+        )
+        .unwrap();
+
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let capture = Arc::clone(&seen);
+        let mut progress: Option<Box<dyn FnMut(IndexProgress) + Send>> =
+            Some(Box::new(move |event: IndexProgress| {
+                if event.phase == ax_types::IndexPhase::Optimizing {
+                    if let Some(label) = event.file_path {
+                        capture.lock().unwrap().push(label);
+                    }
+                }
+            }));
+        let mutex = Arc::clone(&ax.index_mutex);
+        let _guard = mutex.lock().await;
+        ax.index_files_locked(
+            &["src/app.ts".to_string()],
+            quiet,
+            &mut progress,
+            SOURCE_RESYNC_FILE_LOCK_WAIT,
+            true,
+        )
+        .await
+        .unwrap();
+        let labels = seen.lock().unwrap().clone();
+        assert_eq!(
+            labels,
+            vec![
+                "SQLite optimize".to_string(),
+                "file-change capture".to_string(),
+                "graph versions".to_string(),
+            ]
+        );
+    }
 }

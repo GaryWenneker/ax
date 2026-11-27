@@ -637,6 +637,22 @@ impl QueryBuilder {
         Ok(rows.into_iter().map(|r| r.into_edge()).collect())
     }
 
+    /// Edges from doc and contract nodes (`doc:…`, `contract:…`) into nodes
+    /// of `file_path`. A scoped re-extract deletes those nodes, which drops
+    /// these edges by cascade; the caller stores them again afterwards.
+    pub async fn get_doc_edges_into_file(&self, file_path: &str) -> Result<Vec<Edge>, AxError> {
+        let rows = sqlx::query_as::<_, EdgeRow>(
+            "SELECT e.source, e.target, e.kind, e.metadata, e.line, e.col, e.provenance, e.confidence \
+             FROM edges e JOIN nodes n ON n.id = e.target \
+             WHERE n.file_path = ? AND (e.source LIKE 'doc:%' OR e.source LIKE 'contract:%')",
+        )
+        .bind(file_path)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| self.sql_err(e))?;
+        Ok(rows.into_iter().map(|r| r.into_edge()).collect())
+    }
+
     pub async fn get_incoming_edges(&self, node_id: &str) -> Result<Vec<Edge>, AxError> {
         let rows = sqlx::query_as::<_, EdgeRow>(
             "SELECT source, target, kind, metadata, line, col, provenance, confidence FROM edges WHERE target = ?",

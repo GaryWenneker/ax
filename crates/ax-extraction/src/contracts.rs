@@ -170,6 +170,20 @@ pub async fn index_contracts(
     Ok(ops.len())
 }
 
+/// True when `rel_path` has an extension the contract pass may index
+/// (`.proto`, `.graphql`, `.gql`, or a YAML/JSON file that may be OpenAPI).
+pub fn may_be_contract_path(rel_path: &str) -> bool {
+    let ext = Path::new(rel_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "proto" | "graphql" | "gql" | "yaml" | "yml" | "json"
+    )
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ContractKind {
     OpenApi,
