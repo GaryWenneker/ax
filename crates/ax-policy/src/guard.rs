@@ -521,48 +521,15 @@ fn has_null_padded_ascii(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::sqlite::SqlitePoolOptions;
     use tempfile::TempDir;
 
+    /// A database with the real migrations, so the tests see the real schema.
     async fn pool_with_utf8_rule() -> (TempDir, SqlitePool) {
         let dir = TempDir::new().unwrap();
-        let db_path = dir.path().join("test.db");
-        let pool = SqlitePoolOptions::new()
-            .connect_with(
-                sqlx::sqlite::SqliteConnectOptions::new()
-                    .filename(&db_path)
-                    .create_if_missing(true),
-            )
+        let db = ax_db::Database::open(&dir.path().join("test.db"))
             .await
             .unwrap();
-        sqlx::query(
-            "CREATE TABLE policy_rules (
-                id TEXT PRIMARY KEY, level TEXT, always_apply INTEGER, globs TEXT, triggers TEXT,
-                tags TEXT, priority INTEGER, body TEXT, source_path TEXT, content_hash TEXT, updated_at INTEGER,
-                enabled INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'approved',
-                scope TEXT NOT NULL DEFAULT 'project',
-                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT, skill_group TEXT,
-                properties TEXT NOT NULL DEFAULT '{}'
-            )",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "CREATE TABLE policy_skills (
-                name TEXT PRIMARY KEY, description TEXT, always_apply INTEGER NOT NULL DEFAULT 0,
-                triggers TEXT, tags TEXT,
-                priority INTEGER, context_task TEXT, body TEXT, source_path TEXT,
-                content_hash TEXT, updated_at INTEGER,
-                enabled INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'approved',
-                scope TEXT NOT NULL DEFAULT 'project',
-                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT, skill_group TEXT,
-                properties TEXT NOT NULL DEFAULT '{}'
-            )",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        let pool = db.pool().clone();
         sqlx::query(
             "INSERT INTO policy_rules (id, level, always_apply, globs, triggers, tags, priority, body, source_path, content_hash, updated_at, enabled, status, scope)
              VALUES ('utf8-no-bom','CRITICAL',1,'[]','[]','[\"utf8\"]',100,'','','',0,1,'approved','project')",

@@ -1551,16 +1551,10 @@ fn skills() -> Vec<SkillSeed> {
 mod tests {
     use super::*;
 
-    fn project(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!("ax-bootstrap-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&path);
-        fs::create_dir_all(&path).unwrap();
-        path
-    }
-
     #[test]
     fn fresh_install_seeds_required_facts() {
-        let dir = project("fresh");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let report = apply(&dir, false).unwrap();
         assert_eq!(report.seed_version, "2.0.0");
         assert!(report.entities_created > 0);
@@ -1588,12 +1582,12 @@ mod tests {
         assert!(answer(&dir, "Can Ax failure terminate Pi?")
             .unwrap()
             .contains("No"));
-        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
     fn existing_user_node_is_kept_and_seed_is_not_duplicated() {
-        let dir = project("existing");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let graph = DomainFile {
             version: 1,
             nodes: vec![DomainNode {
@@ -1621,23 +1615,23 @@ mod tests {
             .nodes
             .iter()
             .any(|node| { node.id == "billing" && node.code_node_ids == ["fn:bill"] }));
-        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
     fn three_runs_leave_the_same_graph() {
-        let dir = project("repeat");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         apply(&dir, false).unwrap();
         let first = fs::read(graph_path(&dir)).unwrap();
         apply(&dir, false).unwrap();
         apply(&dir, false).unwrap();
         assert_eq!(fs::read(graph_path(&dir)).unwrap(), first);
-        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
     fn migration_from_1_0_0_records_the_step() {
-        let dir = project("migrate");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         write_version(
             &dir,
             &VersionFile {
@@ -1673,18 +1667,17 @@ mod tests {
             .nodes
             .iter()
             .any(|node| node.id == "ax.legacy"));
-        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
     fn dry_run_does_not_write() {
-        let dir = project("dry");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let report = apply(&dir, true).unwrap();
         assert!(report.dry_run);
         assert!(report.entities_created > 0);
         assert!(!graph_path(&dir).exists());
         assert!(!version_path(&dir).exists());
-        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1712,14 +1705,15 @@ mod tests {
 
     #[test]
     fn bootstrap_does_not_need_pi() {
-        let dir = project("no-pi");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         assert!(apply(&dir, false).is_ok());
-        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
     fn project_seed_cannot_move_pi_ownership() {
-        let dir = project("override");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let seed = dir.join(".ax").join("seed");
         fs::create_dir_all(&seed).unwrap();
         fs::write(
@@ -1728,12 +1722,12 @@ mod tests {
         )
         .unwrap();
         assert!(apply(&dir, false).unwrap_err().contains("foundational"));
-        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
     fn project_preference_is_allowed() {
-        let dir = project("nunit");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let seed = dir.join(".ax").join("seed");
         fs::create_dir_all(&seed).unwrap();
         fs::write(
@@ -1744,12 +1738,12 @@ mod tests {
         apply(&dir, false).unwrap();
         let body = fs::read_to_string(agents_rules(&dir).join("project-nunit.mdc")).unwrap();
         assert!(body.contains("NUnit"));
-        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
     fn project_cannot_claim_pi_persistence() {
-        let dir = project("pi-persist");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let seed = dir.join(".ax").join("seed");
         fs::create_dir_all(&seed).unwrap();
         fs::write(
@@ -1758,12 +1752,12 @@ mod tests {
         )
         .unwrap();
         assert!(apply(&dir, false).unwrap_err().contains("Pi runtime"));
-        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
     fn unsupported_seed_version_is_refused() {
-        let dir = project("old");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         write_version(
             &dir,
             &VersionFile {
@@ -1776,7 +1770,6 @@ mod tests {
             .unwrap_err()
             .contains("unsupported seed version"));
         assert!(!graph_path(&dir).exists());
-        let _ = fs::remove_dir_all(dir);
     }
 
     fn graph_with(nodes: Vec<DomainNode>, edges: Vec<DomainEdge>) -> DomainFile {
@@ -1860,7 +1853,8 @@ mod tests {
 
     #[test]
     fn dry_run_plan_names_the_sections() {
-        let dir = project("plan");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let report = apply(&dir, true).unwrap();
         assert!(report.plan.starts_with("SEED PLAN"));
         for section in [
@@ -1873,6 +1867,5 @@ mod tests {
         ] {
             assert!(report.plan.contains(section), "{}", report.plan);
         }
-        let _ = fs::remove_dir_all(dir);
     }
 }

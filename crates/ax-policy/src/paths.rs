@@ -9,6 +9,32 @@ pub const SKILL_FILENAME: &str = "SKILL.md";
 /// Body placeholder written into stub files that point at an external `source`.
 pub const STUB_BODY_MARKER: &str = "<!-- ax:stub — body loaded from source -->";
 
+/// The user's home directory (`AX_HOME_DIR` when set). Unit tests of this
+/// crate get a private empty folder for the whole test process instead, so
+/// they never read or write the developer's real `~/.ax`.
+pub(crate) fn home_dir() -> Option<PathBuf> {
+    #[cfg(test)]
+    {
+        Some(test_home().to_path_buf())
+    }
+    #[cfg(not(test))]
+    {
+        ax_utils::paths::home_dir()
+    }
+}
+
+#[cfg(test)]
+fn test_home() -> &'static Path {
+    static HOME: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| {
+        tempfile::Builder::new()
+            .prefix("ax-policy-test-home")
+            .tempdir()
+            .expect("create the test home folder")
+    })
+    .path()
+}
+
 pub fn policy_root(ax_dir: &Path) -> PathBuf {
     ax_dir.join(POLICY_DIR)
 }

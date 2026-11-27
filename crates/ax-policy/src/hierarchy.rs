@@ -50,7 +50,7 @@ pub fn policy_layer_dirs(project_root: &Path) -> Vec<PathBuf> {
 pub fn policy_layers(project_root: &Path) -> Vec<PolicyLayer> {
     let mut layers = Vec::new();
 
-    if let Some(home) = ax_utils::paths::home_dir() {
+    if let Some(home) = crate::paths::home_dir() {
         let global = home.join(".ax").join("global_policy");
         if global.is_dir() {
             layers.push(PolicyLayer::builtin(global, PolicyScope::Company));
@@ -88,7 +88,7 @@ pub fn policy_layers(project_root: &Path) -> Vec<PolicyLayer> {
         layers.push(layer);
     }
 
-    if let Some(home) = ax_utils::paths::home_dir() {
+    if let Some(home) = crate::paths::home_dir() {
         let private_user = home.join(".ax").join("private_policy");
         if private_user.is_dir() {
             layers.push(PolicyLayer::builtin(private_user, PolicyScope::PrivateUser));
@@ -129,7 +129,7 @@ fn push_root_layers(layers: &mut Vec<PolicyLayer>, project_root: &Path, scope: P
 /// Resolve the on-disk policy directory for a scope (may not exist yet).
 pub fn policy_dir_for_scope(project_root: &Path, scope: PolicyScope) -> PathBuf {
     match scope {
-        PolicyScope::Company => ax_utils::paths::home_dir()
+        PolicyScope::Company => crate::paths::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".ax")
             .join("global_policy"),
@@ -137,7 +137,7 @@ pub fn policy_dir_for_scope(project_root: &Path, scope: PolicyScope) -> PathBuf 
             &find_workspace_root(project_root).unwrap_or_else(|| project_root.to_path_buf()),
         ),
         PolicyScope::Project => crate::agents_share::agents_dir(project_root),
-        PolicyScope::PrivateUser => ax_utils::paths::home_dir()
+        PolicyScope::PrivateUser => crate::paths::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".ax")
             .join("private_policy"),

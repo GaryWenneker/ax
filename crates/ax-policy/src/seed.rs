@@ -426,7 +426,7 @@ pub fn restore_removed_item(project_root: &Path, id: &str) -> std::io::Result<Re
             path: dest.display().to_string(),
         });
     }
-    if let Some(home) = ax_utils::paths::home_dir() {
+    if let Some(home) = crate::paths::home_dir() {
         let rules = home.join(".ax").join("global_policy").join("rules");
         if let Some(template) = GLOBAL_RULE_TEMPLATES.iter().find(|template| {
             template.rel == id
@@ -639,7 +639,7 @@ fn seed_bundles<'a>(
 }
 
 fn skill_history_kind(skills_root: &Path) -> &'static str {
-    if let Some(home) = ax_utils::paths::home_dir() {
+    if let Some(home) = crate::paths::home_dir() {
         if skills_root.starts_with(home.join(".cursor")) {
             return "cursor-skill";
         }
@@ -651,7 +651,7 @@ fn skill_history_kind(skills_root: &Path) -> &'static str {
 }
 
 fn history_for_skills(skills_root: &Path) -> PathBuf {
-    if let Some(home) = ax_utils::paths::home_dir() {
+    if let Some(home) = crate::paths::home_dir() {
         if skills_root.starts_with(home.join(".cursor"))
             || skills_root.starts_with(home.join(".ax").join("global_policy"))
         {
@@ -752,7 +752,7 @@ fn global_rule_id(rel: &str) -> &str {
 }
 
 fn global_policy_root() -> Option<PathBuf> {
-    ax_utils::paths::home_dir().map(|home| home.join(".ax").join("global_policy"))
+    crate::paths::home_dir().map(|home| home.join(".ax").join("global_policy"))
 }
 
 /// Seed `~/.ax/global_policy/` with machine-wide rules and skills (company scope via MCP).
@@ -781,7 +781,7 @@ pub fn seed_global_policy_skills() -> std::io::Result<SeedResult> {
 
 /// Seed `~/.cursor/skills/` with baseline rollout skills (machine-wide Cursor agents).
 pub fn seed_global_cursor_skills() -> std::io::Result<SeedResult> {
-    let Some(home) = ax_utils::paths::home_dir() else {
+    let Some(home) = crate::paths::home_dir() else {
         return Ok(SeedResult::default());
     };
     seed_cursor_skills(&home.join(".cursor").join("skills"))

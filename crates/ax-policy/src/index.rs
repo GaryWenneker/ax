@@ -1336,48 +1336,13 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
     use tempfile::TempDir;
 
+    /// A database with the real migrations, so the tests see the real schema.
     async fn test_pool() -> (TempDir, SqlitePool) {
         let dir = TempDir::new().unwrap();
-        let db_path = dir.path().join("test.db");
-        let opts = sqlx::sqlite::SqliteConnectOptions::new()
-            .filename(&db_path)
-            .create_if_missing(true);
-        let pool = SqlitePoolOptions::new().connect_with(opts).await.unwrap();
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS policy_rules (
-                id TEXT PRIMARY KEY, level TEXT NOT NULL, always_apply INTEGER NOT NULL DEFAULT 0,
-                globs TEXT NOT NULL DEFAULT '[]', triggers TEXT NOT NULL DEFAULT '[]',
-                tags TEXT NOT NULL DEFAULT '[]', priority INTEGER NOT NULL DEFAULT 50,
-                body TEXT NOT NULL, source_path TEXT NOT NULL, content_hash TEXT NOT NULL,
-                updated_at INTEGER NOT NULL,
-                enabled INTEGER NOT NULL DEFAULT 1,
-                status TEXT NOT NULL DEFAULT 'approved',
-                scope TEXT NOT NULL DEFAULT 'project',
-                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT, skill_group TEXT,
-                properties TEXT NOT NULL DEFAULT '{}'
-            )",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS policy_skills (
-                name TEXT PRIMARY KEY, description TEXT NOT NULL,
-                always_apply INTEGER NOT NULL DEFAULT 0,
-                triggers TEXT NOT NULL DEFAULT '[]', tags TEXT NOT NULL DEFAULT '[]',
-                priority INTEGER NOT NULL DEFAULT 50, context_task TEXT,
-                body TEXT NOT NULL, source_path TEXT NOT NULL, content_hash TEXT NOT NULL,
-                updated_at INTEGER NOT NULL,
-                enabled INTEGER NOT NULL DEFAULT 1,
-                status TEXT NOT NULL DEFAULT 'approved',
-                scope TEXT NOT NULL DEFAULT 'project',
-                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT, skill_group TEXT,
-                properties TEXT NOT NULL DEFAULT '{}'
-            )",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        let db = ax_db::Database::open(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let pool = db.pool().clone();
         (dir, pool)
     }
 

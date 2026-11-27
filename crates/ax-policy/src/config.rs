@@ -344,7 +344,7 @@ fn read_policy_section(path: &Path) -> PolicyConfigFile {
 }
 
 fn global_config_path() -> PathBuf {
-    ax_utils::paths::home_dir()
+    crate::paths::home_dir()
         .map(|h| h.join(".ax").join("config.json"))
         .unwrap_or_else(|| PathBuf::from(".ax/config.json"))
 }

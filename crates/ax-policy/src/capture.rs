@@ -432,6 +432,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn non_ascii_prompts_produce_a_safe_proposal() {
+        let long = "ü".repeat(120);
+        for prompt in [
+            "🚀 je moet altijd één café-regel volgen voor de façade",
+            "Ärger vermeiden: you must always validate naïve input — überall",
+            "@rule 日本語のテキストは常にUTF-8で保存すること",
+            &format!("you must always {long}"),
+        ] {
+            let p = propose_rule_from_prompt(prompt, &[]);
+            assert!(p.detected, "{prompt}");
+            assert!(crate::parse::is_kebab_case(&p.suggested_id), "{}", p.suggested_id);
+            assert!(!p.suggested_id.is_empty());
+            assert!(p.preview.contains("---"));
+            let title = p.body.lines().next().unwrap_or_default();
+            assert!(title.len() <= 80, "{title}");
+        }
+        let jp = propose_rule_from_prompt("@rule 日本語のテキストは常に保存すること", &[]);
+        assert_eq!(jp.suggested_id, "captured-rule");
+        assert!(jp.body.contains("日本語"));
+    }
+
+    #[test]
     fn finalized_preview_path_uses_the_configured_agents_dir() {
         let dir = tempfile::tempdir().unwrap();
         let p = propose_rule_from_prompt("you must always run the linter first", &[]);
