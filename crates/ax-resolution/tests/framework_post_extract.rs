@@ -215,3 +215,43 @@ async fn vue_auto_imports_are_left_alone_outside_vue_projects() {
     assert_eq!(self_loops(&q).await, Vec::<String>::new());
     assert_eq!(open_refs(&q).await, vec!["useState".to_string()]);
 }
+
+#[tokio::test]
+async fn scoped_runs_reuse_framework_detection() {
+    use ax_resolution::frameworks::FrameworkRegistry;
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("pom.xml"), "<project/>").unwrap();
+    let q = open(root.path()).await;
+    let a = "src/main/java/A.java";
+    let b = "src/main/java/B.java";
+    add(&q, root.path(), a, "class A {}\n", Language::Java).await;
+    add(&q, root.path(), b, "class B {}\n", Language::Java).await;
+
+    let registry = FrameworkRegistry::new();
+    let gates = registry.run_post_extract(root.path(), &q, None).await.unwrap();
+    assert!(!gates.spring);
+
+    // B changes on disk, but a sync of A alone must not rescan every file.
+    std::fs::write(root.path().join(b), "@RestController\nclass B {}\n").unwrap();
+    let only_a = vec![a.to_string()];
+    let gates = registry
+        .run_post_extract(root.path(), &q, Some(&only_a))
+        .await
+        .unwrap();
+    assert!(!gates.spring, "a scoped run re-read files outside its scope");
+
+    // A sync of B itself does see the new annotation.
+    let only_b = vec![b.to_string()];
+    let gates = registry
+        .run_post_extract(root.path(), &q, Some(&only_b))
+        .await
+        .unwrap();
+    assert!(gates.spring);
+
+    // A fresh registry has nothing cached, so it detects over all files.
+    let gates = FrameworkRegistry::new()
+        .run_post_extract(root.path(), &q, Some(&only_a))
+        .await
+        .unwrap();
+    assert!(gates.spring);
+}
