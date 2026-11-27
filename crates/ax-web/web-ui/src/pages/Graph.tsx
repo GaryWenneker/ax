@@ -489,6 +489,10 @@ export default function GraphPage() {
           // finished before the loop noticed there was anything to do.
           ensureSimulation();
         },
+        onError: (e) => {
+          setLoading(false);
+          setError(e.message || 'Failed to load the graph');
+        },
       },
     );
   }

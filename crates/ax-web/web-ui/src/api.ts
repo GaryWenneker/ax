@@ -3,8 +3,8 @@ import type { Stats, NodeRow, NodeDetail, FileRow, FileRoot, SearchResult, Unres
 
 const BASE = '/api';
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
+async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, signal ? { signal } : undefined);
   if (!res.ok) {
     const body = await res.json().catch(() => ({})) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -408,13 +408,16 @@ export interface GraphPayload {
   systems?: { origin: string; node_count: number }[];
 }
 
-export function fetchGraph(params: { limit?: number; recompute?: boolean; origin?: string } = {}): Promise<GraphPayload> {
+export function fetchGraph(
+  params: { limit?: number; recompute?: boolean; origin?: string } = {},
+  signal?: AbortSignal,
+): Promise<GraphPayload> {
   const sp = new URLSearchParams();
   if (params.limit != null) sp.set('limit', String(params.limit));
   if (params.recompute) sp.set('recompute', 'true');
   if (params.origin) sp.set('origin', params.origin);
   const qs = sp.toString();
-  return get<GraphPayload>(`/graph${qs ? `?${qs}` : ''}`);
+  return get<GraphPayload>(`/graph${qs ? `?${qs}` : ''}`, signal);
 }
 
 /** Nodes indexed after `sinceMs`, plus the edges that touch them. */
@@ -469,12 +472,16 @@ export interface GraphStreamHandlers {
   onNodes?: (nodes: GraphNode[]) => void;
   onEdges?: (edges: GraphEdge[]) => void;
   onDone?: () => void;
+  /** Called once when both the stream and the one-shot fallback fail, or the stream breaks off. */
+  onError?: (error: Error) => void;
 }
 
 /**
  * Stream the graph as Server-Sent Events so it can be rendered gradually.
  * Falls back to the one-shot `fetchGraph` if streaming is unavailable.
- * Returns an abort function that cancels the in-flight stream.
+ * Every run ends in exactly one `onDone` or `onError`, unless it is aborted;
+ * after abort no handler is called.
+ * Returns an abort function that cancels the in-flight stream and fallback.
  */
 export function streamGraph(
   params: { limit?: number; recompute?: boolean; origin?: string },
@@ -487,6 +494,14 @@ export function streamGraph(
   if (params.origin) sp.set('origin', params.origin);
   const qs = sp.toString();
 
+  let finished = false;
+  const live = () => !ctrl.signal.aborted && !finished;
+  const done = () => {
+    if (!live()) return;
+    finished = true;
+    handlers.onDone?.();
+  };
+
   (async () => {
     try {
       const res = await fetch(`${BASE}/graph/stream${qs ? `?${qs}` : ''}`, {
@@ -495,7 +510,8 @@ export function streamGraph(
       });
       if (!res.ok || !res.body) {
         // Fallback: one-shot fetch, delivered through the same handlers.
-        const p = await fetchGraph(params);
+        const p = await fetchGraph(params, ctrl.signal);
+        if (!live()) return;
         handlers.onMeta?.({
           total_nodes: p.total_nodes,
           truncated: p.truncated,
@@ -505,20 +521,21 @@ export function streamGraph(
         });
         handlers.onNodes?.(p.nodes);
         handlers.onEdges?.(p.edges);
-        handlers.onDone?.();
+        done();
         return;
       }
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       let buf = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      while (live()) {
+        const { done: end, value } = await reader.read();
+        if (end) break;
         buf += dec.decode(value, { stream: true });
         const parts = buf.split('\n\n');
         buf = parts.pop() ?? '';
         for (const part of parts) {
           for (const line of part.split('\n')) {
+            if (!live()) return;
             if (!line.startsWith('data: ')) continue;
             let ev: { type: string; nodes?: GraphNode[]; edges?: GraphEdge[] } & GraphStreamMeta;
             try {
@@ -529,12 +546,16 @@ export function streamGraph(
             if (ev.type === 'meta') handlers.onMeta?.(ev);
             else if (ev.type === 'nodes' && ev.nodes) handlers.onNodes?.(ev.nodes);
             else if (ev.type === 'edges' && ev.edges) handlers.onEdges?.(ev.edges);
-            else if (ev.type === 'done') handlers.onDone?.();
+            else if (ev.type === 'done') done();
           }
         }
       }
+      // A stream that closes without a `done` event has still delivered all it will.
+      done();
     } catch (e) {
-      if ((e as Error).name !== 'AbortError') throw e;
+      if (!live()) return;
+      finished = true;
+      handlers.onError?.(e instanceof Error ? e : new Error(String(e)));
     }
   })();
 
