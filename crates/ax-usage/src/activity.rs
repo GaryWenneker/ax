@@ -549,7 +549,26 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static SEQ: AtomicUsize = AtomicUsize::new(0);
-    async fn tmp_root() -> (std::path::PathBuf, tokio::sync::MutexGuard<'static, ()>) {
+
+    /// A temporary project root whose usage database is `AX_USAGE_DB`. Dropping it removes the
+    /// folder. The variable is left pointing at the removed folder, so a later test that forgets
+    /// to set it fails instead of writing to the real usage database.
+    struct TempRoot(std::path::PathBuf);
+
+    impl std::ops::Deref for TempRoot {
+        type Target = Path;
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    async fn tmp_root() -> (TempRoot, tokio::sync::MutexGuard<'static, ()>) {
         let guard = crate::store::USAGE_ENV_LOCK.lock().await;
         let n = SEQ.fetch_add(1, Ordering::SeqCst);
         let dir = std::env::temp_dir().join(format!("ax-activity-{}-{n}", std::process::id()));
@@ -558,7 +577,7 @@ mod tests {
         let db = dir.join("usage.db");
         std::env::set_var("AX_USAGE_DB", db.display().to_string());
         let _ = open_pool_at(&db).await.unwrap();
-        (dir, guard)
+        (TempRoot(dir), guard)
     }
 
     #[tokio::test]
@@ -695,10 +714,98 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(
-            event.summary.contains("[redacted]") || !event.summary.contains("sk-abcdef"),
-            "summary={}",
-            event.summary
-        );
+        assert_eq!(event.summary, "token=[redacted]");
+        let stored = list_activity(&root, Some(ActivitySource::Agent), None, 10)
+            .await
+            .unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].summary, "token=[redacted]");
+    }
+
+    #[tokio::test]
+    async fn failed_and_incomplete_events_keep_their_status_and_a_redacted_error() {
+        let (root, _guard) = tmp_root().await;
+        for (key, status) in [
+            ("st-failed", ActivityStatus::Failed),
+            ("st-incomplete", ActivityStatus::Incomplete),
+        ] {
+            record_activity(
+                &root,
+                ActivityRecord {
+                    idempotency_key: key.into(),
+                    operation: "turn.failed".into(),
+                    summary: key.into(),
+                    status: Some(status),
+                    session_id: Some("st".into()),
+                    error: Some("login failed\nwith password=hunter2".into()),
+                    ..ActivityRecord::default()
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let listed = list_activity(&root, None, Some("st"), 10).await.unwrap();
+        let by_key = |key: &str| listed.iter().find(|e| e.idempotency_key == key).unwrap();
+        assert_eq!(by_key("st-failed").status, ActivityStatus::Failed);
+        assert_eq!(by_key("st-incomplete").status, ActivityStatus::Incomplete);
+        for event in &listed {
+            assert_eq!(
+                event.error.as_deref(),
+                Some("login failed with password=[redacted]")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn list_filters_by_source_session_both_and_neither() {
+        let (root, _guard) = tmp_root().await;
+        let rows = [
+            ("f1", ActivitySource::Cli, "s1"),
+            ("f2", ActivitySource::Agent, "s1"),
+            ("f3", ActivitySource::Agent, "s2"),
+        ];
+        for (key, source, session) in rows {
+            record_activity(
+                &root,
+                ActivityRecord {
+                    idempotency_key: key.into(),
+                    operation: "graph.explore".into(),
+                    summary: key.into(),
+                    source: Some(source),
+                    session_id: Some(session.into()),
+                    ..ActivityRecord::default()
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let keys = |events: Vec<ActivityEvent>| {
+            let mut keys: Vec<String> = events.into_iter().map(|e| e.idempotency_key).collect();
+            keys.sort();
+            keys
+        };
+        let all = list_activity(&root, None, None, 10).await.unwrap();
+        assert_eq!(keys(all), ["f1", "f2", "f3"]);
+        let agent = list_activity(&root, Some(ActivitySource::Agent), None, 10)
+            .await
+            .unwrap();
+        assert_eq!(keys(agent), ["f2", "f3"]);
+        let s1 = list_activity(&root, None, Some("s1"), 10).await.unwrap();
+        assert_eq!(keys(s1), ["f1", "f2"]);
+        let both = list_activity(&root, Some(ActivitySource::Agent), Some("s1"), 10)
+            .await
+            .unwrap();
+        assert_eq!(keys(both), ["f2"]);
+        let limited = list_activity(&root, None, None, 2).await.unwrap();
+        assert_eq!(limited.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn the_temporary_root_is_removed_when_dropped() {
+        let (root, _guard) = tmp_root().await;
+        let path = root.to_path_buf();
+        assert!(path.is_dir());
+        drop(root);
+        assert!(!path.exists());
     }
 }
