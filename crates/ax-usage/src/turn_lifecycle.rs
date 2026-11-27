@@ -3,6 +3,7 @@
 //! Snapshots live under `<project>/.ax/cli-turns/<session>/<turn_id>.json`.
 //! Finish writes a turn memory even when no files changed (research turns).
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -50,6 +51,10 @@ pub struct TurnSnapshot {
     pub outcome: Option<String>,
     pub memory_id: Option<String>,
     pub finish_receipt: Option<Value>,
+    /// Files git reported as dirty when the turn began, with a size and mtime
+    /// fingerprint; finish leaves them out unless they changed during the turn.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub dirty_at_begin: BTreeMap<String, String>,
 }
 
 fn now_ms() -> i64 {
@@ -118,16 +123,34 @@ fn read_snapshot(root: &Path, session: &str, turn_id: &str) -> Result<TurnSnapsh
     serde_json::from_str(&raw).map_err(|e| e.to_string())
 }
 
-fn git_head(root: &Path) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .args(["rev-parse", "HEAD"])
+/// How long one git call may take before the turn goes on without its answer.
+const GIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Most changed files a turn records; more are counted in a receipt warning.
+const MAX_TURN_FILES: usize = 200;
+
+/// Stdout of a successful `git` call in `root`, or `None` when git is missing,
+/// fails, or runs past [`GIT_TIMEOUT`] (the child is killed).
+async fn git(root: &Path, args: &[&str]) -> Option<Vec<u8>> {
+    let child = tokio::process::Command::new("git")
+        .args(args)
         .current_dir(root)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .output();
+    match tokio::time::timeout(GIT_TIMEOUT, child).await {
+        Ok(Ok(out)) if out.status.success() => Some(out.stdout),
+        Ok(_) => None,
+        Err(_) => {
+            tracing::warn!("git {} timed out after {GIT_TIMEOUT:?}", args.join(" "));
+            None
+        }
     }
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+}
+
+async fn git_head(root: &Path) -> Option<String> {
+    let out = git(root, &["rev-parse", "HEAD"]).await?;
+    let s = String::from_utf8_lossy(&out).trim().to_string();
     if s.is_empty() {
         None
     } else {
@@ -135,57 +158,109 @@ fn git_head(root: &Path) -> Option<String> {
     }
 }
 
-fn git_changed_since(root: &Path, head: Option<&str>) -> Vec<String> {
-    let mut args = vec!["diff", "--name-only"];
-    if let Some(h) = head {
-        args.push(h);
-    }
-    let out = match std::process::Command::new("git")
-        .args(&args)
-        .current_dir(root)
-        .output()
-    {
-        Ok(o) if o.status.success() => o,
-        _ => return Vec::new(),
-    };
-    let mut files: Vec<String> = String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .map(str::to_owned)
-        .collect();
-    if let Ok(status) = std::process::Command::new("git")
-        .args(["status", "--porcelain", "-uall"])
-        .current_dir(root)
-        .output()
-    {
-        for line in String::from_utf8_lossy(&status.stdout).lines() {
-            let path = line.get(3..).unwrap_or("").trim();
-            if !path.is_empty() {
-                files.push(path.to_string());
-            }
+/// Paths in NUL-separated `git status --porcelain=v1 -z` output. A rename or
+/// copy record is followed by its source path, which is skipped: the record's
+/// own path is the one that exists now.
+fn parse_status_z(raw: &[u8]) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut records = raw.split(|b| *b == 0);
+    while let Some(record) = records.next() {
+        if record.len() < 4 {
+            continue;
         }
+        let (x, y) = (record[0], record[1]);
+        paths.push(String::from_utf8_lossy(&record[3..]).into_owned());
+        if matches!(x, b'R' | b'C') || matches!(y, b'R' | b'C') {
+            records.next();
+        }
+    }
+    paths
+}
+
+/// Paths in NUL-separated `git diff --name-only -z` output.
+fn parse_names_z(raw: &[u8]) -> Vec<String> {
+    raw.split(|b| *b == 0)
+        .filter(|p| !p.is_empty())
+        .map(|p| String::from_utf8_lossy(p).into_owned())
+        .collect()
+}
+
+/// Every path git reports as different from `head` or the index, untracked included.
+async fn git_dirty_paths(root: &Path, head: Option<&str>) -> Vec<String> {
+    let mut files = Vec::new();
+    let mut diff = vec!["diff", "--name-only", "-z"];
+    if let Some(h) = head {
+        diff.push(h);
+    }
+    if let Some(out) = git(root, &diff).await {
+        files.extend(parse_names_z(&out));
+    }
+    if let Some(out) = git(root, &["status", "--porcelain=v1", "-z", "-uall"]).await {
+        files.extend(parse_status_z(&out));
     }
     files.sort();
     files.dedup();
-    files.truncate(200);
     files
 }
 
-fn git_commits_since(root: &Path, head: Option<&str>) -> Vec<String> {
+/// Size and modification time of `path` under `root`, or `missing`.
+fn file_fingerprint(root: &Path, path: &str) -> String {
+    match fs::symlink_metadata(root.join(path)) {
+        Ok(meta) => {
+            let modified = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos());
+            format!("{}:{modified}", meta.len())
+        }
+        Err(_) => "missing".into(),
+    }
+}
+
+/// Files that were already dirty when the turn began, with their fingerprints.
+async fn dirty_snapshot(root: &Path, head: Option<&str>) -> BTreeMap<String, String> {
+    git_dirty_paths(root, head)
+        .await
+        .into_iter()
+        .map(|path| {
+            let fingerprint = file_fingerprint(root, &path);
+            (path, fingerprint)
+        })
+        .collect()
+}
+
+/// Files changed since the turn began: dirty now, minus files that were dirty at
+/// the start and are unchanged since. The second value is how many files there
+/// were before the list was cut to [`MAX_TURN_FILES`].
+async fn git_changed_since(
+    root: &Path,
+    head: Option<&str>,
+    dirty_at_begin: &BTreeMap<String, String>,
+) -> (Vec<String>, usize) {
+    let mut files: Vec<String> = git_dirty_paths(root, head)
+        .await
+        .into_iter()
+        .filter(|path| {
+            dirty_at_begin
+                .get(path)
+                .is_none_or(|before| *before != file_fingerprint(root, path))
+        })
+        .collect();
+    let total = files.len();
+    files.truncate(MAX_TURN_FILES);
+    (files, total)
+}
+
+async fn git_commits_since(root: &Path, head: Option<&str>) -> Vec<String> {
     let Some(h) = head else {
         return Vec::new();
     };
     let range = format!("{h}..HEAD");
-    let out = match std::process::Command::new("git")
-        .args(["log", "--format=%H", &range])
-        .current_dir(root)
-        .output()
-    {
-        Ok(o) if o.status.success() => o,
-        _ => return Vec::new(),
+    let Some(out) = git(root, &["log", "--format=%H", &range]).await else {
+        return Vec::new();
     };
-    String::from_utf8_lossy(&out.stdout)
+    String::from_utf8_lossy(&out)
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
@@ -207,6 +282,8 @@ pub async fn turn_begin(
 ) -> Result<TurnSnapshot, String> {
     checked_id(session_id, "session")?;
     let turn_id = mint_turn_id(session_id);
+    let head = git_head(root).await;
+    let dirty_at_begin = dirty_snapshot(root, head.as_deref()).await;
     let snap = TurnSnapshot {
         turn_id: turn_id.clone(),
         session_id: session_id.to_string(),
@@ -214,7 +291,7 @@ pub async fn turn_begin(
         prompt: clip(&crate::redact::redact_text(prompt), 8_000),
         state: TurnState::Open,
         started_at_ms: now_ms(),
-        head: git_head(root),
+        head,
         events: Vec::new(),
         decisions: Vec::new(),
         files: Vec::new(),
@@ -222,6 +299,7 @@ pub async fn turn_begin(
         outcome: None,
         memory_id: None,
         finish_receipt: None,
+        dirty_at_begin,
     };
     write_snapshot(root, &snap)?;
     let _ = record_activity(
@@ -405,8 +483,16 @@ pub async fn turn_finish(
         return Err("turn already failed".into());
     }
 
-    let changed = git_changed_since(root, snap.head.as_deref());
-    let commits = git_commits_since(root, snap.head.as_deref());
+    let (changed, changed_total) =
+        git_changed_since(root, snap.head.as_deref(), &snap.dirty_at_begin).await;
+    let commits = git_commits_since(root, snap.head.as_deref()).await;
+    let mut warnings = Vec::new();
+    if changed_total > changed.len() {
+        warnings.push(format!(
+            "changed files cut to {} of {changed_total}",
+            changed.len()
+        ));
+    }
     for f in &changed {
         if !snap.files.iter().any(|x| x == f) {
             snap.files.push(f.clone());
@@ -448,7 +534,7 @@ pub async fn turn_finish(
         state: "finished".into(),
         idempotent: false,
         semantic_memory_ids: semantic_ids.clone(),
-        warnings: Vec::new(),
+        warnings,
     };
     snap.state = TurnState::Finished;
     snap.finish_receipt = Some(serde_json::to_value(&receipt).unwrap_or(json!({})));
@@ -916,6 +1002,96 @@ mod tests {
         );
     }
 
+    fn run_git(root: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+    }
+
+    fn git_repo(root: &Path) {
+        run_git(root, &["init", "-q"]);
+        fs::write(
+            root.join(".git").join("info").join("exclude"),
+            ".ax/\nusage.db*\n",
+        )
+        .unwrap();
+        fs::write(root.join("a.rs"), "a\n").unwrap();
+        fs::write(root.join("dirty.rs"), "d\n").unwrap();
+        fs::write(root.join("kept.rs"), "k\n").unwrap();
+        run_git(root, &["add", "."]);
+        run_git(root, &["commit", "-q", "-m", "init"]);
+    }
+
+    async fn finish_files(root: &Path, pool: &SqlitePool, turn: &TurnSnapshot) -> Vec<String> {
+        turn_finish(
+            root,
+            pool,
+            &turn.session_id,
+            &turn.turn_id,
+            TurnFinishInput {
+                outcome: "done".into(),
+                ..TurnFinishInput::default()
+            },
+        )
+        .await
+        .unwrap()
+        .files
+    }
+
+    #[test]
+    fn status_records_skip_the_source_path_of_renames_and_copies() {
+        let raw = b"R  new.rs\0old.rs\0 M src/a b.rs\0?? d\xc3\xa9.txt\0 C copy.rs\0orig.rs\0";
+        assert_eq!(
+            parse_status_z(raw),
+            vec!["new.rs", "src/a b.rs", "d\u{e9}.txt", "copy.rs"]
+        );
+        assert_eq!(parse_names_z(b"a.rs\0b c.rs\0"), vec!["a.rs", "b c.rs"]);
+    }
+
+    #[tokio::test]
+    async fn renamed_and_quoted_paths_are_recorded_as_real_paths() {
+        let (root, pool, _guard) = fixture().await;
+        git_repo(&root);
+        let begin = turn_begin(&root, "sess-git1", "rename", None)
+            .await
+            .unwrap();
+        run_git(&root, &["mv", "a.rs", "b.rs"]);
+        fs::write(root.join("my file é.txt"), "x").unwrap();
+        let files = finish_files(&root, &pool, &begin).await;
+        assert!(files.contains(&"b.rs".to_string()), "{files:?}");
+        assert!(files.contains(&"my file é.txt".to_string()), "{files:?}");
+        for file in &files {
+            assert!(root.join(file).exists(), "not a real path: {file:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn files_dirty_before_the_turn_are_not_attributed_to_it() {
+        let (root, pool, _guard) = fixture().await;
+        git_repo(&root);
+        fs::create_dir_all(root.join("scratch")).unwrap();
+        fs::write(root.join("scratch").join("notes.txt"), "old").unwrap();
+        fs::write(root.join("dirty.rs"), "dirty before\n").unwrap();
+        fs::write(root.join("kept.rs"), "dirty before\n").unwrap();
+        let begin = turn_begin(&root, "sess-git2", "edit", None).await.unwrap();
+        // Edited again during the turn: it is part of this turn.
+        fs::write(
+            root.join("dirty.rs"),
+            "dirty before, then edited in the turn\n",
+        )
+        .unwrap();
+        fs::write(root.join("new.rs"), "n\n").unwrap();
+        let files = finish_files(&root, &pool, &begin).await;
+        assert!(files.contains(&"new.rs".to_string()), "{files:?}");
+        assert!(files.contains(&"dirty.rs".to_string()), "{files:?}");
+        assert!(!files.contains(&"kept.rs".to_string()), "{files:?}");
+        assert!(!files.iter().any(|f| f.starts_with("scratch")), "{files:?}");
+    }
+
     #[tokio::test]
     async fn session_and_turn_ids_cannot_leave_the_turns_folder() {
         let (root, pool, _guard) = fixture().await;
@@ -927,7 +1103,10 @@ mod tests {
             );
             assert!(turn_status(&root, bad, None).is_err(), "status {bad:?}");
         }
-        assert!(!outside.exists(), "a snapshot was written outside .ax/cli-turns");
+        assert!(
+            !outside.exists(),
+            "a snapshot was written outside .ax/cli-turns"
+        );
 
         // A snapshot-shaped file outside the turns folder must not be readable
         // or rewritable through a turn id.
@@ -943,17 +1122,20 @@ mod tests {
         let escape = "../../planted";
         assert!(turn_status(&root, "sess-p", Some(escape)).is_err());
         assert!(turn_fail(&root, "sess-p", escape, "x").await.is_err());
-        assert!(turn_event(&root, "sess-p", escape, TurnEventInput::default())
-            .await
-            .is_err());
+        assert!(
+            turn_event(&root, "sess-p", escape, TurnEventInput::default())
+                .await
+                .is_err()
+        );
         assert!(turn_checkpoint(&root, "sess-p", escape, "x").await.is_err());
-        assert!(turn_finish(&root, &pool, "sess-p", escape, TurnFinishInput::default())
-            .await
-            .is_err());
-        let after: TurnSnapshot = serde_json::from_slice(
-            &fs::read(root.join(".ax").join("planted.json")).unwrap(),
-        )
-        .unwrap();
+        assert!(
+            turn_finish(&root, &pool, "sess-p", escape, TurnFinishInput::default())
+                .await
+                .is_err()
+        );
+        let after: TurnSnapshot =
+            serde_json::from_slice(&fs::read(root.join(".ax").join("planted.json")).unwrap())
+                .unwrap();
         assert_eq!(after.state, TurnState::Open);
     }
 

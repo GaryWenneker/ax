@@ -708,6 +708,8 @@ ax durable doc-get --session "$SESSION" --kind brief
 
 Explicit turn lifecycle without IDE hooks. Finish writes a memory with `source=cli-turn`. When the finish input has `decisions` or `open_questions`, finish also adds them to the session's working context (the notes `ax_session` keeps). That needs an index; when the write fails, the receipt lists the reason in `warnings` and the turn still finishes.
 
+The receipt's `files` are the files git reports as changed during the turn, renames by their new path. Files that were already modified or untracked when the turn began are left out unless they changed again during the turn. At most 200 files are listed; a larger set adds a `warnings` entry with the full count. Each git call stops after 30 seconds.
+
 Snapshots are stored under `.ax/cli-turns/<session>/<turn>.json`. The `--session` and `--turn` values must be 1 to 128 ASCII letters, digits, `-`, `_`, `.` or `:`, and not dots only; any other value is rejected, so a turn cannot read or write files outside that folder.
 
 ```bash
