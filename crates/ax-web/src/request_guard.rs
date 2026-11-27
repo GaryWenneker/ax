@@ -134,11 +134,27 @@ const FORWARDING: [&str; 7] = [
     "true-client-ip",
 ];
 
+/// True when the TCP peer is a loopback address. An IPv4-mapped address
+/// (`::ffff:127.0.0.1`, how a dual-stack listener sees an IPv4 client) counts.
+fn loopback_peer(peer: Option<SocketAddr>) -> bool {
+    peer.is_some_and(|addr| addr.ip().to_canonical().is_loopback())
+}
+
+fn forwarded(headers: &HeaderMap) -> bool {
+    FORWARDING.iter().any(|name| headers.contains_key(*name))
+}
+
 /// True when the TCP peer is a loopback address and no proxy forwarded the
 /// request. A request with no known peer is not local.
 pub(crate) fn peer_is_local(peer: Option<SocketAddr>, headers: &HeaderMap) -> bool {
-    peer.is_some_and(|addr| addr.ip().is_loopback())
-        && !FORWARDING.iter().any(|name| headers.contains_key(*name))
+    loopback_peer(peer) && !forwarded(headers)
+}
+
+/// True when a reverse proxy or tunnel on this computer forwarded the request:
+/// a loopback peer with a proxy header. Every client of such a proxy arrives
+/// from the same address, so that address does not identify one client.
+pub(crate) fn peer_is_local_proxy(peer: Option<SocketAddr>, headers: &HeaderMap) -> bool {
+    loopback_peer(peer) && forwarded(headers)
 }
 
 /// Refuses requests whose `Host` (or HTTP/2 authority) is not allowed, and
@@ -253,16 +269,25 @@ mod tests {
     fn only_an_unproxied_loopback_peer_is_local() {
         let loopback: SocketAddr = "127.0.0.1:5000".parse().unwrap();
         let v6: SocketAddr = "[::1]:5000".parse().unwrap();
+        let mapped: SocketAddr = "[::ffff:127.0.0.1]:5000".parse().unwrap();
         let remote: SocketAddr = "203.0.113.7:5000".parse().unwrap();
+        let mapped_remote: SocketAddr = "[::ffff:203.0.113.7]:5000".parse().unwrap();
         let empty = HeaderMap::new();
         assert!(peer_is_local(Some(loopback), &empty));
         assert!(peer_is_local(Some(v6), &empty));
+        assert!(peer_is_local(Some(mapped), &empty));
         assert!(!peer_is_local(Some(remote), &empty));
+        assert!(!peer_is_local(Some(mapped_remote), &empty));
         assert!(!peer_is_local(None, &empty));
+        assert!(!peer_is_local_proxy(Some(loopback), &empty));
         for name in FORWARDING {
             let mut proxied = HeaderMap::new();
             proxied.insert(name, HeaderValue::from_static("127.0.0.1"));
             assert!(!peer_is_local(Some(loopback), &proxied), "{name}");
+            assert!(!peer_is_local(Some(mapped), &proxied), "{name}");
+            assert!(peer_is_local_proxy(Some(loopback), &proxied), "{name}");
+            assert!(peer_is_local_proxy(Some(mapped), &proxied), "{name}");
+            assert!(!peer_is_local_proxy(Some(remote), &proxied), "{name}");
         }
     }
 

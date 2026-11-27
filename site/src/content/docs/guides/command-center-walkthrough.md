@@ -164,7 +164,7 @@ The configured origin must exactly match the address used in the browser. Passke
 
 **Security boundaries:** the interactive browser session is separate from MCP client tokens, OAuth, share tokens and Primary/Replica node credentials. Disabling web sign-in does not grant anonymous access to a remotely hosted Command Center. A client token (`axc_`) keeps working on the APIs its scopes allow (for example `memory:read` or `context:read`) whether web sign-in is on or off; without such a token, data APIs need a signed-in session.
 
-**Sign-in limits:** each address gets 5 password or recovery-code attempts per identity and 30 attempts in total every 5 minutes; further attempts get `429 Too Many Requests`. A successful sign-in clears the count for that identity. Behind a reverse proxy on the same computer every client shares the proxy's address, so these limits apply to all of them together.
+**Sign-in limits:** each address gets 5 password or recovery-code attempts per identity and 30 attempts in total every 5 minutes; further attempts get `429 Too Many Requests`. A successful sign-in clears the count for that identity. Behind a reverse proxy or tunnel on the same computer every client shares the proxy's address, so only the limit of 5 attempts per identity applies there; the 30-attempt limit would let one client lock everyone out.
 
 ## CLI, MCP and HTTP features
 

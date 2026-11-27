@@ -336,6 +336,8 @@ const ATTEMPT_WINDOW: Duration = Duration::from_secs(300);
 /// Attempts for one identity from one address within the window.
 const ATTEMPTS_PER_IDENTITY: u32 = 5;
 /// Attempts from one address within the window, whatever identity they name.
+/// Not applied to a reverse proxy or tunnel on this computer: all its clients
+/// share its address, so one client could lock everyone out.
 const ATTEMPTS_PER_ADDRESS: u32 = 30;
 /// Most keys tracked at once. When full, new attempts are refused.
 const MAX_TRACKED_KEYS: usize = 10_000;
@@ -379,8 +381,11 @@ impl AttemptLimiter {
 
     /// A successful sign-in clears its identity key and returns its attempt to
     /// the address.
-    fn forgive(&mut self, identity_key: &str, address_key: &str) {
+    fn forgive(&mut self, identity_key: &str, address_key: Option<&str>) {
         self.entries.remove(identity_key);
+        let Some(address_key) = address_key else {
+            return;
+        };
         if let Some(entry) = self.entries.get_mut(address_key) {
             entry.0 = entry.0.saturating_sub(1);
             if entry.0 == 0 {
@@ -398,31 +403,41 @@ fn login_attempts() -> &'static Mutex<AttemptLimiter> {
 /// The rate-limit keys of one sign-in kind (`login` or `recovery`).
 struct AttemptKeys {
     identity: String,
-    address: String,
+    /// `None` for a reverse proxy or tunnel on this computer.
+    address: Option<String>,
 }
 
-fn attempt_keys(kind: &str, peer: SocketAddr, identity: &str) -> AttemptKeys {
+impl AttemptKeys {
+    fn limits(&self) -> Vec<(&str, u32)> {
+        let mut limits = vec![(self.identity.as_str(), ATTEMPTS_PER_IDENTITY)];
+        if let Some(address) = &self.address {
+            limits.push((address.as_str(), ATTEMPTS_PER_ADDRESS));
+        }
+        limits
+    }
+}
+
+fn attempt_keys(kind: &str, peer: SocketAddr, headers: &HeaderMap, identity: &str) -> AttemptKeys {
+    let ip = peer.ip().to_canonical();
+    let proxied = crate::request_guard::peer_is_local_proxy(Some(peer), headers);
     AttemptKeys {
-        identity: format!("{kind}:{}:{}", peer.ip(), hash(identity)),
-        address: format!("{kind}-address:{}", peer.ip()),
+        identity: format!("{kind}:{ip}:{}", hash(identity)),
+        address: (!proxied).then(|| format!("{kind}-address:{ip}")),
     }
 }
 
 async fn reserve_attempt(keys: &AttemptKeys) -> bool {
-    login_attempts().lock().await.reserve(
-        &[
-            (&keys.identity, ATTEMPTS_PER_IDENTITY),
-            (&keys.address, ATTEMPTS_PER_ADDRESS),
-        ],
-        Instant::now(),
-    )
+    login_attempts()
+        .lock()
+        .await
+        .reserve(&keys.limits(), Instant::now())
 }
 
 async fn forgive_attempt(keys: &AttemptKeys) {
     login_attempts()
         .lock()
         .await
-        .forgive(&keys.identity, &keys.address);
+        .forgive(&keys.identity, keys.address.as_deref());
 }
 
 /// Argon2 work at once. Each run takes tens of milliseconds of CPU and about
@@ -731,7 +746,7 @@ async fn password_login(
     if identity.is_empty() || body.password.len() > 1024 {
         return Err(err(StatusCode::UNAUTHORIZED, PUBLIC_LOGIN_DENIED));
     }
-    let keys = attempt_keys("login", peer, identity);
+    let keys = attempt_keys("login", peer, &headers, identity);
     if !reserve_attempt(&keys).await {
         return Err(err(
             StatusCode::TOO_MANY_REQUESTS,
@@ -979,7 +994,7 @@ async fn recover_login(
     if !body.code.starts_with("axr-") || body.code.len() > 100 || identity.is_empty() {
         return Err(err(StatusCode::UNAUTHORIZED, PUBLIC_RECOVERY_DENIED));
     }
-    let keys = attempt_keys("recovery", peer, identity);
+    let keys = attempt_keys("recovery", peer, &headers, identity);
     if !reserve_attempt(&keys).await {
         return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many attempts"));
     }
@@ -1559,9 +1574,35 @@ mod tests {
         }
         assert!(!limiter.reserve(&[("id", 5), ("ip", 30)], now));
         assert_eq!(limiter.count("ip"), 5, "a refused attempt is not counted");
-        limiter.forgive("id", "ip");
+        limiter.forgive("id", Some("ip"));
         assert_eq!(limiter.count("id"), 0);
         assert_eq!(limiter.count("ip"), 4);
+    }
+
+    /// Behind a tunnel every visitor arrives from 127.0.0.1. Failures under
+    /// many identities must not lock sign-in for a different identity.
+    #[test]
+    fn failures_through_a_local_proxy_do_not_block_other_identities() {
+        let peer: SocketAddr = "127.0.0.1:40000".parse().unwrap();
+        let mut proxied = HeaderMap::new();
+        proxied.insert("cf-connecting-ip", "198.51.100.9".parse().unwrap());
+        let mut limiter = AttemptLimiter::default();
+        let now = Instant::now();
+        for n in 0..ATTEMPTS_PER_ADDRESS * 2 {
+            let keys = attempt_keys("login", peer, &proxied, &format!("guess-{}", n % 10));
+            assert!(keys.address.is_none());
+            limiter.reserve(&keys.limits(), now);
+        }
+        let owner = attempt_keys("login", peer, &proxied, "owner");
+        assert!(limiter.reserve(&owner.limits(), now));
+        // A direct peer still has its address-wide limit.
+        let direct: SocketAddr = "203.0.113.7:40000".parse().unwrap();
+        for n in 0..ATTEMPTS_PER_ADDRESS {
+            let keys = attempt_keys("login", direct, &HeaderMap::new(), &format!("u{n}"));
+            assert!(limiter.reserve(&keys.limits(), now));
+        }
+        let next = attempt_keys("login", direct, &HeaderMap::new(), "owner");
+        assert!(!limiter.reserve(&next.limits(), now));
     }
 
     #[tokio::test]
