@@ -123,3 +123,15 @@ test('streamWorkspaceInit sends a real done frame once', async () => {
     { type: 'done', ok: true, initialized: true },
   ]);
 });
+
+test('streamWorkspaceInit keeps a final done frame that has no trailing blank line', async () => {
+  const events: WorkspaceStreamEvent[] = [];
+  const frames = ['data: {"type":"line","text":"a"}\r\n\r\n', 'data: {"type":"done","ok":true,"initialized":true}\n'];
+  await withFetch(async () => new Response(sseBody(frames)), async () => {
+    await streamWorkspaceInit('/work', (ev) => events.push(ev));
+  });
+  assert.deepEqual(events, [
+    { type: 'line', text: 'a' },
+    { type: 'done', ok: true, initialized: true },
+  ]);
+});

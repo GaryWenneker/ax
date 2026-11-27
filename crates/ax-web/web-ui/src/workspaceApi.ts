@@ -1,3 +1,5 @@
+import { readSseJson } from './lib/sse.ts';
+
 const BASE = '/api/workspace';
 
 const UNREACHABLE = 'The server did not answer. Check that ax web is running and try again.';
@@ -180,28 +182,8 @@ export async function streamWorkspaceInit(
     emit({ type: 'done', ok: false, error: `HTTP ${res.status}` });
     return;
   }
-  const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  let buf = '';
   try {
-    while (!sawDone) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const parts = buf.split('\n\n');
-      buf = parts.pop() ?? '';
-      for (const part of parts) {
-        for (const line of part.split('\n')) {
-          if (line.startsWith('data: ')) {
-            try {
-              emit(JSON.parse(line.slice(6)) as WorkspaceStreamEvent);
-            } catch {
-              /* ignore a frame that is not JSON */
-            }
-          }
-        }
-      }
-    }
+    await readSseJson<WorkspaceStreamEvent>(res.body, emit, () => !sawDone);
   } catch {
     if (signal?.aborted) return;
     emit({ type: 'done', ok: false, error: 'The connection to the server was lost before ax init finished.' });

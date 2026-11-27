@@ -1,3 +1,4 @@
+import { readSseJson } from './lib/sse.ts';
 import type { MemoryDiff } from './memoryDetail';
 import type { Stats, NodeRow, NodeDetail, FileRow, FileRoot, SearchResult, UnresolvedSummary, UnresolvedRow } from './types';
 
@@ -524,32 +525,17 @@ export function streamGraph(
         done();
         return;
       }
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let buf = '';
-      while (live()) {
-        const { done: end, value } = await reader.read();
-        if (end) break;
-        buf += dec.decode(value, { stream: true });
-        const parts = buf.split('\n\n');
-        buf = parts.pop() ?? '';
-        for (const part of parts) {
-          for (const line of part.split('\n')) {
-            if (!live()) return;
-            if (!line.startsWith('data: ')) continue;
-            let ev: { type: string; nodes?: GraphNode[]; edges?: GraphEdge[] } & GraphStreamMeta;
-            try {
-              ev = JSON.parse(line.slice(6));
-            } catch {
-              continue;
-            }
-            if (ev.type === 'meta') handlers.onMeta?.(ev);
-            else if (ev.type === 'nodes' && ev.nodes) handlers.onNodes?.(ev.nodes);
-            else if (ev.type === 'edges' && ev.edges) handlers.onEdges?.(ev.edges);
-            else if (ev.type === 'done') done();
-          }
-        }
-      }
+      type StreamEvent = { type: string; nodes?: GraphNode[]; edges?: GraphEdge[] } & GraphStreamMeta;
+      await readSseJson<StreamEvent>(
+        res.body,
+        (ev) => {
+          if (ev.type === 'meta') handlers.onMeta?.(ev);
+          else if (ev.type === 'nodes' && ev.nodes) handlers.onNodes?.(ev.nodes);
+          else if (ev.type === 'edges' && ev.edges) handlers.onEdges?.(ev.edges);
+          else if (ev.type === 'done') done();
+        },
+        live,
+      );
       // A stream that closes without a `done` event has still delivered all it will.
       done();
     } catch (e) {

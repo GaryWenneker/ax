@@ -1,3 +1,5 @@
+import { readSseJson } from './lib/sse.ts';
+
 const SHIP = '/api/ship';
 
 export interface GateStep {
@@ -276,33 +278,6 @@ export type SonarStreamEvent =
       logs?: string[];
     };
 
-async function consumeSse(
-  body: ReadableStream<Uint8Array>,
-  onEvent: (ev: SonarStreamEvent) => void,
-): Promise<void> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const chunks = buffer.split('\n\n');
-    buffer = chunks.pop() ?? '';
-    for (const chunk of chunks) {
-      for (const line of chunk.split('\n')) {
-        if (!line.startsWith('data: ')) continue;
-        try {
-          onEvent(JSON.parse(line.slice(6)) as SonarStreamEvent);
-        } catch {
-          /* ignore malformed */
-        }
-      }
-    }
-  }
-}
-
 export async function streamSonarInstall(
   onEvent: (ev: SonarStreamEvent) => void,
   signal?: AbortSignal,
@@ -317,7 +292,7 @@ export async function streamSonarInstall(
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
-  await consumeSse(res.body, onEvent);
+  await readSseJson<SonarStreamEvent>(res.body, onEvent);
 }
 
 export async function streamSonarStart(
@@ -334,7 +309,7 @@ export async function streamSonarStart(
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
-  await consumeSse(res.body, onEvent);
+  await readSseJson<SonarStreamEvent>(res.body, onEvent);
 }
 
 export async function streamSonarStop(
@@ -351,7 +326,7 @@ export async function streamSonarStop(
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
-  await consumeSse(res.body, onEvent);
+  await readSseJson<SonarStreamEvent>(res.body, onEvent);
 }
 
 export async function streamSonarScanAll(
@@ -385,7 +360,7 @@ async function streamSonarScan(
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
-  await consumeSse(res.body, onEvent);
+  await readSseJson<SonarStreamEvent>(res.body, onEvent);
 }
 
 export function toggleSonarExclude(
