@@ -1450,21 +1450,28 @@ pub async fn run_pack_install(
 
 pub async fn run_review_list(path: Option<String>, json: bool) -> Result<(), String> {
     let root = resolve_path(path);
-    let items = ax_policy::list_pending(&root).map_err(|e| e.to_string())?;
+    let queue = ax_policy::list_pending_report(&root).map_err(|e| e.to_string())?;
+    let items = &queue.items;
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&items).unwrap_or_default()
+            serde_json::to_string_pretty(items).unwrap_or_default()
         );
-    } else if items.is_empty() {
+    } else if items.is_empty() && queue.invalid.is_empty() {
         println!("No pending policy items.");
     } else {
-        for item in &items {
+        for item in items {
             println!(
                 "[{}] {} — {} ({})",
                 item.kind, item.id, item.level_or_description, item.status
             );
         }
+    }
+    for bad in &queue.invalid {
+        eprintln!(
+            "[{}] {} — cannot be read: {}: {}",
+            bad.kind, bad.id, bad.path, bad.error
+        );
     }
     Ok(())
 }

@@ -534,6 +534,12 @@ pub fn format_validation(err: &ValidationError) -> String {
     format!("{} ({detail})", err.error)
 }
 
+/// An error that names the file and every failing field, for places that turn
+/// a [`ValidationError`] into an [`ax_utils::errors::AxError`].
+pub fn validation_error_at(path: &Path, err: &ValidationError) -> ax_utils::errors::AxError {
+    ax_utils::errors::AxError::Other(format!("{}: {}", path.display(), format_validation(err)))
+}
+
 fn field_err(field: &str, msg: &str) -> ValidationError {
     let mut fields = HashMap::new();
     fields.insert(field.into(), msg.into());
@@ -667,7 +673,11 @@ mod tests {
             let got = &again.frontmatter;
             assert_eq!(got.description, *value, "description\n{saved}");
             assert_eq!(got.source.as_deref(), Some(*value), "source\n{saved}");
-            assert_eq!(got.context_task.as_deref(), Some(*value), "contextTask\n{saved}");
+            assert_eq!(
+                got.context_task.as_deref(),
+                Some(*value),
+                "contextTask\n{saved}"
+            );
             assert_eq!(got.group.as_deref(), Some(*value), "group\n{saved}");
             assert_eq!(got.root_id.as_deref(), Some(*value), "rootId\n{saved}");
         }
@@ -677,7 +687,9 @@ mod tests {
     fn rule_free_text_survives_a_save_unchanged() {
         for value in AWKWARD {
             let raw = "---\nid: round-trip\nlevel: INFO\nalwaysApply: true\n---\n\nBody.\n";
-            let mut fm = parse_rule_file(Path::new("r.mdc"), raw).unwrap().frontmatter;
+            let mut fm = parse_rule_file(Path::new("r.mdc"), raw)
+                .unwrap()
+                .frontmatter;
             fm.source = Some((*value).into());
             fm.group = Some((*value).into());
             fm.root_id = Some((*value).into());

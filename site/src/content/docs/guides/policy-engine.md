@@ -578,6 +578,8 @@ ax policy review approve <id>
 ax policy review reject <id>
 ```
 
+A pending file with broken frontmatter does not block the queue: `review list` still lists the other items and names the bad file with its failing fields (for example `level: required`). `review show`, `approve` and pack import report the same detail. Fix the file or reject it.
+
 Command Center: **Policy → Sync** (status, export/import, toggles), **Policy → Review** queue, label autocomplete on Rules/Skills (type to suggest tags, chips for multi-label AND filter; click a tag in the table to toggle it), layer filters, Scope on editors, and enable checkboxes. Every rule and skill should carry at least one `tags` value so you can filter (e.g. `azdo`, `cicd`, `workflow`). CLI equivalents: `ax policy pack …`, `ax policy review …`, `ax policy share …`, `ax policy enable|disable`.
 
 For org-wide sync outside the project repo, see [Remote Policy Share](/guides/policy-sharing/).

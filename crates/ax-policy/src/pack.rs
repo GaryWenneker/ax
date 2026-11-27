@@ -18,7 +18,8 @@ use ax_utils::errors::AxError;
 use crate::config::load_policy_config;
 use crate::index::{index_policy, list_rules, list_skills, rule_row_to_doc, skill_row_to_doc};
 use crate::parse::{
-    is_kebab_case, parse_rule_file, parse_skill_file, serialize_rule, serialize_skill,
+    format_validation, is_kebab_case, parse_rule_file, parse_skill_file, serialize_rule,
+    serialize_skill, validation_error_at,
 };
 use crate::paths::{
     ax_dir_from_project, pending_rules_dir, pending_skills_dir, rule_file, rules_dir, shared_dir,
@@ -177,7 +178,10 @@ fn clear_previous_pack(pack_root: &Path) -> Result<(), AxError> {
         .is_some();
     if !is_pack {
         let mut entries = std::fs::read_dir(pack_root).map_err(|e| {
-            AxError::Other(format!("cannot read pack folder {}: {e}", pack_root.display()))
+            AxError::Other(format!(
+                "cannot read pack folder {}: {e}",
+                pack_root.display()
+            ))
         })?;
         if entries.next().is_some() {
             return Err(AxError::Other(format!(
@@ -378,9 +382,10 @@ pub async fn import_pack_with_origin(
 
     for meta in &manifest.rules {
         if !is_kebab_case(&meta.id) {
-            result
-                .invalid
-                .push(format!("rule `{}`: manifest id must be kebab-case", meta.id));
+            result.invalid.push(format!(
+                "rule `{}`: manifest id must be kebab-case",
+                meta.id
+            ));
             continue;
         }
         let path = pack_root.join("rules").join(format!("{}.mdc", meta.id));
@@ -389,7 +394,15 @@ pub async fn import_pack_with_origin(
             continue;
         }
         let raw = std::fs::read_to_string(&path).map_err(|e| AxError::Other(e.to_string()))?;
-        let mut doc = parse_rule_file(&path, &raw).map_err(|e| AxError::Other(e.error))?;
+        let mut doc = match parse_rule_file(&path, &raw) {
+            Ok(doc) => doc,
+            Err(e) => {
+                result
+                    .invalid
+                    .push(format!("{}: {}", path.display(), format_validation(&e)));
+                continue;
+            }
+        };
         if doc.frontmatter.id != meta.id {
             result.invalid.push(format!(
                 "{}: frontmatter id `{}` does not match manifest id `{}`",
@@ -431,9 +444,10 @@ pub async fn import_pack_with_origin(
 
     for meta in &manifest.skills {
         if !is_kebab_case(&meta.id) {
-            result
-                .invalid
-                .push(format!("skill `{}`: manifest name must be kebab-case", meta.id));
+            result.invalid.push(format!(
+                "skill `{}`: manifest name must be kebab-case",
+                meta.id
+            ));
             continue;
         }
         let path = pack_root.join("skills").join(&meta.id).join(SKILL_FILENAME);
@@ -442,7 +456,15 @@ pub async fn import_pack_with_origin(
             continue;
         }
         let raw = std::fs::read_to_string(&path).map_err(|e| AxError::Other(e.to_string()))?;
-        let mut doc = parse_skill_file(&path, &raw).map_err(|e| AxError::Other(e.error))?;
+        let mut doc = match parse_skill_file(&path, &raw) {
+            Ok(doc) => doc,
+            Err(e) => {
+                result
+                    .invalid
+                    .push(format!("{}: {}", path.display(), format_validation(&e)));
+                continue;
+            }
+        };
         if doc.frontmatter.name != meta.id {
             result.invalid.push(format!(
                 "{}: frontmatter name `{}` does not match manifest name `{}`",
@@ -492,18 +514,20 @@ pub async fn import_pack_with_origin(
 }
 
 async fn apply_rule(store: &PolicyStore, doc: PolicyRuleDoc) -> Result<(), AxError> {
+    let path = PathBuf::from(&doc.source_path);
     store
         .save_rule(doc.frontmatter, doc.body)
         .await
-        .map_err(|e| AxError::Other(e.error))?;
+        .map_err(|e| validation_error_at(&path, &e))?;
     Ok(())
 }
 
 async fn apply_skill(store: &PolicyStore, doc: PolicySkillDoc) -> Result<(), AxError> {
+    let path = PathBuf::from(&doc.source_path);
     store
         .save_skill(doc.frontmatter, doc.body)
         .await
-        .map_err(|e| AxError::Other(e.error))?;
+        .map_err(|e| validation_error_at(&path, &e))?;
     Ok(())
 }
 
@@ -678,8 +702,14 @@ mod export_tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("not a policy pack"), "{err}");
-        assert_eq!(std::fs::read_to_string(out.join("notes/keep.txt")).unwrap(), "mine\n");
-        assert_eq!(std::fs::read_to_string(out.join("report.md")).unwrap(), "mine\n");
+        assert_eq!(
+            std::fs::read_to_string(out.join("notes/keep.txt")).unwrap(),
+            "mine\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(out.join("report.md")).unwrap(),
+            "mine\n"
+        );
         assert!(!out.join("manifest.json").exists());
     }
 
@@ -785,7 +815,11 @@ mod import_id_tests {
             .unwrap();
         assert_eq!((result.rules_added, result.skills_added), (0, 0));
         assert_eq!(result.invalid.len(), 2, "{:?}", result.invalid);
-        assert!(result.invalid[0].contains("english-only"), "{:?}", result.invalid);
+        assert!(
+            result.invalid[0].contains("english-only"),
+            "{:?}",
+            result.invalid
+        );
         let rules = list_rules(&pool).await.unwrap();
         let rule = rules.iter().find(|r| r.id == "english-only").unwrap();
         assert_eq!(rule.body.trim(), "Local rule");
@@ -807,6 +841,50 @@ mod import_id_tests {
         assert_eq!((result.rules_pending, result.skills_pending), (0, 0));
         assert_eq!(result.invalid.len(), 2);
         assert!(crate::list_pending(root.path()).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod import_parse_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn an_unparsable_pack_file_is_listed_and_the_rest_imports() {
+        let root = tempfile::tempdir().unwrap();
+        let pack = root.path().join("team-pack");
+        std::fs::create_dir_all(pack.join("rules")).unwrap();
+        std::fs::write(
+            pack.join("rules/broken.mdc"),
+            "---\nid: broken\nalwaysApply: true\n---\nNo level\n",
+        )
+        .unwrap();
+        std::fs::write(
+            pack.join("rules/fine.mdc"),
+            "---\nid: fine\nlevel: INFO\nalwaysApply: true\n---\nFine\n",
+        )
+        .unwrap();
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        ax_db::schema::apply_initial_schema(&pool).await.unwrap();
+        ax_db::migrations::run_migrations(&pool, 0).await.unwrap();
+        let result = import_pack_with_options(&pool, root.path(), Some(&pack), false, Some(false))
+            .await
+            .unwrap();
+        assert_eq!(result.rules_added, 1);
+        assert_eq!(result.invalid.len(), 1, "{:?}", result.invalid);
+        assert!(
+            result.invalid[0].contains("broken.mdc"),
+            "{:?}",
+            result.invalid
+        );
+        assert!(
+            result.invalid[0].contains("level: required"),
+            "{:?}",
+            result.invalid
+        );
     }
 }
 

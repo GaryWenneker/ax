@@ -1770,7 +1770,7 @@ ax policy review reject mobile-first
 
 | Subcommand | Description |
 |---|---|
-| `list [path]` | List pending rules and skills (`--json`) |
+| `list [path]` | List pending rules and skills (`--json`). A pending file that cannot be parsed is reported on stderr with its path and the failing fields; the other items are still listed |
 | `show <id> [path]` | Show a pending item and its diff against the local copy (`--json`) |
 | `approve <id> [path]` | Move a pending item into active policy |
 | `reject <id> [path]` | Drop a pending item |
