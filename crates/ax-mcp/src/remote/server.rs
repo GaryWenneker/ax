@@ -374,6 +374,50 @@ pub fn admin_tool_permitted(name: &str, admin: bool) -> bool {
     admin && ADMIN_TOOLS.contains(&name)
 }
 
+/// Frontmatter keys a remote caller may set when saving a rule. Everything
+/// that chooses where the rule is written (`source`, `storage`, `rootId`) or
+/// that the schema does not know is refused, so a remote save can only write
+/// `.agents/rules/<id>.mdc` inside the selected project.
+const REMOTE_RULE_FRONTMATTER_KEYS: &[&str] = &[
+    "id",
+    "level",
+    "alwaysApply",
+    "globs",
+    "triggers",
+    "tags",
+    "priority",
+    "enabled",
+    "status",
+    "share",
+    "scope",
+    "group",
+    "description",
+];
+
+fn remote_rule_frontmatter_allowed(frontmatter: &Value) -> bool {
+    let Some(fields) = frontmatter.as_object() else {
+        return false;
+    };
+    if fields
+        .keys()
+        .any(|key| !REMOTE_RULE_FRONTMATTER_KEYS.contains(&key.as_str()))
+    {
+        return false;
+    }
+    if fields
+        .get("scope")
+        .is_some_and(|scope| scope.as_str() != Some("project"))
+    {
+        return false;
+    }
+    fields.get("id").and_then(Value::as_str).is_some_and(|id| {
+        !id.is_empty()
+            && id
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    })
+}
+
 fn client_tool_permitted(
     client: Option<&ax_global_db::access::ClientPrincipal>,
     name: &str,
@@ -606,21 +650,14 @@ async fn post(
             }
             return error(StatusCode::FORBIDDEN, "Tool is unavailable remotely");
         }
-        if name == "ax_policy_capture" && args.get("action").and_then(Value::as_str) == Some("save")
+        if name == "ax_policy_capture"
+            && args.get("action").and_then(Value::as_str) == Some("save")
+            && !remote_rule_frontmatter_allowed(&args["rule"]["frontmatter"])
         {
-            let fm = &args["rule"]["frontmatter"];
-            if fm
-                .get("scope")
-                .and_then(Value::as_str)
-                .is_some_and(|scope| scope != "project")
-                || fm.get("rootId").is_some_and(|id| !id.is_null())
-                || fm.get("root_id").is_some_and(|id| !id.is_null())
-            {
-                return error(
-                    StatusCode::FORBIDDEN,
-                    "Remote policy writes must remain project-local",
-                );
-            }
+            return error(
+                StatusCode::FORBIDDEN,
+                "Remote policy writes must remain project-local",
+            );
         }
         if !args.is_object() {
             return rpc(

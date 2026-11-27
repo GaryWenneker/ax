@@ -790,3 +790,50 @@ async fn remote_authorized_writer_can_remember_but_cannot_save_global_policy() {
             call("ax_policy_capture",json!({"action":"save","rule":{"frontmatter":frontmatter,"body":"foreign policy"}}))).await.0, StatusCode::FORBIDDEN);
     }
 }
+
+#[tokio::test]
+async fn remote_policy_save_cannot_choose_where_the_rule_file_goes() {
+    let (_dir, app, _) = fixture().await;
+    let mut c = claims("alpha");
+    c["scope"] = json!("ax:context ax:write");
+    let writer = token(&c);
+    let transport = initialize(&app, "alpha", &writer).await;
+    let call = |args: Value| json!({"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"ax_policy_capture","arguments":args}});
+    let outside = tempfile::tempdir().unwrap();
+    let target = outside.path().join("planted.mdc");
+    for frontmatter in [
+        json!({"id":"planted","level":"INFO","alwaysApply":true,"storage":"files",
+            "source": target.to_string_lossy()}),
+        json!({"id":"planted","level":"INFO","alwaysApply":true,"source":"root:shared/rules/x.mdc"}),
+        json!({"id":"planted","level":"INFO","alwaysApply":true,"storage":"files"}),
+        json!({"id":"../../planted","level":"INFO","alwaysApply":true}),
+        json!({"id":"planted","level":"INFO","alwaysApply":true,"unknownKey":"x"}),
+    ] {
+        let (status, _, body) = post(
+            &app,
+            "alpha",
+            Some(&writer),
+            Some(&transport),
+            call(
+                json!({"action":"save","rule":{"frontmatter":frontmatter,"body":"attacker text"}}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{frontmatter} -> {body}");
+    }
+    assert!(!target.exists(), "remote save wrote outside the project");
+
+    // A plain project rule built from the allowed fields still saves.
+    let (status, _, saved) = post(
+        &app,
+        "alpha",
+        Some(&writer),
+        Some(&transport),
+        call(json!({"action":"save","rule":{"frontmatter":{
+            "id":"remote-ok","level":"INFO","alwaysApply":true,"scope":"project",
+            "triggers":["x"],"globs":[],"tags":[],"priority":10},"body":"fine"}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_ne!(saved["result"]["isError"], true, "{saved}");
+}
