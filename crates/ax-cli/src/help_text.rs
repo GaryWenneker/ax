@@ -246,6 +246,10 @@ Downloads the platform bundle for your OS/arch. On Windows, extracts to %LOCALAP
 (matching install.ps1), updates ~/.cargo/bin/ax.exe when present, and exits immediately — a detached
 PowerShell helper finishes the swap after this process exits. Open a new terminal and run `ax version`.
 
+The archive is checked against the release's SHA256SUMS before it is installed; a missing
+or different checksum stops the upgrade. A --local archive is checked against a SHA256SUMS
+in the same folder when one is there.
+
 Examples:
   ax upgrade               Download and install latest available release (always reinstalls)
   ax upgrade v2.0.0        Install a specific tag

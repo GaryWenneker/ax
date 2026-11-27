@@ -990,6 +990,8 @@ ax --version
 
 Self-update from [getax.wenneker.io/releases/latest.txt](https://getax.wenneker.io/releases/latest.txt) (GitHub fallback). Non-interactive — no confirmation prompt.
 
+Every downloaded archive is checked against the release's `SHA256SUMS` (fetched from GitHub when possible, otherwise from getax) before it is extracted. A missing checksum list, a missing entry or a different digest stops the upgrade and leaves the installed binary alone. A `--local` archive is checked against a `SHA256SUMS` in the same folder when one is there.
+
 | Argument / flag | Type | Description |
 |---|---|---|
 | `version` | optional | Pin a release tag (e.g. `v3.0.0`) |
