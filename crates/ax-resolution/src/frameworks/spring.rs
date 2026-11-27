@@ -323,7 +323,7 @@ fn extract_java_file(file_path: &str, content: &str) -> FrameworkExtractResult {
             let sub = parse_mapping_path(args);
             let route_path = join_http_path(&class_prefix, &sub);
             let line = safe[..m.start()].matches('\n').count() as i32 + 1;
-            let qualified = format!("{}::route:{}", file_path, route_path);
+            let qualified = format!("{}::route:{}:{}", file_path, verb, route_path);
             let route_id = stable_node_id(file_path, &qualified);
             out.nodes.push(Node {
                 id: route_id.clone(),
@@ -580,6 +580,16 @@ fn is_pascal_entity(s: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn get_and_post_on_one_path_are_two_routes() {
+        let src = "@RestController\n@RequestMapping(\"/users\")\nclass UserController {\n  @GetMapping(\"/all\")\n  List<User> list() { return null; }\n  @PostMapping(\"/all\")\n  User create() { return null; }\n}\n";
+        let out = extract_file("src/main/java/UserController.java", src);
+        let routes: Vec<_> = out.nodes.iter().filter(|n| n.kind == NodeKind::Route).collect();
+        let ids: std::collections::HashSet<_> = routes.iter().map(|n| n.id.clone()).collect();
+        assert_eq!(routes.len(), 2);
+        assert_eq!(ids.len(), 2, "GET and POST /users share a node id");
+    }
+
     use super::*;
 
     #[test]

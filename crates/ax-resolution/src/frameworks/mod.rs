@@ -208,8 +208,9 @@ fn merge_extract(dst: &mut FrameworkExtractResult, src: FrameworkExtractResult) 
 async fn apply_extract(
     queries: &QueryBuilder,
     file_path: &str,
-    extracted: FrameworkExtractResult,
+    mut extracted: FrameworkExtractResult,
 ) -> Result<(), ax_utils::errors::AxError> {
+    extracted.dedup_nodes();
     if extracted.nodes.is_empty() && extracted.references.is_empty() && extracted.edges.is_empty() {
         return Ok(());
     }

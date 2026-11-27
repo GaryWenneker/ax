@@ -328,7 +328,7 @@ fn push_route(
     end_col: i32,
     now: i64,
 ) {
-    let qualified = format!("{}::route:{}", file_path, route_path);
+    let qualified = format!("{}::route:{}:{}", file_path, method, route_path);
     let route_id = stable_node_id(file_path, &qualified);
     out.nodes.push(Node {
         id: route_id,
@@ -453,6 +453,15 @@ fn direct_to_re() -> &'static Regex {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn get_and_post_on_one_path_are_two_routes() {
+        let src = "fn app() -> Router {\n    Router::new()\n        .route(\"/users\", get(list))\n        .route(\"/users\", post(create))\n}\n";
+        let out = extract_file("src/main.rs", src);
+        let ids: std::collections::HashSet<_> = out.nodes.iter().map(|n| n.id.clone()).collect();
+        assert_eq!(out.nodes.len(), 2, "{:?}", out.nodes.iter().map(|n| &n.name).collect::<Vec<_>>());
+        assert_eq!(ids.len(), 2, "GET and POST /users share a node id");
+    }
+
     use super::*;
 
     #[test]
