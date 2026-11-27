@@ -244,8 +244,8 @@ pub const VERSION_LONG: &str = "Print the installed ax version.
 
 Also available as `ax -V` / `ax --version`.";
 
-pub const UPGRADE_LONG: &str = "Self-update from GitHub Releases, with getax.wenneker.io as the fallback
-(non-interactive — no confirmation prompt).
+pub const UPGRADE_LONG: &str = "Self-update from GitHub Releases, getax.wenneker.io as fallback.
+Non-interactive — no confirmation prompt.
 
 Downloads the platform bundle for your OS/arch. On Windows, extracts to %LOCALAPPDATA%\\ax\\current
 (matching install.ps1), updates ~/.cargo/bin/ax.exe when present, and exits immediately — a detached

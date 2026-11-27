@@ -203,7 +203,9 @@ mod tests {
 
     #[test]
     fn counts_report_every_isolated_symbol_while_lists_stay_capped() {
-        let nodes: Vec<Node> = (0..300).map(|i| node(&format!("f{i:03}"), "function")).collect();
+        let nodes: Vec<Node> = (0..300)
+            .map(|i| node(&format!("f{i:03}"), "function"))
+            .collect();
         let report = build_report(&nodes, &[]);
         assert!(report.isolated.len() <= 200);
         assert_eq!(report.isolated_count, 300);
