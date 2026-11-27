@@ -133,6 +133,30 @@ async fn only_the_local_browser_uses_workspace_routes_without_sign_in() {
     .await;
     assert_eq!(status, StatusCode::OK, "{text}");
     assert!(fx.dir.join("made").is_dir());
+
+    // Any folder may be browsed: the picker walks the whole disk.
+    let (_, text) = send(
+        &fx.app,
+        "GET",
+        "/api/workspace/browse?path=/",
+        LOOPBACK,
+        &[],
+        "",
+    )
+    .await;
+    assert!(text.contains("\"ok\":true"), "{text}");
+    // A relative path would resolve against the server's working directory.
+    let relative = serde_json::json!({"parent": "relative-parent", "name": "x"}).to_string();
+    let (_, text) = send(
+        &fx.app,
+        "POST",
+        "/api/workspace/mkdir",
+        LOOPBACK,
+        &own,
+        &relative,
+    )
+    .await;
+    assert!(text.contains("must be absolute"), "{text}");
 }
 
 #[tokio::test]

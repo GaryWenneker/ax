@@ -174,7 +174,7 @@ The `/api/ship/sonar/*` endpoints (discover, install, start, stop, bootstrap, se
 | GET | `/api/workspace/purge-plan` | What a project purge would delete |
 | POST | `/api/workspace/purge` | Delete a project's ax data |
 
-These routes work on folders anywhere on this computer. With web sign-in off, they answer only the browser of the person at this computer: a connection from this computer, without a proxy header, to `127.0.0.1`, `localhost` or `[::1]` on the Command Center port, with no `Origin` from another page. Anything else gets 403. With sign-in on, they need an Admin or Owner session. The routes that write, `recent/add` included, are refused in read-only mode.
+These routes work on folders anywhere on this computer; there is no list of allowed folders. Paths must be absolute. With web sign-in off, they answer only the browser of the person at this computer: a connection from this computer, without a proxy header, to `127.0.0.1`, `localhost` or `[::1]` on the Command Center port, with no `Origin` from another page. Anything else gets 403. With sign-in on, they need an Admin or Owner session. The routes that write, `recent/add` included, are refused in read-only mode.
 
 ## IDEs and agents
 

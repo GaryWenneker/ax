@@ -55,32 +55,12 @@ pub(crate) fn display_path(path: &Path) -> String {
     s.strip_prefix(r"\\?\").unwrap_or(&s).to_owned()
 }
 
-fn allowed_browse_roots(project_root: &Path) -> Vec<PathBuf> {
-    let mut roots = default_browse_roots();
-    roots.push(canonical_or(project_root));
-    if let Some(parent) = project_root.parent() {
-        roots.push(canonical_or(parent));
-    }
-    let ws = load_workspace_config();
-    for r in ws.browse_roots {
-        roots.push(PathBuf::from(r));
-    }
-    for r in ws.recent {
-        roots.push(PathBuf::from(r.path));
-    }
-    roots.sort();
-    roots.dedup();
-    roots
-}
-
-fn is_path_allowed(path: &Path, project_root: &Path) -> bool {
-    let target = canonical_or(path);
-    allowed_browse_roots(project_root).iter().any(|root| {
-        // Canonicalize roots too — Windows `canonicalize` adds `\\?\`, and
-        // `starts_with` fails when only one side has the extended prefix.
-        let root = canonical_or(root);
-        target.starts_with(&root)
-    })
+/// Any folder on this computer may be browsed, created, initialised or
+/// switched to: the project picker walks the whole disk. Who may do so is
+/// decided by [`local_or_signed_in`]. Paths must be absolute, so nothing
+/// resolves against the server's working directory.
+fn is_path_allowed(path: &Path) -> bool {
+    path.is_absolute()
 }
 
 fn safe_join(parent: &Path, name: &str) -> Result<PathBuf, String> {
@@ -147,10 +127,10 @@ async fn handle_browse(
         .map(PathBuf::from)
         .unwrap_or_else(|| canonical_or(&project_root));
 
-    if !is_path_allowed(&base, &project_root) {
+    if !is_path_allowed(&base) {
         return Json(serde_json::json!({
             "ok": false,
-            "error": "Path is outside allowed browse roots"
+            "error": "Path must be absolute"
         }))
         .into_response();
     }
@@ -223,12 +203,9 @@ async fn handle_switch(
         return Json(serde_json::json!({ "ok": false, "error": "Read-only mode" })).into_response();
     }
     let target = PathBuf::from(&body.path);
-    {
-        let ws = hub.read().await;
-        if !is_path_allowed(&target, &ws.project_root) {
-            return Json(serde_json::json!({ "ok": false, "error": "Path not allowed" }))
-                .into_response();
-        }
+    if !is_path_allowed(&target) {
+        return Json(serde_json::json!({ "ok": false, "error": "Path must be absolute" }))
+            .into_response();
     }
     let target = canonical_or(&target);
     if !target.is_dir() {
@@ -268,13 +245,9 @@ async fn handle_mkdir(State(hub): State<WebHub>, Json(body): Json<MkdirBody>) ->
     if hub.readonly {
         return Json(serde_json::json!({ "ok": false, "error": "Read-only mode" })).into_response();
     }
-    let ws = hub.read().await;
-    let project_root = ws.project_root.clone();
-    drop(ws);
-
     let parent = PathBuf::from(&body.parent);
-    if !is_path_allowed(&parent, &project_root) {
-        return Json(serde_json::json!({ "ok": false, "error": "Parent path not allowed" }))
+    if !is_path_allowed(&parent) {
+        return Json(serde_json::json!({ "ok": false, "error": "Parent path must be absolute" }))
             .into_response();
     }
     let parent = canonical_or(&parent);
@@ -315,13 +288,9 @@ async fn handle_init_stream(
     if hub.readonly {
         return Json(serde_json::json!({ "ok": false, "error": "Read-only mode" })).into_response();
     }
-    let ws = hub.read().await;
-    let project_root = ws.project_root.clone();
-    drop(ws);
-
     let target = PathBuf::from(&body.path);
-    if !is_path_allowed(&target, &project_root) {
-        return Json(serde_json::json!({ "ok": false, "error": "Path not allowed" }))
+    if !is_path_allowed(&target) {
+        return Json(serde_json::json!({ "ok": false, "error": "Path must be absolute" }))
             .into_response();
     }
     let target = canonical_or(&target);
@@ -468,10 +437,10 @@ enum PurgeLookup {
     Missing(PathBuf),
 }
 
-fn resolve_purge_target(hub_root: &Path, raw: &str) -> Result<PurgeLookup, String> {
+fn resolve_purge_target(raw: &str) -> Result<PurgeLookup, String> {
     let target = PathBuf::from(raw);
-    if !is_path_allowed(&target, hub_root) {
-        return Err("Path not allowed".into());
+    if !is_path_allowed(&target) {
+        return Err("Path must be absolute".into());
     }
     let target = canonical_or(&target);
     if target.is_dir() {
@@ -501,7 +470,7 @@ async fn handle_purge_plan(
         return Json(serde_json::json!({ "ok": false, "error": "Read-only mode" })).into_response();
     }
     let hub_root = hub.read().await.project_root.clone();
-    let target = match resolve_purge_target(&hub_root, &q.path) {
+    let target = match resolve_purge_target(&q.path) {
         Ok(PurgeLookup::Present(path)) => path,
         Ok(PurgeLookup::Missing(path)) => return missing_folder_plan(&path).into_response(),
         Err(error) => {
@@ -537,8 +506,7 @@ async fn handle_purge(State(hub): State<WebHub>, Json(body): Json<PurgeBody>) ->
         return Json(serde_json::json!({ "ok": false, "error": "Select at least one item" }))
             .into_response();
     }
-    let hub_root = hub.read().await.project_root.clone();
-    let (target, present) = match resolve_purge_target(&hub_root, &body.path) {
+    let (target, present) = match resolve_purge_target(&body.path) {
         Ok(PurgeLookup::Present(path)) => (path, true),
         Ok(PurgeLookup::Missing(path)) => (path, false),
         Err(error) => {
@@ -654,4 +622,18 @@ async fn local_or_signed_in(
         })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_absolute_paths_are_accepted() {
+        let root = std::env::temp_dir();
+        assert!(is_path_allowed(&root));
+        assert!(!is_path_allowed(Path::new("relative/folder")));
+        assert!(!is_path_allowed(Path::new(".")));
+        assert!(!is_path_allowed(Path::new("")));
+    }
 }
