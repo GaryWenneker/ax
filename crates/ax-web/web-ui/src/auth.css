@@ -5,6 +5,6 @@
 .auth-eyebrow { color: var(--accent); letter-spacing: .06em; }
 .auth-card h1 { font-size: 26px; }
 .auth-card :is(input, button):focus-visible { outline: 1px solid var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
-@media (max-width: 640px) { .auth-card { padding: 20px; } }
+@media (max-width: 639px) { .auth-card { padding: 20px; } }
 .auth-offline { position: fixed; z-index: 1000; left: 50%; bottom: 40px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px); padding: 8px 12px; border: 1px solid; border-radius: 8px; }
 .auth-offline.settings-toast--warn { background: linear-gradient(rgba(204, 167, 0, 0.1), rgba(204, 167, 0, 0.1)), var(--bg-panel); }

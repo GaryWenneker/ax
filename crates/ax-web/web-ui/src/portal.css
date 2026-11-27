@@ -70,7 +70,7 @@ html[data-ax-layout="portal"] .settings-hub .settings-card-body { gap: 8px; }
 html[data-ax-layout="portal"] .settings-hub .settings-row { border-top: 1px solid var(--border); padding-block: 18px; }
 html[data-ax-layout="portal"] .settings-hub .settings-row-desc { max-width: 64ch; }
 html[data-ax-layout="portal"] .w-md-editor, html[data-ax-layout="portal"] .wmde-markdown { --color-canvas-default: var(--bg-panel); --color-fg-default: var(--text); --color-border-default: var(--border); }
-@media (max-width: 1100px) {
+@media (max-width: 1099px) {
   html[data-ax-layout="portal"] .font-ctrl { display: none; }
   html[data-ax-layout="portal"] .titlebar-inner { gap: 12px; }
 }

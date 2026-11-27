@@ -67,7 +67,7 @@ test('the workspace becomes drawers and then one pane on small screens', () => {
   assert.match(css, /\.specws \{[^}]*grid-template-columns/);
   assert.match(css, /@media \(max-width: 1280px\) \{[^@]*\.specws-context \{[^}]*position: absolute/);
   assert.doesNotMatch(css, /@media \(max-width: 1280px\) \{[^@]*\.specws-explorer \{[^}]*position: absolute/);
-  assert.match(css, /@media \(max-width: 900px\) \{[^@]*\.specws-explorer \{[^}]*position: absolute/);
+  assert.match(css, /@media \(max-width: 899px\) \{[^@]*\.specws-explorer \{[^}]*position: absolute/);
   assert.match(css, /@media \(max-width: 720px\) \{[^@]*\.specws-mobile-bar/);
   assert.match(ws, /\(max-width: 900px\)/);
   assert.match(ws, /\(max-width: 1280px\)/);

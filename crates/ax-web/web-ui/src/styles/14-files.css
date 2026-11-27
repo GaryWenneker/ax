@@ -183,7 +183,7 @@
   padding: 1px 5px;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .file-tree-meta-item:not(:last-child) {
     display: none;
   }
@@ -779,7 +779,7 @@
   font-size: 14px;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 899px) {
   .files-split--with-preview {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(180px, 40%) minmax(200px, 60%);

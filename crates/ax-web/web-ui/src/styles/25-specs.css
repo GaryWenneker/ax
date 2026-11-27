@@ -97,7 +97,7 @@
   .specws--drawer-context .specws-context { display: flex; }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 899px) {
   .specws,
   .specws--explorer-collapsed,
   .specws--context-collapsed { grid-template-columns: minmax(0, 1fr); grid-template-areas: "toolbar" "document"; }

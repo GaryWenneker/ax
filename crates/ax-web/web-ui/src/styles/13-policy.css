@@ -282,7 +282,7 @@
   }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 639px) {
   .skill-catalog-slide-row {
     flex-wrap: wrap;
   }
@@ -1040,7 +1040,7 @@ body.policy-list-resizing .policy-list-resize-handle {
   min-height: clamp(420px, 62vh, 820px);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .policy-rules-split.page-split--with-detail {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(320px, 1fr);
@@ -2099,7 +2099,7 @@ body.policy-meta-resizing .policy-meta-resize-handle {
   }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .page-editor-grid {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(180px, 38%) minmax(0, 1fr);

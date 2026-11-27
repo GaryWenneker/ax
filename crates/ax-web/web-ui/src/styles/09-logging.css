@@ -1677,7 +1677,7 @@ button.linkish {
   content: '';
 }
 
-@media (max-width: 640px) {
+@media (max-width: 639px) {
   .settings-page {
     max-width: none;
   }

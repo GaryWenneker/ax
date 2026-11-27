@@ -28,7 +28,7 @@
   margin-top: 8px;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 899px) {
   .sv-token-compare {
     grid-template-columns: 1fr;
   }

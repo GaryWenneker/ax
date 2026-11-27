@@ -11,3 +11,24 @@ describe('custom properties', () => {
     assert.deepEqual(declared, []);
   });
 });
+
+describe('viewport breakpoints', () => {
+  it('never uses one width as both a max-width and a min-width bound', () => {
+    const bounds = (kind: 'max' | 'min') => {
+      const found = new Map<number, string[]>();
+      for (const [file, css] of sheets) {
+        for (const query of css.matchAll(/@media\b[^{]*/g)) {
+          for (const m of query[0].matchAll(new RegExp(`\\(${kind}-width:\\s*(\\d+)px\\)`, 'g'))) {
+            const width = Number(m[1]);
+            found.set(width, [...(found.get(width) ?? []), file]);
+          }
+        }
+      }
+      return found;
+    };
+    const max = bounds('max');
+    const overlaps = [...bounds('min').keys()].filter((width) => max.has(width))
+      .map((width) => `${width}px in ${max.get(width)?.join(', ')}`);
+    assert.deepEqual(overlaps, [], 'a viewport exactly this wide gets both sets of rules; use max-width: N-1px');
+  });
+});

@@ -749,7 +749,7 @@ html[data-ax-layout="portal"] .ax-modal--full:has(.policy-inline-pane--props) :i
   outline: 1px solid var(--accent, #58a6ff);
 }
 
-@media (max-width: 900px) {
+@media (max-width: 899px) {
   .policy-pack-split,
   .policy-pack-split--with-diff {
     grid-template-columns: 1fr;
