@@ -543,6 +543,9 @@ pub async fn revise_plan(pool: &SqlitePool, edit: PlanEdit) -> Result<i64, Strin
         return Err("conflict".into());
     }
     let next = latest + 1;
+    // An edit keeps the spec revision its parent was written against. Only a
+    // compatibility confirmation on a selection accepts it for a newer spec;
+    // rebasing here would hide the spec change from review.
     sqlx::query(
         "INSERT INTO plan_revisions
          (plan_id, version, status, body, content_hash, source, session_id, turn_id, agent_id,
@@ -943,8 +946,8 @@ pub async fn create_workstream(pool: &SqlitePool, input: NewWorkstream) -> Resul
 
 pub async fn select_plan(pool: &SqlitePool, input: PlanSelection) -> Result<(), String> {
     ensure_hierarchy_schema(pool).await?;
-    let owner: Option<String> = sqlx::query_scalar(
-        "SELECT p.owner_spec_id
+    let owner: Option<(String, String)> = sqlx::query_as(
+        "SELECT p.owner_spec_id, r.spec_content_hash
          FROM plans p
          JOIN plan_revisions r ON r.plan_id = p.id AND r.version = ?2
          WHERE p.id = ?1",
@@ -954,7 +957,7 @@ pub async fn select_plan(pool: &SqlitePool, input: PlanSelection) -> Result<(), 
     .fetch_optional(pool)
     .await
     .map_err(|error| error.to_string())?;
-    let Some(owner) = owner else {
+    let Some((owner, written_against)) = owner else {
         return Err("missing plan".into());
     };
     let spec_id: Option<String> =
@@ -969,14 +972,29 @@ pub async fn select_plan(pool: &SqlitePool, input: PlanSelection) -> Result<(), 
     if owner != spec_id {
         return Err("plan belongs to another spec".into());
     }
+    // A plan revision written against another spec body than the approved one
+    // needs a compatibility review, whenever it is selected.
+    let approved: Option<String> = sqlx::query_scalar(
+        "SELECT content_hash FROM spec_revisions
+         WHERE spec_id = ?1 AND status = 'approved'
+         ORDER BY version DESC LIMIT 1",
+    )
+    .bind(&spec_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    let compatibility = match approved {
+        Some(hash) if hash != written_against => "compatibility_review_required",
+        _ => "current",
+    };
     let id = format!(
         "{}:{}:{}:{}:{}",
         input.workstream_id, input.plan_id, input.plan_version, input.session_id, input.turn_id
     );
     sqlx::query(
         "INSERT OR IGNORE INTO plan_selections
-         (id, workstream_id, plan_id, plan_version, session_id, turn_id, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+         (id, workstream_id, plan_id, plan_version, session_id, turn_id, created_at, compatibility)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
     )
     .bind(&id)
     .bind(&input.workstream_id)
@@ -985,6 +1003,7 @@ pub async fn select_plan(pool: &SqlitePool, input: PlanSelection) -> Result<(), 
     .bind(&input.session_id)
     .bind(&input.turn_id)
     .bind(now_ms())
+    .bind(compatibility)
     .execute(pool)
     .await
     .map_err(|error| error.to_string())?;
@@ -1281,12 +1300,16 @@ pub async fn revise_spec(pool: &SqlitePool, edit: SpecEdit) -> Result<i64, Strin
         return Err("empty spec".into());
     }
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
-    let latest: Option<i64> =
-        sqlx::query_scalar("SELECT MAX(version) FROM spec_revisions WHERE spec_id = ?1")
-            .bind(&edit.spec_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(|error| error.to_string())?;
+    // `MAX(version)` always returns a row and decodes NULL as 0, so read the
+    // head row itself, and only for a spec that exists.
+    let latest: Option<i64> = sqlx::query_scalar(
+        "SELECT r.version FROM spec_revisions r JOIN specs s ON s.id = r.spec_id
+         WHERE r.spec_id = ?1 ORDER BY r.version DESC LIMIT 1",
+    )
+    .bind(&edit.spec_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
     let Some(latest) = latest else {
         return Err("missing spec".into());
     };
@@ -1361,13 +1384,14 @@ async fn spec_conflict_json(
     if !error.contains("conflict") {
         return serde_json::json!({ "ok": false, "error": error });
     }
-    let head_version: Option<i64> =
-        sqlx::query_scalar("SELECT MAX(version) FROM spec_revisions WHERE spec_id = ?1")
-            .bind(&parsed.spec_id)
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten();
+    let head_version: Option<i64> = sqlx::query_scalar(
+        "SELECT version FROM spec_revisions WHERE spec_id = ?1 ORDER BY version DESC LIMIT 1",
+    )
+    .bind(&parsed.spec_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
     let mut value = serde_json::json!({
         "ok": false,
         "error": error,
@@ -1442,13 +1466,14 @@ async fn conflict_json(pool: &SqlitePool, parsed: &ReviseBody, error: String) ->
     if !error.contains("conflict") {
         return serde_json::json!({ "ok": false, "error": error });
     }
-    let head_version: Option<i64> =
-        sqlx::query_scalar("SELECT MAX(version) FROM plan_revisions WHERE plan_id = ?1")
-            .bind(&parsed.plan_id)
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten();
+    let head_version: Option<i64> = sqlx::query_scalar(
+        "SELECT version FROM plan_revisions WHERE plan_id = ?1 ORDER BY version DESC LIMIT 1",
+    )
+    .bind(&parsed.plan_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
     let mut value = serde_json::json!({
         "ok": false,
         "error": error,
@@ -3671,6 +3696,147 @@ mod tests {
             .unwrap(),
             2
         );
+    }
+
+    #[tokio::test]
+    async fn revising_an_unknown_spec_is_a_missing_spec() {
+        let (_dir, pool) = open().await;
+        let edit = |based_on: i64| SpecEdit {
+            spec_id: "ghost".into(),
+            based_on,
+            body: "A body for nobody.".into(),
+            session_id: "session-1".into(),
+            turn_id: "turn-1".into(),
+        };
+        assert_eq!(
+            revise_spec(&pool, edit(0)).await,
+            Err("missing spec".into())
+        );
+        assert_eq!(
+            revise_spec(&pool, edit(3)).await,
+            Err("missing spec".into())
+        );
+        let orphans: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM spec_revisions WHERE spec_id = 'ghost'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(orphans, 0);
+        let json = revise_spec_from_json(
+            &pool,
+            serde_json::json!({
+                "specId": "ghost", "basedOn": 2, "body": "x",
+                "sessionId": "s", "turnId": "t",
+            }),
+        )
+        .await;
+        assert_eq!(json["error"], "missing spec");
+        assert!(json.get("head").is_none());
+    }
+
+    async fn approve_spec_v2(pool: &SqlitePool) {
+        let approve = |version: i64| ApprovalRequest {
+            artifact_kind: "spec".into(),
+            artifact_id: "spec-billing".into(),
+            version,
+            actor_member_id: "member-1".into(),
+            actor_kind: "human".into(),
+            roles: vec!["owner".into()],
+            reason: "checked".into(),
+        };
+        approve_artifact(pool, approve(1)).await.unwrap();
+        let v2 = revise_spec(
+            pool,
+            SpecEdit {
+                spec_id: "spec-billing".into(),
+                based_on: 1,
+                body: "Charge the recorded amount, then reconcile.".into(),
+                session_id: "session-1".into(),
+                turn_id: "turn-9".into(),
+            },
+        )
+        .await
+        .unwrap();
+        approve_artifact(pool, approve(v2)).await.unwrap();
+    }
+
+    async fn billing_workstream(pool: &SqlitePool) {
+        create_workstream(
+            pool,
+            NewWorkstream {
+                id: "ws-billing".into(),
+                project_id: "ax".into(),
+                spec_id: "spec-billing".into(),
+                name: "billing".into(),
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    fn pick(version: i64, turn: &str) -> PlanSelection {
+        PlanSelection {
+            workstream_id: "ws-billing".into(),
+            plan_id: "plan-ledger".into(),
+            plan_version: version,
+            session_id: "session-1".into(),
+            turn_id: turn.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn selecting_a_plan_written_against_a_superseded_spec_needs_review() {
+        let (_dir, pool) = open().await;
+        create_spec_with_plan(&pool, sample("Record the ledger."))
+            .await
+            .unwrap();
+        billing_workstream(&pool).await;
+        // Spec v2 is approved while no plan is selected yet.
+        approve_spec_v2(&pool).await;
+        select_plan(&pool, pick(1, "turn-10")).await.unwrap();
+        assert_eq!(
+            compatibility(&pool, "plan-ledger").await,
+            "compatibility_review_required"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_plan_edit_after_a_spec_change_still_needs_review() {
+        let (_dir, pool) = open().await;
+        create_spec_with_plan(&pool, sample("Record the ledger."))
+            .await
+            .unwrap();
+        billing_workstream(&pool).await;
+        approve_spec_v2(&pool).await;
+        let v2 = revise_plan(
+            &pool,
+            PlanEdit {
+                plan_id: "plan-ledger".into(),
+                based_on: 1,
+                body: "Record the ledger, then the receipt.".into(),
+                session_id: "session-1".into(),
+                turn_id: "turn-11".into(),
+                agent_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        select_plan(&pool, pick(v2, "turn-12")).await.unwrap();
+        assert_eq!(
+            compatibility(&pool, "plan-ledger").await,
+            "compatibility_review_required"
+        );
+    }
+
+    #[tokio::test]
+    async fn selecting_a_plan_for_the_approved_spec_stays_current() {
+        let (_dir, pool) = open().await;
+        create_spec_with_plan(&pool, sample("Record the ledger."))
+            .await
+            .unwrap();
+        billing_workstream(&pool).await;
+        select_plan(&pool, pick(1, "turn-2")).await.unwrap();
+        assert_eq!(compatibility(&pool, "plan-ledger").await, "current");
     }
 
     async fn compatibility(pool: &SqlitePool, plan_id: &str) -> String {

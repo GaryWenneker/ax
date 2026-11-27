@@ -1925,7 +1925,7 @@ ax spec-import '{"projectId":"ax","specId":"billing-rules","specTitle":"Billing 
 ax spec-classify '{"allPlanMode":true,"docType":"spec","actor":"owner","reason":"These plan-mode documents are specifications."}'
 ```
 
-Approving a new spec body marks selections of plans written against the previous spec hash as `compatibility_review_required`. Other specs are left alone, and the plan text is not rewritten. `ax spec-compatibility` records that the selection was checked.
+Approving a new spec body marks selections of plans written against the previous spec hash as `compatibility_review_required`. Selecting a plan revision later gets the same mark when that revision was written against another spec body than the approved one. An edited plan revision keeps the spec revision its parent was written against. Other specs are left alone, and the plan text is not rewritten. `ax spec-compatibility` records that the selection was checked. Revising a spec id that does not exist returns `missing spec`.
 
 `ax spec-policy` records which policy revision applies. A `body` field is rejected. The stored link has the revision id and content hash, not the rule text. Sending the same link again keeps the one row.
 
