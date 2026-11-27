@@ -168,7 +168,7 @@ pub async fn on_turn_finished(
     outcome: &str,
     files: &[String],
 ) -> Result<(), String> {
-    let spec_id = prompt_spec_id(prompt);
+    let spec_id = keep_legacy_spec_id(pool, prompt_spec_id(prompt), prompt).await?;
     let _ = capture_finished_plan(
         pool, project_id, &spec_id, prompt, prompt, outcome, session_id, turn_id, "turn", true,
     )
@@ -177,10 +177,11 @@ pub async fn on_turn_finished(
         // The Markdown mirror of an existing spec is checked by `sync_markdown`.
         if is_spec_markdown(file) && spec_for_markdown(pool, file).await?.is_none() {
             if let Ok(body) = std::fs::read_to_string(root.join(file)) {
+                let spec_id = keep_legacy_spec_id(pool, markdown_spec_id(file), file).await?;
                 let _ = capture_finished_plan(
                     pool,
                     project_id,
-                    &markdown_spec_id(file),
+                    &spec_id,
                     file,
                     file,
                     &body,
@@ -767,6 +768,31 @@ fn markdown_spec_id(file: &str) -> String {
             }
         }
         _ => distinct_slug(file),
+    }
+}
+
+/// Earlier builds named a captured spec by the plain cut [`slug`] of its
+/// prompt or file path. When `id` is not taken yet and a spec with that legacy
+/// id and the same title exists, the legacy id is kept, so later revisions of
+/// the same document stay under one spec.
+async fn keep_legacy_spec_id(pool: &SqlitePool, id: String, text: &str) -> Result<String, String> {
+    let legacy = slug(text);
+    if legacy.is_empty() || legacy == id {
+        return Ok(id);
+    }
+    ensure_spec_schema(pool).await?;
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM specs WHERE id IN (?1, ?2) AND (id = ?1 OR title = ?3)")
+            .bind(&id)
+            .bind(&legacy)
+            .bind(text)
+            .fetch_all(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+    if !ids.contains(&id) && ids.contains(&legacy) {
+        Ok(legacy)
+    } else {
+        Ok(id)
     }
 }
 
@@ -2133,6 +2159,48 @@ pub(crate) mod tests {
         assert_eq!(
             sync_markdown(pool, dir.path(), &spec_id).await.unwrap(),
             None
+        );
+    }
+
+    #[tokio::test]
+    async fn a_long_plan_file_captured_under_its_legacy_id_keeps_that_id() {
+        let _lock = HOME_LOCK.lock().await;
+        let _home = IsolatedHome::new();
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        let file = "docs/plans/2026-11-27-some-feature-name-with-a-long-title.md";
+        let legacy = slug(file);
+        assert_ne!(legacy, markdown_spec_id(file), "the path must be long");
+        let plans = dir.path().join("docs/plans");
+        std::fs::create_dir_all(&plans).unwrap();
+        // A draft stored the way earlier builds named it: the cut slug of the path.
+        capture_finished_plan(
+            pool, "ax", &legacy, file, file, "# Plan\n\nFirst.\n", "s", "t1", "file", true,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        std::fs::write(dir.path().join(file), "# Plan\n\nSecond.\n").unwrap();
+        on_turn_finished(pool, dir.path(), "ax", "s", "t2", "edit", "done", &[file.to_string()])
+            .await
+            .unwrap();
+        let revisions = list_revisions(pool, &legacy).await.unwrap();
+        assert_eq!(revisions.len(), 2, "{revisions:?}");
+        assert!(list_revisions(pool, &markdown_spec_id(file))
+            .await
+            .unwrap()
+            .is_empty());
+
+        // A new long file uses the distinct id.
+        let other = "docs/plans/2026-11-27-another-feature-name-with-a-long-title.md";
+        std::fs::write(dir.path().join(other), "# Other\n").unwrap();
+        on_turn_finished(pool, dir.path(), "ax", "s2", "t1", "edit", "done", &[other.to_string()])
+            .await
+            .unwrap();
+        assert_eq!(
+            list_revisions(pool, &markdown_spec_id(other)).await.unwrap().len(),
+            1
         );
     }
 
