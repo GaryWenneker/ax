@@ -1,6 +1,8 @@
 //! Every path that inserts a memory fills the columns derived from its content
 //! (search_text, origin, trust_level), as `remember` does.
 
+mod common;
+
 use ax_memory::{
     capture_git_history, capture_graph_episodes, save_file_change_with_hunk, save_file_changes,
     save_turn, trust_level_for, TurnRecord,
@@ -63,17 +65,7 @@ async fn every_insert_path_fills_the_derived_columns() {
 
     let repo = dir.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    let git = |args: &[&str]| {
-        let ok = std::process::Command::new("git")
-            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
-            .args(args)
-            .current_dir(&repo)
-            .output()
-            .unwrap()
-            .status
-            .success();
-        assert!(ok, "git {args:?}");
-    };
+    let git = |args: &[&str]| common::git(&repo, &[], args);
     git(&["init", "-q"]);
     std::fs::write(repo.join("a.txt"), "a").unwrap();
     git(&["add", "a.txt"]);

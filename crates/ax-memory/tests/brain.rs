@@ -1,5 +1,7 @@
 //! Brain-scale memory: cues, demotion, archive ANN, episodes, and consolidation.
 
+mod common;
+
 use ax_memory::{
     capture_activity_engrams, capture_graph_episodes, capture_graph_episodes_on, confirm_memory,
     consolidate, memories_for_preflight, prune_turns, recall, recall_for_prompt, remember,
@@ -985,19 +987,8 @@ async fn a_git_capture_lands_in_the_archive() {
     let repo = dir.path().join("repo");
     std::fs::create_dir_all(repo.join("src")).unwrap();
     std::fs::write(repo.join("src/note.txt"), "hello\n").unwrap();
-    let git = |args: &[&str]| {
-        let status = std::process::Command::new("git")
-            .args(args)
-            .current_dir(&repo)
-            .env("GIT_AUTHOR_NAME", "Test")
-            .env("GIT_AUTHOR_EMAIL", "test@example.com")
-            .env("GIT_COMMITTER_NAME", "Test")
-            .env("GIT_COMMITTER_EMAIL", "test@example.com")
-            .status()
-            .unwrap();
-        assert!(status.success(), "{args:?}");
-    };
-    git(&["init"]);
+    let git = |args: &[&str]| common::git(&repo, &[], args);
+    git(&["init", "-q"]);
     git(&["add", "src/note.txt"]);
     git(&[
         "commit",
@@ -2024,19 +2015,8 @@ async fn a_git_capture_redacts_secrets_in_the_title() {
     let repo = dir.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     std::fs::write(repo.join("a.txt"), "a\n").unwrap();
-    let git = |args: &[&str]| {
-        let status = std::process::Command::new("git")
-            .args(args)
-            .current_dir(&repo)
-            .env("GIT_AUTHOR_NAME", "Test")
-            .env("GIT_AUTHOR_EMAIL", "test@example.com")
-            .env("GIT_COMMITTER_NAME", "Test")
-            .env("GIT_COMMITTER_EMAIL", "test@example.com")
-            .status()
-            .unwrap();
-        assert!(status.success(), "{args:?}");
-    };
-    git(&["init"]);
+    let git = |args: &[&str]| common::git(&repo, &[], args);
+    git(&["init", "-q"]);
     git(&["add", "a.txt"]);
     git(&[
         "commit",
