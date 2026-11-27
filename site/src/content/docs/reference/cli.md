@@ -593,7 +593,7 @@ ax capture-git --limit 1 --quiet    # same as the post-commit hook
 
 ### `ax memory export`
 
-Export memories that carry a tag (default: `shared`) to `.ax/memory/shared.jsonl` for team git sync.
+Export memories that carry a tag (default: `shared`) to `.ax/memory/shared.jsonl` for team git sync. Memories tagged `local`, `noshare` or `private`, disabled memories, and kinds the import skips (turns, folder docs and kinds ax does not know) are not exported.
 
 | Flag | Default | Description |
 |---|---|---|

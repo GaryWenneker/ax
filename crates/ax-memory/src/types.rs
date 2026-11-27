@@ -29,6 +29,7 @@ pub const MEMORY_KINDS: &[&str] = &[
     "architecture",
     "convention",
     "note",
+    "lesson",
     "git",
     "turn",
     "doc",

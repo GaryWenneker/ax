@@ -325,3 +325,31 @@ async fn instruction_like_imports_wait_as_candidates() {
         .unwrap();
     assert_eq!(status, "candidate");
 }
+
+#[tokio::test]
+async fn every_exported_kind_round_trips_and_unknown_kinds_are_not_exported() {
+    let (_tmp, root, db) = open().await;
+    let pool = db.pool();
+    let mut lesson = shared("Shared lesson", "Learned the hard way.");
+    lesson.kind = Some("lesson".into());
+    let lesson = remember(pool, lesson).await.unwrap();
+    let mut custom = shared("Custom kind", "Free-text kind from the CLI.");
+    custom.kind = Some("wishlist".into());
+    remember(pool, custom).await.unwrap();
+
+    let exported = export_shared(pool, &root, "shared", None).await.unwrap();
+    assert_eq!(exported.written, 1, "only importable kinds are exported");
+    let text = std::fs::read_to_string(&exported.path).unwrap();
+    assert!(text.contains(&lesson.id) && !text.contains("wishlist"));
+
+    let (_tmp2, _root2, db2) = open().await;
+    let imported = import_shared(db2.pool(), &exported.path).await.unwrap();
+    let row = get(db2.pool(), &lesson.id)
+        .await
+        .unwrap()
+        .expect("lesson imported");
+    db2.close().await;
+    db.close().await;
+    assert_eq!(imported.skipped, 0, "{imported:?}");
+    assert_eq!(row.kind, "lesson");
+}

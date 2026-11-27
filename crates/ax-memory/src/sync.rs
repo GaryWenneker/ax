@@ -24,9 +24,11 @@ pub fn default_shared_path(project_root: &Path) -> PathBuf {
 
 /// Export requires explicit consent via a matching tag and rejects all local,
 /// private, disabled and recall-only records even if they also carry that tag.
+/// It also skips kinds the import would skip, so every exported line can be
+/// imported again.
 pub fn is_shared_export_candidate(memory: &MemoryRow, tag: &str) -> bool {
     memory.enabled
-        && !crate::folder_sync::is_recall_only(&memory.kind)
+        && importable_kind(&memory.kind)
         && memory.tags.iter().any(|t| t.eq_ignore_ascii_case(tag))
         && !memory.tags.iter().any(|t| {
             t.eq_ignore_ascii_case("local")
