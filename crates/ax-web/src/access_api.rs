@@ -162,10 +162,57 @@ struct CreateClient {
 
 pub(crate) async fn pool() -> Result<sqlx::SqlitePool, String> {
     let pool = crate::global_pool::global_pool().await?;
-    let _ = access::bootstrap_owner(&pool, "local-owner", "Local owner", None)
+    ensure_owner(&pool).await?;
+    Ok(pool)
+}
+
+/// Create the local owner when the team is empty. The team is checked with a
+/// read first, so the usual request (team already set up) does not write.
+async fn ensure_owner(pool: &sqlx::SqlitePool) -> Result<(), String> {
+    let has_members: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM team_members)")
+        .fetch_one(pool)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(pool)
+    if has_members {
+        return Ok(());
+    }
+    access::bootstrap_owner(pool, "local-owner", "Local owner", None)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod pool_tests {
+    use super::ensure_owner;
+    use sqlx::Connection;
+    use std::time::Duration;
+
+    /// Every access request checks for the owner; once one exists, that check
+    /// must not need the global.db write lock that the CLI and MCP also use.
+    #[tokio::test]
+    async fn an_existing_owner_is_checked_without_the_write_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("global.db");
+        let pool = crate::global_pool::pool_at(&path).await.unwrap();
+        ensure_owner(&pool).await.unwrap();
+
+        // Another process holds the write lock.
+        let mut writer = sqlx::SqliteConnection::connect(&format!("sqlite://{}", path.display()))
+            .await
+            .unwrap();
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut writer)
+            .await
+            .unwrap();
+
+        let checked = tokio::time::timeout(Duration::from_secs(2), ensure_owner(&pool)).await;
+        sqlx::query("ROLLBACK").execute(&mut writer).await.unwrap();
+        assert!(
+            matches!(checked, Ok(Ok(()))),
+            "owner check waited for the write lock: {checked:?}"
+        );
+    }
 }
 
 fn role(value: &str) -> Result<access::MemberRole, String> {
