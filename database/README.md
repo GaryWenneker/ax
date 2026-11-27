@@ -34,7 +34,7 @@ Web Portal UI
 ./scripts/create-global-db.sh
 ```
 
-This creates `~/.ax/global.db` with the complete schema including:
+This creates `~/.ax/global.db` with the complete schema. It refuses to run when that file already exists, so it never writes into a live database. It includes:
 - Meta tables for project/workspace tracking
 - Aggregation tables for global node/document/edge storage
 - Cross-project feature tables
