@@ -362,6 +362,8 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
   const [oldestLoadedDay, setOldestLoadedDay] = useState('');
   const [historyExhausted, setHistoryExhausted] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  /** Set when an older-day chunk failed; automatic loading stops until the user retries. */
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [projectLabel, setProjectLabel] = useState('…');
   const [projectRoot, setProjectRoot] = useState('');
   const [fallbackLabel, setFallbackLabel] = useState('');
@@ -424,6 +426,7 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
       setLogDay(d.logDay);
       setOldestLoadedDay(d.logDay);
       setHistoryExhausted(false);
+      setHistoryError(null);
     }
     if (d.projectRoot) setProjectRoot(d.projectRoot);
     if (d.projectLabel) setProjectLabel(d.projectLabel);
@@ -759,6 +762,7 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
           setSelectedId(null);
           setCursorId(null);
           setHistoryExhausted(false);
+          setHistoryError(null);
           setOldestLoadedDay('');
           setCaughtUp(false);
         },
@@ -834,16 +838,22 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
     if (logDay && !oldestLoadedDay) setOldestLoadedDay(logDay);
   }, [logDay, oldestLoadedDay]);
 
-  const loadOlderDayRef = useRef<() => void>(() => {});
-  loadOlderDayRef.current = () => {
+  /** `retry` is true only for an explicit user action after a failed chunk. */
+  const loadOlderDayRef = useRef<(retry?: boolean) => void>(() => {});
+  loadOlderDayRef.current = (retry = false) => {
     if (loadingHistory || historyExhausted || !oldestLoadedDay) return;
+    if (historyError && !retry) return;
     setLoadingHistory(true);
+    setHistoryError(null);
     // Server walks back past gaps (a day with no verbose activity, or a
     // history-mangling bug) to find the nearest real dated file before
     // `oldestLoadedDay` — it may jump back several calendar days at once.
     void fetchMcpTraceChunk(oldestLoadedDay)
       .then((res) => {
-        if (!res.ok) return;
+        if (!res.ok) {
+          setHistoryError(res.error || 'the server did not return it');
+          return;
+        }
         if (!res.day) {
           setHistoryExhausted(true);
           return;
@@ -857,7 +867,7 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
         setOldestLoadedDay(res.day);
         if (!res.hasOlder) setHistoryExhausted(true);
       })
-      .catch(() => {})
+      .catch(() => setHistoryError('the server did not answer'))
       .finally(() => setLoadingHistory(false));
   };
 
@@ -867,9 +877,9 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
   useEffect(() => {
     if (!live || !caughtUp) return;
     if (entries.length > 0) return;
-    if (loadingHistory || historyExhausted || !oldestLoadedDay) return;
+    if (loadingHistory || historyExhausted || historyError || !oldestLoadedDay) return;
     loadOlderDayRef.current();
-  }, [live, caughtUp, entries.length, loadingHistory, historyExhausted, oldestLoadedDay]);
+  }, [live, caughtUp, entries.length, loadingHistory, historyExhausted, historyError, oldestLoadedDay]);
 
   useEffect(() => {
     const root = scrollerRef.current;
@@ -1399,6 +1409,13 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
           <div className="mcp-trace-empty">
             {loadingHistory ? (
               'Loading earlier history…'
+            ) : historyError ? (
+              <>
+                Could not load earlier history: {historyError}.{' '}
+                <button type="button" className="linkish" onClick={() => loadOlderDayRef.current(true)}>
+                  Retry
+                </button>
+              </>
             ) : historyExhausted ? (
               verboseFromApi === false && !logExists && !fallbackLabel ? (
                 `No MCP log in ${projectLabel || 'this project'} yet. Reconnect ax MCP with this folder as --path.`
@@ -1592,6 +1609,14 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
         <div ref={historySentinelRef} className="mcp-trace-history-sentinel" aria-hidden="true" />
         {loadingHistory && entries.length > 0 ? (
           <div className="mcp-trace-history-status">Loading earlier history…</div>
+        ) : null}
+        {historyError && !loadingHistory && entries.length > 0 ? (
+          <div className="mcp-trace-history-status">
+            Could not load earlier history: {historyError}.{' '}
+            <button type="button" className="linkish" onClick={() => loadOlderDayRef.current(true)}>
+              Retry
+            </button>
+          </div>
         ) : null}
         {historyExhausted && entries.length > 0 ? (
           <div className="mcp-trace-history-status mcp-trace-history-status--end">

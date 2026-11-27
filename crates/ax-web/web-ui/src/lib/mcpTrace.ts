@@ -780,6 +780,10 @@ export async function fetchMcpTraceChunk(beforeDay: string): Promise<{
   error?: string;
 }> {
   const r = await fetch(`${MCP_TRACE_CHUNK_URL}?day=${encodeURIComponent(beforeDay)}`);
+  if (!r.ok) {
+    const body = (await r.json().catch(() => null)) as { error?: string } | null;
+    return { ok: false, error: body?.error || `HTTP ${r.status}` };
+  }
   return r.json() as Promise<{
     ok: boolean;
     day?: string | null;
