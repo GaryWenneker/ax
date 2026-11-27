@@ -713,7 +713,7 @@ Do not pass `write` as a positional argument — it was parsed as project path i
 ### Policy smoke tests
 
 ```bash
-ax policy test          # match, guard, bootstrap, subagents checks
+ax policy test          # index, match, inject, guard and bootstrap checks
 ax policy test --json   # machine-readable output
 ```
 

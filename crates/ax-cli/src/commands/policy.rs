@@ -564,7 +564,12 @@ struct PolicyTestResult {
     detail: String,
 }
 
-pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
+/// `ax policy test`: health checks that hold on any initialized project.
+///
+/// Checks that need a particular rule or file are skipped when it is absent.
+/// `self_check` (hidden `--self`) adds assertions that only hold inside the ax
+/// repository, for its own CI.
+pub async fn run_test(path: Option<String>, json: bool, self_check: bool) -> Result<(), String> {
     let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let mut results: Vec<PolicyTestResult> = Vec::new();
@@ -590,7 +595,7 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
     let status = ax.policy_status().await.map_err(|e| e.to_string())?;
     check(
         "policy_status",
-        status.indexed && status.rules >= 4,
+        status.indexed && status.rules > 0,
         &format!(
             "mode={} rules={} skills={}",
             status.mode, status.rules, status.skills
@@ -601,25 +606,10 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
     let always: Vec<_> = rules.iter().filter(|r| r.always_apply).collect();
-    check(
-        "always_apply_rules",
-        always.len() >= 4,
-        &format!("{} alwaysApply rules", always.len()),
-    );
-
-    let subagents_rule = rules.iter().any(|r| r.id == "subagents");
-    check("subagents_rule", subagents_rule, "subagents rule indexed");
-
     let skills = ax_policy::list_skills(ax.db_pool())
         .await
         .map_err(|e| e.to_string())?;
-    let subagents_skill = skills.iter().any(|s| s.name == "subagents");
     let startup_skill = skills.iter().any(|s| s.name == "startup");
-    check(
-        "subagents_skill",
-        subagents_skill,
-        "subagents skill indexed",
-    );
     check("startup_skill", startup_skill, "startup skill indexed");
 
     let baseline = MatchInput {
@@ -629,93 +619,83 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
         changed_files: vec![],
     };
     let baseline_match = ax.match_policy(baseline).await.map_err(|e| e.to_string())?;
+    let missing_always: Vec<&str> = always
+        .iter()
+        .filter(|r| r.enabled && r.status == "approved")
+        .filter(|r| !baseline_match.rules.iter().any(|m| m.id == r.id))
+        .map(|r| r.id.as_str())
+        .collect();
     check(
         "match_baseline",
-        baseline_match.rules.len() >= 4,
-        &format!("{} rules matched", baseline_match.rules.len()),
+        missing_always.is_empty(),
+        &if missing_always.is_empty() {
+            format!(
+                "{} rules matched, every alwaysApply rule included",
+                baseline_match.rules.len()
+            )
+        } else {
+            format!(
+                "alwaysApply rules not matched: {}",
+                missing_always.join(", ")
+            )
+        },
     );
-
-    let release = MatchInput {
-        prompt: "deploy release latest.txt".into(),
-        cwd: root.clone(),
-        open_files: vec![root.join("site/public/releases/latest.txt")],
-        changed_files: vec![],
-    };
-    let release_match = ax.match_policy(release).await.map_err(|e| e.to_string())?;
-    let has_release = release_match
-        .rules
-        .iter()
-        .any(|r| r.id == "release-all-platforms");
-    check(
-        "match_release_trigger",
-        has_release,
-        &format!(
-            "release rule matched={has_release}, skills={}",
-            release_match.skills.len()
-        ),
-    );
-
-    if skills.iter().any(|s| s.name == "savings-gauntlet") {
-        let savings = MatchInput {
-            prompt: "rerun the savings gauntlet".into(),
-            cwd: root.clone(),
-            open_files: vec![],
-            changed_files: vec![],
-        };
-        let savings_match = ax.match_policy(savings).await.map_err(|e| e.to_string())?;
-        let matched = savings_match
-            .skills
-            .iter()
-            .any(|s| s.name == "savings-gauntlet");
-        check(
-            "match_savings_gauntlet",
-            matched,
-            &format!("savings-gauntlet matched={matched}"),
-        );
-    }
 
     let meta = ax_policy::build_preflight_meta(&status, &baseline_match);
     check(
         "preflight_meta",
-        meta.guard_required && meta.matched_rules >= 4,
+        meta.matched_rules == baseline_match.rules.len(),
         &format!(
             "guardRequired={} matchedRules={}",
             meta.guard_required, meta.matched_rules
         ),
     );
 
-    let inject_ok = baseline_match.inject.contains("<ax_policy")
-        && baseline_match.inject.contains("agent-workflow");
-    check("inject_block", inject_ok, "inject contains team policy");
+    if baseline_match.rules.is_empty() {
+        check("inject_block", true, "skipped — no rule matched");
+    } else {
+        check(
+            "inject_block",
+            baseline_match.inject.contains("<ax_policy"),
+            "inject contains team policy",
+        );
+    }
 
-    let guard_target = root.join("crates/ax-cli/src/main.rs");
-    let guard_ok = ax
-        .guard_operation(
-            &guard_target,
-            GuardOp::Write,
-            std::fs::read(&guard_target).ok().as_deref(),
-        )
+    let new_target = root.join(".ax/policy-test-new.rs");
+    let guard_new = ax
+        .guard_operation(&new_target, GuardOp::Write, Some(b"fn main() {}\n"))
         .await
         .map(|r| r.allowed)
         .unwrap_or(false);
-    check(
-        "guard_utf8_existing",
-        guard_ok,
-        "existing UTF-8 file allowed",
-    );
+    check("guard_utf8_new", guard_new, "new UTF-8 file allowed");
 
-    let new_target = root.join("target-dev/policy-test-new.rs");
-    let bom = [0xEFu8, 0xBB, 0xBF, b'x'];
-    let guard_bom = ax
-        .guard_operation(&new_target, GuardOp::Write, Some(&bom))
-        .await
-        .map(|r| !r.allowed)
-        .unwrap_or(false);
-    check(
-        "guard_utf8_bom_blocked",
-        guard_bom,
-        "UTF-8 BOM in proposed content blocked",
-    );
+    let has_utf8_rule = rules.iter().any(|r| {
+        let id = r.id.to_lowercase();
+        r.enabled
+            && r.level.eq_ignore_ascii_case("CRITICAL")
+            && (id.contains("utf8")
+                || id.contains("encoding")
+                || r.tags.iter().any(|t| t.eq_ignore_ascii_case("utf8")))
+    });
+    if has_utf8_rule {
+        let bom = [0xEFu8, 0xBB, 0xBF, b'x'];
+        let guard_bom = ax
+            .guard_operation(&new_target, GuardOp::Write, Some(&bom))
+            .await
+            .map(|r| !r.allowed)
+            .unwrap_or(false);
+        check(
+            "guard_utf8_bom_blocked",
+            guard_bom,
+            "UTF-8 BOM in proposed content blocked",
+        );
+    } else {
+        check(
+            "guard_utf8_bom_blocked",
+            true,
+            "skipped — no CRITICAL UTF-8 rule indexed",
+        );
+    }
 
     let env_target = root.join(".env");
     let has_secrets_rule = rules
@@ -748,12 +728,94 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
         .any(|c| c.label.contains("startup") && c.ok);
     check("bootstrap_startup", startup_ok, "startup skill file OK");
 
-    let ide = ax_policy::sync_ide_bootstrap(&root, false).map_err(|e| e.to_string())?;
-    let cursor_ok = ide
-        .checks
-        .iter()
-        .any(|c| c.label.contains("ax.mdc") && c.ok);
-    check("bootstrap_cursor", cursor_ok, ".cursor/rules/ax.mdc OK");
+    if root.join(".cursor").is_dir() {
+        let ide = ax_policy::sync_ide_bootstrap(&root, false).map_err(|e| e.to_string())?;
+        let cursor_ok = ide
+            .checks
+            .iter()
+            .any(|c| c.label.contains("ax.mdc") && c.ok);
+        check("bootstrap_cursor", cursor_ok, ".cursor/rules/ax.mdc OK");
+    } else {
+        check("bootstrap_cursor", true, "skipped — no .cursor folder");
+    }
+
+    if self_check {
+        check(
+            "self_always_apply_rules",
+            always.len() >= 4,
+            &format!("{} alwaysApply rules", always.len()),
+        );
+        check(
+            "self_subagents_rule",
+            rules.iter().any(|r| r.id == "subagents"),
+            "subagents rule indexed",
+        );
+        check(
+            "self_subagents_skill",
+            skills.iter().any(|s| s.name == "subagents"),
+            "subagents skill indexed",
+        );
+        check(
+            "self_inject_agent_workflow",
+            baseline_match.inject.contains("agent-workflow"),
+            "inject contains agent-workflow",
+        );
+
+        let release = MatchInput {
+            prompt: "deploy release latest.txt".into(),
+            cwd: root.clone(),
+            open_files: vec![root.join("site/public/releases/latest.txt")],
+            changed_files: vec![],
+        };
+        let release_match = ax.match_policy(release).await.map_err(|e| e.to_string())?;
+        let has_release = release_match
+            .rules
+            .iter()
+            .any(|r| r.id == "release-all-platforms");
+        check(
+            "self_match_release_trigger",
+            has_release,
+            &format!(
+                "release rule matched={has_release}, skills={}",
+                release_match.skills.len()
+            ),
+        );
+
+        if skills.iter().any(|s| s.name == "savings-gauntlet") {
+            let savings = MatchInput {
+                prompt: "rerun the savings gauntlet".into(),
+                cwd: root.clone(),
+                open_files: vec![],
+                changed_files: vec![],
+            };
+            let savings_match = ax.match_policy(savings).await.map_err(|e| e.to_string())?;
+            let matched = savings_match
+                .skills
+                .iter()
+                .any(|s| s.name == "savings-gauntlet");
+            check(
+                "self_match_savings_gauntlet",
+                matched,
+                &format!("savings-gauntlet matched={matched}"),
+            );
+        }
+
+        let guard_target = root.join("crates/ax-cli/src/main.rs");
+        let guard_ok = ax
+            .guard_operation(
+                &guard_target,
+                GuardOp::Write,
+                std::fs::read(&guard_target).ok().as_deref(),
+            )
+            .await
+            .map(|r| r.allowed)
+            .unwrap_or(false);
+        check(
+            "self_guard_utf8_existing",
+            guard_ok && guard_target.is_file(),
+            "existing UTF-8 file allowed",
+        );
+    }
 
     let failed: Vec<_> = results.iter().filter(|r| !r.ok).collect();
     if json {
@@ -775,7 +837,7 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
     }
 
     if !failed.is_empty() {
-        std::process::exit(1);
+        return Err(format!("{} policy check(s) failed", failed.len()));
     }
     Ok(())
 }

@@ -1498,7 +1498,7 @@ ax policy guard old-file.txt --delete
 
 ### `ax policy test [path]`
 
-Smoke tests: match, guard, bootstrap, subagents.
+Policy health checks that hold on any initialized project: policy indexed, the `startup` skill present, every alwaysApply rule matched and injected, a new UTF-8 file allowed by the guard, and the bootstrap files in place. Checks that need a particular rule or folder (a CRITICAL UTF-8 rule, a secrets rule, `.cursor/`) report `skipped` when it is absent. Exits with status 1 when any check fails.
 
 | Flag | Description |
 |---|---|

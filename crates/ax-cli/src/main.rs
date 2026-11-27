@@ -2028,11 +2028,14 @@ enum PolicyCommands {
         #[arg(long)]
         json: bool,
     },
-    /// Run policy smoke tests (match, guard, bootstrap, subagents)
+    /// Run policy health checks (index, match, inject, guard, bootstrap)
     Test {
         path: Option<String>,
         #[arg(long)]
         json: bool,
+        /// Also run the checks that only hold inside the ax repository
+        #[arg(long = "self", hide = true)]
+        self_check: bool,
     },
     /// Verify ax preflight instruction and IDE bootstrap files (Recall instruction-sync parity)
     Sync {
@@ -3278,7 +3281,11 @@ async fn async_main() {
                 json,
             } => commands::policy::run_guard(path, file, delete, json).await,
             PolicyCommands::Sync { path, fix, force } => commands::policy::run_sync(path, fix, force).await,
-            PolicyCommands::Test { path, json } => commands::policy::run_test(path, json).await,
+            PolicyCommands::Test {
+                path,
+                json,
+                self_check,
+            } => commands::policy::run_test(path, json, self_check).await,
             PolicyCommands::Capture {
                 prompt,
                 path,
