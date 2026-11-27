@@ -623,22 +623,33 @@ html[data-ax-theme] .ax-project-badge-icon {
 .mcp-trace-calm .mcp-kind-badge .badge-icon { color: var(--kind-color, var(--accent-text)); }
 
 /* Prompt in (blue) vs returned to agent (green); ax's own work stays grey. */
+:root {
+  --dir-in: #4fa8ff;
+  --dir-out: #3ee4b2;
+  --dir-internal: #8d8d8d;
+}
+/* Darker inks keep the marks at 3:1 or more on the light page and panels. */
+html[data-ax-theme="azure-light"] {
+  --dir-in: #0067c0;
+  --dir-out: #0a7c5c;
+  --dir-internal: #707070;
+}
 .mcp-trace-calm .mcp-trace-row--dir-in,
 .mcp-blade-steps .mcp-blade-step--dir-in,
 .mcp-dir-legend-item--in {
-  --dir-ink: #4fa8ff;
+  --dir-ink: var(--dir-in);
   --dir-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 16'%3E%3Cg fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='14' cy='8' r='5'/%3E%3Cpath d='M19.8 8H26.4M23.6 5.3 26.6 8 23.6 10.7'/%3E%3C/g%3E%3C/svg%3E");
 }
 .mcp-trace-calm .mcp-trace-row--dir-out,
 .mcp-blade-steps .mcp-blade-step--dir-out,
 .mcp-dir-legend-item--out {
-  --dir-ink: #3ee4b2;
+  --dir-ink: var(--dir-out);
   --dir-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 16'%3E%3Cg fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='14' cy='8' r='5'/%3E%3Cpath d='M8.2 8H1.6M4.4 5.3 1.4 8 4.4 10.7'/%3E%3C/g%3E%3C/svg%3E");
 }
 .mcp-trace-calm .mcp-trace-row--dir-internal,
 .mcp-blade-steps .mcp-blade-step--dir-internal,
 .mcp-dir-legend-item--internal {
-  --dir-ink: #8d8d8d;
+  --dir-ink: var(--dir-internal);
   --dir-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 16'%3E%3Cg fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round'%3E%3Ccircle cx='14' cy='8' r='5'/%3E%3Cpath d='M9.2 8h9.6'/%3E%3C/g%3E%3C/svg%3E");
 }
 .mcp-dir-legend-item--neural {
@@ -655,7 +666,7 @@ html[data-ax-theme] .ax-project-badge-icon {
   border: none;
   border-radius: 0;
   box-shadow: none;
-  background-color: var(--dir-ink, #8d8d8d);
+  background-color: var(--dir-ink, var(--dir-internal));
   -webkit-mask: var(--dir-mark) center / 28px 16px no-repeat;
   mask: var(--dir-mark) center / 28px 16px no-repeat;
 }
@@ -664,14 +675,14 @@ html[data-ax-theme] .ax-project-badge-icon {
 .mcp-trace-calm .page-item--selected.page-item--graph:hover .page-item-node,
 .mcp-blade-steps .page-item--graph:hover .page-item-node,
 .mcp-blade-steps .page-item--selected.page-item--graph .page-item-node {
-  background-color: var(--dir-ink, #8d8d8d);
+  background-color: var(--dir-ink, var(--dir-internal));
   box-shadow: none;
 }
 .mcp-trace-calm .mcp-trace-group {
   --conv-color: hsl(var(--conv-hue) 70% 62%);
 }
 .mcp-trace-calm .mcp-trace-group .page-item-node {
-  background-color: var(--dir-ink, #8d8d8d);
+  background-color: var(--dir-ink, var(--dir-internal));
 }
 .mcp-trace-calm .mcp-trace-group:is(.mcp-trace-group--prev, .mcp-trace-group--next)::after {
   content: "";
@@ -696,7 +707,7 @@ html[data-ax-theme] .ax-project-badge-icon {
   height: 16px;
   border: none;
   border-radius: 0;
-  background-color: var(--dir-ink, #8d8d8d);
+  background-color: var(--dir-ink, var(--dir-internal));
   -webkit-mask: var(--dir-mark) center / 28px 16px no-repeat;
   mask: var(--dir-mark) center / 28px 16px no-repeat;
 }
@@ -980,10 +991,10 @@ html[data-ax-theme] .ax-project-badge-icon {
 .mcp-blade-dir { display: inline-flex; align-items: center; gap: 6px; }
 .mcp-blade-dir::before {
   content: ""; width: 8px; height: 8px; border-radius: 50%;
-  border: 1.5px solid var(--dir-ink, #8d8d8d);
+  border: 1.5px solid var(--dir-ink, var(--dir-internal));
 }
 .mcp-blade-steps { overflow: visible; }
-.mcp-blade-steps .mcp-blade-step .page-item-node { background-color: var(--dir-ink, #8d8d8d); }
+.mcp-blade-steps .mcp-blade-step .page-item-node { background-color: var(--dir-ink, var(--dir-internal)); }
 .mcp-blade-steps .page-item-title { font: 400 13px var(--font-ui); color: var(--accent-text); }
 .mcp-blade-steps .page-item-meta { font-family: var(--font-ui); font-size: 13px; font-variant-numeric: tabular-nums; color: var(--text); }
 :is(html, html[data-ax-theme]) .mcp-blade-steps .page-item-badge.mcp-kind-badge {
