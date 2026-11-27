@@ -339,20 +339,18 @@ pub async fn check_linked_files(
         "Linked files changed since the approved spec. The approved body was not rewritten.\n{}",
         drifted.join("\n")
     );
-    if latest_with_body(pool, spec_id, &note).await?.is_none() {
-        let approved = approved_revision(pool, spec_id).await?;
-        insert_revision(
-            pool,
-            spec_id,
-            "change_requested",
-            &note,
-            "drift",
-            session_id,
-            turn_id,
-            approved.as_ref().map(|item| item.version),
-        )
-        .await?;
-    }
+    let approved = approved_revision(pool, spec_id).await?;
+    insert_revision_if_new(
+        pool,
+        spec_id,
+        "change_requested",
+        &note,
+        "drift",
+        session_id,
+        turn_id,
+        approved.as_ref().map(|item| item.version),
+    )
+    .await?;
     Ok(true)
 }
 
@@ -376,19 +374,17 @@ pub async fn sync_markdown(
     if file_hash == approved.content_hash || file_body == stored_body(&approved.body) {
         return Ok(None);
     }
-    if latest_with_body(pool, spec_id, file_body).await?.is_none() {
-        insert_revision(
-            pool,
-            spec_id,
-            "draft",
-            file_body,
-            "file",
-            "",
-            "",
-            Some(approved.version),
-        )
-        .await?;
-    }
+    insert_revision_if_new(
+        pool,
+        spec_id,
+        "draft",
+        file_body,
+        "file",
+        "",
+        "",
+        Some(approved.version),
+    )
+    .await?;
     Ok(Some((approved.content_hash, file_hash)))
 }
 
@@ -409,15 +405,18 @@ pub async fn spec_context_block(pool: &SqlitePool, root: &Path, session_id: &str
         return format!("spec: {spec_id}\napproved: none\npointer: ax spec show {spec_id}");
     };
     let conflict = sync_markdown(pool, root, &spec_id).await.ok().flatten();
-    let drift = check_linked_files(pool, root, &spec_id, session_id, "preflight")
-        .await
-        .unwrap_or(false);
+    // A failed check is not evidence that nothing drifted.
+    let drift = match check_linked_files(pool, root, &spec_id, session_id, "preflight").await {
+        Ok(true) => "yes",
+        Ok(false) => "no",
+        Err(_) => "unknown",
+    };
     let mut lines = vec![
         format!("spec: {spec_id}"),
         format!("approved: v{}", approved.version),
         format!("hash: {}", approved.content_hash),
         format!("objective: {}", first_line(&approved.body)),
-        format!("drift: {}", if drift { "yes" } else { "no" }),
+        format!("drift: {drift}"),
         format!("pointer: ax spec show {spec_id}@{}", approved.version),
     ];
     if let Some((approved_hash, file_hash)) = conflict {
@@ -568,23 +567,6 @@ async fn revision_for_turn(
     }
 }
 
-async fn latest_with_body(
-    pool: &SqlitePool,
-    spec_id: &str,
-    body: &str,
-) -> Result<Option<i64>, String> {
-    let hash = hash_text(stored_body(body));
-    sqlx::query_scalar(
-        "SELECT version FROM spec_revisions WHERE spec_id = ?1 AND content_hash = ?2
-         ORDER BY version DESC LIMIT 1",
-    )
-    .bind(spec_id)
-    .bind(hash)
-    .fetch_optional(pool)
-    .await
-    .map_err(|error| error.to_string())
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn insert_revision(
     pool: &SqlitePool,
@@ -596,22 +578,60 @@ async fn insert_revision(
     turn_id: &str,
     based_on: Option<i64>,
 ) -> Result<SpecRevision, String> {
-    let body = stored_body(body);
-    let version: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(version), 0) + 1 FROM spec_revisions WHERE spec_id = ?1",
+    insert_revision_where(
+        pool, spec_id, status, body, source, session_id, turn_id, based_on, false,
     )
-    .bind(spec_id)
-    .fetch_one(pool)
+    .await?
+    .ok_or_else(|| format!("spec {spec_id}: revision was not stored"))
+}
+
+/// Store a revision unless one with the same body already exists for the spec.
+/// Returns `None` when such a revision exists.
+#[allow(clippy::too_many_arguments)]
+async fn insert_revision_if_new(
+    pool: &SqlitePool,
+    spec_id: &str,
+    status: &str,
+    body: &str,
+    source: &str,
+    session_id: &str,
+    turn_id: &str,
+    based_on: Option<i64>,
+) -> Result<Option<SpecRevision>, String> {
+    insert_revision_where(
+        pool, spec_id, status, body, source, session_id, turn_id, based_on, true,
+    )
     .await
-    .map_err(|error| error.to_string())?;
+}
+
+/// One statement picks the next version and inserts the row, so concurrent
+/// callers never compute the same version. With `only_new`, the same
+/// statement also skips a body the spec already has.
+#[allow(clippy::too_many_arguments)]
+async fn insert_revision_where(
+    pool: &SqlitePool,
+    spec_id: &str,
+    status: &str,
+    body: &str,
+    source: &str,
+    session_id: &str,
+    turn_id: &str,
+    based_on: Option<i64>,
+    only_new: bool,
+) -> Result<Option<SpecRevision>, String> {
+    let body = stored_body(body);
     let content_hash = hash_text(body);
-    sqlx::query(
+    let version: Option<i64> = sqlx::query_scalar(
         "INSERT INTO spec_revisions
          (spec_id, version, status, body, content_hash, source, session_id, turn_id, based_on, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+         SELECT ?1, COALESCE(MAX(version), 0) + 1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+         FROM spec_revisions WHERE spec_id = ?1
+         HAVING ?10 = 0 OR NOT EXISTS (
+             SELECT 1 FROM spec_revisions WHERE spec_id = ?1 AND content_hash = ?4
+         )
+         RETURNING version",
     )
     .bind(spec_id)
-    .bind(version)
     .bind(status)
     .bind(body)
     .bind(&content_hash)
@@ -620,16 +640,17 @@ async fn insert_revision(
     .bind(turn_id)
     .bind(based_on)
     .bind(now_ms())
-    .execute(pool)
+    .bind(only_new)
+    .fetch_optional(pool)
     .await
     .map_err(|error| error.to_string())?;
-    Ok(SpecRevision {
+    Ok(version.map(|version| SpecRevision {
         spec_id: spec_id.to_string(),
         version,
         status: status.to_string(),
         body: body.to_string(),
         content_hash,
-    })
+    }))
 }
 
 async fn bind_session(pool: &SqlitePool, session_id: &str, spec_id: &str) -> Result<(), String> {
@@ -2282,6 +2303,85 @@ pub(crate) mod tests {
         assert_eq!(approved.body, "Keep src/lib.rs stable.");
         let history = list_revisions(pool, "billing").await.unwrap();
         assert!(history.iter().any(|row| row.status == "change_requested"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_drift_checks_store_one_note_and_all_report_drift() {
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        let code = dir.path().join("src");
+        std::fs::create_dir_all(&code).unwrap();
+        std::fs::write(code.join("lib.rs"), "fn price() {}\n").unwrap();
+        capture_finished_plan(
+            pool,
+            "ax",
+            "billing",
+            "Billing",
+            "make a plan",
+            "Keep src/lib.rs stable.",
+            "s",
+            "t1",
+            "turn",
+            true,
+        )
+        .await
+        .unwrap();
+        approve_revision(pool, dir.path(), "billing", 1, &[])
+            .await
+            .unwrap();
+        std::fs::write(code.join("lib.rs"), "fn price() { 1 }\n").unwrap();
+        let tasks: Vec<_> = (0..12)
+            .map(|index| {
+                let pool = pool.clone();
+                let root = dir.path().to_path_buf();
+                tokio::spawn(async move {
+                    check_linked_files(&pool, &root, "billing", "s", &format!("t{index}")).await
+                })
+            })
+            .collect();
+        for task in tasks {
+            assert_eq!(task.await.unwrap(), Ok(true));
+        }
+        let notes: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM spec_revisions WHERE spec_id = 'billing' AND status = 'change_requested'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert_eq!(notes, 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_drift_check_is_reported_as_unknown_not_as_no_drift() {
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        let _lock = HOME_LOCK.lock().await;
+        let _home = IsolatedHome::new();
+        capture_finished_plan(
+            pool,
+            "ax",
+            "billing",
+            "Billing",
+            "make a plan",
+            "Keep the ledger.",
+            "s",
+            "t1",
+            "turn",
+            true,
+        )
+        .await
+        .unwrap();
+        approve_revision(pool, dir.path(), "billing", 1, &[])
+            .await
+            .unwrap();
+        sqlx::query("DROP TABLE spec_file_seals")
+            .execute(pool)
+            .await
+            .unwrap();
+        let context = spec_context_block(pool, dir.path(), "s").await;
+        assert!(context.contains("drift: unknown"), "{context}");
     }
 
     #[tokio::test]
