@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { accessJson } from '../lib/accessApi';
 import { memoryRowAge } from '../memoryHeadline';
 import { useNow } from '../lib/useNow';
+import { replicationErrorSlot, type ReplicationErrorSlot } from '../lib/replicationErrors';
 import ModalShell from './ModalShell';
 import Codicon from './Codicon';
 import ServiceStatus, { type ServiceState } from './ServiceStatus';
@@ -116,6 +117,8 @@ export default function ReplicationSetup({ locked, onChanged }: { locked: boolea
   const paired = !!state?.running && state.active_project && !state.safety?.sync_failed && (state.settings?.config.role === 'primary' ? peers > 0 : complete);
   const serviceState: ServiceState = error || state?.runtime_error || state?.safety?.sync_failed ? 'error' : !state?.running ? 'stopped' : (state.safety?.review_required || state.sync?.compatibility_warning) ? 'warning' : 'running';
   const saved = state?.settings;
+  const errorSlot = replicationErrorSlot({ setup: setupOpen, restart, remove: confirmRemove, stop: confirmStop });
+  const errorIn = (slot: ReplicationErrorSlot) => error && errorSlot === slot ? <p role="alert" className="settings-toast settings-toast--err">{error}</p> : null;
   async function credential() {
     if (issued) return issued;
     const result = await accessJson<{ token: string }>('/api/access/nodes/local/credential', { method: 'POST' });
@@ -129,7 +132,7 @@ export default function ReplicationSetup({ locked, onChanged }: { locked: boolea
   </div></label>;
   return <div className="access-client replication-setup">
     <div className="access-client-header"><div><h3>{saved ? 'Replication configuration' : 'Configure this Ax environment'}</h3><p>{saved ? 'Manage the Primary or Replica configured for this project.' : 'Make it a Primary or connect it to a Primary as a Replica.'}</p></div></div>
-    {error && <p role="alert" className="settings-toast settings-toast--err">{error}</p>}
+    {errorIn('page')}
     {message && <p role="status" className="settings-toast settings-toast--ok">{message}</p>}
     <div className="service-toolbar"><ServiceStatus state={serviceState} label={serviceState === 'error' ? 'Replication needs attention' : state?.running ? 'Replication service running' : saved ? 'Replication stopped' : 'Replication not configured'} active={paired} />
       {state?.running && <button type="button" className="btn" disabled={locked || busy} onClick={() => setConfirmStop(true)}>Stop managed node</button>}
@@ -181,7 +184,7 @@ export default function ReplicationSetup({ locked, onChanged }: { locked: boolea
       </div>
     </div> : <button type="button" className="btn primary" disabled={locked || busy} onClick={() => { editing.current = true; setSetupOpen(true); }}>Set up replication</button>}
     {setupOpen && <ModalShell title="Set up replication" onClose={() => { if (!busy) { setSetupOpen(false); editing.current = false; } }}>
-      {error && !setupOpen && <p role="alert">{error}</p>}
+      {errorIn('setup')}
 <form className="access-form" onSubmit={activate} aria-label="Replication setup">
       <label>Local node role<SettingsSelect className="settings-select" aria-label="Local node role" value={role} disabled={disabled} onChange={e => { setRole(e.target.value as 'primary' | 'replica'); setToken(''); setIssued(null); setMessage(null); }}><option value="primary">Primary — publish this project</option><option value="replica">Replica — connect to a Primary</option></SettingsSelect></label>
       <details><summary>Advanced options</summary><p className="access-note">IDs are generated for a Primary and returned by authenticated enrollment for a Replica. Override a project ID only when the Primary serves multiple projects.</p>
@@ -209,8 +212,8 @@ export default function ReplicationSetup({ locked, onChanged }: { locked: boolea
       <button type="submit" className="btn primary" disabled={disabled}>{phase === 'connecting' ? 'Connecting…' : role === 'primary' ? 'Start Primary' : 'Connect to Primary'}</button>
     </form>
     </ModalShell>}
-    {restart && <ModalShell title={role === 'primary' ? 'Restart Primary' : 'Reconnect Replica'} onClose={() => !busy && setRestart(false)}><p>Restart with the securely stored credential. Leave the field empty to reuse it, or enter a replacement.</p><form className="access-form" onSubmit={activate}>{credentialControl}<div className="access-actions"><button type="button" className="btn" disabled={busy} onClick={() => setRestart(false)}>Cancel</button><button type="submit" className="btn primary" disabled={disabled}>{role === 'primary' ? 'Start Primary' : 'Connect to Primary'}</button></div></form></ModalShell>}
-    {confirmRemove && <ModalShell title="Remove local replication configuration?" onClose={() => !busy && setConfirmRemove(false)}><p>Stops this project's managed service and removes its saved configuration and credential. Existing memories, rules, skills and other servers remain. The setup form will return.</p>{error && <p role="alert">{error}</p>}<div className="access-actions"><button type="button" className="btn" disabled={busy} onClick={() => setConfirmRemove(false)}>Cancel</button><button type="button" className="btn danger" disabled={locked || busy} onClick={() => void action(async () => { await accessJson('/api/access/nodes/local/remove', { method: 'POST' }); if (!mounted.current) return; setConfirmRemove(false); setCluster(''); setProject(''); setPrimary(''); setAdvertise(''); setPort('0'); setRole('primary'); setCandidates([]); setToken(''); setIssued(null); setVisible(false); setMessage('Local replication configuration removed. Existing project data is preserved.'); await load(); await onChanged(); })}>Remove configuration</button></div></ModalShell>}
-    {confirmStop && <ModalShell title="Stop managed replication?" onClose={() => !busy && setConfirmStop(false)}><p>Stops this project’s managed service. Stored configuration and staged snapshots remain. Other Ax services are unaffected.</p><div className="access-actions"><button type="button" className="btn" disabled={busy} onClick={() => setConfirmStop(false)}>Cancel</button><button type="button" className="btn danger" disabled={locked || busy} onClick={() => void action(async () => { await accessJson('/api/access/nodes/local/stop', { method: 'POST' }); if (!mounted.current) return; setConfirmStop(false); setMessage('Managed node stopped. Its configuration is preserved. Restart it to enable automatic startup again.'); await load(); await onChanged(); })}>Stop replication</button></div></ModalShell>}
+    {restart && <ModalShell title={role === 'primary' ? 'Restart Primary' : 'Reconnect Replica'} onClose={() => !busy && setRestart(false)}><p>Restart with the securely stored credential. Leave the field empty to reuse it, or enter a replacement.</p>{errorIn('restart')}<form className="access-form" onSubmit={activate}>{credentialControl}<div className="access-actions"><button type="button" className="btn" disabled={busy} onClick={() => setRestart(false)}>Cancel</button><button type="submit" className="btn primary" disabled={disabled}>{role === 'primary' ? 'Start Primary' : 'Connect to Primary'}</button></div></form></ModalShell>}
+    {confirmRemove && <ModalShell title="Remove local replication configuration?" onClose={() => !busy && setConfirmRemove(false)}><p>Stops this project's managed service and removes its saved configuration and credential. Existing memories, rules, skills and other servers remain. The setup form will return.</p>{errorIn('remove')}<div className="access-actions"><button type="button" className="btn" disabled={busy} onClick={() => setConfirmRemove(false)}>Cancel</button><button type="button" className="btn danger" disabled={locked || busy} onClick={() => void action(async () => { await accessJson('/api/access/nodes/local/remove', { method: 'POST' }); if (!mounted.current) return; setConfirmRemove(false); setCluster(''); setProject(''); setPrimary(''); setAdvertise(''); setPort('0'); setRole('primary'); setCandidates([]); setToken(''); setIssued(null); setVisible(false); setMessage('Local replication configuration removed. Existing project data is preserved.'); await load(); await onChanged(); })}>Remove configuration</button></div></ModalShell>}
+    {confirmStop && <ModalShell title="Stop managed replication?" onClose={() => !busy && setConfirmStop(false)}><p>Stops this project’s managed service. Stored configuration and staged snapshots remain. Other Ax services are unaffected.</p>{errorIn('stop')}<div className="access-actions"><button type="button" className="btn" disabled={busy} onClick={() => setConfirmStop(false)}>Cancel</button><button type="button" className="btn danger" disabled={locked || busy} onClick={() => void action(async () => { await accessJson('/api/access/nodes/local/stop', { method: 'POST' }); if (!mounted.current) return; setConfirmStop(false); setMessage('Managed node stopped. Its configuration is preserved. Restart it to enable automatic startup again.'); await load(); await onChanged(); })}>Stop replication</button></div></ModalShell>}
   </div>;
 }
