@@ -159,7 +159,11 @@ export function subscribeSharedEventSource(
   }
   ensureConnected(hub);
 
+  let released = false;
   return () => {
+    // React may call a cleanup twice; release this subscriber's reference only once.
+    if (released) return;
+    released = true;
     for (const [type, handler] of added) {
       const set = hub!.handlers.get(type);
       set?.delete(handler);
@@ -171,15 +175,16 @@ export function subscribeSharedEventSource(
     if (opts.onError) hub!.errorHandlers.delete(opts.onError);
     if (opts.onOpen) hub!.openHandlers.delete(opts.onOpen);
 
-    hub!.refCount -= 1;
-    if (hub!.refCount <= 0) {
+    hub!.refCount = Math.max(0, hub!.refCount - 1);
+    if (hub!.refCount === 0) {
       tearDownEs(hub!);
-      hubs.delete(url);
+      // A newer hub may own this URL by now; only forget the one this subscriber joined.
+      if (hubs.get(url) === hub) hubs.delete(url);
     }
   };
 }
 
-/** Close every shared SSE (e.g. pagehide) so sockets cannot outlive the tab. */
+/** Close every shared SSE and forget all hubs. Subscribers still mounted are not reconnected. */
 export function closeAllSharedEventSources() {
   for (const [url, hub] of [...hubs.entries()]) {
     hub.refCount = 0;
@@ -188,6 +193,25 @@ export function closeAllSharedEventSources() {
   }
 }
 
+/**
+ * Close the sockets on pagehide so they cannot outlive the tab (and the page stays eligible
+ * for the back/forward cache), but keep every hub and its subscribers.
+ */
+function suspendSharedEventSources() {
+  for (const hub of hubs.values()) tearDownEs(hub);
+}
+
+/** A page restored from the back/forward cache reopens the streams its subscribers still use. */
+function resumeSharedEventSources() {
+  for (const hub of hubs.values()) {
+    hub.reconnectDelay = 1000;
+    ensureConnected(hub);
+  }
+}
+
 if (typeof window !== 'undefined') {
-  window.addEventListener('pagehide', () => closeAllSharedEventSources());
+  window.addEventListener('pagehide', () => suspendSharedEventSources());
+  window.addEventListener('pageshow', (ev) => {
+    if ((ev as PageTransitionEvent).persisted) resumeSharedEventSources();
+  });
 }
