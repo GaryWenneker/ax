@@ -438,7 +438,7 @@ ax report --stdout
 
 ### `ax validate [path]`
 
-Graph hygiene report: isolated symbols (no call or import edges), dangling edges (an edge whose target is missing), and orphan docs (Markdown with no documents / references edges). Use `--ci` to fail a pipeline on a dirty graph.
+Graph hygiene report: isolated symbols (no call or import edges), dangling edges (an edge whose target is missing), and orphan docs (Markdown with no documents / references edges). Use `--ci` to fail a pipeline on a dirty graph. Counts are always complete; the lists are capped at 200 isolated symbols and 100 orphan docs (`isolatedCount` and `orphanDocsCount` in `--json` carry the full numbers).
 
 | Argument / flag | Type | Default | Description |
 |---|---|---|---|
