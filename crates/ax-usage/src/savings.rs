@@ -1859,6 +1859,45 @@ struct SessionAccum {
     model: Option<String>,
     started_at: Option<i64>,
     ended_at: Option<i64>,
+    /// Usage already counted per API response (message id or request id), with
+    /// the index of its event. Transcripts repeat one response's usage on every
+    /// content-block line.
+    seen_responses: HashMap<String, (ResponseUsage, Option<usize>)>,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct ResponseUsage {
+    input: Option<i64>,
+    output: Option<i64>,
+    cache_read: Option<i64>,
+    cache_write: Option<i64>,
+}
+
+impl ResponseUsage {
+    fn max(self, other: Self) -> Self {
+        fn m(a: Option<i64>, b: Option<i64>) -> Option<i64> {
+            match (a, b) {
+                (Some(a), Some(b)) => Some(a.max(b)),
+                (a, b) => a.or(b),
+            }
+        }
+        Self {
+            input: m(self.input, other.input),
+            output: m(self.output, other.output),
+            cache_read: m(self.cache_read, other.cache_read),
+            cache_write: m(self.cache_write, other.cache_write),
+        }
+    }
+}
+
+/// The id of the API response a transcript line belongs to: the message id,
+/// else the line's request id.
+fn response_key(msg: &Value, line: &Value) -> Option<String> {
+    msg.get("id")
+        .or_else(|| line.get("requestId"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 fn parse_iso_ms(s: &str) -> Option<i64> {
@@ -1955,7 +1994,12 @@ fn classify_cursor_tool(name: &str, input: &Value, acc: &mut SessionAccum) {
     }
 }
 
-fn add_usage_from_message(msg: &Value, acc: &mut SessionAccum, capture_event: bool) {
+fn add_usage_from_message(
+    msg: &Value,
+    acc: &mut SessionAccum,
+    capture_event: bool,
+    response: Option<String>,
+) {
     if acc.model.is_none() {
         if let Some(model) = msg.get("model").and_then(|m| m.as_str()) {
             if !model.is_empty() {
@@ -1966,34 +2010,65 @@ fn add_usage_from_message(msg: &Value, acc: &mut SessionAccum, capture_event: bo
     let Some(usage) = msg.get("usage") else {
         return;
     };
-    let input = usage
-        .get("input_tokens")
-        .or_else(|| usage.get("prompt_tokens"))
-        .and_then(json_i64);
-    let output = usage
-        .get("output_tokens")
-        .or_else(|| usage.get("completion_tokens"))
-        .and_then(json_i64);
-    let cache_read = usage.get("cache_read_input_tokens").and_then(json_i64);
-    let cache_write = usage.get("cache_creation_input_tokens").and_then(json_i64);
+    let current = ResponseUsage {
+        input: usage
+            .get("input_tokens")
+            .or_else(|| usage.get("prompt_tokens"))
+            .and_then(json_i64),
+        output: usage
+            .get("output_tokens")
+            .or_else(|| usage.get("completion_tokens"))
+            .and_then(json_i64),
+        cache_read: usage.get("cache_read_input_tokens").and_then(json_i64),
+        cache_write: usage.get("cache_creation_input_tokens").and_then(json_i64),
+    };
     acc.saw_usage = true;
-    acc.session_input_tokens += input.unwrap_or(0).max(0);
-    acc.session_output_tokens += output.unwrap_or(0).max(0);
-    acc.cache_read_tokens += cache_read.unwrap_or(0).max(0);
-    acc.cache_write_tokens += cache_write.unwrap_or(0).max(0);
-    if capture_event {
-        acc.events.push(crate::cost::CostUsage {
-            provider: None,
-            model: acc.model.clone(),
-            input_tokens: input,
-            output_tokens: output,
-            cache_read_tokens: cache_read,
-            cache_write_tokens: cache_write,
-            timestamp_ms: acc.ended_at.or(acc.started_at),
-            session_id: None,
-            turn_id: Some(acc.events.len().to_string()),
-            confidence: crate::cost::CostConfidence::Estimated,
-        });
+    let (previous, event_idx) = match response
+        .as_ref()
+        .and_then(|key| acc.seen_responses.get(key))
+    {
+        Some(&(prev, idx)) => (Some(prev), idx),
+        None => (None, None),
+    };
+    // A repeated response counts once, at the largest value seen for each field.
+    let counted = previous.map_or(current, |p| p.max(current));
+    let base = previous.unwrap_or_default();
+    let delta =
+        |new: Option<i64>, old: Option<i64>| new.unwrap_or(0).max(0) - old.unwrap_or(0).max(0);
+    acc.session_input_tokens += delta(counted.input, base.input);
+    acc.session_output_tokens += delta(counted.output, base.output);
+    acc.cache_read_tokens += delta(counted.cache_read, base.cache_read);
+    acc.cache_write_tokens += delta(counted.cache_write, base.cache_write);
+
+    let event_idx = match event_idx {
+        Some(idx) => {
+            if let Some(event) = acc.events.get_mut(idx) {
+                event.input_tokens = counted.input;
+                event.output_tokens = counted.output;
+                event.cache_read_tokens = counted.cache_read;
+                event.cache_write_tokens = counted.cache_write;
+            }
+            Some(idx)
+        }
+        None if capture_event => {
+            acc.events.push(crate::cost::CostUsage {
+                provider: None,
+                model: acc.model.clone(),
+                input_tokens: counted.input,
+                output_tokens: counted.output,
+                cache_read_tokens: counted.cache_read,
+                cache_write_tokens: counted.cache_write,
+                timestamp_ms: acc.ended_at.or(acc.started_at),
+                session_id: None,
+                turn_id: Some(acc.events.len().to_string()),
+                confidence: crate::cost::CostConfidence::Estimated,
+            });
+            Some(acc.events.len() - 1)
+        }
+        None => None,
+    };
+    if let Some(key) = response {
+        acc.seen_responses.insert(key, (counted, event_idx));
     }
 }
 
@@ -2009,13 +2084,19 @@ fn process_claude_line(line: &str, acc: &mut SessionAccum) {
         acc.started_at = Some(acc.started_at.map_or(ts, |s| s.min(ts)));
         acc.ended_at = Some(acc.ended_at.map_or(ts, |e| e.max(ts)));
     }
-    let msg = v.get("message").unwrap_or(&v);
+    let wrapped = v.get("message");
+    let msg = wrapped.unwrap_or(&v);
+    let response = response_key(msg, &v);
     let on_message =
         msg.get("role").and_then(|r| r.as_str()) == Some("assistant") && msg.get("usage").is_some();
     if msg.get("role").and_then(|r| r.as_str()) == Some("assistant") {
-        add_usage_from_message(msg, acc, on_message);
+        add_usage_from_message(msg, acc, on_message, response.clone());
     }
-    add_usage_from_message(&v, acc, !on_message && v.get("usage").is_some());
+    // Usage at the top level of a wrapped line. A flat line was handled above.
+    if wrapped.is_some() {
+        let top_key = response.map(|k| format!("{k}#line"));
+        add_usage_from_message(&v, acc, !on_message && v.get("usage").is_some(), top_key);
+    }
     let content = msg.get("content").and_then(|c| c.as_array()).or_else(|| {
         v.get("message")
             .and_then(|m| m.get("content"))
@@ -2051,7 +2132,8 @@ fn process_cursor_line(line: &str, acc: &mut SessionAccum) {
         return;
     };
     // Cursor transcripts usually omit usage; capture it (and the model) when present.
-    add_usage_from_message(msg, acc, true);
+    let response = response_key(msg, &v);
+    add_usage_from_message(msg, acc, true, response);
     let Some(items) = msg.get("content").and_then(|c| c.as_array()) else {
         return;
     };
@@ -2527,6 +2609,51 @@ mod tests {
         assert_eq!(acc.events[0].input_tokens, Some(100));
         assert_eq!(acc.events[0].cache_read_tokens, Some(40));
         assert_eq!(acc.events[0].cache_write_tokens, Some(10));
+    }
+
+    #[test]
+    fn claude_multi_block_response_counts_usage_once() {
+        // Claude Code writes one line per content block; each repeats the same
+        // message id and usage object.
+        let mut acc = SessionAccum::default();
+        for block in ["thinking", "text", "tool_use", "tool_use"] {
+            let line = format!(
+                r#"{{"timestamp":"2026-10-03T12:00:00Z","requestId":"req_1","message":{{"id":"msg_1","role":"assistant","model":"claude-sonnet","content":[{{"type":"{block}","name":"Read"}}],"usage":{{"input_tokens":2000,"output_tokens":50,"cache_read_input_tokens":7}}}}}}"#
+            );
+            process_claude_line(&line, &mut acc);
+        }
+        assert_eq!(acc.session_input_tokens, 2000);
+        assert_eq!(acc.session_output_tokens, 50);
+        assert_eq!(acc.cache_read_tokens, 7);
+        assert_eq!(acc.events.len(), 1);
+        // A second response is counted on its own.
+        let line = r#"{"message":{"id":"msg_2","role":"assistant","usage":{"input_tokens":10,"output_tokens":1}}}"#;
+        process_claude_line(line, &mut acc);
+        assert_eq!(acc.session_input_tokens, 2010);
+        assert_eq!(acc.events.len(), 2);
+    }
+
+    #[test]
+    fn claude_repeated_response_keeps_largest_usage() {
+        let mut acc = SessionAccum::default();
+        let first = r#"{"message":{"id":"msg_1","role":"assistant","usage":{"input_tokens":100,"output_tokens":5}}}"#;
+        let last = r#"{"message":{"id":"msg_1","role":"assistant","usage":{"input_tokens":100,"output_tokens":80}}}"#;
+        process_claude_line(first, &mut acc);
+        process_claude_line(last, &mut acc);
+        assert_eq!(acc.session_input_tokens, 100);
+        assert_eq!(acc.session_output_tokens, 80);
+        assert_eq!(acc.events.len(), 1);
+        assert_eq!(acc.events[0].output_tokens, Some(80));
+    }
+
+    #[test]
+    fn claude_flat_assistant_line_counts_usage_once() {
+        let line = r#"{"role":"assistant","usage":{"input_tokens":300,"output_tokens":20}}"#;
+        let mut acc = SessionAccum::default();
+        process_claude_line(line, &mut acc);
+        assert_eq!(acc.session_input_tokens, 300);
+        assert_eq!(acc.session_output_tokens, 20);
+        assert_eq!(acc.events.len(), 1);
     }
 
     #[test]
