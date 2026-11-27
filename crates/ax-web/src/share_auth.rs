@@ -74,7 +74,6 @@ pub(crate) async fn enforce_share_token(
         || path == "/sw.js"
         || path == "/favicon.ico"
         || path == "/api/share/status"
-        || path.starts_with("/api/auth/microsoft")
     {
         return next.run(req).await;
     }

@@ -79,6 +79,8 @@ description: Every HTTP endpoint served by ax web / ax ship --watch, grouped by 
 | PUT | `/api/auth/microsoft/config` | Tenant / client settings |
 | DELETE | `/api/auth/microsoft` | Sign out |
 
+The Microsoft sign-in routes follow the same share-token and sign-in rules as the rest of `/api`. Starting or polling sign-in, changing the client and signing out work only on a writable server, from a browser on this computer at the loopback address; other callers get `403`.
+
 See [Remote Policy Share](/guides/policy-sharing/).
 
 ## Memory and links

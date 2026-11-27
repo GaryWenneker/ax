@@ -145,7 +145,7 @@ impl WebHub {
             )
             .nest(
                 "/api/auth/microsoft",
-                crate::policy_share::microsoft_auth_router(),
+                crate::policy_share::microsoft_auth_router(hub.clone()),
             )
             .nest("/api/policy", policy::router_hub(hub.clone()))
             .nest("/api/ship", ship::router_hub(hub.clone()))

@@ -1254,7 +1254,6 @@ fn excluded(path: &str) -> bool {
         || path.starts_with("/api/web-auth/users/")
         || path == "/api/web-auth/passkeys"
         || path.starts_with("/api/web-auth/passkeys/")
-        || path.starts_with("/api/auth/")
         || path.starts_with("/mcp")
         || path.starts_with("/api/share")
 }
