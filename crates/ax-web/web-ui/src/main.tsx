@@ -12,6 +12,7 @@ import './mobile.css';
 import './auth.css';
 import { installContextMenuGuard } from './lib/contextMenuGuard';
 import { installBrowserChunkReload } from './lib/chunkReload';
+import { PWA_OPTIN_KEY, resolvePwaOptIn } from './lib/pwaOptIn';
 
 installContextMenuGuard();
 installBrowserChunkReload();
@@ -28,21 +29,30 @@ if (root) {
 /**
  * Service workers caused empty Command Center pages (stale HTML shell / broken
  * intercept of navigations). Default: unregister + clear caches so /api/* always
- * hits the live server. Opt-in PWA only with `?pwa=1` or already-installed standalone.
+ * hits the live server. Opt-in PWA only with `?pwa=1`, the stored opt-in, or an installed standalone
+ * window; `?pwa=0` opts out again (see lib/pwaOptIn.ts).
  */
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     const params = new URLSearchParams(window.location.search);
     let optInStored = false;
     try {
-      optInStored = localStorage.getItem('ax-pwa-optin') === '1';
+      optInStored = localStorage.getItem(PWA_OPTIN_KEY) === '1';
     } catch {
       /* ignore */
     }
-    const enablePwa =
-      params.has('pwa') ||
-      optInStored ||
-      window.matchMedia('(display-mode: standalone)').matches;
+    const { enable: enablePwa, clearStored } = resolvePwaOptIn(
+      params.get('pwa'),
+      optInStored,
+      window.matchMedia('(display-mode: standalone)').matches,
+    );
+    if (clearStored) {
+      try {
+        localStorage.removeItem(PWA_OPTIN_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
 
     void (async () => {
       try {

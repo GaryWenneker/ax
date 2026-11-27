@@ -29,7 +29,7 @@ cloudflared tunnel --url http://127.0.0.1:7070
 
 ## PWA
 
-Manifest + icons (`/icon-192.png`, `/icon-512.png`). Service worker is **opt-in** via Settings → Sharing → **Enable PWA**, `?pwa=1`, `localStorage ax-pwa-optin=1`, or an installed standalone window — so normal `ax web` always uses live APIs until you opt in.
+Manifest + icons (`/icon-192.png`, `/icon-512.png`). Service worker is **opt-in** via Settings → Sharing → **Enable PWA**, `?pwa=1`, `localStorage ax-pwa-optin=1`, or an installed standalone window — so normal `ax web` always uses live APIs until you opt in. Only `?pwa=1` opts in through the URL; `?pwa=0` opts out again, clears the stored opt-in and unregisters the worker.
 
 `ax web --open` uses `http://127.0.0.1:PORT`. If `localhost` still shows empty pages from an old cached service worker, open `http://localhost:PORT/api/reset-client-cache` once, then reload.
 
