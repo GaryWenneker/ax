@@ -6,6 +6,7 @@ pub mod cli_install;
 pub mod cli_only;
 pub mod command_center;
 pub mod detect;
+mod hermes_yaml;
 pub mod hooks;
 pub mod ide_choice;
 pub mod report;

@@ -446,52 +446,9 @@ fn codex_ax_block(bin: &str) -> String {
     )
 }
 
+#[cfg(test)]
 fn hermes_ax_block(bin: &str) -> String {
-    let path = mcp_path_token("hermes");
-    format!(
-        "mcp_servers:\n  ax:\n    command: {bin}\n    args:\n      - serve\n      - --mcp\n      - --path\n      - {path}\n    cwd: {path}\n    timeout: 120\n    connect_timeout: 60\n    enabled: true\nplatform_toolsets:\n  cli:\n    - mcp-ax\n",
-    )
-}
-
-fn replace_hermes_ax_block(content: &str, block: &str) -> String {
-    let lines: Vec<&str> = content.lines().collect();
-    let mut out = Vec::new();
-    let mut skip = false;
-    for line in lines {
-        let trimmed = line.trim();
-        if trimmed == "mcp_servers:" || trimmed == "  ax:" {
-            skip = true;
-            continue;
-        }
-        if skip {
-            if trimmed == "platform_toolsets:" {
-                skip = false;
-                continue;
-            }
-            if !line.starts_with(' ') && !line.is_empty() {
-                skip = false;
-                out.push(line);
-            }
-            continue;
-        }
-        if trimmed == "platform_toolsets:" {
-            continue;
-        }
-        if trimmed == "cli:" || trimmed == "- mcp-ax" {
-            continue;
-        }
-        out.push(line);
-    }
-    while out.last().is_some_and(|l| l.trim().is_empty()) {
-        out.pop();
-    }
-    let mut result = out.join("\n");
-    if !result.is_empty() {
-        result.push('\n');
-    }
-    result.push('\n');
-    result.push_str(block);
-    result
+    crate::hermes_yaml::ax_entry(bin, mcp_path_token("hermes"), 0)
 }
 
 fn home_dir() -> Result<PathBuf, String> {
@@ -1331,12 +1288,9 @@ fn hermes_config_path() -> Result<PathBuf, String> {
 fn install_hermes_mcp(_project_root: &Path) -> Result<TargetReport, String> {
     let mut report = TargetReport::new("hermes", display_name("hermes"));
     let path = hermes_config_path()?;
-    let content = if path.exists() {
-        fs::read_to_string(&path).unwrap_or_default()
-    } else {
-        String::new()
-    };
-    let out = replace_hermes_ax_block(&content, &hermes_ax_block(&ax_bin()));
+    let content = read_text_for_edit(&path)?;
+    let out = hermes_upsert(&content, &ax_bin())
+        .map_err(|e| format!("{} {e}; left unchanged", path.display()))?;
     report.push_file(path.clone(), write_text_action(&path, &out)?);
     report.note("Start a new Hermes session for MCP changes to take effect.");
     Ok(report)
@@ -1345,34 +1299,37 @@ fn install_hermes_mcp(_project_root: &Path) -> Result<TargetReport, String> {
 fn uninstall_hermes_mcp() -> Result<TargetReport, String> {
     let mut report = TargetReport::new("hermes", display_name("hermes"));
     let path = hermes_config_path()?;
-    if !path.exists()
-        || !fs::read_to_string(&path)
-            .unwrap_or_default()
-            .contains("  ax:")
-    {
+    if !path.exists() {
         return Ok(report);
     }
-    let content = fs::read_to_string(&path).unwrap_or_default();
-    let filtered: Vec<&str> = content
-        .lines()
-        .filter(|l| {
-            !l.contains("mcp-ax")
-                && l.trim() != "  ax:"
-                && !l.trim().starts_with("command:")
-                && !l.trim().starts_with("- serve")
-                && !l.trim().starts_with("- --mcp")
-                && !l.trim().starts_with("- --path")
-                && l.trim() != "cwd: ."
-                && l.trim() != "timeout: 120"
-                && l.trim() != "connect_timeout: 60"
-                && l.trim() != "enabled: true"
-        })
-        .collect();
-    report.push_file(
-        path.clone(),
-        write_text_action(&path, &(filtered.join("\n") + "\n"))?,
-    );
+    let content = read_text_for_edit(&path)?;
+    let removed =
+        hermes_remove(&content).map_err(|e| format!("{} {e}; left unchanged", path.display()))?;
+    if let Some(out) = removed {
+        report.push_file(path.clone(), write_text_action(&path, &out)?);
+    }
     Ok(report)
+}
+
+/// The text of a config file about to be edited; missing is empty, any other
+/// read error is reported so the file is not replaced.
+fn read_text_for_edit(path: &Path) -> Result<String, String> {
+    match fs::read_to_string(path) {
+        Ok(c) => Ok(c),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(format!(
+            "cannot read {}: {e}; left unchanged",
+            path.display()
+        )),
+    }
+}
+
+fn hermes_upsert(content: &str, bin: &str) -> Result<String, String> {
+    crate::hermes_yaml::upsert(content, bin, mcp_path_token("hermes"))
+}
+
+fn hermes_remove(content: &str) -> Result<Option<String>, String> {
+    crate::hermes_yaml::remove(content)
 }
 
 fn zed_tasks_path() -> Result<PathBuf, String> {
@@ -1839,5 +1796,84 @@ mod strip_jsonc_tests {
         assert_eq!(v["t"], ",}");
         assert_eq!(v["a"], serde_json::json!([1, 2]));
         assert_eq!(v["\u{e9}"], "\u{1f600}");
+    }
+}
+
+#[cfg(test)]
+mod hermes_yaml_tests {
+    use super::*;
+
+    const USER_CONFIG: &str = "\
+model: anthropic/claude
+# my servers
+mcp_servers:
+  github:
+    command: npx
+    args:
+      - -y
+      - github-mcp
+    enabled: true
+    timeout: 120
+platform_toolsets:
+  cli:
+    - hermes-cli
+    - mcp-github
+  telegram:
+    - hermes-telegram
+display:
+  enabled: true
+";
+
+    fn yaml(text: &str) -> serde_yaml::Value {
+        serde_yaml::from_str(text).unwrap_or_else(|e| panic!("{e}\n{text}"))
+    }
+
+    #[test]
+    fn install_keeps_other_servers_and_toolsets() {
+        let out = hermes_upsert(USER_CONFIG, "/opt/ax").unwrap();
+        let v = yaml(&out);
+        assert_eq!(v["mcp_servers"]["github"]["command"], "npx");
+        assert_eq!(v["mcp_servers"]["github"]["enabled"], true);
+        assert_eq!(v["mcp_servers"]["ax"]["command"], "/opt/ax");
+        assert_eq!(v["mcp_servers"]["ax"]["enabled"], true);
+        let cli: Vec<&str> = v["platform_toolsets"]["cli"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap())
+            .collect();
+        assert_eq!(cli, ["hermes-cli", "mcp-github", "mcp-ax"]);
+        assert_eq!(v["platform_toolsets"]["telegram"][0], "hermes-telegram");
+        assert_eq!(v["display"]["enabled"], true);
+        assert_eq!(v["model"], "anthropic/claude");
+        assert!(out.contains("# my servers\n"), "{out}");
+        // A second install changes nothing.
+        assert_eq!(hermes_upsert(&out, "/opt/ax").unwrap(), out);
+    }
+
+    #[test]
+    fn uninstall_removes_only_the_ax_entries() {
+        let installed = hermes_upsert(USER_CONFIG, "/opt/ax").unwrap();
+        let out = hermes_remove(&installed).unwrap().expect("changed");
+        assert_eq!(yaml(&out), yaml(USER_CONFIG));
+        // Nothing to remove: no rewrite.
+        assert_eq!(hermes_remove(USER_CONFIG).unwrap(), None);
+    }
+
+    #[test]
+    fn install_into_an_empty_file_creates_both_blocks() {
+        let out = hermes_upsert("", "ax").unwrap();
+        let v = yaml(&out);
+        assert_eq!(v["mcp_servers"]["ax"]["args"][0], "serve");
+        assert_eq!(v["platform_toolsets"]["cli"][0], "mcp-ax");
+        let removed = hermes_remove(&out).unwrap().expect("changed");
+        assert!(yaml(&removed).get("mcp_servers").is_none(), "{removed}");
+    }
+
+    #[test]
+    fn unparsable_yaml_is_refused() {
+        let bad = "mcp_servers:\n  github: [unclosed\n";
+        assert!(hermes_upsert(bad, "ax").is_err());
+        assert!(hermes_remove(bad).is_err());
     }
 }

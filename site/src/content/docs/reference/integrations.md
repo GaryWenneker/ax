@@ -11,7 +11,7 @@ The interactive installer auto-detects supported agents and wires the ax MCP ser
 - **Cursor**
 - **Codex CLI**
 - **opencode**
-- **Hermes Agent**
+- **Hermes Agent** — writes `mcp_servers.ax` and adds `mcp-ax` to `platform_toolsets.cli` in `~/.hermes/config.yaml` (or `$HERMES_HOME/config.yaml`). Other servers, toolsets and comments stay as written; `ax uninstall` removes only those two entries.
 - **Gemini CLI**
 - **Antigravity IDE**
 - **Kiro**
