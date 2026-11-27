@@ -105,6 +105,18 @@ pub fn ensure_within(root: &Path, path: &Path) -> Result<(), PathEscape> {
 /// content, never a partial file: write a temporary file next to it, flush it
 /// to disk, then rename it over `path`. Keeps the old file's permissions.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    replace_file(path, bytes, false)
+}
+
+/// [`atomic_write`] for a secret: the temporary file is created with mode
+/// 0600 on Unix before any byte is written, and `path` ends up 0600 whatever
+/// its permissions were, so the content is never readable by other users,
+/// not even briefly.
+pub fn atomic_write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    replace_file(path, bytes, true)
+}
+
+fn replace_file(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> {
     let dir = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -120,11 +132,21 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let seq = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = dir.join(format!(".{name}.{}.{seq}.tmp", std::process::id()));
     let result = (|| {
-        let mut f = File::create(&tmp)?;
+        let mut opts = OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        if private {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut f = opts.open(&tmp)?;
         f.write_all(bytes)?;
         f.sync_all()?;
-        if let Ok(meta) = fs::metadata(path) {
-            fs::set_permissions(&tmp, meta.permissions())?;
+        drop(f);
+        if !private {
+            if let Ok(meta) = fs::metadata(path) {
+                fs::set_permissions(&tmp, meta.permissions())?;
+            }
         }
         fs::rename(&tmp, path)
     })();
@@ -205,6 +227,32 @@ pub fn read_to_end_bounded<R: Read>(reader: R, max_bytes: u64) -> io::Result<Vec
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_private_leaves_a_0600_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sub").join("token");
+        super::atomic_write_private(&path, b"one").unwrap();
+        let mode = |p: &std::path::Path| fs_mode(p) & 0o777;
+        fn fs_mode(p: &std::path::Path) -> u32 {
+            std::fs::metadata(p).unwrap().permissions().mode()
+        }
+        assert_eq!(mode(&path), 0o600);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        super::atomic_write_private(&path, b"two").unwrap();
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(std::fs::read(&path).unwrap(), b"two");
+        // The plain variant keeps the existing permissions.
+        super::atomic_write(&path, b"three").unwrap();
+        assert_eq!(mode(&path), 0o600);
+        let names: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["token"]);
+    }
+
     use super::*;
 
     #[test]

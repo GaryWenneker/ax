@@ -1321,46 +1321,9 @@ fn persist_token(
     token: &str,
 ) -> Result<(PathBuf, bool), String> {
     let token_path = sonar_token_path(project_root);
-    write_private_file(&token_path, format!("{token}\n").as_bytes())
+    ax_utils::atomic_write_private(&token_path, format!("{token}\n").as_bytes())
         .map_err(|e| format!("could not save {}: {e}", token_path.display()))?;
     Ok((token_path, set_user_env_var(token_env, token)))
-}
-
-/// Writes `bytes` to a temporary file created with mode 0600 next to
-/// `path`, then renames it over `path`, so the secret is never readable by
-/// other users, not even briefly.
-fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write as _;
-    let dir = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    std::fs::create_dir_all(dir)?;
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "secret".into());
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let seq = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp = dir.join(format!(".{name}.{}.{seq}.tmp", std::process::id()));
-    let result = (|| {
-        let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o600);
-        }
-        let mut f = opts.open(&tmp)?;
-        f.write_all(bytes)?;
-        f.sync_all()?;
-        drop(f);
-        std::fs::rename(&tmp, path)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
 }
 
 const USER_ENV_NAME_VAR: &str = "AX_USER_ENV_NAME";
