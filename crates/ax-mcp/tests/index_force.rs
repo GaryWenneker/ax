@@ -84,3 +84,63 @@ async fn forced_rebuild_drops_files_that_are_gone() {
         .collect();
     assert!(!paths.iter().any(|p| p == "gone.rs"), "{paths:?}");
 }
+
+async fn seed_replica_file(ax: &ax_core::Ax) -> String {
+    let path = "ax-replica/a_1/src/remote.rs".to_string();
+    ax.queries()
+        .upsert_file(&ax_types::FileRecord {
+            path: path.clone(),
+            content_hash: "replica".into(),
+            language: ax_types::Language::Rust,
+            size: 1,
+            modified_at: 0,
+            indexed_at: 0,
+            node_count: 0,
+            errors: None,
+        })
+        .await
+        .unwrap();
+    path
+}
+
+async fn has_file(ax: &ax_core::Ax, path: &str) -> bool {
+    ax.queries()
+        .get_all_files()
+        .await
+        .unwrap()
+        .iter()
+        .any(|f| f.path == path)
+}
+
+#[tokio::test]
+async fn forced_rebuild_keeps_replicated_files() {
+    let (_dir, mut ax) = indexed_project().await;
+    let replica = seed_replica_file(&ax).await;
+    ToolHandler::call_tool(&mut ax, "ax_index", json!({"force": true}))
+        .await
+        .unwrap();
+    assert!(
+        has_file(&ax, &replica).await,
+        "a forced rebuild must keep replicated rows"
+    );
+}
+
+#[tokio::test]
+async fn full_index_keeps_replicated_files() {
+    let (_dir, mut ax) = indexed_project().await;
+    let replica = seed_replica_file(&ax).await;
+    ax.index_all(
+        IndexOptions {
+            quiet: true,
+            ..Default::default()
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        has_file(&ax, &replica).await,
+        "a full index must keep replicated rows"
+    );
+    assert!(has_symbol(&ax, "kept_symbol_survives").await);
+}

@@ -1087,12 +1087,17 @@ fn unix_ms() -> i64 {
 }
 
 /// Drop every file row (with its nodes, edges and stored source) that a full
-/// extraction started at `started` did not write. Replicated rows are kept.
+/// extraction started at `started` did not write. Replicated rows (paths
+/// under `ax-replica/`) come from imported datasets, not from the scan, so
+/// they are always kept.
 async fn drop_files_not_indexed_since(
     queries: &QueryBuilder,
     started: i64,
 ) -> Result<(), ax_utils::errors::AxError> {
     for file in queries.get_all_files().await? {
+        if file.path.starts_with(ax_db::replication::PREFIX) {
+            continue;
+        }
         if file.indexed_at < started {
             queries.clear_file(&file.path).await?;
         }
