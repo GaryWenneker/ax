@@ -2,6 +2,8 @@
 # Manual mutants for the Green Vessel intro. Each mutant must change the file
 # and must make src/greenVesselIntro.test.ts fail. Restores the original after.
 set -euo pipefail
+scripts_dir="$(cd "$(dirname "$0")" && pwd)"
+source "$scripts_dir/lib/restore-on-exit.sh"
 cd "$(dirname "$0")/../crates/ax-web/web-ui"
 file=src/greenVesselIntro.ts
 css=src/greenVesselIntro.css
@@ -11,7 +13,8 @@ total=0
 mutate() {
   local target="$1" old="$2" new="$3"
   total=$((total + 1))
-  cp "$target" "$target.orig"
+  ax_guard_file "$target"
+  cp "$target" "$AX_GUARD_TMP/orig"
   python3 - "$target" "$old" "$new" <<'EOF'
 import sys
 p, old, new = sys.argv[1:]
@@ -20,8 +23,8 @@ if old not in s:
     sys.exit(f"mutant pattern not found in {p}: {old}")
 open(p, "w").write(s.replace(old, new, 1))
 EOF
-  if cmp -s "$target" "$target.orig"; then
-    mv "$target.orig" "$target"
+  if cmp -s "$target" "$AX_GUARD_TMP/orig"; then
+    mv "$AX_GUARD_TMP/orig" "$target"
     echo "NOT APPLIED: $old"
     exit 1
   fi
@@ -31,7 +34,7 @@ EOF
     killed=$((killed + 1))
     echo "killed: $target :: $old -> $new"
   fi
-  mv "$target.orig" "$target"
+  mv "$AX_GUARD_TMP/orig" "$target"
 }
 
 mutate "$file" "el.classList.add('is-playing');" ""

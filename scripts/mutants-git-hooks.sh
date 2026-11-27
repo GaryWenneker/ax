@@ -7,6 +7,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/lib/restore-on-exit.sh"
 
 HOOKS=crates/ax-sync/src/git_hooks.rs
 SERVER=crates/ax-mcp/src/server.rs
@@ -36,6 +37,7 @@ mutant() {
   total=$((total + 1))
   local before after
   before="$(shasum "$file" | cut -d' ' -f1)"
+  ax_guard_file "$file"
   perl -0pi -e "$expr" "$file"
   after="$(shasum "$file" | cut -d' ' -f1)"
   if [ "$before" = "$after" ]; then

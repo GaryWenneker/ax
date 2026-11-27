@@ -6,7 +6,7 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 source "$root/scripts/lib/restore-on-exit.sh"
 file="$root/crates/ax-usage/src/spec_registry.rs"
-backup="$(mktemp "${TMPDIR:-/tmp}/ax-spec-registry.XXXXXX")"
+backup="$AX_GUARD_TMP/spec_registry.rs"
 cp -p "$file" "$backup"
 ax_guard_file "$file"
 restore() { cp -p "$backup" "$file"; }
@@ -46,5 +46,4 @@ apply '        Ok(None) => match live_bound_spec(pool, root).await {
   '        Ok(None) => return "none".into(),' \
   'live-session-ignored' 'different_chat'
 
-rm -f "$backup"
 echo "killed 2/2"

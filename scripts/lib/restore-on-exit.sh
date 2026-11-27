@@ -3,16 +3,27 @@
 # Source this file, then call `ax_guard_file <path>` before the first in-place
 # rewrite of <path>. On exit (success, a failing command under `set -e`, Ctrl+C,
 # SIGTERM or SIGHUP) every guarded file gets back the copy taken when it was
-# first guarded. Guarding a file again keeps that first copy.
+# first guarded. Guarding a file again keeps that first copy. A relative path
+# is resolved against the working directory at guard time, so the script may
+# change directory afterwards.
+#
+# AX_GUARD_TMP is a scratch directory for the script's own backups; it is
+# removed on exit, so nothing such as a `*.orig` file is left in the tree.
 #
 # This file sets the EXIT, INT, TERM and HUP traps. A script that sources it
 # must not replace them.
 
 _AX_GUARD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ax-guard.XXXXXX")"
 _AX_GUARD_COUNT=0
+AX_GUARD_TMP="$_AX_GUARD_DIR/scratch"
+mkdir "$AX_GUARD_TMP"
 
 ax_guard_file() {
   local path="$1" i=0
+  case "$path" in
+    /*) ;;
+    *) path="$PWD/$path" ;;
+  esac
   while [ "$i" -lt "$_AX_GUARD_COUNT" ]; do
     if [ "$(cat "$_AX_GUARD_DIR/$i.path")" = "$path" ]; then
       return 0

@@ -2,6 +2,8 @@
 # Manual mutants for the Obsidian-style graph modules. Each mutant must change
 # the file (proved by cmp) and must make the unit suite fail.
 set -euo pipefail
+scripts_dir="$(cd "$(dirname "$0")" && pwd)"
+source "$scripts_dir/lib/restore-on-exit.sh"
 cd "$(dirname "$0")/../crates/ax-web/web-ui"
 lib=src/lib
 killed=0
@@ -10,7 +12,8 @@ total=0
 mutate() { # file, python-literal old, python-literal new
   local file="$1" old="$2" new="$3"
   total=$((total + 1))
-  cp "$file" "$file.orig"
+  ax_guard_file "$file"
+  cp "$file" "$AX_GUARD_TMP/orig"
   python3 - "$file" "$old" "$new" <<'EOF'
 import sys
 p, old, new = sys.argv[1:]
@@ -19,15 +22,15 @@ if old not in s:
     sys.exit(f"mutant pattern not found in {p}: {old}")
 open(p, "w").write(s.replace(old, new, 1))
 EOF
-  if cmp -s "$file" "$file.orig"; then
-    mv "$file.orig" "$file"; echo "NOT APPLIED: $old"; exit 1
+  if cmp -s "$file" "$AX_GUARD_TMP/orig"; then
+    mv "$AX_GUARD_TMP/orig" "$file"; echo "NOT APPLIED: $old"; exit 1
   fi
   if node --test "$lib/graphObsidian.test.ts" >/dev/null 2>&1; then
     echo "SURVIVED: $file :: $old -> $new"
   else
     killed=$((killed + 1)); echo "killed: $file :: $old -> $new"
   fi
-  mv "$file.orig" "$file"
+  mv "$AX_GUARD_TMP/orig" "$file"
 }
 
 mutate $lib/graphFilter.ts "if (!opts.orphans)" "if (opts.orphans)"

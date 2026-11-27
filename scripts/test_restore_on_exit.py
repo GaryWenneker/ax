@@ -30,6 +30,17 @@ MUTATING_SCRIPTS = [
     "tools/gauntlet-macos-theme.sh",
     "scripts/dav-mount-mutants.sh",
     "scripts/ide-panel-mutants.sh",
+    "scripts/mutants-per-turn-memory.sh",
+    "scripts/mutants-turn-outcomes.sh",
+    "scripts/mutants-git-hooks.sh",
+    "scripts/mutants-install-daemon-hygiene.sh",
+    "scripts/mutants-client-cleanup.sh",
+    "scripts/init-ides-mutants.sh",
+    "scripts/graph-obsidian-mutants.sh",
+    "scripts/green-vessel-mutants.sh",
+    "scripts/link-origin-mutants.sh",
+    "scripts/link-picker-mutants.sh",
+    "scripts/mutate-spec-registry.sh",
 ]
 
 ORIGINAL = "pristine source\n"
@@ -110,6 +121,29 @@ echo mutant2 > "{self.target}"
 """)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.target.read_text(), ORIGINAL)
+
+    def test_restores_a_relative_path_after_the_script_changes_directory(self) -> None:
+        elsewhere = self.dir / "elsewhere"
+        elsewhere.mkdir()
+        result = self._run(f"""
+cd "{self.dir}"
+ax_guard_file src.rs
+echo mutant > src.rs
+cd "{elsewhere}"
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.target.read_text(), ORIGINAL)
+        self.assertFalse((elsewhere / "src.rs").exists())
+
+    def test_scratch_directory_is_removed_on_exit(self) -> None:
+        marker = self.dir / "scratch-path"
+        result = self._run(f"""
+test -d "$AX_GUARD_TMP"
+cp "{self.target}" "$AX_GUARD_TMP/orig"
+printf '%s' "$AX_GUARD_TMP" > "{marker}"
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(Path(marker.read_text()).exists())
 
     def test_restores_several_files_and_keeps_exit_code(self) -> None:
         other = self.dir / "other.rs"
