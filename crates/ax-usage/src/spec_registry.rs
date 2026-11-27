@@ -2601,6 +2601,62 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn an_unchanged_plan_file_is_not_read_again() {
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        let plans = dir.path().join(".cursor").join("plans");
+        std::fs::create_dir_all(&plans).unwrap();
+        let path = plans.join("billing.md");
+        std::fs::write(&path, "# Billing\n\nKeep the first price.\n").unwrap();
+        assert_eq!(
+            import_plan_mode_files(pool, dir.path(), "ax")
+                .await
+                .unwrap(),
+            1
+        );
+        let stamp = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        // Same size and modification time: the import trusts its record and
+        // does not read the file, so the new text is not captured.
+        std::fs::write(&path, "# Billing\n\nKeep the other price.\n").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(stamp)
+            .unwrap();
+        assert_eq!(
+            import_plan_mode_files(pool, dir.path(), "ax")
+                .await
+                .unwrap(),
+            1
+        );
+        let history = list_revisions(pool, "billing").await.unwrap();
+        assert_eq!(history.len(), 1);
+        assert!(history[0].body.contains("Keep the first price."));
+
+        // A new modification time makes the import read and capture it.
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(stamp + std::time::Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(
+            import_plan_mode_files(pool, dir.path(), "ax")
+                .await
+                .unwrap(),
+            1
+        );
+        let history = list_revisions(pool, "billing").await.unwrap();
+        assert_eq!(history.len(), 2);
+        assert!(history
+            .iter()
+            .any(|rev| rev.body.contains("Keep the other price")));
+    }
+
+    #[tokio::test]
     async fn a_named_code_file_change_is_drift_and_the_approved_body_stays() {
         let open = open().await;
         let pool = &open.pool;
