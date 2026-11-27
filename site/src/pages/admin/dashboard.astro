@@ -128,12 +128,15 @@ import LogoMark from '../../components/LogoMark.astro';
     </div>
 
     <script>
+      import { latestRequests } from '../../lib/latest-request.ts';
       // Chart.js is loaded from CDN — declare the global to satisfy TS.
       declare const Chart: typeof import('chart.js').Chart;
 
       const PALETTE = ['#88a6af', '#93a995', '#9b9ba8', '#c3a487', '#d59790', '#b79a7b', '#88a6af88', '#93a99588'];
       const FETCH_TIMEOUT_MS = 22_000;
       const chartInstances: Array<InstanceType<typeof Chart>> = [];
+      /** Changing the range quickly overlaps loads; only the newest may render. */
+      const loads = latestRequests();
 
       function getToken(): string | null {
         return sessionStorage.getItem('ax_admin_token');
@@ -270,12 +273,11 @@ import LogoMark from '../../components/LogoMark.astro';
 
         destroyCharts();
 
-        const controller = new AbortController();
-        const timeoutId = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+        const request = loads.begin();
+        const timeoutId = window.setTimeout(() => request.abort(), FETCH_TIMEOUT_MS);
 
         try {
-          const signal = controller.signal;
-          const data = (await apiFetch(days, signal)) as {
+          const data = (await apiFetch(days, request.signal)) as {
             overview: { installs: number; indexes: number; tool_calls: number; cli_calls: number; uninstalls: number };
             timeline: { installs: Array<{ date: string; count: number }>; indexes: Array<{ date: string; count: number }> };
             tools: { mcp_tools: Array<{ name: string; count: number }>; cli_commands: Array<{ name: string; count: number }> };
@@ -284,6 +286,7 @@ import LogoMark from '../../components/LogoMark.astro';
             warnings?: string[];
           } | null;
 
+          if (!request.isCurrent()) return;
           if (!data) {
             authError.hidden = false;
             return;
@@ -320,6 +323,7 @@ import LogoMark from '../../components/LogoMark.astro';
             console.error('Chart render error:', chartErr);
           }
         } catch (err) {
+          if (!request.isCurrent()) return;
           console.error('Dashboard load error:', err);
           const msg =
             err instanceof DOMException && err.name === 'AbortError'
@@ -331,7 +335,7 @@ import LogoMark from '../../components/LogoMark.astro';
           loadError.hidden = false;
         } finally {
           window.clearTimeout(timeoutId);
-          loading.hidden = true;
+          if (request.isCurrent()) loading.hidden = true;
         }
       }
 
