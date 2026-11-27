@@ -2008,3 +2008,42 @@ async fn cancelled_graph_capture_leaves_no_open_transaction() {
         .expect("the reused connection is still inside the cancelled transaction");
     sqlx::query("ROLLBACK").execute(&mut *conn).await.unwrap();
 }
+
+#[tokio::test]
+async fn a_git_capture_redacts_secrets_in_the_title() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::write(repo.join("a.txt"), "a\n").unwrap();
+    let git = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&repo)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .status()
+            .unwrap();
+        assert!(status.success(), "{args:?}");
+    };
+    git(&["init"]);
+    git(&["add", "a.txt"]);
+    git(&[
+        "commit",
+        "-m",
+        "Point staging at postgres://app:hunter2@db/prod",
+    ]);
+    let db = open_db(dir.path()).await;
+    let result = ax_memory::capture_git_history(db.pool(), &repo, 10)
+        .await
+        .unwrap();
+    assert_eq!(result.captured, 1);
+    let (title, body): (String, String) =
+        sqlx::query_as("SELECT title, body FROM memories WHERE kind = 'git'")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert!(!title.contains("hunter2"), "{title}");
+    assert!(!body.contains("hunter2"), "{body}");
+}

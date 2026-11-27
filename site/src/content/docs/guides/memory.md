@@ -331,7 +331,7 @@ Rules:
 - **Local.** `turn` memories are still skipped by the `<ax_memories>` block, the memory titles list, and `ax memory export`.
 - **Demoted after 90 days, backed up first.** Every turn end that writes moves `turn` memories older than 90 days to the archive. They are first appended to `.ax/backups/turn-memories-YYYY-MM-DD.jsonl`. If that write fails, nothing changes. The archived turn stays fetchable by id and by cue. Other kinds are never demoted by this job.
 - **Change kind per file.** The memory body ends with a `Changes:` section (`A path`, `M path`, `D path`) so Command Center can color each file. Turns captured before this section existed only have `Files:` and show their files without a color.
-- **Secrets redacted.** API keys (`sk-…`, `ghp_…`, `AKIA…`), `password=…` values, and long hex or base64 runs are stored as `[redacted]`.
+- **Secrets redacted.** API keys and tokens (`sk-…`, `ghp_…`, `AKIA…`, Slack `xox…`, Stripe, GitLab, npm and Google keys), JWTs, values of secret-named keys (`password=…`, `db_password=…`, `"api_key": "…"`, `client_secret: …`, `token = …`), `Authorization: Bearer …` values, the password in `scheme://user:password@host`, and long hex or base64 runs are stored as `[redacted]`. Git commit titles are redacted the same way as their bodies.
 - **Never blocks.** The hooks print nothing and always exit 0; outside a git repository or an ax project they do nothing.
 
 The memory says *what* changed and what the agent reported, not *why*. Save the why with `ax_remember`.

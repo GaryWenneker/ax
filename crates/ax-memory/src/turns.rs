@@ -771,11 +771,54 @@ fn write_backup(dir: &Path, stem: &str, now_ms: i64, rows: &[MemoryRow]) -> Resu
 }
 
 const REDACTED: &str = "[redacted]";
-const PASSWORD_KEYS: [&str; 3] = ["password", "passwd", "pwd"];
 const TOKEN_PREFIXES: [&str; 6] = ["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"];
+/// Vendor token prefixes (Slack, Stripe, GitLab, npm, Google) whose tokens may
+/// be shorter than the generic 40-character rule.
+const VENDOR_PREFIXES: [&str; 12] = [
+    "xoxb-", "xoxp-", "xoxa-", "xoxr-", "xoxs-", "xapp-", "sk_live_", "sk_test_", "rk_live_",
+    "glpat-", "npm_", "AIza",
+];
+/// A key that names a secret: equal to or ending with one of these
+/// (case-insensitive), so `db_password`, `client_secret` and `API_KEY` match
+/// while `max_tokens` and `author` do not.
+const SECRET_KEY_SUFFIXES: [&str; 13] = [
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "api-key",
+    "access_key",
+    "private_key",
+    "auth",
+    "authorization",
+    "credentials",
+];
+/// Authorization schemes: the value after them is the secret.
+const AUTH_SCHEMES: [&str; 3] = ["Bearer", "Basic", "Token"];
 
 fn is_token_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '+' | '/' | '=' | '.')
+}
+
+fn is_secret_key(key: &str) -> bool {
+    let key = key.trim_start_matches('-').to_ascii_lowercase();
+    !key.is_empty() && SECRET_KEY_SUFFIXES.iter().any(|s| key.ends_with(s))
+}
+
+fn is_jwt(token: &str) -> bool {
+    let parts: Vec<&str> = token.split('.').collect();
+    token.starts_with("eyJ")
+        && token.len() >= 20
+        && parts.len() == 3
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '='))
+        })
 }
 
 fn looks_like_secret(token: &str) -> bool {
@@ -784,6 +827,12 @@ fn looks_like_secret(token: &str) -> bool {
         return true;
     }
     if TOKEN_PREFIXES.iter().any(|p| token.starts_with(p)) && len >= 24 {
+        return true;
+    }
+    if VENDOR_PREFIXES.iter().any(|p| token.starts_with(p)) && len >= 20 {
+        return true;
+    }
+    if is_jwt(token) {
         return true;
     }
     if token.starts_with("AKIA")
@@ -811,36 +860,122 @@ fn looks_like_secret(token: &str) -> bool {
 /// `password=value` → `password=[redacted]`; `None` when `token` is not such an assignment.
 fn redact_assignment(token: &str) -> Option<String> {
     let (key, value) = token.split_once('=')?;
-    (PASSWORD_KEYS.contains(&key.to_ascii_lowercase().as_str()) && !value.is_empty())
-        .then(|| format!("{key}={REDACTED}"))
+    (is_secret_key(key) && !value.is_empty()).then(|| format!("{key}={REDACTED}"))
 }
 
-/// Replace likely secrets (API keys, tokens, `password=` values, long hex/base64 runs) with `[redacted]`.
-pub fn redact_secrets(text: &str) -> String {
+/// The separator between a key and its value: `:` or `=`, with optional
+/// spaces and quotes around it (`password: x`, `"password": "x"`, `key='x'`).
+fn is_key_value_separator(separator: &str) -> bool {
+    let core: String = separator
+        .chars()
+        .filter(|c| !c.is_whitespace() && !matches!(c, '"' | '\''))
+        .collect();
+    core == ":" || core == "="
+}
+
+/// `scheme://user:password@host` → `scheme://user:[redacted]@host`.
+fn redact_url_credentials(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    let mut previous_token = String::new();
     let mut rest = text;
+    while let Some(at) = rest.find("://") {
+        let (head, tail) = rest.split_at(at + 3);
+        out.push_str(head);
+        let authority_end = tail
+            .find(|c: char| {
+                c == '/'
+                    || c == '?'
+                    || c == '#'
+                    || c.is_whitespace()
+                    || matches!(c, '"' | '\'' | '<' | '>')
+            })
+            .unwrap_or(tail.len());
+        let authority = &tail[..authority_end];
+        match authority.rfind('@') {
+            Some(at_sign) => {
+                let userinfo = &authority[..at_sign];
+                match userinfo.split_once(':') {
+                    Some((user, password)) if !password.is_empty() => {
+                        out.push_str(user);
+                        out.push(':');
+                        out.push_str(REDACTED);
+                        out.push_str(&authority[at_sign..]);
+                    }
+                    _ => out.push_str(authority),
+                }
+            }
+            None => out.push_str(authority),
+        }
+        rest = &tail[authority_end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Replace likely secrets with `[redacted]`: API keys and vendor tokens, JWTs,
+/// long hex/base64 runs, values of secret-named keys (`password=`,
+/// `"api_key": "…"`, `client_secret: …`, `token = …`), `Authorization:
+/// Bearer …` values and the password in `scheme://user:password@host`.
+pub fn redact_secrets(text: &str) -> String {
+    /// What the previous tokens said about the next one.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Expect {
+        Nothing,
+        /// A secret-named key: a value follows after `:` or `=`.
+        Key,
+        /// A value follows after whitespace (`password = x`, `Bearer x`).
+        Value,
+        /// Like `Value`, after an authorization scheme was already seen.
+        SchemeValue,
+    }
+    let text = redact_url_credentials(text);
+    let mut out = String::with_capacity(text.len());
+    let mut expect = Expect::Nothing;
+    let mut rest = text.as_str();
     while let Some(start) = rest.find(is_token_char) {
         let separator = &rest[..start];
         out.push_str(separator);
-        let after_password_colon = separator.trim() == ":"
-            && PASSWORD_KEYS.contains(&previous_token.to_ascii_lowercase().as_str());
         let tail = &rest[start..];
         let end = tail.find(|c: char| !is_token_char(c)).unwrap_or(tail.len());
         let run = &tail[..end];
         let token = run.trim_end_matches('.');
         let dots = &run[token.len()..];
-        if after_password_colon && !token.is_empty() {
+        let quiet_separator = separator
+            .chars()
+            .all(|c| c.is_whitespace() || matches!(c, '"' | '\''));
+        let is_value = !token.is_empty()
+            && match expect {
+                Expect::Nothing => false,
+                Expect::Key => is_key_value_separator(separator),
+                Expect::Value | Expect::SchemeValue => quiet_separator,
+            };
+        expect = if expect == Expect::Key && token == "=" && quiet_separator {
+            // `password = value`: the value comes next.
+            out.push_str(token);
+            Expect::Value
+        } else if is_value && expect != Expect::SchemeValue && AUTH_SCHEMES.contains(&token) {
+            out.push_str(token);
+            Expect::SchemeValue
+        } else if is_value {
             out.push_str(REDACTED);
+            Expect::Nothing
+        } else if token == "Bearer" {
+            out.push_str(token);
+            Expect::SchemeValue
         } else if let Some(redacted) = redact_assignment(token) {
             out.push_str(&redacted);
+            Expect::Nothing
         } else if looks_like_secret(token) {
             out.push_str(REDACTED);
+            Expect::Nothing
         } else {
             out.push_str(token);
-        }
+            if is_secret_key(token) {
+                Expect::Key
+            } else {
+                Expect::Nothing
+            }
+        };
         out.push_str(dots);
-        previous_token = token.to_string();
         rest = &tail[end..];
     }
     out.push_str(rest);

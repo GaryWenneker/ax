@@ -110,22 +110,23 @@ pub async fn capture_git_history(
             continue;
         }
         let id = format!("git-{}", &commit.hash[..commit.hash.len().min(12)]);
-        let body = crate::turns::redact_secrets(&if commit.body.is_empty() {
-            commit.subject.clone()
+        let subject = crate::turns::redact_secrets(&commit.subject);
+        let body = if commit.body.is_empty() {
+            subject.clone()
         } else {
-            format!("{}\n\n{}", commit.subject, commit.body)
-        });
-        let embedding = crate::embed::embedding_to_blob(&crate::embed::embed_text(&format!(
-            "{} {}",
-            commit.subject, commit.body
-        )));
+            format!(
+                "{subject}\n\n{}",
+                crate::turns::redact_secrets(&commit.body)
+            )
+        };
+        let embedding = crate::embed::embedding_to_blob(&crate::embed::embed_text(&body));
         let outcome = sqlx::query(
             r#"INSERT OR IGNORE INTO memories
                (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, embedding)
                VALUES (?, 'git', ?, ?, '["git"]', ?, 0.8, 'git', ?, ?, ?)"#,
         )
         .bind(&id)
-        .bind(commit.subject.chars().take(120).collect::<String>())
+        .bind(subject.chars().take(120).collect::<String>())
         .bind(&body)
         .bind(serde_json::to_string(&commit.files).unwrap_or_else(|_| "[]".into()))
         .bind(commit.author_time_ms)
