@@ -265,6 +265,34 @@ pub fn write_project_require_review(project_root: &Path, enabled: bool) -> Resul
     Ok(path)
 }
 
+/// Reads a config file that is about to be changed. A missing file is an
+/// empty object; a file that exists but is not valid JSON is an error, so a
+/// writer never replaces a hand-edited file and loses its other keys.
+fn read_config_for_update(path: &Path) -> Result<serde_json::Value, String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(serde_json::json!({})),
+        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+    };
+    if text.trim().is_empty() {
+        return Ok(serde_json::json!({}));
+    }
+    serde_json::from_str(&text).map_err(|e| {
+        format!(
+            "{} is not valid JSON ({e}); fix the file and try again, nothing was changed",
+            path.display()
+        )
+    })
+}
+
+/// Writes a config file through a temporary file and a rename, so readers
+/// never see a half-written file.
+fn write_config(path: &Path, root: &serde_json::Value) -> Result<(), String> {
+    let text = serde_json::to_string_pretty(root).map_err(|e| e.to_string())? + "\n";
+    ax_utils::atomic_write(path, text.as_bytes())
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))
+}
+
 fn read_root_bool(project_root: &Path, key: &str) -> bool {
     for name in [CONFIG_FILENAME, CONFIG_ALIAS] {
         let path = project_root.join(name);
@@ -281,24 +309,17 @@ fn read_root_bool(project_root: &Path, key: &str) -> bool {
 }
 
 fn write_root_bool_at(path: &Path, key: &str, value: bool) -> Result<(), String> {
-    let mut root: serde_json::Value = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
+    let mut root = read_config_for_update(path)?;
     let obj = root
         .as_object_mut()
         .ok_or_else(|| "config root must be a JSON object".to_string())?;
     obj.insert(key.into(), serde_json::Value::Bool(value));
-    let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n";
-    std::fs::write(path, text.as_bytes()).map_err(|e| e.to_string())?;
+    write_config(path, &root)?;
     Ok(())
 }
 
 fn write_policy_bool_at(path: &Path, key: &str, value: bool) -> Result<(), String> {
-    let mut root: serde_json::Value = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
+    let mut root = read_config_for_update(path)?;
     let policy = root
         .as_object_mut()
         .ok_or_else(|| "config root must be a JSON object".to_string())?;
@@ -308,8 +329,7 @@ fn write_policy_bool_at(path: &Path, key: &str, value: bool) -> Result<(), Strin
         .unwrap_or_default();
     policy_obj.insert(key.into(), serde_json::Value::Bool(value));
     policy.insert("policy".into(), serde_json::Value::Object(policy_obj));
-    let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n";
-    std::fs::write(path, text.as_bytes()).map_err(|e| e.to_string())?;
+    write_config(path, &root)?;
     Ok(())
 }
 
@@ -412,10 +432,7 @@ pub fn write_global_policy_storage(storage: PolicyStorage) -> Result<PathBuf, St
 }
 
 fn write_policy_storage_at(path: &Path, storage: PolicyStorage) -> Result<(), String> {
-    let mut root: serde_json::Value = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
+    let mut root = read_config_for_update(path)?;
 
     let policy = root
         .as_object_mut()
@@ -431,8 +448,7 @@ fn write_policy_storage_at(path: &Path, storage: PolicyStorage) -> Result<(), St
     );
     policy.insert("policy".into(), serde_json::Value::Object(policy_obj));
 
-    let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n";
-    std::fs::write(path, text.as_bytes()).map_err(|e| e.to_string())?;
+    write_config(path, &root)?;
     Ok(())
 }
 
@@ -455,10 +471,7 @@ pub fn write_project_stacks(
     stack_detect: &str,
 ) -> Result<(), String> {
     let path = project_root.join(CONFIG_FILENAME);
-    let mut root: serde_json::Value = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
+    let mut root = read_config_for_update(&path)?;
     let policy = root
         .as_object_mut()
         .ok_or_else(|| "config root must be a JSON object".to_string())?;
@@ -481,8 +494,7 @@ pub fn write_project_stacks(
         serde_json::Value::String(stack_detect.into()),
     );
     policy.insert("policy".into(), serde_json::Value::Object(policy_obj));
-    let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n";
-    std::fs::write(&path, text.as_bytes()).map_err(|e| e.to_string())?;
+    write_config(&path, &root)?;
     Ok(())
 }
 
@@ -501,10 +513,7 @@ pub fn read_project_ides(project_root: &Path) -> Option<Vec<String>> {
 /// Save `agents.ides` in the project `ax.json`, keeping every other key.
 pub fn write_project_ides(project_root: &Path, ides: &[String]) -> Result<(), String> {
     let path = project_root.join(CONFIG_FILENAME);
-    let mut root: serde_json::Value = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
+    let mut root = read_config_for_update(&path)?;
     let obj = root
         .as_object_mut()
         .ok_or_else(|| "config root must be a JSON object".to_string())?;
@@ -513,8 +522,7 @@ pub fn write_project_ides(project_root: &Path, ides: &[String]) -> Result<(), St
         *agents = serde_json::json!({});
     }
     agents["ides"] = serde_json::json!(ides);
-    let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n";
-    std::fs::write(&path, text.as_bytes()).map_err(|e| e.to_string())
+    write_config(&path, &root)
 }
 
 pub const DEFAULT_AGENTS_DIR: &str = ".agents";
@@ -551,10 +559,7 @@ pub fn validate_agents_dir_name(raw: &str) -> Result<String, String> {
 pub fn write_project_agents_dir(project_root: &Path, raw: &str) -> Result<String, String> {
     let name = validate_agents_dir_name(raw)?;
     let path = project_root.join(CONFIG_FILENAME);
-    let mut root: serde_json::Value = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
+    let mut root = read_config_for_update(&path)?;
     let policy = root
         .as_object_mut()
         .ok_or_else(|| "config root must be a JSON object".to_string())?;
@@ -564,8 +569,7 @@ pub fn write_project_agents_dir(project_root: &Path, raw: &str) -> Result<String
         .unwrap_or_default();
     policy_obj.insert("agentsDir".into(), serde_json::Value::String(name.clone()));
     policy.insert("policy".into(), serde_json::Value::Object(policy_obj));
-    let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n";
-    std::fs::write(&path, text.as_bytes()).map_err(|e| e.to_string())?;
+    write_config(&path, &root)?;
     Ok(name)
 }
 
@@ -691,5 +695,55 @@ mod tests {
             configured_agents_dir(dir.path()).as_deref(),
             Some("team-policy")
         );
+    }
+
+    #[test]
+    fn writers_refuse_an_unparseable_config_and_leave_it_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(CONFIG_FILENAME);
+        let broken = "{\"members\":[\"a\"],\"index\":{\"exclude\":[\"x\"]},}\n";
+        std::fs::write(&path, broken).unwrap();
+        let attempts: Vec<(&str, Result<(), String>)> = vec![
+            (
+                "policySync",
+                write_project_policy_sync(dir.path(), true).map(|_| ()),
+            ),
+            (
+                "requireReview",
+                write_project_require_review(dir.path(), true).map(|_| ()),
+            ),
+            (
+                "storage",
+                write_project_policy_storage(dir.path(), PolicyStorage::Database).map(|_| ()),
+            ),
+            (
+                "stacks",
+                write_project_stacks(dir.path(), &["rust".into()], "off"),
+            ),
+            ("ides", write_project_ides(dir.path(), &["cursor".into()])),
+            (
+                "agentsDir",
+                write_project_agents_dir(dir.path(), "team").map(|_| ()),
+            ),
+        ];
+        for (what, result) in attempts {
+            let err = result.expect_err(what);
+            assert!(err.contains(CONFIG_FILENAME), "{what}: {err}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), broken, "{what}");
+        }
+    }
+
+    #[test]
+    fn writers_create_a_missing_config() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_policy_sync(dir.path(), true).unwrap();
+        assert!(policy_sync_enabled(dir.path()));
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 }
