@@ -63,8 +63,10 @@ $ClippyPackages = @($ClippyCrates | ForEach-Object { '-p', $_ })
 # Findings outside these crates are dropped. Compiling the crates above also
 # compiles workspace dependencies (ax-lsp, ax-share, ...), and rustc replays
 # their warnings only for units cargo actually rebuilds — so counting them would
-# make this layer depend on the build cache instead of on the code.
-$ClippyScope = '^crates\\(' + ($ClippyCrates -join '|') + ')\\'
+# make this layer depend on the build cache instead of on the code. The filter
+# (and its tests, scripts/test_gauntlet_clippy_filter.py) compares paths with
+# forward slashes, so it works on Windows, macOS and Linux alike.
+. (Join-Path $PSScriptRoot 'gauntlet-clippy-filter.ps1')
 
 # Pre-existing test failures. Recorded 2026-08-19 on the graph-only branch.
 #   pricing_sync::tests::upsert_and_history - order-dependent: it shares the
@@ -77,16 +79,16 @@ $SuiteBaseline = @('pricing_sync::tests::upsert_and_history')
 # outside this change's diff; several are in files it edited, which is why the
 # baseline is per-file-per-lint counts and not a file allowlist.
 $ClippyBaseline = @{
-    'crates\ax-context\src\directory.rs [clippy::invalid_regex]'                = 1
-    'crates\ax-db\src\queries.rs [clippy::len_zero]'                            = 1
-    'crates\ax-extraction\src\languages\common.rs [clippy::only_used_in_recursion]' = 1
-    'crates\ax-extraction\src\languages\csharp.rs [unused_imports]'             = 1
-    'crates\ax-extraction\src\languages\refs.rs [clippy::manual_map]'           = 1
-    'crates\ax-extraction\src\languages\refs.rs [clippy::too_many_arguments]'   = 7
-    'crates\ax-extraction\src\orchestrator.rs [clippy::derivable_impls]'        = 1
-    'crates\ax-extraction\src\orchestrator.rs [clippy::type_complexity]'        = 1
-    'crates\ax-extraction\src\parse_pool.rs [clippy::new_without_default]'      = 1
-    'crates\ax-extraction\src\test_mapper.rs [clippy::double_ended_iterator_last]' = 1
+    'crates/ax-context/src/directory.rs [clippy::invalid_regex]'                = 1
+    'crates/ax-db/src/queries.rs [clippy::len_zero]'                            = 1
+    'crates/ax-extraction/src/languages/common.rs [clippy::only_used_in_recursion]' = 1
+    'crates/ax-extraction/src/languages/csharp.rs [unused_imports]'             = 1
+    'crates/ax-extraction/src/languages/refs.rs [clippy::manual_map]'           = 1
+    'crates/ax-extraction/src/languages/refs.rs [clippy::too_many_arguments]'   = 7
+    'crates/ax-extraction/src/orchestrator.rs [clippy::derivable_impls]'        = 1
+    'crates/ax-extraction/src/orchestrator.rs [clippy::type_complexity]'        = 1
+    'crates/ax-extraction/src/parse_pool.rs [clippy::new_without_default]'      = 1
+    'crates/ax-extraction/src/test_mapper.rs [clippy::double_ended_iterator_last]' = 1
 }
 
 function Add-Result {
@@ -231,37 +233,20 @@ function Invoke-ClippyLayer {
         return
     }
 
-    # Unique file:line:lint, so the same finding reported for lib and lib-test
-    # counts once.
-    $sigs = @($diags | Where-Object { $_.message.code.code } | ForEach-Object {
-        $span = $_.message.spans | Where-Object { $_.is_primary } | Select-Object -First 1
-        if ($span -and $span.file_name -match $ClippyScope) {
-            [pscustomobject]@{
-                Key  = "$($span.file_name) [$($_.message.code.code)]"
-                Uniq = "$($span.file_name):$($span.line_start) [$($_.message.code.code)]"
-                Text = $_.message.rendered
-            }
-        }
-    } | Group-Object Uniq | ForEach-Object { $_.Group[0] })
-
-    $groups = @($sigs | Group-Object Key)
-    $newFindings = @()
-    foreach ($g in $groups) {
-        $allowed = if ($ClippyBaseline.ContainsKey($g.Name)) { $ClippyBaseline[$g.Name] } else { 0 }
-        if ($g.Count -gt $allowed) {
-            $newFindings += "$($g.Name): $($g.Count) found, $allowed baselined"
-            $g.Group | Select-Object -Skip $allowed | ForEach-Object {
-                Write-Host $_.Text -ForegroundColor Red
-            }
-        }
+    # Each file:line:lint counts once, so a finding reported for lib and
+    # lib-test is not counted twice.
+    $verdict = Get-ClippyVerdict -Diagnostics $diags -Crates $ClippyCrates -Baseline $ClippyBaseline
+    if ($verdict.Error) {
+        Add-Result -Layer $layer -Status 'FAIL' -Detail $verdict.Error
+        return
     }
-
-    if ($newFindings.Count -gt 0) {
-        Add-Result -Layer $layer -Status 'FAIL' -Detail ($newFindings -join ' | ')
+    if ($verdict.New.Count -gt 0) {
+        $verdict.Texts | ForEach-Object { Write-Host $_ -ForegroundColor Red }
+        Add-Result -Layer $layer -Status 'FAIL' -Detail ($verdict.New -join ' | ')
         return
     }
 
-    $total = ($sigs | Measure-Object).Count
+    $total = $verdict.Total
     Write-Host "$total finding(s), all within the recorded baseline" -ForegroundColor Green
     Add-Result -Layer $layer -Status 'PASS' `
         -Detail "0 new findings ($total pre-existing, all baselined)"
