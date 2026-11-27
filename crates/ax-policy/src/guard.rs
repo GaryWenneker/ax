@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use sqlx::SqlitePool;
 
@@ -36,11 +36,22 @@ pub async fn guard_operation_with_extra_skills(
     };
     let mut violations = Vec::new();
 
-    let rel = path
-        .strip_prefix(project_root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/");
+    let rel = match project_relative(project_root, path) {
+        Some(rel) => rel,
+        None => {
+            return Ok(GuardResult {
+                allowed: false,
+                violations: vec![GuardViolation {
+                    rule_id: OUTSIDE_PROJECT_RULE.into(),
+                    message: format!(
+                        "{} is outside the project {}; ax_guard only allows paths inside it",
+                        path.display(),
+                        project_root.display()
+                    ),
+                }],
+            });
+        }
+    };
     let rel_lc = rel.to_lowercase();
     let require_skill_exempt = is_require_skill_exempt(&rel);
 
@@ -290,8 +301,84 @@ fn extract_quoted(s: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
+/// `rule_id` of the violation for a path that resolves outside the project.
+const OUTSIDE_PROJECT_RULE: &str = "outside-project";
+
+/// Glob matching follows the file system: case-insensitive on macOS and
+/// Windows, where `SRC/api` and `src/api` name the same folder.
+const CASE_INSENSITIVE_FS: bool = cfg!(any(target_os = "macos", windows));
+
+/// Removes `.` and resolves `..` without touching the file system.
+fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push(component);
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Resolves symbolic links in the deepest part of `path` that exists and
+/// keeps the rest as written, so a file that does not exist yet still gets
+/// the real location of its folder.
+fn resolve_existing_prefix(path: &Path) -> PathBuf {
+    let mut existing = path.to_path_buf();
+    let mut rest = Vec::new();
+    loop {
+        if let Ok(real) = existing.canonicalize() {
+            let mut out = real;
+            for part in rest.iter().rev() {
+                out.push(part);
+            }
+            return out;
+        }
+        match (
+            existing.file_name().map(|n| n.to_os_string()),
+            existing.parent(),
+        ) {
+            (Some(name), Some(parent)) => {
+                rest.push(name);
+                existing = parent.to_path_buf();
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
+}
+
+/// The project-relative spelling of `path` with `/` separators, after `.`,
+/// `..` and symbolic links are resolved. A relative `path` is taken relative
+/// to the project root. `None` when the path ends up outside the project.
+fn project_relative(project_root: &Path, path: &Path) -> Option<String> {
+    let absolute_root = std::path::absolute(project_root).unwrap_or(project_root.to_path_buf());
+    let root = lexical_normalize(&absolute_root);
+    let joined = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    };
+    let lexical = lexical_normalize(&joined);
+    let rel = match (root.canonicalize(), lexical.starts_with(&root)) {
+        (Ok(real_root), _) => resolve_existing_prefix(&lexical)
+            .strip_prefix(&real_root)
+            .ok()?
+            .to_path_buf(),
+        (Err(_), true) => lexical.strip_prefix(&root).ok()?.to_path_buf(),
+        (Err(_), false) => return None,
+    };
+    Some(rel.to_string_lossy().replace('\\', "/"))
+}
+
 fn path_matches_glob(pattern: &str, rel_path: &str) -> bool {
-    globset::Glob::new(pattern)
+    globset::GlobBuilder::new(pattern)
+        .case_insensitive(CASE_INSENSITIVE_FS)
+        .build()
         .map(|g| g.compile_matcher().is_match(rel_path))
         .unwrap_or(false)
 }
@@ -779,5 +866,94 @@ mod tests {
         .await
         .unwrap();
         assert!(result.allowed, "{:?}", result.violations);
+    }
+
+    async fn pool_with_auth_rule() -> (TempDir, SqlitePool) {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        insert_rule(
+            &pool,
+            "routes-need-auth",
+            "[\"src/api/**\"]",
+            "guard: require-content: \"requireAuth(\"",
+        )
+        .await;
+        std::fs::create_dir_all(dir.path().join("src/api")).unwrap();
+        std::fs::create_dir_all(dir.path().join("docs")).unwrap();
+        (dir, pool)
+    }
+
+    #[tokio::test]
+    async fn dot_dot_segments_do_not_escape_rule_globs() {
+        let (dir, pool) = pool_with_auth_rule().await;
+        let root = dir.path();
+        for spelled in [
+            root.join("docs/../src/api/users.ts"),
+            root.join("./src/./api/users.ts"),
+            std::path::PathBuf::from("src/api/users.ts"),
+        ] {
+            let result = guard_operation(
+                &pool,
+                root,
+                &spelled,
+                GuardOp::Write,
+                Some(b"export function handler() {}"),
+            )
+            .await
+            .unwrap();
+            assert!(!result.allowed, "{} must be guarded", spelled.display());
+        }
+    }
+
+    #[tokio::test]
+    async fn paths_outside_the_project_are_refused() {
+        let (dir, pool) = pool_with_auth_rule().await;
+        let root = dir.path().join("src");
+        let outside = root.join("../docs/../../elsewhere.ts");
+        let result = guard_operation(&pool, &root, &outside, GuardOp::Write, Some(b"x"))
+            .await
+            .unwrap();
+        assert!(!result.allowed);
+        assert!(
+            result.violations[0].message.contains("outside the project"),
+            "{:?}",
+            result.violations
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_link_out_of_the_project_is_refused() {
+        let (dir, pool) = pool_with_auth_rule().await;
+        let outside = TempDir::new().unwrap();
+        let project = dir.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        std::os::unix::fs::symlink(outside.path(), project.join("link")).unwrap();
+        let result = guard_operation(
+            &pool,
+            &project,
+            &project.join("link/x.ts"),
+            GuardOp::Write,
+            Some(b"x"),
+        )
+        .await
+        .unwrap();
+        assert!(!result.allowed, "{:?}", result.violations);
+    }
+
+    #[cfg(any(target_os = "macos", windows))]
+    #[tokio::test]
+    async fn globs_ignore_case_on_case_insensitive_platforms() {
+        let (dir, pool) = pool_with_auth_rule().await;
+        let root = dir.path();
+        let result = guard_operation(
+            &pool,
+            root,
+            &root.join("SRC/API/users.ts"),
+            GuardOp::Write,
+            Some(b"export function handler() {}"),
+        )
+        .await
+        .unwrap();
+        assert!(!result.allowed);
     }
 }

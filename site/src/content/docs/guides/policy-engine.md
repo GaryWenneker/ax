@@ -392,6 +392,8 @@ guard: require-skill: "old-coder"
 
 `old-coder-mandatory` ships with `require-skill: "old-coder"` so implementation writes fail closed if the skill is missing or not always-apply.
 
+Before matching, `ax_guard` resolves the path: `.` and `..` segments and symbolic links are followed, and a relative path is taken from the project root. A path that ends up outside the project is refused (rule id `outside-project`). On macOS and Windows, glob matching ignores case, like the file system.
+
 ### Command Center: label filter
 
 On **Policy → Rules** and **Policy → Skills**:
