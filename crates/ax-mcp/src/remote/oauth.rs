@@ -33,8 +33,55 @@ fn secret() -> String {
 fn now() -> i64 {
     ax_global_db::remote_mcp_publications::now()
 }
+/// Logs a database failure and returns text that is safe to show any caller.
 fn db(error: sqlx::Error) -> String {
-    error.to_string()
+    tracing::error!("remote OAuth database error: {error}");
+    "OAuth database unavailable".into()
+}
+/// An OAuth endpoint failure: an RFC 6749 error code, its HTTP status and a
+/// description that never carries internal details.
+#[derive(Debug)]
+struct Fail {
+    status: StatusCode,
+    code: &'static str,
+    description: String,
+}
+impl Fail {
+    fn client(code: &'static str, description: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            code,
+            description: description.into(),
+        }
+    }
+    fn grant(description: &str) -> Self {
+        Self::client("invalid_grant", description)
+    }
+    fn into_response(self) -> Response {
+        response(
+            self.status,
+            json!({"error":self.code,"error_description":self.description}),
+        )
+    }
+}
+impl From<&str> for Fail {
+    fn from(description: &str) -> Self {
+        Self::client("invalid_request", description)
+    }
+}
+impl From<String> for Fail {
+    fn from(description: String) -> Self {
+        Self::client("invalid_request", description)
+    }
+}
+/// A storage failure in an OAuth endpoint: logged here, reported as `server_error`.
+fn server(error: impl std::fmt::Display) -> Fail {
+    tracing::error!("remote OAuth endpoint failed: {error}");
+    Fail {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        code: "server_error",
+        description: "The authorization server could not complete the request".into(),
+    }
 }
 #[derive(Clone)]
 pub struct OAuthStore {
@@ -233,12 +280,6 @@ fn secure(mut r: Response) -> Response {
     }
     r
 }
-fn error(message: &str) -> Response {
-    response(
-        StatusCode::BAD_REQUEST,
-        json!({"error":"invalid_request","error_description":message}),
-    )
-}
 pub fn router(store: OAuthStore, config: Arc<RemoteConfig>) -> Router {
     Router::new()
         .route(
@@ -304,24 +345,24 @@ async fn register(State(p): State<Provider>, Json(body): Json<Value>) -> Respons
         if redirects.is_empty() || redirects.len()>8 || redirects.len()!=values.len() || redirects.iter().any(|s|!redirect(s,false)) {return Err("Register exact HTTPS or IP-loopback redirect URIs".into());}
         let name=body.get("client_name").and_then(Value::as_str).unwrap_or("Remote MCP client");
         if name.is_empty() || name.len()>160 || name.chars().any(char::is_control) {return Err("Invalid client name".into());}
-        let mut tx=p.store.pool.begin().await.map_err(db)?;
+        let mut tx=p.store.pool.begin().await.map_err(server)?;
         // Acquire the SQLite write lock before checking the public registration quota.
         let unused="origin=? AND native=0 AND id NOT IN (SELECT client_id FROM remote_oauth_requests WHERE origin=?)";
-        sqlx::query(&format!("DELETE FROM remote_oauth_clients WHERE {unused} AND created<?")).bind(&p.store.origin).bind(&p.store.origin).bind(now()-UNUSED_CLIENT_TTL).execute(&mut *tx).await.map_err(db)?;
-        let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_clients WHERE origin=?").bind(&p.store.origin).fetch_one(&mut *tx).await.map_err(db)?;
+        sqlx::query(&format!("DELETE FROM remote_oauth_clients WHERE {unused} AND created<?")).bind(&p.store.origin).bind(&p.store.origin).bind(now()-UNUSED_CLIENT_TTL).execute(&mut *tx).await.map_err(server)?;
+        let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_clients WHERE origin=?").bind(&p.store.origin).fetch_one(&mut *tx).await.map_err(server)?;
         if count>=MAX_CLIENTS {
             // Make room by removing the oldest client that never started a sign-in.
-            let evicted=sqlx::query(&format!("DELETE FROM remote_oauth_clients WHERE rowid IN (SELECT rowid FROM remote_oauth_clients WHERE {unused} ORDER BY created, rowid LIMIT ?)")).bind(&p.store.origin).bind(&p.store.origin).bind(count-MAX_CLIENTS+1).execute(&mut *tx).await.map_err(db)?;
+            let evicted=sqlx::query(&format!("DELETE FROM remote_oauth_clients WHERE rowid IN (SELECT rowid FROM remote_oauth_clients WHERE {unused} ORDER BY created, rowid LIMIT ?)")).bind(&p.store.origin).bind(&p.store.origin).bind(count-MAX_CLIENTS+1).execute(&mut *tx).await.map_err(server)?;
             if count-(evicted.rows_affected() as i64)>=MAX_CLIENTS {return Err("Client registration capacity reached".into());}
         }
         let id=uuid::Uuid::new_v4().to_string();
-        sqlx::query("INSERT INTO remote_oauth_clients VALUES (?,?,?,?,0,?)").bind(&p.store.origin).bind(&id).bind(name).bind(serde_json::to_string(&redirects).map_err(|e|e.to_string())?).bind(now()).execute(&mut *tx).await.map_err(db)?;
-        tx.commit().await.map_err(db)?;
-        Ok::<_,String>(json!({"client_id":id,"client_id_issued_at":now(),"client_name":name,"redirect_uris":redirects,"token_endpoint_auth_method":"none","grant_types":["authorization_code","refresh_token"],"response_types":["code"]}))
+        sqlx::query("INSERT INTO remote_oauth_clients VALUES (?,?,?,?,0,?)").bind(&p.store.origin).bind(&id).bind(name).bind(serde_json::to_string(&redirects).map_err(server)?).bind(now()).execute(&mut *tx).await.map_err(server)?;
+        tx.commit().await.map_err(server)?;
+        Ok::<_,Fail>(json!({"client_id":id,"client_id_issued_at":now(),"client_name":name,"redirect_uris":redirects,"token_endpoint_auth_method":"none","grant_types":["authorization_code","refresh_token"],"response_types":["code"]}))
     }.await;
     match result {
         Ok(value) => response(StatusCode::CREATED, value),
-        Err(e) => error(&e),
+        Err(e) => e.into_response(),
     }
 }
 #[derive(Clone, Deserialize)]
@@ -340,28 +381,28 @@ async fn authorize(State(p): State<Provider>, Query(q): Query<Authorization>) ->
         return too_many(retry);
     }
     let result=async {
-        let row=sqlx::query("SELECT redirects,native FROM remote_oauth_clients WHERE origin=? AND id=?").bind(&p.store.origin).bind(&q.client_id).fetch_optional(&p.store.pool).await.map_err(db)?.ok_or("Unknown OAuth client")?;
+        let row=sqlx::query("SELECT redirects,native FROM remote_oauth_clients WHERE origin=? AND id=?").bind(&p.store.origin).bind(&q.client_id).fetch_optional(&p.store.pool).await.map_err(server)?.ok_or("Unknown OAuth client")?;
         let native=row.get::<i64,_>("native")!=0; let registered:Vec<String>=serde_json::from_str(&row.get::<String,_>("redirects")).map_err(|_|"Invalid registered client")?;
         if !redirect(&q.redirect_uri,native) || (!native && !registered.contains(&q.redirect_uri)) {return Err("Redirect URI is not registered".into());}
         let project=p.config.projects.iter().find(|project|q.resource==format!("{}/projects/{}/mcp",p.store.origin,project.id) || (p.config.projects.len()==1 && q.resource==p.store.origin)).ok_or("Unknown project resource")?;
         let scope:HashSet<_>=q.scope.split_whitespace().collect();
         if q.response_type!="code" || q.state.is_empty() || q.state.len()>2048 || q.code_challenge_method!="S256" || q.code_challenge.len()!=43 || URL_SAFE_NO_PAD.decode(&q.code_challenge).map_or(true,|v|v.len()!=32) || !scope.contains(CONTEXT_SCOPE) || scope.iter().any(|s|!matches!(*s,CONTEXT_SCOPE|WRITE_SCOPE)) {return Err("Authorization requires state, S256 PKCE and supported scopes".into());}
-        let mut tx=p.store.pool.begin().await.map_err(db)?;
-        sqlx::query("DELETE FROM remote_oauth_requests WHERE origin=? AND expires<? AND status IN ('pending','denied')").bind(&p.store.origin).bind(now()).execute(&mut *tx).await.map_err(db)?;
+        let mut tx=p.store.pool.begin().await.map_err(server)?;
+        sqlx::query("DELETE FROM remote_oauth_requests WHERE origin=? AND expires<? AND status IN ('pending','denied')").bind(&p.store.origin).bind(now()).execute(&mut *tx).await.map_err(server)?;
         // A full table never refuses a new sign-in: the oldest pending request makes room.
         let oldest="DELETE FROM remote_oauth_requests WHERE id IN (SELECT id FROM remote_oauth_requests WHERE origin=? AND status='pending'";
         if !native {
-            let mine:i64=sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_requests WHERE origin=? AND status='pending' AND client_id=?").bind(&p.store.origin).bind(&q.client_id).fetch_one(&mut *tx).await.map_err(db)?;
-            if mine>=MAX_PENDING_PER_CLIENT {sqlx::query(&format!("{oldest} AND client_id=? ORDER BY expires, rowid LIMIT ?)")).bind(&p.store.origin).bind(&q.client_id).bind(mine-MAX_PENDING_PER_CLIENT+1).execute(&mut *tx).await.map_err(db)?;}
+            let mine:i64=sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_requests WHERE origin=? AND status='pending' AND client_id=?").bind(&p.store.origin).bind(&q.client_id).fetch_one(&mut *tx).await.map_err(server)?;
+            if mine>=MAX_PENDING_PER_CLIENT {sqlx::query(&format!("{oldest} AND client_id=? ORDER BY expires, rowid LIMIT ?)")).bind(&p.store.origin).bind(&q.client_id).bind(mine-MAX_PENDING_PER_CLIENT+1).execute(&mut *tx).await.map_err(server)?;}
         }
-        let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_requests WHERE origin=? AND status='pending'").bind(&p.store.origin).fetch_one(&mut *tx).await.map_err(db)?;
-        if count>=MAX_PENDING {sqlx::query(&format!("{oldest} ORDER BY expires, rowid LIMIT ?)")).bind(&p.store.origin).bind(count-MAX_PENDING+1).execute(&mut *tx).await.map_err(db)?;}
+        let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_requests WHERE origin=? AND status='pending'").bind(&p.store.origin).fetch_one(&mut *tx).await.map_err(server)?;
+        if count>=MAX_PENDING {sqlx::query(&format!("{oldest} ORDER BY expires, rowid LIMIT ?)")).bind(&p.store.origin).bind(count-MAX_PENDING+1).execute(&mut *tx).await.map_err(server)?;}
         let id=uuid::Uuid::new_v4().to_string(); let nonce=secret(); let scope=if scope.contains(WRITE_SCOPE) {"ax:context ax:write"} else {CONTEXT_SCOPE};
-        sqlx::query("INSERT INTO remote_oauth_requests(origin,id,nonce_hash,client_id,redirect,state,challenge,scope,project,resource,expires) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(&p.store.origin).bind(&id).bind(hash(&nonce)).bind(&q.client_id).bind(&q.redirect_uri).bind(&q.state).bind(&q.code_challenge).bind(scope).bind(&project.id).bind(&q.resource).bind(now()+600).execute(&mut *tx).await.map_err(db)?;
-        tx.commit().await.map_err(db)?; Ok::<_,String>((id,nonce))
+        sqlx::query("INSERT INTO remote_oauth_requests(origin,id,nonce_hash,client_id,redirect,state,challenge,scope,project,resource,expires) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(&p.store.origin).bind(&id).bind(hash(&nonce)).bind(&q.client_id).bind(&q.redirect_uri).bind(&q.state).bind(&q.code_challenge).bind(scope).bind(&project.id).bind(&q.resource).bind(now()+600).execute(&mut *tx).await.map_err(server)?;
+        tx.commit().await.map_err(server)?; Ok::<_,Fail>((id,nonce))
     }.await;
     match result {
-        Err(e) => error(&e),
+        Err(e) => e.into_response(),
         Ok((id, nonce)) => {
             // Only generated UUID/hex values are embedded; no caller-controlled HTML or URL.
             let html = format!(
@@ -376,59 +417,56 @@ async fn authorize(State(p): State<Provider>, Query(q): Query<Authorization>) ->
 async fn poll(State(p): State<Provider>, Path(nonce): Path<String>) -> Response {
     let result=async {
         if nonce.len()!=64 || !nonce.bytes().all(|b|b.is_ascii_hexdigit()) {return Err("Invalid request".into());}
-        let row=sqlx::query("SELECT id,status,expires,revoked,redirect,state FROM remote_oauth_requests WHERE origin=? AND nonce_hash=?").bind(&p.store.origin).bind(hash(&nonce)).fetch_optional(&p.store.pool).await.map_err(db)?.ok_or("Unknown request")?;
+        let row=sqlx::query("SELECT id,status,expires,revoked,redirect,state FROM remote_oauth_requests WHERE origin=? AND nonce_hash=?").bind(&p.store.origin).bind(hash(&nonce)).fetch_optional(&p.store.pool).await.map_err(server)?.ok_or("Unknown request")?;
         if row.get::<i64,_>("expires")<=now() || row.get::<i64,_>("revoked")!=0 {return Ok(json!({"status":"expired"}));}
         let status:String=row.get("status"); if status!="approved" {return Ok(json!({"status":status}));}
-        let code=secret(); let changed=sqlx::query("UPDATE remote_oauth_requests SET status='delivered',code_hash=? WHERE origin=? AND id=? AND status='approved' AND revoked=0 AND expires>?").bind(hash(&code)).bind(&p.store.origin).bind(row.get::<String,_>("id")).bind(now()).execute(&p.store.pool).await.map_err(db)?;
+        let code=secret(); let changed=sqlx::query("UPDATE remote_oauth_requests SET status='delivered',code_hash=? WHERE origin=? AND id=? AND status='approved' AND revoked=0 AND expires>?").bind(hash(&code)).bind(&p.store.origin).bind(row.get::<String,_>("id")).bind(now()).execute(&p.store.pool).await.map_err(server)?;
         if changed.rows_affected()!=1 {return Ok(json!({"status":"expired"}));}
         let mut url=Url::parse(&row.get::<String,_>("redirect")).map_err(|_|"Invalid redirect")?; url.query_pairs_mut().extend_pairs([("code",code.as_str()),("state",row.get::<String,_>("state").as_str()),("iss",format!("{}/oauth",p.store.origin).as_str())]);
-        Ok::<_,String>(json!({"status":"approved","redirect":url.as_str()}))
+        Ok::<_,Fail>(json!({"status":"approved","redirect":url.as_str()}))
     }.await;
     match result {
         Ok(v) => response(StatusCode::OK, v),
-        Err(e) => error(&e),
+        Err(e) => e.into_response(),
     }
 }
 async fn token(State(p): State<Provider>, Form(q): Form<BTreeMap<String, String>>) -> Response {
     let result=async {
         let value=|key:&str|q.get(key).map(String::as_str).unwrap_or(""); let client=value("client_id");
-        let mut tx=p.store.pool.begin().await.map_err(db)?;
-        sqlx::query("DELETE FROM remote_oauth_tokens WHERE origin=? AND refresh_expires<=?").bind(&p.store.origin).bind(now()).execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("DELETE FROM remote_oauth_used_refresh WHERE origin=? AND expires<=?").bind(&p.store.origin).bind(now()).execute(&mut *tx).await.map_err(db)?;
+        let mut tx=p.store.pool.begin().await.map_err(server)?;
+        sqlx::query("DELETE FROM remote_oauth_tokens WHERE origin=? AND refresh_expires<=?").bind(&p.store.origin).bind(now()).execute(&mut *tx).await.map_err(server)?;
+        sqlx::query("DELETE FROM remote_oauth_used_refresh WHERE origin=? AND expires<=?").bind(&p.store.origin).bind(now()).execute(&mut *tx).await.map_err(server)?;
         let row=match value("grant_type") {
             "authorization_code"=>{
-                let row=sqlx::query("SELECT * FROM remote_oauth_requests WHERE origin=? AND code_hash=? AND client_id=? AND status='delivered' AND revoked=0 AND expires>?").bind(&p.store.origin).bind(hash(value("code"))).bind(client).bind(now()).fetch_optional(&mut *tx).await.map_err(db)?.ok_or("Invalid authorization grant")?;
+                let row=sqlx::query("SELECT * FROM remote_oauth_requests WHERE origin=? AND code_hash=? AND client_id=? AND status='delivered' AND revoked=0 AND expires>?").bind(&p.store.origin).bind(hash(value("code"))).bind(client).bind(now()).fetch_optional(&mut *tx).await.map_err(server)?.ok_or_else(||Fail::grant("Invalid authorization grant"))?;
                 let verifier=value("code_verifier");
-                if !(43..=128).contains(&verifier.len()) || !verifier.bytes().all(|b|b.is_ascii_alphanumeric() || b"-._~".contains(&b)) || URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))!=row.get::<String,_>("challenge") || value("redirect_uri")!=row.get::<String,_>("redirect") {return Err("Invalid authorization grant".into());} row
+                if !(43..=128).contains(&verifier.len()) || !verifier.bytes().all(|b|b.is_ascii_alphanumeric() || b"-._~".contains(&b)) || URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))!=row.get::<String,_>("challenge") || value("redirect_uri")!=row.get::<String,_>("redirect") {return Err(Fail::grant("Invalid authorization grant"));} row
             },
             "refresh_token"=>{
-                let row=sqlx::query("SELECT r.* FROM remote_oauth_tokens t JOIN remote_oauth_requests r ON r.origin=t.origin AND r.id=t.request_id WHERE t.origin=? AND t.refresh_hash=? AND t.client_id=? AND t.refresh_expires>? AND r.revoked=0").bind(&p.store.origin).bind(hash(value("refresh_token"))).bind(client).bind(now()).fetch_optional(&mut *tx).await.map_err(db)?;
+                let row=sqlx::query("SELECT r.* FROM remote_oauth_tokens t JOIN remote_oauth_requests r ON r.origin=t.origin AND r.id=t.request_id WHERE t.origin=? AND t.refresh_hash=? AND t.client_id=? AND t.refresh_expires>? AND r.revoked=0").bind(&p.store.origin).bind(hash(value("refresh_token"))).bind(client).bind(now()).fetch_optional(&mut *tx).await.map_err(server)?;
                 if let Some(row)=row {row} else {
-                    let id:Option<String>=sqlx::query_scalar("SELECT request_id FROM remote_oauth_used_refresh WHERE origin=? AND hash=? AND client_id=? AND expires>?").bind(&p.store.origin).bind(hash(value("refresh_token"))).bind(client).bind(now()).fetch_optional(&mut *tx).await.map_err(db)?;
-                    if let Some(id)=id {sqlx::query("UPDATE remote_oauth_requests SET revoked=1 WHERE origin=? AND id=?").bind(&p.store.origin).bind(id).execute(&mut *tx).await.map_err(db)?;tx.commit().await.map_err(db)?;}
-                    return Err("Invalid refresh grant".into());
+                    let id:Option<String>=sqlx::query_scalar("SELECT request_id FROM remote_oauth_used_refresh WHERE origin=? AND hash=? AND client_id=? AND expires>?").bind(&p.store.origin).bind(hash(value("refresh_token"))).bind(client).bind(now()).fetch_optional(&mut *tx).await.map_err(server)?;
+                    if let Some(id)=id {sqlx::query("UPDATE remote_oauth_requests SET revoked=1 WHERE origin=? AND id=?").bind(&p.store.origin).bind(id).execute(&mut *tx).await.map_err(server)?;tx.commit().await.map_err(server)?;}
+                    return Err(Fail::grant("Invalid refresh grant"));
                 }
             },
-            _=>return Err("Unsupported grant type".into()),
+            _=>return Err(Fail::client("unsupported_grant_type","Unsupported grant type")),
         };
-        if value("resource")!=row.get::<String,_>("resource") {return Err("Invalid resource".into());}
+        if value("resource")!=row.get::<String,_>("resource") {return Err(Fail::client("invalid_target","Invalid resource"));}
         let id:String=row.get("id");
-        if value("grant_type")=="authorization_code" {sqlx::query("UPDATE remote_oauth_requests SET code_hash=NULL WHERE origin=? AND id=?").bind(&p.store.origin).bind(&id).execute(&mut *tx).await.map_err(db)?;}
+        if value("grant_type")=="authorization_code" {sqlx::query("UPDATE remote_oauth_requests SET code_hash=NULL WHERE origin=? AND id=?").bind(&p.store.origin).bind(&id).execute(&mut *tx).await.map_err(server)?;}
         else {
-            sqlx::query("INSERT INTO remote_oauth_used_refresh VALUES (?,?,?,?,?)").bind(&p.store.origin).bind(hash(value("refresh_token"))).bind(client).bind(&id).bind(now()+30*86400).execute(&mut *tx).await.map_err(db)?;
-            sqlx::query("DELETE FROM remote_oauth_tokens WHERE origin=? AND refresh_hash=?").bind(&p.store.origin).bind(hash(value("refresh_token"))).execute(&mut *tx).await.map_err(db)?;
+            sqlx::query("INSERT INTO remote_oauth_used_refresh VALUES (?,?,?,?,?)").bind(&p.store.origin).bind(hash(value("refresh_token"))).bind(client).bind(&id).bind(now()+30*86400).execute(&mut *tx).await.map_err(server)?;
+            sqlx::query("DELETE FROM remote_oauth_tokens WHERE origin=? AND refresh_hash=?").bind(&p.store.origin).bind(hash(value("refresh_token"))).execute(&mut *tx).await.map_err(server)?;
         }
         let access=format!("axo_{}",secret());let refresh=secret();
-        sqlx::query("INSERT INTO remote_oauth_tokens VALUES (?,?,?,?,?,?,?)").bind(&p.store.origin).bind(hash(&access)).bind(hash(&refresh)).bind(&id).bind(client).bind(now()+3600).bind(now()+30*86400).execute(&mut *tx).await.map_err(db)?;
-        tx.commit().await.map_err(db)?;
-        Ok::<_,String>(json!({"access_token":access,"token_type":"Bearer","expires_in":3600,"refresh_token":refresh,"scope":row.get::<String,_>("scope")}))
+        sqlx::query("INSERT INTO remote_oauth_tokens VALUES (?,?,?,?,?,?,?)").bind(&p.store.origin).bind(hash(&access)).bind(hash(&refresh)).bind(&id).bind(client).bind(now()+3600).bind(now()+30*86400).execute(&mut *tx).await.map_err(server)?;
+        tx.commit().await.map_err(server)?;
+        Ok::<_,Fail>(json!({"access_token":access,"token_type":"Bearer","expires_in":3600,"refresh_token":refresh,"scope":row.get::<String,_>("scope")}))
     }.await;
     match result {
         Ok(v) => response(StatusCode::OK, v),
-        Err(e) => response(
-            StatusCode::BAD_REQUEST,
-            json!({"error":"invalid_grant","error_description":e}),
-        ),
+        Err(e) => e.into_response(),
     }
 }
 async fn revoke(State(p): State<Provider>, Form(q): Form<BTreeMap<String, String>>) -> Response {
@@ -899,5 +937,63 @@ mod tests {
             register(State(p.clone()), body()).await.status(),
             StatusCode::TOO_MANY_REQUESTS
         );
+    }
+
+    #[tokio::test]
+    async fn token_errors_use_rfc_codes_and_hide_database_details() {
+        let p = provider().await;
+        let client = p.store.native_client().await.unwrap();
+        let form = |pairs: &[(&str, &str)]| {
+            Form(
+                pairs
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect::<BTreeMap<_, _>>(),
+            )
+        };
+        let unsupported = token(
+            State(p.clone()),
+            form(&[("grant_type", "password"), ("client_id", &client)]),
+        )
+        .await;
+        assert_eq!(unsupported.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(unsupported).await["error"], "unsupported_grant_type");
+        let unknown_code = token(
+            State(p.clone()),
+            form(&[
+                ("grant_type", "authorization_code"),
+                ("client_id", &client),
+                ("code", "nope"),
+            ]),
+        )
+        .await;
+        assert_eq!(unknown_code.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(unknown_code).await["error"], "invalid_grant");
+
+        // A database failure is a server error, not a rejected grant, and the
+        // driver's message never reaches the anonymous caller.
+        p.store.pool.close().await;
+        let failed = token(
+            State(p.clone()),
+            form(&[
+                ("grant_type", "refresh_token"),
+                ("client_id", &client),
+                ("refresh_token", "still-valid"),
+            ]),
+        )
+        .await;
+        assert_eq!(failed.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = json_body(failed).await;
+        assert_eq!(body["error"], "server_error");
+        assert!(!body.to_string().contains("pool"), "{body}");
+        let registered = register(
+            State(p.clone()),
+            Json(json!({"redirect_uris":["https://client.example.com/cb"]})),
+        )
+        .await;
+        assert_eq!(registered.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = json_body(registered).await;
+        assert_eq!(body["error"], "server_error");
+        assert!(!body.to_string().contains("pool"), "{body}");
     }
 }
