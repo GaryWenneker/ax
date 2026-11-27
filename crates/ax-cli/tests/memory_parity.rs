@@ -1,21 +1,12 @@
 //! One memory, three doors: the library, the CLI, and the MCP tool.
 
+mod common;
+
 use std::process::Command;
 
-use serde_json::Value;
+use common::ax_bin;
 
-fn ax_bin() -> std::path::PathBuf {
-    std::env::var_os("CARGO_BIN_EXE_ax")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            let mut path = std::env::current_exe().unwrap();
-            path.pop();
-            if path.ends_with("deps") {
-                path.pop();
-            }
-            path.join("ax")
-        })
-}
+use serde_json::Value;
 
 fn run_ax(root: &std::path::Path, args: &[&str]) -> Value {
     let out = Command::new(ax_bin())
