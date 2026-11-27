@@ -61,12 +61,11 @@ fn now_ms() -> i64 {
 
 fn mint_turn_id(session: &str) -> String {
     let raw = format!("{session}\n{}", now_ms());
-    format!("trn_{}", &blake3_hex(&raw)[..16])
+    format!("trn_{}", &sha256_hex(&raw)[..16])
 }
 
-fn blake3_hex(input: &str) -> String {
-    // Avoid a new blake3 dep in ax-usage: use a stable hash via DefaultHasher + salt.
-    // Prefer blake3 when available through std isn't; use sha2 already in crate.
+/// Hex SHA-256 of `input`, used for stable short ids.
+fn sha256_hex(input: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
     h.update(input.as_bytes());
@@ -574,7 +573,7 @@ async fn save_cli_turn_memory(
         }
     }
     body.push_str("\n\nConversation: ");
-    body.push_str(&blake3_hex(&snap.session_id)[..12]);
+    body.push_str(&sha256_hex(&snap.session_id)[..12]);
     if !outcome.is_empty() {
         body.push_str("\n\nOutcome: ");
         body.push_str(outcome);
@@ -582,7 +581,7 @@ async fn save_cli_turn_memory(
 
     let id = format!(
         "turn-{}",
-        &blake3_hex(&format!("{}:{}", snap.session_id, snap.turn_id))[..16]
+        &sha256_hex(&format!("{}:{}", snap.session_id, snap.turn_id))[..16]
     );
     let files_json = serde_json::to_string(&snap.files).unwrap_or_else(|_| "[]".into());
     let now = now_ms();
@@ -620,7 +619,7 @@ async fn save_semantic_memory(
     let body = crate::redact::redact_text(&mem.body);
     let id = format!(
         "mem-{}",
-        &blake3_hex(&format!("{session_id}:{turn_id}:{kind}:{title}:{body}"))[..16]
+        &sha256_hex(&format!("{session_id}:{turn_id}:{kind}:{title}:{body}"))[..16]
     );
     let tags = serde_json::to_string(&mem.tags).unwrap_or_else(|_| "[]".into());
     let files = serde_json::to_string(&mem.files).unwrap_or_else(|_| "[]".into());

@@ -6,7 +6,9 @@ use sha2::Digest;
 use sqlx::Row;
 use sqlx::SqlitePool;
 
-const SCHEMA: &str = r#"
+/// The spec tables both the registry and the hierarchy use. One definition,
+/// so the table shape does not depend on which module creates it first.
+pub(crate) const SPEC_TABLES: &str = r#"
 CREATE TABLE IF NOT EXISTS specs (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
@@ -29,6 +31,9 @@ CREATE TABLE IF NOT EXISTS spec_revisions (
     created_at INTEGER NOT NULL,
     PRIMARY KEY (spec_id, version)
 );
+"#;
+
+const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS plans (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
@@ -207,8 +212,9 @@ pub async fn ensure_hierarchy_schema(pool: &SqlitePool) -> Result<(), String> {
     Ok(())
 }
 
-async fn migrate_hierarchy_schema(pool: &SqlitePool) -> Result<(), String> {
-    for statement in SCHEMA.split(';') {
+/// Run each `;`-separated statement of a schema script.
+pub(crate) async fn run_schema(pool: &SqlitePool, script: &str) -> Result<(), String> {
+    for statement in script.split(';') {
         let statement = statement.trim();
         if statement.is_empty() {
             continue;
@@ -218,6 +224,12 @@ async fn migrate_hierarchy_schema(pool: &SqlitePool) -> Result<(), String> {
             .await
             .map_err(|error| error.to_string())?;
     }
+    Ok(())
+}
+
+async fn migrate_hierarchy_schema(pool: &SqlitePool) -> Result<(), String> {
+    run_schema(pool, SPEC_TABLES).await?;
+    run_schema(pool, SCHEMA).await?;
     add_column_if_missing(pool, "specs", "needs_plan", "INTEGER NOT NULL DEFAULT 0").await?;
     add_column_if_missing(
         pool,
@@ -379,7 +391,14 @@ pub struct ApprovalRequest {
     pub reason: String,
 }
 
-pub async fn approve_artifact(pool: &SqlitePool, request: ApprovalRequest) -> Result<(), String> {
+/// Role check on caller-supplied roles, kept for tests of the approval rules.
+/// Production approval goes through `approve_for_member`, which reads the
+/// roles from the membership database.
+#[cfg(test)]
+pub(crate) async fn approve_artifact(
+    pool: &SqlitePool,
+    request: ApprovalRequest,
+) -> Result<(), String> {
     ensure_hierarchy_schema(pool).await?;
     if request.actor_kind != "human" {
         return Err("agent cannot approve".into());
@@ -1452,64 +1471,18 @@ pub async fn revise_spec_from_json(
             "specId": parsed.spec_id,
             "specVersion": version,
         }),
-        Err(error) => spec_conflict_json(pool, &parsed, error).await,
-    }
-}
-
-async fn spec_conflict_json(
-    pool: &SqlitePool,
-    parsed: &SpecReviseBody,
-    error: String,
-) -> serde_json::Value {
-    if error != CONFLICT {
-        return serde_json::json!({ "ok": false, "error": error });
-    }
-    let head_version: Option<i64> = sqlx::query_scalar(
-        "SELECT version FROM spec_revisions WHERE spec_id = ?1 ORDER BY version DESC LIMIT 1",
-    )
-    .bind(&parsed.spec_id)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
-    let mut value = serde_json::json!({
-        "ok": false,
-        "error": error,
-        "incoming": { "body": parsed.body.trim() },
-    });
-    if let Ok(Some((body, hash))) = spec_side(pool, &parsed.spec_id, parsed.based_on).await {
-        value["base"] = serde_json::json!({
-            "version": parsed.based_on,
-            "body": body,
-            "hash": hash,
-        });
-    }
-    if let Some(version) = head_version {
-        if let Ok(Some((body, hash))) = spec_side(pool, &parsed.spec_id, version).await {
-            value["head"] = serde_json::json!({
-                "version": version,
-                "body": body,
-                "hash": hash,
-            });
+        Err(error) => {
+            conflict_json(
+                pool,
+                Revisions::Spec,
+                &parsed.spec_id,
+                parsed.based_on,
+                &parsed.body,
+                error,
+            )
+            .await
         }
     }
-    value
-}
-
-async fn spec_side(
-    pool: &SqlitePool,
-    spec_id: &str,
-    version: i64,
-) -> Result<Option<(String, String)>, String> {
-    ensure_hierarchy_schema(pool).await?;
-    sqlx::query_as(
-        "SELECT body, content_hash FROM spec_revisions WHERE spec_id = ?1 AND version = ?2",
-    )
-    .bind(spec_id)
-    .bind(version)
-    .fetch_optional(pool)
-    .await
-    .map_err(|error| error.to_string())
 }
 
 pub async fn revise_plan_from_json(
@@ -1538,36 +1511,100 @@ pub async fn revise_plan_from_json(
             "planId": parsed.plan_id,
             "planVersion": version,
         }),
-        Err(error) => conflict_json(pool, &parsed, error).await,
+        Err(error) => {
+            conflict_json(
+                pool,
+                Revisions::Plan,
+                &parsed.plan_id,
+                parsed.based_on,
+                &parsed.body,
+                error,
+            )
+            .await
+        }
     }
 }
 
-async fn conflict_json(pool: &SqlitePool, parsed: &ReviseBody, error: String) -> serde_json::Value {
+/// Which revision table a conflict or a side-by-side view reads.
+#[derive(Clone, Copy)]
+enum Revisions {
+    Plan,
+    Spec,
+}
+
+impl Revisions {
+    fn head_sql(self) -> &'static str {
+        match self {
+            Self::Plan => {
+                "SELECT version FROM plan_revisions WHERE plan_id = ?1 ORDER BY version DESC LIMIT 1"
+            }
+            Self::Spec => {
+                "SELECT version FROM spec_revisions WHERE spec_id = ?1 ORDER BY version DESC LIMIT 1"
+            }
+        }
+    }
+
+    fn side_sql(self) -> &'static str {
+        match self {
+            Self::Plan => {
+                "SELECT body, content_hash FROM plan_revisions WHERE plan_id = ?1 AND version = ?2"
+            }
+            Self::Spec => {
+                "SELECT body, content_hash FROM spec_revisions WHERE spec_id = ?1 AND version = ?2"
+            }
+        }
+    }
+}
+
+/// Body and hash of one revision.
+async fn revision_side(
+    pool: &SqlitePool,
+    kind: Revisions,
+    id: &str,
+    version: i64,
+) -> Result<Option<(String, String)>, String> {
+    ensure_hierarchy_schema(pool).await?;
+    sqlx::query_as(kind.side_sql())
+        .bind(id)
+        .bind(version)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// The error payload of a failed edit. A conflict also carries the incoming
+/// body, the base it was written against and the current head.
+async fn conflict_json(
+    pool: &SqlitePool,
+    kind: Revisions,
+    id: &str,
+    based_on: i64,
+    incoming: &str,
+    error: String,
+) -> serde_json::Value {
     if error != CONFLICT {
         return serde_json::json!({ "ok": false, "error": error });
     }
-    let head_version: Option<i64> = sqlx::query_scalar(
-        "SELECT version FROM plan_revisions WHERE plan_id = ?1 ORDER BY version DESC LIMIT 1",
-    )
-    .bind(&parsed.plan_id)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
+    let head_version: Option<i64> = sqlx::query_scalar(kind.head_sql())
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
     let mut value = serde_json::json!({
         "ok": false,
         "error": error,
-        "incoming": { "body": parsed.body.trim() },
+        "incoming": { "body": incoming.trim() },
     });
-    if let Ok(Some((body, hash))) = plan_side(pool, &parsed.plan_id, parsed.based_on).await {
+    if let Ok(Some((body, hash))) = revision_side(pool, kind, id, based_on).await {
         value["base"] = serde_json::json!({
-            "version": parsed.based_on,
+            "version": based_on,
             "body": body,
             "hash": hash,
         });
     }
     if let Some(version) = head_version {
-        if let Ok(Some((body, hash))) = plan_side(pool, &parsed.plan_id, version).await {
+        if let Ok(Some((body, hash))) = revision_side(pool, kind, id, version).await {
             value["head"] = serde_json::json!({
                 "version": version,
                 "body": body,
@@ -1774,12 +1811,12 @@ pub async fn compare_plan_from_json(
         Ok(parsed) => parsed,
         Err(error) => return serde_json::json!({ "ok": false, "error": error.to_string() }),
     };
-    let left = match plan_side(pool, &parsed.plan_id, parsed.left).await {
+    let left = match revision_side(pool, Revisions::Plan, &parsed.plan_id, parsed.left).await {
         Ok(Some(side)) => side,
         Ok(None) => return serde_json::json!({ "ok": false, "error": "missing revision" }),
         Err(error) => return serde_json::json!({ "ok": false, "error": error }),
     };
-    let right = match plan_side(pool, &parsed.plan_id, parsed.right).await {
+    let right = match revision_side(pool, Revisions::Plan, &parsed.plan_id, parsed.right).await {
         Ok(Some(side)) => side,
         Ok(None) => return serde_json::json!({ "ok": false, "error": "missing revision" }),
         Err(error) => return serde_json::json!({ "ok": false, "error": error }),
@@ -1790,22 +1827,6 @@ pub async fn compare_plan_from_json(
         "left": { "version": parsed.left, "body": left.0, "hash": left.1 },
         "right": { "version": parsed.right, "body": right.0, "hash": right.1 },
     })
-}
-
-async fn plan_side(
-    pool: &SqlitePool,
-    plan_id: &str,
-    version: i64,
-) -> Result<Option<(String, String)>, String> {
-    ensure_hierarchy_schema(pool).await?;
-    sqlx::query_as(
-        "SELECT body, content_hash FROM plan_revisions WHERE plan_id = ?1 AND version = ?2",
-    )
-    .bind(plan_id)
-    .bind(version)
-    .fetch_optional(pool)
-    .await
-    .map_err(|error| error.to_string())
 }
 
 pub async fn list_plan_revisions(

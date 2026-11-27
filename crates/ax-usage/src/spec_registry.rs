@@ -6,27 +6,9 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
+/// Registry tables; the shared `specs` and `spec_revisions` tables come from
+/// `spec_hierarchy::SPEC_TABLES`.
 const SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS specs (
-    id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL,
-    title TEXT NOT NULL,
-    markdown_path TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS spec_revisions (
-    spec_id TEXT NOT NULL,
-    version INTEGER NOT NULL,
-    status TEXT NOT NULL,
-    body TEXT NOT NULL,
-    content_hash TEXT NOT NULL,
-    source TEXT NOT NULL,
-    session_id TEXT,
-    turn_id TEXT,
-    based_on INTEGER,
-    created_at INTEGER NOT NULL,
-    PRIMARY KEY (spec_id, version)
-);
 CREATE TABLE IF NOT EXISTS spec_bindings (
     session_id TEXT PRIMARY KEY,
     spec_id TEXT NOT NULL
@@ -95,16 +77,8 @@ pub async fn ensure_spec_schema(pool: &SqlitePool) -> Result<(), String> {
     if REGISTRY_MIGRATED.contains(pool) {
         return Ok(());
     }
-    for statement in SCHEMA.split(';') {
-        let statement = statement.trim();
-        if statement.is_empty() {
-            continue;
-        }
-        sqlx::query(statement)
-            .execute(pool)
-            .await
-            .map_err(|error| error.to_string())?;
-    }
+    crate::spec_hierarchy::run_schema(pool, crate::spec_hierarchy::SPEC_TABLES).await?;
+    crate::spec_hierarchy::run_schema(pool, SCHEMA).await?;
     REGISTRY_MIGRATED.insert(pool);
     Ok(())
 }
@@ -2415,6 +2389,43 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
+    }
+
+    async fn table_shape(
+        pool: &SqlitePool,
+        table: &str,
+    ) -> Vec<(String, String, i64, Option<String>, i64)> {
+        sqlx::query_as(&format!(
+            "SELECT name, type, \"notnull\", dflt_value, pk FROM pragma_table_info('{table}') ORDER BY cid"
+        ))
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    async fn memory_pool() -> SqlitePool {
+        sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_spec_tables_have_one_shape_whichever_module_creates_them() {
+        let registry = memory_pool().await;
+        ensure_spec_schema(&registry).await.unwrap();
+        let hierarchy = memory_pool().await;
+        crate::spec_hierarchy::ensure_hierarchy_schema(&hierarchy)
+            .await
+            .unwrap();
+        for table in ["specs", "spec_revisions"] {
+            assert_eq!(
+                table_shape(&registry, table).await,
+                table_shape(&hierarchy, table).await,
+                "{table}"
+            );
+        }
     }
 
     #[tokio::test]
