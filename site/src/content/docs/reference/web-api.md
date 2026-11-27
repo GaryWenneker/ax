@@ -26,10 +26,12 @@ description: Every HTTP endpoint served by ax web / ax ship --watch, grouped by 
 | GET | `/api/files` | Indexed file tree (lazy per folder) |
 | GET | `/api/files/roots` | Top-level folders and files |
 | GET | `/api/search` | Full-text symbol search |
-| GET | `/api/source` | Source text of a file range |
+| GET | `/api/source` | Source text of a file range (indexed files only, up to 8 MiB; never `.env*`, `.git/` or `.ax/`) |
 | GET | `/api/unresolved` | Unresolved references |
 | GET | `/api/unresolved/summary` | Unresolved counts per kind |
 | POST | `/api/unresolved/reconcile` | Re-run resolution for unresolved references |
+
+List routes take `limit` and `offset`. `limit` is kept between 1 and the route's maximum, and a negative `offset` starts at the first row.
 
 ## Policy (rules and skills)
 

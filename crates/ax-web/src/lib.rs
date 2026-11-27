@@ -160,6 +160,17 @@ fn nodes_max_limit() -> i64 {
     2_000
 }
 
+/// Page size from a query string, kept in `1..=max`. SQLite reads a negative
+/// `LIMIT` as "no limit", so the lower bound matters as much as the upper.
+fn page_limit(limit: i64, max: i64) -> i64 {
+    limit.clamp(1, max)
+}
+
+/// Row offset from a query string; negative values start at the first row.
+fn page_offset(offset: i64) -> i64 {
+    offset.max(0)
+}
+
 async fn handle_nodes(State(hub): State<WebHub>, Query(p): Query<NodesQuery>) -> impl IntoResponse {
     let ws = hub.read().await;
     let filter = queries::NodeFilter {
@@ -167,8 +178,8 @@ async fn handle_nodes(State(hub): State<WebHub>, Query(p): Query<NodesQuery>) ->
         lang: p.lang.as_deref(),
         file: p.file.as_deref(),
         q: p.q.as_deref(),
-        limit: p.limit.min(nodes_max_limit()),
-        offset: p.offset,
+        limit: page_limit(p.limit, nodes_max_limit()),
+        offset: page_offset(p.offset),
     };
     match queries::get_nodes(&ws.graph_pool, filter).await {
         Ok(page) => (
@@ -212,8 +223,8 @@ async fn handle_files(State(hub): State<WebHub>, Query(p): Query<FilesQuery>) ->
         lang: p.lang.as_deref(),
         q: p.q.as_deref(),
         prefix: p.prefix.as_deref(),
-        limit: p.limit.min(files_max_limit()),
-        offset: p.offset,
+        limit: page_limit(p.limit, files_max_limit()),
+        offset: page_offset(p.offset),
     };
     match queries::get_files(&ws.graph_pool, filter).await {
         Ok(page) => (
@@ -250,7 +261,7 @@ async fn handle_search(
 ) -> impl IntoResponse {
     let ws = hub.read().await;
     let q = p.q.as_deref().unwrap_or("");
-    match queries::search(&ws.graph_pool, q, p.limit.min(100)).await {
+    match queries::search(&ws.graph_pool, q, page_limit(p.limit, 100)).await {
         Ok(results) => (
             StatusCode::OK,
             Json(serde_json::json!({ "results": results })),
@@ -286,8 +297,8 @@ async fn handle_unresolved(
     let filter = queries::UnresolvedFilter {
         q: p.q.as_deref(),
         kind: p.kind.as_deref(),
-        limit: p.limit.min(500),
-        offset: p.offset,
+        limit: page_limit(p.limit, 500),
+        offset: page_offset(p.offset),
     };
     match queries::get_unresolved_refs(&ws.graph_pool, filter).await {
         Ok(page) => (
@@ -350,6 +361,46 @@ fn default_source_context() -> i64 {
 
 const SOURCE_MAX_LINES: i64 = 500;
 
+/// Largest file `/api/source` reads; bigger files get 413.
+const SOURCE_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Paths `/api/source` never serves, even when an index lists them.
+fn source_path_denied(rel: &str) -> bool {
+    rel.split('/')
+        .any(|part| part == ".git" || part == ".ax" || part == ".env" || part.starts_with(".env."))
+}
+
+/// Whether `/api/source` may serve `resolved`: the file must be in the
+/// index's `files` table (by the requested path or by its path relative to
+/// the canonical root) and not on the deny list.
+async fn source_is_indexed(
+    pool: &sqlx::SqlitePool,
+    root: &std::path::Path,
+    resolved: &std::path::Path,
+    requested: &str,
+) -> Result<bool, sqlx::Error> {
+    let Ok(rel) = resolved.strip_prefix(root) else {
+        return Ok(false);
+    };
+    let rel = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/");
+    let requested = requested.replace('\\', "/");
+    let requested = requested.trim_start_matches("./");
+    if rel.is_empty() || source_path_denied(&rel) || source_path_denied(requested) {
+        return Ok(false);
+    }
+    let hit =
+        sqlx::query_scalar::<_, i64>("SELECT 1 FROM files WHERE path = ? OR path = ? LIMIT 1")
+            .bind(&rel)
+            .bind(requested)
+            .fetch_optional(pool)
+            .await?;
+    Ok(hit.is_some())
+}
+
 async fn handle_source(
     State(hub): State<WebHub>,
     Query(p): Query<SourceQuery>,
@@ -402,21 +453,64 @@ async fn handle_source(
             )
                 .into_response();
         }
+        // Serve only files the index holds, so files left out of the index on
+        // purpose (secrets, VCS metadata, ax state) stay unreadable here.
+        match source_is_indexed(&ws.graph_pool, &root, &resolved, &p.path).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(ApiError {
+                        error: format!("file is not in the index: {}", p.path),
+                    }),
+                )
+                    .into_response()
+            }
+            Err(e) => return api_err(e.to_string()).into_response(),
+        }
 
-        match tokio::fs::read_to_string(&resolved).await {
-            Ok(t) => t,
+        let path = resolved.clone();
+        let read =
+            tokio::task::spawn_blocking(move || ax_utils::read_bounded(&path, SOURCE_MAX_BYTES))
+                .await;
+        match read {
+            Ok(Ok(bytes)) => match String::from_utf8(bytes) {
+                Ok(t) => t,
+                Err(_) => {
+                    return api_err(format!("cannot read {}: not UTF-8 text", p.path))
+                        .into_response()
+                }
+            },
+            Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => {
+                return (
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    Json(ApiError {
+                        error: format!(
+                            "{} is larger than {} MiB",
+                            p.path,
+                            SOURCE_MAX_BYTES / (1024 * 1024)
+                        ),
+                    }),
+                )
+                    .into_response()
+            }
+            Ok(Err(e)) => return api_err(format!("cannot read {}: {e}", p.path)).into_response(),
             Err(e) => return api_err(format!("cannot read {}: {e}", p.path)).into_response(),
         }
     };
     let lines: Vec<&str> = text.lines().collect();
     let total = lines.len() as i64;
 
+    // Query values are untrusted i64s: saturate so extreme values clamp
+    // instead of overflowing.
+    let context = p.context.max(0);
     let start = p.start.unwrap_or(1).max(1);
-    let end = p.end.unwrap_or(start + 200).max(start);
-    let from = (start - p.context.max(0)).max(1);
-    let to = (end + p.context.max(0))
+    let end = p.end.unwrap_or(start.saturating_add(200)).max(start);
+    let from = start.saturating_sub(context).max(1);
+    let to = end
+        .saturating_add(context)
         .min(total)
-        .min(from + SOURCE_MAX_LINES - 1);
+        .min(from.saturating_add(SOURCE_MAX_LINES - 1));
 
     let slice: Vec<serde_json::Value> = lines
         .iter()
