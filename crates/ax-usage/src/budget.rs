@@ -159,19 +159,26 @@ pub(crate) fn parse_config_json(bytes: &[u8]) -> Result<Value, String> {
 /// Reads a number field. Numeric strings such as `"60"` are accepted.
 fn number_field(section: &Value, key: &str, path: &str, diags: &mut Vec<String>) -> Option<f64> {
     let raw = section.get(key)?;
-    let parsed = match raw {
-        Value::Number(n) => n.as_f64(),
-        Value::String(s) => s.trim().parse::<f64>().ok(),
-        Value::Null => return None,
-        _ => None,
-    };
-    match parsed.filter(|v| v.is_finite()) {
+    if raw.is_null() {
+        return None;
+    }
+    match parse_number(raw) {
         Some(v) => Some(v),
         None => {
             diags.push(format!("{path}.{key} is not a number ({raw}); ignored"));
             None
         }
     }
+}
+
+/// A finite number, or a numeric string such as `"60"`; anything else is `None`.
+fn parse_number(raw: &Value) -> Option<f64> {
+    match raw {
+        Value::Number(n) => n.as_f64(),
+        Value::String(s) => s.trim().parse::<f64>().ok(),
+        _ => None,
+    }
+    .filter(|v| v.is_finite())
 }
 
 /// Allowed range for a number field: lower bound, whether the lower bound is
@@ -532,13 +539,14 @@ fn apply_budget_patch(
 }
 
 /// Refuses a budget section whose explicitly set thresholds are not
-/// `warning <= critical <= hardLimit`. Unset thresholds are not checked: the
+/// `warning <= critical <= hardLimit`. Thresholds are parsed the way the reader
+/// parses them, so numeric strings count. Unset thresholds are not checked: the
 /// reader lowers a default to fit under a set one.
 fn check_threshold_order(budget: &serde_json::Map<String, Value>) -> Result<(), String> {
     let keys = ["warningPercent", "criticalPercent", "hardLimitPercent"];
     let set: Vec<(&str, f64)> = keys
         .iter()
-        .filter_map(|k| budget.get(*k).and_then(Value::as_f64).map(|v| (*k, v)))
+        .filter_map(|k| budget.get(*k).and_then(parse_number).map(|v| (*k, v)))
         .collect();
     for pair in set.windows(2) {
         let ((low_key, low), (high_key, high)) = (pair[0], pair[1]);
@@ -1168,6 +1176,16 @@ mod tests {
         // Setting only a hard limit under the default critical is allowed.
         let fresh = dir.path().join("fresh.json");
         save_budget_to(&fresh, &patch).unwrap();
+        // A threshold stored as a numeric string is read as a number, so it
+        // is checked too.
+        let stringy = dir.path().join("stringy.json");
+        std::fs::write(&stringy, r#"{"budget":{"criticalPercent":"70"}}"#).unwrap();
+        let err = save_budget_to(&stringy, &patch).unwrap_err();
+        assert!(err.contains("order"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&stringy).unwrap(),
+            r#"{"budget":{"criticalPercent":"70"}}"#
+        );
     }
 
     #[test]
