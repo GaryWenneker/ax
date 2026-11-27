@@ -157,11 +157,26 @@ pub enum ReceiptStatus {
     Blocking,
 }
 
+/// A receipt blocks when a mandatory item was left out for lack of budget. A mandatory item
+/// rejected as a duplicate (its content is already in) or as created after the replay cutoff
+/// does not block.
 pub fn receipt_status(candidates: &[SelectionCandidate]) -> ReceiptStatus {
-    if candidates.iter().any(|candidate| {
-        candidate.role == SelectionRole::Mandatory
-            && candidate.decision == SelectionDecision::Rejected
-    }) {
+    status_of(
+        candidates
+            .iter()
+            .map(|c| (c.role, c.decision, c.reason.as_str())),
+    )
+}
+
+fn status_of<'a>(
+    items: impl IntoIterator<Item = (SelectionRole, SelectionDecision, &'a str)>,
+) -> ReceiptStatus {
+    let blocking = items.into_iter().any(|(role, decision, reason)| {
+        role == SelectionRole::Mandatory
+            && decision == SelectionDecision::Rejected
+            && reason == "budget"
+    });
+    if blocking {
         ReceiptStatus::Blocking
     } else {
         ReceiptStatus::Ready
@@ -276,6 +291,9 @@ pub struct ResolveReceipt {
     pub items: Vec<ResolvedItem>,
 }
 
+/// Choose the context for a task. Mandatory candidates get the budget first, then advisory
+/// ones share what is left; within each pass the input order decides. Items come back in the
+/// input order.
 pub fn resolve_context(
     mode: ReplayMode,
     cutoff_ms: Option<i64>,
@@ -283,54 +301,57 @@ pub fn resolve_context(
     budget_tokens: u64,
     candidates: &[ContextCandidate],
 ) -> ResolveReceipt {
-    let mut items = Vec::with_capacity(candidates.len());
-    let mut seen = std::collections::BTreeSet::new();
-    let mut remaining = budget_tokens;
-    let mut blocking = false;
-    for candidate in candidates {
-        let role = if candidate.kind == "skill" {
-            SelectionRole::Advisory
-        } else if candidate.mandatory {
+    let role_of = |candidate: &ContextCandidate| {
+        if candidate.kind != "skill" && candidate.mandatory {
             SelectionRole::Mandatory
         } else {
             SelectionRole::Advisory
-        };
-        let after_cutoff = mode == ReplayMode::AsOf
-            && cutoff_ms.is_some_and(|cutoff| candidate.created_at_ms > cutoff);
-        let (decision, reason) = if after_cutoff {
-            (SelectionDecision::Rejected, "after cutoff")
-        } else if role == SelectionRole::Advisory && !candidate_relevant(candidate, task_tags) {
-            (SelectionDecision::Rejected, "not relevant")
-        } else if seen.contains(&candidate.content_hash) {
-            (SelectionDecision::Rejected, "duplicate")
-        } else if candidate.tokens > remaining {
-            if role == SelectionRole::Mandatory {
-                blocking = true;
+        }
+    };
+    let mut decided: Vec<Option<ResolvedItem>> = vec![None; candidates.len()];
+    let mut seen = std::collections::BTreeSet::new();
+    let mut remaining = budget_tokens;
+    for pass in [SelectionRole::Mandatory, SelectionRole::Advisory] {
+        for (index, candidate) in candidates.iter().enumerate() {
+            let role = role_of(candidate);
+            if role != pass {
+                continue;
             }
-            (SelectionDecision::Rejected, "budget")
-        } else {
-            remaining -= candidate.tokens;
-            seen.insert(candidate.content_hash.clone());
-            let reason = if role == SelectionRole::Mandatory {
-                "mandatory"
+            let after_cutoff = mode == ReplayMode::AsOf
+                && cutoff_ms.is_some_and(|cutoff| candidate.created_at_ms > cutoff);
+            let (decision, reason) = if after_cutoff {
+                (SelectionDecision::Rejected, "after cutoff")
+            } else if role == SelectionRole::Advisory && !candidate_relevant(candidate, task_tags) {
+                (SelectionDecision::Rejected, "not relevant")
+            } else if seen.contains(&candidate.content_hash) {
+                (SelectionDecision::Rejected, "duplicate")
+            } else if candidate.tokens > remaining {
+                (SelectionDecision::Rejected, "budget")
             } else {
-                "relevant"
+                remaining -= candidate.tokens;
+                seen.insert(candidate.content_hash.clone());
+                let reason = if role == SelectionRole::Mandatory {
+                    "mandatory"
+                } else {
+                    "relevant"
+                };
+                (SelectionDecision::Selected, reason)
             };
-            (SelectionDecision::Selected, reason)
-        };
-        items.push(ResolvedItem {
-            id: candidate.id.clone(),
-            role,
-            decision,
-            reason: reason.into(),
-        });
+            decided[index] = Some(ResolvedItem {
+                id: candidate.id.clone(),
+                role,
+                decision,
+                reason: reason.into(),
+            });
+        }
     }
+    let items: Vec<ResolvedItem> = decided.into_iter().flatten().collect();
     ResolveReceipt {
-        status: if blocking {
-            ReceiptStatus::Blocking
-        } else {
-            ReceiptStatus::Ready
-        },
+        status: status_of(
+            items
+                .iter()
+                .map(|item| (item.role, item.decision, item.reason.as_str())),
+        ),
         items,
     }
 }
@@ -1332,6 +1353,62 @@ mod tests {
             .iter()
             .find(|item| item.id == id)
             .unwrap_or_else(|| panic!("missing {id}"))
+    }
+
+    #[test]
+    fn a_mandatory_rule_gets_the_budget_before_an_earlier_advisory_skill() {
+        let skill = candidate(
+            "skill-dotnet",
+            "skill",
+            false,
+            "s1",
+            60,
+            1,
+            &["dotnet"],
+            "Use dotnet.",
+        );
+        let rule = candidate("rule-english", "rule", true, "r1", 50, 1, &[], "English.");
+        for candidates in [[skill.clone(), rule.clone()], [rule.clone(), skill.clone()]] {
+            let receipt = resolve_context(ReplayMode::Current, None, &["dotnet"], 100, &candidates);
+            assert_eq!(receipt.status, ReceiptStatus::Ready);
+            assert_eq!(
+                item(&receipt, "rule-english").decision,
+                SelectionDecision::Selected
+            );
+            assert_eq!(item(&receipt, "skill-dotnet").reason, "budget");
+            let ids: Vec<&str> = receipt.items.iter().map(|i| i.id.as_str()).collect();
+            let input: Vec<&str> = candidates.iter().map(|c| c.id.as_str()).collect();
+            assert_eq!(ids, input, "items keep the input order");
+        }
+    }
+
+    #[test]
+    fn receipt_status_and_the_resolver_agree_on_what_blocks() {
+        let receipt = resolve_context(
+            ReplayMode::AsOf,
+            Some(10),
+            &[],
+            100,
+            &[
+                candidate("rule-a", "rule", true, "same", 10, 1, &[], "A."),
+                candidate("rule-b", "rule", true, "same", 10, 1, &[], "A."),
+                candidate("rule-late", "rule", true, "late", 10, 20, &[], "Late."),
+            ],
+        );
+        assert_eq!(item(&receipt, "rule-b").reason, "duplicate");
+        assert_eq!(item(&receipt, "rule-late").reason, "after cutoff");
+        assert_eq!(receipt.status, ReceiptStatus::Ready);
+        let as_candidates: Vec<SelectionCandidate> = receipt
+            .items
+            .iter()
+            .map(|i| SelectionCandidate {
+                id: i.id.clone(),
+                role: i.role,
+                decision: i.decision,
+                reason: i.reason.clone(),
+            })
+            .collect();
+        assert_eq!(receipt_status(&as_candidates), receipt.status);
     }
 
     #[test]
