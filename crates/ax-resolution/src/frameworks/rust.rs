@@ -1,5 +1,6 @@
 //! Rust web route extraction (Actix/Rocket attrs, Axum, Actix builder) — CG: frameworks/rust.ts
 
+use ax_utils::slice_bytes;
 use regex::Regex;
 use std::sync::OnceLock;
 
@@ -129,7 +130,7 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
         } else {
             safe.len().min(after + 500)
         };
-        let chain = &safe[after..end];
+        let chain = slice_bytes(&safe, after, end);
         let method_to = actix_method_to_re();
         let mut found = false;
         for m2 in method_to.captures_iter(chain) {
@@ -448,4 +449,34 @@ fn actix_method_to_re() -> &'static Regex {
 fn direct_to_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r#"^\s*\.to\s*\(\s*([A-Za-z_][\w:]*)"#).expect("direct to"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn actix_resource_window_cut_inside_a_character_does_not_panic() {
+        let head = r#"web::resource("/a")"#;
+        let mut src = format!("{head}.route(web::get().to(list)) // ");
+        // Put a two-byte character across byte 500 after the resource call.
+        while src.len() < head.len() + 499 {
+            src.push('a');
+        }
+        src.push_str("\u{e9} more text\n");
+        let r = extract_file("src/main.rs", &format!("fn f() {{ {src} }}"));
+        assert!(r.nodes.iter().any(|n| n.name.contains("/a")));
+    }
+
+    #[test]
+    fn actix_next_resource_far_away_cut_inside_a_character_does_not_panic() {
+        let head = r#"web::resource("/a")"#;
+        let mut src = format!("{head}.route(web::get().to(list)); let s = \"");
+        while src.len() < head.len() + 499 {
+            src.push('a');
+        }
+        src.push_str("\u{e9}\"; web::resource(\"/b\");\n");
+        let r = extract_file("src/main.rs", &format!("fn f() {{ {src} }}"));
+        assert!(r.nodes.iter().any(|n| n.name.contains("/a")));
+    }
 }
