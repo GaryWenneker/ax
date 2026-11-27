@@ -2,6 +2,7 @@
 
 use std::convert::Infallible;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -29,24 +30,53 @@ struct QualityCache {
     root: PathBuf,
     log_mtime_ms: i64,
     snap: Option<QualitySnapshot>,
+    /// When the cached snapshot was audited.
+    audited_at: Option<std::time::Instant>,
+}
+
+/// A changed verbose log does not trigger a new audit sooner than this.
+const MIN_AUDIT_INTERVAL: Duration = Duration::from_secs(5);
+
+struct QualityInner {
+    cache: RwLock<QualityCache>,
+    /// Held while an audit runs, so concurrent callers share one audit.
+    refresh: tokio::sync::Mutex<()>,
+    /// Audits run so far (background and on request).
+    audits: AtomicU64,
+    watcher_started: AtomicBool,
 }
 
 #[derive(Clone)]
-pub struct QualityState {
-    cache: Arc<RwLock<QualityCache>>,
-}
+pub struct QualityState(Arc<QualityInner>);
 
 impl QualityState {
     pub fn new() -> Self {
-        Self {
-            cache: Arc::new(RwLock::new(QualityCache::default())),
-        }
+        Self(Arc::new(QualityInner {
+            cache: RwLock::new(QualityCache::default()),
+            refresh: tokio::sync::Mutex::new(()),
+            audits: AtomicU64::new(0),
+            watcher_started: AtomicBool::new(false),
+        }))
+    }
+
+    #[cfg(test)]
+    fn audit_runs(&self) -> u64 {
+        self.0.audits.load(Ordering::SeqCst)
+    }
+
+    #[cfg(test)]
+    fn watcher_running(&self) -> bool {
+        self.0.watcher_started.load(Ordering::SeqCst)
     }
 }
 
 pub fn router(hub: WebHub) -> Router {
-    let state = QualityState::new();
-    spawn_watcher(hub.clone(), state.clone());
+    router_with_state(hub, QualityState::new())
+}
+
+/// The background watcher starts with the first request to these routes,
+/// not when the router is built.
+fn router_with_state(hub: WebHub, state: QualityState) -> Router {
     Router::new()
         .route("/mcp-quality", get(handle_quality))
         .route("/mcp-quality/events", get(handle_quality_events))
@@ -75,24 +105,42 @@ fn latest_verbose_log_mtime_ms(root: &std::path::Path) -> i64 {
     max
 }
 
+/// The cached snapshot when it still describes `root`: the verbose log has
+/// not changed (also when there is none), or the last audit is recent.
+fn cached_snapshot(
+    cache: &QualityCache,
+    root: &std::path::Path,
+    mtime: i64,
+) -> Option<QualitySnapshot> {
+    if cache.root != root {
+        return None;
+    }
+    let recent = cache
+        .audited_at
+        .is_some_and(|at| at.elapsed() < MIN_AUDIT_INTERVAL);
+    if cache.log_mtime_ms == mtime || recent {
+        return cache.snap.clone();
+    }
+    None
+}
+
 async fn refresh_snapshot(hub: &WebHub, state: &QualityState, force: bool) -> QualitySnapshot {
     let root = {
         let ws = hub.read().await;
         ws.project_root.clone()
     };
     let mtime = latest_verbose_log_mtime_ms(&root);
+    if !force {
+        if let Some(snap) = cached_snapshot(&*state.0.cache.read().await, &root, mtime) {
+            return snap;
+        }
+    }
 
-    {
-        let cache = state.cache.read().await;
-        if !force
-            && cache.root == root
-            && cache.log_mtime_ms == mtime
-            && cache.snap.is_some()
-            && mtime > 0
-        {
-            if let Some(ref s) = cache.snap {
-                return s.clone();
-            }
+    // One audit at a time; callers that waited reuse its result.
+    let _running = state.0.refresh.lock().await;
+    if !force {
+        if let Some(snap) = cached_snapshot(&*state.0.cache.read().await, &root, mtime) {
+            return snap;
         }
     }
 
@@ -101,6 +149,7 @@ async fn refresh_snapshot(hub: &WebHub, state: &QualityState, force: bool) -> Qu
         persist: true,
         ..Default::default()
     };
+    state.0.audits.fetch_add(1, Ordering::SeqCst);
     let snap = match tokio::task::spawn_blocking({
         let root = root.clone();
         move || audit_project(&root, &opts)
@@ -112,10 +161,11 @@ async fn refresh_snapshot(hub: &WebHub, state: &QualityState, force: bool) -> Qu
         Err(e) => empty_error_snap(&root, &e.to_string()),
     };
 
-    let mut cache = state.cache.write().await;
+    let mut cache = state.0.cache.write().await;
     cache.root = root;
     cache.log_mtime_ms = mtime;
     cache.snap = Some(snap.clone());
+    cache.audited_at = Some(std::time::Instant::now());
     snap
 }
 
@@ -164,17 +214,34 @@ fn empty_error_snap(root: &std::path::Path, err: &str) -> QualitySnapshot {
     snap
 }
 
-fn spawn_watcher(hub: WebHub, state: QualityState) {
+/// Starts the background refresh once. It holds only a weak reference to the
+/// state, so it stops when the router that owns the state is dropped.
+fn ensure_watcher(hub: &WebHub, state: &QualityState) {
+    if state
+        .0
+        .watcher_started
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return;
+    }
+    let hub = hub.clone();
+    let weak = Arc::downgrade(&state.0);
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
+        interval.tick().await; // the first tick fires at once; the request already refreshed
         loop {
             interval.tick().await;
-            let _ = refresh_snapshot(&hub, &state, false).await;
+            let Some(inner) = weak.upgrade() else {
+                break;
+            };
+            let _ = refresh_snapshot(&hub, &QualityState(inner), false).await;
         }
     });
 }
 
 async fn handle_quality(State((hub, state)): State<(WebHub, QualityState)>) -> impl IntoResponse {
+    ensure_watcher(&hub, &state);
     let snap = refresh_snapshot(&hub, &state, false).await;
     Json(snap)
 }
@@ -247,6 +314,9 @@ async fn handle_audit(
                 .into_response();
         }
     }
+    // Shares the lock with the background refresh: one audit at a time.
+    let running = state.0.refresh.lock().await;
+    state.0.audits.fetch_add(1, Ordering::SeqCst);
     let snap = match tokio::task::spawn_blocking(move || audit_project(&root, &opts)).await {
         Ok(Ok(s)) => s,
         Ok(Err(e)) => {
@@ -265,10 +335,11 @@ async fn handle_audit(
         }
     };
     {
-        let mut cache = state.cache.write().await;
+        let mut cache = state.0.cache.write().await;
         cache.snap = Some(snap.clone());
         cache.root = PathBuf::from(&snap.project_root);
     }
+    drop(running);
     if body.markdown {
         let md = format_markdown_report(&snap);
         return Json(json!({ "snapshot": snap, "markdown": md })).into_response();
@@ -279,6 +350,7 @@ async fn handle_audit(
 async fn handle_quality_events(
     State((hub, state)): State<(WebHub, QualityState)>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    ensure_watcher(&hub, &state);
     let stream = async_stream::stream! {
         let mut last_score: Option<u8> = None;
         let mut last_updated: i64 = 0;
@@ -295,4 +367,73 @@ async fn handle_quality_events(
         }
     };
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    async fn hub(dir: &std::path::Path) -> WebHub {
+        let db_path = dir.join(".ax").join("ax.db");
+        std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+        drop(ax_db::Database::open(&db_path).await.unwrap());
+        WebHub::open(dir.to_path_buf(), true, 0).await.unwrap()
+    }
+
+    /// With no verbose log (the default), the audit result is reused instead
+    /// of rerunning a full audit on every poll.
+    #[tokio::test]
+    async fn audit_is_cached_without_verbose_logs() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = hub(dir.path()).await;
+        let state = QualityState::new();
+        assert_eq!(latest_verbose_log_mtime_ms(dir.path()), 0);
+        refresh_snapshot(&hub, &state, false).await;
+        refresh_snapshot(&hub, &state, false).await;
+        refresh_snapshot(&hub, &state, false).await;
+        assert_eq!(state.audit_runs(), 1);
+    }
+
+    /// Callers that arrive while an audit runs wait for it instead of
+    /// starting their own.
+    #[tokio::test]
+    async fn concurrent_refreshes_run_one_audit() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = hub(dir.path()).await;
+        let state = QualityState::new();
+        tokio::join!(
+            refresh_snapshot(&hub, &state, false),
+            refresh_snapshot(&hub, &state, false),
+            refresh_snapshot(&hub, &state, false),
+            refresh_snapshot(&hub, &state, false),
+        );
+        assert_eq!(state.audit_runs(), 1);
+    }
+
+    /// Building the router starts nothing; the background watcher starts with
+    /// the first quality request.
+    #[tokio::test]
+    async fn watcher_starts_on_first_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = hub(dir.path()).await;
+        let state = QualityState::new();
+        let app = router_with_state(hub, state.clone());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!state.watcher_running());
+        assert_eq!(state.audit_runs(), 0, "router construction ran an audit");
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri("/mcp-quality")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(res.status().is_success());
+        assert!(state.watcher_running());
+    }
 }
