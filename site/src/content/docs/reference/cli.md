@@ -706,7 +706,7 @@ ax durable doc-get --session "$SESSION" --kind brief
 
 ### `ax turn`
 
-Explicit turn lifecycle without IDE hooks. Finish writes a memory with `source=cli-turn`.
+Explicit turn lifecycle without IDE hooks. Finish writes a memory with `source=cli-turn`. When the finish input has `decisions` or `open_questions`, finish also adds them to the session's working context (the notes `ax_session` keeps). That needs an index; when the write fails, the receipt lists the reason in `warnings` and the turn still finishes.
 
 ```bash
 TURN=$(printf '%s' "$PROMPT" | ax turn begin --session "$SESSION" --prompt-stdin --json | jq -r .turnId)

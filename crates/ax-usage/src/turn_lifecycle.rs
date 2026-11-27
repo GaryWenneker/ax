@@ -353,6 +353,9 @@ pub struct TurnFinishReceipt {
     pub state: String,
     pub idempotent: bool,
     pub semantic_memory_ids: Vec<String>,
+    /// Steps after the turn memory that did not complete, such as the working-context write.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 /// Finish a turn. Idempotent: a second finish returns the prior receipt.
@@ -380,6 +383,7 @@ pub async fn turn_finish(
             state: "finished".into(),
             idempotent: true,
             semantic_memory_ids: Vec::new(),
+            warnings: Vec::new(),
         });
     }
     if snap.state == TurnState::Failed {
@@ -429,6 +433,7 @@ pub async fn turn_finish(
         state: "finished".into(),
         idempotent: false,
         semantic_memory_ids: semantic_ids.clone(),
+        warnings: Vec::new(),
     };
     snap.state = TurnState::Finished;
     snap.finish_receipt = Some(serde_json::to_value(&receipt).unwrap_or(json!({})));
@@ -471,32 +476,46 @@ pub async fn turn_finish(
         tracing::warn!("spec capture skipped: {error}");
     }
 
-    if !input.open_questions.is_empty() {
-        let _ = crate::working_context_apply(
-            root,
-            session_id,
-            &json!({
-                "action": "add",
-                "open_questions": input.open_questions,
-                "decisions": input.decisions,
-            }),
-            "",
-        )
-        .await;
-    } else if !input.decisions.is_empty() {
-        let _ = crate::working_context_apply(
-            root,
-            session_id,
-            &json!({
-                "action": "add",
-                "decisions": input.decisions,
-            }),
-            "",
-        )
-        .await;
+    let mut receipt = receipt;
+    if let Err(error) = note_working_context(root, pool, session_id, &input).await {
+        tracing::warn!("working context not updated: {error}");
+        receipt
+            .warnings
+            .push(format!("working context not updated: {error}"));
     }
 
     Ok(receipt)
+}
+
+/// Store the turn's decisions and open questions in the session's working context, stamped
+/// with the current index fingerprint (the store refuses notes without one).
+async fn note_working_context(
+    root: &Path,
+    pool: &SqlitePool,
+    session_id: &str,
+    input: &TurnFinishInput,
+) -> Result<(), String> {
+    if (input.decisions.is_empty() && input.open_questions.is_empty()) || !crate::reuse_enabled() {
+        return Ok(());
+    }
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT path, content_hash FROM files")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("index unavailable ({e}); retry after ax_sync"))?;
+    let index: crate::IndexHashes = rows.into_iter().collect();
+    let fingerprint = crate::index_fingerprint(&index);
+    crate::working_context_apply(
+        root,
+        session_id,
+        &json!({
+            "action": "add",
+            "decisions": input.decisions,
+            "open_questions": input.open_questions,
+        }),
+        &fingerprint,
+    )
+    .await
+    .map(|_| ())
 }
 
 fn normalize_kind(kind: &str) -> &'static str {
@@ -817,6 +836,69 @@ mod tests {
         assert_eq!(title, "Draft the rollout");
         assert!(body.contains(outcome), "{body}");
         assert!(!body.contains("hunter2secret"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn finish_stores_decisions_and_open_questions_in_the_working_context() {
+        let (root, pool, _guard) = fixture().await;
+        sqlx::query("CREATE TABLE files (path TEXT PRIMARY KEY, content_hash TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO files (path, content_hash) VALUES ('src/a.rs', 'h1')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let begin = turn_begin(&root, "sess-wc", "decide cookies", None)
+            .await
+            .unwrap();
+        let receipt = turn_finish(
+            &root,
+            &pool,
+            "sess-wc",
+            &begin.turn_id,
+            TurnFinishInput {
+                outcome: "done".into(),
+                decisions: vec!["Use Lax SameSite".into()],
+                open_questions: vec!["Does Safari keep the cookie?".into()],
+                ..TurnFinishInput::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(receipt.warnings.is_empty(), "{:?}", receipt.warnings);
+        let notes = crate::working_context_apply(&root, "sess-wc", &json!({"action": "get"}), "x")
+            .await
+            .unwrap();
+        assert!(notes.contains("Use Lax SameSite"), "{notes}");
+        assert!(notes.contains("Does Safari keep the cookie?"), "{notes}");
+    }
+
+    #[tokio::test]
+    async fn finish_reports_a_working_context_write_it_could_not_make() {
+        let (root, pool, _guard) = fixture().await;
+        let begin = turn_begin(&root, "sess-wc2", "no index", None)
+            .await
+            .unwrap();
+        let receipt = turn_finish(
+            &root,
+            &pool,
+            "sess-wc2",
+            &begin.turn_id,
+            TurnFinishInput {
+                outcome: "done".into(),
+                decisions: vec!["Keep it".into()],
+                ..TurnFinishInput::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(receipt.warnings.len(), 1, "{:?}", receipt.warnings);
+        assert!(
+            receipt.warnings[0].contains("working context"),
+            "{:?}",
+            receipt.warnings
+        );
     }
 
     #[tokio::test]
