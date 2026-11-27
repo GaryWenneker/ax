@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchPolicySkill, savePolicySkill, type PolicyOriginQuery } from '../policyApi';
+import { joinPolicyList, policyEditorCanSave, policyEditorView, type PolicyEditorLoad } from '../lib/policyEditorLoad';
 import MarkdownEditor from '../components/MarkdownEditor';
 import { LinkedMarkdown, useItemLinks } from '../components/LinkedBody';
 import PolicyMetaResizeHandle from '../components/PolicyEditorResize';
@@ -9,6 +10,7 @@ import PolicyPropertiesEditor from '../components/PolicyPropertiesEditor';
 import {
   PageCard,
   PageCardBody,
+  PageEmpty,
   PageHero,
   PageLoading,
   PageRow,
@@ -17,7 +19,7 @@ import {
   PageToasts,
 } from '../components/ui/PageLayout';
 import { usePageContext } from '../context/UiContext';
-import { POLICY_SCOPES, type SkillFrontmatter } from '../policyTypes';
+import { POLICY_SCOPES, type PolicySkillDoc, type SkillFrontmatter } from '../policyTypes';
 import { SKILL_PROPERTY_RESERVED } from '../lib/policyProperties';
 import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
 import SettingsSelect from '../components/ui/SettingsSelect';
@@ -67,24 +69,34 @@ export default function PolicySkillEditor({ skillName, origin, projectId, onBack
   const [triggersText, setTriggersText] = useState('');
   const [tagsText, setTagsText] = useState('');
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(!isNew);
+  const [load, setLoad] = useState<PolicyEditorLoad>(isNew ? 'ready' : 'loading');
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
+  function applyDoc(doc: PolicySkillDoc) {
+    setFm(normalizeSkillFm(doc.frontmatter));
+    setBody(doc.body);
+    setTriggersText(joinPolicyList(doc.frontmatter.triggers));
+    setTagsText(joinPolicyList(doc.frontmatter.tags));
+  }
+
+  /** Load the saved skill. `thenView` leaves edit mode once it arrives (first open, Cancel). */
+  function reload(thenView: boolean) {
     if (!skillName) return;
-    setLoading(true);
+    setLoad('loading');
     setError('');
     fetchPolicySkill(skillName, originQ)
       .then((doc) => {
-        setFm(normalizeSkillFm(doc.frontmatter));
-        setBody(doc.body);
-        setTriggersText(doc.frontmatter.triggers.join(', '));
-        setTagsText(doc.frontmatter.tags.join(', '));
-        setEditing(false);
+        applyDoc(doc);
+        if (thenView) setEditing(false);
+        setLoad('ready');
       })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [skillName, origin, projectId]);
+      .catch((e: Error) => {
+        setError(e.message);
+        setLoad('failed');
+      });
+  }
+
+  useEffect(() => reload(true), [skillName, origin, projectId]);
 
   usePageContext(isNew || editing ? 'Skill editor' : 'Skill', skillName ?? 'new skill');
 
@@ -117,19 +129,8 @@ export default function PolicySkillEditor({ skillName, origin, projectId, onBack
       onBack();
       return;
     }
-    setError('');
     setEditing(false);
-    if (!skillName) return;
-    setLoading(true);
-    fetchPolicySkill(skillName, originQ)
-      .then((doc) => {
-        setFm(normalizeSkillFm(doc.frontmatter));
-        setBody(doc.body);
-        setTriggersText(doc.frontmatter.triggers.join(', '));
-        setTagsText(doc.frontmatter.tags.join(', '));
-      })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
+    reload(true);
   }
 
   const title = isNew ? 'New skill' : editing ? `Edit skill: ${skillName}` : skillName!;
@@ -151,21 +152,10 @@ export default function PolicySkillEditor({ skillName, origin, projectId, onBack
               <PolicyRevisionHistory
                 kind="skill"
                 itemId={skillName}
-                onRestored={() => {
-                  setLoading(true);
-                  fetchPolicySkill(skillName, originQ)
-                    .then((doc) => {
-                      setFm(normalizeSkillFm(doc.frontmatter));
-                      setBody(doc.body);
-                      setTriggersText(doc.frontmatter.triggers.join(', '));
-                      setTagsText(doc.frontmatter.tags.join(', '));
-                    })
-                    .catch((e: Error) => setError(e.message))
-                    .finally(() => setLoading(false));
-                }}
+                onRestored={() => reload(false)}
               />
             ) : null}
-            {!isNew && !editing && (
+            {!isNew && !editing && load === 'ready' && (
               <button type="button" className="btn primary" onClick={() => setEditing(true)}>
                 Edit
               </button>
@@ -174,7 +164,7 @@ export default function PolicySkillEditor({ skillName, origin, projectId, onBack
               <button type="button" className="btn" onClick={cancelEdit}>Cancel</button>
             )}
             {editing && (
-              <button type="button" className="btn primary" disabled={saving || loading} onClick={save}>
+              <button type="button" className="btn primary" disabled={!policyEditorCanSave({ load, saving })} onClick={save}>
                 {saving ? 'Saving…' : 'Save'}
               </button>
             )}
@@ -184,8 +174,12 @@ export default function PolicySkillEditor({ skillName, origin, projectId, onBack
 
       <PageToasts err={error || null} />
 
-      {loading ? (
+      {policyEditorView(load) === 'spinner' ? (
         <PageLoading />
+      ) : policyEditorView(load) === 'retry' ? (
+        <PageEmpty title="This skill could not be loaded">
+          <button type="button" className="btn" onClick={() => reload(false)}>Retry</button>
+        </PageEmpty>
       ) : (
         <div className="page-editor-grid">
           <PageStack>
