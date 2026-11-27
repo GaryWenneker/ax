@@ -369,6 +369,41 @@ mod tests {
     }
 
     #[test]
+    fn agents_dir_ignores_an_unsafe_configured_value() {
+        let outer = tempfile::tempdir().unwrap();
+        let project = outer.path().join("project");
+        let shared = outer.path().join("shared");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(shared.join("rules")).unwrap();
+        let abs = shared.display().to_string().replace('\\', "/");
+        for bad in ["../shared", abs.as_str(), ".", ".git", ".ax", ".AX", "a/b"] {
+            std::fs::write(
+                project.join("ax.json"),
+                serde_json::json!({"policy": {"agentsDir": bad}}).to_string(),
+            )
+            .unwrap();
+            assert_eq!(
+                agents_dir(&project),
+                project.join(AGENTS_DIR),
+                "agentsDir {bad:?} must fall back to .agents"
+            );
+            assert!(
+                crate::config::validate_agents_dir_name(bad).is_err(),
+                "{bad}"
+            );
+        }
+        // Moving to a safe name must not pull the outside folder in.
+        std::fs::write(
+            project.join("ax.json"),
+            serde_json::json!({"policy": {"agentsDir": "../shared"}}).to_string(),
+        )
+        .unwrap();
+        set_agents_dir(&project, "team").unwrap();
+        assert!(shared.join("rules").is_dir());
+        assert!(!project.join("team").exists());
+    }
+
+    #[test]
     fn project_write_path_is_agents() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path();

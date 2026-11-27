@@ -442,7 +442,7 @@ ax policy pack install azdo-fullstack --force
 
 ### Stacks
 
-Core policy (startup, debugging, TDD, design-first, and the preflight rules) is seeded for every project. Language, frontend, and CMS skills are **not** copied on init. The on-disk folder is `policy.agentsDir` in `ax.json` (default `.agents`). `ax init` asks for that name when it is not set yet. Change it later with `ax policy agents-dir <name>` or in Command Center settings.
+Core policy (startup, debugging, TDD, design-first, and the preflight rules) is seeded for every project. Language, frontend, and CMS skills are **not** copied on init. The on-disk folder is `policy.agentsDir` in `ax.json` (default `.agents`); it must be a single folder name inside the project, and an unsafe value (a path, `..`, `.ax`, `.git`) is ignored in favor of `.agents`. `ax init` asks for that name when it is not set yet. Change it later with `ax policy agents-dir <name>` or in Command Center settings.
 
 ```bash
 ax policy stack detect

@@ -527,12 +527,24 @@ pub fn write_project_ides(project_root: &Path, ides: &[String]) -> Result<(), St
 
 pub const DEFAULT_AGENTS_DIR: &str = ".agents";
 
-/// `policy.agentsDir` when the project `ax.json` defines it.
+/// `policy.agentsDir` when the project `ax.json` defines it. A value that
+/// fails [`validate_agents_dir_name`] (a path, `..`, or a reserved folder) is
+/// ignored with a warning, so rules and skills always stay inside the project.
 pub fn configured_agents_dir(project_root: &Path) -> Option<String> {
-    read_policy_section(&project_root.join(CONFIG_FILENAME))
+    let raw = read_policy_section(&project_root.join(CONFIG_FILENAME))
         .agents_dir
         .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty())?;
+    match validate_agents_dir_name(&raw) {
+        Ok(name) => Some(name),
+        Err(e) => {
+            eprintln!(
+                "[ax policy] ignoring policy.agentsDir {raw:?} in {}: {e}; using {DEFAULT_AGENTS_DIR}",
+                project_root.join(CONFIG_FILENAME).display()
+            );
+            None
+        }
+    }
 }
 
 /// Folder name for on-disk rules and skills. `.agents` when unset.
@@ -540,17 +552,23 @@ pub fn agents_dir_name(project_root: &Path) -> String {
     configured_agents_dir(project_root).unwrap_or_else(|| DEFAULT_AGENTS_DIR.to_string())
 }
 
-/// A single relative directory name. No absolute paths, slashes, or `..`.
+/// A single relative directory name. No absolute paths, slashes, `..`, `.`,
+/// drive prefixes, or the folders ax and git own (`.ax`, `.git`).
 pub fn validate_agents_dir_name(raw: &str) -> Result<String, String> {
     let name = raw.trim();
     if name.is_empty() {
         return Ok(DEFAULT_AGENTS_DIR.to_string());
     }
-    if name.contains('/') || name.contains('\\') || name.contains("..") {
+    if name.contains('/') || name.contains('\\') || name.contains("..") || name.contains(':') {
         return Err("agents directory must be a single folder name, not a path".into());
     }
     if Path::new(name).is_absolute() {
         return Err("agents directory must be a folder name inside the project".into());
+    }
+    if name == "." || name.eq_ignore_ascii_case(".ax") || name.eq_ignore_ascii_case(".git") {
+        return Err(format!(
+            "agents directory cannot be {name:?}; pick a folder of its own such as {DEFAULT_AGENTS_DIR}"
+        ));
     }
     Ok(name.to_string())
 }

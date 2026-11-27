@@ -1615,7 +1615,7 @@ ax policy disable mobile-first
 
 ### `ax policy agents-dir [name] [path]`
 
-Show or set the folder that holds on-disk rules and skills. The default suggestion is `.agents`. The value is `policy.agentsDir` in project `ax.json`. When you set a new name and the old folder exists, ax renames it. `ax init` asks for this name when it is not saved yet.
+Show or set the folder that holds on-disk rules and skills. The default suggestion is `.agents`. The value is `policy.agentsDir` in project `ax.json`. The name must be a single folder inside the project: paths, `..`, `.`, `.ax` and `.git` are refused, and such a value found in `ax.json` is ignored with a warning (ax uses `.agents` instead). When you set a new name and the old folder exists, ax renames it. `ax init` asks for this name when it is not saved yet.
 
 ```bash
 ax policy agents-dir
