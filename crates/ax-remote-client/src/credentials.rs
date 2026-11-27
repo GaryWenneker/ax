@@ -113,7 +113,10 @@ pub fn connections() -> Result<Vec<Connection>, String> {
 }
 
 fn read_connections() -> Result<Vec<Connection>, String> {
-    let path = metadata_path()?;
+    read_connections_at(&metadata_path()?)
+}
+
+fn read_connections_at(path: &std::path::Path) -> Result<Vec<Connection>, String> {
     match std::fs::read_to_string(path) {
         Ok(text) => {
             serde_json::from_str(&text).map_err(|_| "Invalid remote connection metadata".into())
@@ -131,7 +134,10 @@ pub fn connection(url: &str) -> Result<Connection, String> {
 }
 
 fn write_connections(connections: &[Connection]) -> Result<(), String> {
-    let path = metadata_path()?;
+    write_connections_at(&metadata_path()?, connections)
+}
+
+fn write_connections_at(path: &std::path::Path, connections: &[Connection]) -> Result<(), String> {
     let parent = path.parent().ok_or("Invalid metadata path")?;
     std::fs::create_dir_all(parent).map_err(|_| "Cannot create connection directory")?;
     let temp = parent.join(format!("remote-connections-{}.tmp", uuid::Uuid::new_v4()));
@@ -147,9 +153,9 @@ fn write_connections(connections: &[Connection]) -> Result<(), String> {
     // Windows rename cannot replace a file; use a serialized metadata update there.
     #[cfg(windows)]
     if path.exists() {
-        std::fs::remove_file(&path).map_err(|_| "Cannot update connection metadata")?;
+        std::fs::remove_file(path).map_err(|_| "Cannot update connection metadata")?;
     }
-    std::fs::rename(&temp, &path).map_err(|_| "Cannot update connection metadata".into())
+    std::fs::rename(&temp, path).map_err(|_| "Cannot update connection metadata".into())
 }
 
 pub fn save(connection: Connection, tokens: &Tokens) -> Result<(), String> {
@@ -268,6 +274,52 @@ mod tests {
     }
 
     const URL: &str = "https://ax.example/projects/app/mcp";
+
+    #[test]
+    fn connection_metadata_round_trips_privately_and_rejects_a_damaged_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".ax/remote-connections.json");
+        assert_eq!(read_connections_at(&path).unwrap(), Vec::new());
+        let other = "https://ax.example/projects/other/mcp";
+        let list = merged(Vec::new(), entry_for(URL, &[USER_AX]));
+        let list = merged(list, entry_for(other, &[USER_ADMIN]));
+        write_connections_at(&path, &list).unwrap();
+        assert_eq!(read_connections_at(&path).unwrap(), list);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        // A save for an address replaces its entry and keeps its users.
+        let mut renewed = entry_for(URL, &[]);
+        renewed.expires_at = 99;
+        let list = merged(read_connections_at(&path).unwrap(), renewed);
+        write_connections_at(&path, &list).unwrap();
+        let stored = read_connections_at(&path).unwrap();
+        assert_eq!(stored.len(), 2);
+        let entry = stored.iter().find(|c| c.url == URL).unwrap();
+        assert_eq!(
+            (entry.expires_at, entry.users.clone()),
+            (99, vec![USER_AX.to_string()])
+        );
+        // A removal keeps the other entries.
+        let mut list = stored;
+        list.retain(|c| c.url != URL);
+        write_connections_at(&path, &list).unwrap();
+        assert_eq!(read_connections_at(&path).unwrap().len(), 1);
+        // No temporary files are left behind.
+        let names: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(
+            names,
+            vec![std::ffi::OsString::from("remote-connections.json")]
+        );
+        std::fs::write(&path, "{ not json").unwrap();
+        assert!(read_connections_at(&path).unwrap_err().contains("Invalid"));
+    }
 
     #[test]
     fn a_sign_in_used_by_the_cli_is_not_revoked_when_ax_admin_lets_go() {

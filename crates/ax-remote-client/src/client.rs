@@ -101,11 +101,20 @@ async fn bounded_json_limit<T: serde::de::DeserializeOwned>(
 }
 
 async fn discover(url: &str) -> Result<(ResourceMetadata, OAuthMetadata), String> {
+    discover_with(&http_client()?, url, https_url).await
+}
+
+/// `discover` with the HTTP client and the URL check (`https_url` outside tests)
+/// passed in.
+async fn discover_with(
+    client: &reqwest::Client,
+    url: &str,
+    https_url: fn(&str) -> Result<Url, String>,
+) -> Result<(ResourceMetadata, OAuthMetadata), String> {
     let project_url = https_url(url)?;
     if !project_url.path().starts_with("/projects/") || !project_url.path().ends_with("/mcp") {
         return Err("Use the server's /projects/PROJECT/mcp URL".into());
     }
-    let client = http_client()?;
     let origin = project_url.origin().ascii_serialization();
     let resource: ResourceMetadata = bounded_json(
         client
@@ -627,14 +636,38 @@ async fn token_for(url: &str, force_refresh: bool) -> Result<String, String> {
     })
     .await
     .map_err(|_| "Credential lookup failed")??;
-    if !force_refresh && connection.expires_at > credentials::now() + 30 {
+    current_or_renewed(
+        &http_client()?,
+        connection,
+        tokens,
+        force_refresh,
+        credentials::save,
+    )
+    .await
+}
+
+/// Seconds before expiry at which a stored access token is renewed.
+const EXPIRY_MARGIN: u64 = 30;
+
+/// The stored access token while it is valid for more than `EXPIRY_MARGIN`
+/// seconds (and no refresh is forced), otherwise a renewed one stored with `save`.
+async fn current_or_renewed<F>(
+    client: &reqwest::Client,
+    connection: Connection,
+    tokens: Tokens,
+    force_refresh: bool,
+    save: F,
+) -> Result<String, String>
+where
+    F: FnOnce(Connection, &Tokens) -> Result<(), String> + Send + 'static,
+{
+    if !force_refresh && connection.expires_at > credentials::now() + EXPIRY_MARGIN {
         return Ok(tokens.access_token);
     }
     let refresh = tokens
         .refresh_token
         .ok_or("Sign-in expired; reconnect to Ax")?;
-    let client = http_client()?;
-    renew(&client, connection, refresh, credentials::save).await
+    renew(client, connection, refresh, save).await
 }
 
 /// Redeem `refresh`, store the new tokens with `save` and return the new access token.
@@ -703,19 +736,30 @@ async fn revoke_locked(url: String) -> Result<(), String> {
     // Always remove local access even if remote revocation is unavailable.
     credentials::remove(&url)?;
     if let (Some(endpoint), Some(tokens)) = (connection.revocation_endpoint, tokens) {
-        let token = tokens.refresh_token.unwrap_or(tokens.access_token);
-        let response = http_client()?
-            .post(endpoint)
-            .form(&[("token", token), ("client_id", connection.client_id)])
-            .send()
-            .await;
-        if !response.is_ok_and(|r| r.status().is_success()) {
+        if !revoke_at_provider(&http_client()?, &endpoint, &connection.client_id, tokens).await {
             eprintln!(
                 "Local connection removed; provider token revocation could not be confirmed."
             );
         }
     }
     Ok(())
+}
+
+/// Asks the provider to revoke the refresh token (or the access token when there
+/// is none). True when the provider confirmed it.
+async fn revoke_at_provider(
+    client: &reqwest::Client,
+    endpoint: &str,
+    client_id: &str,
+    tokens: Tokens,
+) -> bool {
+    let token = tokens.refresh_token.unwrap_or(tokens.access_token);
+    client
+        .post(endpoint)
+        .form(&[("token", token.as_str()), ("client_id", client_id)])
+        .send()
+        .await
+        .is_ok_and(|r| r.status().is_success())
 }
 
 /// Stdio bridge for IDEs that cannot connect to authenticated HTTP directly.
@@ -1550,6 +1594,271 @@ mod proxy_tests {
         assert_eq!(replies[1]["id"], 2);
         assert_eq!(replies[1]["result"]["ok"], true);
         assert_eq!(server.sessions_started.load(Ordering::SeqCst), 2);
+        task.abort();
+    }
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+    use axum::{extract::Form, routing::post, Json};
+
+    #[derive(Clone, Default)]
+    struct Provider {
+        base: String,
+        wrong_resource: bool,
+        wrong_issuer: bool,
+        no_s256: bool,
+        only_openid: bool,
+    }
+
+    impl Provider {
+        fn issuer(&self) -> String {
+            format!("{}/tenant", self.base)
+        }
+        fn metadata(&self) -> Value {
+            let issuer = if self.wrong_issuer {
+                "https://other.example/tenant".to_string()
+            } else {
+                self.issuer()
+            };
+            let methods = if self.no_s256 {
+                vec!["plain"]
+            } else {
+                vec!["S256"]
+            };
+            json!({
+                "issuer": issuer,
+                "authorization_endpoint": format!("{}/authorize", self.base),
+                "token_endpoint": format!("{}/token", self.base),
+                "code_challenge_methods_supported": methods,
+            })
+        }
+    }
+
+    /// Accepts the loopback http URLs of the local test provider.
+    fn any_url(value: &str) -> Result<Url, String> {
+        Url::parse(value).map_err(|_| "Invalid URL".to_string())
+    }
+
+    async fn serve(provider: Provider) -> (Provider, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let provider = Provider {
+            base: format!("http://{}", listener.local_addr().unwrap()),
+            ..provider
+        };
+        let state = provider.clone();
+        let app = Router::new()
+            .route(
+                "/.well-known/oauth-protected-resource",
+                get(|State(p): State<Provider>| async move {
+                    let resource = if p.wrong_resource {
+                        "https://elsewhere.example".to_string()
+                    } else {
+                        p.base.clone()
+                    };
+                    Json(json!({"resource": resource, "authorization_servers": [p.issuer()]}))
+                }),
+            )
+            .route(
+                "/.well-known/oauth-authorization-server/tenant",
+                get(|State(p): State<Provider>| async move {
+                    if p.only_openid {
+                        StatusCode::NOT_FOUND.into_response()
+                    } else {
+                        Json(p.metadata()).into_response()
+                    }
+                }),
+            )
+            .route(
+                "/tenant/.well-known/openid-configuration",
+                get(|State(p): State<Provider>| async move { Json(p.metadata()) }),
+            )
+            .with_state(state);
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (provider, task)
+    }
+
+    async fn discover_from(provider: Provider) -> Result<(String, String), String> {
+        let (provider, task) = serve(provider).await;
+        let url = format!("{}/projects/demo/mcp", provider.base);
+        let result = discover_with(&http_client().unwrap(), &url, any_url).await;
+        task.abort();
+        result.map(|(resource, metadata)| (resource.resource, metadata.issuer))
+    }
+
+    #[tokio::test]
+    async fn discovery_finds_the_issuer_through_oauth_metadata_or_the_openid_fallback() {
+        for only_openid in [false, true] {
+            let (resource, issuer) = discover_from(Provider {
+                only_openid,
+                ..Provider::default()
+            })
+            .await
+            .unwrap();
+            assert!(resource.starts_with("http://127.0.0.1:"));
+            assert_eq!(issuer, format!("{resource}/tenant"));
+        }
+    }
+
+    #[tokio::test]
+    async fn discovery_rejects_a_foreign_resource_a_mismatched_issuer_and_no_pkce() {
+        let cases = [
+            (
+                Provider {
+                    wrong_resource: true,
+                    ..Provider::default()
+                },
+                "does not match server origin",
+            ),
+            (
+                Provider {
+                    wrong_issuer: true,
+                    ..Provider::default()
+                },
+                "does not match the advertised issuer",
+            ),
+            (
+                Provider {
+                    wrong_issuer: true,
+                    only_openid: true,
+                    ..Provider::default()
+                },
+                "does not match the advertised issuer",
+            ),
+            (
+                Provider {
+                    no_s256: true,
+                    ..Provider::default()
+                },
+                "PKCE S256",
+            ),
+        ];
+        for (provider, expected) in cases {
+            let error = discover_from(provider).await.unwrap_err();
+            assert!(error.contains(expected), "{error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn discovery_requires_an_https_project_mcp_url() {
+        let client = http_client().unwrap();
+        for url in [
+            "http://ax.example/projects/demo/mcp",
+            "https://ax.example/other",
+            "https://user:pw@ax.example/projects/demo/mcp",
+        ] {
+            assert!(
+                discover_with(&client, url, https_url).await.is_err(),
+                "{url}"
+            );
+        }
+    }
+
+    fn connection(token_endpoint: &str, expires_at: u64) -> Connection {
+        Connection {
+            url: "http://127.0.0.1:9/projects/demo/mcp".into(),
+            client_id: "native".into(),
+            issuer: "https://issuer.example/".into(),
+            resource: "https://ax.example.com".into(),
+            token_endpoint: token_endpoint.into(),
+            revocation_endpoint: None,
+            expires_at,
+            users: Vec::new(),
+        }
+    }
+
+    fn tokens(refresh: Option<&str>) -> Tokens {
+        Tokens {
+            access_token: "stored-access".into(),
+            refresh_token: refresh.map(str::to_owned),
+        }
+    }
+
+    fn never_saved(_: Connection, _: &Tokens) -> Result<(), String> {
+        panic!("nothing is renewed")
+    }
+
+    #[tokio::test]
+    async fn a_stored_token_is_used_until_thirty_seconds_before_it_expires() {
+        let client = http_client().unwrap();
+        // Port 9 (discard) is not served: any network use would fail.
+        let unreachable = "http://127.0.0.1:9/token";
+        let fresh = credentials::now() + EXPIRY_MARGIN + 60;
+        let token = current_or_renewed(
+            &client,
+            connection(unreachable, fresh),
+            tokens(Some("r")),
+            false,
+            never_saved,
+        )
+        .await;
+        assert_eq!(token.as_deref(), Ok("stored-access"));
+        for (expires_at, force) in [
+            (credentials::now() + EXPIRY_MARGIN - 1, false),
+            (fresh, true),
+        ] {
+            let error = current_or_renewed(
+                &client,
+                connection(unreachable, expires_at),
+                tokens(Some("r")),
+                force,
+                never_saved,
+            )
+            .await
+            .unwrap_err();
+            assert!(error.contains("Cannot refresh"), "{error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_expired_sign_in_without_a_refresh_token_asks_to_reconnect() {
+        let error = current_or_renewed(
+            &http_client().unwrap(),
+            connection("http://127.0.0.1:9/token", 1),
+            tokens(None),
+            false,
+            never_saved,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("reconnect"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn logout_revokes_the_refresh_token_or_else_the_access_token() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let seen: Arc<Mutex<Vec<HashMap<String, String>>>> = Arc::default();
+        let sink = seen.clone();
+        let app = Router::new()
+            .route(
+                "/revoke",
+                post(move |Form(form): Form<HashMap<String, String>>| {
+                    let sink = sink.clone();
+                    async move {
+                        sink.lock().await.push(form);
+                        StatusCode::OK
+                    }
+                }),
+            )
+            .route("/broken", post(|| async { StatusCode::BAD_REQUEST }));
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = http_client().unwrap();
+        let endpoint = format!("{base}/revoke");
+        assert!(revoke_at_provider(&client, &endpoint, "native", tokens(Some("refresh"))).await);
+        assert!(revoke_at_provider(&client, &endpoint, "native", tokens(None)).await);
+        assert!(
+            !revoke_at_provider(&client, &format!("{base}/broken"), "native", tokens(None)).await
+        );
+        let seen = seen.lock().await;
+        assert_eq!(seen[0]["token"], "refresh");
+        assert_eq!(seen[0]["client_id"], "native");
+        assert_eq!(seen[1]["token"], "stored-access");
         task.abort();
     }
 }
