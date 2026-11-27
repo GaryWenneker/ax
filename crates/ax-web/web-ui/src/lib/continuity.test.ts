@@ -128,3 +128,35 @@ test('copying the test reference does not embed a historical answer', () => {
     assert.equal(copied.text.includes('secret historical answer'), false);
   }
 });
+
+test('incoming continuity values keep the fields the user edited', async () => {
+  const { mergeContinuityDraft } = await import('./continuity.ts');
+  const base = filledContinuityFieldsFromTrace([{ sessionId: 'axs_one', turnId: 't1', message: 'first' }], 'ax');
+  const typed = { ...base, task: 'My own task', targetAgent: 'codex' };
+  const nextEvent = filledContinuityFieldsFromTrace(
+    [{ sessionId: 'axs_one', turnId: 't2', message: 'second' }],
+    'ax',
+  );
+  const merged = mergeContinuityDraft(typed, nextEvent, base, new Set(['task', 'targetAgent']));
+  assert.equal(merged.draft.task, 'My own task');
+  assert.equal(merged.draft.targetAgent, 'codex');
+  assert.equal(merged.draft.axTurnId, nextEvent.axTurnId);
+  assert.deepEqual([...merged.edited].sort(), ['targetAgent', 'task']);
+});
+
+test('a different session replaces the draft and forgets the edits', async () => {
+  const { mergeContinuityDraft } = await import('./continuity.ts');
+  const base = filledContinuityFieldsFromTrace([{ sessionId: 'axs_one', message: 'first' }], 'ax');
+  const typed = { ...base, task: 'My own task' };
+  const other = filledContinuityFieldsFromTrace([{ sessionId: 'axs_two', message: 'other' }], 'ax');
+  const merged = mergeContinuityDraft(typed, other, base, new Set(['task']));
+  assert.deepEqual(merged.draft, other);
+  assert.equal(merged.edited.size, 0);
+});
+
+test('without edits incoming values replace the draft', async () => {
+  const { mergeContinuityDraft } = await import('./continuity.ts');
+  const base = filledContinuityFieldsFromTrace([{ sessionId: 'axs_one', turnId: 't1' }], 'ax');
+  const next = filledContinuityFieldsFromTrace([{ sessionId: 'axs_one', turnId: 't2' }], 'ax');
+  assert.deepEqual(mergeContinuityDraft(base, next, base, new Set()).draft, next);
+});
