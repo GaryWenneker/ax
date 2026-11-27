@@ -240,14 +240,7 @@ async fn install_one(
             &name,
             dest,
             replace,
-            |file| {
-                let url = if file.starts_with("http://") || file.starts_with("https://") {
-                    file.to_string()
-                } else {
-                    format!("{base}/{name}/{file}")
-                };
-                http_bytes(&url)
-            },
+            |file| http_bytes(&well_known_file_url(&base, &name, file)?),
         )?]
     } else {
         let tree = only_path(source, &fetched.tree);
@@ -583,12 +576,7 @@ fn audit_candidate(source_text: &str, name: &str) -> Result<SkillAuditReport, St
         let dest = temp.path().join("skills");
         let base = fetched.file_base.clone();
         materialize_well_known(&index, name, &dest, true, |file| {
-            let url = if file.starts_with("http://") || file.starts_with("https://") {
-                file.to_string()
-            } else {
-                format!("{base}/{name}/{file}")
-            };
-            http_bytes(&url)
+            http_bytes(&well_known_file_url(&base, name, file)?)
         })?;
         let mut report = audit_directory(&dest.join(name))?;
         report.candidate = true;
@@ -819,22 +807,51 @@ fn git_publish(repo: &Path, name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The URL of one file listed in a well-known skill index. A relative entry
+/// resolves under the index; an absolute entry must share the index's origin
+/// (scheme, host and port), so an index cannot point the download at another
+/// server or downgrade it from https to http.
+fn well_known_file_url(base: &str, name: &str, file: &str) -> Result<String, String> {
+    if !(file.starts_with("http://") || file.starts_with("https://")) {
+        return Ok(format!("{base}/{name}/{file}"));
+    }
+    let index = reqwest::Url::parse(base).map_err(|e| format!("bad index URL {base}: {e}"))?;
+    let target = reqwest::Url::parse(file).map_err(|e| format!("bad file URL {file}: {e}"))?;
+    if index.origin() != target.origin() {
+        return Err(format!(
+            "skill file {file} is not on the index origin {}",
+            index.origin().ascii_serialization()
+        ));
+    }
+    Ok(file.to_string())
+}
+
 fn http_text(url: &str) -> Result<String, String> {
     let bytes = http_bytes(url)?;
     String::from_utf8(bytes).map_err(|e| e.to_string())
 }
 
+/// The largest download a skill command accepts.
+const MAX_DOWNLOAD: u64 = 25 * 1024 * 1024;
+
+/// GET `url`, reading at most [`MAX_DOWNLOAD`] bytes of body.
 fn http_bytes(url: &str) -> Result<Vec<u8>, String> {
     let fetch = |url: &str| {
         let response = reqwest::blocking::get(url).map_err(|e| e.to_string())?;
         if !response.status().is_success() {
             return Err(format!("GET {url} returned {}", response.status()));
         }
-        let bytes = response.bytes().map_err(|e| e.to_string())?;
-        if bytes.len() > 25 * 1024 * 1024 {
-            return Err("download is larger than 25 MiB".into());
+        let too_large = || "download is larger than 25 MiB".to_string();
+        if response.content_length().is_some_and(|len| len > MAX_DOWNLOAD) {
+            return Err(too_large());
         }
-        Ok(bytes.to_vec())
+        ax_utils::read_to_end_bounded(response, MAX_DOWNLOAD).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::InvalidData {
+                too_large()
+            } else {
+                e.to_string()
+            }
+        })
     };
     if tokio::runtime::Handle::try_current().is_ok() {
         tokio::task::block_in_place(|| fetch(url))
@@ -860,6 +877,73 @@ fn encode(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Serve one HTTP response: `head` (status line and headers), then
+    /// `body_len` bytes of body, then keep the connection open for 40 s.
+    fn stalling_server(head: &'static str, body_len: usize) -> String {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(head.as_bytes());
+            let chunk = vec![b'a'; 64 * 1024];
+            let mut sent = 0;
+            while sent < body_len {
+                let n = chunk.len().min(body_len - sent);
+                if stream.write_all(&chunk[..n]).is_err() {
+                    return;
+                }
+                sent += n;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(40));
+        });
+        format!("http://{addr}/file")
+    }
+
+    #[test]
+    fn http_bytes_rejects_a_declared_oversize_body_without_reading_it() {
+        let url = stalling_server(
+            "HTTP/1.1 200 OK\r\nContent-Length: 104857600\r\n\r\n",
+            1024,
+        );
+        let started = std::time::Instant::now();
+        let err = http_bytes(&url).unwrap_err();
+        assert!(err.contains("25 MiB"), "{err}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    }
+
+    #[test]
+    fn http_bytes_stops_reading_an_endless_body_at_the_limit() {
+        let url = stalling_server(
+            "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n",
+            26 * 1024 * 1024,
+        );
+        let started = std::time::Instant::now();
+        let err = http_bytes(&url).unwrap_err();
+        assert!(err.contains("25 MiB"), "{err}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    }
+
+    #[test]
+    fn well_known_file_urls_stay_on_the_index_origin() {
+        let base = "https://skills.example.org/.well-known/agent-skills";
+        assert_eq!(
+            well_known_file_url(base, "x", "SKILL.md").unwrap(),
+            "https://skills.example.org/.well-known/agent-skills/x/SKILL.md"
+        );
+        assert_eq!(
+            well_known_file_url(base, "x", "https://skills.example.org/cdn/x/SKILL.md").unwrap(),
+            "https://skills.example.org/cdn/x/SKILL.md"
+        );
+        let err = well_known_file_url(base, "x", "https://evil.example.net/SKILL.md").unwrap_err();
+        assert!(err.contains("origin"), "{err}");
+        let err =
+            well_known_file_url(base, "x", "http://skills.example.org/x/SKILL.md").unwrap_err();
+        assert!(err.contains("origin"), "{err}");
+    }
 
     #[test]
     fn git_clone_refuses_a_url_that_looks_like_an_option() {
