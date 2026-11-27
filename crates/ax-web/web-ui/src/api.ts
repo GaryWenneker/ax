@@ -956,3 +956,19 @@ export function fetchCodingAgents(days = 30): Promise<CodingAgentRow[]> {
 export function syncPricing(force = true): Promise<PricingSyncReport> {
   return post<PricingSyncReport>('/usage/pricing/sync', { force });
 }
+
+/** The project's Smart Output context budget; `tokens` is null when no override is set. */
+export interface ContextBudget {
+  tokens?: number | null;
+  min?: number;
+  max?: number;
+}
+
+export function fetchContextBudget(): Promise<ContextBudget> {
+  return get<ContextBudget>('/context-budget/');
+}
+
+/** Store the context budget override in the project's ax.json. */
+export function saveContextBudget(tokens: number): Promise<ContextBudget> {
+  return request<ContextBudget>('PUT', '/context-budget/', { tokens });
+}

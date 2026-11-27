@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import { fetchAgentStatus, saveAgentConfig, setActiveProfile, updateAgentProfile, type AgentsConfig } from './agentApi.ts';
-import { deleteMemory, setMemoryEnabled, updateMemory } from './api.ts';
+import { deleteMemory, fetchContextBudget, saveContextBudget, setMemoryEnabled, updateMemory } from './api.ts';
 import { runMcpAudit } from './lib/mcpQuality.ts';
 
 const realFetch = globalThis.fetch;
@@ -88,4 +88,19 @@ test('successful helpers send the same requests and return the parsed body', asy
   reply(204, '');
   await deleteMemory('m1');
   assert.equal(calls[0].method, 'DELETE');
+});
+
+test('the context budget read and write report HTTP errors instead of parsing HTML', async () => {
+  reply(502, HTML_502, 'text/html');
+  await rejectsWith(fetchContextBudget(), 502, /HTTP 502/);
+  await rejectsWith(saveContextBudget(9000), 502, /HTTP 502/);
+
+  reply(200, JSON.stringify({ tokens: 12000 }));
+  assert.deepEqual(await fetchContextBudget(), { tokens: 12000 });
+  assert.equal(calls[0].url, '/api/context-budget/');
+
+  reply(200, JSON.stringify({ ok: true, tokens: 9000 }));
+  await saveContextBudget(9000);
+  assert.equal(calls[0].method, 'PUT');
+  assert.deepEqual(JSON.parse(calls[0].body ?? ''), { tokens: 9000 });
 });

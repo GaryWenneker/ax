@@ -2,7 +2,9 @@ import useMobile from '../hooks/useMobile';
 import ModalShell from '../components/ModalShell';
 import AccessSettingsSection from '../components/AccessSettingsSection';
 import SecuritySettingsSection from '../components/SecuritySettingsSection';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { fetchContextBudget, saveContextBudget } from '../api';
+import { createLatestSaver, type LatestSaver } from '../lib/latestSaver';
 
 import EmbedSettingsSection from '../components/EmbedSettingsSection';
 import NeuralSettingsSection from '../components/NeuralSettingsSection';
@@ -67,6 +69,19 @@ export default function SettingsPage() {
   const [reviewLanguages, setReviewLanguages] = useState<ReviewLanguageChoice[]>(REVIEW_LANGUAGES);
   const [contextBudget, setContextBudget] = useState(8_000);
   const [contextBudgetSet, setContextBudgetSet] = useState(false);
+  /** Saves the slider once it settles, one write at a time, reporting only the newest value. */
+  const budgetSaver = useRef<LatestSaver<number> | null>(null);
+  if (!budgetSaver.current) {
+    budgetSaver.current = createLatestSaver<number>(saveContextBudget, {
+      delayMs: 400,
+      onSaved: (tokens) => {
+        setErr(null);
+        setMsg(`Context budget set to ${tokens.toLocaleString()} tokens`);
+      },
+      onError: () => setErr('Could not save the context budget'),
+    });
+  }
+  useEffect(() => () => budgetSaver.current?.dispose(), []);
 
   usePageContext('Settings', 'Command Center · pipeline & agents');
 
@@ -109,7 +124,7 @@ export default function SettingsPage() {
         setConfigOk(true);
         setConfigLoaded(true);
         try {
-          const budget = await fetch('/api/context-budget/').then((res) => res.json()) as { tokens?: number | null };
+          const budget = await fetchContextBudget();
           if (!cancelled && typeof budget.tokens === 'number') {
             setContextBudget(budget.tokens);
             setContextBudgetSet(true);
@@ -298,15 +313,10 @@ export default function SettingsPage() {
                     const tokens = Number(event.target.value);
                     setContextBudget(tokens);
                     setContextBudgetSet(true);
-                    void fetch('/api/context-budget/', {
-                      method: 'PUT',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ tokens }),
-                    }).then((res) => {
-                      if (!res.ok) setErr('Could not save the context budget');
-                      else setMsg(`Context budget set to ${tokens.toLocaleString()} tokens`);
-                    }).catch(() => setErr('Could not save the context budget'));
+                    budgetSaver.current?.set(tokens);
                   }}
+                  onPointerUp={() => budgetSaver.current?.flush()}
+                  onBlur={() => budgetSaver.current?.flush()}
                 />
                 <span>{contextBudgetSet ? `${contextBudget.toLocaleString()} tokens` : 'Not set'}</span>
               </label>
