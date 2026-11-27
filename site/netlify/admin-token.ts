@@ -1,6 +1,6 @@
 // Shared by netlify/functions/admin-auth.ts and admin-telemetry.ts. Kept outside
 // netlify/functions so Netlify does not deploy it as a function of its own.
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { SignJWT, jwtVerify } from 'jose';
 
 export const ADMIN_ISSUER = 'getax-admin';
@@ -56,10 +56,17 @@ export const MAX_FAILED_LOGINS = 5;
 /** Length of the failure window, and of the lockout that follows it. */
 export const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 
-/** Compares two passwords in constant time (both are hashed to equal-length digests). */
+/** Random salt for this function instance; the derived keys never leave memory. */
+const PASSWORD_SALT = randomBytes(16);
+
+/**
+ * Compares two passwords in constant time. Both go through scrypt with the same
+ * salt, so the comparison is between equal-length keys and a fast hash is never
+ * applied to a password.
+ */
 export function passwordMatches(given: string, expected: string): boolean {
-	const a = createHash('sha256').update(given, 'utf8').digest();
-	const b = createHash('sha256').update(expected, 'utf8').digest();
+	const a = scryptSync(given, PASSWORD_SALT, 32);
+	const b = scryptSync(expected, PASSWORD_SALT, 32);
 	return timingSafeEqual(a, b);
 }
 
