@@ -95,7 +95,9 @@ test('vault mount errors keep the server message and command', async () => {
   const { fetchMountStatus } = await import('./vaultMount.ts');
   reply(500, JSON.stringify({ error: 'mount failed', command: 'mount -t webdav' }));
   await assert.rejects(fetchMountStatus(), (e: unknown) => {
-    assert.deepEqual(e, { message: 'mount failed', command: 'mount -t webdav' });
+    assert.ok(e instanceof Error);
+    assert.equal(e.message, 'mount failed');
+    assert.equal((e as Error & { command: string | null }).command, 'mount -t webdav');
     return true;
   });
 });

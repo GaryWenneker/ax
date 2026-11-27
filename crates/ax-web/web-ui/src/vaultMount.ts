@@ -15,6 +15,17 @@ export interface MountError {
   command: string | null;
 }
 
+/** A failed vault request. It is an `Error`, and it keeps the copyable mount command when the server sent one. */
+export class MountRequestError extends Error implements MountError {
+  command: string | null;
+
+  constructor(error: MountError) {
+    super(error.message);
+    this.name = 'MountRequestError';
+    this.command = error.command;
+  }
+}
+
 const BASE = '/api/dav/mount';
 
 export function openLabel(os: MountOs): string {
@@ -48,8 +59,8 @@ export function mountError(status: number, body: unknown): MountError {
 
 /**
  * Send a vault request and read its JSON reply. A non-2xx reply throws a
- * {@link MountError}; so does a 2xx reply that is not a JSON object (an HTML
- * login page from a proxy), instead of returning it as data.
+ * {@link MountRequestError}; so does a 2xx reply that is not a JSON object (an
+ * HTML login page from a proxy), instead of returning it as data.
  */
 async function vaultRequest<T>(url: string, method: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -58,9 +69,9 @@ async function vaultRequest<T>(url: string, method: string, body?: unknown): Pro
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data: unknown = await res.json().catch(() => null);
-  if (!res.ok) throw mountError(res.status, data);
+  if (!res.ok) throw new MountRequestError(mountError(res.status, data));
   if (!data || typeof data !== 'object') {
-    throw { message: `The server reply was not JSON (HTTP ${res.status})`, command: null } satisfies MountError;
+    throw new MountRequestError({ message: `The server reply was not JSON (HTTP ${res.status})`, command: null });
   }
   return data as T;
 }
@@ -104,12 +115,8 @@ export interface VaultFolderList {
   readonly: boolean;
 }
 
-async function folderCall<T>(method: string, path = '', body?: unknown): Promise<T> {
-  try {
-    return await vaultRequest<T>(`${FOLDERS}${path}`, method, body);
-  } catch (err) {
-    throw new Error((err as MountError).message);
-  }
+function folderCall<T>(method: string, path = '', body?: unknown): Promise<T> {
+  return vaultRequest<T>(`${FOLDERS}${path}`, method, body);
 }
 
 export const fetchVaultFolders = () => folderCall<VaultFolderList>('GET');
@@ -128,11 +135,22 @@ export function folderNameFromPath(path: string): string {
   return validMountName(name) ? name : '';
 }
 
-/** Opens the OS folder dialog through ax. `undefined` means no dialog exists on this system. */
+/**
+ * Opens the OS folder dialog through ax. `undefined` means no dialog exists on this system and
+ * `null` means the user closed the dialog without picking. A reply without a string or null
+ * `path` throws.
+ */
 export async function pickFolderPath(): Promise<string | null | undefined> {
   const res = await fetch('/api/vault/folder-picker', { method: 'POST' });
   const data: unknown = await res.json().catch(() => null);
   if (res.status === 501) return undefined;
-  if (!res.ok) throw new Error(mountError(res.status, data).message);
-  return (data as { path: string | null }).path;
+  if (!res.ok) throw new MountRequestError(mountError(res.status, data));
+  const path = data && typeof data === 'object' ? (data as { path?: unknown }).path : undefined;
+  if (typeof path !== 'string' && path !== null) {
+    throw new MountRequestError({
+      message: `The folder dialog reply was not readable (HTTP ${res.status}). Type the path instead.`,
+      command: null,
+    });
+  }
+  return path;
 }
