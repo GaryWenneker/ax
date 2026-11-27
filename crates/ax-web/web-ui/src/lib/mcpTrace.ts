@@ -709,30 +709,52 @@ export function summarizeTraceLine(line: string): string {
   return parsed.badge;
 }
 
+/**
+ * Leading token of a trace body (after the `[ax]` / `[ax-mcp]` logger prefix) → kind.
+ * MCP trace lines lead with their event (`inbound`, `outbound preview`, …); domain lines
+ * lead with their domain (`memory remember ok …`). Free text later in the line never
+ * decides the kind.
+ */
+const LEADING_KINDS: readonly [RegExp, TraceKind][] = [
+  [/^inbound\b/, 'inbound'],
+  [/^outbound preview\b/, 'preview'],
+  [/^outbound\b/, 'outbound'],
+  [/^internal\b/, 'internal'],
+  [/^error\b/, 'error'],
+  [/^enrich\b/, 'enrich'],
+  [/^mcp-activity\b/, 'inbound'],
+  [/^plugin\b/, 'plugin'],
+  [/^lsp\b/, 'lsp'],
+  [/^ship(?:-ci)?\b/, 'ship'],
+  [/^share\b/, 'share'],
+  [/^workspace\b/, 'workspace'],
+  [/^embed\b/, 'embed'],
+  [/^action\b/, 'action'],
+  [/^memory\b/, 'memory'],
+  [/^policy\b/, 'policy'],
+  [/^cli\b/, 'cli'],
+  [/^hook\b/, 'hook'],
+  [/^agent\b/, 'agent'],
+];
+
+/** Explicit `source=` values (activity lines) → kind, used when the leading token is unknown. */
+const SOURCE_KINDS: Readonly<Record<string, TraceKind>> = {
+  cli: 'cli',
+  hook: 'hook',
+  agent: 'agent',
+  mcp: 'inbound',
+};
+
 function classify(body: string): { kind: TraceKind; badge: string } {
-  if (body.includes('inbound tool=')) return { kind: 'inbound', badge: 'IN' };
-  if (body.includes('enrich ')) return { kind: 'enrich', badge: 'ENR' };
-  if (body.includes('internal tool=')) return { kind: 'internal', badge: 'INT' };
-  if (body.includes('outbound preview')) return { kind: 'preview', badge: 'PREV' };
-  if (body.includes('outbound tool=')) return { kind: 'outbound', badge: 'OUT' };
-  if (body.includes('error tool=')) return { kind: 'error', badge: 'ERR' };
-  // v4 domain lines: `[ax] plugin …` / `plugin extract …`
-  if (/\bplugin\b/.test(body)) return { kind: 'plugin', badge: 'PLG' };
-  if (/\blsp\b/.test(body)) return { kind: 'lsp', badge: 'LSP' };
-  if (/\bship-ci\b/.test(body) || /\bship ci\b/.test(body) || /\[ax]\s*(?:🪓\s*)?ship\b/.test(body)) {
-    return { kind: 'ship', badge: 'SHIP' };
+  const lead = body.replace(/^\[(?:ax|ax-mcp)\]\s*/, '').replace(/^🪓\s*/, '').trimStart();
+  for (const [pattern, kind] of LEADING_KINDS) {
+    // MCP activity lines count as inbound but keep their own badge.
+    if (pattern.test(lead)) return { kind, badge: lead.startsWith('mcp-activity') ? 'MCP' : TRACE_KIND_BADGES[kind] };
   }
-  if (/\bshare\b/.test(body)) return { kind: 'share', badge: 'SHR' };
-  if (/\bworkspace\b/.test(body)) return { kind: 'workspace', badge: 'WS' };
-  if (/\bembed\b/.test(body)) return { kind: 'embed', badge: 'EMB' };
-  if (/\baction\b/.test(body)) return { kind: 'action', badge: 'ACT' };
-  if (/\bmemory\b/.test(body)) return { kind: 'memory', badge: 'MEM' };
-  if (/\bpolicy\b/.test(body)) return { kind: 'policy', badge: 'POL' };
-  if (/\[ax]\s*(?:🪓\s*)?cli\b/.test(body) || /\bcli cmd=/.test(body) || /\bsource=cli\b/.test(body)) return { kind: 'cli', badge: 'CLI' };
-  if (/\[ax]\s*(?:🪓\s*)?hook\b/.test(body) || /\bsource=hook\b/.test(body)) return { kind: 'hook', badge: 'HOOK' };
-  if (/\[ax]\s*(?:🪓\s*)?agent\b/.test(body) || /\bsource=agent\b/.test(body)) return { kind: 'agent', badge: 'AGT' };
-  if (/\bmcp-activity\b/.test(body) || /\bsource=mcp\b/.test(body)) return { kind: 'inbound', badge: 'MCP' };
-  return { kind: 'other', badge: 'LOG' };
+  const source = lead.match(/(?:^|\s)source=([\w-]+)/)?.[1];
+  const sourceKind = source ? SOURCE_KINDS[source] : undefined;
+  if (sourceKind) return { kind: sourceKind, badge: source === 'mcp' ? 'MCP' : TRACE_KIND_BADGES[sourceKind] };
+  return { kind: 'other', badge: TRACE_KIND_BADGES.other };
 }
 
 /** Exported for smoke / unit checks of domain kind mapping. */
