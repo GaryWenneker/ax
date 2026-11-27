@@ -1,4 +1,5 @@
-//! Per-turn memories (docs/specs/per-turn-memory.md): dedup, retention, recall-only, local-only, redaction.
+//! Per-turn memories (docs/specs/per-turn-memory.md): dedup, retention (old turns are backed up
+//! and demoted to the archive tier, never deleted), recall-only, local-only, redaction.
 
 use ax_memory::{
     export_shared, list, prune_turns, recall, recall_for_prompt, redact_secrets, remember,
@@ -69,7 +70,7 @@ async fn saving_the_same_turn_twice_keeps_one_memory() {
 }
 
 #[tokio::test]
-async fn prune_removes_only_old_turn_memories() {
+async fn prune_demotes_only_old_turn_memories() {
     let dir = tempfile::tempdir().unwrap();
     let db = open_db(dir.path()).await;
     save_turn(db.pool(), &turn("turn-old", "Old turn"), NOW - 31 * DAY_MS)
@@ -168,7 +169,7 @@ fn retention_is_90_days() {
 }
 
 #[tokio::test]
-async fn p1_p2_turn_older_than_retention_is_backed_up_then_deleted() {
+async fn p1_p2_turn_older_than_retention_is_backed_up_then_archived() {
     let dir = tempfile::tempdir().unwrap();
     let db = open_db(dir.path()).await;
     save_turn(
@@ -260,7 +261,7 @@ async fn nothing_to_prune_writes_no_backup_file() {
 }
 
 #[tokio::test]
-async fn p3_failed_backup_deletes_nothing() {
+async fn p3_failed_backup_demotes_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let db = open_db(dir.path()).await;
     save_turn(db.pool(), &turn("turn-old", "Old"), NOW - 100 * DAY_MS)
@@ -272,10 +273,11 @@ async fn p3_failed_backup_deletes_nothing() {
     assert!(prune_turns(db.pool(), NOW, TURN_RETENTION_DAYS, &not_a_dir)
         .await
         .is_err());
-    assert!(ax_memory::get(db.pool(), "turn-old")
+    let kept = ax_memory::get(db.pool(), "turn-old")
         .await
         .unwrap()
-        .is_some());
+        .expect("the turn is still stored");
+    assert_ne!(kept.tier, "t3", "a failed backup must not archive the turn");
 }
 
 #[test]

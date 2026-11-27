@@ -743,7 +743,7 @@ pub async fn prune_turns(
     }
     write_backup(backup_dir, "turn-memories", now_ms, &expired)?;
     let mut tx = pool.begin().await.map_err(db_err)?;
-    let mut deleted = 0;
+    let mut archived = 0;
     for row in &expired {
         let result = sqlx::query(
             "UPDATE memories SET tier = 't3' WHERE id = ? AND kind IN (?, ?) AND COALESCE(tier, 't1') != 't3'",
@@ -754,13 +754,13 @@ pub async fn prune_turns(
         .execute(&mut *tx)
         .await
         .map_err(db_err)?;
-        deleted += result.rows_affected();
+        archived += result.rows_affected();
     }
     tx.commit().await.map_err(db_err)?;
     for row in &expired {
         crate::brain::index_archive_vector(pool, &row.id).await?;
     }
-    Ok(deleted)
+    Ok(archived)
 }
 
 fn write_backup(dir: &Path, stem: &str, now_ms: i64, rows: &[MemoryRow]) -> Result<(), AxError> {
