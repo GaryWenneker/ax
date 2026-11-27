@@ -31,6 +31,11 @@ CREATE TABLE IF NOT EXISTS spec_bindings (
     session_id TEXT PRIMARY KEY,
     spec_id TEXT NOT NULL
 );
+-- Sessions whose binding came from a scanned plan file, not from a capture
+-- or edit in that session. Only these bindings are moved by a later scan.
+CREATE TABLE IF NOT EXISTS spec_implicit_bindings (
+    session_id TEXT PRIMARY KEY
+);
 CREATE TABLE IF NOT EXISTS spec_deliveries (
     session_id TEXT NOT NULL,
     turn_id TEXT NOT NULL,
@@ -624,6 +629,55 @@ async fn bind_session(pool: &SqlitePool, session_id: &str, spec_id: &str) -> Res
     .execute(pool)
     .await
     .map_err(|error| error.to_string())?;
+    sqlx::query("DELETE FROM spec_implicit_bindings WHERE session_id = ?1")
+        .bind(session_id)
+        .execute(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Bind a session found in a scanned plan file. A session with no binding, or
+/// one that an earlier scan bound, follows the plan. A binding made by a
+/// capture or an edit in the session itself is kept.
+async fn bind_session_implicit(
+    pool: &SqlitePool,
+    session_id: &str,
+    spec_id: &str,
+) -> Result<(), String> {
+    if session_id.is_empty() {
+        return Ok(());
+    }
+    match bound_spec(pool, session_id).await? {
+        Some(current) if current == spec_id => return Ok(()),
+        Some(_) => {
+            let implicit: Option<String> = sqlx::query_scalar(
+                "SELECT session_id FROM spec_implicit_bindings WHERE session_id = ?1",
+            )
+            .bind(session_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+            if implicit.is_none() {
+                return Ok(());
+            }
+        }
+        None => {}
+    }
+    sqlx::query(
+        "INSERT INTO spec_bindings (session_id, spec_id) VALUES (?1, ?2)
+         ON CONFLICT(session_id) DO UPDATE SET spec_id = excluded.spec_id",
+    )
+    .bind(session_id)
+    .bind(spec_id)
+    .execute(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query("INSERT OR IGNORE INTO spec_implicit_bindings (session_id) VALUES (?1)")
+        .bind(session_id)
+        .execute(pool)
+        .await
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -1102,7 +1156,7 @@ async fn import_plan_dirs(
             stored += 1;
         }
         for extra in sessions_named_in(&body) {
-            bind_session(pool, &extra, &spec_id).await?;
+            bind_session_implicit(pool, &extra, &spec_id).await?;
         }
         if newest.as_ref().is_some_and(|chosen| chosen == path) {
             newest_id = Some(spec_id);
@@ -1110,7 +1164,7 @@ async fn import_plan_dirs(
     }
     if let Some(spec_id) = newest_id {
         for session in live_sessions {
-            bind_session(pool, session, &spec_id).await?;
+            bind_session_implicit(pool, session, &spec_id).await?;
         }
     }
     Ok(stored)
@@ -1825,6 +1879,97 @@ pub(crate) mod tests {
             sync_markdown(pool, dir.path(), &spec_id).await.unwrap(),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn plan_files_do_not_replace_an_explicit_binding() {
+        let _lock = HOME_LOCK.lock().await;
+        let home = IsolatedHome::new();
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        capture_finished_plan(
+            pool,
+            "ax",
+            "registry",
+            "Registry",
+            "make a plan",
+            "Keep the registry.",
+            "axs_bound",
+            "t1",
+            "turn",
+            true,
+        )
+        .await
+        .unwrap();
+        approve_revision(pool, dir.path(), "registry", 1, &[])
+            .await
+            .unwrap();
+        let user_plans = home.path().join(".cursor").join("plans");
+        std::fs::create_dir_all(&user_plans).unwrap();
+        std::fs::write(
+            user_plans.join("other.plan.md"),
+            "# Other\n\nA plan for another project.\n",
+        )
+        .unwrap();
+        let plans = dir.path().join("docs").join("plans");
+        std::fs::create_dir_all(&plans).unwrap();
+        std::fs::write(
+            plans.join("notes.md"),
+            "# Notes\n\nSeen in axs_bound earlier.\n",
+        )
+        .unwrap();
+        let turns = dir.path().join(".ax").join("turns");
+        std::fs::create_dir_all(&turns).unwrap();
+        std::fs::write(
+            turns.join("current.json"),
+            "{\"session_id\":\"axs_bound\"}\n",
+        )
+        .unwrap();
+        let context = spec_context_block(pool, dir.path(), "axs_bound").await;
+        assert!(
+            context.starts_with("spec: registry\napproved: v1"),
+            "{context}"
+        );
+        assert_eq!(
+            bound_spec(pool, "axs_bound").await.unwrap().as_deref(),
+            Some("registry")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_plan_file_binding_follows_the_newest_plan() {
+        let _lock = HOME_LOCK.lock().await;
+        let home = IsolatedHome::new();
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        let user_plans = home.path().join(".cursor").join("plans");
+        std::fs::create_dir_all(&user_plans).unwrap();
+        let first = user_plans.join("first.plan.md");
+        std::fs::write(&first, "# First\n\nThe first plan.\n").unwrap();
+        let turns = dir.path().join(".ax").join("turns");
+        std::fs::create_dir_all(&turns).unwrap();
+        std::fs::write(
+            turns.join("current.json"),
+            "{\"session_id\":\"axs_live\"}\n",
+        )
+        .unwrap();
+        let context = spec_context_block(pool, dir.path(), "axs_live").await;
+        assert!(context.starts_with("spec: first-plan\n"), "{context}");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&first)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+            .unwrap();
+        std::fs::write(
+            user_plans.join("second.plan.md"),
+            "# Second\n\nThe next plan.\n",
+        )
+        .unwrap();
+        let context = spec_context_block(pool, dir.path(), "axs_live").await;
+        assert!(context.starts_with("spec: second-plan\n"), "{context}");
     }
 
     #[tokio::test]
