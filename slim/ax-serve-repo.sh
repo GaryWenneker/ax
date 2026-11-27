@@ -59,11 +59,19 @@ dir="${AX_WORKDIR:-/tmp/project}"
 # Fetch AX_REPO_URL at AX_REPO_REF (the default branch otherwise) into $dir. An existing
 # checkout is updated, so a restart picks up new commits and a changed AX_REPO_REF. The URL
 # is only passed to git fetch: origin is stored without credentials, so a token in the URL
-# never reaches .git/config.
+# never reaches .git/config. When the fetch fails (network error, outage, expired token)
+# over a checkout that already has a commit, that checkout is served as it is, so a
+# restart does not take the server down; without a checkout the start fails.
 checkout_repo() {
   mkdir -p "$dir"
   [ -d "$dir/.git" ] || git -C "$dir" init --quiet
-  git -C "$dir" fetch --quiet --depth 1 "$AX_REPO_URL" "${AX_REPO_REF:-HEAD}"
+  if ! git -C "$dir" fetch --quiet --depth 1 "$AX_REPO_URL" "${AX_REPO_REF:-HEAD}"; then
+    current="$(git -C "$dir" rev-parse --verify --quiet HEAD)" \
+      || die "could not fetch the repository and there is no existing checkout in $dir"
+    printf 'ax-serve-repo: warning: fetch failed; serving the existing checkout at %s\n' \
+      "$(git -C "$dir" rev-parse --short "$current")" >&2
+    return 0
+  fi
   git -C "$dir" -c advice.detachedHead=false checkout --quiet --force FETCH_HEAD
   git -C "$dir" remote remove origin 2>/dev/null || true
   git -C "$dir" remote add origin \

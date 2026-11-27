@@ -283,7 +283,10 @@ image and also in `-ubuntu`) fetches
 The public URL comes from `AX_PUBLIC_URL` or is detected on Render, Koyeb,
 Railway and Azure Container Apps. An existing checkout in `AX_WORKDIR` is
 fetched again on every start, so a restart picks up new commits and a changed
-`AX_REPO_REF`. A token in `AX_REPO_URL` is used for the fetch only; the
+`AX_REPO_REF`. When that fetch fails (a network error, a GitHub outage, an
+expired token) the existing checkout is served as it is and a warning names its
+commit; only a start without a checkout fails. `ax-index-repo` fails the job
+instead. A token in `AX_REPO_URL` is used for the fetch only; the
 checkout's `origin` is stored without it. The website's guide (Deploy to the cloud) has
 the buttons:
 

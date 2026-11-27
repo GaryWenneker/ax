@@ -279,7 +279,7 @@ Every deployment asks for:
 - **`AX_REPO_URL`**: the git URL to serve. For a private repository, include a read-only token in the URL. Azure stores it as a secret. The token is used to fetch only; the checkout's `.git/config` keeps the URL without it.
 - **`AX_API_KEY`**: the bearer key clients send, at least 32 characters (letters, digits and `._~+/=-`). Generate one with `openssl rand -hex 32`. Only its SHA-256 is written to the server configuration.
 
-Optional variables: `AX_REPO_REF` (branch or tag; when the checkout survives a restart, for example on a mounted `AX_WORKDIR`, the restart fetches this ref again), `AX_API_KEY_WRITE=1` (let the key write memories and policy; read-only otherwise), `AX_PROJECT_ID` (the `project` part of the URL) and `AX_PUBLIC_URL`. The public URL is detected on Azure Container Apps, Render, Koyeb and Railway; set it yourself anywhere else.
+Optional variables: `AX_REPO_REF` (branch or tag; when the checkout survives a restart, for example on a mounted `AX_WORKDIR`, the restart fetches this ref again; if that fetch fails, the existing checkout is served and the log shows a warning with its commit), `AX_API_KEY_WRITE=1` (let the key write memories and policy; read-only otherwise), `AX_PROJECT_ID` (the `project` part of the URL) and `AX_PUBLIC_URL`. The public URL is detected on Azure Container Apps, Render, Koyeb and Railway; set it yourself anywhere else.
 
 The checkout and index live on the container's disk. A restart or redeploy clones and indexes again, so the first requests after a start wait for `ax init`. In this headless build nobody can approve browser (OAuth) sign-ins, because that happens in the Command Center: the API key is the only way in.
 

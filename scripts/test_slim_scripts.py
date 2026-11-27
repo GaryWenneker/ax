@@ -107,6 +107,25 @@ class ServeRepoTest(CheckoutTestBase):
     def test_token_is_not_stored_in_the_checkout(self):
         self.check_token_not_stored("ax-serve-repo.sh")
 
+    def test_failed_fetch_serves_the_existing_checkout(self):
+        served = self.run_script("ax-serve-repo.sh", "main")
+        shutil.rmtree(self.upstream)  # the remote is now unreachable
+        env = dict(self.env, AX_REPO_REF="main")
+        self.capture.unlink(missing_ok=True)
+        run = subprocess.run(["sh", str(SLIM / "ax-serve-repo.sh")], env=env,
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(self.capture.read_text().strip(), served)
+        self.assertIn(f"fetch failed; serving the existing checkout at {served[:7]}", run.stderr)
+        self.assertNotIn(TOKEN, run.stderr)
+
+    def test_failed_fetch_without_a_checkout_stops(self):
+        shutil.rmtree(self.upstream)
+        run = subprocess.run(["sh", str(SLIM / "ax-serve-repo.sh")], env=self.env,
+                             capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(run.returncode, 0)
+        self.assertFalse(self.capture.exists(), "nothing may be served without a checkout")
+
 
 class IndexRepoTest(CheckoutTestBase):
     def test_restart_fetches_and_follows_ref(self):
@@ -114,6 +133,13 @@ class IndexRepoTest(CheckoutTestBase):
 
     def test_token_is_not_stored_in_the_checkout(self):
         self.check_token_not_stored("ax-index-repo.sh")
+
+    def test_failed_fetch_fails_the_job(self):
+        self.run_script("ax-index-repo.sh", "main")
+        shutil.rmtree(self.upstream)
+        run = subprocess.run(["sh", str(SLIM / "ax-index-repo.sh")], env=dict(self.env, AX_REPO_REF="main"),
+                             capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(run.returncode, 0, "a one-shot job must not index a stale checkout")
 
 
 class CreateJobHelpTest(unittest.TestCase):
