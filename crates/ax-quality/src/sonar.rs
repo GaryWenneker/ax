@@ -54,6 +54,11 @@ pub struct SonarConfig {
     /// Repos to exclude from SonarQube scanning (folder names).
     #[serde(default)]
     pub exclude_repos: Vec<String>,
+    /// Treat existing `<folder>-<repo>` projects (made by ax versions that
+    /// kept no record) as ax-created, so they are renamed to the current key.
+    /// Off by default; nothing is ever deleted either way.
+    #[serde(default)]
+    pub migrate_legacy_keys: bool,
 }
 
 fn default_admin_user() -> String {
@@ -94,6 +99,7 @@ impl Default for SonarConfig {
             admin_user: default_admin_user(),
             admin_password: default_admin_password(),
             exclude_repos: Vec::new(),
+            migrate_legacy_keys: false,
         }
     }
 }

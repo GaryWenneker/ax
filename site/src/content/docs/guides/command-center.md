@@ -181,6 +181,8 @@ Every `podman`/`docker` command ax runs has a time limit (30 seconds for status 
 
 ax records the SonarQube projects it creates in `.ax/sonar-projects.json`. When `project_key` changes, a project that ax created under the old workspace key (`<folder>-<repo>`) is renamed to the new key (`<project_key>-<repo>`) before a scan. Projects that ax did not create are never renamed, and ax never deletes a project: when both the old and the new key exist, the old project stays and the log says so, so you can delete it in SonarQube yourself.
 
+Older ax versions created `<folder>-<repo>` projects without keeping that record, so those projects are not renamed by default and a scan creates a new project under the current key next to them. To move their analysis history to the current key, set `migrate_legacy_keys = true` under `[sonar]` in `.ax/ship.toml`. The next scan or project setup then records every existing `<folder>-<repo>` project of this workspace's repos in `.ax/sonar-projects.json` as created by ax and renames it the same way (the log lists each adopted project). It still deletes nothing, and you can set the option back to `false` afterwards.
+
 A scan of one repo in a workspace with several git repos writes to `<project_key>-<repo>`, and its quality gate is read from that same key.
 
 ### Reading the SonarQube quality gate

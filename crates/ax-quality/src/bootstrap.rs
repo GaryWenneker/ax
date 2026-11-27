@@ -81,6 +81,9 @@ pub struct SonarBootstrapConfig {
     pub admin_password: String,
     pub token_name: String,
     pub token_env: String,
+    /// `[sonar] migrate_legacy_keys` in `.ax/ship.toml`: adopt existing
+    /// `<folder>-<repo>` projects as ax-created so they can be renamed.
+    pub migrate_legacy_keys: bool,
 }
 
 impl SonarBootstrapConfig {
@@ -102,6 +105,7 @@ impl SonarBootstrapConfig {
             admin_password: DEFAULT_ADMIN_PASSWORD.into(),
             token_name: DEFAULT_TOKEN_NAME.into(),
             token_env: token_env.to_string(),
+            migrate_legacy_keys: false,
         }
     }
 
@@ -116,6 +120,7 @@ impl SonarBootstrapConfig {
             admin_password: sonar.admin_password.clone(),
             token_name: DEFAULT_TOKEN_NAME.into(),
             token_env: sonar.token_env.clone(),
+            migrate_legacy_keys: sonar.migrate_legacy_keys,
         }
     }
 }
@@ -978,6 +983,10 @@ fn note_created_project(project_root: &Path, key: &str) {
 /// created in `.ax/sonar-projects.json` are touched, and nothing is ever
 /// deleted: a recorded legacy project whose canonical key already exists is
 /// left in place and reported, for the user to remove in SonarQube.
+///
+/// Older ax versions did not keep that record. With `migrate_legacy_keys`
+/// set, every existing legacy key for this workspace's repos is recorded as
+/// ax-created first, and then renamed the same way.
 async fn migrate_legacy_sonar_projects(
     config: &SonarBootstrapConfig,
     project_root: &Path,
@@ -994,8 +1003,8 @@ async fn migrate_legacy_sonar_projects(
     if legacy_prefixes.is_empty() {
         return Ok(Vec::new());
     }
-    let ours = created_projects(project_root);
-    if ours.is_empty() {
+    let mut ours = created_projects(project_root);
+    if ours.is_empty() && !config.migrate_legacy_keys {
         return Ok(Vec::new());
     }
 
@@ -1021,6 +1030,30 @@ async fn migrate_legacy_sonar_projects(
     .await;
 
     let mut actions = Vec::new();
+    if config.migrate_legacy_keys {
+        let mut adopted: Vec<String> = Vec::new();
+        for repo in repo_names {
+            for legacy_prefix in &legacy_prefixes {
+                let legacy = format!("{legacy_prefix}-{}", sonar_key_from_name(repo));
+                if exists.get(&legacy).copied().unwrap_or(false) && !ours.contains(&legacy) {
+                    adopted.push(legacy);
+                }
+            }
+        }
+        adopted.sort();
+        adopted.dedup();
+        if !adopted.is_empty() {
+            record_created_projects(project_root, &adopted).map_err(|e| {
+                format!("could not record the legacy SonarQube projects to migrate: {e}")
+            })?;
+            for key in &adopted {
+                actions.push(format!(
+                    "Adopted legacy SonarQube project '{key}' for migration (migrate_legacy_keys)"
+                ));
+            }
+            ours.extend(adopted);
+        }
+    }
     for repo in repo_names {
         let canonical = canonical_repo_project_key(&workspace_key, repo, multi_repo);
         for legacy_prefix in &legacy_prefixes {
@@ -1639,6 +1672,50 @@ mod tests {
         let created = created_projects(&root);
         assert!(created.contains("ax-Api") && !created.contains("Contoso-Api"));
         assert!(created.contains("Contoso-Web"));
+    }
+
+    #[tokio::test]
+    async fn migrate_legacy_keys_adopts_and_renames_legacy_projects_without_a_record() {
+        let (_dir, root, repos) = contoso_workspace();
+        assert!(!created_projects_path(&root).exists());
+        let sonar = sonar_with_projects(&["Contoso-Web", "ax-Web", "Contoso-Api"]).await;
+        let mut config = SonarBootstrapConfig::from_sonar(&sonar.host, "ax", "SONAR_TOKEN");
+        config.migrate_legacy_keys = true;
+        let log = migrate_legacy_sonar_projects(&config, &root, &repos, None, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            mutating(&sonar.requests()),
+            vec!["POST /api/projects/update_key?from=Contoso-Api&to=ax-Api".to_string()]
+        );
+        assert!(
+            log.iter()
+                .any(|l| l.contains("Contoso-Web") && l.contains("left in place")),
+            "{log:?}"
+        );
+        let created = created_projects(&root);
+        assert!(created.contains("ax-Api") && !created.contains("Contoso-Api"));
+        assert!(created.contains("Contoso-Web"), "{created:?}");
+    }
+
+    #[test]
+    fn migrate_legacy_keys_is_off_unless_the_config_sets_it() {
+        let base = serde_json::json!({
+            "enabled": true,
+            "host": "http://localhost:9000",
+            "project_key": "ax",
+            "token_env": "SONAR_TOKEN",
+            "scanner_path": "sonar-scanner",
+            "podman_container": null
+        });
+        let cfg: crate::sonar::SonarConfig = serde_json::from_value(base.clone()).unwrap();
+        assert!(!cfg.migrate_legacy_keys);
+        let root = Path::new("/tmp/x");
+        assert!(!SonarBootstrapConfig::resolve_for_project(&cfg, root).migrate_legacy_keys);
+        let mut on = base;
+        on["migrate_legacy_keys"] = true.into();
+        let cfg: crate::sonar::SonarConfig = serde_json::from_value(on).unwrap();
+        assert!(SonarBootstrapConfig::resolve_for_project(&cfg, root).migrate_legacy_keys);
     }
 
     #[test]
