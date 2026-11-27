@@ -651,11 +651,7 @@ impl SonarClient {
         project_key: &str,
         wait_for_ce: bool,
     ) -> Result<QualityGateResult, String> {
-        let url = format!(
-            "{}/api/qualitygates/project_status?projectKey={}",
-            self.config.host.trim_end_matches('/'),
-            project_key
-        );
+        let host = self.config.host.trim_end_matches('/');
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(30))
@@ -664,20 +660,64 @@ impl SonarClient {
         let token = read_sonar_token(project_root, &self.config.token_env);
         let auth = token.as_deref().map(token_basic_auth);
 
-        // SonarQube returns "NONE" while the Compute Engine is still processing
-        // the analysis. Poll with back-off until we get a real result.
-        const MAX_RETRIES: u32 = 10;
-        const RETRY_DELAY: Duration = Duration::from_secs(3);
+        // Right after a scan, project_status still describes the previous
+        // analysis until the Compute Engine has processed the new report.
+        // Wait for the project's CE queue to drain and read the gate of the
+        // analysis it produced.
+        let mut query = format!("projectKey={project_key}");
+        let mut retry_none = false;
+        if wait_for_ce {
+            match wait_for_ce_queue(
+                &client,
+                host,
+                auth.as_deref(),
+                project_key,
+                CE_POLL_INTERVAL,
+                CE_WAIT_LIMIT,
+            )
+            .await
+            {
+                CeWait::Done {
+                    analysis_id: Some(id),
+                } => query = format!("analysisId={id}"),
+                CeWait::Done { analysis_id: None } => {}
+                CeWait::Failed(reason) => {
+                    warn!(project = %project_key, "SonarQube analysis failed: {reason}");
+                    return Ok(QualityGateResult {
+                        status: "ANALYSIS_FAILED".into(),
+                        passed: false,
+                        conditions: vec![],
+                    });
+                }
+                CeWait::TimedOut => {
+                    warn!(project = %project_key, "SonarQube analysis still queued at the deadline");
+                    return Ok(QualityGateResult {
+                        status: "PENDING".into(),
+                        passed: false,
+                        conditions: vec![],
+                    });
+                }
+                CeWait::Unavailable(reason) => {
+                    warn!(
+                        project = %project_key,
+                        "SonarQube Compute Engine status unavailable ({reason}); polling the gate"
+                    );
+                    retry_none = true;
+                }
+            }
+        }
+        let url = format!("{host}/api/qualitygates/project_status?{query}");
 
-        for attempt in 0..=MAX_RETRIES {
+        // Without the CE status, NONE is the only sign that the analysis is
+        // still being processed: poll a while for a real result.
+        const MAX_RETRIES: u32 = 10;
+        let mut attempt = 0;
+        loop {
             let mut req = client.get(&url);
             if let Some(ref a) = auth {
                 req = req.header("Authorization", a.clone());
             }
-            let resp = match req.send().await {
-                Ok(r) => r,
-                Err(e) => return Err(e.to_string()),
-            };
+            let resp = req.send().await.map_err(|e| e.to_string())?;
             if !resp.status().is_success() {
                 warn!("SonarQube quality gate API returned {}", resp.status());
                 return Ok(QualityGateResult {
@@ -689,18 +729,25 @@ impl SonarClient {
             let body: SonarStatusResponse = resp.json().await.map_err(|e| e.to_string())?;
             let status = body.project_status.status.clone();
 
-            if status == "NONE" && wait_for_ce && attempt < MAX_RETRIES {
+            if status == "NONE" && retry_none && attempt < MAX_RETRIES {
+                attempt += 1;
                 info!(
                     project = %project_key,
-                    attempt = attempt + 1,
-                    "Quality gate NONE — CE task still pending, retrying in {}s",
-                    RETRY_DELAY.as_secs()
+                    attempt,
+                    "Quality gate NONE — retrying in {}s",
+                    CE_POLL_INTERVAL.as_secs_f32()
                 );
-                tokio::time::sleep(RETRY_DELAY).await;
+                tokio::time::sleep(CE_POLL_INTERVAL).await;
                 continue;
             }
 
-            let passed = matches!(status.as_str(), "OK" | "NONE" | "WARN");
+            // NONE means no gate was computed. A caller that waited for the
+            // analysis gets a failed gate; a snapshot keeps it neutral.
+            let passed = match status.as_str() {
+                "OK" | "WARN" => true,
+                "NONE" => !wait_for_ce,
+                _ => false,
+            };
             return Ok(QualityGateResult {
                 status,
                 passed,
@@ -716,8 +763,93 @@ impl SonarClient {
                     .collect(),
             });
         }
+    }
+}
 
-        unreachable!()
+/// How often the Compute Engine queue and a NONE gate are polled.
+const CE_POLL_INTERVAL: Duration = if cfg!(test) {
+    Duration::from_millis(20)
+} else {
+    Duration::from_secs(3)
+};
+/// How long to wait for the Compute Engine to process a submitted report.
+const CE_WAIT_LIMIT: Duration = if cfg!(test) {
+    Duration::from_secs(2)
+} else {
+    Duration::from_secs(600)
+};
+
+#[derive(Deserialize, Debug, Default)]
+struct CeComponentResponse {
+    #[serde(default)]
+    queue: Vec<serde_json::Value>,
+    #[serde(default)]
+    current: Option<CeTask>,
+}
+
+#[derive(Deserialize, Debug)]
+struct CeTask {
+    status: String,
+    #[serde(rename = "analysisId", default)]
+    analysis_id: Option<String>,
+    #[serde(rename = "errorMessage", default)]
+    error_message: Option<String>,
+}
+
+#[derive(Debug, PartialEq)]
+enum CeWait {
+    /// The queue is empty; the last task succeeded (with its analysis, when known).
+    Done { analysis_id: Option<String> },
+    /// The last task did not succeed.
+    Failed(String),
+    /// Tasks were still queued at the deadline.
+    TimedOut,
+    /// The Compute Engine status could not be read.
+    Unavailable(String),
+}
+
+async fn wait_for_ce_queue(
+    client: &reqwest::Client,
+    host: &str,
+    auth: Option<&str>,
+    project_key: &str,
+    interval: Duration,
+    limit: Duration,
+) -> CeWait {
+    let url = format!("{host}/api/ce/component?component={project_key}");
+    let deadline = tokio::time::Instant::now() + limit;
+    loop {
+        let mut req = client.get(&url);
+        if let Some(a) = auth {
+            req = req.header("Authorization", a);
+        }
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) => return CeWait::Unavailable(e.to_string()),
+        };
+        if !resp.status().is_success() {
+            return CeWait::Unavailable(format!("HTTP {}", resp.status()));
+        }
+        let body: CeComponentResponse = match resp.json().await {
+            Ok(b) => b,
+            Err(e) => return CeWait::Unavailable(e.to_string()),
+        };
+        if body.queue.is_empty() {
+            return match body.current {
+                None => CeWait::Done { analysis_id: None },
+                Some(task) if task.status == "SUCCESS" => CeWait::Done {
+                    analysis_id: task.analysis_id.filter(|id| !id.is_empty()),
+                },
+                Some(task) => CeWait::Failed(
+                    task.error_message
+                        .unwrap_or_else(|| format!("task status {}", task.status)),
+                ),
+            };
+        }
+        if tokio::time::Instant::now() + interval > deadline {
+            return CeWait::TimedOut;
+        }
+        tokio::time::sleep(interval).await;
     }
 }
 
@@ -1050,6 +1182,132 @@ mod tests {
         assert_eq!(scan_project_keys("ax", &[], 0), vec!["ax"]);
         let two = vec!["a".to_string(), "b".to_string()];
         assert_eq!(scan_project_keys("ax", &two, 2), vec!["ax-a", "ax-b"]);
+    }
+
+    #[tokio::test]
+    async fn gate_waits_for_the_submitted_analysis_and_reads_its_status() {
+        // The previous analysis passed; the report just uploaded is still
+        // queued in the Compute Engine and will fail the gate.
+        let sonar = MockSonar::start(|path, before| {
+            if path.starts_with("/api/ce/component") {
+                if before < 2 {
+                    (200, "{\"queue\":[{\"id\":\"T2\",\"status\":\"PENDING\"}],\"current\":{\"id\":\"T1\",\"status\":\"SUCCESS\",\"analysisId\":\"A1\"}}".into())
+                } else {
+                    (200, "{\"queue\":[],\"current\":{\"id\":\"T2\",\"status\":\"SUCCESS\",\"analysisId\":\"A2\"}}".into())
+                }
+            } else if path.contains("analysisId=A2") {
+                (200, gate_body("ERROR"))
+            } else {
+                (200, gate_body("OK"))
+            }
+        })
+        .await;
+        let root = tempfile::tempdir().unwrap();
+        let gate = client_for(&sonar.host)
+            .fetch_quality_gate(root.path(), &[])
+            .await
+            .unwrap();
+        assert_eq!(gate.status, "ERROR", "{:?}", sonar.hits());
+        assert!(!gate.passed);
+    }
+
+    #[tokio::test]
+    async fn gate_does_not_pass_when_no_status_was_computed() {
+        let sonar = MockSonar::start(|path, _| {
+            if path.starts_with("/api/ce/component") {
+                (200, "{\"queue\":[]}".into())
+            } else {
+                (200, gate_body("NONE"))
+            }
+        })
+        .await;
+        let root = tempfile::tempdir().unwrap();
+        let gate = client_for(&sonar.host)
+            .fetch_quality_gate(root.path(), &[])
+            .await
+            .unwrap();
+        assert_eq!(gate.status, "NONE");
+        assert!(!gate.passed);
+    }
+
+    #[tokio::test]
+    async fn gate_is_pending_when_the_analysis_stays_queued() {
+        let sonar = MockSonar::start(|path, _| {
+            if path.starts_with("/api/ce/component") {
+                (
+                    200,
+                    "{\"queue\":[{\"id\":\"T2\",\"status\":\"IN_PROGRESS\"}]}".into(),
+                )
+            } else {
+                (200, gate_body("OK"))
+            }
+        })
+        .await;
+        let root = tempfile::tempdir().unwrap();
+        let gate = client_for(&sonar.host)
+            .fetch_quality_gate(root.path(), &[])
+            .await
+            .unwrap();
+        assert_eq!(gate.status, "PENDING");
+        assert!(!gate.passed);
+        assert!(!sonar
+            .hits()
+            .iter()
+            .any(|p| p.starts_with("/api/qualitygates/")));
+    }
+
+    #[tokio::test]
+    async fn without_compute_engine_status_the_gate_polls_past_none() {
+        let sonar = MockSonar::start(|path, before| {
+            if path.starts_with("/api/ce/component") {
+                (403, "{}".into())
+            } else if before < 2 {
+                (200, gate_body("NONE"))
+            } else {
+                (200, gate_body("ERROR"))
+            }
+        })
+        .await;
+        let root = tempfile::tempdir().unwrap();
+        let gate = client_for(&sonar.host)
+            .fetch_quality_gate(root.path(), &[])
+            .await
+            .unwrap();
+        assert_eq!(gate.status, "ERROR");
+        assert!(!gate.passed);
+    }
+
+    #[tokio::test]
+    async fn snapshot_does_not_wait_and_keeps_none_neutral() {
+        let sonar = MockSonar::start(|_, _| (200, gate_body("NONE"))).await;
+        let root = tempfile::tempdir().unwrap();
+        let gate = client_for(&sonar.host)
+            .fetch_quality_gate_snapshot(root.path(), &[])
+            .await
+            .unwrap();
+        assert!(gate.passed);
+        assert_eq!(
+            sonar.hits(),
+            vec!["/api/qualitygates/project_status?projectKey=ax".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn gate_fails_when_the_analysis_task_failed() {
+        let sonar = MockSonar::start(|path, _| {
+            if path.starts_with("/api/ce/component") {
+                (200, "{\"queue\":[],\"current\":{\"id\":\"T2\",\"status\":\"FAILED\",\"errorMessage\":\"boom\"}}".into())
+            } else {
+                (200, gate_body("OK"))
+            }
+        })
+        .await;
+        let root = tempfile::tempdir().unwrap();
+        let gate = client_for(&sonar.host)
+            .fetch_quality_gate(root.path(), &[])
+            .await
+            .unwrap();
+        assert!(!gate.passed, "{gate:?}");
     }
 
     #[tokio::test]

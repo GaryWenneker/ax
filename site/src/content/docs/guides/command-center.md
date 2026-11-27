@@ -181,6 +181,12 @@ Every `podman`/`docker` command ax runs has a time limit (30 seconds for status 
 
 ax records the SonarQube projects it creates in `.ax/sonar-projects.json`. When `project_key` changes, a project that ax created under the old workspace key (`<folder>-<repo>`) is renamed to the new key (`<project_key>-<repo>`) before a scan. Projects that ax did not create are never renamed, and ax never deletes a project: when both the old and the new key exist, the old project stays and the log says so, so you can delete it in SonarQube yourself.
 
+A scan of one repo in a workspace with several git repos writes to `<project_key>-<repo>`, and its quality gate is read from that same key.
+
+### Reading the SonarQube quality gate
+
+After a scan, ax waits until SonarQube has processed the uploaded report (it polls `/api/ce/component` every 3 seconds, for at most 10 minutes) and then reads the gate of that analysis, not the previous one. The gate passes on `OK` or `WARN`. It fails on `ERROR`, on `NONE` (no gate was computed), when the analysis task failed (`ANALYSIS_FAILED`), and when the report is still queued at the deadline (`PENDING`). If the token may not read the Compute Engine status, ax polls the gate for about 30 seconds while it reports `NONE`.
+
 ### Auto-commit / rollback (`[auto_commit]`)
 
 Off by default — a deliberate automation feature, not a silent behavior change. With `enabled = true`, every `ax ship --evaluate` commits the current uncommitted diff as a checkpoint before running index/diff/TIA/tests/Sonar/policy, across every git root under this workspace. If the gate passes, the checkpoint stays. If it fails and `revert_on_fail = true`, ax undoes *that exact commit* with `git reset --mixed HEAD~1` — never `--hard` — so the edits remain on disk, uncommitted, for the agent or user to fix and re-run. Rollback refuses if `HEAD` has moved since the checkpoint (e.g. something else was committed in between), rather than resetting the wrong commit.

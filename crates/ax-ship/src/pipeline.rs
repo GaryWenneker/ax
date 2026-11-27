@@ -279,10 +279,19 @@ impl ShipPipeline {
                     self.step_ok("sonar", Some("Scan completed".to_string()));
                     logger.step_ok("sonar", Some("Scan completed"));
                 }
-                let sonar_result = sonar
-                    .fetch_quality_gate_snapshot(&self.project_root, &repo_names)
-                    .await
-                    .ok();
+                // After a successful scan, wait for SonarQube to process the
+                // report so the gate describes this code, not the last run.
+                let sonar_result = if scan_ok {
+                    sonar
+                        .fetch_quality_gate(&self.project_root, &repo_names)
+                        .await
+                        .ok()
+                } else {
+                    sonar
+                        .fetch_quality_gate_snapshot(&self.project_root, &repo_names)
+                        .await
+                        .ok()
+                };
                 let (status, detail) = if !scan_ok {
                     ("failed", Some("Scanner failed — see log".to_string()))
                 } else if let Some(ref gate) = sonar_result {
