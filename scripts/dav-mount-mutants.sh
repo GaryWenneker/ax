@@ -3,6 +3,7 @@
 # Every mutant must change its file, be killed by the suite, and be restored byte for byte.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source "scripts/lib/restore-on-exit.sh"
 
 RUST_TESTS="cargo test -q -p ax-web --lib dav::mount && cargo test -q -p ax-web --test dav_mount"
 UI_TESTS="cd crates/ax-web/web-ui && node --test src/vaultMount.test.ts"
@@ -27,6 +28,7 @@ for m in "${mutants[@]}"; do
   IFS='|' read -r file expr tests label <<<"$m"
   backup="$(mktemp)"
   cp "$file" "$backup"
+  ax_guard_file "$file"
   perl -0pi -e "$expr" "$file"
   if cmp -s "$file" "$backup"; then
     cp "$backup" "$file"

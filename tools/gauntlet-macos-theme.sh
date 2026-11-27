@@ -3,6 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/lib/restore-on-exit.sh"
 
 echo "== theme unit tests =="
 (cd crates/ax-web/web-ui && node --experimental-strip-types --test src/lib/themes.test.ts)
@@ -40,6 +41,7 @@ echo "== manual mutation =="
 THEMES="$ROOT/crates/ax-web/web-ui/src/lib/themes.ts"
 ORIG="$(mktemp)"
 cp "$THEMES" "$ORIG"
+ax_guard_file "$THEMES"
 kill_mutant() {
   local name="$1"
   if (cd crates/ax-web/web-ui && node --experimental-strip-types --test src/lib/themes.test.ts) >/tmp/macos-theme-mutant.out 2>&1; then

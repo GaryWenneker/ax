@@ -3,6 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/lib/restore-on-exit.sh"
 unset CARGO_TARGET_DIR
 
 echo "== rust =="
@@ -47,6 +48,7 @@ echo "== manual mutation =="
 SRC="$ROOT/crates/ax-policy/src/revisions.rs"
 ORIG="$(mktemp)"
 cp "$SRC" "$ORIG"
+ax_guard_file "$SRC"
 kill_mutant() {
   local label="$1"
   if cargo test -p ax-policy revisions --quiet >/dev/null 2>&1; then

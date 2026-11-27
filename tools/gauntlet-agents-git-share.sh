@@ -3,6 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/lib/restore-on-exit.sh"
 
 echo "== cargo test -p ax-policy --lib agents_share + related =="
 cargo test -p ax-policy --lib agents_share -- --nocapture
@@ -32,6 +33,7 @@ echo "== leak-gate negative control (disable check, expect test fail, restore) =
 SRC="crates/ax-policy/src/agents_share.rs"
 backup="$(mktemp)"
 cp "$SRC" "$backup"
+ax_guard_file "$SRC"
 python3 - <<'PY'
 from pathlib import Path
 p = Path("crates/ax-policy/src/agents_share.rs")
@@ -54,6 +56,7 @@ echo "== manual mutation (5) =="
 HIER="crates/ax-policy/src/hierarchy.rs"
 hbackup="$(mktemp)"
 cp "$HIER" "$hbackup"
+ax_guard_file "$HIER"
 restore() { cp "$backup" "$SRC"; cp "$hbackup" "$HIER"; }
 
 kill_src() {

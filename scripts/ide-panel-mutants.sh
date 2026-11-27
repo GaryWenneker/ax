@@ -4,6 +4,7 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
+source "$root/scripts/lib/restore-on-exit.sh"
 
 cc=crates/ax-installer/src/command_center.rs
 ide=crates/ax-web/web-ui/src/ideInstall.ts
@@ -15,6 +16,7 @@ run_mutant() {
   local backup before after
   backup="$(mktemp)"
   cp "$file" "$backup"
+  ax_guard_file "$file"
   before="$(shasum "$file" | cut -d' ' -f1)"
   FROM="$from" TO="$to" python3 - "$file" <<'PY'
 import os, sys

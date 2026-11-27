@@ -3,6 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/lib/restore-on-exit.sh"
 
 export CARGO_TARGET_DIR="/tmp/ax-policy-zip-gauntlet"
 
@@ -135,6 +136,7 @@ echo "== manual mutation =="
 SRC="$ROOT/crates/ax-policy/src/zip_package.rs"
 ORIG="$(mktemp)"
 cp "$SRC" "$ORIG"
+ax_guard_file "$SRC"
 kill_mutant() {
   local name="$1"
   if cargo test -p ax-policy zip_package >/tmp/zip-pkg-mutant.out 2>&1; then

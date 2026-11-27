@@ -3,6 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/lib/restore-on-exit.sh"
 
 echo "== isGitShared unit tests =="
 (cd crates/ax-web/web-ui && node --experimental-strip-types --test src/gitShare.test.ts)
@@ -30,6 +31,7 @@ echo "== manual mutation of isGitShared =="
 UTIL="$ROOT/crates/ax-web/web-ui/src/components/ui/policyListUtils.ts"
 ORIG="$(mktemp)"
 cp "$UTIL" "$ORIG"
+ax_guard_file "$UTIL"
 kill_mutant() {
   local name="$1"
   if (cd crates/ax-web/web-ui && node --experimental-strip-types --test src/gitShare.test.ts) >/tmp/gitshare-mutant.out 2>&1; then

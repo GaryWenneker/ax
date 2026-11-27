@@ -3,6 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/lib/restore-on-exit.sh"
 CSS="$ROOT/crates/ax-web/web-ui/src/index.css"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -38,6 +39,7 @@ echo "== mutant: restore compact helper must fail T1 =="
 UTIL="$ROOT/crates/ax-web/web-ui/src/components/ui/policyListUtils.ts"
 ORIG="$(mktemp)"
 cp "$UTIL" "$ORIG"
+ax_guard_file "$UTIL"
 printf '\nexport function compactTagItems() { return { shown: [], extra: 0 }; }\n' >>"$UTIL"
 if (cd crates/ax-web/web-ui && node --experimental-strip-types --test src/tagOneline.test.ts) >/tmp/tag-oneline-mutant.out 2>&1; then
   echo "FAIL: mutant survived" >&2

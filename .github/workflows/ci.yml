@@ -31,6 +31,8 @@ jobs:
         run: python -m unittest discover -s scripts -p 'test_workflows.py'
       - name: Verify the gauntlet clippy filter
         run: python -m unittest discover -s scripts -p 'test_gauntlet_clippy_filter.py'
+      - name: Verify mutation scripts restore source on exit
+        run: python -m unittest discover -s scripts -p 'test_restore_on_exit.py'
       - name: Classify changed paths
         id: paths
         env:
