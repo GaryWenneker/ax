@@ -149,6 +149,17 @@ $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture 
 $target = "win32-$arch"
 $assetName = "ax-$target.zip"
 
+function ConvertTo-AxTagVersion([string]$Tag) {
+  # Sort key for a release tag: its leading MAJOR[.MINOR[.PATCH]], missing parts as 0.
+  # A tag without a leading number (or one too large to parse) sorts below every release.
+  if ("$Tag".Trim() -match '^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?') {
+    $parts = foreach ($i in 1..3) { if ($Matches[$i]) { $Matches[$i] } else { '0' } }
+    $parsed = $null
+    if ([version]::TryParse(($parts -join '.'), [ref]$parsed)) { return $parsed }
+  }
+  return [version]'0.0'
+}
+
 function Get-GitHubApiHeaders {
   param([switch]$NoAuth)
   $h = @{
@@ -201,7 +212,7 @@ function Resolve-AxVersionFromGitHubApi {
       }
       if ($installable.Count -gt 0) {
         return ($installable |
-          Sort-Object { [version]($_.TrimStart('v')) } -Descending |
+          Sort-Object { ConvertTo-AxTagVersion $_ } -Descending |
           Select-Object -First 1)
       }
       Write-Host "ax: GitHub API ($($attempt.Label)) returned releases but none include $AssetName." -ForegroundColor Yellow
@@ -334,7 +345,7 @@ Or pin a published tag: `$env:AX_VERSION = 'v2.1.0'; irm https://getax.wenneker.
 
   $sorted = $candidates |
     Select-Object -Unique |
-    Sort-Object { [version]($_.TrimStart('v')) } -Descending
+    Sort-Object { ConvertTo-AxTagVersion $_ } -Descending
 
   foreach ($candidate in $sorted) {
     $tag = if ($candidate -match '^v') { $candidate } else { "v$candidate" }

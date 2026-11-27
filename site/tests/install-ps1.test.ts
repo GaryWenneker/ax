@@ -188,3 +188,38 @@ for (const [name, sums, expected] of [
     assert.doesNotMatch(result.stdout, /STOP-AX-PROCESSES/);
   });
 }
+
+const mixedReleases = `
+function Get-AxReleasesFromGitHubApi {
+  param([hashtable]$Headers)
+  $asset = @([pscustomobject]@{ name = $assetName })
+  @(
+    [pscustomobject]@{ tag_name = 'v10.1.0'; draft = $false; prerelease = $false; assets = $asset },
+    [pscustomobject]@{ tag_name = 'v10.2.0-hotfix1'; draft = $false; prerelease = $false; assets = $asset },
+    [pscustomobject]@{ tag_name = 'nightly'; draft = $false; prerelease = $false; assets = $asset },
+    [pscustomobject]@{ tag_name = 'v10.3'; draft = $false; prerelease = $false; assets = $asset },
+    [pscustomobject]@{ tag_name = 'v9.9.9'; draft = $false; prerelease = $false; assets = $asset }
+  )
+}`;
+
+test('a release tag that is not plain x.y.z does not break version resolution', { skip }, () => {
+  const result = runDefinitions(`${mixedReleases}
+$v = Resolve-AxVersionFromGitHubApi -AssetName $assetName
+Write-Output "VERSION=$v"`);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /VERSION=v10\.3\r?\n/);
+  assert.doesNotMatch(result.stdout, /unreachable/i);
+});
+
+test('the fallback tag sort ranks tags by their leading version and survives odd tags', { skip }, () => {
+  const result = runDefinitions(`
+$sorted = @('v10.1.0', 'v10.2.0-hotfix1', 'nightly', 'v9.9.9') | Sort-Object { ConvertTo-AxTagVersion $_ } -Descending
+Write-Output "ORDER=$($sorted -join ',')"`);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /ORDER=v10\.2\.0-hotfix1,v10\.1\.0,v9\.9\.9,nightly/);
+});
+
+test('both release sorts in install.ps1 use the tolerant version key', () => {
+  const text = readFileSync(installer, 'utf8');
+  assert.doesNotMatch(text, /\[version\]\(\$_\.TrimStart/);
+});

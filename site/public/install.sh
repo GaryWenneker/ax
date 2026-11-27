@@ -151,10 +151,13 @@ for r in data:
         continue
     if any(a.get("name") == asset for a in r.get("assets", [])):
         tags.append(r["tag_name"])
+# Rank by the leading MAJOR[.MINOR[.PATCH]]; a tag without one is skipped.
 def key(t):
-    return tuple(int(x) for x in re.sub(r"^v", "", t).split("."))
-if tags:
-    print(max(tags, key=key))
+    m = re.match(r"v?(\d+)(?:\.(\d+))?(?:\.(\d+))?", t.strip())
+    return tuple(int(x or 0) for x in m.groups()) if m else None
+ranked = [t for t in tags if key(t) is not None]
+if ranked:
+    print(max(ranked, key=key))
 ' "$asset" 2>/dev/null
 }
 

@@ -439,3 +439,18 @@ for (const options of [{}, { withoutPython: true }, { stalePin: true }]) {
     } finally { rmSync(f.root, { recursive: true, force: true }); }
   });
 }
+
+test('a release tag that is not plain x.y.z does not break version resolution', () => {
+  const text = readFileSync(installers[0], 'utf8');
+  const fn = text.match(/^parse_latest_installable_tag\(\) \{\n[\s\S]*?\n\}\n/m);
+  assert.ok(fn, 'install.sh defines parse_latest_installable_tag');
+  const asset = 'ax-darwin-arm64.tar.gz';
+  const release = (tag: string) => ({ tag_name: tag, draft: false, prerelease: false, assets: [{ name: asset }] });
+  const releases = [release('v10.1.0'), release('v10.2.0-hotfix1'), release('nightly'), release('v10.3'), release('v9.9.9'),
+    { ...release('v11.0.0'), prerelease: true }];
+  const result = spawnSync('sh', ['-c', `${fn[0]}\nparse_latest_installable_tag "$1"`, 'sh', asset], {
+    encoding: 'utf8', input: JSON.stringify(releases),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'v10.3\n');
+});
