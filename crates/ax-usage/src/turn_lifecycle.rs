@@ -76,14 +76,32 @@ fn turns_dir(root: &Path) -> PathBuf {
     root.join(".ax").join("cli-turns")
 }
 
-fn snapshot_path(root: &Path, session: &str, turn_id: &str) -> PathBuf {
-    turns_dir(root)
-        .join(session)
-        .join(format!("{turn_id}.json"))
+/// `raw` when it is usable as one path segment under `.ax/cli-turns`: the
+/// session-id rule (ASCII letters, digits and `-_.:`, no surrounding space) and
+/// not made of dots only, so it cannot name a parent folder or an absolute path.
+fn checked_id<'a>(raw: &'a str, what: &str) -> Result<&'a str, String> {
+    let usable = crate::reuse_cache::usable_session(raw).as_deref() == Some(raw)
+        && !raw.chars().all(|c| c == '.');
+    if usable {
+        Ok(raw)
+    } else {
+        Err(format!(
+            "invalid {what} id {raw:?}: use 1-128 ASCII letters, digits, '-', '_', '.' or ':'"
+        ))
+    }
+}
+
+fn session_dir(root: &Path, session: &str) -> Result<PathBuf, String> {
+    Ok(turns_dir(root).join(checked_id(session, "session")?))
+}
+
+fn snapshot_path(root: &Path, session: &str, turn_id: &str) -> Result<PathBuf, String> {
+    let turn_id = checked_id(turn_id, "turn")?;
+    Ok(session_dir(root, session)?.join(format!("{turn_id}.json")))
 }
 
 fn write_snapshot(root: &Path, snap: &TurnSnapshot) -> Result<(), String> {
-    let path = snapshot_path(root, &snap.session_id, &snap.turn_id);
+    let path = snapshot_path(root, &snap.session_id, &snap.turn_id)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -95,7 +113,7 @@ fn write_snapshot(root: &Path, snap: &TurnSnapshot) -> Result<(), String> {
 }
 
 fn read_snapshot(root: &Path, session: &str, turn_id: &str) -> Result<TurnSnapshot, String> {
-    let path = snapshot_path(root, session, turn_id);
+    let path = snapshot_path(root, session, turn_id)?;
     let raw = fs::read_to_string(&path).map_err(|e| format!("turn not found: {e}"))?;
     serde_json::from_str(&raw).map_err(|e| e.to_string())
 }
@@ -187,9 +205,7 @@ pub async fn turn_begin(
     prompt: &str,
     agent: Option<&str>,
 ) -> Result<TurnSnapshot, String> {
-    if session_id.trim().is_empty() {
-        return Err("session id required".into());
-    }
+    checked_id(session_id, "session")?;
     let turn_id = mint_turn_id(session_id);
     let snap = TurnSnapshot {
         turn_id: turn_id.clone(),
@@ -685,7 +701,7 @@ pub fn turn_status(root: &Path, session_id: &str, turn_id: Option<&str>) -> Resu
         let snap = read_snapshot(root, session_id, id)?;
         return serde_json::to_value(snap).map_err(|e| e.to_string());
     }
-    let dir = turns_dir(root).join(session_id);
+    let dir = session_dir(root, session_id)?;
     let mut open = Vec::new();
     let mut finished = Vec::new();
     let mut failed = Vec::new();
@@ -898,6 +914,47 @@ mod tests {
             "{:?}",
             receipt.warnings
         );
+    }
+
+    #[tokio::test]
+    async fn session_and_turn_ids_cannot_leave_the_turns_folder() {
+        let (root, pool, _guard) = fixture().await;
+        let outside = root.join("outside");
+        for bad in ["../../outside", "..", ".", "/tmp/abs", "a/b", "", " s "] {
+            assert!(
+                turn_begin(&root, bad, "p", None).await.is_err(),
+                "session {bad:?} was accepted"
+            );
+            assert!(turn_status(&root, bad, None).is_err(), "status {bad:?}");
+        }
+        assert!(!outside.exists(), "a snapshot was written outside .ax/cli-turns");
+
+        // A snapshot-shaped file outside the turns folder must not be readable
+        // or rewritable through a turn id.
+        let begin = turn_begin(&root, "sess-p", "p", None).await.unwrap();
+        let mut planted = begin.clone();
+        planted.turn_id = "planted".into();
+        fs::create_dir_all(root.join(".ax")).unwrap();
+        fs::write(
+            root.join(".ax").join("planted.json"),
+            serde_json::to_vec(&planted).unwrap(),
+        )
+        .unwrap();
+        let escape = "../../planted";
+        assert!(turn_status(&root, "sess-p", Some(escape)).is_err());
+        assert!(turn_fail(&root, "sess-p", escape, "x").await.is_err());
+        assert!(turn_event(&root, "sess-p", escape, TurnEventInput::default())
+            .await
+            .is_err());
+        assert!(turn_checkpoint(&root, "sess-p", escape, "x").await.is_err());
+        assert!(turn_finish(&root, &pool, "sess-p", escape, TurnFinishInput::default())
+            .await
+            .is_err());
+        let after: TurnSnapshot = serde_json::from_slice(
+            &fs::read(root.join(".ax").join("planted.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(after.state, TurnState::Open);
     }
 
     #[tokio::test]

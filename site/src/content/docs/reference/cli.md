@@ -708,6 +708,8 @@ ax durable doc-get --session "$SESSION" --kind brief
 
 Explicit turn lifecycle without IDE hooks. Finish writes a memory with `source=cli-turn`. When the finish input has `decisions` or `open_questions`, finish also adds them to the session's working context (the notes `ax_session` keeps). That needs an index; when the write fails, the receipt lists the reason in `warnings` and the turn still finishes.
 
+Snapshots are stored under `.ax/cli-turns/<session>/<turn>.json`. The `--session` and `--turn` values must be 1 to 128 ASCII letters, digits, `-`, `_`, `.` or `:`, and not dots only; any other value is rejected, so a turn cannot read or write files outside that folder.
+
 ```bash
 TURN=$(printf '%s' "$PROMPT" | ax turn begin --session "$SESSION" --prompt-stdin --json | jq -r .turnId)
 ax turn event --session "$SESSION" --turn "$TURN" --kind finding --body "cookie cleared on soft reload"
