@@ -62,7 +62,10 @@ fn discover_skills_for(root: &Path, only: Option<&str>) -> Result<Vec<FoundSkill
                 return Err(err);
             }
         };
-        if dir.file_name().and_then(|n| n.to_str()) != Some(meta.name.as_str()) {
+        // A SKILL.md at the source root (a single-skill repository) takes its
+        // name from the frontmatter: the root folder is often a temp clone.
+        let at_root = entry.depth() == 1;
+        if !at_root && dir.file_name().and_then(|n| n.to_str()) != Some(meta.name.as_str()) {
             let requested = only.is_some_and(|name| {
                 name != "*" && (name == meta.name.as_str() || name == dir_name)
             });
@@ -187,6 +190,10 @@ fn collect_files(
 ) -> Result<(), String> {
     for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
+        if entry.file_name() == ".git" {
+            // A skill at the root of a git clone: the repository data is not part of it.
+            continue;
+        }
         let path = entry.path();
         let rel = path
             .strip_prefix(root)
@@ -282,6 +289,33 @@ mod tests {
         let err = install_tree(src.path(), dest.path(), Some("template-skill"), false).unwrap_err();
         assert!(err.contains("template-skill"));
         assert!(err.contains("must match directory"));
+    }
+
+    #[test]
+    fn installs_a_skill_whose_skill_md_is_at_the_source_root() {
+        // A git clone lands in a temp directory with a random name.
+        let src = tempfile::tempdir().unwrap();
+        fs::write(
+            src.path().join("SKILL.md"),
+            "---\nname: pdf\ndescription: Use pdf.\n---\n\nRead.\n",
+        )
+        .unwrap();
+        fs::create_dir_all(src.path().join("scripts")).unwrap();
+        fs::write(src.path().join("scripts/run.py"), b"print(1)\n").unwrap();
+        fs::create_dir_all(src.path().join(".git")).unwrap();
+        fs::write(src.path().join(".git/HEAD"), b"ref: refs/heads/main\n").unwrap();
+        for only in [None, Some("*"), Some("pdf")] {
+            let dest = tempfile::tempdir().unwrap();
+            let receipts = install_tree(src.path(), dest.path(), only, false).unwrap();
+            assert_eq!(receipts.len(), 1, "{only:?}");
+            assert_eq!(receipts[0].name, "pdf");
+            assert!(dest.path().join("pdf/SKILL.md").is_file());
+            assert!(dest.path().join("pdf/scripts/run.py").is_file());
+            assert!(!dest.path().join("pdf/.git").exists());
+        }
+        let dest = tempfile::tempdir().unwrap();
+        let err = install_tree(src.path(), dest.path(), Some("other"), false).unwrap_err();
+        assert!(err.contains("skill not in source"), "{err}");
     }
 
     #[test]
