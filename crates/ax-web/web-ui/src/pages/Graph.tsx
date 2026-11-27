@@ -33,13 +33,13 @@ import {
 } from 'd3-force';
 import GraphSettingsPanel from '../components/GraphSettingsPanel';
 import { useTheme } from '../hooks/useTheme';
-import { themeById, ensureTextContrast } from '../lib/themes';
+import { themeById, ensureTextContrast, THEME_CHANGED } from '../lib/themes';
 import { useLive } from '../lib/useLive';
 import { edgeMarker, planSparks, sparkPhase } from '../lib/live';
 import { ResizableBlade } from '../components/BladeResize';
 import { loadGraphSettings, saveGraphSettings, type GraphSettings } from '../lib/graphSettings';
 import { filterGraph, groupColor } from '../lib/graphFilter';
-import { buildNeighbors, highlightFor, selectionPulse, type Highlight, type NeighborIndex } from '../lib/graphHover';
+import { buildNeighbors, highlightFor, selectionPulseDone, selectionRing, type Highlight, type NeighborIndex } from '../lib/graphHover';
 import { forceParams, seedCluster } from '../lib/graphForces';
 import { labelAlpha, labelPx, placeLabels, type LabelBox } from '../lib/graphLabels';
 import SettingsSelect from '../components/ui/SettingsSelect';
@@ -117,9 +117,19 @@ function clusterRadius(n: number): number {
   return 4 * Math.sqrt(Math.max(1, n));
 }
 
-function themeAccent(): string {
-  const v = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
-  return v || '#7c4dff';
+/** Theme colours and the motion preference the canvas draws with. */
+type CanvasPalette = { accent: string; highlightInk: string; text: string; reduceMotion: boolean };
+
+const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
+
+function readCanvasPalette(): CanvasPalette {
+  const style = getComputedStyle(document.documentElement);
+  return {
+    accent: style.getPropertyValue('--accent').trim() || '#7c4dff',
+    highlightInk: style.getPropertyValue('--text-hi').trim() || '#fff',
+    text: style.getPropertyValue('--text').trim() || '#e6e6e6',
+    reduceMotion: window.matchMedia?.(REDUCED_MOTION_QUERY).matches ?? false,
+  };
 }
 
 type GraphDetail = {
@@ -255,6 +265,10 @@ export default function GraphPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
+  /** When the current selection was made; the ring pulses a few times from here. */
+  const selectedAtRef = useRef(0);
+  /** Read once per theme or motion change, not on every frame. */
+  const paletteRef = useRef<CanvasPalette | null>(null);
   const [search, setSearch] = useState('');
   const [kindFilter, setKindFilter] = useState('');
   const [communityFilter, setCommunityFilter] = useState('');
@@ -979,9 +993,8 @@ export default function GraphPage() {
     const h = canvas.height / dpr;
     const { scale, offsetX, offsetY } = transformRef.current;
     const s = settingsRef.current;
-    const accent = themeAccent();
-    const themeStyle = getComputedStyle(document.documentElement);
-    const highlightInk = themeStyle.getPropertyValue('--text-hi').trim() || '#fff';
+    const palette = (paletteRef.current ??= readCanvasPalette());
+    const { accent, highlightInk, reduceMotion } = palette;
 
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1092,7 +1105,9 @@ export default function GraphPage() {
     const sel = selectedRef.current == null ? undefined : idIndexRef.current.get(selectedRef.current);
     const selNode = sel == null ? null : nodes[sel];
     if (selNode && (!vis || vis.nodes.has(sel!))) {
-      const { grow, alpha } = selectionPulse(performance.now());
+      const { grow, alpha } = reduceMotion
+        ? selectionRing(Number.POSITIVE_INFINITY)
+        : selectionRing(performance.now() - selectedAtRef.current);
       const base = worldRadius(selNode);
       ctx.globalAlpha = 1;
       ctx.strokeStyle = accent;
@@ -1109,7 +1124,6 @@ export default function GraphPage() {
     }
 
     const now = performance.now();
-    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
     for (const [id, t0] of sparksRef.current) {
       const i = idIndexRef.current.get(id);
       const phase = sparkPhase(now - t0);
@@ -1139,7 +1153,7 @@ export default function GraphPage() {
     ctx.font = `${LABEL_PX}px var(--font-mono, monospace)`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillStyle = themeStyle.getPropertyValue('--text').trim() || '#e6e6e6';
+    ctx.fillStyle = palette.text;
     for (const i of placeLabels(labels)) {
       const l = labels[i];
       ctx.globalAlpha = l.alpha;
@@ -1192,16 +1206,35 @@ export default function GraphPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Keep redrawing while a node is selected so its ring keeps pulsing.
+  // Re-read theme colours and the motion preference when either changes.
   useEffect(() => {
-    if (!selected) {
+    const refresh = () => {
+      paletteRef.current = null;
+      requestDraw();
+    };
+    window.addEventListener(THEME_CHANGED, refresh);
+    const mq = window.matchMedia?.(REDUCED_MOTION_QUERY);
+    mq?.addEventListener('change', refresh);
+    return () => {
+      window.removeEventListener(THEME_CHANGED, refresh);
+      mq?.removeEventListener('change', refresh);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Redraw while the selection ring pulses; it holds still after a few cycles,
+  // and under reduced motion it never pulses.
+  useEffect(() => {
+    selectedAtRef.current = performance.now();
+    if (!selected || (paletteRef.current ??= readCanvasPalette()).reduceMotion) {
       requestDraw();
       return;
     }
+    const start = selectedAtRef.current;
     let raf = 0;
     const tick = () => {
       requestDraw();
-      raf = requestAnimationFrame(tick);
+      if (!selectionPulseDone(performance.now() - start)) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
