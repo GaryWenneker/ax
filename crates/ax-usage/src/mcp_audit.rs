@@ -1362,25 +1362,9 @@ fn grade_for(score: u8) -> String {
     }
 }
 
+/// Whether verbose MCP file logging is on, as decided by the log writer itself.
 fn verbose_enabled_for(project_root: &Path) -> bool {
-    if std::env::var("AX_MCP_VERBOSE")
-        .map(|v| {
-            let v = v.trim();
-            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
-        })
-        .unwrap_or(false)
-    {
-        return true;
-    }
-    let path = project_root.join(".ax").join("ship.toml");
-    let Ok(text) = fs::read_to_string(path) else {
-        return false;
-    };
-    text.lines().any(|l| {
-        let t = l.trim();
-        t.starts_with("verbose_mcp")
-            && (t.contains("true") || t.ends_with("=1") || t.contains("= true"))
-    })
+    crate::mcp_verbose_log::verbose_enabled(Some(project_root))
 }
 
 fn enrichment_from(clusters: &[VerboseCluster]) -> EnrichmentMetrics {
@@ -1964,6 +1948,17 @@ mod tests {
             &blob,
         );
         findings.into_iter().map(|f| f.check).collect()
+    }
+
+    #[test]
+    fn audit_treats_verbose_logging_as_on_without_ship_toml_key() {
+        // File logging is always on; the audit must agree with mcp_verbose_log.
+        let dir = tempfile::tempdir().unwrap();
+        assert!(crate::mcp_verbose_log::verbose_enabled(Some(dir.path())));
+        assert!(verbose_enabled_for(dir.path()));
+        std::fs::create_dir_all(dir.path().join(".ax")).unwrap();
+        std::fs::write(dir.path().join(".ax/ship.toml"), "verbose_mcp = false\n").unwrap();
+        assert!(verbose_enabled_for(dir.path()));
     }
 
     #[test]

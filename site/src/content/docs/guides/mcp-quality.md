@@ -232,6 +232,6 @@ Related surfaces:
 | Q score stuck / muted | Need inbound traffic + verbose file; open Logging and trigger a preflight (MCP) or `ax preflight` / `ax explore` (CLI) |
 | ExploreBeforeGrep false alarm | Install session hook; prefer timed transcripts; re-run audit after a real ax-heavy chat; quiet/DEGRADED MCP should not flag this |
 | Correlation near 0% | Wrong project; MCP disconnected; missing `session=` (reinstall hook / restart MCP); or audit without matching transcript — pass `--session` |
-| UncorrelatedTool (medium) despite a project log | Usually ax MCP is offline after a reinstall — reconnect MCP; live rolling audits no longer score-penalize this when `verbose_mcp=true` |
-| LspAvailableUnused | Run `ax lsp enrich` (or Unresolved → Enrich with LSP) while MCP is active; domain-only windows no longer false-flag |
+| UncorrelatedTool (medium) despite a project log | Usually ax MCP is offline after a reinstall — reconnect MCP; a rolling-window audit with no MCP calls in the window ignores the transcript calls, because verbose logging is always on |
+| LspAvailableUnused | Run `ax lsp enrich` (or Unresolved → Enrich with LSP) while MCP is active; only `[ax] lsp enrich …` log lines count, not prompts that mention it |
 | Fixpack empty | No findings in window — widen `--window-minutes` or run a fuller agent turn first |
