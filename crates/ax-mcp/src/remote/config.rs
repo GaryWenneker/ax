@@ -104,7 +104,10 @@ impl RemoteConfig {
             if p.write_subjects.iter().any(|s| !p.subjects.contains(s)) {
                 return Err("Write subjects must also have context access".into());
             }
-            if p.admin_subjects.iter().any(|s| !p.write_subjects.contains(s)) {
+            if p.admin_subjects
+                .iter()
+                .any(|s| !p.write_subjects.contains(s))
+            {
                 return Err("Admin subjects must also have write access".into());
             }
         }

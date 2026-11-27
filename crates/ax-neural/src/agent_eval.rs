@@ -2,8 +2,8 @@
 //! Measures context retrieval quality across Ax / Neural arms on the coding fixture.
 //! Live LLM task-success / token counts stay `not_measured` until an identical-model run is executed.
 
-use ax_memory::bench::{load_coding_fixture, score_coding};
 use crate::metrics::{Acc, SummaryStyle, AGENT_EVAL};
+use ax_memory::bench::{load_coding_fixture, score_coding};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -118,7 +118,11 @@ pub async fn run_agent_eval(fixture_text: &str) -> Result<Value, String> {
         crate::predict::evaluate_fixture(fixture_text, 0.75).unwrap_or_else(|_| json!({}));
     let mut learn_train_reports = Vec::new();
 
-    for question in fixture.questions.iter().filter(|q| LOCKED.contains(&q.family.as_str())) {
+    for question in fixture
+        .questions
+        .iter()
+        .filter(|q| LOCKED.contains(&q.family.as_str()))
+    {
         let score = scored
             .questions
             .iter()
@@ -142,11 +146,7 @@ pub async fn run_agent_eval(fixture_text: &str) -> Result<Value, String> {
                 task_category: q.family.clone(),
                 skills: Vec::new(),
                 rules: Vec::new(),
-                context_ids: q
-                    .relevant
-                    .iter()
-                    .map(|id| format!("memory:{id}"))
-                    .collect(),
+                context_ids: q.relevant.iter().map(|id| format!("memory:{id}")).collect(),
             })
             .collect();
         let predicted = crate::predict::predict(&rows, &question.family, 0.5);

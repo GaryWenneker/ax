@@ -42,7 +42,9 @@ pub fn memory_report() -> serde_json::Value {
 pub fn process_rss_bytes() -> Option<u64> {
     #[cfg(test)]
     {
-        let _g = PROCESS_RSS_SAMPLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = PROCESS_RSS_SAMPLE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         PROCESS_RSS_SAMPLE_CALLS.fetch_add(1, Ordering::Relaxed);
     }
     #[cfg(target_os = "linux")]
@@ -75,13 +77,17 @@ pub fn process_rss_bytes() -> Option<u64> {
 
 #[cfg(test)]
 pub(crate) fn take_process_rss_sample_calls() -> usize {
-    let _g = PROCESS_RSS_SAMPLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = PROCESS_RSS_SAMPLE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     PROCESS_RSS_SAMPLE_CALLS.swap(0, Ordering::Relaxed)
 }
 
 #[cfg(test)]
 pub(crate) fn reset_process_rss_sample_calls() {
-    let _g = PROCESS_RSS_SAMPLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = PROCESS_RSS_SAMPLE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     PROCESS_RSS_SAMPLE_CALLS.store(0, Ordering::Relaxed);
 }
 

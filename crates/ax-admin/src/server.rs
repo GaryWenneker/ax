@@ -17,12 +17,7 @@ use axum::{
 use include_dir::{include_dir, Dir};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 use subtle::ConstantTimeEq;
 use tokio::sync::Mutex;
 
@@ -110,7 +105,11 @@ impl App {
             sign_in_grace,
             pending: Mutex::new(HashMap::new()),
             leftovers: Mutex::new(std::collections::HashSet::new()),
-            csrf: format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple()),
+            csrf: format!(
+                "{}{}",
+                uuid::Uuid::new_v4().simple(),
+                uuid::Uuid::new_v4().simple()
+            ),
             port,
         }))
     }
@@ -144,7 +143,9 @@ impl From<McpError> for ApiError {
         let status = match e {
             McpError::UnknownTool(_) => StatusCode::NOT_FOUND,
             // The environment could not be reached, or something else answered.
-            McpError::Unreachable | McpError::Redirect | McpError::NotMcp(_) => StatusCode::BAD_GATEWAY,
+            McpError::Unreachable | McpError::Redirect | McpError::NotMcp(_) => {
+                StatusCode::BAD_GATEWAY
+            }
             McpError::Timeout | McpError::StillRunning => StatusCode::GATEWAY_TIMEOUT,
             McpError::Busy => StatusCode::TOO_MANY_REQUESTS,
             McpError::Reindexing => StatusCode::SERVICE_UNAVAILABLE,
@@ -164,10 +165,18 @@ fn bad_request(message: impl Into<String>) -> ApiError {
     ApiError(StatusCode::BAD_REQUEST, "invalid_request", message.into())
 }
 fn internal(message: impl Into<String>) -> ApiError {
-    ApiError(StatusCode::INTERNAL_SERVER_ERROR, "local_error", message.into())
+    ApiError(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "local_error",
+        message.into(),
+    )
 }
 fn unknown_connection() -> ApiError {
-    ApiError(StatusCode::NOT_FOUND, "unknown_connection", "Unknown connection".into())
+    ApiError(
+        StatusCode::NOT_FOUND,
+        "unknown_connection",
+        "Unknown connection".into(),
+    )
 }
 
 type Api<T = Value> = Result<(StatusCode, Json<T>), ApiError>;
@@ -192,7 +201,8 @@ async fn guard(State(app): State<Arc<App>>, request: Request, next: Next) -> Res
     let hosts = app.allowed_hosts();
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
     let forbidden = |message: &str| {
-        let mut response = ApiError(StatusCode::FORBIDDEN, "forbidden", message.into()).into_response();
+        let mut response =
+            ApiError(StatusCode::FORBIDDEN, "forbidden", message.into()).into_response();
         no_store(&mut response);
         response
     };
@@ -214,7 +224,8 @@ async fn guard(State(app): State<Arc<App>>, request: Request, next: Next) -> Res
             .get(CSRF_HEADER)
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
-        if token.len() != app.csrf.len() || !bool::from(token.as_bytes().ct_eq(app.csrf.as_bytes())) {
+        if token.len() != app.csrf.len() || !bool::from(token.as_bytes().ct_eq(app.csrf.as_bytes()))
+        {
             return forbidden("Missing or invalid request token; reload the page");
         }
     }
@@ -231,9 +242,15 @@ fn no_store(response: &mut Response) {
 
 pub fn router(app: Arc<App>) -> Router {
     let api = Router::new()
-        .route("/connections", get(list_connections).post(create_connection))
+        .route(
+            "/connections",
+            get(list_connections).post(create_connection),
+        )
         .route("/connections/test", post(test_connection))
-        .route("/connections/{id}", put(update_connection).delete(remove_connection))
+        .route(
+            "/connections/{id}",
+            put(update_connection).delete(remove_connection),
+        )
         .route("/connections/{id}/activate", post(activate_connection))
         .route("/login", post(start_login))
         .route("/login/{id}", get(login_status).delete(cancel_login))
@@ -241,7 +258,11 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/remote/info", get(remote_info))
         .route("/remote/tools/{name}", post(call_tool))
         .fallback(|| async {
-            ApiError(StatusCode::NOT_FOUND, "not_found", "Unknown API route".into())
+            ApiError(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "Unknown API route".into(),
+            )
         });
     Router::new()
         .nest("/api", api)
@@ -341,7 +362,11 @@ fn api_key(auth: Option<AuthInput>) -> Result<String, ApiError> {
     if key.is_empty() {
         return Err(bad_request("Enter the credentials for this environment"));
     }
-    if key.len() > 16384 || key.bytes().any(|b| b.is_ascii_whitespace() || b.is_ascii_control()) {
+    if key.len() > 16384
+        || key
+            .bytes()
+            .any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
+    {
         return Err(bad_request("The key contains spaces or is too long"));
     }
     Ok(key)
@@ -352,7 +377,11 @@ fn connection_name(name: Option<String>, url: &url::Url) -> Result<String, ApiEr
     if name.chars().count() > 80 || name.chars().any(char::is_control) {
         return Err(bad_request("Use a name of at most 80 characters"));
     }
-    Ok(if name.is_empty() { default_name(url) } else { name })
+    Ok(if name.is_empty() {
+        default_name(url)
+    } else {
+        name
+    })
 }
 
 fn info_json(info: &RemoteInfo) -> Value {
@@ -364,7 +393,10 @@ fn info_json(info: &RemoteInfo) -> Value {
     })
 }
 
-async fn probe(url: url::Url, tokens: Arc<dyn TokenSource>) -> Result<(Arc<Remote>, RemoteInfo), ApiError> {
+async fn probe(
+    url: url::Url,
+    tokens: Arc<dyn TokenSource>,
+) -> Result<(Arc<Remote>, RemoteInfo), ApiError> {
     let remote = Arc::new(Remote::new(url, tokens)?);
     let info = remote.info().await?;
     Ok((remote, info))
@@ -394,7 +426,10 @@ impl App {
             .ok_or_else(unknown_connection)
     }
 
-    async fn stored_tokens(&self, connection: &SavedConnection) -> Result<Arc<dyn TokenSource>, ApiError> {
+    async fn stored_tokens(
+        &self,
+        connection: &SavedConnection,
+    ) -> Result<Arc<dyn TokenSource>, ApiError> {
         match connection.auth {
             AuthKind::Oauth => Ok(self.logins.tokens(&connection.url)),
             AuthKind::ApiKey => {
@@ -438,7 +473,9 @@ impl App {
             let remote = Arc::new(Remote::new(url, self.stored_tokens(&connection).await?)?);
             let mut remotes = self.remotes.lock().await;
             if remotes.version(&connection.id) == version {
-                remotes.clients.insert(connection.id.clone(), remote.clone());
+                remotes
+                    .clients
+                    .insert(connection.id.clone(), remote.clone());
                 return Ok((connection, remote));
             }
             // The connection changed meanwhile: read it again.
@@ -455,7 +492,9 @@ impl App {
         let (url, except) = (url.to_owned(), except.map(str::to_owned));
         self.store(move |store| {
             store.list().iter().any(|c| {
-                c.auth == AuthKind::Oauth && c.url == url && Some(c.id.as_str()) != except.as_deref()
+                c.auth == AuthKind::Oauth
+                    && c.url == url
+                    && Some(c.id.as_str()) != except.as_deref()
             })
         })
         .await
@@ -601,16 +640,27 @@ async fn create_connection(State(app): State<Arc<App>>, body: axum::body::Bytes)
     let id = connection.id.clone();
     blocking(move || secrets.set(&id, &key)).await?;
     let saved = connection.clone();
-    if let Err(e) = app.store(move |store| store.upsert(saved, true)).await.and_then(|r| r.map_err(internal)) {
+    if let Err(e) = app
+        .store(move |store| store.upsert(saved, true))
+        .await
+        .and_then(|r| r.map_err(internal))
+    {
         // Without its entry the key would be unreachable: take it out again.
         let secrets = app.secrets.clone();
         let id = connection.id.clone();
         if let Err(undo) = blocking(move || secrets.delete(&id)).await {
-            warn("the key of a connection that could not be saved was not removed", &undo.2);
+            warn(
+                "the key of a connection that could not be saved was not removed",
+                &undo.2,
+            );
         }
         return Err(e);
     }
-    app.remotes.lock().await.clients.insert(connection.id.clone(), remote);
+    app.remotes
+        .lock()
+        .await
+        .clients
+        .insert(connection.id.clone(), remote);
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -692,7 +742,10 @@ async fn update_connection(
                 })
                 .await;
                 if let Err(undo) = undo {
-                    warn("the previous key of a connection could not be restored", &undo.2);
+                    warn(
+                        "the previous key of a connection could not be restored",
+                        &undo.2,
+                    );
                 }
             }
             app.remotes.lock().await.invalidate(&id);
@@ -868,7 +921,11 @@ async fn complete_login(State(app): State<Arc<App>>, Path(id): Path<String>) -> 
         app.drop_unused_sign_in(&connection.url).await;
         return Err(e);
     }
-    app.remotes.lock().await.clients.insert(connection.id.clone(), remote);
+    app.remotes
+        .lock()
+        .await
+        .clients
+        .insert(connection.id.clone(), remote);
     app.leftovers.lock().await.remove(&connection.url);
     ok(json!({
         "state": "connected",
@@ -924,7 +981,10 @@ async fn call_tool(
         return Err(ApiError(
             StatusCode::CONFLICT,
             "connection_changed",
-            format!("{} is the active environment now. Reload to continue.", connection.name),
+            format!(
+                "{} is the active environment now. Reload to continue.",
+                connection.name
+            ),
         ));
     }
     let result = remote.call_tool(&name, arguments).await?;

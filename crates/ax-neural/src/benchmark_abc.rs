@@ -22,9 +22,7 @@ fn lexical_rank_keys(fixture: &CodingFixture, prompt: &str) -> Vec<String> {
         .memories
         .iter()
         .filter(|m| m.insert)
-        .map(|m| {
-            crate::lexical::LexicalDoc::new(m.key.clone(), &m.title, &m.body, &m.triggers)
-        })
+        .map(|m| crate::lexical::LexicalDoc::new(m.key.clone(), &m.title, &m.body, &m.triggers))
         .collect();
     let (ranked, abstained) = crate::lexical::rank(&docs, prompt);
     if abstained {
@@ -194,19 +192,28 @@ mod tests {
         assert_eq!(report["kind"], "measured");
         assert_eq!(report["productionRankingUnchanged"], true);
         assert_eq!(report["semanticWeight"], 0.0);
-        assert_eq!(report["arms"]["C_ax_neural"]["claimsNeuralInference"], false);
-        assert!(report["arms"]["A_ax_without_neural_ranking"]["locked"]["questionsScored"]
-            .as_u64()
-            .unwrap()
-            >= 1);
-        assert!(report["arms"]["B_ax_original_ranking"]["locked"]["questionsScored"]
-            .as_u64()
-            .unwrap()
-            >= 1);
-        assert!(report["arms"]["C_ax_neural"]["locked"]["questionsScored"]
-            .as_u64()
-            .unwrap()
-            >= 1);
+        assert_eq!(
+            report["arms"]["C_ax_neural"]["claimsNeuralInference"],
+            false
+        );
+        assert!(
+            report["arms"]["A_ax_without_neural_ranking"]["locked"]["questionsScored"]
+                .as_u64()
+                .unwrap()
+                >= 1
+        );
+        assert!(
+            report["arms"]["B_ax_original_ranking"]["locked"]["questionsScored"]
+                .as_u64()
+                .unwrap()
+                >= 1
+        );
+        assert!(
+            report["arms"]["C_ax_neural"]["locked"]["questionsScored"]
+                .as_u64()
+                .unwrap()
+                >= 1
+        );
         assert!(report["heldOutFamilyCount"].as_u64().unwrap() >= 1);
         match report["memory"]["kind"].as_str() {
             Some("measured") => {

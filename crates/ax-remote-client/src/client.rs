@@ -838,9 +838,18 @@ mod scope_tests {
     #[test]
     fn the_admin_scope_is_requested_only_on_demand_and_implies_write() {
         assert_eq!(login_scope(false, false), "ax:context offline_access");
-        assert_eq!(login_scope(true, false), "ax:context ax:write offline_access");
-        assert_eq!(login_scope(true, true), "ax:context ax:write ax:admin offline_access");
-        assert_eq!(login_scope(false, true), "ax:context ax:write ax:admin offline_access");
+        assert_eq!(
+            login_scope(true, false),
+            "ax:context ax:write offline_access"
+        );
+        assert_eq!(
+            login_scope(true, true),
+            "ax:context ax:write ax:admin offline_access"
+        );
+        assert_eq!(
+            login_scope(false, true),
+            "ax:context ax:write ax:admin offline_access"
+        );
     }
 }
 

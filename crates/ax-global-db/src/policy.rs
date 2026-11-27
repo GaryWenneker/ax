@@ -143,12 +143,11 @@ pub async fn global_policy_item_exists(
     item_id: &str,
 ) -> Result<bool> {
     let table = table_for(kind);
-    let row: Option<(i64,)> = sqlx::query_as(&format!(
-        "SELECT 1 FROM {table} WHERE item_id = ? LIMIT 1"
-    ))
-    .bind(item_id)
-    .fetch_optional(global)
-    .await?;
+    let row: Option<(i64,)> =
+        sqlx::query_as(&format!("SELECT 1 FROM {table} WHERE item_id = ? LIMIT 1"))
+            .bind(item_id)
+            .fetch_optional(global)
+            .await?;
     Ok(row.is_some())
 }
 

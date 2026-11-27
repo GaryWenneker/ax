@@ -88,7 +88,11 @@ fn key(id: &str, secret: &str, project: &str, write: bool, admin: bool) -> ApiKe
 async fn project(dir: &std::path::Path, id: &str) -> Project {
     let root = dir.join(id);
     std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(root.join("lib.rs"), "pub fn remote_fixture() -> u32 { 1 }\n").unwrap();
+    std::fs::write(
+        root.join("lib.rs"),
+        "pub fn remote_fixture() -> u32 { 1 }\n",
+    )
+    .unwrap();
     let mut ax = ax_core::Ax::init(&root).await.unwrap();
     ax.index_all(
         ax_extraction::orchestrator::IndexOptions {
@@ -173,7 +177,9 @@ fn jwt(subject: &str, scope: &str) -> String {
 
 /// Two projects. alpha's subject "alpha" is an admin subject; "ann" may only
 /// write. beta has no admin subject.
-async fn fixture_with(adjust: impl FnOnce(RemoteState) -> RemoteState) -> (tempfile::TempDir, Router) {
+async fn fixture_with(
+    adjust: impl FnOnce(RemoteState) -> RemoteState,
+) -> (tempfile::TempDir, Router) {
     isolate_usage_db();
     let dir = tempfile::tempdir().unwrap();
     let mut alpha = project(dir.path(), "alpha").await;
@@ -192,8 +198,11 @@ async fn fixture_with(adjust: impl FnOnce(RemoteState) -> RemoteState) -> (tempf
     );
     config.validate().unwrap();
     let config = Arc::new(config);
-    let verifier =
-        TokenVerifier::with_keys(config.clone(), signing().jwks.clone(), reqwest::Client::new());
+    let verifier = TokenVerifier::with_keys(
+        config.clone(),
+        signing().jwks.clone(),
+        reqwest::Client::new(),
+    );
     (dir, router(adjust(RemoteState::new(config, verifier))))
 }
 
@@ -224,7 +233,9 @@ async fn send(
         .get("mcp-session-id")
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
-    let bytes = to_bytes(response.into_body(), 8 * 1024 * 1024).await.unwrap();
+    let bytes = to_bytes(response.into_body(), 8 * 1024 * 1024)
+        .await
+        .unwrap();
     let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     (status, session, value)
 }
@@ -316,7 +327,10 @@ async fn e2_admin_key_lists_and_calls_admin_tools_on_its_own_project_only() {
     let (_dir, app) = fixture().await;
     let list = tool_names(&app, "alpha", ADMIN_KEY).await;
     for tool in ADMIN_TOOLS {
-        assert!(list.contains(&tool.to_string()), "{tool} missing from {list:?}");
+        assert!(
+            list.contains(&tool.to_string()),
+            "{tool} missing from {list:?}"
+        );
     }
     for tool in RECORDED_WRITE_LIST {
         assert!(list.contains(&tool.to_string()), "{tool} dropped");
@@ -359,7 +373,9 @@ async fn e2_admin_tools_are_described_as_admin_scoped_without_project_arguments(
             json!(["ax:context", "ax:write", "ax:admin"]),
             "{name}"
         );
-        assert!(tool.pointer("/inputSchema/properties/projectPath").is_none());
+        assert!(tool
+            .pointer("/inputSchema/properties/projectPath")
+            .is_none());
     }
     let read_only = |name: &str| {
         tools.iter().find(|t| t["name"] == name).unwrap()["annotations"]["readOnlyHint"].clone()
@@ -421,7 +437,10 @@ async fn e4_configuration_without_admin_fields_loads_and_grants_nothing() {
     // Only the field names are checked: the project root is a temporary path that may
     // itself contain "admin" (the Windows CI account is "runneradmin").
     let saved = serde_json::to_value(&config).unwrap();
-    assert!(saved["projects"][0].get("admin_subjects").is_none(), "{saved}");
+    assert!(
+        saved["projects"][0].get("admin_subjects").is_none(),
+        "{saved}"
+    );
     assert!(saved["api_keys"][0].get("admin").is_none(), "{saved}");
 }
 
@@ -432,10 +451,21 @@ async fn e5_admin_calls_cannot_select_another_project_root() {
     let beta = dir.path().join("beta");
     for tool in ["ax_index", "ax_sync", "ax_files", "ax_logs"] {
         for field in ["projectPath", "project_path"] {
-            let (status, body) =
-                call(&app, "alpha", ADMIN_KEY, &session, tool, json!({ field: beta })).await;
+            let (status, body) = call(
+                &app,
+                "alpha",
+                ADMIN_KEY,
+                &session,
+                tool,
+                json!({ field: beta }),
+            )
+            .await;
             assert_eq!(status, StatusCode::OK, "{tool}");
-            assert_eq!(body["error"]["code"], json!(-32602), "{tool} {field}: {body}");
+            assert_eq!(
+                body["error"]["code"],
+                json!(-32602),
+                "{tool} {field}: {body}"
+            );
             assert_eq!(
                 body["error"]["message"],
                 "Project and policy session are selected by the authenticated connection",
@@ -450,7 +480,11 @@ async fn e6_sync_and_index_update_the_pinned_project() {
     let (dir, app) = fixture().await;
     let session = open(&app, "alpha", ADMIN_KEY).await;
     let alpha = dir.path().join("alpha");
-    std::fs::write(alpha.join("added.rs"), "pub fn synced_remotely() -> u32 { 2 }\n").unwrap();
+    std::fs::write(
+        alpha.join("added.rs"),
+        "pub fn synced_remotely() -> u32 { 2 }\n",
+    )
+    .unwrap();
     let (status, body) = call(&app, "alpha", ADMIN_KEY, &session, "ax_sync", json!({})).await;
     assert_eq!(status, StatusCode::OK);
     assert_ne!(body["result"]["isError"], json!(true), "{body}");
@@ -465,7 +499,11 @@ async fn e6_sync_and_index_update_the_pinned_project() {
     .await;
     assert!(text(&found).contains("synced_remotely"), "{found}");
 
-    std::fs::write(alpha.join("rebuilt.rs"), "pub fn rebuilt_remotely() -> u32 { 3 }\n").unwrap();
+    std::fs::write(
+        alpha.join("rebuilt.rs"),
+        "pub fn rebuilt_remotely() -> u32 { 3 }\n",
+    )
+    .unwrap();
     let (status, body) = call(
         &app,
         "alpha",
@@ -508,8 +546,22 @@ async fn e6_two_concurrent_index_requests_both_finish_with_a_consistent_index() 
     let first = open(&app, "alpha", ADMIN_KEY).await;
     let second = open(&app, "alpha", ADMIN_KEY).await;
     let (a, b) = tokio::join!(
-        call(&app, "alpha", ADMIN_KEY, &first, "ax_index", json!({"force":true})),
-        call(&app, "alpha", ADMIN_KEY, &second, "ax_index", json!({"force":true})),
+        call(
+            &app,
+            "alpha",
+            ADMIN_KEY,
+            &first,
+            "ax_index",
+            json!({"force":true})
+        ),
+        call(
+            &app,
+            "alpha",
+            ADMIN_KEY,
+            &second,
+            "ax_index",
+            json!({"force":true})
+        ),
     );
     for (status, body) in [a, b] {
         assert_eq!(status, StatusCode::OK);
@@ -532,7 +584,15 @@ async fn e7_logs_are_newest_first_paged_bounded_scoped_and_without_bodies() {
     let (_dir, app) = fixture().await;
     // Calls on beta must never show up in alpha's log.
     let beta_session = open(&app, "beta", BETA_KEY).await;
-    call(&app, "beta", BETA_KEY, &beta_session, "ax_cycles", json!({})).await;
+    call(
+        &app,
+        "beta",
+        BETA_KEY,
+        &beta_session,
+        "ax_cycles",
+        json!({}),
+    )
+    .await;
     let session = open(&app, "alpha", ADMIN_KEY).await;
     call(&app, "alpha", ADMIN_KEY, &session, "ax_status", json!({})).await;
     call(
@@ -561,7 +621,10 @@ async fn e7_logs_are_newest_first_paged_bounded_scoped_and_without_bodies() {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     let tools: Vec<_> = entries.iter().filter_map(|e| e["tool"].as_str()).collect();
-    assert!(tools.contains(&"ax_status") && tools.contains(&"ax_search"), "{tools:?}");
+    assert!(
+        tools.contains(&"ax_status") && tools.contains(&"ax_search"),
+        "{tools:?}"
+    );
     assert!(!tools.contains(&"ax_cycles"), "beta call leaked: {tools:?}");
     let ids: Vec<i64> = entries.iter().map(|e| e["id"].as_i64().unwrap()).collect();
     let mut sorted = ids.clone();
@@ -572,11 +635,28 @@ async fn e7_logs_are_newest_first_paged_bounded_scoped_and_without_bodies() {
         fields.sort();
         assert_eq!(
             fields,
-            ["at", "durationMs", "id", "ok", "responseChars", "responseTokens", "tool", "transport"]
+            [
+                "at",
+                "durationMs",
+                "id",
+                "ok",
+                "responseChars",
+                "responseTokens",
+                "tool",
+                "transport"
+            ]
         );
     }
     // Paging: one entry, then the next older one.
-    let (_, page) = call(&app, "alpha", ADMIN_KEY, &session, "ax_logs", json!({"limit":1})).await;
+    let (_, page) = call(
+        &app,
+        "alpha",
+        ADMIN_KEY,
+        &session,
+        "ax_logs",
+        json!({"limit":1}),
+    )
+    .await;
     let page = &page["result"]["structuredContent"];
     assert_eq!(page["entries"].as_array().unwrap().len(), 1);
     let newest = page["entries"][0]["id"].as_i64().unwrap();
@@ -590,7 +670,12 @@ async fn e7_logs_are_newest_first_paged_bounded_scoped_and_without_bodies() {
         json!({"limit":1,"before":newest}),
     )
     .await;
-    assert!(older["result"]["structuredContent"]["entries"][0]["id"].as_i64().unwrap() < newest);
+    assert!(
+        older["result"]["structuredContent"]["entries"][0]["id"]
+            .as_i64()
+            .unwrap()
+            < newest
+    );
     // The limit is capped.
     let (_, capped) = call(
         &app,
@@ -611,7 +696,10 @@ async fn e7_logs_are_newest_first_paged_bounded_scoped_and_without_bodies() {
         json!({"tool":"ax_search"}),
     )
     .await;
-    let found = found["result"]["structuredContent"]["entries"].as_array().unwrap().clone();
+    let found = found["result"]["structuredContent"]["entries"]
+        .as_array()
+        .unwrap()
+        .clone();
     assert!(!found.is_empty() && found.iter().all(|e| e["tool"] == "ax_search"));
 }
 
@@ -641,13 +729,22 @@ async fn the_admin_scope_is_advertised_only_where_a_token_can_carry_it() {
     isolate_usage_db();
     let dir = tempfile::tempdir().unwrap();
     let alpha = project(dir.path(), "alpha").await;
-    let mut config = base_config(vec![alpha], vec![key("adm", ADMIN_KEY, "alpha", true, true)]);
+    let mut config = base_config(
+        vec![alpha],
+        vec![key("adm", ADMIN_KEY, "alpha", true, true)],
+    );
     config.validate().unwrap();
     let config = Arc::new(config);
-    let verifier =
-        TokenVerifier::with_keys(config.clone(), JwkSet { keys: vec![] }, reqwest::Client::new());
+    let verifier = TokenVerifier::with_keys(
+        config.clone(),
+        JwkSet { keys: vec![] },
+        reqwest::Client::new(),
+    );
     let app = router(RemoteState::new(config, verifier));
-    assert_eq!(advertised_scopes(app).await, json!(["ax:context", "ax:write"]));
+    assert_eq!(
+        advertised_scopes(app).await,
+        json!(["ax:context", "ax:write"])
+    );
 }
 
 #[tokio::test]
@@ -687,7 +784,15 @@ async fn e2_an_admin_subject_needs_the_scope_and_the_grant() {
         assert!(admin.contains(&tool.to_string()), "{tool}");
     }
     let session = open(&app, "alpha", &jwt("alpha", all)).await;
-    let (status, body) = call(&app, "alpha", &jwt("alpha", all), &session, "ax_files", json!({})).await;
+    let (status, body) = call(
+        &app,
+        "alpha",
+        &jwt("alpha", all),
+        &session,
+        "ax_files",
+        json!({}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert!(text(&body).contains("lib.rs"), "{body}");
 
@@ -725,10 +830,26 @@ async fn policy_reload_is_the_only_policy_action_available_remotely() {
         assert_eq!(status, StatusCode::FORBIDDEN, "{action}");
         assert_eq!(body["error"], "Only action=index is available remotely");
     }
-    let (status, body) = call(&app, "alpha", ADMIN_KEY, &session, "ax_policy_index", json!({"action": 7})).await;
+    let (status, body) = call(
+        &app,
+        "alpha",
+        ADMIN_KEY,
+        &session,
+        "ax_policy_index",
+        json!({"action": 7}),
+    )
+    .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     for arguments in [json!({}), json!({"action": "index"})] {
-        let (status, body) = call(&app, "alpha", ADMIN_KEY, &session, "ax_policy_index", arguments).await;
+        let (status, body) = call(
+            &app,
+            "alpha",
+            ADMIN_KEY,
+            &session,
+            "ax_policy_index",
+            arguments,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert_ne!(body["result"]["isError"], json!(true), "{body}");
     }
@@ -748,22 +869,37 @@ async fn policy_reload_is_the_only_policy_action_available_remotely() {
         .find(|t| t["name"] == "ax_policy_index")
         .unwrap()
         .clone();
-    assert_eq!(tool["inputSchema"]["properties"]["action"]["enum"], json!(["index"]));
+    assert_eq!(
+        tool["inputSchema"]["properties"]["action"]["enum"],
+        json!(["index"])
+    );
     assert!(tool["inputSchema"]["properties"].get("id").is_none());
 }
 
 #[tokio::test]
 async fn an_index_run_finishes_after_its_request_timed_out() {
-    let (dir, app) = fixture_with(|state| state.with_admin_limits(Duration::from_millis(1), 4)).await;
+    let (dir, app) =
+        fixture_with(|state| state.with_admin_limits(Duration::from_millis(1), 4)).await;
     let session = open(&app, "alpha", ADMIN_KEY).await;
     std::fs::write(
         dir.path().join("alpha/late.rs"),
         "pub fn indexed_after_timeout() -> u32 { 9 }\n",
     )
     .unwrap();
-    let (status, body) = call(&app, "alpha", ADMIN_KEY, &session, "ax_index", json!({"force":true})).await;
+    let (status, body) = call(
+        &app,
+        "alpha",
+        ADMIN_KEY,
+        &session,
+        "ax_index",
+        json!({"force":true}),
+    )
+    .await;
     assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
-    assert_eq!(body["error"], "The operation is still running on the server");
+    assert_eq!(
+        body["error"],
+        "The operation is still running on the server"
+    );
     assert_eq!(body["running"], true);
     // The run was not dropped: the rebuilt index appears, on a fresh session too.
     let other = open(&app, "alpha", CONTEXT_KEY).await;
@@ -819,9 +955,15 @@ async fn calls_do_not_queue_behind_a_running_index() {
     let started = std::time::Instant::now();
     let (status, body) = call(&app, "alpha", CONTEXT_KEY, &session, "ax_status", json!({})).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(body["error"], "This project is being re-indexed; try again when it is done");
+    assert_eq!(
+        body["error"],
+        "This project is being re-indexed; try again when it is done"
+    );
     assert_eq!(body["reindexing"], true);
-    assert!(started.elapsed() < Duration::from_secs(10), "told quickly, not after minutes");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "told quickly, not after minutes"
+    );
     // Listing tools needs no index, and the other project is not affected.
     let (status, _, _) = send(
         &app,
@@ -832,7 +974,15 @@ async fn calls_do_not_queue_behind_a_running_index() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let (status, _) = call(&app, "beta", BETA_KEY, &beta_session, "ax_status", json!({})).await;
+    let (status, _) = call(
+        &app,
+        "beta",
+        BETA_KEY,
+        &beta_session,
+        "ax_status",
+        json!({}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
     drop(indexing);
@@ -842,7 +992,8 @@ async fn calls_do_not_queue_behind_a_running_index() {
 
 #[tokio::test]
 async fn index_changing_calls_are_limited_and_reads_are_not() {
-    let (_dir, app) = fixture_with(|state| state.with_admin_limits(Duration::from_secs(60), 0)).await;
+    let (_dir, app) =
+        fixture_with(|state| state.with_admin_limits(Duration::from_secs(60), 0)).await;
     let session = open(&app, "alpha", ADMIN_KEY).await;
     for (tool, arguments) in [
         ("ax_sync", json!({})),
@@ -851,7 +1002,10 @@ async fn index_changing_calls_are_limited_and_reads_are_not() {
     ] {
         let (status, body) = call(&app, "alpha", ADMIN_KEY, &session, tool, arguments).await;
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{tool}");
-        assert_eq!(body["error"], "Too many index operations are running; try again later");
+        assert_eq!(
+            body["error"],
+            "Too many index operations are running; try again later"
+        );
     }
     for tool in ["ax_files", "ax_logs", "ax_status"] {
         let (status, body) = call(&app, "alpha", ADMIN_KEY, &session, tool, json!({})).await;

@@ -65,10 +65,7 @@ pub fn contained_join(root: &Path, rel: &str) -> Result<PathBuf, PathEscape> {
 /// `root` (following symbolic links). `path` must already be lexically under
 /// `root`.
 pub fn ensure_within(root: &Path, path: &Path) -> Result<(), PathEscape> {
-    if path
-        .components()
-        .any(|c| matches!(c, Component::ParentDir))
-    {
+    if path.components().any(|c| matches!(c, Component::ParentDir)) {
         return Err(PathEscape::ParentDir(path.display().to_string()));
     }
     if !path.starts_with(root) {
@@ -179,7 +176,8 @@ where
 pub fn read_bounded(path: &Path, max_bytes: u64) -> io::Result<Vec<u8>> {
     let file = File::open(path)?;
     let mut buf = Vec::new();
-    file.take(max_bytes.saturating_add(1)).read_to_end(&mut buf)?;
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut buf)?;
     if buf.len() as u64 > max_bytes {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -193,7 +191,9 @@ pub fn read_bounded(path: &Path, max_bytes: u64) -> io::Result<Vec<u8>> {
 /// bodies); more is an error.
 pub fn read_to_end_bounded<R: Read>(reader: R, max_bytes: u64) -> io::Result<Vec<u8>> {
     let mut buf = Vec::new();
-    reader.take(max_bytes.saturating_add(1)).read_to_end(&mut buf)?;
+    reader
+        .take(max_bytes.saturating_add(1))
+        .read_to_end(&mut buf)?;
     if buf.len() as u64 > max_bytes {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -210,8 +210,19 @@ mod tests {
     #[test]
     fn safe_relative_refuses_every_escape_form() {
         for bad in [
-            "", "  ", ".", "/etc/passwd", "//etc/passwd", "\\\\server\\share", "C:\\x", "c:/x",
-            "..", "../x", "a/../../x", "a\\..\\x", "a/./../b",
+            "",
+            "  ",
+            ".",
+            "/etc/passwd",
+            "//etc/passwd",
+            "\\\\server\\share",
+            "C:\\x",
+            "c:/x",
+            "..",
+            "../x",
+            "a/../../x",
+            "a\\..\\x",
+            "a/./../b",
         ] {
             assert!(safe_relative(bad).is_err(), "{bad:?} must be refused");
         }
@@ -225,7 +236,10 @@ mod tests {
     fn contained_join_stays_inside_the_root() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        assert_eq!(contained_join(root, "rules/a.md").unwrap(), root.join("rules/a.md"));
+        assert_eq!(
+            contained_join(root, "rules/a.md").unwrap(),
+            root.join("rules/a.md")
+        );
         assert!(contained_join(root, "../a.md").is_err());
         assert!(contained_join(root, "/tmp/a.md").is_err());
     }
@@ -240,9 +254,18 @@ mod tests {
         std::os::unix::fs::symlink(outside.path(), root.join("out")).unwrap();
         std::os::unix::fs::symlink(root.join("inner"), root.join("in")).unwrap();
         std::os::unix::fs::symlink(outside.path().join("missing"), root.join("dangling")).unwrap();
-        assert!(matches!(contained_join(&root, "out/x.md"), Err(PathEscape::Symlink(_))));
-        assert!(matches!(contained_join(&root, "out"), Err(PathEscape::Symlink(_))));
-        assert!(matches!(contained_join(&root, "dangling"), Err(PathEscape::Symlink(_))));
+        assert!(matches!(
+            contained_join(&root, "out/x.md"),
+            Err(PathEscape::Symlink(_))
+        ));
+        assert!(matches!(
+            contained_join(&root, "out"),
+            Err(PathEscape::Symlink(_))
+        ));
+        assert!(matches!(
+            contained_join(&root, "dangling"),
+            Err(PathEscape::Symlink(_))
+        ));
         assert!(contained_join(&root, "in/x.md").is_ok());
         assert!(contained_join(&root, "new/deeper/x.md").is_ok());
     }
@@ -281,7 +304,11 @@ mod tests {
         let data = fs::read(&path).unwrap();
         assert_eq!(data.len(), 4096);
         assert!(data.iter().all(|b| *b == data[0]), "mixed content");
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1, "temp files left");
+        assert_eq!(
+            fs::read_dir(dir.path()).unwrap().count(),
+            1,
+            "temp files left"
+        );
     }
 
     #[cfg(unix)]
@@ -293,7 +320,10 @@ mod tests {
         fs::write(&path, b"{}").unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
         atomic_write(&path, b"{\"a\":1}").unwrap();
-        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     #[test]
