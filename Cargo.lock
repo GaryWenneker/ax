@@ -647,6 +647,7 @@ dependencies = [
  "ax-sync",
  "ax-types",
  "ax-utils",
+ "blake3",
  "dirs",
  "serde",
  "serde_json",

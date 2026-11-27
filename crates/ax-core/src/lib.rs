@@ -410,13 +410,14 @@ impl Ax {
     /// Doc and contract rescans and the memory passes are left to the next
     /// sync or watch batch.
     ///
-    /// Doc and contract files (Markdown, YAML, JSON, `.proto`, GraphQL) are not
-    /// re-extracted here: their `doc:` and `contract:` nodes come only from the
-    /// project-wide doc and contract passes, so a re-extract would drop them.
-    /// Such files keep their stale label and their stored hash, so the next
-    /// sync or watch batch sees the change and runs those passes.
+    /// Doc files (Markdown, JSON and other opaque docs) and files holding `contract:` or `doc:` nodes (an
+    /// OpenAPI YAML/JSON, `.proto` or GraphQL file) are not re-extracted here:
+    /// those nodes come only from the project-wide doc and contract passes, so
+    /// a re-extract would drop them. Such files keep their stale label and their
+    /// stored hash, so the next sync or watch batch sees the change and runs
+    /// those passes. Other YAML files are re-extracted as usual.
     async fn try_resync_source(&mut self, paths: &[String]) -> bool {
-        let paths = read_path_resync_paths(paths);
+        let paths = read_path_resync_paths(&self.queries, paths).await;
         if paths.is_empty() {
             return false;
         }
@@ -1097,16 +1098,31 @@ fn report_optimizing(on_progress: &mut Option<Box<dyn FnMut(IndexProgress) + Sen
 }
 
 /// The stale paths a read-path resync may re-extract: everything except doc
-/// and contract files (see `Ax::try_resync_source`).
-fn read_path_resync_paths(paths: &[String]) -> Vec<String> {
-    paths
-        .iter()
-        .filter(|p| {
-            !ax_extraction::markdown::is_doc_path(p)
-                && !ax_extraction::contracts::may_be_contract_path(p)
-        })
-        .cloned()
-        .collect()
+/// files (Markdown, and opaque docs such as JSON, which get a `doc:` node) and
+/// files that hold `contract:` or `doc:` nodes (see `Ax::try_resync_source`).
+/// A YAML, `.proto` or GraphQL file without such nodes (a compose or k8s file)
+/// is re-extracted as usual. When the stored nodes cannot be read, the file is
+/// left to the next sync.
+async fn read_path_resync_paths(queries: &QueryBuilder, paths: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for p in paths {
+        if ax_extraction::markdown::is_doc_path(p) {
+            continue;
+        }
+        if ax_extraction::contracts::may_be_contract_path(p) {
+            let pass_owned = match queries.get_nodes_by_file(p).await {
+                Ok(nodes) => nodes
+                    .iter()
+                    .any(|n| n.id.starts_with("contract:") || n.id.starts_with("doc:")),
+                Err(_) => true,
+            };
+            if pass_owned {
+                continue;
+            }
+        }
+        out.push(p.clone());
+    }
+    out
 }
 
 /// What a finalize pass covers.
@@ -1316,20 +1332,103 @@ mod read_path_tests {
         ids
     }
 
-    #[test]
-    fn a_read_path_resync_leaves_doc_and_contract_files_alone() {
+    async fn file_hash(ax: &Ax, rel: &str) -> String {
+        ax.queries
+            .get_all_files()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|f| f.path == rel)
+            .unwrap_or_else(|| panic!("{rel} is indexed"))
+            .content_hash
+    }
+
+    fn sorted(mut v: Vec<String>) -> Vec<String> {
+        v.sort();
+        v
+    }
+
+    /// Change `rel` on disk and put the new text in the source store, leaving
+    /// the `files` row on the old hash: the drift a read path detects.
+    async fn write_drift(ax: &Ax, root: &std::path::Path, rel: &str, text: &str) {
+        std::fs::write(root.join(rel), text).unwrap();
+        let h = blake3::hash(text.as_bytes()).to_hex().to_string();
+        ax.queries.upsert_file_content(rel, &h, text).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_read_path_resync_refreshes_plain_yaml_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("openapi.yaml"), OPENAPI_V1).unwrap();
+        std::fs::write(root.join("deploy.yaml"), "name: web\nreplicas: 1\n").unwrap();
+        std::fs::write(root.join("compose.yml"), "services:\n  web:\n    image: a\n").unwrap();
+        let mut ax = Ax::init(root).await.unwrap();
+        ax.index_all(
+            IndexOptions {
+                quiet: true,
+                ..IndexOptions::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+        write_drift(&ax, root, "deploy.yaml", "name: web\nreplicas: 3\n").await;
+        write_drift(&ax, root, "compose.yml", "services:\n  web:\n    image: b\n").await;
+        let stale = vec!["compose.yml".to_string(), "deploy.yaml".to_string()];
+        assert_eq!(
+            sorted(ax.queries.stale_source_paths(&stale).await.unwrap()),
+            stale
+        );
+
+        assert!(ax.try_resync_source(&stale).await);
+        assert!(
+            ax.queries.stale_source_paths(&stale).await.unwrap().is_empty(),
+            "plain YAML files are re-extracted on the read path"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_read_path_resync_leaves_doc_and_contract_files_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::write(root.join("openapi.yaml"), OPENAPI_V1).unwrap();
+        std::fs::write(
+            root.join("api.json"),
+            r#"{"openapi": "3.0.0", "info": {"title": "a", "version": "1"}, "paths": {"/items": {"get": {"operationId": "listItems"}}}}"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("README.md"), "# A\n").unwrap();
+        std::fs::write(root.join("deploy.yaml"), "name: web\nreplicas: 1\n").unwrap();
+        std::fs::write(root.join("package.json"), "{\"name\": \"a\"}\n").unwrap();
+        std::fs::write(root.join("src/app.ts"), "export function a() {}\n").unwrap();
+        let mut ax = Ax::init(root).await.unwrap();
+        ax.index_all(
+            IndexOptions {
+                quiet: true,
+                ..IndexOptions::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(!node_ids(&ax, "api.json", "contract:").await.is_empty());
+
         let paths = [
             "openapi.yaml",
             "api.json",
-            "svc.proto",
-            "schema.graphql",
             "README.md",
+            "deploy.yaml",
+            "package.json",
             "src/app.ts",
         ]
         .map(String::from);
         assert_eq!(
-            read_path_resync_paths(&paths),
-            vec!["src/app.ts".to_string()]
+            read_path_resync_paths(&ax.queries, &paths).await,
+            ["deploy.yaml", "src/app.ts"].map(String::from),
+            "package.json is a doc file: the doc pass owns its doc: node"
         );
     }
 
@@ -1352,20 +1451,24 @@ mod read_path_tests {
         );
         let docs_before = node_ids(&ax, "README.md", "doc:").await;
 
-        std::fs::write(root.join("openapi.yaml"), OPENAPI_V2).unwrap();
-        std::fs::write(root.join("README.md"), "# B\n").unwrap();
+        // A read path sees drift when the source store holds newer text than
+        // the `files` row: store the new text the way a read-path refresh does.
+        let old_hash = file_hash(&ax, "openapi.yaml").await;
+        write_drift(&ax, root, "openapi.yaml", OPENAPI_V2).await;
+        write_drift(&ax, root, "README.md", "# B\n").await;
         let stale = vec!["openapi.yaml".to_string(), "README.md".to_string()];
+        assert_eq!(
+            ax.queries.stale_source_paths(&stale).await.unwrap(),
+            vec!["openapi.yaml".to_string()],
+        );
 
         assert!(!ax.try_resync_source(&stale).await);
         assert_eq!(node_ids(&ax, "openapi.yaml", "contract:").await, before);
         assert_eq!(node_ids(&ax, "README.md", "doc:").await, docs_before);
         assert_eq!(
-            ax.queries
-                .stale_source_paths(&["openapi.yaml".to_string()])
-                .await
-                .unwrap(),
-            vec!["openapi.yaml".to_string()],
-            "the contract file must stay stale so the next sync revisits it"
+            file_hash(&ax, "openapi.yaml").await,
+            old_hash,
+            "the contract file keeps its old hash so the next sync revisits it"
         );
 
         ax.sync(quiet, None).await.unwrap();
