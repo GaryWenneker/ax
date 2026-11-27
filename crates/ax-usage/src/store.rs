@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS mcp_session_index (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_session_index_created ON mcp_session_index(created_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_session_index_session ON mcp_session_index(session_id, created_at);
 
 CREATE TABLE IF NOT EXISTS mcp_context_cache (
   id TEXT PRIMARY KEY,
@@ -286,6 +287,24 @@ pub fn usage_db_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".ax").join(USAGE_DB_FILENAME))
 }
 
+/// Fingerprint of the schema and migrations below, stored in
+/// `PRAGMA user_version` once they have run. FNV-1a, so it is stable across
+/// builds; any change to the DDL changes it and the schema runs again.
+fn schema_fingerprint() -> i32 {
+    let mut hash: u32 = 0x811c_9dc5;
+    let parts = [SCHEMA, PRICING_SCHEMA, MIGRATION_DROP_TOKEN_USAGE]
+        .into_iter()
+        .chain(MIGRATION_ADD_COLUMNS.iter().copied());
+    for part in parts {
+        for byte in part.bytes().chain(std::iter::once(0)) {
+            hash ^= u32::from(byte);
+            hash = hash.wrapping_mul(0x0100_0193);
+        }
+    }
+    // Keep it positive and non-zero: 0 is a fresh database.
+    ((hash & 0x7fff_ffff) | 1) as i32
+}
+
 pub async fn open_pool() -> Result<SqlitePool, AxError> {
     open_pool_at(&usage_db_path()).await
 }
@@ -319,6 +338,17 @@ pub(crate) async fn open_pool_at(path: &std::path::Path) -> Result<SqlitePool, A
         .await
         .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
 
+    // The schema has already run on this file: skip the DDL so every open
+    // is one read instead of dozens of statements.
+    let fingerprint = schema_fingerprint();
+    let current: (i32,) = sqlx::query_as("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| AxError::Database(DatabaseError::new(format!("usage schema: {e}"))))?;
+    if current.0 == fingerprint {
+        return Ok(pool);
+    }
+
     sqlx::query(MIGRATION_DROP_TOKEN_USAGE)
         .execute(&pool)
         .await
@@ -347,6 +377,11 @@ pub(crate) async fn open_pool_at(path: &std::path::Path) -> Result<SqlitePool, A
         let _ = sqlx::query(stmt).execute(&pool).await;
     }
 
+    sqlx::query(&format!("PRAGMA user_version = {fingerprint}"))
+        .execute(&pool)
+        .await
+        .map_err(|e| AxError::Database(DatabaseError::new(format!("usage schema: {e}"))))?;
+
     Ok(pool)
 }
 
@@ -354,3 +389,55 @@ pub(crate) async fn open_pool_at(path: &std::path::Path) -> Result<SqlitePool, A
 /// The variable is process-global, so separate per-module locks still race.
 #[cfg(test)]
 pub(crate) static USAGE_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn index_exists(pool: &SqlitePool, name: &str) -> bool {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
+                .bind(name)
+                .fetch_optional(pool)
+                .await
+                .unwrap();
+        row.is_some()
+    }
+
+    #[tokio::test]
+    async fn a_database_at_the_current_schema_is_opened_without_rerunning_the_schema() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("usage.db");
+        let pool = open_pool_at(&path).await.unwrap();
+        assert!(index_exists(&pool, "idx_mcp_call_log_tool").await);
+        // A marker the schema would recreate: if the second open reran the
+        // DDL, the index would be back.
+        sqlx::query("DROP INDEX idx_mcp_call_log_tool")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+        let pool = open_pool_at(&path).await.unwrap();
+        assert!(!index_exists(&pool, "idx_mcp_call_log_tool").await);
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn a_database_at_an_older_schema_is_migrated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("usage.db");
+        let pool = open_pool_at(&path).await.unwrap();
+        sqlx::query("DROP INDEX idx_mcp_call_log_tool")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("PRAGMA user_version = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+        let pool = open_pool_at(&path).await.unwrap();
+        assert!(index_exists(&pool, "idx_mcp_call_log_tool").await);
+        pool.close().await;
+    }
+}
