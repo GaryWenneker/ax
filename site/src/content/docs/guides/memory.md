@@ -342,7 +342,7 @@ When a sync or the file watcher re-indexes a file, ax writes a `file_change` mem
 
 ### When did I change X?
 
-`ax_history` (MCP) and `ax history` (CLI) list the turns and git commits that touched a file, a symbol, or a topic, newest first, with date and time, the prompt, the outcome (first 600 characters), the files, and the commits.
+`ax_history` (MCP) and `ax history` (CLI) list the turns and git commits that touched a file, a symbol, or a topic, newest first, with date and time, the prompt, the outcome (first 600 characters), the files, and the commits. For a topic, a commit is listed when its message contains every significant word of the query (four letters or more, not a stop word), in any letter case.
 
 - A **file path** matches exactly or by its end (`review_language.rs` finds `crates/ax-core/src/review_language.rs`). `git log` for that path adds the commits.
 - A **symbol name** resolves to the file it is defined in, then works like a path.

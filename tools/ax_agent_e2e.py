@@ -213,7 +213,7 @@ def agent_calls(run):
       expect=["invoice_total"])
     c("callers", "ax_callers", dict(s, symbol="invoice_total"), expect=["taxed_total"])
     c("callers through a macro argument", "ax_callers", dict(s, symbol="invoice_total"),
-      expect=["print_invoice"], known_gap="calls inside println!/assert! arguments get no edge")
+      expect=["print_invoice"])
     c("callees", "ax_callees", dict(s, symbol="taxed_total"), expect=["add_tax"])
     c("impact", "ax_impact", dict(s, symbol="invoice_total"), expect=["taxed_total"])
     c("path between symbols", "ax_path", dict(s, **{"from": "taxed_total", "to": "add_tax"}),
@@ -244,8 +244,7 @@ def agent_calls(run):
       expect=["Tax is 20 percent"])
     c("history of a file", "ax_history", {"query": "src/billing.rs"}, expect=["MARKER-COMMIT"])
     c("history by topic word", "ax_history", {"query": "invoice billing"},
-      expect=["MARKER-COMMIT"],
-      known_gap="a commit is found by file path but not by the words of its subject")
+      expect=["MARKER-COMMIT"])
 
     c("session note", "ax_session",
       dict(s, action="add", facts=["MARKER-NOTE invoices are stored in cents"]))
