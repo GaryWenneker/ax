@@ -4,6 +4,12 @@ Out-of-tree extractors live under `.ax/plugins/<name>/` with a `plugin.toml`.
 During `ax index` / `ax sync`, matching extensions are handled by the plugin
 before the built-in tree-sitter pool.
 
+A plugin runs a command with the user's rights, so a project plugin only runs
+after `ax plugins trust` (all plugins, or the named ones). Trust is stored in
+`~/.ax/plugin-trust.json` per plugin folder and is bound to the exact
+`plugin.toml`; after editing it, trust it again. `ax plugins list` shows what
+each plugin runs and whether it is trusted.
+
 ## Process plugin
 
 ```toml

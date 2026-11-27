@@ -34,13 +34,40 @@ impl std::fmt::Display for PluginRunError {
 
 pub struct PluginHost {
     plugins: Vec<LoadedPlugin>,
+    untrusted: Vec<LoadedPlugin>,
 }
 
 impl PluginHost {
+    /// Loads the project's plugins that the user has trusted
+    /// (`ax plugins trust`). Untrusted plugins are kept aside and never run.
     pub fn load(project_root: &Path) -> Self {
-        Self {
-            plugins: discover_plugins(project_root),
+        match crate::trust::trust_store_path() {
+            Some(store) => Self::load_with_store(project_root, &store),
+            None => Self {
+                plugins: Vec::new(),
+                untrusted: discover_plugins(project_root),
+            },
         }
+    }
+
+    /// [`PluginHost::load`] against an explicit trust store file.
+    pub fn load_with_store(project_root: &Path, store: &Path) -> Self {
+        let (plugins, untrusted): (Vec<_>, Vec<_>) = discover_plugins(project_root)
+            .into_iter()
+            .partition(|p| crate::trust::is_trusted_in(store, p));
+        for p in &untrusted {
+            tracing::warn!(
+                plugin = %p.manifest.name,
+                dir = %p.dir.display(),
+                "skipping untrusted project plugin; run `ax plugins trust` to allow it"
+            );
+        }
+        Self { plugins, untrusted }
+    }
+
+    /// Plugins found in the project but not trusted, so not run.
+    pub fn untrusted(&self) -> &[LoadedPlugin] {
+        &self.untrusted
     }
 
     pub fn manifests(&self) -> Vec<&crate::manifest::PluginManifest> {
@@ -172,9 +199,98 @@ args = []
 "#,
         )
         .unwrap();
+        let found = discover_plugins(dir.path());
+        assert_eq!(found.len(), 1);
+        assert!(found[0].matches_ext("demo"));
+        assert!(found[0].matches_ext(".demo"));
+        // Found, but not loaded for running until trusted.
+        let store = dir.path().join("trust.json");
+        let host = PluginHost::load_with_store(dir.path(), &store);
+        assert!(host.is_empty());
+        assert_eq!(host.untrusted().len(), 1);
+    }
+
+    #[cfg(unix)]
+    fn marker_plugin(project: &std::path::Path, marker: &std::path::Path) {
+        let plug = project.join(".ax/plugins/evil");
+        fs::create_dir_all(&plug).unwrap();
+        fs::write(
+            plug.join("plugin.toml"),
+            format!(
+                "name = \"evil\"\nextensions = [\".rs\"]\ncommand = \"sh\"\nargs = [\"-c\", \"touch '{}'; echo '{{}}'\"]\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn untrusted_project_plugin_never_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("pwned");
+        marker_plugin(dir.path(), &marker);
+        std::env::set_var("AX_HOME_DIR", home.path());
         let host = PluginHost::load(dir.path());
-        assert_eq!(host.plugins.len(), 1);
-        assert!(host.plugins[0].matches_ext("demo"));
-        assert!(host.plugins[0].matches_ext(".demo"));
+        let ran = host.extract("src/main.rs", "fn main() {}");
+        assert!(ran.is_none(), "untrusted plugin was offered for .rs");
+        assert!(!marker.exists(), "untrusted plugin command ran");
+        assert!(host.extensions().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn trusted_plugin_runs_until_its_manifest_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("ran");
+        marker_plugin(dir.path(), &marker);
+        let store = dir.path().join("home/.ax/plugin-trust.json");
+
+        for p in discover_plugins(dir.path()) {
+            crate::trust::trust_in(&store, &p).unwrap();
+        }
+        let host = PluginHost::load_with_store(dir.path(), &store);
+        assert_eq!(host.extensions(), vec![".rs".to_string()]);
+        let (name, _res) = host.extract("a.rs", "").unwrap();
+        assert_eq!(name, "evil");
+        assert!(marker.exists(), "trusted plugin did not run");
+
+        // Editing plugin.toml (here: a new command) drops the trust.
+        fs::remove_file(&marker).unwrap();
+        let manifest = dir.path().join(".ax/plugins/evil/plugin.toml");
+        let raw = fs::read_to_string(&manifest).unwrap();
+        fs::write(&manifest, raw.replace("touch", "touch -c")).unwrap();
+        let host = PluginHost::load_with_store(dir.path(), &store);
+        assert!(host.extract("a.rs", "").is_none());
+        assert!(!marker.exists());
+
+        // Untrust removes it again.
+        for p in discover_plugins(dir.path()) {
+            crate::trust::trust_in(&store, &p).unwrap();
+        }
+        assert!(!PluginHost::load_with_store(dir.path(), &store).is_empty());
+        for p in discover_plugins(dir.path()) {
+            crate::trust::untrust_in(&store, &p).unwrap();
+        }
+        assert!(PluginHost::load_with_store(dir.path(), &store).is_empty());
+    }
+
+    #[test]
+    fn unparsable_trust_store_is_not_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let plug = dir.path().join(".ax/plugins/demo");
+        fs::create_dir_all(&plug).unwrap();
+        fs::write(
+            plug.join("plugin.toml"),
+            "name = \"demo\"\ncommand = \"x\"\n",
+        )
+        .unwrap();
+        let store = dir.path().join("trust.json");
+        fs::write(&store, "{ broken").unwrap();
+        let p = &discover_plugins(dir.path())[0];
+        assert!(crate::trust::trust_in(&store, p).is_err());
+        assert_eq!(fs::read_to_string(&store).unwrap(), "{ broken");
+        assert!(PluginHost::load_with_store(dir.path(), &store).is_empty());
     }
 }

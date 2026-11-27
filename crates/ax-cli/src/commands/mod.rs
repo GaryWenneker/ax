@@ -37,6 +37,7 @@ pub mod neural;
 pub mod node;
 pub mod offload;
 pub mod path;
+pub mod plugins_cmd;
 pub mod policy;
 pub mod policy_share;
 pub mod preflight;

@@ -726,6 +726,11 @@ enum Commands {
         #[command(subcommand)]
         action: DocsCatalogAction,
     },
+    /// List project extractor plugins (.ax/plugins) and trust them to run
+    Plugins {
+        #[command(subcommand)]
+        action: PluginsAction,
+    },
     /// Configure and inspect a standalone Ax node
     #[cfg(feature = "web")]
     Server {
@@ -1131,6 +1136,28 @@ enum CacheCliAction {
         path: Option<String>,
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum PluginsAction {
+    /// Show each plugin, what it runs, and whether it is trusted
+    List {
+        path: Option<String>,
+        #[arg(long, help = "JSON output")]
+        json: bool,
+    },
+    /// Allow plugins to run during indexing (all, or the named ones)
+    Trust {
+        #[arg(long)]
+        path: Option<String>,
+        names: Vec<String>,
+    },
+    /// Stop plugins from running (all, or the named ones)
+    Untrust {
+        #[arg(long)]
+        path: Option<String>,
+        names: Vec<String>,
     },
 }
 
@@ -3582,6 +3609,15 @@ async fn async_main() {
                 json,
             } => commands::docs_catalog::run_sync(skip_wiki_pull, dry_run, json).await,
         },
+        Some(Commands::Plugins { action }) => match action {
+            PluginsAction::List { path, json } => commands::plugins_cmd::run_list(path, json),
+            PluginsAction::Trust { path, names } => {
+                commands::plugins_cmd::run_trust(path, names, false)
+            }
+            PluginsAction::Untrust { path, names } => {
+                commands::plugins_cmd::run_trust(path, names, true)
+            }
+        },
         #[cfg(feature = "web")]
         Some(Commands::Server { action }) => match action {
             ServerAction::Init {
@@ -3859,6 +3895,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Agent { .. }) => Some("agent".into()),
         Some(Commands::Bootstrap { .. }) => Some("bootstrap".into()),
         Some(Commands::DocsCatalog { .. }) => Some("docs-catalog".into()),
+        Some(Commands::Plugins { .. }) => Some("plugins".into()),
         #[cfg(feature = "web")]
         Some(Commands::Server { .. }) => Some("server".into()),
         Some(Commands::Global { .. }) => Some("global".into()),

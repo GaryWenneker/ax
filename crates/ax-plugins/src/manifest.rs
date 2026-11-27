@@ -24,6 +24,8 @@ pub struct PluginManifest {
 pub struct LoadedPlugin {
     pub dir: PathBuf,
     pub manifest: PluginManifest,
+    /// blake3 of the plugin.toml bytes; trust is bound to it.
+    pub manifest_hash: String,
 }
 
 impl LoadedPlugin {
@@ -40,6 +42,8 @@ impl LoadedPlugin {
     }
 }
 
+/// Every parsable `.ax/plugins/*/plugin.toml` under `project_root`, trusted
+/// or not. Use [`crate::PluginHost::load`] to get only the plugins that may run.
 pub fn discover_plugins(project_root: &Path) -> Vec<LoadedPlugin> {
     let root = project_root.join(".ax").join("plugins");
     if !root.is_dir() {
@@ -61,8 +65,13 @@ pub fn discover_plugins(project_root: &Path) -> Vec<LoadedPlugin> {
         let Ok(raw) = std::fs::read_to_string(&manifest_path) else {
             continue;
         };
+        let manifest_hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
         match toml::from_str::<PluginManifest>(&raw) {
-            Ok(manifest) => out.push(LoadedPlugin { dir, manifest }),
+            Ok(manifest) => out.push(LoadedPlugin {
+                dir,
+                manifest,
+                manifest_hash,
+            }),
             Err(e) => {
                 tracing::warn!(path = %manifest_path.display(), error = %e, "invalid plugin.toml");
             }

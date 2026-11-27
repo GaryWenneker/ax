@@ -204,6 +204,22 @@ ax watch
 ax watch --quiet
 ```
 
+### `ax plugins`
+
+Lists the project's extractor plugins (`.ax/plugins/<name>/plugin.toml`) and controls which ones may run. A plugin can run any command, so `ax index`, `ax sync` and the MCP server skip every plugin until you trust it. Trust is stored in `~/.ax/plugin-trust.json` per plugin folder and is bound to the exact `plugin.toml`; editing that file needs a new `ax plugins trust`. See [Extractor plugins](/guides/plugins/).
+
+| Subcommand | Description |
+|---|---|
+| `list [path] [--json]` | Each plugin, its extensions, the command it runs, and whether it is trusted |
+| `trust [--path <p>] [names…]` | Trust all plugins of the project, or only the named ones |
+| `untrust [--path <p>] [names…]` | Remove the trust again |
+
+```bash
+ax plugins list
+ax plugins trust terraform
+ax plugins untrust
+```
+
 ### `ax status [path]`
 
 Index statistics: node/edge/file counts, **document inventory by extension** (markdown, office, PDF, other opaque types), unresolved refs, pending sync, and last indexed time. When `.ax/integrity.json` records a database incident, the text and `--json` include it and name `ax db repair`. The project daemon runs a quick check once a day, and again after a crash. A broken full-text index, cue index, or vector map is rebuilt then. Stored rows, including a dangling edge, wait for `ax db repair`. The incident file is written when something remains. A recorded incident also skips the background file watcher until a later check passes.

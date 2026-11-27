@@ -52,6 +52,7 @@ ax-pi = { workspace = true }
 ax-lsp = { workspace = true }
 ax-docs-catalog = { workspace = true }
 ax-global-db = { workspace = true }
+ax-plugins = { workspace = true }
 uuid = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
