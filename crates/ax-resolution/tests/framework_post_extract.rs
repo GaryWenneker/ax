@@ -31,9 +31,15 @@ async fn add(q: &QueryBuilder, root: &std::path::Path, path: &str, content: &str
     std::fs::write(full, content).unwrap();
     q.upsert_file(&file(path, lang)).await.unwrap();
     // The post-extract pass hangs its nodes under the file node.
-    q.upsert_nodes(&[node(&stable_node_id(path, path), NodeKind::File, path, path, lang)])
-        .await
-        .unwrap();
+    q.upsert_nodes(&[node(
+        &stable_node_id(path, path),
+        NodeKind::File,
+        path,
+        path,
+        lang,
+    )])
+    .await
+    .unwrap();
 }
 
 fn node(id: &str, kind: NodeKind, name: &str, file: &str, language: Language) -> Node {
