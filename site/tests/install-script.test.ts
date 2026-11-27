@@ -18,11 +18,28 @@ test('published and repository shell installers match', () => {
 for (const installer of installers) {
   for (const shell of ['sh', 'bash']) {
     test(`${installer} parses in ${shell}`, () => {
-      const result = spawnSync(shell, shell === 'bash' ? ['--posix', '-n', installer] : ['-n', installer], { encoding: 'utf8' });
+      const result = spawnSync(shell, shell === 'bash' ? ['--posix', '-n', installer] : ['-n', installer], { encoding: 'utf8', timeout: 10_000 });
       assert.equal(result.status, 0, result.stderr);
     });
   }
 }
+
+test('every shell run in this suite has a timeout so a waiting installer fails instead of hanging', () => {
+  const source = readFileSync(fileURLToPath(import.meta.url), 'utf8');
+  const calls = [...source.matchAll(/spawnSync\((?:'(?:sh|bash|zsh)'|shell\b)/g)];
+  assert.ok(calls.length > 5, 'found the shell runs');
+  for (const call of calls) {
+    let depth = 0;
+    let end = call.index!;
+    for (; end < source.length; end++) {
+      if (source[end] === '(') depth++;
+      else if (source[end] === ')' && --depth === 0) break;
+    }
+    const text = source.slice(call.index!, end + 1);
+    const line = source.slice(0, call.index!).split('\n').length;
+    assert.match(text, /\btimeout:/, `line ${line}: ${text.split('\n')[0]}`);
+  }
+});
 
 function fixture(options: { os?: string; arch?: string; withoutPython?: boolean; stalePin?: boolean; powershell?: boolean; tokenFailure?: 'rate' | 'auth'; loginShell?: string; binName?: string; binaryVersion?: string } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'ax-installer-test-'));
@@ -40,7 +57,7 @@ function fixture(options: { os?: string; arch?: string; withoutPython?: boolean;
   writeFileSync(join(root, 'tampered/ax'), `#!/bin/sh\necho "ax ${options.binaryVersion ?? '8.1.0'}"\n# tampered\n`, { mode: 0o755 });
   const tampered = join(root, 'tampered.tar.gz');
   assert.equal(spawnSync('tar', ['-czf', tampered, '-C', root, 'tampered'], { encoding: 'utf8' }).status, 0);
-  const realSort = spawnSync('sh', ['-c', 'command -v sort'], { encoding: 'utf8' }).stdout.trim();
+  const realSort = spawnSync('sh', ['-c', 'command -v sort'], { encoding: 'utf8', timeout: 10_000 }).stdout.trim();
   const mock = join(bin, 'mock.mjs');
   writeFileSync(mock, `#!${process.execPath}
 import { appendFileSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs';
@@ -123,7 +140,7 @@ for (const os of ['Darwin', 'Linux']) {
       const f = fixture({ os, arch });
       try {
         const definitions = readFileSync(installers[0], 'utf8').split('# ---- install steps ----')[0];
-        const result = spawnSync('sh', ['-s'], { env: f.env, input: `${definitions}\nresolve_version_from_api\n`, encoding: 'utf8' });
+        const result = spawnSync('sh', ['-s'], { env: f.env, input: `${definitions}\nresolve_version_from_api\n`, encoding: 'utf8', timeout: 30_000 });
         assert.equal(result.status, 0, result.stderr);
         assert.equal(result.stdout.trim(), 'v8.1.0');
       } finally { rmSync(f.root, { recursive: true, force: true }); }
@@ -426,7 +443,8 @@ for (const options of [{}, { withoutPython: true }, { stalePin: true }]) {
   test(`piped Apple Silicon installation completes with ${JSON.stringify(options)}`, () => {
     const f = fixture(options);
     try {
-      const result = spawnSync('sh', ['-s'], { env: f.env, input: readFileSync(installers[1], 'utf8'), encoding: 'utf8' });
+      const result = runInstaller(installers[1], f.env);
+      assert.equal(result.error, undefined, 'installer finished within the timeout');
       assert.equal(result.status, 0, result.stderr);
       assert.match(result.stdout, /Installing ax v8\.1\.0 \(darwin-arm64\)/);
       assert.match(result.stdout, /Active: ax 8\.1\.0/);
@@ -449,7 +467,7 @@ test('a release tag that is not plain x.y.z does not break version resolution', 
   const releases = [release('v10.1.0'), release('v10.2.0-hotfix1'), release('nightly'), release('v10.3'), release('v9.9.9'),
     { ...release('v11.0.0'), prerelease: true }];
   const result = spawnSync('sh', ['-c', `${fn[0]}\nparse_latest_installable_tag "$1"`, 'sh', asset], {
-    encoding: 'utf8', input: JSON.stringify(releases),
+    encoding: 'utf8', input: JSON.stringify(releases), timeout: 10_000,
   });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, 'v10.3\n');
