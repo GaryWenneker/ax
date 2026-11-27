@@ -189,7 +189,7 @@ The `/api/ship/sonar/*` endpoints (discover, install, start, stop, bootstrap, se
 
 `/api/agent/chat/stream` and `/api/agent/pty/ws` belonged to the removed Agent page. The `config` and `profiles` endpoints still exist, but no Command Center screen uses them anymore.
 
-In read-only mode every `/api/agent` request other than `GET` and `HEAD` returns 403. `/api/agent/chat/stream` starts an agent with tool access in the project, so like the terminal socket it answers only the local browser (a loopback peer on the loopback address); other callers get 403. An external agent run is stopped after 30 minutes or as soon as the browser closes the stream.
+In read-only mode every `/api/agent` request other than `GET` and `HEAD` returns 403. `/api/agent/chat/stream` starts an agent with tool access in the project, so like the terminal socket it answers only the local browser (a loopback peer on the loopback address); other callers get 403. An external agent run is stopped after 30 minutes or as soon as the browser closes the stream. Closing the `/api/agent/pty/ws` socket kills the CLI it started.
 
 ## Operations and integrations
 
