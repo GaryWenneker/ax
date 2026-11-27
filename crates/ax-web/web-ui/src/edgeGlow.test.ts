@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { readGlobalStyles } from '../test-support/globalStyles.ts';
+import { portalOrbitGlowOff } from '../test-support/cssRules.ts';
 
 const app = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
 const indexCss = readGlobalStyles();
@@ -26,11 +27,16 @@ describe('B2 wave ribbon height is zero', () => {
 
 describe('B5 selected-node orbit glow is off in portal', () => {
   it('disables orbit and breathe animations', () => {
-    assert.match(
-      portalCss,
-      /html\[data-ax-layout="portal"\][\s\S]*ax-node-orbit|page-item-node::before[\s\S]*animation:\s*none/,
-    );
-    assert.match(portalCss, /page-item-node::(before|after)[\s\S]*animation:\s*none/);
+    assert.equal(portalOrbitGlowOff(portalCss), true);
+  });
+  it('fails when the portal rule turns the orbit back on', () => {
+    const reenabled = portalCss.replace(/(page-item-node::after \{\s*)animation: none;/, '$1animation: ax-node-orbit 3s linear infinite;');
+    assert.notEqual(reenabled, portalCss);
+    assert.equal(portalOrbitGlowOff(reenabled), false);
+  });
+  it('fails when a later rule restores the orbit on a pseudo-element', () => {
+    const restored = `${portalCss}\nhtml[data-ax-layout="portal"] .calm-list .page-item--selected.page-item--graph .page-item-node::before { animation: ax-node-orbit 3s linear infinite; }\n`;
+    assert.equal(portalOrbitGlowOff(restored), false);
   });
 });
 
