@@ -122,36 +122,63 @@ fn set_last_error(err: Option<String>, debug: bool) {
     *LAST_ERROR.lock().unwrap_or_else(|e| e.into_inner()) = err;
 }
 
+/// Who asked for an offload request. It is never sent to the provider; it
+/// tags the debug log line written for every request (caller, project,
+/// outcome and latency).
 #[derive(Debug, Clone)]
 pub struct ExploreOffloadMeta {
     pub source: &'static str,
     pub project: Option<String>,
 }
 
+/// Sends `context` and `query` to the configured offload model and returns
+/// its answer, or `None` when offload is off or the request fails.
 pub async fn synthesize_offload(
     query: &str,
     context: &str,
-    _meta: Option<&ExploreOffloadMeta>,
+    meta: Option<&ExploreOffloadMeta>,
 ) -> Option<String> {
     let cfg = resolve_offload();
     if !cfg.enabled {
         return None;
     }
+    let started = std::time::Instant::now();
+    let (answer, outcome) = request_offload(&cfg, query, context).await;
+    tracing::debug!(
+        source = meta.map(|m| m.source).unwrap_or("unknown"),
+        project = meta.and_then(|m| m.project.as_deref()).unwrap_or(""),
+        outcome,
+        latency_ms = started.elapsed().as_millis() as u64,
+        "offload request"
+    );
+    answer
+}
+
+/// One offload request; returns the answer and a short outcome for the log.
+async fn request_offload(
+    cfg: &crate::config::ResolvedOffload,
+    query: &str,
+    context: &str,
+) -> (Option<String>, &'static str) {
     let url = cfg
         .url
         .as_ref()
         .map(|u| format!("{}/chat/completions", u.trim_end_matches('/')));
-    let url = url?;
+    let Some(url) = url else {
+        return (None, "no_endpoint");
+    };
     let ctx = if cfg.strip {
         strip_agent_directives(context)
     } else {
         context.to_string()
     };
 
-    let client = reqwest::Client::builder()
+    let Ok(client) = reqwest::Client::builder()
         .timeout(std::time::Duration::from_millis(cfg.timeout_ms))
         .build()
-        .ok()?;
+    else {
+        return (None, "client_error");
+    };
 
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
@@ -191,25 +218,27 @@ pub async fn synthesize_offload(
                 .and_then(|c| c.as_str())
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
-            answer.map(|a| {
+            let answer = answer.map(|a| {
                 if cfg.style == "report" {
                     a.to_string()
                 } else {
                     format!("{a}{PLAIN_FOOTER}")
                 }
-            })
+            });
+            let outcome = if answer.is_some() { "ok" } else { "empty" };
+            (answer, outcome)
         }
         Ok(r) => {
             let status = r.status();
             let text = r.text().await.unwrap_or_default();
             let text = ax_utils::truncate_chars(text.trim(), ERROR_BODY_CHARS, "…");
             set_last_error(Some(format!("{url} returned {status}: {text}")), cfg.debug);
-            None
+            (None, "rejected")
         }
         Err(e) => {
             // reqwest errors name the URL and cause, never the request headers.
             set_last_error(Some(format!("{url}: {e}")), cfg.debug);
-            None
+            (None, "transport_error")
         }
     }
 }
@@ -236,6 +265,9 @@ pub fn offload_status() -> serde_json::Value {
         "effort": cfg.effort,
         "style": cfg.style,
         "timeout_ms": cfg.timeout_ms,
+        "max_tokens": cfg.max_tokens,
+        "strip": cfg.strip,
+        "debug": cfg.debug,
         "problem": cfg.problem,
         "last_error": last_offload_error(),
         "suggestion": if cfg.enabled || cfg.problem.is_some() {
@@ -311,6 +343,22 @@ mod tests {
     }
 
     const OK: &str = r#"{"choices":[{"message":{"content":"Coverage: full."}}]}"#;
+
+    #[test]
+    fn status_reports_every_setting_that_shapes_a_request() {
+        let status = with_env(
+            &[
+                ("AX_OFFLOAD_URL", "http://localhost:11434/v1"),
+                ("AX_OFFLOAD_MAXTOKENS", "900"),
+                ("AX_OFFLOAD_STRIP", "1"),
+                ("AX_OFFLOAD_DEBUG", "1"),
+            ],
+            |_| offload_status(),
+        );
+        assert_eq!(status["max_tokens"], 900, "{status}");
+        assert_eq!(status["strip"], true, "{status}");
+        assert_eq!(status["debug"], true, "{status}");
+    }
 
     #[test]
     fn strip_removes_ax_hints_outside_source() {
