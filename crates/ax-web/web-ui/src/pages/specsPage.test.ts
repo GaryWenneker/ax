@@ -80,3 +80,8 @@ test('the specs page can filter, edit, and walk history', () => {
   assert.match(css, /\.memory-blade\.specs-blade \{[^}]*left:\s*8rem/);
   assert.doesNotMatch(css, /memory-blade\.specs-blade\) > \.container/);
 });
+
+test('both spec and plan loads clear a different document before fetching and show a failed load', () => {
+  assert.equal(page.match(/beginDocLoad\(key\);\n\s*try \{/g)?.length, 2);
+  assert.match(page, /role="alert" className="specs-load-error"/);
+});

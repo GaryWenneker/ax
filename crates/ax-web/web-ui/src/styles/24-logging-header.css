@@ -240,6 +240,10 @@ html[data-ax-layout="portal"] :is(.specs-page .specs-list, .specs-blade) .page-i
   font: 12px/1.3 var(--font-ui);
   color: var(--text-dim);
 }
+.specs-load-error {
+  margin: 12px 0;
+  color: var(--danger);
+}
 .specs-plans-panel {
   display: flex;
   flex-direction: column;

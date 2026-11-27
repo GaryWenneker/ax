@@ -19,6 +19,7 @@ import SpecsDetail, { type EditorMode, type SpecRevision } from './SpecsDetail';
 import SpecWorkspace, { NewPlanModal } from './SpecWorkspace';
 import { workspaceFromHierarchy, workspaceFromLegacy, type WorkspaceDoc } from '../lib/specWorkspace';
 import type { ListColumn } from '../components/ui/ListColumns';
+import { editorResetForLoad, specDocKey } from '../lib/specDocLoad';
 import {
   approveSpec,
   createAlternativePlan,
@@ -236,6 +237,10 @@ export default function SpecsPage() {
   const [view, setView] = useState<SpecsView>(initialView());
   const [newPlanOpen, setNewPlanOpen] = useState(false);
   const loadToken = useRef(0);
+  /** The document whose revisions the editor holds, as a specDocKey; null while none has loaded. */
+  const loadedDoc = useRef<string | null>(null);
+  /** Why the open document's revisions could not be loaded, shown in place of the editor. */
+  const [docError, setDocError] = useState('');
   const closeTimer = useRef<number | null>(null);
   const pane = useRef<HTMLDivElement>(null);
   const sentinel = useRef<HTMLDivElement>(null);
@@ -274,16 +279,32 @@ export default function SpecsPage() {
     setDirty(false);
   }
 
+  /** Clear the editor before loading a different document, so its text never shows under the new title. */
+  function beginDocLoad(key: string) {
+    const reset = editorResetForLoad(loadedDoc.current, key);
+    if (reset) {
+      loadedDoc.current = null;
+      setRevisions(reset.revisions);
+      setOpenVersion(reset.openVersion);
+      setDraftText(reset.draftText);
+      setDirty(reset.dirty);
+    }
+    setDocError('');
+  }
+
   async function loadRevisions(id: string, version: number | null) {
     const token = ++loadToken.current;
+    const key = specDocKey('spec', id);
     setSelected(id);
     setEditorTarget('spec');
     setSelectedPlan(null);
+    beginDocLoad(key);
     try {
       const data = await fetchSpecRevisions(id);
       if (token !== loadToken.current) return;
       if (data.error) setError(String(data.error));
       const rows: SpecRevision[] = Array.isArray(data.revisions) ? data.revisions : [];
+      loadedDoc.current = key;
       setRevisions(rows);
       const approved = rows.find((row) => row.status === 'approved');
       const newest = rows.length > 0 ? rows[rows.length - 1].version : null;
@@ -291,20 +312,23 @@ export default function SpecsPage() {
       showVersion(rows, exists ? version : approved?.version ?? newest, false);
     } catch (err) {
       if (token !== loadToken.current) return;
-      setError(err instanceof Error ? err.message : 'Could not load revisions');
+      setDocError(`Could not load this spec: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
   async function loadPlanRevisions(planId: string, version: number | null) {
     const token = ++loadToken.current;
+    const key = specDocKey('plan', planId);
     setSelectedPlan(planId);
     setEditorTarget('plan');
     setBladeTab('plans');
+    beginDocLoad(key);
     try {
       const data = await fetchPlanRevisions(planId);
       if (token !== loadToken.current) return;
       if (data.error) setError(String(data.error));
       const rows: SpecRevision[] = Array.isArray(data.revisions) ? data.revisions : [];
+      loadedDoc.current = key;
       setRevisions(rows);
       const approved = rows.find((row) => row.status === 'approved');
       const newest = rows.length > 0 ? rows[rows.length - 1].version : null;
@@ -312,7 +336,7 @@ export default function SpecsPage() {
       showVersion(rows, exists ? version : approved?.version ?? newest, false);
     } catch (err) {
       if (token !== loadToken.current) return;
-      setError(err instanceof Error ? err.message : 'Could not load plan revisions');
+      setDocError(`Could not load this plan: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -329,6 +353,8 @@ export default function SpecsPage() {
       setSelectedPlan(null);
       setBladeTab('agreement');
       setEditorTarget('spec');
+      loadedDoc.current = null;
+      setDocError('');
       setRevisions([]);
       setOpenVersion(null);
       setDirty(false);
@@ -440,6 +466,8 @@ export default function SpecsPage() {
     if (tab === 'plans') {
       setSelectedPlan(null);
       setEditorTarget('spec');
+      loadedDoc.current = null;
+      setDocError('');
       setRevisions([]);
       setOpenVersion(null);
       syncRoute(selected, null, tab);
@@ -611,7 +639,9 @@ export default function SpecsPage() {
   const bladeHost = typeof document !== 'undefined' ? document.querySelector('.workspace') : null;
 
   function renderEditor(title: string) {
-    if (!current) return null;
+    if (!current) {
+      return docError ? <p role="alert" className="specs-load-error">{docError}</p> : null;
+    }
     const open = current;
     return (
       <SpecsDetail
