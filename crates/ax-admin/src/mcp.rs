@@ -174,7 +174,9 @@ pub struct Remote {
     http: reqwest::Client,
     tokens: Arc<dyn TokenSource>,
     limits: Limits,
-    session: Mutex<Option<Session>>,
+    /// Shared, so a failed request can tell whether the cached session is
+    /// still the one it used (`Arc::ptr_eq`).
+    session: Mutex<Option<Arc<Session>>>,
     tools: Mutex<Option<Vec<Value>>>,
 }
 
@@ -387,18 +389,30 @@ impl Remote {
         Ok(session)
     }
 
-    async fn session(&self, token: &str) -> Result<Session, McpError> {
+    async fn session(&self, token: &str) -> Result<Arc<Session>, McpError> {
         let mut guard = self.session.lock().await;
         if let Some(session) = guard.as_ref() {
             return Ok(session.clone());
         }
-        let session = self.initialize(token).await?;
+        let session = Arc::new(self.initialize(token).await?);
         *guard = Some(session.clone());
         Ok(session)
     }
 
     async fn forget_session(&self) {
         *self.session.lock().await = None;
+    }
+
+    /// Drops the cached session only while it is still `used`. Another request
+    /// may already have replaced it with a fresh one, which is kept.
+    async fn forget_session_if(&self, used: &Arc<Session>) {
+        let mut guard = self.session.lock().await;
+        if guard
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, used))
+        {
+            *guard = None;
+        }
     }
 
     /// One JSON-RPC request. An expired transport session is re-opened once,
@@ -408,7 +422,7 @@ impl Remote {
         method: &str,
         params: Value,
         timeout: Duration,
-    ) -> Result<(Value, Session), McpError> {
+    ) -> Result<(Value, Arc<Session>), McpError> {
         let mut retried_session = false;
         let mut retried_token = false;
         loop {
@@ -417,8 +431,11 @@ impl Remote {
                 .token(retried_token)
                 .await
                 .map_err(McpError::Credential)?;
+            // The session this request was sent with; None when opening one failed.
+            let mut used = None;
             let outcome = match self.session(&token).await {
                 Ok(session) => {
+                    used = Some(session.clone());
                     let body =
                         json!({"jsonrpc": "2.0", "id": 2, "method": method, "params": params});
                     self.post(&token, Some(&session), &body, timeout)
@@ -428,21 +445,18 @@ impl Remote {
                 }
                 Err(e) => Err(e),
             };
-            match outcome {
-                Err(McpError::UnknownProject) if !retried_session => {
-                    // With a session header, 404 means the session expired.
-                    let had_session = self.session.lock().await.is_some();
-                    if !had_session {
-                        return Err(McpError::UnknownProject);
-                    }
+            match (outcome, used) {
+                // With a session header, 404 means the session expired. Without
+                // one (the initialize request), the project is unknown.
+                (Err(McpError::UnknownProject), Some(used)) if !retried_session => {
                     retried_session = true;
-                    self.forget_session().await;
+                    self.forget_session_if(&used).await;
                 }
-                Err(McpError::Rejected) if !retried_token && self.tokens.refreshable() => {
+                (Err(McpError::Rejected), _) if !retried_token && self.tokens.refreshable() => {
                     retried_token = true;
                     self.forget_session().await;
                 }
-                other => return other,
+                (other, _) => return other,
             }
         }
     }
@@ -459,9 +473,9 @@ impl Remote {
             .ok_or_else(|| McpError::Protocol("tool list is missing".into()))?;
         *self.tools.lock().await = Some(tools.clone());
         Ok(RemoteInfo {
-            server_name: session.server_name,
-            server_version: session.server_version,
-            protocol_version: session.version,
+            server_name: session.server_name.clone(),
+            server_version: session.server_version.clone(),
+            protocol_version: session.version.clone(),
             tools,
         })
     }

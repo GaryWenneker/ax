@@ -1724,6 +1724,71 @@ async fn b2_an_expired_session_is_reopened_once() {
     assert_eq!(script.count("tools/list"), 2);
 }
 
+/// Two calls in flight on the same expired session renew it once. The second
+/// call's "expired" answer arrives after the first call opened a new session;
+/// that new session must be used, not thrown away and opened a third time.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn b2_two_calls_on_one_expired_session_reopen_it_once() {
+    #[derive(Default)]
+    struct Restarted {
+        inits: AtomicUsize,
+        stale_calls: AtomicUsize,
+    }
+    let state = Arc::new(Restarted::default());
+    let app = Router::new()
+        .fallback(
+            |State(state): State<Arc<Restarted>>, headers: HeaderMap, body: String| async move {
+                let request: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+                let session = headers
+                    .get("mcp-session-id")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .to_owned();
+                match request["method"].as_str().unwrap_or("") {
+                    "initialize" => {
+                        let n = state.inits.fetch_add(1, Ordering::SeqCst);
+                        initialized("2025-11-25", &format!("s{n}"))
+                    }
+                    "notifications/initialized" => StatusCode::ACCEPTED.into_response(),
+                    "tools/list" => tool_list(&["ax_status"]),
+                    _ if session == "s0" => {
+                        // The server restarted: the first session is gone. The
+                        // second stale call is answered only after the first
+                        // one has opened a new session.
+                        if state.stale_calls.fetch_add(1, Ordering::SeqCst) > 0 {
+                            for _ in 0..500 {
+                                if state.inits.load(Ordering::SeqCst) >= 2 {
+                                    break;
+                                }
+                                tokio::time::sleep(Duration::from_millis(10)).await;
+                            }
+                        }
+                        expired()
+                    }
+                    _ => rpc_ok(json!({"content": [{"type": "text", "text": "ok"}]})),
+                }
+            },
+        )
+        .with_state(state.clone());
+    let base = serve(app).await;
+    let client = Arc::new(remote(
+        format!("{base}/projects/alpha/mcp").parse().unwrap(),
+    ));
+    client.info().await.unwrap();
+    let (a, b) = tokio::join!(
+        client.call_tool("ax_status", json!({})),
+        client.call_tool("ax_status", json!({}))
+    );
+    a.unwrap();
+    b.unwrap();
+    assert_eq!(state.stale_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        state.inits.load(Ordering::SeqCst),
+        2,
+        "the expired session is renewed once, and the renewed one is kept"
+    );
+}
+
 struct Rotating {
     asked: AtomicUsize,
     refreshable: bool,
