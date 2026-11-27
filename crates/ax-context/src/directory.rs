@@ -132,15 +132,22 @@ pub fn has_structural_keyword(prompt: &str) -> bool {
 
 const HARNESS_BLOCK_OPEN: &str = "<system-reminder>";
 const HARNESS_BLOCK_CLOSE: &str = "</system-reminder>";
-const HARNESS_NOTIFICATION: &str = "<task-notification>";
+/// Prompts that are one harness message: a finished background task, or an event
+/// the desktop app sends about a pull request or a side session.
+const HARNESS_NOTIFICATIONS: &[&str] = &[
+    "<task-notification>",
+    "<ci-monitor-event>",
+    "<side-sessions-event>",
+];
 
 /// The part of a hook prompt the user wrote.
 ///
 /// Agent harnesses append `<system-reminder>` blocks to the prompt and deliver
-/// background-task results as a prompt that is one `<task-notification>` block.
-/// Neither is a question about the code, so matching or exploring them injects
+/// background-task results and app events as a prompt that is one block
+/// (`<task-notification>`, `<ci-monitor-event>`, `<side-sessions-event>`).
+/// None of these is a question about the code, so matching or exploring them injects
 /// context for text nobody asked about. Reminder blocks are cut out (an unclosed
-/// one hides the rest), and a prompt that is only a notification becomes empty.
+/// one hides the rest), and a prompt that is only such a block becomes empty.
 pub fn user_prompt_text(prompt: &str) -> String {
     let mut text = String::with_capacity(prompt.len());
     let mut rest = prompt;
@@ -153,7 +160,10 @@ pub fn user_prompt_text(prompt: &str) -> String {
     }
     text.push_str(rest);
     let text = text.trim();
-    if text.starts_with(HARNESS_NOTIFICATION) {
+    if HARNESS_NOTIFICATIONS
+        .iter()
+        .any(|tag| text.starts_with(tag))
+    {
         return String::new();
     }
     text.to_string()
@@ -598,6 +608,18 @@ mod prompt_tests {
         assert_eq!(
             user_prompt_text("  how does sync work  "),
             "how does sync work"
+        );
+    }
+
+    #[test]
+    fn e2_an_app_event_only_prompt_is_empty() {
+        for tag in ["ci-monitor-event", "side-sessions-event"] {
+            let prompt = format!("<{tag}>how does the build flow</{tag}>");
+            assert_eq!(user_prompt_text(&prompt), "", "{tag}");
+        }
+        assert_eq!(
+            user_prompt_text("why did <ci-monitor-event> fire, how does it flow"),
+            "why did <ci-monitor-event> fire, how does it flow"
         );
     }
 

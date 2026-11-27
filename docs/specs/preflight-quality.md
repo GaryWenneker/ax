@@ -135,7 +135,8 @@ Scenario: E1 harness blocks are removed before matching
   Then  the hook prints no <ax_context> block
 
 Scenario: E2 a prompt that is only a notification is skipped
-  Given a prompt that, after trimming, starts with "<task-notification>"
+  Given a prompt that, after trimming, starts with "<task-notification>",
+        "<ci-monitor-event>" or "<side-sessions-event>"
   Then  the hook prints nothing
 
 Scenario: E3 a plain capitalized word is not a code token
@@ -261,6 +262,10 @@ Scenario: C5 an unrelated longer word does not match
   therefore replaced:
   - N4' The remote server keeps the lean payload internally and drops `structuredContent`
     only as its last step, for a text-only client. Replies to other clients are unchanged.
+
+- R6 (2026-11-27): opening the pull request made the desktop app send a
+  `<ci-monitor-event>` prompt, and the hook explored it and reported a directive. E2 now
+  also names `<ci-monitor-event>` and `<side-sessions-event>`.
 
 ```gherkin
 Scenario: A5 a Claude client over the remote server

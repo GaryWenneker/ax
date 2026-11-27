@@ -24,57 +24,7 @@ import tempfile
 MAX_REPLY_CHARS = 60_000
 STEP_TIMEOUT_S = 120
 
-RULE = """---
-id: money-in-cents
-level: CRITICAL
-alwaysApply: true
----
-# Money in cents
-
-Amounts are integers in cents. MARKER-RULE-CENTS
-"""
-
-SKILL = """---
-name: invoice-review
-description: "Review invoice and billing code changes"
-triggers: ["invoice"]
-enabled: true
-status: approved
----
-# Invoice review
-
-MARKER-SKILL-INVOICE Step one: check every total against the cents rule.
-"""
-
-BILLING = """pub fn invoice_total(items: &[u32]) -> u32 {
-    items.iter().sum()
-}
-
-pub fn print_invoice(items: &[u32]) {
-    println!("{}", invoice_total(items));
-}
-"""
-
-TAX = """use crate::billing::invoice_total;
-
-pub fn add_tax(amount: u32) -> u32 {
-    amount + amount / 5
-}
-
-pub fn taxed_total(items: &[u32]) -> u32 {
-    add_tax(invoice_total(items))
-}
-"""
-
-
-BILLING_TEST = """use e2e::billing::invoice_total;
-
-#[test]
-fn invoice_total_sums_items() {
-    let total = invoice_total(&[100, 250]);
-    assert_eq!(total, 350);
-}
-"""
+FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ax_agent_e2e_fixture.json")
 
 
 class Failure(Exception):
@@ -149,15 +99,9 @@ def build_project(ax):
     )
     for key in ("AX_MCP_FULL", "AX_MCP_STRUCTURED"):
         env.pop(key, None)
-    files = {
-        "src/billing.rs": BILLING,
-        "src/tax.rs": TAX,
-        "src/lib.rs": "pub mod billing;\npub mod tax;\n",
-        "tests/billing_test.rs": BILLING_TEST,
-        "Cargo.toml": '[package]\nname = "e2e"\nversion = "0.1.0"\nedition = "2021"\n',
-        ".agents/rules/money-in-cents.mdc": RULE,
-        ".agents/skills/invoice-review/SKILL.md": SKILL,
-    }
+    # The project's files live in a data file, keyed by relative path.
+    with open(FIXTURE, encoding="utf-8") as handle:
+        files = json.load(handle)
     for rel, body in files.items():
         path = os.path.join(project, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)

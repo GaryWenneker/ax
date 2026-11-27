@@ -5,7 +5,7 @@
   not approve the text. Confidence is lower than for an approved spec; the spec is the artifact
   to review.
 - Review loop: **not run.** No independent review round was done on this change.
-- Source state of the final run: commit `4bc6509295e60c8effc4632619a946e08bf718c5`, 0 uncommitted files.
+- Source state of the final run: commit `657774a5` plus the changes of the commit that follows it (revision R6 and the end-to-end fixture moved to `tools/ax_agent_e2e_fixture.json`). The fixture file was moved while that run was in its mutation step, before the end-to-end steps; the end-to-end test was run once more on the full build afterwards with the same result.
 - Toolchain: rustc 1.100.0 (0ef1bc386 2026-11-09), Python 3.15.2, macOS arm64.
 - Rerun everything: `bash tools/gauntlet-preflight-quality.sh` from the repository root.
 
@@ -49,7 +49,7 @@ All numbers below come from that one run, made after the last code edit.
 
 | Layer | Command | Result |
 |---|---|---|
-| Tests | `cargo test -p ax-policy -p ax-context -p ax-core -p ax-mcp -p ax-cli` with an empty `HOME` | 31 suites ok, 816 tests passed, 0 failed |
+| Tests | `cargo test -p ax-policy -p ax-context -p ax-core -p ax-mcp -p ax-cli` with an empty `HOME` | 31 suites ok, 817 tests passed, 0 failed |
 | Lint | `cargo clippy` (same crates) `--all-targets -- -D warnings` | clean |
 | Format | `rustfmt --check` on the 8 Rust files this spec changed | clean |
 | Mutation | `tools/preflight_quality_mutants.py` | 18 of 18 killed; the no-op control survived, as it must |

@@ -65,8 +65,8 @@ MUTANTS = [
     {
         "id": "E-notification-kept",
         "file": "crates/ax-context/src/directory.rs",
-        "find": "if text.starts_with(HARNESS_NOTIFICATION) {",
-        "replace": "if false {",
+        "find": "        .any(|tag| text.starts_with(tag))",
+        "replace": "        .any(|_| false)",
         "test": ["cargo", "test", "-p", "ax-context", "--lib", "prompt_tests"],
     },
     {
