@@ -465,13 +465,23 @@ impl SonarClient {
 
     /// Runs the scanner with the token in the child environment only
     /// (`SONAR_TOKEN`), never on the command line or in a file: process
-    /// arguments are readable by every local user.
+    /// arguments are readable by every local user. SonarScanner CLI versions
+    /// before 5.0 do not read `SONAR_TOKEN`, so with a token such a scanner is
+    /// refused instead of scanning unauthenticated.
     fn run_native_scan(
         &self,
         project_root: &Path,
         target: &ScanTarget,
         token: Option<&str>,
     ) -> Result<(), String> {
+        if token.is_some() {
+            let mut version = Command::new(&self.config.scanner_path);
+            version.arg("--version").current_dir(project_root);
+            if let Ok(out) = crate::process::run_with_timeout(&mut version, VERSION_TIMEOUT) {
+                check_scanner_supports_env_token(&format!("{}\n{}", out.stdout, out.stderr))
+                    .map_err(|e| format!("{e} ({})", self.config.scanner_path))?;
+            }
+        }
         let mut cmd = self.native_scan_command(project_root, target, token);
         run_command_with_timeout(&mut cmd, SCAN_TIMEOUT)
     }
@@ -815,6 +825,35 @@ async fn wait_for_ce_queue(
             return CeWait::TimedOut;
         }
         tokio::time::sleep(interval).await;
+    }
+}
+
+/// Deadline for `sonar-scanner --version`.
+const VERSION_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Oldest SonarScanner CLI major version that reads the `SONAR_TOKEN`
+/// environment variable.
+const MIN_SCANNER_MAJOR: u32 = 5;
+
+/// Major version from a `sonar-scanner --version` banner such as
+/// `INFO: SonarScanner 4.8.0.2856` or `SonarScanner CLI 6.2.1.4610`.
+fn scanner_major_version(output: &str) -> Option<u32> {
+    let rest = &output[output.find("SonarScanner")? + "SonarScanner".len()..];
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix("CLI").unwrap_or(rest).trim_start();
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
+/// Refuses a scanner older than 5.0, which ignores `SONAR_TOKEN`. A banner
+/// without a version is not refused.
+fn check_scanner_supports_env_token(version_output: &str) -> Result<(), String> {
+    match scanner_major_version(version_output) {
+        Some(major) if major < MIN_SCANNER_MAJOR => Err(format!(
+            "SonarScanner CLI {major}.x does not read the SONAR_TOKEN environment variable; \
+             install SonarScanner CLI {MIN_SCANNER_MAJOR}.0 or newer, or remove it from PATH so ax uses the container scanner"
+        )),
+        _ => Ok(()),
     }
 }
 
@@ -1604,6 +1643,57 @@ mod tests {
         let args: Vec<_> = cmd.get_args().collect();
         let i = args.iter().position(|a| *a == "-e").expect("-e");
         assert_eq!(args[i + 1], "SONAR_TOKEN");
+    }
+
+    #[test]
+    fn the_scanner_version_is_read_from_its_banner() {
+        for (out, major) in [
+            ("INFO: SonarScanner 4.8.0.2856\nINFO: Java 17", Some(4)),
+            ("INFO: SonarScanner 5.0.1.3006\n", Some(5)),
+            ("17:02:11.120 INFO  SonarScanner CLI 6.2.1.4610\n", Some(6)),
+            ("SonarScanner CLI 7.0.2.4839", Some(7)),
+            ("no banner here", None),
+        ] {
+            assert_eq!(scanner_major_version(out), major, "{out}");
+        }
+        assert!(check_scanner_supports_env_token("INFO: SonarScanner 4.8.0.2856")
+            .unwrap_err()
+            .contains("5.0"));
+        assert!(check_scanner_supports_env_token("INFO: SonarScanner 5.0.1.3006").is_ok());
+        // An unknown banner is not refused.
+        assert!(check_scanner_supports_env_token("something else").is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_old_native_scanner_is_refused_before_it_runs_without_the_token() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("scanned");
+        let script = dir.path().join("sonar-scanner");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'INFO: SonarScanner 4.8.0.2856'; exit 0; fi\ntouch {}\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let client = SonarClient::new(SonarConfig {
+            scanner_path: script.display().to_string(),
+            ..SonarConfig::default()
+        });
+        let err = client
+            .run_native_scan(dir.path(), &token_target(), Some("squ_secret"))
+            .unwrap_err();
+        assert!(err.contains("5.0"), "{err}");
+        assert!(!marker.exists(), "the scanner must not run");
+        // Without a token there is nothing to pass, so the scan runs.
+        client
+            .run_native_scan(dir.path(), &token_target(), None)
+            .unwrap();
+        assert!(marker.exists());
     }
 
     #[test]

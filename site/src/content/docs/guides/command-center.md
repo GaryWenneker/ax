@@ -165,7 +165,7 @@ revert_on_fail = false
 
 ### SonarQube scanner token
 
-Sonar setup saves the generated scanner token in `.ax/sonar.token`. On Unix the file is readable and writable by its owner only (mode 0600). The scanner reads the token from that file and gets it passed explicitly; ax does not export it into its own process environment. On Windows ax also stores the token in the user environment variable named by `token_env`. That name must be a plain variable name (letters, digits and `_`, not starting with a digit); any other name is skipped with a warning.
+Sonar setup saves the generated scanner token in `.ax/sonar.token`. On Unix the file is readable and writable by its owner only (mode 0600). The scanner reads the token from that file and gets it passed explicitly; ax does not export it into its own process environment. ax passes it to the scanner in the `SONAR_TOKEN` environment variable of the scanner process only, never on its command line. A native `sonar-scanner` on PATH must be SonarScanner CLI 5.0 or newer, because older versions do not read `SONAR_TOKEN`: ax checks `sonar-scanner --version` and refuses an older one with a message, instead of scanning without the token. Without a native scanner, ax runs the scanner container, which is always new enough. On Windows ax also stores the token in the user environment variable named by `token_env`. That name must be a plain variable name (letters, digits and `_`, not starting with a digit); any other name is skipped with a warning.
 
 ### SonarQube network exposure
 
