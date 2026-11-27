@@ -69,14 +69,6 @@
   html {
     background: #080808;
   }
-
-  html[data-ax-theme="macos"] {
-    background: #1c1c1e;
-  }
-
-  html[data-ax-theme="mono"] {
-    background: #141414;
-  }
 }
 
 @media (min-width: 2560px) {

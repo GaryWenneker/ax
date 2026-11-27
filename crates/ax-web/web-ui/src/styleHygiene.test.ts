@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { appStylesheets } from '../test-support/cssRules.ts';
+import { THEMES } from './lib/themes.ts';
 
 const sheets = appStylesheets();
 const allCss = [...sheets.values()].join('\n');
@@ -30,5 +31,14 @@ describe('viewport breakpoints', () => {
     const overlaps = [...bounds('min').keys()].filter((width) => max.has(width))
       .map((width) => `${width}px in ${max.get(width)?.join(', ')}`);
     assert.deepEqual(overlaps, [], 'a viewport exactly this wide gets both sets of rules; use max-width: N-1px');
+  });
+});
+
+describe('theme selectors', () => {
+  it('only target theme ids that applyTheme can set', () => {
+    const known = new Set(THEMES.map((theme) => theme.id));
+    const unknown = new Set<string>();
+    for (const m of allCss.matchAll(/data-ax-theme="([^"]+)"/g)) if (!known.has(m[1])) unknown.add(m[1]);
+    assert.deepEqual([...unknown], []);
   });
 });

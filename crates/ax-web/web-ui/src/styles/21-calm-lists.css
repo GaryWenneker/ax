@@ -411,27 +411,6 @@ html[data-ax-theme] .ax-project-badge-icon {
   line-height: 1;
   color: var(--ok);
 }
-html[data-ax-theme="macos"] :is(
-  .badge,
-  .page-item-badge,
-  .page-level-badge,
-  .list-item-badge,
-  .confidence-badge,
-  .policy-pack-badge,
-  .beta-badge,
-  .mcp-trace-badge,
-  .ship-live-badge,
-  .status-quality-badge,
-  .settings-embed-badge,
-  .settings-share-badge,
-  .lsp-server-badge,
-  .mcp-q-strip-badge,
-  .ax-project-badge,
-  .page-origin-badge--project,
-  .page-origin-badge--global
-) {
-  border-radius: 0;
-}
 
 /* Calm lists — Rules, Skills and Logging reuse the Memory row look. */
 .calm-groups {
