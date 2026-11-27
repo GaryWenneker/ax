@@ -1567,8 +1567,7 @@ Set **database** as the project default (`ax.db`). Without `--yes`, prints a sca
 | Flag | Description |
 |---|---|
 | `--global` | Write to `~/.ax/config.json` instead of project `ax.json` |
-| `--migrate` | Same as running without `--yes`: print the scan plan |
-| `--yes` | Import all candidates into `ax.db` and **delete** `.agents/` / `.ax/policy/` markdown |
+| `--yes` | Import all candidates into `ax.db`, then switch the config, then **delete** `.agents/` / `.ax/policy/` markdown. When the import fails, the config and the files stay as they were |
 | `--keep-files` | With `--yes`, import but leave markdown on disk |
 | `--json` | JSON output |
 
@@ -1585,8 +1584,7 @@ Set **files** as the project default source of truth (`.agents/` on disk).
 | Flag | Description |
 |---|---|
 | `--global` | Write to `~/.ax/config.json` |
-| `--migrate` | Preview export |
-| `--yes` | Export every rule/skill from `ax.db` into `.agents/` |
+| `--yes` | Export every rule/skill from `ax.db` into `.agents/`, then switch the config. When the export fails, the config stays as it was |
 | `--json` | JSON output |
 
 ```bash

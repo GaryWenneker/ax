@@ -179,7 +179,7 @@ The cleanup runs after `ax sync`, `ax index` and the watch sync, after every pol
 
 ### Database migration scan
 
-When switching to **database** with `--migrate`, ax does not import only `.ax/policy/`. It **recursively scans the project** for:
+When switching to **database** (`ax policy storage database`), ax does not import only `.ax/policy/`. It **recursively scans the project** for:
 
 | Pattern | Examples |
 |---|---|

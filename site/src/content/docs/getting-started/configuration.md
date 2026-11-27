@@ -210,9 +210,9 @@ Policy can live in **files** (`.ax/policy/` on disk) or **database** (`ax.db` ta
 
 ```bash
 ax policy storage status           # show effective mode (project + global)
-ax policy storage database --migrate        # scan repo, show per-item interview (no import)
-ax policy storage database --migrate --yes  # switch + import all candidates into ax.db
-ax policy storage files --migrate           # export DB → files on switch
+ax policy storage database         # scan repo, show per-item interview (no import)
+ax policy storage database --yes   # import all candidates into ax.db, then switch
+ax policy storage files --yes      # export DB → files, then switch
 ```
 
 The migration scan walks the **entire codebase** for `.mdc` rules and `SKILL.md` skills — including `.cursor/rules/`, `.cursor/skills/`, and other paths — not only `.ax/policy/`. Bootstrap files (e.g. `.cursor/rules/ax.mdc`) are skipped. Each candidate includes interview questions (import yes/no, id, level, triggers, globs, priority, storage destination).

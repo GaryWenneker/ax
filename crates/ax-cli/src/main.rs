@@ -2313,7 +2313,8 @@ enum PolicyStorageCommands {
         path: Option<String>,
         #[arg(long, help = "Write to ~/.ax/config.json instead of project ax.json")]
         global: bool,
-        #[arg(long, help = "Scan repo and import rules/skills into database")]
+        /// No effect: the scan preview runs without --yes, the import with --yes
+        #[arg(long, hide = true)]
         migrate: bool,
         #[arg(
             long,
@@ -2330,10 +2331,8 @@ enum PolicyStorageCommands {
         path: Option<String>,
         #[arg(long, help = "Write to ~/.ax/config.json instead of project ax.json")]
         global: bool,
-        #[arg(
-            long,
-            help = "Preview or (with --yes) export database policy to .agents/"
-        )]
+        /// No effect: the preview runs without --yes, the export with --yes
+        #[arg(long, hide = true)]
         migrate: bool,
         #[arg(long, help = "Apply exclusive switch: export ax.db to .agents/")]
         yes: bool,
@@ -3303,7 +3302,7 @@ async fn async_main() {
                 PolicyStorageCommands::Database {
                     path,
                     global,
-                    migrate,
+                    migrate: _,
                     yes,
                     keep_files,
                     json,
@@ -3312,7 +3311,6 @@ async fn async_main() {
                         path,
                         PolicyStorage::Database,
                         global,
-                        migrate,
                         yes,
                         keep_files,
                         json,
@@ -3322,7 +3320,7 @@ async fn async_main() {
                 PolicyStorageCommands::Files {
                     path,
                     global,
-                    migrate,
+                    migrate: _,
                     yes,
                     json,
                 } => {
@@ -3330,7 +3328,6 @@ async fn async_main() {
                         path,
                         PolicyStorage::Files,
                         global,
-                        migrate,
                         yes,
                         false,
                         json,

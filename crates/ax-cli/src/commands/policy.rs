@@ -953,17 +953,20 @@ pub async fn run_storage_set_item(
     Ok(())
 }
 
+/// Switch the policy storage mode.
+///
+/// Without `yes` this only previews. With `yes` (project scope) the migration
+/// runs first and the config is written only after it succeeded; markdown
+/// sources are removed last, after the config points at the database.
 pub async fn run_storage_set(
     path: Option<String>,
     target: PolicyStorage,
     global: bool,
-    migrate: bool,
     yes: bool,
     keep_files: bool,
     json: bool,
 ) -> Result<(), String> {
     let root = resolve_project_root(path);
-    let _ = migrate;
     let do_migrate = !global;
 
     // Propose migration plan without changing storage or importing.
@@ -1048,20 +1051,25 @@ pub async fn run_storage_set(
         return Ok(());
     }
 
-    let config_path = if global {
-        ax_policy::write_global_policy_storage(target)?
-    } else {
-        ax_policy::write_project_policy_storage(&root, target)?
+    let write_config = || {
+        if global {
+            ax_policy::write_global_policy_storage(target)
+        } else {
+            ax_policy::write_project_policy_storage(&root, target)
+        }
     };
 
-    if yes && !global {
+    let mut found: Option<(u32, u32, usize)> = None;
+    let config_path = if yes && !global {
         let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
         match target {
             PolicyStorage::Database => {
-                let (plan, apply) =
-                    ax_policy::exclusive_to_database(ax.db_pool(), &root, keep_files)
-                        .await
-                        .map_err(|e| e.to_string())?;
+                let (plan, mut apply) = ax_policy::migrate_to_database(ax.db_pool(), &root).await?;
+                let config_path = write_config()?;
+                if !keep_files {
+                    apply.files_removed =
+                        ax_policy::remove_ax_policy_file_sources(&root, &plan.candidates);
+                }
                 if !json {
                     println!(
                         "Migrated {} rules, {} skills into database (scanned {} candidates, {} skipped)",
@@ -1076,6 +1084,8 @@ pub async fn run_storage_set(
                         println!("  removed {} .agents/.ax/policy files", apply.files_removed);
                     }
                 }
+                found = Some((plan.rules_found, plan.skills_found, plan.candidates.len()));
+                config_path
             }
             PolicyStorage::Files => {
                 let out = ax_policy::agents_dir(&root);
@@ -1083,6 +1093,7 @@ pub async fn run_storage_set(
                     ax_policy::export_policy_to_files_filtered(ax.db_pool(), &root, &out, false)
                         .await
                         .map_err(|e| e.to_string())?;
+                let config_path = write_config()?;
                 ax.index_policy(true).await.map_err(|e| e.to_string())?;
                 if !json {
                     println!(
@@ -1090,9 +1101,12 @@ pub async fn run_storage_set(
                         result.rules_exported, result.skills_exported, result.output_dir
                     );
                 }
+                config_path
             }
         }
-    }
+    } else {
+        write_config()?
+    };
 
     if json {
         let mut payload = serde_json::json!({
@@ -1104,11 +1118,10 @@ pub async fn run_storage_set(
             "migrated": yes && !global,
             "keepFiles": keep_files,
         });
-        if yes && target == PolicyStorage::Database {
-            let plan = ax_policy::scan_policy_candidates(&root);
-            payload["rulesFound"] = serde_json::json!(plan.rules_found);
-            payload["skillsFound"] = serde_json::json!(plan.skills_found);
-            payload["candidates"] = serde_json::json!(plan.candidates.len());
+        if let Some((rules, skills, candidates)) = found {
+            payload["rulesFound"] = serde_json::json!(rules);
+            payload["skillsFound"] = serde_json::json!(skills);
+            payload["candidates"] = serde_json::json!(candidates);
         }
         println!(
             "{}",

@@ -1,4 +1,5 @@
-//! `ax policy test` must pass on any freshly initialized project, not only
+//! `ax policy test` and `ax policy storage` against a freshly initialized
+//! project. `ax policy test` must pass there, not only
 //! inside the ax repository. Runs with a temp HOME so no real config is touched.
 
 use std::path::Path;
@@ -117,4 +118,51 @@ fn hidden_self_flag_adds_the_ax_repository_checks() {
     assert!(names.contains(&"self_match_release_trigger"), "{names:?}");
     // The ax sources are not in this project, so the repository check fails.
     assert!(!out.status.success(), "{}", text(&out));
+}
+
+fn project_storage(project: &Path) -> Option<String> {
+    let raw = std::fs::read_to_string(project.join("ax.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    v["policy"]["storage"].as_str().map(str::to_string)
+}
+
+#[test]
+fn storage_switch_keeps_the_config_when_the_migration_fails() {
+    let (_dir, home, project) = fresh_project("none");
+    let before = project_storage(&project);
+    // An ax.db the migration cannot open.
+    let db = project.join(".ax/ax.db");
+    let _ = std::fs::remove_file(&db);
+    for ext in ["ax.db-wal", "ax.db-shm"] {
+        let _ = std::fs::remove_file(project.join(".ax").join(ext));
+    }
+    std::fs::create_dir_all(db.join("not-a-database")).unwrap();
+
+    let out = ax(&project, &home, &["policy", "storage", "database", "--yes"]);
+    assert!(!out.status.success(), "{}", text(&out));
+    assert_eq!(project_storage(&project), before, "{}", text(&out));
+    assert!(
+        project
+            .join(".agents/rules")
+            .read_dir()
+            .unwrap()
+            .next()
+            .is_some(),
+        "rule files must stay when the switch failed"
+    );
+}
+
+#[test]
+fn storage_switch_json_reports_what_was_migrated() {
+    let (_dir, home, project) = fresh_project("none");
+    let out = ax(
+        &project,
+        &home,
+        &["policy", "storage", "database", "--yes", "--json"],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(v["rulesFound"].as_u64().unwrap() > 0, "{v}");
+    assert!(v["skillsFound"].as_u64().unwrap() > 0, "{v}");
+    assert_eq!(project_storage(&project).as_deref(), Some("database"));
 }
