@@ -251,7 +251,7 @@ To watch what each tool receives, how preflight enrichment builds the inject blo
 
 MCP lines are prefixed with `[ax-mcp]`. From **ax 8.4.4**, matching CLI graph/policy/memory commands write the same `inbound tool=` / `outbound tool=` bodies with an `[ax]` brand into the same daily file, so Logging is not MCP-only. Lines never append debug text to `content.text` or `structuredContent`. When a Cursor session id is known, lines also include `session=<uuid>` so `ax mcp audit --session <uuid>` can filter the verbose log.
 
-`ax_guard` accepts the documented `path` + `operation` shape and common aliases (`paths[]`, `file`, `action=edit|write|delete`) so agents do not burn retries on `path required` validation errors.
+`ax_guard` accepts the documented `path` + `operation` shape and common aliases (`paths[]`, `file`, `action=edit|write|delete`) so agents do not burn retries on `path required` validation errors. When no `content` is passed, `ax_guard` and `ax_diagnostics` read the file for content rules only when the path names a regular file inside the project (relative, or absolute under the project root) of at most 2 MB that does not leave the project through `..` or a symbolic link. Any other path is checked by path alone.
 
 ### Response budget environment variables
 

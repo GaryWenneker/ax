@@ -2114,13 +2114,57 @@ fn attach_skill_audit(value: &mut Value, ax: &Ax, name: &str, source_path: &str)
     value["audit"] = json!(ax_skill_catalog::agent_brief(&report, &file));
 }
 
+/// Largest file ax_guard and ax_diagnostics read to check content rules.
+const GUARD_READ_LIMIT: u64 = 2 * 1024 * 1024;
+
+/// Reads a file for content rules only when `path_str` names a regular file
+/// inside the project (relative, or absolute under the project root) that
+/// does not leave it through `..` or a symbolic link and is at most
+/// [`GUARD_READ_LIMIT`] bytes. Anything else is checked by path alone.
+async fn guard_file_content(root: &Path, path_str: &str) -> Option<Vec<u8>> {
+    let root = root.to_path_buf();
+    let path_str = path_str.to_string();
+    tokio::task::spawn_blocking(move || read_guarded_project_file(&root, &path_str))
+        .await
+        .ok()
+        .flatten()
+}
+
+fn read_guarded_project_file(root: &Path, path_str: &str) -> Option<Vec<u8>> {
+    let candidate = Path::new(path_str);
+    let rel = if candidate.is_absolute() {
+        let real_root = root.canonicalize().ok();
+        candidate
+            .strip_prefix(root)
+            .ok()
+            .or_else(|| {
+                real_root
+                    .as_deref()
+                    .and_then(|r| candidate.strip_prefix(r).ok())
+            })?
+            .to_str()?
+            .to_string()
+    } else {
+        path_str.to_string()
+    };
+    let full = ax_utils::contained_join(root, &rel).ok()?;
+    let meta = std::fs::metadata(&full).ok()?;
+    if !meta.is_file() || meta.len() > GUARD_READ_LIMIT {
+        return None;
+    }
+    ax_utils::read_bounded(&full, GUARD_READ_LIMIT).ok()
+}
+
 async fn guard(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let paths = guard_paths_from_params(&params)?;
     let op = guard_op_from_params(&params);
     if paths.len() == 1 {
         let path_str = &paths[0];
         let path = ax.project_root().join(path_str);
-        let content = guard_content_from_params(&params).or_else(|| std::fs::read(&path).ok());
+        let content = match guard_content_from_params(&params) {
+            Some(content) => Some(content),
+            None => guard_file_content(ax.project_root(), path_str).await,
+        };
         let result = ax
             .guard_operation(&path, op, content.as_deref())
             .await
@@ -2144,7 +2188,10 @@ async fn guard(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let mut results = Vec::new();
     for path_str in &paths {
         let path = ax.project_root().join(path_str);
-        let content = guard_content_from_params(&params).or_else(|| std::fs::read(&path).ok());
+        let content = match guard_content_from_params(&params) {
+            Some(content) => Some(content),
+            None => guard_file_content(ax.project_root(), path_str).await,
+        };
         let result = ax
             .guard_operation(&path, op, content.as_deref())
             .await
@@ -2201,7 +2248,7 @@ async fn diagnostics(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let mut guarded_paths = Vec::new();
     for path_str in &paths {
         let abs = ax.project_root().join(path_str);
-        let content = std::fs::read(&abs).ok();
+        let content = guard_file_content(ax.project_root(), path_str).await;
         if let Ok(result) = ax
             .guard_operation(&abs, GuardOp::Write, content.as_deref())
             .await
