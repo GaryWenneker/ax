@@ -49,11 +49,11 @@ test('closed column filters keep no document listeners; an open one adds them un
 
   await filters.first().locator('summary').click();
   await expect(page.locator('.column-filter-panel:popover-open')).toHaveCount(1);
-  expect(await focusinListeners(page)).toBe(idle + 1);
+  await expect.poll(() => focusinListeners(page)).toBe(idle + 1);
 
   await page.mouse.click(5, 5);
   await expect(page.locator('.column-filter-panel:popover-open')).toHaveCount(0);
-  expect(await focusinListeners(page)).toBe(idle);
+  await expect.poll(() => focusinListeners(page)).toBe(idle);
 
   // The idle count does not grow with the number of filterable columns.
   expect(idle).toBeLessThan(await filters.count());
