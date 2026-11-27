@@ -2418,6 +2418,9 @@ fn run_desktop_on_os_main_thread() {
     ui::configure_clap(&mut cmd);
     let matches = cmd.get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    if should_refresh_ide_files(&cli.command) {
+        commands::upgrade::refresh_cwd_ide_files();
+    }
 
     let result = match cli.command {
         Some(Commands::Desktop { path, port, bind }) => {
@@ -2457,6 +2460,9 @@ async fn async_main() {
     ui::configure_clap(&mut cmd);
     let matches = cmd.get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    if should_refresh_ide_files(&cli.command) {
+        commands::upgrade::refresh_cwd_ide_files();
+    }
     let cmd_name = cli_command_name(&cli.command);
     let should_check_update = should_notify_update(&cli.command);
     let started = std::time::Instant::now();
@@ -3781,6 +3787,25 @@ async fn start_replication(root: &std::path::Path) {
     let _ = root;
 }
 
+/// Whether this command may refresh the managed IDE instruction files in the
+/// current project. Hidden hook and helper commands run on every agent tool
+/// call and stay side-effect free; uninstall and uninit remove those files.
+fn should_refresh_ide_files(cmd: &Option<Commands>) -> bool {
+    !matches!(
+        cmd,
+        Some(Commands::PromptHook)
+            | Some(Commands::SessionHook)
+            | Some(Commands::StopHook)
+            | Some(Commands::TurnHook { .. })
+            | Some(Commands::ReadGuard { .. })
+            | Some(Commands::WatchdogChild { .. })
+            | Some(Commands::UpgradeApply { .. })
+            | Some(Commands::Version)
+            | Some(Commands::Uninstall)
+            | Some(Commands::Uninit { .. })
+    )
+}
+
 fn should_notify_update(cmd: &Option<Commands>) -> bool {
     !matches!(
         cmd,
@@ -3911,6 +3936,44 @@ fn log_directive(args: &[String]) -> &'static str {
         "ax=warn"
     } else {
         "ax=info"
+    }
+}
+
+#[cfg(test)]
+mod refresh_ide_files_tests {
+    use super::{should_refresh_ide_files, Cli};
+    use clap::Parser;
+
+    fn refreshes(argv: &'static [&'static str]) -> bool {
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || should_refresh_ide_files(&Cli::try_parse_from(argv).unwrap().command))
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    #[test]
+    fn hooks_helpers_and_removal_commands_skip_the_refresh() {
+        for argv in [
+            &["ax", "read-guard", "--ide", "claude"][..],
+            &["ax", "prompt-hook"],
+            &["ax", "session-hook"],
+            &["ax", "stop-hook"],
+            &["ax", "turn-hook", "end"],
+            &["ax", "watchdog-child", "1", "10"],
+            &["ax", "uninstall"],
+            &["ax", "uninit"],
+            &["ax", "version"],
+        ] {
+            assert!(!refreshes(argv), "{argv:?} must not refresh IDE files");
+        }
+    }
+
+    #[test]
+    fn regular_commands_refresh() {
+        assert!(refreshes(&["ax", "status"]));
+        assert!(refreshes(&["ax", "sync"]));
     }
 }
 

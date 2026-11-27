@@ -16,19 +16,38 @@ const REQUEST_TIMEOUT_SECS: u64 = 120;
 pub fn apply_pending_upgrade() {
     #[cfg(windows)]
     apply_pending_upgrade_windows();
-    refresh_cwd_ide_files();
 }
 
-/// After an upgrade, and on later ax commands in a project, rewrite managed
-/// IDE instruction files when the seeded Ax section has changed.
-fn refresh_cwd_ide_files() {
+/// File in `.ax/` holding the ax version that last refreshed the IDE files.
+const IDE_SEED_STAMP: &str = "ide-seed-version";
+
+/// Rewrite managed IDE instruction files in the current project the first
+/// time a new ax version runs there.
+pub fn refresh_cwd_ide_files() {
     let Ok(cwd) = std::env::current_dir() else {
         return;
     };
-    if !cwd.join(".ax").is_dir() {
-        return;
+    refresh_ide_files_once_per_version(&cwd, env!("CARGO_PKG_VERSION"));
+}
+
+/// Seed the managed IDE files of `project_root` when its `.ax/` stamp names a
+/// different ax version than `version`. Returns whether the seed ran.
+fn refresh_ide_files_once_per_version(project_root: &Path, version: &str) -> bool {
+    let ax_dir = project_root.join(".ax");
+    if !ax_dir.is_dir() {
+        return false;
     }
-    let _ = ax_policy::seed_ide_agent_workflow(&cwd);
+    let stamp = ax_dir.join(IDE_SEED_STAMP);
+    if std::fs::read_to_string(&stamp)
+        .map(|seen| seen.trim() == version)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    if ax_policy::seed_ide_agent_workflow(project_root).is_ok() {
+        let _ = ax_utils::atomic_write(&stamp, version.as_bytes());
+    }
+    true
 }
 
 pub async fn run(
@@ -1187,6 +1206,34 @@ fn clear_promotion(install_root: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ide_files_refresh_once_per_ax_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        assert!(!refresh_ide_files_once_per_version(root, "1.0.0"));
+        std::fs::create_dir(root.join(".ax")).unwrap();
+
+        assert!(refresh_ide_files_once_per_version(root, "1.0.0"));
+        let agents = root.join("AGENTS.md");
+        assert!(agents.is_file(), "the first run seeds the IDE files");
+
+        let stale = "<!-- AX_START -->\nstale\n<!-- AX_END -->\n";
+        std::fs::write(&agents, stale).unwrap();
+        assert!(!refresh_ide_files_once_per_version(root, "1.0.0"));
+        assert_eq!(
+            std::fs::read_to_string(&agents).unwrap(),
+            stale,
+            "the same version does not touch the project again"
+        );
+
+        assert!(refresh_ide_files_once_per_version(root, "1.1.0"));
+        assert_ne!(
+            std::fs::read_to_string(&agents).unwrap(),
+            stale,
+            "a new version refreshes the files"
+        );
+    }
 
     /// A fake release host: GitHub fails for the archive, the CDN serves `cdn_archive`,
     /// and SHA256SUMS lists the digest of `genuine`.

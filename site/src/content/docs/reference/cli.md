@@ -1010,6 +1010,8 @@ ax upgrade --local dist/ax-win32-x64.zip
 
 On Windows the process exits immediately; a detached helper finishes the binary swap. Open a new terminal and run `ax version` to verify.
 
+The first regular `ax` command that a new version runs inside an initialized project rewrites the managed IDE instruction files there once, and records that version in `.ax/ide-seed-version`. The hidden hook commands, `ax version`, `ax uninit` and `ax uninstall` never do this.
+
 ---
 
 ## Telemetry
