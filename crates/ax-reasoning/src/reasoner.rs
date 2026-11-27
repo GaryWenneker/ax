@@ -190,7 +190,7 @@ fn clear_backoff(url: &str) {
 /// slow reply.
 fn connect_timeout_for(timeout_ms: u64) -> std::time::Duration {
     CONNECT_TIMEOUT.min(std::time::Duration::from_millis(
-        (timeout_ms * 3 / 4).max(1),
+        (timeout_ms / 4 * 3 + timeout_ms % 4 * 3 / 4).max(1),
     ))
 }
 
@@ -376,6 +376,20 @@ mod tests {
     use super::*;
     use crate::config::tests::with_env;
     use std::io::{BufRead, BufReader, Read, Write};
+
+    #[test]
+    fn connect_timeout_does_not_overflow_on_huge_request_timeout() {
+        assert_eq!(connect_timeout_for(u64::MAX), CONNECT_TIMEOUT);
+        assert_eq!(
+            connect_timeout_for(10_000_000_000_000_000_000),
+            CONNECT_TIMEOUT
+        );
+        assert_eq!(
+            connect_timeout_for(1000),
+            std::time::Duration::from_millis(750)
+        );
+        assert_eq!(connect_timeout_for(0), std::time::Duration::from_millis(1));
+    }
 
     /// Serves one HTTP request with `status` and `body`; returns the base URL
     /// and a handle that yields the JSON body the client sent.
