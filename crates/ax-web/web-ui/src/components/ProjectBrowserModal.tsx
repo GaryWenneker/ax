@@ -9,11 +9,12 @@ import {
   mkdirWorkspace,
   streamWorkspaceInit,
   switchWorkspace,
-  type BrowseEntry,
   type RecentProject,
 } from '../workspaceApi';
 import { notifyWorkspaceSwitched } from '../workspaceEvents';
 import {containOverlayFocus} from '../lib/overlayFocus';
+import { createLatestGate } from '../lib/latestLoad';
+import { browseOutcome, EMPTY_BROWSE_VIEW, type BrowseResponse, type BrowseView } from '../lib/projectBrowse';
 
 interface Props {
   onClose: () => void;
@@ -35,10 +36,12 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
   useEffect(() => {close.current = onClose;}, [onClose]);
   const [currentPath, setCurrentPath] = useState('');
   const [recent, setRecent] = useState<RecentProject[]>([]);
-  const [browsePath, setBrowsePath] = useState('');
-  const [browseInitialized, setBrowseInitialized] = useState(false);
-  const [entries, setEntries] = useState<BrowseEntry[]>([]);
-  const [parent, setParent] = useState<string | undefined>();
+  /** The folder on screen. Path, parent, flag and entries change together, only from a successful browse. */
+  const [view, setView] = useState<BrowseView>(EMPTY_BROWSE_VIEW);
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const browseGate = useRef(createLatestGate()).current;
+  const { path: browsePath, parent, initialized: browseInitialized, entries } = view;
   const [filter, setFilter] = useState('');
   const [axOnly, setAxOnly] = useState(false);
   const [newName, setNewName] = useState('');
@@ -48,20 +51,21 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
   const [pathDraft, setPathDraft] = useState('');
   const [editingPath, setEditingPath] = useState(false);
   const loadBrowse = useCallback(async (path: string) => {
+    const ticket = browseGate.begin();
     setErr(null);
-    const data = await browseWorkspace(path);
-    if (data.ok && data.path) {
-      const shown = displayPath(data.path);
-      setBrowsePath(shown);
-      setPathDraft(shown);
-      setParent(data.parent ? displayPath(data.parent) : undefined);
-      setBrowseInitialized(data.initialized === true);
-      setEntries(data.entries ?? []);
-      setEditingPath(false);
-    } else {
-      setErr(data.error ?? 'Browse failed');
+    let data: BrowseResponse;
+    try {
+      data = await browseWorkspace(path);
+    } catch (e) {
+      data = { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
-  }, []);
+    const out = browseOutcome(viewRef.current, data, browseGate.isLatest(ticket));
+    if (!out) return;
+    setView(out.view);
+    setPathDraft(out.draft);
+    setErr(out.error);
+    if (!out.error) setEditingPath(false);
+  }, [browseGate]);
 
   useEffect(() => {
     void (async () => {
@@ -70,18 +74,14 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
       if (data.workspace?.path) {
         const shown = displayPath(data.workspace.path);
         setCurrentPath(shown);
-        setBrowsePath(shown);
         setPathDraft(shown);
+        void loadBrowse(shown);
       }
       if (data.recent) setRecent(data.recent);
     })();
     // Do not autofocus the filter — on mobile that opens the keyboard and
     // steals attention from Recent / browse. Users tap the field when needed.
-  }, []);
-
-  useEffect(() => {
-    if (browsePath) void loadBrowse(browsePath);
-  }, [browsePath, loadBrowse]);
+  }, [loadBrowse]);
 
   const crumbs = useMemo(() => pathBreadcrumbs(browsePath), [browsePath]);
 
@@ -92,7 +92,7 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
       setPathDraft(browsePath);
       return;
     }
-    setBrowsePath(next);
+    void loadBrowse(next);
   }
 
   useEffect(() => {
@@ -110,7 +110,7 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
     }
     if (res.needs_init) {
       setErr('Not an ax project yet — use Initialize below.');
-      setBrowsePath(path);
+      void loadBrowse(path);
       return;
     }
     if (!res.ok) {
@@ -226,7 +226,7 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
                 <button
                   type="button"
                   className="btn btn-subtle btn-sm"
-                  onClick={() => setBrowsePath(parent)}
+                  onClick={() => void loadBrowse(parent)}
                   disabled={!!busy}
                   title="Parent folder"
                 >
@@ -265,7 +265,7 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
                       <button
                         type="button"
                         className={`project-browser-crumb${i === crumbs.length - 1 ? ' project-browser-crumb--current' : ''}`}
-                        onClick={() => (i === crumbs.length - 1 ? setEditingPath(true) : setBrowsePath(c.path))}
+                        onClick={() => (i === crumbs.length - 1 ? setEditingPath(true) : void loadBrowse(c.path))}
                         disabled={!!busy}
                         title={c.path}
                       >
@@ -329,7 +329,7 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
                 <button
                   type="button"
                   className="project-browser-row-main"
-                  onClick={() => (e.initialized ? void doSwitch(e.path) : setBrowsePath(displayPath(e.path)))}
+                  onClick={() => (e.initialized ? void doSwitch(e.path) : void loadBrowse(displayPath(e.path)))}
                   disabled={!!busy}
                   title={displayPath(e.path)}
                 >
@@ -343,7 +343,7 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
                   <button
                     type="button"
                     className="btn btn-subtle btn-sm project-browser-row-enter"
-                    onClick={() => setBrowsePath(displayPath(e.path))}
+                    onClick={() => void loadBrowse(displayPath(e.path))}
                     disabled={!!busy}
                     title="Open folder"
                   >
