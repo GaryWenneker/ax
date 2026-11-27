@@ -1513,6 +1513,8 @@ ax policy history
 ax policy restore-item <id>
 ```
 
+`restore-item` takes a rule id (`utf8-no-bom`), a skill name (`startup`) or a template path (`skills/startup/SKILL.md`). When a bundled rule and a bundled skill share the name, such as `subagents`, name the kind: `rule:subagents` or `skill:subagents`.
+
 After `--fix` restores `.ax/policy/` files in database mode, run `ax policy import` so `ax.db` picks up the updated skill bodies.
 ### `ax policy capture <prompt> [path]`
 

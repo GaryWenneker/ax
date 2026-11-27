@@ -379,14 +379,32 @@ pub struct RestoredItem {
 pub fn restore_removed_item(project_root: &Path, id: &str) -> std::io::Result<RestoredItem> {
     let ax_dir = project_root.join(".ax");
     let policy = shareable_policy_root(&ax_dir);
+    let (wanted_kind, bare_id) = match id.split_once(':') {
+        Some((kind @ ("rule" | "skill"), rest)) => (Some(kind), rest),
+        _ => (None, id),
+    };
     let matches: Vec<&Template> = TEMPLATES
         .iter()
-        .filter(|template| template.rel == id || template_stem(template.rel) == id)
+        .filter(|template| {
+            let (kind, template_id) = template_id(template.rel);
+            template.rel == id
+                || (template_id == bare_id && wanted_kind.is_none_or(|want| want == kind))
+        })
         .collect();
     if matches.len() > 1 {
+        let options: Vec<String> = matches
+            .iter()
+            .map(|t| {
+                let (kind, template_id) = template_id(t.rel);
+                format!("{kind}:{template_id}")
+            })
+            .collect();
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            format!("ambiguous policy id '{id}'"),
+            format!(
+                "ambiguous policy id '{id}': use one of {}",
+                options.join(", ")
+            ),
         ));
     }
     if let Some(template) = matches.first() {
@@ -410,10 +428,10 @@ pub fn restore_removed_item(project_root: &Path, id: &str) -> std::io::Result<Re
     }
     if let Some(home) = ax_utils::paths::home_dir() {
         let rules = home.join(".ax").join("global_policy").join("rules");
-        if let Some(template) = GLOBAL_RULE_TEMPLATES
-            .iter()
-            .find(|template| template.rel == id || global_rule_id(template.rel) == id)
-        {
+        if let Some(template) = GLOBAL_RULE_TEMPLATES.iter().find(|template| {
+            template.rel == id
+                || (wanted_kind != Some("skill") && global_rule_id(template.rel) == bare_id)
+        }) {
             let rule_id = global_rule_id(template.rel);
             std::fs::create_dir_all(&rules)?;
             let dest = rules.join(format!("{rule_id}.mdc"));
@@ -438,11 +456,19 @@ pub fn restore_removed_item(project_root: &Path, id: &str) -> std::io::Result<Re
     ))
 }
 
-fn template_stem(rel: &str) -> &str {
-    Path::new(rel)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or(rel)
+/// The kind and id of a bundled template: `rules/<id>.mdc` is the rule
+/// `<id>`, `skills/<name>/SKILL.md` is the skill `<name>`.
+fn template_id(rel: &str) -> (&'static str, &str) {
+    if let Some(id) = rel
+        .strip_prefix("rules/")
+        .and_then(|s| s.strip_suffix(".mdc"))
+    {
+        ("rule", id)
+    } else if let Some(rest) = rel.strip_prefix("skills/") {
+        ("skill", rest.strip_suffix("/SKILL.md").unwrap_or(rest))
+    } else {
+        (kind_for_rel(rel), rel)
+    }
 }
 
 fn kind_for_rel(rel: &str) -> &'static str {
@@ -1164,6 +1190,39 @@ mod tests {
         assert!(restored.ok);
         assert_eq!(restored.action, "restored");
         assert!(rule.exists());
+    }
+
+    #[test]
+    fn restore_item_writes_one_deleted_skill_back_by_its_name() {
+        let dir = tempdir().unwrap();
+        let ax = dir.path().join(".ax");
+        seed_default_policy(&ax).unwrap();
+        let skill = dir.path().join(".agents/skills/startup/SKILL.md");
+        std::fs::remove_file(&skill).unwrap();
+        let restored = restore_removed_item(dir.path(), "startup").unwrap();
+        assert_eq!(restored.kind, "skill");
+        assert!(skill.is_file());
+    }
+
+    #[test]
+    fn restore_item_needs_a_kind_when_a_rule_and_a_skill_share_the_id() {
+        let dir = tempdir().unwrap();
+        let ax = dir.path().join(".ax");
+        seed_default_policy(&ax).unwrap();
+        let rule = dir.path().join(".agents/rules/subagents.mdc");
+        let skill = dir.path().join(".agents/skills/subagents/SKILL.md");
+        std::fs::remove_file(&rule).unwrap();
+        std::fs::remove_file(&skill).unwrap();
+        let err = restore_removed_item(dir.path(), "subagents").unwrap_err();
+        assert!(err.to_string().contains("skill:subagents"), "{err}");
+        let restored = restore_removed_item(dir.path(), "skill:subagents").unwrap();
+        assert_eq!(restored.kind, "skill");
+        assert!(skill.is_file());
+        assert!(!rule.exists());
+        let restored = restore_removed_item(dir.path(), "rule:subagents").unwrap();
+        assert_eq!(restored.kind, "rule");
+        assert!(rule.is_file());
+        assert!(restore_removed_item(dir.path(), "SKILL").is_err());
     }
 
     #[test]
