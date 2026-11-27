@@ -131,15 +131,30 @@ jobs:
         run: npm run build
       - name: Unit tests
         run: npm test
-      - name: Test Remote Settings and portal pages
+      # Specs that mock every API call they make, run against the built UI. Specs that
+      # need a running ax web server or live project data are not listed here.
+      - name: Test pages against mocked APIs
         env:
           AX_WEB_URL: http://127.0.0.1:5190
         run: |
-          npm run dev -- --host 127.0.0.1 --port 5190 > /tmp/remote-vite.log 2>&1 &
-          VITE_PID=$!
-          trap 'kill "$VITE_PID"' EXIT
+          npm run preview -- --host 127.0.0.1 --port 5190 --strictPort > /tmp/ui-preview.log 2>&1 &
+          PREVIEW_PID=$!
+          trap 'kill "$PREVIEW_PID"' EXIT
           for attempt in $(seq 1 60); do
             if curl --fail --silent "$AX_WEB_URL/settings" > /dev/null; then break; fi
             sleep 1
           done
-          npm run test:e2e -- remote-mcp.spec.ts azure-portal.spec.ts access-settings.spec.ts access-workflows.spec.ts logging-layout.spec.ts --project=desktop-chrome
+          npm run test:e2e -- --project=desktop-chrome \
+            access-settings.spec.ts access-workflows.spec.ts admin-brand-home.spec.ts \
+            auth-gate-transient.spec.ts azure-portal.spec.ts column-accessibility.spec.ts \
+            column-filter-listeners.spec.ts command-center-auth.spec.ts continuity-draft.spec.ts \
+            continuity-panel.spec.ts control-spacing.spec.ts file-preview-race.spec.ts \
+            file-tree-filter-expansion.spec.ts graph-obsidian.spec.ts graph-selection-idle.spec.ts \
+            graph-stale-load.spec.ts label-filter-keyboard.spec.ts logging-history-failure.spec.ts \
+            logging-layout.spec.ts logging-trace-cap.spec.ts policy-comma-values.spec.ts \
+            policy-graph-unsaved.spec.ts policy-graph.spec.ts policy-property-name.spec.ts \
+            policy-restore-diff-race.spec.ts project-browser-browse.spec.ts \
+            project-switch-failure.spec.ts project-switch-trash.spec.ts remote-mcp-login-poll.spec.ts \
+            remote-mcp-publish.spec.ts remote-mcp.spec.ts replication-setup.spec.ts \
+            ship-config-load.spec.ts specs-page.spec.ts specs-unsaved.spec.ts \
+            workspace-request-failures.spec.ts
