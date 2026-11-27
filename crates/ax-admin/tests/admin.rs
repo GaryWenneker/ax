@@ -3,7 +3,7 @@
 //! show on demand: older protocol versions, expired sessions, redirects.
 use ax_admin::{
     login::{BoxFuture, LoginBackend, LoginStarted, LoginState},
-    mcp::{Limits, McpError, Remote, StaticToken, TokenFuture, TokenSource},
+    mcp::{requires_admin, Limits, McpError, Remote, StaticToken, TokenFuture, TokenSource},
     secrets::{MemoryStore, SecretStore},
     server::{bind, router, App, CSRF_HEADER},
 };
@@ -1910,6 +1910,93 @@ async fn b2_two_calls_on_one_expired_session_reopen_it_once() {
     );
 }
 
+/// The long admin timeout follows what the server says about a tool (its
+/// `ax:admin` scope), not a list of names kept in ax-admin.
+#[tokio::test]
+async fn a_tool_the_server_marks_as_admin_gets_the_admin_timeout() {
+    isolate_usage_db();
+    fn listed(name: &str, scopes: &[&str]) -> Value {
+        let schemes = json!([{"type": "oauth2", "scopes": scopes}]);
+        json!({"name": name, "inputSchema": {"type": "object", "properties": {}},
+            "securitySchemes": schemes, "_meta": {"securitySchemes": schemes}})
+    }
+    let app = Router::new().fallback(|body: String| async move {
+        let request: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+        match request["method"].as_str().unwrap_or("") {
+            "initialize" => initialized("2025-11-25", "s"),
+            "notifications/initialized" => StatusCode::ACCEPTED.into_response(),
+            "tools/list" => rpc_ok(json!({"tools": [
+                listed("ax_compact", &["ax:context", "ax:write", "ax:admin"]),
+                listed("ax_status", &["ax:context"]),
+            ]})),
+            _ => {
+                // Longer than a context call may take, well within an admin call.
+                tokio::time::sleep(Duration::from_millis(600)).await;
+                rpc_ok(json!({"content": []}))
+            }
+        }
+    });
+    let url: url::Url = format!("{}/projects/alpha/mcp", serve(app).await)
+        .parse()
+        .unwrap();
+    let limits = Limits {
+        handshake: Duration::from_secs(5),
+        call: Duration::from_millis(200),
+        admin_call: Duration::from_secs(10),
+        max_bytes: 64 * 1024,
+    };
+    let client = Remote::with_limits(url, Arc::new(StaticToken("k".into())), limits).unwrap();
+    client
+        .call_tool("ax_compact", json!({}))
+        .await
+        .expect("an admin tool may take as long as an admin call");
+    assert_eq!(
+        client.call_tool("ax_status", json!({})).await.unwrap_err(),
+        McpError::Timeout,
+        "a context tool keeps the short timeout"
+    );
+}
+
+/// The real remote server marks its management tools with the admin scope and
+/// its context tools without it, which is what ax-admin goes by.
+#[tokio::test]
+async fn the_remote_server_marks_exactly_its_management_tools_as_admin() {
+    isolate_usage_db();
+    let upstream = Upstream::start().await;
+    let tools = |key: &str| {
+        let url: url::Url = upstream.url("alpha").parse().unwrap();
+        let key = key.to_owned();
+        async move {
+            Remote::new(url, Arc::new(StaticToken(key)))
+                .unwrap()
+                .info()
+                .await
+                .unwrap()
+                .tools
+        }
+    };
+    let admin: Vec<String> = tools(ADMIN_KEY)
+        .await
+        .iter()
+        .filter(|tool| requires_admin(tool))
+        .map(|tool| tool["name"].as_str().unwrap().to_owned())
+        .collect();
+    for name in [
+        "ax_sync",
+        "ax_index",
+        "ax_policy_index",
+        "ax_files",
+        "ax_logs",
+    ] {
+        assert!(admin.iter().any(|n| n == name), "{name} in {admin:?}");
+    }
+    assert!(!admin.iter().any(|n| n == "ax_status" || n == "ax_explore"));
+    assert!(tools(CONTEXT_KEY)
+        .await
+        .iter()
+        .all(|tool| !requires_admin(tool)));
+}
+
 struct Rotating {
     asked: AtomicUsize,
     refreshable: bool,
@@ -2122,10 +2209,18 @@ async fn b6_slow_and_oversized_answers_are_errors() {
     assert_eq!(error, McpError::Timeout);
     assert!(started.elapsed() < Duration::from_secs(5));
 
-    // Tool calls: the context timeout applies to ax_status, the longer one to ax_index.
+    // Tool calls: the context timeout applies to ax_status, the longer one to
+    // the tools the server lists with the admin scope, as the real server does.
     let (_, url) = scripted(|method, _, _, request| match method {
         "initialize" => initialized("2025-11-25", "s"),
-        "tools/list" => tool_list(&["ax_status", "ax_index", "ax_files"]),
+        "tools/list" => {
+            let admin = json!([{"type": "oauth2", "scopes": ["ax:context", "ax:write", "ax:admin"]}]);
+            rpc_ok(json!({"tools": [
+                {"name": "ax_status", "inputSchema": {"type": "object"}},
+                {"name": "ax_index", "inputSchema": {"type": "object"}, "securitySchemes": admin},
+                {"name": "ax_files", "inputSchema": {"type": "object"}, "_meta": {"securitySchemes": admin}},
+            ]}))
+        }
         _ => {
             let name = request["params"]["name"].as_str().unwrap().to_owned();
             std::thread::sleep(Duration::from_millis(700));

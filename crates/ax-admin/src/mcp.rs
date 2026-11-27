@@ -17,18 +17,25 @@ pub const CALL_TIMEOUT: Duration = Duration::from_secs(130);
 /// large project, and reports over it, can run for minutes.
 pub const ADMIN_CALL_TIMEOUT: Duration = Duration::from_secs(600);
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
-/// The tools the remote server offers only with the admin grant.
-pub const ADMIN_TOOLS: &[&str] = &[
-    "ax_sync",
-    "ax_index",
-    "ax_policy_index",
-    "ax_files",
-    "ax_cost",
-    "ax_tool_economics",
-    "ax_budget",
-    "ax_optimization_advice",
-    "ax_logs",
-];
+/// The scope the remote server asks for on a tool that needs the admin grant.
+pub const ADMIN_SCOPE: &str = "ax:admin";
+
+/// Whether the server lists `tool` (one `tools/list` entry) as needing its
+/// admin grant: one of its security schemes, at the top level or in `_meta`,
+/// asks for [`ADMIN_SCOPE`].
+pub fn requires_admin(tool: &Value) -> bool {
+    [
+        tool.get("securitySchemes"),
+        tool.pointer("/_meta/securitySchemes"),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_array)
+    .flatten()
+    .filter_map(|scheme| scheme.get("scopes").and_then(Value::as_array))
+    .flatten()
+    .any(|scope| scope == ADMIN_SCOPE)
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum McpError {
@@ -131,9 +138,9 @@ pub struct Limits {
 }
 
 impl Limits {
-    /// How long a call to `tool` may take.
-    pub fn call_timeout(&self, tool: &str) -> Duration {
-        if ADMIN_TOOLS.contains(&tool) {
+    /// How long a call to `tool` (its `tools/list` entry) may take.
+    pub fn call_timeout(&self, tool: &Value) -> Duration {
+        if requires_admin(tool) {
             self.admin_call
         } else {
             self.call
@@ -480,7 +487,8 @@ impl Remote {
         })
     }
 
-    async fn offers(&self, name: &str) -> Result<bool, McpError> {
+    /// The server's `tools/list` entry for `name`, if it lists the tool.
+    async fn listed(&self, name: &str) -> Result<Option<Value>, McpError> {
         if self.tools.lock().await.is_none() {
             self.info().await?;
         }
@@ -489,16 +497,17 @@ impl Remote {
             .lock()
             .await
             .as_ref()
-            .is_some_and(|tools| tools.iter().any(|tool| tool["name"] == name)))
+            .and_then(|tools| tools.iter().find(|tool| tool["name"] == name).cloned()))
     }
 
     /// Calls a tool the server listed. A tool it did not list is refused here,
-    /// without a request to the server.
+    /// without a request to the server. How long it may take follows what the
+    /// server lists for it (see [`Limits::call_timeout`]).
     pub async fn call_tool(&self, name: &str, arguments: Value) -> Result<Value, McpError> {
-        if !self.offers(name).await? {
+        let Some(tool) = self.listed(name).await? else {
             return Err(McpError::UnknownTool(name.to_owned()));
-        }
-        let timeout = self.limits.call_timeout(name);
+        };
+        let timeout = self.limits.call_timeout(&tool);
         self.rpc(
             "tools/call",
             json!({"name": name, "arguments": arguments}),
@@ -513,22 +522,28 @@ impl Remote {
 mod tests {
     use super::*;
 
+    fn listed(schemes: Value) -> Value {
+        json!({"name": "ax_x", "securitySchemes": schemes.clone(), "_meta": {"securitySchemes": schemes}})
+    }
+
     #[test]
     fn admin_tools_get_ten_minutes_and_other_tools_do_not() {
         let limits = Limits::default();
         assert_eq!(ADMIN_CALL_TIMEOUT, Duration::from_secs(600));
-        assert_eq!(ADMIN_TOOLS.len(), 9);
-        for tool in ADMIN_TOOLS {
-            assert_eq!(limits.call_timeout(tool), ADMIN_CALL_TIMEOUT, "{tool}");
-        }
+        let admin =
+            listed(json!([{"type": "oauth2", "scopes": ["ax:context", "ax:write", "ax:admin"]}]));
+        assert_eq!(limits.call_timeout(&admin), ADMIN_CALL_TIMEOUT);
+        let only_meta =
+            json!({"name": "ax_x", "_meta": {"securitySchemes": [{"scopes": ["ax:admin"]}]}});
+        assert_eq!(limits.call_timeout(&only_meta), ADMIN_CALL_TIMEOUT);
         for tool in [
-            "ax_status",
-            "ax_explore",
-            "ax_remember",
-            "ax_future_tool",
-            "",
+            listed(json!([{"type": "oauth2", "scopes": ["ax:context"]}])),
+            listed(json!([{"type": "oauth2", "scopes": ["ax:context", "ax:write"]}])),
+            listed(json!([{"scopes": "ax:admin"}, null, "ax:admin"])),
+            json!({"name": "ax_logs"}),
+            json!({}),
         ] {
-            assert_eq!(limits.call_timeout(tool), CALL_TIMEOUT, "{tool}");
+            assert_eq!(limits.call_timeout(&tool), CALL_TIMEOUT, "{tool}");
         }
         assert!(CALL_TIMEOUT < ADMIN_CALL_TIMEOUT);
     }
