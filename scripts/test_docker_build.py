@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contract tests for the standalone Docker build (Dockerfile.standalone).
+"""Contract tests for the Docker builds (Dockerfile.standalone and slim/Dockerfile).
 
 The build context must leave out local build output, and every base image
 must name a fixed version so two builds of one commit use the same toolchain.
@@ -15,21 +15,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DOCKERFILE = ROOT / "Dockerfile.standalone"
 DOCKERIGNORE = ROOT / ".dockerignore"
+SLIM_DOCKERIGNORE = ROOT / "slim" / "Dockerfile.dockerignore"
 
 
-def ignore_patterns() -> list[str]:
+def ignore_patterns(file: Path = DOCKERIGNORE) -> list[str]:
     return [
         line.strip()
-        for line in DOCKERIGNORE.read_text(encoding="utf-8").splitlines()
+        for line in file.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.startswith("#") and not line.startswith("!")
     ]
 
 
-def ignored(path: str) -> bool:
-    """True when a .dockerignore pattern drops `path` (or a parent of it) from the context."""
+def ignored(path: str, file: Path = DOCKERIGNORE) -> bool:
+    """True when a pattern in the ignore `file` drops `path` (or a parent of it) from the context."""
     parts = path.split("/")
     prefixes = ["/".join(parts[: i + 1]) for i in range(len(parts))]
-    for pattern in ignore_patterns():
+    for pattern in ignore_patterns(file):
         for prefix in prefixes:
             if fnmatch.fnmatchcase(prefix, pattern):
                 return True
@@ -60,6 +61,18 @@ class BuildContext(unittest.TestCase):
     def test_sources_stay_in_the_context(self) -> None:
         for path in ["Cargo.toml", "Cargo.lock", "crates/ax-cli/src/main.rs", "crates/ax-web/web-ui/package.json"]:
             self.assertFalse(ignored(path), f".dockerignore must keep {path}")
+
+
+class SlimBuildContext(unittest.TestCase):
+    """slim/Dockerfile builds from the repository root with slim/Dockerfile.dockerignore."""
+
+    def test_local_build_output_stays_out_of_the_context(self) -> None:
+        for path in ["target/release/ax", "target-dev/debug/ax", "slim/dist/ax-linux-amd64", "slim/dist/ax-linux-arm64"]:
+            self.assertTrue(ignored(path, SLIM_DOCKERIGNORE), f"slim/Dockerfile.dockerignore must exclude {path}")
+
+    def test_sources_stay_in_the_context(self) -> None:
+        for path in ["Cargo.toml", "Cargo.lock", "crates/ax-cli/src/main.rs", "slim/ax-serve-repo.sh", "slim/ax-index-repo.sh"]:
+            self.assertFalse(ignored(path, SLIM_DOCKERIGNORE), f"slim/Dockerfile.dockerignore must keep {path}")
 
 
 class BaseImages(unittest.TestCase):
