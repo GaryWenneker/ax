@@ -26,7 +26,7 @@ import {
 } from '../components/ui/PageLayout';
 import { PolicyCount, PolicySortControl, PolicyToolbar } from '../components/ui/PolicyTable';
 import { PolicyCalmList } from '../components/ui/PolicyCalmList';
-import { auditOneRule } from '../components/SkillCatalogBar';
+import { auditOneRule } from '../lib/policyAudit';
 import { PolicyContextMenu } from '../components/ui/PolicyContextMenu';
 import { PolicyDbLegend } from '../components/PolicyMetaView';
 import { priorityMeta, ruleRowSubtitle } from '../lib/calmRows';
