@@ -19,7 +19,7 @@ The interactive installer auto-detects supported agents and wires the ax MCP ser
 - **Windsurf (Cascade)** — writes `~/.codeium/windsurf/mcp_config.json` (global only — Windsurf has no project-level MCP config).
 - **Zed** — writes `context_servers` in Zed's `settings.json` (`%APPDATA%\Zed\settings.json` on Windows, `~/.config/zed/settings.json` on macOS/Linux).
 
-The installer only adds or replaces its own `ax` entry and keeps every other key in the file. A config file it cannot parse (for example a strict JSON file with a comment or a trailing comma), or one whose server list is not a JSON object, is left untouched: that agent's install fails with a message naming the file, so you can fix it and run the install again. Zed settings, VS Code `.vscode/mcp.json` and `opencode.jsonc` may contain comments and trailing commas; the comments are not kept when ax rewrites the file.
+The installer only adds or replaces its own `ax` entry and keeps every other key in the file. A config file it cannot parse (for example a strict JSON file with a comment or a trailing comma), or one whose server list is not a JSON object, is left untouched: that agent's install fails with a message naming the file, so you can fix it and run the install again. Zed settings, VS Code `.vscode/mcp.json` and `opencode.jsonc` may contain comments and trailing commas; ax rewrites such a file as plain JSON with all text (including non-ASCII characters) intact, and first saves the original, comments included, as `<file>.ax-backup` next to it.
 
 Run `npx @garywenneker/ax` or `ax install` — see [Installation](/getting-started/installation/) for non-interactive flags.
 

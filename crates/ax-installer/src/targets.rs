@@ -540,6 +540,9 @@ fn write_json_action(path: &Path, value: &Value) -> Result<FileAction, String> {
         return Ok(FileAction::Unchanged);
     }
     let body = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    if existed {
+        backup_if_comments_lost(path)?;
+    }
     ax_utils::atomic_write(path, body.as_bytes())
         .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     Ok(if existed {
@@ -547,6 +550,23 @@ fn write_json_action(path: &Path, value: &Value) -> Result<FileAction, String> {
     } else {
         FileAction::Created
     })
+}
+
+/// Rewriting a JSONC file as JSON drops its comments. Before that happens the
+/// original is copied to `<file>.ax-backup`, so nothing the user wrote is lost.
+fn backup_if_comments_lost(path: &Path) -> Result<(), String> {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return Ok(());
+    };
+    let text = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
+    if text.trim().is_empty() || serde_json::from_str::<Value>(text).is_ok() {
+        return Ok(());
+    }
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".ax-backup");
+    let backup = path.with_file_name(name);
+    ax_utils::atomic_write(&backup, raw.as_bytes())
+        .map_err(|e| format!("cannot write {}: {e}", backup.display()))
 }
 
 fn upsert_mcp_servers(path: &Path, target: &str) -> Result<FileAction, String> {
@@ -1959,5 +1979,49 @@ display:
         let bad = "mcp_servers:\n  github: [unclosed\n";
         assert!(hermes_upsert(bad, "ax").is_err());
         assert!(hermes_remove(bad).is_err());
+    }
+}
+
+#[cfg(test)]
+mod jsonc_rewrite_tests {
+    use super::*;
+
+    #[test]
+    fn rewriting_a_commented_settings_file_keeps_text_and_a_backup_of_the_comments() {
+        let dir = std::env::temp_dir().join(format!(
+            "ax-installer-jsonc-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        let original = "// Zed settings\n{\n  \"buffer_font_family\": \"Zed Mono \u{2014} Nerd\", // font\n  \"theme\": \"Caf\u{e9} \u{1f600}\",\n}\n";
+        fs::write(&path, original).unwrap();
+
+        let mut config = read_json_lenient(&path).unwrap();
+        object_entry(&mut config, "context_servers", &path)
+            .unwrap()
+            .insert("ax".into(), zed_context_server_entry());
+        assert_eq!(
+            write_json_action(&path, &config).unwrap(),
+            FileAction::Updated
+        );
+
+        let v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["buffer_font_family"], "Zed Mono \u{2014} Nerd");
+        assert_eq!(v["theme"], "Caf\u{e9} \u{1f600}");
+        assert!(v["context_servers"]["ax"].is_object());
+        let backup = dir.join("settings.json.ax-backup");
+        assert_eq!(fs::read_to_string(&backup).unwrap(), original);
+
+        // A plain JSON file gets no backup.
+        let plain = dir.join("plain.json");
+        fs::write(&plain, "{\"a\": 1}").unwrap();
+        write_json_action(&plain, &serde_json::json!({"a": 2})).unwrap();
+        assert!(!dir.join("plain.json.ax-backup").exists());
+        let _ = fs::remove_dir_all(dir);
     }
 }
