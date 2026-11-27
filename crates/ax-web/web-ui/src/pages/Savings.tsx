@@ -1,7 +1,8 @@
 import MobileControls from '../components/ui/MobileControls';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { useLive, useNewKeys } from '../lib/useLive';
+import { createLatestGate, dataAfterFailedLoad } from '../lib/latestLoad';
 import {
   fetchCallTokenDetail,
   fetchSavings,
@@ -816,11 +817,14 @@ export default function SavingsPage() {
 
   const [dataScope, setDataScope] = useState('');
 
+  const loadGate = useRef(createLatestGate());
+
   const load = useCallback(async (quiet = false) => {
     if (period === 'custom' && !from) {
       setError('Pick a start date for custom range.');
       return;
     }
+    const ticket = loadGate.current.begin();
     if (!quiet) setLoading(true);
     setError(null);
     try {
@@ -829,13 +833,16 @@ export default function SavingsPage() {
         from: period === 'custom' ? from : undefined,
         to: period === 'custom' && to ? to : undefined,
       });
+      if (!loadGate.current.isLatest(ticket)) return;
       setDataScope(`${period}|${from}|${to}`);
       setData(summary);
     } catch (e) {
+      if (!loadGate.current.isLatest(ticket)) return;
       setError(String(e));
-      setData(null);
+      // A failed live refresh keeps the dashboard; the next change event retries.
+      setData((shown) => dataAfterFailedLoad(shown, quiet));
     } finally {
-      setLoading(false);
+      if (loadGate.current.isLatest(ticket)) setLoading(false);
     }
   }, [period, from, to]);
 
