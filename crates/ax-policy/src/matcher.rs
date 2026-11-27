@@ -436,8 +436,7 @@ mod tests {
         // The file does not exist and the process runs in another directory.
         let rel = collect_relative_files(dir.path(), &[PathBuf::from("src/App.tsx")], &[]);
         assert_eq!(rel, vec!["src/App.tsx".to_string()]);
-        let dotted =
-            collect_relative_files(dir.path(), &[PathBuf::from("./src/../lib/a.rs")], &[]);
+        let dotted = collect_relative_files(dir.path(), &[PathBuf::from("./src/../lib/a.rs")], &[]);
         assert_eq!(dotted, vec!["lib/a.rs".to_string()]);
     }
 

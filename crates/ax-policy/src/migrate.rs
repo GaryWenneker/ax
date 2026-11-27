@@ -691,7 +691,11 @@ triggers: [test]
         let plan = scan_policy_candidates(dir.path());
         let keys: Vec<&str> = plan.candidates.iter().map(|c| c.key.as_str()).collect();
         assert_eq!(keys, vec!["rule:live"]);
-        for skipped in [".ax/policy/pending", ".ax/policy-inactive", ".ax/policy-private"] {
+        for skipped in [
+            ".ax/policy/pending",
+            ".ax/policy-inactive",
+            ".ax/policy-private",
+        ] {
             assert!(
                 plan.skipped.iter().any(|s| s.source_path == skipped),
                 "{skipped} should be reported as skipped: {:?}",
@@ -704,7 +708,11 @@ triggers: [test]
     fn scan_ignores_rule_and_skill_files_outside_policy_folders() {
         let dir = tempfile::tempdir().unwrap();
         write_rule(dir.path(), "crates/x/templates/rules/tmpl.mdc", "tmpl");
-        write_skill(dir.path(), "crates/x/templates/skills/tmpl/SKILL.md", "tmpl");
+        write_skill(
+            dir.path(),
+            "crates/x/templates/skills/tmpl/SKILL.md",
+            "tmpl",
+        );
         write_rule(dir.path(), "docs/example.mdc", "example");
         write_skill(dir.path(), "fixtures/SKILL.md", "fixture");
         let plan = scan_policy_candidates(dir.path());
@@ -726,7 +734,11 @@ triggers: [test]
         write_skill(dir.path(), "zz-agents/skills/deploy/SKILL.md", "deploy");
 
         let plan = scan_policy_candidates(dir.path());
-        let rule = plan.candidates.iter().find(|c| c.key == "rule:foo").unwrap();
+        let rule = plan
+            .candidates
+            .iter()
+            .find(|c| c.key == "rule:foo")
+            .unwrap();
         assert_eq!(rule.source_path, "zz-agents/rules/foo.mdc");
         assert_eq!(rule.source, "ax-policy");
         let skill = plan
