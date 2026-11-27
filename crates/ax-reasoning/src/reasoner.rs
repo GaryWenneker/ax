@@ -563,6 +563,44 @@ mod tests {
         })
     }
 
+    /// Result of [`timed_back_off`]: the error after the second request,
+    /// whether the endpoint is still backed off, and how long both requests
+    /// took. All three are read while the env lock is held, so time spent
+    /// waiting for other tests and their back-off state never leak in.
+    struct BackOffRun {
+        err: String,
+        backing_off: bool,
+        elapsed: std::time::Duration,
+    }
+
+    fn timed_back_off(url: &str, timeout_ms: &str) -> BackOffRun {
+        let vars = [
+            ("AX_OFFLOAD_URL", url),
+            ("AX_OFFLOAD_MODEL", "gpt-4o"),
+            ("AX_OFFLOAD_TIMEOUT_MS", timeout_ms),
+        ];
+        let endpoint = format!("{url}/chat/completions");
+        with_env(&vars, |_| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let started = std::time::Instant::now();
+            let first = rt.block_on(synthesize_offload("q", "ctx", None));
+            let second = rt.block_on(synthesize_offload("q", "ctx", None));
+            let elapsed = started.elapsed();
+            assert!(first.is_none());
+            assert!(second.is_none());
+            let run = BackOffRun {
+                err: last_offload_error().unwrap_or_default(),
+                backing_off: backing_off(&endpoint),
+                elapsed,
+            };
+            clear_backoff(&endpoint);
+            run
+        })
+    }
+
     #[test]
     fn an_unreachable_endpoint_is_skipped_for_a_while_after_a_failure() {
         let (url, server) = fail_then_serve(std::time::Duration::from_millis(1500));
@@ -582,38 +620,26 @@ mod tests {
         // A non-routable address: the SYN gets no answer, so the connect times
         // out (or the network reports it unreachable). Either way offload must
         // skip the endpoint for the next request instead of waiting again.
-        let url = "http://10.255.255.1:9/v1";
-        let started = std::time::Instant::now();
-        let (first, second, err) = two_requests(url, &[("AX_OFFLOAD_TIMEOUT_MS", "10000")]);
-        assert!(first.is_none());
-        assert!(second.is_none());
-        let err = err.unwrap_or_default();
-        assert!(err.contains("backing off"), "{err}");
-        assert!(backing_off(&format!("{url}/chat/completions")));
+        let run = timed_back_off("http://10.255.255.1:9/v1", "10000");
+        assert!(run.err.contains("backing off"), "{}", run.err);
+        assert!(run.backing_off);
         assert!(
-            started.elapsed() < CONNECT_TIMEOUT * 2,
+            run.elapsed < CONNECT_TIMEOUT * 2,
             "the second request waited for the connect timeout again"
         );
-        clear_backoff(&format!("{url}/chat/completions"));
     }
 
     #[test]
     fn a_connect_timeout_shorter_than_the_default_starts_the_back_off() {
         // The request timeout is shorter than the default connect timeout, so the
         // connect must give up first and count as a connect failure.
-        let url = "http://10.255.255.1:10/v1";
-        let started = std::time::Instant::now();
-        let (first, second, err) = two_requests(url, &[("AX_OFFLOAD_TIMEOUT_MS", "500")]);
-        assert!(first.is_none());
-        assert!(second.is_none());
-        let err = err.unwrap_or_default();
-        assert!(err.contains("backing off"), "{err}");
-        assert!(backing_off(&format!("{url}/chat/completions")));
+        let run = timed_back_off("http://10.255.255.1:10/v1", "500");
+        assert!(run.err.contains("backing off"), "{}", run.err);
+        assert!(run.backing_off);
         assert!(
-            started.elapsed() < std::time::Duration::from_millis(900),
+            run.elapsed < std::time::Duration::from_millis(900),
             "the second request waited for the timeout again"
         );
-        clear_backoff(&format!("{url}/chat/completions"));
     }
 
     /// The first request gets no reply until well after the client timeout;
