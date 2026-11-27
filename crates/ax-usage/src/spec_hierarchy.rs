@@ -569,6 +569,18 @@ async fn mark_approved(
     Ok(())
 }
 
+/// The error a revision returns when its `based_on` is not the latest version.
+pub(crate) const CONFLICT: &str = "conflict";
+
+/// A unique violation on the revision key means another edit stored the same
+/// version first, which is a conflict, not a database failure.
+fn revision_insert_error(error: sqlx::Error) -> String {
+    match &error {
+        sqlx::Error::Database(db) if db.is_unique_violation() => CONFLICT.into(),
+        _ => error.to_string(),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PlanEdit {
     pub plan_id: String,
@@ -585,7 +597,12 @@ pub async fn revise_plan(pool: &SqlitePool, edit: PlanEdit) -> Result<i64, Strin
     if body.is_empty() {
         return Err("empty plan".into());
     }
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    // IMMEDIATE takes the write lock before the read, so two edits of one
+    // version run one after the other and the second sees a conflict.
+    let mut tx = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|error| error.to_string())?;
     let current: Option<(i64, String, i64, String)> = sqlx::query_as(
         "SELECT version, spec_id, spec_version, spec_content_hash
          FROM plan_revisions WHERE plan_id = ?1
@@ -599,7 +616,7 @@ pub async fn revise_plan(pool: &SqlitePool, edit: PlanEdit) -> Result<i64, Strin
         return Err("missing plan".into());
     };
     if edit.based_on != latest {
-        return Err("conflict".into());
+        return Err(CONFLICT.into());
     }
     let next = latest + 1;
     // An edit keeps the spec revision its parent was written against. Only a
@@ -625,7 +642,7 @@ pub async fn revise_plan(pool: &SqlitePool, edit: PlanEdit) -> Result<i64, Strin
     .bind(now_ms())
     .execute(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(revision_insert_error)?;
     tx.commit().await.map_err(|error| error.to_string())?;
     Ok(next)
 }
@@ -1358,7 +1375,11 @@ pub async fn revise_spec(pool: &SqlitePool, edit: SpecEdit) -> Result<i64, Strin
     if body.is_empty() {
         return Err("empty spec".into());
     }
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    // IMMEDIATE takes the write lock before the read; see revise_plan.
+    let mut tx = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|error| error.to_string())?;
     // `MAX(version)` always returns a row and decodes NULL as 0, so read the
     // head row itself, and only for a spec that exists.
     let latest: Option<i64> = sqlx::query_scalar(
@@ -1373,7 +1394,7 @@ pub async fn revise_spec(pool: &SqlitePool, edit: SpecEdit) -> Result<i64, Strin
         return Err("missing spec".into());
     };
     if edit.based_on != latest {
-        return Err("conflict".into());
+        return Err(CONFLICT.into());
     }
     let next = latest + 1;
     sqlx::query(
@@ -1391,7 +1412,7 @@ pub async fn revise_spec(pool: &SqlitePool, edit: SpecEdit) -> Result<i64, Strin
     .bind(now_ms())
     .execute(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(revision_insert_error)?;
     tx.commit().await.map_err(|error| error.to_string())?;
     Ok(next)
 }
@@ -1440,7 +1461,7 @@ async fn spec_conflict_json(
     parsed: &SpecReviseBody,
     error: String,
 ) -> serde_json::Value {
-    if !error.contains("conflict") {
+    if error != CONFLICT {
         return serde_json::json!({ "ok": false, "error": error });
     }
     let head_version: Option<i64> = sqlx::query_scalar(
@@ -1522,7 +1543,7 @@ pub async fn revise_plan_from_json(
 }
 
 async fn conflict_json(pool: &SqlitePool, parsed: &ReviseBody, error: String) -> serde_json::Value {
-    if !error.contains("conflict") {
+    if error != CONFLICT {
         return serde_json::json!({ "ok": false, "error": error });
     }
     let head_version: Option<i64> = sqlx::query_scalar(
@@ -3195,6 +3216,60 @@ mod tests {
         assert_eq!(review["ok"], true);
         assert_eq!(review["ids"], serde_json::json!(["plan-queued"]));
         assert_eq!(count(&pool, "specs").await, 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_edits_of_one_version_get_one_win_and_conflict_payloads() {
+        let (_dir, pool) = open().await;
+        create_spec_with_plan(&pool, sample("Record the ledger."))
+            .await
+            .unwrap();
+        let plans = (0..8).map(|index| {
+            let pool = pool.clone();
+            tokio::spawn(async move {
+                revise_plan_from_json(
+                    &pool,
+                    serde_json::json!({
+                        "planId": "plan-ledger",
+                        "basedOn": 1,
+                        "body": format!("Plan edit {index}."),
+                        "sessionId": "session-1",
+                        "turnId": format!("turn-plan-{index}"),
+                    }),
+                )
+                .await
+            })
+        });
+        let specs = (0..8).map(|index| {
+            let pool = pool.clone();
+            tokio::spawn(async move {
+                revise_spec_from_json(
+                    &pool,
+                    serde_json::json!({
+                        "specId": "spec-billing",
+                        "basedOn": 1,
+                        "body": format!("Spec edit {index}."),
+                        "sessionId": "session-1",
+                        "turnId": format!("turn-spec-{index}"),
+                    }),
+                )
+                .await
+            })
+        });
+        let tasks: Vec<_> = plans.chain(specs).collect();
+        let mut results = Vec::new();
+        for task in tasks {
+            results.push(task.await.unwrap());
+        }
+        for (label, group) in [("plan", &results[..8]), ("spec", &results[8..])] {
+            let wins = group.iter().filter(|value| value["ok"] == true).count();
+            assert_eq!(wins, 1, "{label}: {group:?}");
+            for value in group.iter().filter(|value| value["ok"] != true) {
+                assert_eq!(value["error"], "conflict", "{label}: {value}");
+                assert!(value["head"]["body"].is_string(), "{label}: {value}");
+                assert!(value["base"]["body"].is_string(), "{label}: {value}");
+            }
+        }
     }
 
     #[tokio::test]
