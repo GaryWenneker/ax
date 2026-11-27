@@ -19,6 +19,8 @@ The interactive installer auto-detects supported agents and wires the ax MCP ser
 - **Windsurf (Cascade)** — writes `~/.codeium/windsurf/mcp_config.json` (global only — Windsurf has no project-level MCP config).
 - **Zed** — writes `context_servers` in Zed's `settings.json` (`%APPDATA%\Zed\settings.json` on Windows, `~/.config/zed/settings.json` on macOS/Linux).
 
+The installer only adds or replaces its own `ax` entry and keeps every other key in the file. A config file it cannot parse (for example a strict JSON file with a comment or a trailing comma), or one whose server list is not a JSON object, is left untouched: that agent's install fails with a message naming the file, so you can fix it and run the install again. Zed settings, VS Code `.vscode/mcp.json` and `opencode.jsonc` may contain comments and trailing commas; the comments are not kept when ax rewrites the file.
+
 Run `npx @garywenneker/ax` or `ax install` — see [Installation](/getting-started/installation/) for non-interactive flags.
 
 VS Code, Windsurf, and Zed are MCP-only integrations for the full install — there is no headless CLI to run these as background agents (unlike Claude Code, Cursor, Codex, opencode, or Gemini CLI), so `ax install` (or **Settings → IDEs & agents** in the Command Center) wires the MCP server, plus the Command Center inside the editor: an extension for the VS Code family, a tool window for JetBrains IDEs, and a browser task for Zed — see [Command Center inside your IDE](/guides/command-center/#command-center-inside-your-ide).
