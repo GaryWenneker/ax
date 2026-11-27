@@ -1652,16 +1652,27 @@ pub(crate) mod tests {
     pub(crate) static HOME_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
         std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
+    /// Variables that point plan import at folders outside the test. The
+    /// isolated home sets `AX_HOME_DIR` and clears the others.
+    const HOME_VARS: [&str; 3] = ["AX_HOME_DIR", "XDG_CONFIG_HOME", "HERMES_HOME"];
+
+    /// A temporary `AX_HOME_DIR` with `XDG_CONFIG_HOME` and `HERMES_HOME` unset,
+    /// restored on drop. Hold [`HOME_LOCK`] while it lives.
     pub(crate) struct IsolatedHome {
-        previous: Option<std::ffi::OsString>,
+        previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
         dir: tempfile::TempDir,
     }
 
     impl IsolatedHome {
         pub(crate) fn new() -> Self {
             let dir = tempfile::tempdir().unwrap();
-            let previous = std::env::var_os("AX_HOME_DIR");
+            let previous = HOME_VARS
+                .iter()
+                .map(|name| (*name, std::env::var_os(name)))
+                .collect();
             std::env::set_var("AX_HOME_DIR", dir.path());
+            std::env::remove_var("XDG_CONFIG_HOME");
+            std::env::remove_var("HERMES_HOME");
             Self { previous, dir }
         }
 
@@ -1672,11 +1683,29 @@ pub(crate) mod tests {
 
     impl Drop for IsolatedHome {
         fn drop(&mut self) {
-            match self.previous.clone() {
-                Some(value) => std::env::set_var("AX_HOME_DIR", value),
-                None => std::env::remove_var("AX_HOME_DIR"),
+            for (name, value) in &self.previous {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
             }
         }
+    }
+
+    /// The specs in `pool` are exactly `id`: nothing was imported from the
+    /// machine's own home, recent projects, or plan folders.
+    async fn assert_only_spec(pool: &SqlitePool, id: &str) {
+        let ids: Vec<String> = list_specs(pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|item| item.id)
+            .collect();
+        assert_eq!(
+            ids,
+            vec![id.to_string()],
+            "plans from outside the test were imported"
+        );
     }
 
     struct Open {
@@ -1902,6 +1931,8 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn a_linked_file_change_does_not_rewrite_the_approved_body() {
+        let _lock = HOME_LOCK.lock().await;
+        let _home = IsolatedHome::new();
         let open = open().await;
         let pool = &open.pool;
         let dir = &open.dir;
@@ -1932,6 +1963,7 @@ pub(crate) mod tests {
         let approved = approved_revision(pool, "registry").await.unwrap().unwrap();
         assert_eq!(approved.body, "keep me");
         let context = spec_context_block(pool, dir.path(), "s").await;
+        assert_only_spec(pool, "registry").await;
         assert!(context.contains("approved: v1"));
         assert!(context.contains("drift: yes"));
         assert!(context.contains("hash: "));
@@ -1939,6 +1971,8 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn an_edited_markdown_file_is_a_conflict() {
+        let _lock = HOME_LOCK.lock().await;
+        let _home = IsolatedHome::new();
         let open = open().await;
         let pool = &open.pool;
         let dir = &open.dir;
@@ -1969,6 +2003,7 @@ pub(crate) mod tests {
         let approved = approved_revision(pool, "registry").await.unwrap().unwrap();
         assert_eq!(approved.body, "approved text");
         let context = spec_context_block(pool, dir.path(), "s").await;
+        assert_only_spec(pool, "registry").await;
         assert!(context.contains("delivery: conflict"));
         assert!(context.contains(&format!("approvedHash: {}", hashes.0)));
         assert!(context.contains(&format!("fileHash: {}", hashes.1)));
@@ -2113,6 +2148,8 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn a_bound_turn_can_show_the_version_it_received() {
+        let _lock = HOME_LOCK.lock().await;
+        let _home = IsolatedHome::new();
         let open = open().await;
         let pool = &open.pool;
         let dir = &open.dir;
@@ -2162,6 +2199,7 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(delivered_version(pool, "s", "t9").await.unwrap(), Some(1));
         let context = spec_context_block(pool, dir.path(), "s").await;
+        assert_only_spec(pool, "registry").await;
         assert!(context.contains("approved: v2"));
         assert!(context.contains("pointer: ax spec show registry@2"));
     }

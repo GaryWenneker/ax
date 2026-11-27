@@ -825,8 +825,28 @@ mod tests {
 
     static SEQ: AtomicUsize = AtomicUsize::new(0);
 
-    async fn fixture() -> (PathBuf, SqlitePool, tokio::sync::MutexGuard<'static, ()>) {
-        let guard = crate::store::USAGE_ENV_LOCK.lock().await;
+    /// Holds [`crate::store::USAGE_ENV_LOCK`] and puts `AX_USAGE_DB` back as it
+    /// was when dropped.
+    struct UsageDbEnv {
+        previous: Option<std::ffi::OsString>,
+        _lock: tokio::sync::MutexGuard<'static, ()>,
+    }
+
+    impl Drop for UsageDbEnv {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var("AX_USAGE_DB", value),
+                None => std::env::remove_var("AX_USAGE_DB"),
+            }
+        }
+    }
+
+    async fn fixture() -> (PathBuf, SqlitePool, UsageDbEnv) {
+        let lock = crate::store::USAGE_ENV_LOCK.lock().await;
+        let guard = UsageDbEnv {
+            previous: std::env::var_os("AX_USAGE_DB"),
+            _lock: lock,
+        };
         let n = SEQ.fetch_add(1, Ordering::SeqCst);
         let dir = std::env::temp_dir().join(format!("ax-turn-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
