@@ -92,29 +92,53 @@ def probe_arms(ax_bin: Path) -> dict:
     }
 
 
+def norm_path(path: str) -> str:
+    """Repo-relative path with forward slashes, no leading `./` and no trailing `/`."""
+    p = path.strip().replace("\\", "/")
+    while p.startswith("./"):
+        p = p[2:]
+    return p.rstrip("/")
+
+
+def hit_flags(relevant: list[str], ranked: list[str]) -> list[bool]:
+    """For each ranked entry: True when it equals an expected path not matched earlier.
+
+    Paths are compared whole, so a file under an expected directory or a path
+    that only shares a suffix with an expected file is not a hit, and the same
+    expected entry is credited once.
+    """
+    wanted = {norm_path(r) for r in relevant} - {""}
+    seen: set[str] = set()
+    flags = []
+    for x in ranked:
+        n = norm_path(x)
+        flags.append(n in wanted and n not in seen)
+        if n in wanted:
+            seen.add(n)
+    return flags
+
+
 def precision_at(relevant: list[str], ranked: list[str], k: int) -> float | None:
     if not relevant:
         return None
     top = ranked[:k]
     if not top:
         return 0.0
-    hits = sum(1 for x in top if any(r.endswith(x) or x.endswith(r) or r in x or x in r for r in relevant))
-    return hits / min(k, len(top))
+    return sum(hit_flags(relevant, top)) / min(k, len(top))
 
 
 def recall_at(relevant: list[str], ranked: list[str], k: int) -> float | None:
-    if not relevant:
+    wanted = {norm_path(r) for r in relevant} - {""}
+    if not wanted:
         return None
-    top = ranked[:k]
-    hits = sum(1 for r in relevant if any(r.endswith(x) or x.endswith(r) or r in x or x in r for x in top))
-    return hits / len(relevant)
+    return sum(hit_flags(relevant, ranked[:k])) / len(wanted)
 
 
 def mrr(relevant: list[str], ranked: list[str]) -> float | None:
     if not relevant:
         return None
-    for i, x in enumerate(ranked, start=1):
-        if any(r.endswith(x) or x.endswith(r) or r in x or x in r for r in relevant):
+    for i, hit in enumerate(hit_flags(relevant, ranked), start=1):
+        if hit:
             return 1.0 / i
     return 0.0
 
@@ -122,13 +146,10 @@ def mrr(relevant: list[str], ranked: list[str]) -> float | None:
 def ndcg_at(relevant: list[str], ranked: list[str], k: int) -> float:
     import math
 
-    def rel(i: int) -> float:
-        x = ranked[i] if i < len(ranked) else ""
-        return 1.0 if any(r.endswith(x) or x.endswith(r) or r in x or x in r for r in relevant) else 0.0
-
-    dcg = sum((2 ** rel(i) - 1) / math.log2(i + 2) for i in range(min(k, len(ranked))))
-    ideal_hits = min(len(relevant), k)
-    idcg = sum((2**1 - 1) / math.log2(i + 2) for i in range(ideal_hits))
+    flags = hit_flags(relevant, ranked[:k])
+    dcg = sum(1.0 / math.log2(i + 2) for i, hit in enumerate(flags) if hit)
+    ideal_hits = min(len({norm_path(r) for r in relevant} - {""}), k)
+    idcg = sum(1.0 / math.log2(i + 2) for i in range(ideal_hits))
     return (dcg / idcg) if idcg else 0.0
 
 
