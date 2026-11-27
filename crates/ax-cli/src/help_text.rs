@@ -223,7 +223,9 @@ The daemon shares one index connection for multiple MCP clients (Cursor, VS Code
 
 Subcommands:
   status    Show pid, port, socket path from .ax/daemon.json
-  stop      Stop the running daemon for this project root
+  stop      Stop the running daemon for this project root: checks that the
+            recorded pid is an ax daemon, sends SIGTERM, waits, then SIGKILL.
+            A pid that now belongs to another program is left running.
   restart   Stop + start a fresh daemon (same as Command Center Reload MCP)
 
 Examples:

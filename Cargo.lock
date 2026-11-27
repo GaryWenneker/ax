@@ -607,6 +607,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "subtle",
+ "sysinfo",
  "tar",
  "tempfile",
  "tokio",

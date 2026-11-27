@@ -957,7 +957,7 @@ The daemon follows its binary. It checks every 30 seconds (`AX_DAEMON_EXE_CHECK_
 |---|---|
 | `path` | Optional project root (before subcommand) |
 | `status` | Show pid, port, socket from `.ax/daemon.json` (default) |
-| `stop` | Stop the running daemon |
+| `stop` | Stop the running daemon. It first checks that the recorded pid is still an ax daemon, sends SIGTERM, waits up to 5 seconds, then sends SIGKILL; it reports "stopped" only once the process is gone and fails otherwise. A pid that now belongs to another program is left running and the stale `.ax/daemon.json` is removed |
 | `restart` | Stop + start a fresh daemon (Command Center **Reload MCP** uses the same path) |
 
 ```bash
