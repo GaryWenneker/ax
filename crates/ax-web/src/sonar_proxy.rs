@@ -346,9 +346,13 @@ impl SonarProxyCache {
         self.ready = true;
     }
 
+    /// Remember a fallback host that answered. Only a ready cache takes it:
+    /// after [`Self::invalidate`] the credentials are gone, so the next
+    /// request must rebuild host and credentials together.
     fn set_host(&mut self, host: String) {
-        self.host = host;
-        self.ready = true;
+        if self.ready {
+            self.host = host;
+        }
     }
 }
 
@@ -1003,6 +1007,34 @@ fn rewrite_location(location: &str, sonar_host: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_host_fallback_after_invalidate_does_not_mark_the_cache_ready() {
+        let mut config = ShipConfig::default();
+        config.sonar.host = "http://127.0.0.1:9000/".into();
+        config.sonar.admin_user = "admin".into();
+        config.sonar.admin_password = "secret".into();
+        let mut cache = SonarProxyCache::default();
+        cache.ensure(&config);
+        assert!(cache.ready);
+        let auth = cache.auth_header.clone();
+        assert!(!auth.is_empty());
+
+        // Request B gave up and invalidated; request A then found a working host.
+        cache.invalidate();
+        cache.set_host("http://localhost:9000".into());
+        assert!(!cache.ready, "a cache without credentials must not be ready");
+
+        // The next request rebuilds host and credentials together.
+        cache.ensure(&config);
+        assert!(cache.ready);
+        assert_eq!(cache.auth_header, auth);
+
+        // While ready, the fallback host replaces the configured one.
+        cache.set_host("http://localhost:9000".into());
+        assert_eq!(cache.host, "http://localhost:9000");
+        assert_eq!(cache.auth_header, auth);
+    }
 
     #[test]
     fn upstream_path_strips_route_prefix() {
