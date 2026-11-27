@@ -717,13 +717,6 @@ html[data-ax-theme] .ax-project-badge-icon {
 @media (prefers-reduced-motion: reduce) {
   .mcp-ai-star.is-live { animation: none; opacity: 1; transform: none; }
 }
-.mcp-dir-legend-item--neural.is-ranking::before {
-  animation: none;
-}
-@keyframes mcp-neural-rank {
-  0%, 100% { opacity: 0.45; }
-  50% { opacity: 1; }
-}
 .continuity-panel {
   display: flex;
   flex-direction: column;
@@ -884,12 +877,6 @@ html[data-ax-theme] .ax-project-badge-icon {
 .continuity-prompt-copy:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-}
-@media (prefers-reduced-motion: reduce) {
-  .mcp-dir-legend-item--neural.is-ranking::before {
-    animation: none;
-    opacity: 1;
-  }
 }
 .mcp-dir-legend-live {
   position: absolute;

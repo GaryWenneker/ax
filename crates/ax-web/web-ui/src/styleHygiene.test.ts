@@ -43,6 +43,17 @@ describe('theme selectors', () => {
   });
 });
 
+describe('keyframes', () => {
+  it('declares only keyframes that some animation runs', () => {
+    const named = [...allCss.matchAll(/@keyframes\s+([\w-]+)/g)].map((m) => m[1]);
+    const animations = [...sheets.values()].flatMap((css) => cssRules(css))
+      .flatMap((rule) => [rule.declarations.get('animation') ?? '', rule.declarations.get('animation-name') ?? ''])
+      .join(' ');
+    const unused = named.filter((name) => !new RegExp(`(^|[\\s,])${name}($|[\\s,;!])`).test(animations));
+    assert.deepEqual(unused, []);
+  });
+});
+
 describe('reduced motion', () => {
   const reduced = [...sheets.values()].flatMap((css) => cssRules(css))
     .filter((rule) => rule.conditions.some((c) => /prefers-reduced-motion:\s*reduce/.test(c)));
