@@ -373,15 +373,17 @@ pub fn parse_composer_model_config(value: &Value) -> Option<String> {
         for entry in models {
             if let Some(arr) = entry.get("parameters").and_then(|v| v.as_array()) {
                 for param in arr {
-                    let id = param.get("id").and_then(|v| v.as_str())?.trim();
+                    let Some(id) = param.get("id").and_then(|v| v.as_str()).map(str::trim) else {
+                        continue;
+                    };
                     if id.is_empty() {
                         continue;
                     }
-                    let val = param
-                        .get("value")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
+                    let val = match param.get("value") {
+                        Some(Value::String(s)) => s.clone(),
+                        Some(Value::Bool(b)) => b.to_string(),
+                        _ => String::new(),
+                    };
                     params.push((id.to_string(), val));
                 }
             }
@@ -637,6 +639,26 @@ pub async fn import_cursor_composer_state() -> Result<(usize, usize), String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn model_config_skips_param_without_id_and_reads_bool_values() {
+        let value = json!({
+            "modelConfig": {
+                "modelName": "composer-2.5",
+                "selectedModels": [{
+                    "parameters": [
+                        {"value": "true"},
+                        {"id": "fast", "value": true},
+                        {"id": "thinking", "value": false}
+                    ]
+                }]
+            }
+        });
+        assert_eq!(
+            parse_composer_model_config(&value).as_deref(),
+            Some("composer-2.5-fast")
+        );
+    }
 
     #[test]
     fn normalize_cursor_model_skips_duplicate_suffix() {
