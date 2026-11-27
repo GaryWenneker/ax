@@ -182,6 +182,12 @@ export default function GraphPage() {
   const iterationsRef = useRef(0);
   const settledRef = useRef(false);
   const abortRef = useRef<null | (() => void)>(null);
+  /**
+   * Bumped by every full load (live, as-of, domain) and on unmount. An async
+   * load or live merge captures it before awaiting and drops its result when
+   * it changed, so a slow old response cannot overwrite the current graph.
+   */
+  const loadGenRef = useRef(0);
   const transformRef = useRef({ scale: 1, offsetX: 0, offsetY: 0 });
   const draggingRef = useRef<{ node: SimNode | null; panning: boolean; lastX: number; lastY: number }>({
     node: null,
@@ -421,6 +427,7 @@ export default function GraphPage() {
   /** Load the local graph as it was at `at` (graph history). */
   function loadAsOf(at: number) {
     let cancelled = false;
+    loadGenRef.current += 1;
     if (abortRef.current) abortRef.current();
     abortRef.current = null;
     resetGraphState();
@@ -467,6 +474,7 @@ export default function GraphPage() {
     if (graphSource({ asOfMs, viewMode, system }) !== 'live') return;
     liveSinceRef.current = Date.now() - LIVE_SINCE_SLACK_MS;
     if (abortRef.current) abortRef.current();
+    loadGenRef.current += 1;
     resetGraphState();
     setMeta(null);
     setLegendNodes([]);
@@ -514,6 +522,7 @@ export default function GraphPage() {
   async function mergeLive() {
     if (!acceptsLiveMerge({ asOfMs, viewMode: viewModeRef.current, system }) || loading) return;
     const requestedAt = Date.now();
+    const gen = loadGenRef.current;
     let payload;
     try {
       const [top, recent] = await Promise.all([fetchGraph({ limit, origin: system }), fetchRecentGraph(liveSinceRef.current)]);
@@ -525,6 +534,8 @@ export default function GraphPage() {
     } catch {
       return;
     }
+    // A reload, a new system or limit, or a switch to another view started meanwhile.
+    if (gen !== loadGenRef.current) return;
     liveSinceRef.current = requestedAt - LIVE_SINCE_SLACK_MS;
     const idIndex = idIndexRef.current;
     const added = payload.nodes.filter((n) => !idIndex.has(n.id));
@@ -622,6 +633,7 @@ export default function GraphPage() {
   async function loadDomain() {
     if (abortRef.current) abortRef.current();
     abortRef.current = null;
+    const gen = ++loadGenRef.current;
     resetGraphState();
     setMeta(null);
     setLegendNodes([]);
@@ -636,6 +648,8 @@ export default function GraphPage() {
     detailRef.current = { maxIterations: 0, maxEdgesDrawn: 4000, showLabels: true };
     try {
       const overlay = await fetchDomainGraph();
+      // The user switched view or reloaded while the overlay was in flight.
+      if (gen !== loadGenRef.current) return;
       setDomainOverlay(overlay);
       const laid = layoutDomainGraph(overlay);
       const wrap = wrapRef.current;
@@ -683,6 +697,7 @@ export default function GraphPage() {
       setLoadDone(true);
       setLoading(false);
     } catch (e) {
+      if (gen !== loadGenRef.current) return;
       setError(e instanceof Error ? e.message : 'Failed to load domain overlay');
       setDomainOverlay({ version: 1, nodes: [], edges: [] });
       setLoading(false);
@@ -1232,6 +1247,7 @@ export default function GraphPage() {
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
       simRef.current?.stop();
       if (abortRef.current) abortRef.current();
+      loadGenRef.current += 1;
     };
   }, []);
 
