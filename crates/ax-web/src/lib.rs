@@ -1040,13 +1040,42 @@ pub async fn serve_with(opts: ServeOptions) -> Result<(), String> {
     actions::publish("web", "server started", None);
     ax_usage::spawn_ensure_daily_pricing_sync();
 
-    axum::serve(
+    serve_until(listener, app, shutdown_signal()).await
+}
+
+/// Serve `app` until `signal` fires. Requests still open then get
+/// [`SHUTDOWN_GRACE`] to finish; event streams never finish on their own, so
+/// after that the server stops without them.
+async fn serve_until<F>(
+    listener: tokio::net::TcpListener,
+    app: axum::Router,
+    signal: F,
+) -> Result<(), String>
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    let (fired, on_fired) = tokio::sync::oneshot::channel::<()>();
+    let server = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
-    .await
-    .map_err(|e| e.to_string())
+    .with_graceful_shutdown(async move {
+        signal.await;
+        let _ = fired.send(());
+    });
+    let server = std::future::IntoFuture::into_future(server);
+    tokio::pin!(server);
+    tokio::select! {
+        result = &mut server => return result.map_err(|e| e.to_string()),
+        _ = on_fired => {}
+    }
+    match tokio::time::timeout(SHUTDOWN_GRACE, server).await {
+        Ok(result) => result.map_err(|e| e.to_string()),
+        Err(_) => {
+            eprintln!("ax web: closed the requests that were still open.");
+            Ok(())
+        }
+    }
 }
 
 fn guess_lan_ip() -> Option<String> {
@@ -1182,9 +1211,96 @@ fn open_browser(url: &str) {
     let _ = std::process::Command::new("xdg-open").arg(url).spawn();
 }
 
+/// How long open requests (event streams included) may run after a shutdown
+/// signal before the server stops anyway.
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Ctrl+C, or SIGTERM on Unix (systemd, Docker, an IDE stopping `ax web`).
 async fn shutdown_signal() {
-    tokio::signal::ctrl_c().await.ok();
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut term) => {
+                term.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = terminate => {}
+    }
     eprintln!("\nax web: shutting down.");
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    use axum::response::sse::{Event, Sse};
+    use std::time::Duration;
+
+    /// An event stream that never ends, like `/api/changes`.
+    fn endless_stream_app() -> axum::Router {
+        axum::Router::new().route(
+            "/events",
+            axum::routing::get(|| async {
+                let stream = futures_util::stream::unfold((), |()| async {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    Some((
+                        Ok::<_, std::convert::Infallible>(Event::default().data("tick")),
+                        (),
+                    ))
+                });
+                Sse::new(stream)
+            }),
+        )
+    }
+
+    #[tokio::test]
+    async fn an_open_event_stream_does_not_keep_the_server_running() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(listener, endless_stream_app(), async {
+            let _ = stopped.await;
+        }));
+
+        // A browser tab keeps the stream open.
+        let mut tab = tokio::net::TcpStream::connect(addr).await.unwrap();
+        tokio::io::AsyncWriteExt::write_all(
+            &mut tab,
+            b"GET /events HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n",
+        )
+        .await
+        .unwrap();
+        let mut first = [0u8; 64];
+        let n = tokio::io::AsyncReadExt::read(&mut tab, &mut first)
+            .await
+            .unwrap();
+        assert!(n > 0, "the stream never started");
+
+        stop.send(()).unwrap();
+        let ended = tokio::time::timeout(SHUTDOWN_GRACE + Duration::from_secs(5), server).await;
+        assert!(ended.is_ok(), "the server kept running for the open stream");
+        drop(tab);
+    }
+
+    /// `ax web` under systemd, Docker or an IDE is stopped with SIGTERM.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sigterm_starts_the_shutdown() {
+        let waiting = tokio::spawn(shutdown_signal());
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let status = std::process::Command::new("kill")
+            .args(["-TERM", &std::process::id().to_string()])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let fired = tokio::time::timeout(Duration::from_secs(5), waiting).await;
+        assert!(fired.is_ok(), "SIGTERM did not start the shutdown");
+    }
 }
 
 #[cfg(test)]
