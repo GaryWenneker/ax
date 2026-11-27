@@ -16,39 +16,6 @@ use crate::store::open_pool;
 
 pub const ACTIVITY_SCHEMA_VERSION: i32 = 1;
 
-const ACTIVITY_SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS ax_activity_event (
-  event_id TEXT PRIMARY KEY,
-  idempotency_key TEXT NOT NULL,
-  schema_version INTEGER NOT NULL DEFAULT 1,
-  timestamp_ms INTEGER NOT NULL,
-  source TEXT NOT NULL,
-  agent TEXT,
-  project_id TEXT NOT NULL,
-  session_id TEXT,
-  turn_id TEXT,
-  parent_event_id TEXT,
-  operation TEXT NOT NULL,
-  status TEXT NOT NULL,
-  duration_ms INTEGER,
-  summary TEXT NOT NULL,
-  files_json TEXT NOT NULL DEFAULT '[]',
-  symbols_json TEXT NOT NULL DEFAULT '[]',
-  commit_ids_json TEXT NOT NULL DEFAULT '[]',
-  token_input INTEGER,
-  token_output INTEGER,
-  token_provenance TEXT NOT NULL DEFAULT 'unknown',
-  error TEXT,
-  UNIQUE(project_id, idempotency_key)
-);
-CREATE INDEX IF NOT EXISTS idx_ax_activity_project_ts
-  ON ax_activity_event(project_id, timestamp_ms DESC);
-CREATE INDEX IF NOT EXISTS idx_ax_activity_session
-  ON ax_activity_event(session_id, timestamp_ms DESC);
-CREATE INDEX IF NOT EXISTS idx_ax_activity_source
-  ON ax_activity_event(source, timestamp_ms DESC);
-";
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ActivitySource {
@@ -237,21 +204,6 @@ fn uuid_ish() -> String {
     format!("{:016x}{:08x}{:x}", h.finish(), std::process::id(), seq)
 }
 
-/// Ensure the activity table exists (idempotent).
-pub async fn ensure_activity_schema(pool: &SqlitePool) -> Result<(), String> {
-    for stmt in ACTIVITY_SCHEMA
-        .split(';')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        sqlx::query(stmt)
-            .execute(pool)
-            .await
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
 fn to_json_array(items: &[String]) -> String {
     serde_json::to_string(items).unwrap_or_else(|_| "[]".into())
 }
@@ -340,7 +292,6 @@ pub async fn record_activity(
     };
 
     let pool = open_pool().await.map_err(|e| e.to_string())?;
-    ensure_activity_schema(&pool).await?;
 
     let result = sqlx::query(
         "INSERT OR IGNORE INTO ax_activity_event (
@@ -480,7 +431,6 @@ pub async fn list_activity(
     limit: i64,
 ) -> Result<Vec<ActivityEvent>, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
-    ensure_activity_schema(&pool).await?;
     let project_id = project_scope(root);
     let limit = limit.clamp(1, 500);
 

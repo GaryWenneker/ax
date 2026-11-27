@@ -2659,7 +2659,8 @@ mod tests {
             started_at: Some(1_000),
             ended_at: Some(2_000),
         };
-        crate::cursor_state::upsert_composer_state_row(&state_row)
+        let pool = crate::store::open_pool().await.expect("pool");
+        crate::cursor_state::upsert_composer_state_row(&pool, &state_row)
             .await
             .expect("state");
 

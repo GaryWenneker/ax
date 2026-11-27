@@ -438,8 +438,10 @@ pub async fn load_composer_state_rows(path: &Path) -> Result<Vec<ComposerStateRo
 }
 
 /// Merge Composer state into `agent_session_log` without clobbering tool-call counts.
-pub async fn upsert_composer_state_row(row: &ComposerStateRow) -> Result<bool, String> {
-    let pool = open_pool().await.map_err(|e| e.to_string())?;
+pub(crate) async fn upsert_composer_state_row(
+    pool: &sqlx::SqlitePool,
+    row: &ComposerStateRow,
+) -> Result<bool, String> {
     let input = row.input_tokens.filter(|n| *n > 0);
     let result = sqlx::query(
         "INSERT INTO agent_session_log
@@ -479,7 +481,7 @@ pub async fn upsert_composer_state_row(row: &ComposerStateRow) -> Result<bool, S
     .bind(&row.model)
     .bind(row.started_at)
     .bind(row.ended_at)
-    .execute(&pool)
+    .execute(pool)
     .await
     .map_err(|e| e.to_string())?;
     Ok(result.rows_affected() > 0)
@@ -502,10 +504,11 @@ pub async fn import_cursor_composer_state() -> Result<(usize, usize), String> {
         }
     };
 
+    let pool = open_pool().await.map_err(|e| e.to_string())?;
     let mut enriched = 0usize;
     let mut skipped = 0usize;
     for row in &rows {
-        match upsert_composer_state_row(row).await {
+        match upsert_composer_state_row(&pool, row).await {
             Ok(true) => enriched += 1,
             Ok(false) => skipped += 1,
             Err(e) => eprintln!(
