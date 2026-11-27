@@ -22,9 +22,9 @@ test.beforeEach(async({page})=>{
  });
 });
 
-test('logging retains stacked left-aligned event details at every panel width',async({page})=>{
+test('logging keeps each event title and its description on one aligned line at every panel width',async({page})=>{
  await page.goto('/logging');const rows=page.locator('.mcp-trace-row');await expect(rows).toHaveCount(3);
- await expect(page.locator('.mcp-trace-row--outbound .page-item-title')).toContainText('ax_search');
+ await expect(page.locator('.mcp-trace-row--outbound .page-item-title')).toHaveText('Search · Returned');
  for(const width of [2048,1366,900,393]) {
   await page.setViewportSize({width,height:900});
   const row=rows.first();await expect(row).toBeVisible();
@@ -32,9 +32,9 @@ test('logging retains stacked left-aligned event details at every panel width',a
    const body=e.querySelector('.page-item-body')!;
    const title=body.querySelector('.page-item-title-line')!.getBoundingClientRect();
    const sub=body.querySelector('.page-item-sub')!.getBoundingClientRect();
-   return {left:Math.abs(title.left-sub.left),gap:sub.top-title.bottom,overflow:e.scrollWidth>e.clientWidth+1};
+   return {middle:Math.abs((title.top+title.bottom)/2-(sub.top+sub.bottom)/2),gap:sub.left-title.right,overflow:e.scrollWidth>e.clientWidth+1};
   });
-  expect(geometry.left).toBeLessThanOrEqual(1);expect(geometry.gap).toBeLessThanOrEqual(3);expect(geometry.gap).toBeGreaterThanOrEqual(0);
+  expect(geometry.middle,`title and description share a line at ${width}px`).toBeLessThanOrEqual(1);expect(geometry.gap,`description follows the title at ${width}px`).toBeGreaterThanOrEqual(0);
   expect(geometry.overflow).toBe(false);
   if(process.env.AX_COLUMN_SCREENSHOTS && test.info().project.name==='desktop-chrome' && (width===1366 || width===393)) await page.screenshot({path:`../../../site/public/screenshots/cc-logging-columns${width===393?'-mobile':''}.png`});
  }
@@ -69,7 +69,7 @@ test('live log arrivals obey active column sort and filters',async({page},info)=
  });
  await page.setViewportSize({width:2048,height:900});await page.goto('/logging');await expect(page.locator('.mcp-trace-row')).toHaveCount(3);
  const header=page.locator('.mcp-trace-calm .column-header');await header.getByRole('button',{name:'Sort Time',exact:true}).click();
- await header.locator('summary[aria-label="Filter Context"]').click();await header.getByRole('textbox',{name:'Filter Context',exact:true}).fill('ax_search');await expect(page.locator('.mcp-trace-row')).toHaveCount(2);
+ await header.locator('summary[aria-label="Filter Context"]').click();await header.getByRole('textbox',{name:'Filter Context',exact:true}).fill('Search');await expect(page.locator('.mcp-trace-row')).toHaveCount(2);
  if(streamFixture) {const emitted=await page.request.get(`${streamFixture}/emit?id=${streamId}&line=${encodeURIComponent('2026-10-12T19:59:00Z [ax-mcp] inbound tool=ax_search args={"query":"Earlier arriving event"}')}`);expect(emitted.ok()).toBe(true);}
  await expect(page.locator('.mcp-trace-row')).toHaveCount(3);await expect(page.locator('.mcp-trace-row').first()).toContainText('Earlier arriving event');
 });
@@ -92,6 +92,7 @@ test('logging has one compact page heading and no duplicate summary bars',async(
  await expect(page.locator('.mcp-trace-project-banner')).toHaveCount(0);
  await expect(page.locator('.mcp-q-strip')).toHaveCount(0);
  await expect(page.getByRole('button',{name:'Open MCP quality',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Show filters',exact:true}).click();
  const filter=page.getByRole('search',{name:'Filter MCP log'});
  expect((await filter.boundingBox())!.height).toBeLessThan(150);
 });
@@ -105,8 +106,9 @@ test('logging markers have a separate gutter and no unrelated dotted connector',
    const title=row.querySelector('.page-item-title')!.getBoundingClientRect();
    return {gap:title.left-dot.right,dotWidth:dot.width,connector:getComputedStyle(row,'::before').display,overflow:row.scrollWidth>row.clientWidth+1,pageOverflow:document.documentElement.scrollWidth>innerWidth+1};
   });
-  expect(geometry.gap,`marker gutter at ${width}px`).toBeGreaterThanOrEqual(12);
-  expect(geometry.dotWidth).toBeLessThanOrEqual(12);
+  // The marker is a 28px direction glyph drawn inset in its box; the title starts clear of that box.
+  expect(geometry.gap,`marker gutter at ${width}px`).toBeGreaterThanOrEqual(4);
+  expect(geometry.dotWidth).toBeLessThanOrEqual(28);
   expect(geometry.connector).toBe('none');expect(geometry.overflow).toBe(false);expect(geometry.pageOverflow).toBe(false);
  }
 });
@@ -118,14 +120,14 @@ test('real domain lines show readable actions and preserve raw-field search',asy
   '2026-10-12T20:00:02Z [ax] 🪓 ship ok mode=evaluate passed=1 tool=ship',
  ];
  if(streamFixture){const response=await page.request.post(`${streamFixture}/configure`,{data:{lines:domainLines}});expect(response.ok()).toBe(true);}
- else await page.route('**/api/usage/mcp-trace/events',route=>route.fulfill({contentType:'text/event-stream',body:`event: batch\ndata: ${JSON.stringify(domainLines)}\n\n`}));
+ else {let sent=false;await page.route('**/api/usage/mcp-trace/events',route=>{const body=sent?': heartbeat\n\n':`event: batch\ndata: ${JSON.stringify(domainLines)}\n\n`;sent=true;return route.fulfill({contentType:'text/event-stream',body});});}
  await page.goto('/logging');await expect(page.locator('.mcp-trace-row')).toHaveCount(3);
  const workspace=page.locator('.mcp-trace-row--workspace');
- await expect(workspace.locator('.page-item-title')).toHaveText('Workspace sync completed');
- await expect(workspace.locator('.page-item-sub')).toHaveText('19 files · 162 ms');
- await expect(page.locator('.mcp-trace-row--memory .page-item-title')).toHaveText('Git history captured');
- await expect(page.locator('.mcp-trace-row--ship .page-item-title')).toHaveText('Quality check completed');
- await expect(workspace.locator('.item-column-context button')).toHaveCount(1);
+ await expect(workspace.locator('.page-item-title')).toHaveText('Sync · 19 files synced');
+ await expect(workspace.locator('.page-item-sub')).toHaveText('Internal · Workspace');
+ await expect(page.locator('.mcp-trace-row--memory .page-item-title')).toHaveText('Memory · 2 commits captured');
+ await expect(page.locator('.mcp-trace-row--ship .page-item-title')).toHaveText('Quality · Check passed');
+ await expect(workspace.locator('.item-column-context button')).toHaveText(['Workspace','Sync']);
  await expect(workspace).not.toContainText('tool=workspace');await expect(workspace).not.toContainText('🪓');
  const columns=page.locator('.mcp-trace-calm .column-header');
  await page.setViewportSize({width:1366,height:900});
@@ -147,7 +149,7 @@ test('real domain lines show readable actions and preserve raw-field search',asy
 test('inspector steps have a marker gutter and label the selected tool',async({page})=>{
  const mixed=[...lines,'2026-10-12T20:00:03Z [ax] 🪓 workspace sync ok files=19 duration_ms=162 tool=workspace'];
  if(streamFixture){const response=await page.request.post(`${streamFixture}/configure`,{data:{lines:mixed}});expect(response.ok()).toBe(true);}
- else await page.route('**/api/usage/mcp-trace/events',route=>route.fulfill({contentType:'text/event-stream',body:`event: batch\ndata: ${JSON.stringify(mixed)}\n\n`}));
+ else {let sent=false;await page.route('**/api/usage/mcp-trace/events',route=>{const body=sent?': heartbeat\n\n':`event: batch\ndata: ${JSON.stringify(mixed)}\n\n`;sent=true;return route.fulfill({contentType:'text/event-stream',body});});}
  await page.goto('/logging');await expect(page.locator('.mcp-trace-row')).toHaveCount(4);
  await page.locator('.mcp-trace-row--workspace .page-item-title').click();
  const blade=page.getByRole('complementary',{name:'Log event details'});
@@ -156,8 +158,8 @@ test('inspector steps have a marker gutter and label the selected tool',async({p
   const node=row.querySelector('.page-item-node')!.getBoundingClientRect(),title=row.querySelector('.page-item-title')!.getBoundingClientRect();
   return title.left-node.right;
  });
- expect(geometry).toBeGreaterThanOrEqual(12);
- await expect(blade.locator('.detail-header .detail-title')).toHaveText('workspace');
- await expect(blade.getByText('Tool',{exact:true}).locator('..')).toContainText('workspace');
- await expect(blade.locator('.mcp-blade-step').last().locator('.page-item-title')).toHaveText('Workspace sync completed');
+ expect(geometry).toBeGreaterThanOrEqual(4);
+ await expect(blade.locator('.detail-header .detail-title')).toHaveText('Sync');
+ await expect(blade.getByText('Tool',{exact:true}).locator('..')).toContainText('Sync');
+ await expect(blade.locator('.mcp-blade-step').last().locator('.page-item-title')).toHaveText('Sync · 19 files synced');
 });

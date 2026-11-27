@@ -952,8 +952,9 @@ html[data-ax-theme="macos"] :is(
 .mcp-trace-turn-summary::-webkit-details-marker {
   display: none;
 }
-.mcp-trace-turn {
-  margin-left: 10px;
+/* Rows span the full list width so they line up with the fitted column header; only the turn label is indented. */
+.mcp-trace-turn-summary {
+  padding-left: 22px;
 }
 .mcp-trace-session-count,
 .mcp-trace-turn-count {
