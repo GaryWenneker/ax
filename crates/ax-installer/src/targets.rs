@@ -666,7 +666,8 @@ const CLAUDE_HOOKS: [(&str, &str); 4] = [
 
 /// Register `ax <hook_subcommand>` under `hooks.<event>` in Claude's `settings.json`.
 /// A command that already runs this binary for that subcommand is left as written.
-/// A command that names the subcommand but points at another binary is replaced in place.
+/// An ax hook for the same subcommand that points at another `ax` binary is replaced in
+/// place. Other commands are never changed, even when their text mentions the subcommand.
 fn install_claude_hook(
     settings_path: &Path,
     event: &str,
@@ -703,7 +704,7 @@ fn install_claude_hook(
         .iter_mut()
         .filter_map(|g| g.get_mut("hooks").and_then(|h| h.as_array_mut()))
         .flatten()
-        .find(|e| command_of(e).is_some_and(|s| s.contains(hook_subcommand)));
+        .find(|e| command_of(e).is_some_and(|s| is_ax_hook_command(s, hook_subcommand)));
     match stale {
         Some(entry) => entry["command"] = Value::String(hook_cmd),
         None => groups.push(serde_json::json!({
@@ -729,29 +730,50 @@ fn remove_claude_hook(
     let Some(groups) = hooks.get_mut(event).and_then(|v| v.as_array_mut()) else {
         return Ok(false);
     };
-    let before = groups.len();
-    groups.retain(|g| !hook_group_matches(std::slice::from_ref(g), hook_subcommand));
-    if groups.len() == before {
+    // Drop only the ax entries; a group is removed when nothing else is left in it.
+    let mut changed = false;
+    groups.retain_mut(|group| {
+        let Some(list) = group.get_mut("hooks").and_then(|h| h.as_array_mut()) else {
+            return true;
+        };
+        let before = list.len();
+        list.retain(|e| {
+            !e.get("command")
+                .and_then(|c| c.as_str())
+                .is_some_and(|s| is_ax_hook_command(s, hook_subcommand))
+        });
+        if list.len() == before {
+            return true;
+        }
+        changed = true;
+        !list.is_empty()
+    });
+    if !changed {
         return Ok(false);
     }
     write_json_action(settings_path, &settings)?;
     Ok(true)
 }
 
-fn hook_group_matches(groups: &[Value], hook_subcommand: &str) -> bool {
-    groups.iter().any(|g| {
-        g.get("hooks")
-            .and_then(|h| h.as_array())
-            .map(|arr| {
-                arr.iter().any(|e| {
-                    e.get("command")
-                        .and_then(|c| c.as_str())
-                        .map(|s| s.contains(hook_subcommand))
-                        .unwrap_or(false)
-                })
-            })
-            .unwrap_or(false)
-    })
+/// Whether `command` runs an ax binary (basename `ax` or `ax.exe`, quoted or
+/// not) with exactly the tokens of `hook_subcommand` and nothing else.
+fn is_ax_hook_command(command: &str, hook_subcommand: &str) -> bool {
+    let command = command.trim();
+    let (program, rest) = match command.strip_prefix('"') {
+        Some(quoted) => match quoted.split_once('"') {
+            Some((program, rest)) => (program, rest),
+            None => return false,
+        },
+        None => command
+            .split_once(char::is_whitespace)
+            .unwrap_or((command, "")),
+    };
+    let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    let is_ax = name.eq_ignore_ascii_case("ax") || name.eq_ignore_ascii_case("ax.exe");
+    is_ax
+        && rest
+            .split_whitespace()
+            .eq(hook_subcommand.split_whitespace())
 }
 
 fn install_codex_mcp(_project_root: &Path) -> Result<TargetReport, String> {
@@ -1621,6 +1643,68 @@ mod mcp_path_tests {
         assert_eq!(value["hooks"]["Stop"].as_array().unwrap().len(), 1);
 
         let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_user_hook_that_only_mentions_the_subcommand_is_not_touched() {
+        let path = temp_settings_path("user-hook-substring");
+        let user_group = serde_json::json!({ "hooks": [
+            { "type": "command", "command": "~/bin/notify-stop-hook.sh" },
+            { "type": "command", "command": "say done" }
+        ]});
+        let before = serde_json::json!({ "hooks": { "Stop": [user_group.clone()] } });
+        fs::write(&path, serde_json::to_string_pretty(&before).unwrap()).unwrap();
+
+        install_claude_hook(&path, "Stop", "stop-hook").unwrap();
+        let value: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let groups = value["hooks"]["Stop"].as_array().unwrap();
+        assert_eq!(groups[0], user_group, "user group was rewritten");
+        assert_eq!(groups.len(), 2, "the ax hook gets its own group");
+
+        remove_claude_hook(&path, "Stop", "stop-hook").unwrap();
+        let value: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(value["hooks"]["Stop"], serde_json::json!([user_group]));
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn uninstall_keeps_user_hooks_that_share_a_group_with_the_ax_hook() {
+        let path = temp_settings_path("shared-group");
+        let before = serde_json::json!({ "hooks": { "Stop": [{ "hooks": [
+            { "type": "command", "command": "/usr/local/bin/ax stop-hook" },
+            { "type": "command", "command": "say done" }
+        ]}]}});
+        fs::write(&path, serde_json::to_string_pretty(&before).unwrap()).unwrap();
+        assert!(remove_claude_hook(&path, "Stop", "stop-hook").unwrap());
+        let value: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            value["hooks"]["Stop"],
+            serde_json::json!([{ "hooks": [{ "type": "command", "command": "say done" }] }])
+        );
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn ax_hook_commands_are_recognised_by_binary_and_exact_subcommand() {
+        for ours in [
+            "ax stop-hook",
+            "/tmp/ax-gone/bin/ax stop-hook",
+            "\"C:/Program Files/ax/ax.exe\" stop-hook",
+            r"C:\ax\bin\AX.EXE stop-hook",
+        ] {
+            assert!(is_ax_hook_command(ours, "stop-hook"), "{ours}");
+        }
+        for theirs in [
+            "~/bin/notify-stop-hook.sh",
+            "ax stop-hook --extra",
+            "max stop-hook",
+            "ax prompt-hook",
+            "echo ax stop-hook",
+        ] {
+            assert!(!is_ax_hook_command(theirs, "stop-hook"), "{theirs}");
+        }
+        assert!(is_ax_hook_command("ax turn-hook start", "turn-hook start"));
+        assert!(!is_ax_hook_command("ax turn-hook stop", "turn-hook start"));
     }
 
     fn event_commands(value: &Value, event: &str) -> Vec<String> {
