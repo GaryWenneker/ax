@@ -147,25 +147,41 @@ fn manifest_path_for(jsonl_path: &Path) -> Option<PathBuf> {
     Some(jsonl_path.with_file_name(format!("{stem}{MANIFEST_SUFFIX}")))
 }
 
-/// Read a backup and check it against its manifest before anything is written:
-/// the blake3 checksum and the row count must match, and every line must parse.
+/// Read a backup and check it before anything is written: every line must parse.
+///
+/// A `*.jsonl.zst` backup (written by [`write_full_backup`] or
+/// [`write_incremental_backup`]) must also match its manifest: the blake3
+/// checksum and the row count. A plain `*.jsonl` file without a manifest, such
+/// as the turn-memory copy `prune_turns` appends to, is checked line by line only.
 fn read_verified_rows(jsonl_path: &Path) -> Result<Vec<MemoryRow>, AxError> {
     let manifest_path = manifest_path_for(jsonl_path).ok_or_else(|| {
         other(format!(
-            "{} is not a memory backup file (*{JSONL_SUFFIX})",
+            "{} is not a memory backup file (*{JSONL_SUFFIX} or *.jsonl)",
             jsonl_path.display()
         ))
     })?;
-    let manifest: serde_json::Value = std::fs::read(&manifest_path)
-        .map_err(|e| other(format!("backup manifest {}: {e}", manifest_path.display())))
-        .and_then(|b| serde_json::from_slice(&b).map_err(other))?;
+    let compressed = jsonl_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.ends_with(JSONL_SUFFIX));
+    let manifest: Option<serde_json::Value> = if compressed || manifest_path.exists() {
+        Some(
+            std::fs::read(&manifest_path)
+                .map_err(|e| other(format!("backup manifest {}: {e}", manifest_path.display())))
+                .and_then(|b| serde_json::from_slice(&b).map_err(other))?,
+        )
+    } else {
+        None
+    };
     let plain = read_backup_bytes(jsonl_path)?;
-    let checksum = blake3::hash(&plain).to_hex().to_string();
-    if manifest["checksum"].as_str() != Some(checksum.as_str()) {
-        return Err(other(format!(
-            "backup {} does not match the checksum in its manifest; nothing restored",
-            jsonl_path.display()
-        )));
+    if let Some(manifest) = &manifest {
+        let checksum = blake3::hash(&plain).to_hex().to_string();
+        if manifest["checksum"].as_str() != Some(checksum.as_str()) {
+            return Err(other(format!(
+                "backup {} does not match the checksum in its manifest; nothing restored",
+                jsonl_path.display()
+            )));
+        }
     }
     let text = String::from_utf8(plain).map_err(other)?;
     let mut rows = Vec::new();
@@ -183,7 +199,7 @@ fn read_verified_rows(jsonl_path: &Path) -> Result<Vec<MemoryRow>, AxError> {
         })?;
         rows.push(row);
     }
-    if manifest["count"].as_u64() != Some(rows.len() as u64) {
+    if let Some(manifest) = manifest.filter(|m| m["count"].as_u64() != Some(rows.len() as u64)) {
         return Err(other(format!(
             "backup {} holds {} rows but its manifest says {}; nothing restored",
             jsonl_path.display(),
@@ -195,13 +211,14 @@ fn read_verified_rows(jsonl_path: &Path) -> Result<Vec<MemoryRow>, AxError> {
 }
 
 /// Restore memories from a backup written by [`write_full_backup`] or
-/// [`write_incremental_backup`].
+/// [`write_incremental_backup`], or from a turn-memory copy written by `prune_turns`.
 ///
-/// The file is checked against its manifest first; on any mismatch or parse error
-/// nothing is written. Ids that already exist or were purged (tombstoned) are
+/// The file is checked first (against its manifest when it has one); on any
+/// mismatch or parse error nothing is written. Ids that already exist or were purged (tombstoned) are
 /// skipped, so running a restore again after an interruption completes it.
 /// Restored rows keep their original timestamps, confidence, enabled flag and tier;
-/// they are not stamped with the current session or turn.
+/// they are not stamped with the current session or turn. A row restored into the
+/// archive tier gets its archive vector back.
 pub async fn restore_from_backup(
     pool: &SqlitePool,
     jsonl_path: &Path,
@@ -255,6 +272,10 @@ pub async fn restore_from_backup(
         .execute(pool)
         .await
         .map_err(other)?;
+        if row.tier == crate::brain::TIER_ARCHIVE {
+            // Archive recall searches by vector as well as by text.
+            crate::brain::index_archive_vector(pool, &row.id).await?;
+        }
         report.restored += 1;
     }
     Ok(report)

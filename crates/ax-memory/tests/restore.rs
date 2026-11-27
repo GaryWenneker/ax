@@ -247,6 +247,16 @@ async fn restore_keeps_timestamps_confidence_enabled_and_tier() {
     assert!((confidence - 0.4).abs() < 1e-9);
     assert_eq!(enabled, 0, "a disabled memory must stay disabled");
     assert_eq!(tier, "t3");
+    let vectors: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM memory_vec_map WHERE memory_id = ?")
+            .bind(&id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
+    assert_eq!(
+        vectors, 1,
+        "a restored archive memory needs its archive vector"
+    );
     db.close().await;
 }
 
@@ -318,6 +328,56 @@ async fn restore_refuses_a_backup_without_manifest() {
     std::fs::remove_file(&backup.manifest_path).unwrap();
 
     assert!(restore_from_backup(pool, &backup.path).await.is_err());
+    assert_eq!(memory_count(pool).await, 0);
+    db.close().await;
+}
+
+#[tokio::test]
+async fn restore_reads_a_turn_memory_backup_written_by_prune_turns() {
+    let (dir, db) = fresh_db().await;
+    let pool = db.pool();
+    ax_memory::save_file_changes(pool, &["src/old.rs".into()], "c", "t", 1_000)
+        .await
+        .unwrap();
+    let backups = dir.path().join(".ax/backups");
+    let now = 1_000 + 40 * 86_400_000;
+    assert_eq!(
+        ax_memory::prune_turns(pool, now, 30, &backups)
+            .await
+            .unwrap(),
+        1
+    );
+    let file = std::fs::read_dir(&backups)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("turn-memories-") && name.ends_with(".jsonl"))
+        })
+        .expect("prune_turns writes a turn-memories backup");
+    sqlx::query("DELETE FROM memories")
+        .execute(pool)
+        .await
+        .unwrap();
+
+    let report = restore_from_backup(pool, &file).await.unwrap();
+    assert_eq!(report.restored, 1);
+    let kind: String = sqlx::query_scalar("SELECT kind FROM memories")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(kind, "file_change");
+
+    // A malformed line still blocks the whole restore.
+    sqlx::query("DELETE FROM memories")
+        .execute(pool)
+        .await
+        .unwrap();
+    let mut text = std::fs::read_to_string(&file).unwrap();
+    text.push_str("{not json\n");
+    std::fs::write(&file, text).unwrap();
+    assert!(restore_from_backup(pool, &file).await.is_err());
     assert_eq!(memory_count(pool).await, 0);
     db.close().await;
 }
