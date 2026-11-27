@@ -203,7 +203,8 @@ ax_session({ "action": "compact", "objective": "Understand authentication", "fac
 
 - **`append`** writes a `user`, `assistant`, `tool`, or `system` entry. Once a transcript exists, later tool calls in that chat are appended as `tool` entries (the first 160 characters of the reply).
 - **`read`** returns the working view. **`search`** finds text in entries that compaction has hidden, including the parent up to a fork point, at most 50 hits.
-- **`compact`** stores the summary you write. `read` drops entries before that summary. Ax does not call a model to write it.
+- **`compact`** stores the summary you write. `read` drops entries before that summary, or before `first_kept` when you pass it; `first_kept` must be an entry this conversation can see, otherwise the call fails. In a fork, compaction also hides the entries inherited from the parent. Ax does not call a model to write it.
+- **Size:** an `append` body, a `compact` summary and a `handoff` note may be at most 8,000 bytes. A longer one is rejected with an error and nothing is stored; split it into several entries. An automatic `tool` entry that would be longer is cut and ends with `[cut from N bytes]`.
 - **`fork`** opens a new id that reads the parent through the entry you pass as `at` and copies JSON documents. It does not copy entries. **`handoff`** opens a new id whose first entry is the note. The parent transcript stays.
 - **`doc_put` / `doc_get`** store one JSON document per kind.
 - **Tasks:** `task_start`, `task_checkpoint`, `task_resume`, `task_finish`. `task_resume` returns the last checkpoint after the database is reopened. A finished task returns `task is finished`.

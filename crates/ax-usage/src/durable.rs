@@ -181,8 +181,9 @@ pub(crate) async fn apply_with(
             if body.trim().is_empty() {
                 return Err("append needs a body".into());
             }
+            require_fits("body", body)?;
             ensure_conversation(pool, conversation, None, None).await?;
-            let id = append_entry(pool, conversation, kind, &clip(body), None).await?;
+            let id = append_entry(pool, conversation, kind, body, None).await?;
             fire_hooks(pool, conversation, "append").await?;
             Ok(format!("<ax_durable_entry id={id} kind={kind}>"))
         }
@@ -214,16 +215,19 @@ pub(crate) async fn apply_with(
             if summary.is_empty() {
                 return Err("compact needs a summary".into());
             }
-            ensure_conversation(pool, conversation, None, None).await?;
+            require_fits("summary", &summary)?;
             let first_kept = request.get("first_kept").and_then(Value::as_i64);
-            let id = append_entry(
-                pool,
-                conversation,
-                "compaction",
-                &clip(&summary),
-                first_kept,
-            )
-            .await?;
+            if let Some(first_kept) = first_kept {
+                // Ids are shared by all conversations, so an unchecked head could hide
+                // every later entry or point into another transcript.
+                if !entry_visible(pool, conversation, first_kept).await? {
+                    return Err(format!(
+                        "first_kept {first_kept} is not in this conversation"
+                    ));
+                }
+            }
+            ensure_conversation(pool, conversation, None, None).await?;
+            let id = append_entry(pool, conversation, "compaction", &summary, first_kept).await?;
             let head = first_kept.unwrap_or(id);
             sqlx::query("UPDATE ax_durable_entry SET head = ? WHERE id = ?")
                 .bind(head)
@@ -265,9 +269,10 @@ pub(crate) async fn apply_with(
             if note.is_empty() {
                 return Err("handoff needs a note".into());
             }
+            require_fits("note", &note)?;
             let child = mint_id("dcv", conversation);
             ensure_conversation(pool, &child, None, None).await?;
-            append_entry(pool, &child, "reset", &clip(&note), None).await?;
+            append_entry(pool, &child, "reset", &note, None).await?;
             fire_hooks(pool, conversation, "handoff").await?;
             Ok(format!(
                 "<ax_durable_handoff parent={conversation} child={child}>"
@@ -452,15 +457,26 @@ async fn task_row(pool: &SqlitePool, id: &str) -> Result<TaskRow, String> {
     })
 }
 
+/// Fit an automatic tool note into [`MAX_BODY`] bytes. A cut note ends with a marker
+/// that names the original length, so a reader can tell text was dropped.
 fn clip(body: &str) -> String {
-    let mut out = String::new();
-    for ch in body.chars() {
-        if out.len() + ch.len_utf8() > MAX_BODY {
-            break;
-        }
-        out.push(ch);
+    if body.len() <= MAX_BODY {
+        return body.to_string();
     }
-    out
+    let marker = format!(" [cut from {} bytes]", body.len());
+    let kept = ax_utils::prefix_bytes(body, MAX_BODY.saturating_sub(marker.len()));
+    format!("{kept}{marker}")
+}
+
+/// Bodies the caller writes are stored whole or not at all.
+fn require_fits(what: &str, body: &str) -> Result<(), String> {
+    if body.len() > MAX_BODY {
+        return Err(format!(
+            "{what} is {} bytes and exceeds {MAX_BODY} bytes; split it into smaller entries",
+            body.len()
+        ));
+    }
+    Ok(())
 }
 
 fn mint_id(prefix: &str, seed: &str) -> String {
@@ -633,12 +649,14 @@ async fn working_entries(
     pool: &SqlitePool,
     conversation: &str,
 ) -> Result<Vec<DurableEntry>, String> {
+    // Ids grow along the ancestry (a fork starts after its fork point), so the
+    // concatenated slices are in id order and the latest compaction anywhere in the
+    // chain hides everything before its head, inherited entries included.
     let mut out = Vec::new();
     for (id, max_id) in ancestry(pool, conversation).await? {
-        let slice = hide_compacted(load_entries(pool, &id, max_id).await?);
-        out.extend(slice);
+        out.extend(load_entries(pool, &id, max_id).await?);
     }
-    Ok(out)
+    Ok(hide_compacted(out))
 }
 
 async fn search_entries(
@@ -774,6 +792,176 @@ mod tests {
             .await
             .unwrap();
         assert!(found.contains("pine"), "{found}");
+    }
+
+    fn entry_id(reply: &str) -> i64 {
+        reply
+            .split("id=")
+            .nth(1)
+            .unwrap()
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn oversized_bodies_are_rejected_not_cut() {
+        let pool = pool().await;
+        let long = format!("{} TAIL-PHRASE", "word ".repeat(4_000));
+        for request in [
+            json!({"action":"append","kind":"assistant","body":long}),
+            json!({"action":"compact","summary":long}),
+            json!({"action":"handoff","note":long}),
+        ] {
+            let err = apply_with(&pool, "chat", &request).await.unwrap_err();
+            assert!(err.contains("exceeds 8000 bytes"), "{err}");
+        }
+        let found = apply_with(&pool, "chat", &json!({"action":"search","query":"word"}))
+            .await
+            .unwrap_or_default();
+        assert!(!found.contains("word"), "{found}");
+        let fits = "a".repeat(MAX_BODY);
+        apply_with(
+            &pool,
+            "chat",
+            &json!({"action":"append","kind":"user","body":fits}),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[test]
+    fn a_clipped_tool_note_says_it_was_cut() {
+        let note = clip(&"x".repeat(MAX_BODY + 500));
+        assert!(note.len() <= MAX_BODY, "{}", note.len());
+        assert!(
+            note.ends_with(&format!("[cut from {} bytes]", MAX_BODY + 500)),
+            "{}",
+            &note[note.len() - 40..]
+        );
+        assert_eq!(clip("short"), "short");
+    }
+
+    #[tokio::test]
+    async fn compact_rejects_a_first_kept_outside_this_conversation() {
+        let pool = pool().await;
+        apply_with(
+            &pool,
+            "chat",
+            &json!({"action":"append","kind":"user","body":"one"}),
+        )
+        .await
+        .unwrap();
+        let other = apply_with(
+            &pool,
+            "other",
+            &json!({"action":"append","kind":"user","body":"foreign"}),
+        )
+        .await
+        .unwrap();
+        for first_kept in [999_999, entry_id(&other)] {
+            let err = apply_with(
+                &pool,
+                "chat",
+                &json!({"action":"compact","summary":"s","first_kept":first_kept}),
+            )
+            .await
+            .unwrap_err();
+            assert!(err.contains("not in this conversation"), "{err}");
+        }
+        apply_with(
+            &pool,
+            "chat",
+            &json!({"action":"append","kind":"user","body":"later entry"}),
+        )
+        .await
+        .unwrap();
+        let view = apply_with(&pool, "chat", &json!({"action":"read"}))
+            .await
+            .unwrap();
+        assert!(
+            view.contains("one") && view.contains("later entry"),
+            "{view}"
+        );
+    }
+
+    #[tokio::test]
+    async fn compact_keeps_entries_from_a_valid_first_kept() {
+        let pool = pool().await;
+        apply_with(
+            &pool,
+            "chat",
+            &json!({"action":"append","kind":"user","body":"dropped"}),
+        )
+        .await
+        .unwrap();
+        let kept = apply_with(
+            &pool,
+            "chat",
+            &json!({"action":"append","kind":"user","body":"kept"}),
+        )
+        .await
+        .unwrap();
+        apply_with(
+            &pool,
+            "chat",
+            &json!({"action":"compact","summary":"sum","first_kept":entry_id(&kept)}),
+        )
+        .await
+        .unwrap();
+        let view = apply_with(&pool, "chat", &json!({"action":"read"}))
+            .await
+            .unwrap();
+        assert!(view.contains("kept") && view.contains("sum"), "{view}");
+        assert!(!view.contains("dropped"), "{view}");
+    }
+
+    #[tokio::test]
+    async fn compaction_in_a_fork_hides_inherited_entries() {
+        let pool = pool().await;
+        for body in ["parent-one", "parent-two"] {
+            apply_with(
+                &pool,
+                "parent",
+                &json!({"action":"append","kind":"user","body":body}),
+            )
+            .await
+            .unwrap();
+        }
+        let forked = apply_with(&pool, "parent", &json!({"action":"fork"}))
+            .await
+            .unwrap();
+        let child = forked
+            .split("child=")
+            .nth(1)
+            .unwrap()
+            .split(" at=")
+            .next()
+            .unwrap()
+            .to_string();
+        apply_with(
+            &pool,
+            &child,
+            &json!({"action":"compact","summary":"child summary"}),
+        )
+        .await
+        .unwrap();
+        let view = apply_with(&pool, &child, &json!({"action":"read"}))
+            .await
+            .unwrap();
+        assert!(view.contains("child summary"), "{view}");
+        assert!(!view.contains("parent-one"), "{view}");
+        assert!(!view.contains("parent-two"), "{view}");
+        let found = apply_with(
+            &pool,
+            &child,
+            &json!({"action":"search","query":"parent-one"}),
+        )
+        .await
+        .unwrap();
+        assert!(found.contains("parent-one"), "{found}");
     }
 
     #[tokio::test]
