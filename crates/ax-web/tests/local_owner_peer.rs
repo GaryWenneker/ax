@@ -160,3 +160,60 @@ async fn the_terminal_socket_needs_a_loopback_peer_even_on_a_lan_bind() {
         StatusCode::UPGRADE_REQUIRED
     );
 }
+
+fn post_json(uri: &str, headers: &[(&str, &str)], body: &str) -> Request<Body> {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("content-type", "application/json");
+    for (name, value) in headers {
+        builder = builder.header(*name, *value);
+    }
+    let mut req = builder.body(Body::from(body.to_string())).unwrap();
+    let peer: SocketAddr = LOOPBACK.parse().unwrap();
+    req.extensions_mut().insert(ConnectInfo(peer));
+    req
+}
+
+/// A reverse proxy or tunnel on this computer that adds no forwarding header
+/// still names its public host. Its visitors must not become the Owner
+/// without a session: they cannot set the Owner password, run setup or turn
+/// login on.
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // process-global env; the guard must cover the awaits
+async fn a_same_host_proxy_visitor_cannot_take_over_the_owner() {
+    let _lock = env_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let hub = hub(dir.path()).await;
+    std::env::set_var("AX_WEB_ALLOWED_HOSTS", "admin.example");
+    let app = hub.nest_routers(CorsLayer::new());
+    let proxied = [
+        ("host", "admin.example"),
+        ("origin", "https://admin.example"),
+    ];
+    let password = r#"{"password":"attacker-pass-123"}"#;
+    let changed = status(
+        &app,
+        post_json("/api/web-auth/users/owner/password", &proxied, password),
+    )
+    .await;
+    let setup = status(&app, post_json("/api/web-auth/setup", &proxied, password)).await;
+    let config = status(
+        &app,
+        post_json("/api/web-auth/config", &proxied, r#"{"enabled":true}"#),
+    )
+    .await;
+    std::env::remove_var("AX_WEB_ALLOWED_HOSTS");
+    assert_eq!(changed, StatusCode::UNAUTHORIZED);
+    assert_eq!(setup, StatusCode::FORBIDDEN);
+    assert_eq!(config, StatusCode::UNAUTHORIZED);
+    // The person at this computer can still set the first password.
+    let local = [
+        ("host", "127.0.0.1:7070"),
+        ("origin", "http://127.0.0.1:7070"),
+    ];
+    assert_eq!(
+        status(&app, post_json("/api/web-auth/setup", &local, password)).await,
+        StatusCode::OK
+    );
+}
