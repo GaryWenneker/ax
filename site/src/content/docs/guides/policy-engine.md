@@ -666,6 +666,9 @@ ax policy does not replace other systems:
 | Claude Code | `.claude/rules/ax.md` | marker block in `.claude/CLAUDE.md` |
 | Codex / opencode | — | marker block in `AGENTS.md` |
 | Gemini CLI | — | marker block in `GEMINI.md` |
+| Cline | — | marker block in `.clinerules` |
+
+In a shared instruction file (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.clinerules`, …) `ax init` only replaces or appends the block between `<!-- AX_START -->` and `<!-- AX_END -->`. Text before and after that block is kept. A `.clinerules/` folder is left alone.
 
 Legacy `.cursor/rules/ax-agent-workflow.mdc` is migrated to `ax.mdc` on init.
 

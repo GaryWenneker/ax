@@ -525,19 +525,17 @@ fn seed_marked_file(
     Ok(())
 }
 
-fn cline_bootstrap_stale(content: &str) -> bool {
-    !crate::seed::verify_content(
-        content
-            .find(AX_SECTION_START)
-            .and_then(|start| {
-                content
-                    .find(AX_SECTION_END)
-                    .map(|end| &content[start..end + AX_SECTION_END.len()])
-            })
-            .unwrap_or(content),
-    )
-    .is_empty()
-        || content.trim() != CLINE_RULE_BODY.trim()
+/// The marked ax block inside the Cline template. Existing `.clinerules` files get
+/// only this block replaced or appended, so their own text is kept.
+fn cline_template_block() -> &'static str {
+    CLINE_RULE_BODY
+        .find(AX_SECTION_START)
+        .and_then(|start| {
+            CLINE_RULE_BODY[start..]
+                .find(AX_SECTION_END)
+                .map(|end| &CLINE_RULE_BODY[start..start + end + AX_SECTION_END.len()])
+        })
+        .unwrap_or(CLINE_INSTRUCTIONS_BLOCK)
 }
 
 fn seed_cline_bootstrap(
@@ -547,6 +545,13 @@ fn seed_cline_bootstrap(
 ) -> std::io::Result<()> {
     let path = project_root.join(".clinerules");
     let rel = ".clinerules";
+
+    // Cline also supports a `.clinerules/` folder of rule files; that folder belongs
+    // to the user and is never touched.
+    if path.is_dir() {
+        result.record_skipped(rel);
+        return Ok(());
+    }
 
     if !path.exists() {
         if ide_removed(project_root, rel, force)? {
@@ -559,24 +564,13 @@ fn seed_cline_bootstrap(
         return Ok(());
     }
 
-    let content = std::fs::read_to_string(&path)?;
-    if !cline_bootstrap_stale(&content) {
-        record_upsert(result, rel, UpsertAction::Unchanged);
-        return Ok(());
-    }
-
-    // Preserve any custom content above the ax block; replace ax block + Cline sections.
-    let custom_prefix = content
-        .find(AX_SECTION_START)
-        .map(|start| content[..start].trim_end())
-        .filter(|prefix| !prefix.is_empty());
-
-    let body = match custom_prefix {
-        Some(prefix) => format!("{prefix}\n\n{CLINE_RULE_BODY}\n"),
-        None => format!("{CLINE_RULE_BODY}\n"),
-    };
-    std::fs::write(&path, body)?;
-    record_upsert(result, rel, UpsertAction::Updated);
+    let action = replace_or_append_marked_section(
+        &path,
+        cline_template_block(),
+        AX_SECTION_START,
+        AX_SECTION_END,
+    )?;
+    record_upsert(result, rel, action);
     Ok(())
 }
 
@@ -670,8 +664,9 @@ pub fn seed_ide_agent_workflow(project_root: &Path) -> std::io::Result<IdeSeedRe
     seed_ide_agent_workflow_with_force(project_root, false)
 }
 
-/// Seed IDE bootstrap files. With `force=false`, existing files are left alone (create-missing).
-/// With `force=true`, stale managed templates may be rewritten.
+/// Seed IDE bootstrap files. Shared instruction files (`AGENTS.md`, `.clinerules`, …) only get
+/// their marked ax block replaced or appended; text outside it is kept. With `force=true`, stale
+/// ax-managed templates may be rewritten.
 pub fn seed_ide_agent_workflow_with_force(
     project_root: &Path,
     force: bool,
@@ -1550,5 +1545,67 @@ mod tests {
             .fixed
             .iter()
             .any(|p| p.contains("mcp-callmcp-shape.mdc")));
+    }
+    #[test]
+    fn an_existing_clinerules_without_an_ax_block_keeps_its_team_rules() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(".clinerules");
+        let team = "# Team rules\n\nAlways run the linter before you commit.\n";
+        std::fs::write(&path, team).unwrap();
+        let result = seed_ide_agent_workflow(dir.path()).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.starts_with(team.trim_end()), "{content}");
+        assert!(content.contains(AX_SECTION_START));
+        assert!(content.contains("ax_preflight"));
+        assert!(result.updated.iter().any(|p| p == ".clinerules"));
+    }
+
+    #[test]
+    fn an_existing_clinerules_keeps_text_before_and_after_the_ax_block() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(".clinerules");
+        std::fs::write(
+            &path,
+            "# Mine\n\n<!-- AX_START -->\nold\n<!-- AX_END -->\n\n## Our own section\nKeep me.\n",
+        )
+        .unwrap();
+        seed_ide_agent_workflow(dir.path()).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.starts_with("# Mine\n\n<!-- AX_START -->"),
+            "{content}"
+        );
+        assert!(
+            content.contains("## Our own section\nKeep me."),
+            "{content}"
+        );
+        assert!(!content.contains("\nold\n"));
+        assert!(content.contains("ax_preflight"));
+    }
+
+    #[test]
+    fn a_clinerules_directory_is_skipped_and_the_seed_continues() {
+        let dir = tempdir().unwrap();
+        let rules_dir = dir.path().join(".clinerules");
+        std::fs::create_dir_all(&rules_dir).unwrap();
+        std::fs::write(rules_dir.join("team.md"), "team\n").unwrap();
+        let result = seed_ide_agent_workflow(dir.path()).unwrap();
+        assert!(result.skipped.iter().any(|p| p == ".clinerules"));
+        assert!(rules_dir.is_dir());
+        assert_eq!(
+            std::fs::read_to_string(rules_dir.join("team.md")).unwrap(),
+            "team\n"
+        );
+    }
+
+    #[test]
+    fn a_seeded_clinerules_is_left_unchanged_on_reseed() {
+        let dir = tempdir().unwrap();
+        seed_ide_agent_workflow(dir.path()).unwrap();
+        let before = std::fs::read_to_string(dir.path().join(".clinerules")).unwrap();
+        let result = seed_ide_agent_workflow(dir.path()).unwrap();
+        let after = std::fs::read_to_string(dir.path().join(".clinerules")).unwrap();
+        assert_eq!(before, after);
+        assert!(result.skipped.iter().any(|p| p == ".clinerules"));
     }
 }
