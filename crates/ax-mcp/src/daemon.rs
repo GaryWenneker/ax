@@ -1149,6 +1149,43 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_line_longer_than_the_limit_closes_the_connection() {
+        let _env = crate::test_env::shared().await;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let engine = Arc::new(Mutex::new(McpEngine::with_project_root(root.clone())));
+        let lifecycle = DaemonLifecycle::new(root.clone(), None);
+        let (client, server) = tokio::io::duplex(1024 * 1024);
+        let served = tokio::spawn(async move {
+            serve_session(
+                DaemonSession::from_io(server),
+                engine,
+                &root,
+                0,
+                None,
+                None,
+                lifecycle,
+            )
+            .await
+        });
+        let mut client = DaemonSession::from_io(client);
+        assert_eq!(read_json_line(&mut client).await["type"], "hello");
+        // Bytes without a newline, one more than the limit.
+        let chunk = vec![b'a'; 1024 * 1024];
+        let mut left = crate::daemon_conn::MAX_LINE_BYTES + 1;
+        while left > 0 {
+            let n = left.min(chunk.len() as u64) as usize;
+            if client.write_bytes(&chunk[..n]).await.is_err() {
+                break;
+            }
+            left -= n as u64;
+        }
+        let ended = tokio::time::timeout(Duration::from_secs(20), served).await;
+        let result = ended.expect("the daemon kept reading an endless line").unwrap();
+        assert!(result.is_err(), "an over-long line is an error");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_client_that_stops_reading_does_not_block_other_clients() {
         let _env = crate::test_env::shared().await;
         let dir = tempfile::tempdir().unwrap();

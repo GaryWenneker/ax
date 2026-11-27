@@ -3,6 +3,31 @@
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
+/// The longest JSON-RPC line a daemon or proxy accepts from its peer.
+pub const MAX_LINE_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Reads one line of at most `limit` bytes. A peer that sends more without a
+/// newline gets an `InvalidData` error instead of growing `line` without end.
+pub async fn read_line_capped<R>(
+    reader: &mut R,
+    line: &mut String,
+    limit: u64,
+) -> std::io::Result<usize>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+    let n = reader.take(limit.saturating_add(1)).read_line(line).await?;
+    if n as u64 > limit {
+        line.clear();
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("line longer than {limit} bytes; connection closed"),
+        ));
+    }
+    Ok(n)
+}
+
 pub struct DaemonSession {
     pub reader: BufReader<Box<dyn AsyncRead + Unpin + Send>>,
     pub writer: Box<dyn AsyncWrite + Unpin + Send>,
@@ -43,8 +68,9 @@ impl DaemonSession {
         (self.reader, self.writer)
     }
 
+    /// Reads one line of at most [`MAX_LINE_BYTES`]; a longer line is an error.
     pub async fn read_line(&mut self, line: &mut String) -> std::io::Result<usize> {
-        self.reader.read_line(line).await
+        read_line_capped(&mut self.reader, line, MAX_LINE_BYTES).await
     }
 
     /// Like `read_line`, reading at most `limit` bytes.

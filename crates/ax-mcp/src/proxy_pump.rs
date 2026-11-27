@@ -4,10 +4,10 @@ use std::future::Future;
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncBufRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
-use crate::daemon_conn::DaemonSession;
+use crate::daemon_conn::{read_line_capped, DaemonSession, MAX_LINE_BYTES};
 
 pub const DAEMON_RESTARTED: &str = "ax daemon restarted; retry the call";
 
@@ -25,7 +25,8 @@ where
     tokio::spawn(async move {
         loop {
             let mut line = String::new();
-            match reader.read_line(&mut line).await {
+            // A line over the limit ends this reader like a closed peer.
+            match read_line_capped(&mut reader, &mut line, MAX_LINE_BYTES).await {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
                     if tx.send(line).await.is_err() {
@@ -603,6 +604,34 @@ mod tests {
             .await;
         let outcome = tokio::time::timeout(WAIT, task).await.unwrap().unwrap();
         assert_eq!(outcome, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn a_daemon_line_longer_than_the_limit_is_treated_as_a_lost_daemon() {
+        let (s1, mut d1) = daemon();
+        let mut h = start(s1, vec![], Duration::from_millis(400));
+
+        h.client.send(request(5, "ax_status")).await;
+        d1.line().await.unwrap();
+        let chunk = vec![b'a'; 1024 * 1024];
+        let writer = tokio::spawn(async move {
+            let mut left = crate::daemon_conn::MAX_LINE_BYTES + 1;
+            while left > 0 {
+                let n = left.min(chunk.len() as u64) as usize;
+                if d1.writer.write_all(&chunk[..n]).await.is_err() {
+                    break;
+                }
+                left -= n as u64;
+            }
+            d1
+        });
+        let reply = tokio::time::timeout(Duration::from_secs(20), h.client.line())
+            .await
+            .expect("the proxy kept reading an endless line")
+            .unwrap();
+        assert_eq!(reply["id"], 5);
+        assert_eq!(reply["error"]["code"], -32000);
+        drop(writer);
     }
 
     #[tokio::test]
