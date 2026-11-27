@@ -868,7 +868,11 @@ mod tests {
         use crate::server_config::ProjectRegistration;
         let dir = tempfile::tempdir().unwrap();
         let token = "b".repeat(48);
-        std::env::set_var("AX_TEST_BOOTSTRAP_REGISTER_ONCE", &token);
+        let _env = crate::test_env::scoped_env(&[(
+            "AX_TEST_BOOTSTRAP_REGISTER_ONCE",
+            std::ffi::OsStr::new(&token),
+        )])
+        .await;
         let db = ax_global_db::open_and_init(&dir.path().join("access.db"))
             .await
             .unwrap();
@@ -945,7 +949,6 @@ mod tests {
             authorize_project(&state, "project", &headers).await,
             Err(StatusCode::FORBIDDEN)
         );
-        std::env::remove_var("AX_TEST_BOOTSTRAP_REGISTER_ONCE");
     }
 
     #[tokio::test]
@@ -1116,6 +1119,16 @@ mod tests {
     #[tokio::test]
     async fn three_nodes_exchange_complete_graph_source_memory_logs_and_conversations_over_http() {
         use crate::server_config::ProjectRegistration;
+        // Conversation rows from the temp projects must land in a temp usage database.
+        let usage_home = tempfile::tempdir().unwrap();
+        let usage_db = usage_home.path().join("usage.db");
+        let token = "x".repeat(64);
+        let _env = crate::test_env::scoped_env(&[
+            ("AX_USAGE_DB", usage_db.as_os_str()),
+            ("AX_TEST_FULL_SYNC_CREDENTIAL", std::ffi::OsStr::new(&token)),
+        ])
+        .await;
+        assert_eq!(ax_usage::usage_db_path(), usage_db);
         let primary_root = tempfile::tempdir().unwrap();
         let a_root = tempfile::tempdir().unwrap();
         let b_root = tempfile::tempdir().unwrap();
@@ -1154,8 +1167,6 @@ mod tests {
         let primary_ax = seed(primary_root.path(), "primary").await;
         let a_ax = seed(a_root.path(), "a").await;
         let b_ax = seed(b_root.path(), "b").await;
-        let token = "x".repeat(64);
-        std::env::set_var("AX_TEST_FULL_SYNC_CREDENTIAL", &token);
         let primary = ServerConfig {
             schema_version: 1,
             cluster_id: "team".into(),
@@ -1365,6 +1376,5 @@ mod tests {
         assert_eq!(before, after);
         let _ = shutdown.send(());
         server.await.unwrap();
-        std::env::remove_var("AX_TEST_FULL_SYNC_CREDENTIAL");
     }
 }

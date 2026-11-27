@@ -25,6 +25,8 @@ mod server_snapshot;
 use ax_web::server_discovery;
 #[cfg(feature = "web")]
 mod server_push;
+#[cfg(test)]
+mod test_env;
 mod ui;
 mod version_check;
 
