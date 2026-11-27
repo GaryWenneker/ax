@@ -516,7 +516,7 @@ async fn handle_purge(State(hub): State<WebHub>, Json(body): Json<PurgeBody>) ->
 
     let wants_database = present && body.groups.iter().any(|id| id == "database");
     let disconnected = if wants_database {
-        hub.close_graph_pool_if_current(&target).await
+        hub.close_project_if_current(&target).await
     } else {
         false
     };
