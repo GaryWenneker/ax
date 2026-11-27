@@ -1,13 +1,16 @@
 # Ensure cloudflared is installed, configured, and running for ax Command Center.
 #
 # Usage:
-#   .\scripts\ensure-cloudflare-tunnel.ps1
-#   .\scripts\ensure-cloudflare-tunnel.ps1 -InstallAx
-#   .\scripts\ensure-cloudflare-tunnel.ps1 -ConfigPath C:\path\to\config.yml -Hostname ax.wenneker.dev -Port 7070
+#   .\scripts\ensure-cloudflare-tunnel.ps1 -Hostname ax.example.com
+#   .\scripts\ensure-cloudflare-tunnel.ps1 -Hostname ax.example.com -InstallAx
+#   .\scripts\ensure-cloudflare-tunnel.ps1 -Hostname ax.example.com -ConfigPath C:\path\to\config.yml -Port 7070
 #
 # Requires Administrator to install cloudflared into Program Files and start the Windows service.
+# A downloaded cloudflared.exe is installed only when its Authenticode signature is valid and
+# signed by Cloudflare, Inc.
 param(
-    [string]$Hostname = 'ax.wenneker.dev',
+    [Parameter(Mandatory = $true)]
+    [string]$Hostname,
     [int]$Port = 7070,
     [string]$ConfigPath = '',
     [string]$CloudflaredDir = 'C:\Program Files (x86)\cloudflared',
@@ -70,6 +73,15 @@ function Resolve-ConfigPath {
     throw "cloudflared config.yml not found. Pass -ConfigPath or install the Cloudflared service first."
 }
 
+function Assert-CloudflareSigned {
+    param([string]$Path)
+    $signature = Get-AuthenticodeSignature -FilePath $Path
+    $subject = if ($signature.SignerCertificate) { [string]$signature.SignerCertificate.Subject } else { '' }
+    if ([string]$signature.Status -ne 'Valid' -or $subject -notmatch '(^|,\s*)O="?Cloudflare, Inc\.') {
+        throw "Refusing to install $Path`: signature status '$($signature.Status)', signer '$subject' (expected a valid signature by Cloudflare, Inc.)."
+    }
+}
+
 function Ensure-CloudflaredCli {
     Refresh-Path
     $cmd = Get-Command cloudflared -ErrorAction SilentlyContinue
@@ -100,17 +112,20 @@ function Ensure-CloudflaredCli {
     }
 
     New-Item -ItemType Directory -Force -Path $CloudflaredDir | Out-Null
-    $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') {
-        'cloudflared-windows-amd64.exe'
-    } else {
-        'cloudflared-windows-amd64.exe'
-    }
-    $url = "https://github.com/cloudflare/cloudflared/releases/latest/download/$arch"
+    # The x64 build; Windows on Arm runs it under x64 emulation.
+    $url = 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe'
     $dest = Join-Path $CloudflaredDir 'cloudflared.exe'
+    $download = "$dest.download"
     Write-Host "Downloading $url"
-    Invoke-WebRequest -Uri $url -OutFile $dest -TimeoutSec 120
-    if (-not (Test-Path $dest)) {
-        throw "cloudflared download failed"
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $download -TimeoutSec 120 -UseBasicParsing
+        if (-not (Test-Path $download)) {
+            throw "cloudflared download failed"
+        }
+        Assert-CloudflareSigned -Path $download
+        Move-Item -LiteralPath $download -Destination $dest -Force
+    } finally {
+        if (Test-Path -LiteralPath $download) { Remove-Item -LiteralPath $download -Force }
     }
     Write-Host "Installed: $dest" -ForegroundColor Green
     return $dest
@@ -162,7 +177,8 @@ function Ensure-AxCli {
         if ($LASTEXITCODE -ne 0) { throw 'cargo install ax-cli failed' }
         Pop-Location
     } else {
-        Invoke-Expression ((Invoke-WebRequest -Uri 'https://getax.wenneker.io/install.ps1' -UseBasicParsing).Content)
+        # Never evaluate downloaded code as Administrator: the user installs ax and re-runs.
+        throw "ax CLI is not installed. Install it first (see https://getax.wenneker.io/), then re-run this script."
     }
 
     Refresh-Path
