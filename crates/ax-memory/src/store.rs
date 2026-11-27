@@ -1355,6 +1355,26 @@ fn drop_weak_term_matches_with_relative(
     });
 }
 
+/// Enabled memories carrying `tag` (ASCII case-insensitive), ordered by id.
+/// No row cap: the shared export must see every tagged memory, however many
+/// automatic rows the vault holds.
+pub(crate) async fn enabled_with_tag(
+    pool: &SqlitePool,
+    tag: &str,
+) -> Result<Vec<MemoryRow>, AxError> {
+    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+        "{MEMORY_SELECT} WHERE enabled = 1 AND EXISTS (
+             SELECT 1 FROM json_each(CASE WHEN json_valid(memories.tags) THEN memories.tags ELSE '[]' END) t
+             WHERE lower(t.value) = lower(?))
+         ORDER BY id"
+    ))
+    .bind(tag)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| db_err(pool, e))?;
+    Ok(rows.into_iter().map(row_from_db).collect())
+}
+
 pub async fn list(
     pool: &SqlitePool,
     limit: usize,

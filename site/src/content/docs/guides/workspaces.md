@@ -112,6 +112,8 @@ ax memory export
 ax memory import   # on other machines / after git pull
 ```
 
+The export holds every enabled memory tagged `shared` (not `local`, `noshare`, or `private`), ordered by id, and replaces the file in one step. Import adds new ids. It updates an existing memory only when the shared copy is newer than the local one, and keeps the shared copy's timestamp; a newer local edit is never overwritten. A file with a malformed line is rejected before anything is written.
+
 Set `"memorySync": true` in root `ax.json` to install post-commit export and post-merge import hook lines.
 
 ## Export graphs

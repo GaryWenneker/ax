@@ -11,7 +11,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-use crate::store::{get, list, update};
+use crate::store::{enabled_with_tag, get, update};
 use crate::types::{MemoryRow, RememberInput};
 
 fn db_err(e: impl std::fmt::Display) -> AxError {
@@ -48,7 +48,9 @@ pub struct MemoryImportResult {
     pub skipped: usize,
 }
 
-/// Export memories that carry `tag` (default: `shared`) to JSONL.
+/// Export every memory that carries `tag` (default: `shared`) to JSONL,
+/// ordered by id so the committed file diffs cleanly. The file is replaced
+/// atomically: readers see the old or the new export, never a partial one.
 pub async fn export_shared(
     pool: &SqlitePool,
     project_root: &Path,
@@ -62,7 +64,7 @@ pub async fn export_shared(
         std::fs::create_dir_all(parent).map_err(|e| AxError::Other(e.to_string()))?;
     }
 
-    let (rows, _) = list(pool, 10_000, 0).await?;
+    let rows = enabled_with_tag(pool, tag).await?;
     let selected: Vec<&MemoryRow> = rows
         .iter()
         .filter(|memory| is_shared_export_candidate(memory, tag))
@@ -74,7 +76,8 @@ pub async fn export_shared(
         body.push_str(&line);
         body.push('\n');
     }
-    std::fs::write(&out_path, body).map_err(|e| AxError::Other(e.to_string()))?;
+    ax_utils::atomic_write(&out_path, body.as_bytes())
+        .map_err(|e| AxError::Other(e.to_string()))?;
 
     Ok(MemoryExportResult {
         written: selected.len(),
@@ -82,14 +85,17 @@ pub async fn export_shared(
     })
 }
 
-/// Import JSONL memories. Existing ids are updated; new ids are inserted.
+/// Import JSONL memories. New ids are inserted. An existing id is updated
+/// only when the shared row is strictly newer than the local one, and then
+/// keeps the shared row's `updated_at`; a local copy that is as new or newer
+/// is never replaced. Every line is parsed before anything is written, so a
+/// malformed file changes nothing.
 pub async fn import_shared(pool: &SqlitePool, path: &Path) -> Result<MemoryImportResult, AxError> {
     if !path.is_file() {
         return Ok(MemoryImportResult::default());
     }
     let content = std::fs::read_to_string(path).map_err(|e| AxError::Other(e.to_string()))?;
-    let mut result = MemoryImportResult::default();
-
+    let mut rows: Vec<MemoryRow> = Vec::new();
     for (lineno, line) in content.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() {
@@ -97,12 +103,14 @@ pub async fn import_shared(pool: &SqlitePool, path: &Path) -> Result<MemoryImpor
         }
         let row: MemoryRow = serde_json::from_str(line)
             .map_err(|e| AxError::Other(format!("shared.jsonl line {}: {e}", lineno + 1)))?;
+        rows.push(row);
+    }
+
+    let mut result = MemoryImportResult::default();
+    for row in rows {
         match get(pool, &row.id).await? {
             Some(existing) => {
-                if existing.updated_at >= row.updated_at
-                    && existing.body == row.body
-                    && existing.title == row.title
-                {
+                if existing.updated_at >= row.updated_at {
                     result.skipped += 1;
                     continue;
                 }
@@ -120,6 +128,12 @@ pub async fn import_shared(pool: &SqlitePool, path: &Path) -> Result<MemoryImpor
                 )
                 .await?;
                 if ok {
+                    sqlx::query("UPDATE memories SET updated_at = ? WHERE id = ?")
+                        .bind(row.updated_at)
+                        .bind(&row.id)
+                        .execute(pool)
+                        .await
+                        .map_err(db_err)?;
                     result.updated += 1;
                 } else {
                     result.skipped += 1;
