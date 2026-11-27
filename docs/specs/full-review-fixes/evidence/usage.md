@@ -105,7 +105,7 @@ Round commits: 8253b83b, 3211e43f, 231f75b9, 03ba7b04 (round 1); f3333325 (round
 
 ## Final check run
 
-All commands ran in `/Users/gary/io/ax-wt/usage` . The ax-usage test, clippy and fmt rows ran at 58a337ab; the ax-cli and site rows ran at 71b863ab, and the only change since is a new ax-usage unit test.
+All commands ran in `/Users/gary/io/ax-wt/usage`. The ax-usage test, clippy and fmt rows ran at 58a337ab; the ax-cli and site rows ran at 71b863ab, and the only change since is a new ax-usage unit test.
 
 | Command | Result |
 |---|---|
