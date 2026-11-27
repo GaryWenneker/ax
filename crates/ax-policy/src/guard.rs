@@ -471,14 +471,17 @@ fn skill_satisfies_require(skills: &[crate::types::PolicySkillRow], name: &str) 
     })
 }
 
-/// File names that usually hold secrets. Takes the lower-cased
-/// project-relative path and looks at the file name only:
+/// Paths that usually hold secrets. Takes the lower-cased
+/// project-relative path:
 /// - `.env`, `.env.*` and names ending in `.env`;
 /// - private SSH keys and key or certificate stores;
 /// - names with `secrets` or `credentials` as a whole word (split on `-`,
 ///   `_` and `.`), such as `secrets.json`, `aws-credentials.json` or
-///   `.aws/credentials`, unless the name ends in a source-code or
-///   documentation extension (`credentials_form.tsx`, `secrets-handling.md`).
+///   `.aws/credentials`, and any file inside a folder named exactly
+///   `secrets` or `credentials` (`config/credentials/prod.json`), unless the
+///   name ends in a source-code or documentation extension
+///   (`credentials_form.tsx`, `src/credentials/form.tsx`,
+///   `secrets-handling.md`).
 ///
 /// Committed templates are not secrets: any of these names with an
 /// `example`, `sample`, `template` or `dist` part (`.env.example`,
@@ -513,6 +516,10 @@ fn is_sensitive_path(rel_lc: &str) -> bool {
     };
     if extension.is_some_and(|ext| CODE_OR_DOC_EXTENSIONS.contains(&ext)) {
         return false;
+    }
+    let mut folders = rel_lc.split('/').rev().skip(1);
+    if folders.any(|folder| SECRET_WORDS.contains(&folder)) {
+        return true;
     }
     name.split(['-', '_', '.'])
         .any(|word| SECRET_WORDS.contains(&word))
@@ -1202,6 +1209,9 @@ mod tests {
             "credentials-prod.yaml",
             "config/app.secrets.toml",
             "deploy/db_secrets",
+            "config/credentials/prod.json",
+            "credentials/service-account.json",
+            "deploy/secrets/db.yaml",
         ] {
             let result = guard_operation(&pool, root, &root.join(blocked), GuardOp::Delete, None)
                 .await
@@ -1220,6 +1230,10 @@ mod tests {
             "src/secrets_view.ts",
             "src/environment.rs",
             "docs/credentialsmanager.json",
+            "src/credentials/form.tsx",
+            "docs/secrets/rotation.md",
+            "credentials/service-account.example.json",
+            "my-credentials-app/config.json",
         ] {
             let result = guard_operation(&pool, root, &root.join(allowed), GuardOp::Delete, None)
                 .await
