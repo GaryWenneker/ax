@@ -8,10 +8,12 @@ async fn background_watch_returns_when_a_newer_build_is_registered() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     let ax = Ax::init(&root).await.unwrap();
+    // A running process (this test) holds the newer build; a row from an
+    // exited process would be removed instead.
     register_build(
         ax.db_pool(),
         "mcp",
-        42,
+        i64::from(std::process::id()),
         &BuildStamp {
             version: "future".into(),
             mtime_ms: 9_000_000_000_000,
