@@ -7,6 +7,7 @@ edition = "2021"
 ax-db = { workspace = true }
 ax-memory = { workspace = true }
 ax-utils = { workspace = true }
+fs2 = { workspace = true }
 sqlx = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -960,6 +960,7 @@ dependencies = [
  "ax-utils",
  "blake3",
  "dirs",
+ "fs2",
  "globset",
  "regex",
  "serde",
