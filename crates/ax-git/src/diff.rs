@@ -134,8 +134,11 @@ fn parse_unified_diff(text: &str) -> Vec<ChangedHunk> {
     hunks
 }
 
+/// Parse `@@ -a,b +c,d @@ [function context]`. Git appends the enclosing
+/// function line after the second `@@`, so the ranges end there.
 fn parse_hunk_header(line: &str, path: &str) -> Option<ChangedHunk> {
-    let inner = line.strip_prefix("@@ ")?.strip_suffix(" @@")?;
+    let rest = line.strip_prefix("@@ ")?;
+    let inner = rest.split(" @@").next()?;
     let parts: Vec<&str> = inner.split_whitespace().collect();
     if parts.len() < 2 {
         return None;
@@ -170,6 +173,14 @@ fn current_branch(repo_path: &Path) -> Result<Option<String>, GitError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hunk_header_with_function_context_is_parsed() {
+        let h = parse_hunk_header("@@ -40 +40 @@ pub fn run() {", "src/lib.rs").unwrap();
+        assert_eq!((h.old_start, h.old_lines, h.new_start, h.new_lines), (40, 1, 40, 1));
+        let h = parse_hunk_header("@@ -10,5 +12,0 @@ fn a() -> u8 { 1 @@ 2 }", "x").unwrap();
+        assert_eq!((h.new_start, h.new_lines), (12, 0));
+    }
 
     #[test]
     fn parse_hunk_header_works() {
