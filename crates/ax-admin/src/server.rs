@@ -696,13 +696,12 @@ async fn update_connection(
     if url_changed && new_key.is_none() {
         return Err(bad_request("Enter the key again to use another address"));
     }
-    let mut updated = saved.clone();
-    updated.url = url.to_string();
-    if let Some(name) = input.name {
-        updated.name = connection_name(Some(name), &url)?;
-    }
+    let new_name = match input.name {
+        Some(name) => Some(connection_name(Some(name), &url)?),
+        None => None,
+    };
     if let Some(key) = &new_key {
-        probe(url, Arc::new(StaticToken(key.clone()))).await?;
+        probe(url.clone(), Arc::new(StaticToken(key.clone()))).await?;
     }
     // From here the key and the entry change. A client built in between is
     // not cached (see `Remotes`), and none is left over afterwards.
@@ -721,24 +720,34 @@ async fn update_connection(
         }
         None => None,
     };
-    let to_save = updated.clone();
+    // The edit is applied to the entry as it is now, in one step: a removal
+    // that finished meanwhile is not undone by writing back an older copy.
+    let (edit_id, new_url) = (id.clone(), url.to_string());
     let result = app
         .store(move |store| {
             store
-                .upsert(to_save, false)
-                .map(|()| store.active_id().map(str::to_owned))
+                .update(&edit_id, |connection| {
+                    connection.url = new_url;
+                    if let Some(name) = new_name {
+                        connection.name = name;
+                    }
+                })
+                .map(|updated| updated.map(|c| (c, store.active_id().map(str::to_owned))))
         })
         .await
-        .and_then(|r| r.map_err(internal));
-    let active = match result {
-        Ok(active) => active,
+        .and_then(|r| r.map_err(internal))
+        .and_then(|r| r.ok_or_else(unknown_connection));
+    let (updated, active) = match result {
+        Ok(saved) => saved,
         Err(e) => {
-            // The entry still names the old address: put its key back.
             if let Some(previous) = previous_key {
+                // The entry still names the old address: put its key back. A
+                // connection that is gone keeps no key at all.
+                let gone = e.1 == "unknown_connection";
                 let (secrets, id) = (app.secrets.clone(), id.clone());
                 let undo = blocking(move || match previous {
-                    Some(key) => secrets.set(&id, &key),
-                    None => secrets.delete(&id),
+                    Some(key) if !gone => secrets.set(&id, &key),
+                    _ => secrets.delete(&id),
                 })
                 .await;
                 if let Err(undo) = undo {

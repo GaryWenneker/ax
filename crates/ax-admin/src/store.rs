@@ -162,6 +162,25 @@ impl Store {
         self.commit(data)
     }
 
+    /// Changes a saved connection in place and writes the file. Returns the
+    /// changed entry, or `None` when no connection has this id (it may have
+    /// been removed meanwhile); nothing is added then.
+    pub fn update(
+        &mut self,
+        id: &str,
+        edit: impl FnOnce(&mut SavedConnection),
+    ) -> Result<Option<SavedConnection>, String> {
+        let mut data = self.data.clone();
+        let Some(existing) = data.connections.iter_mut().find(|c| c.id == id) else {
+            return Ok(None);
+        };
+        edit(existing);
+        existing.id = id.to_owned();
+        let updated = existing.clone();
+        self.commit(data)?;
+        Ok(Some(updated))
+    }
+
     pub fn activate(&mut self, id: &str) -> Result<(), String> {
         if self.get(id).is_none() {
             return Err("Unknown connection".into());
@@ -322,6 +341,24 @@ mod tests {
         assert_eq!(store.active_id(), Some("one"));
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         assert_eq!(Store::open(dir.path()).unwrap().list().len(), 1);
+    }
+
+    #[test]
+    fn update_changes_an_existing_entry_and_never_adds_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path()).unwrap();
+        store.upsert(connection("one"), true).unwrap();
+        let updated = store
+            .update("one", |c| c.name = "renamed".into())
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.name, "renamed");
+        assert_eq!(Store::open(dir.path()).unwrap().list()[0].name, "renamed");
+        assert!(store
+            .update("gone", |c| c.name = "x".into())
+            .unwrap()
+            .is_none());
+        assert_eq!(store.list().len(), 1);
     }
 
     #[test]

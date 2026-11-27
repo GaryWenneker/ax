@@ -831,6 +831,62 @@ async fn a8_editing_keeps_the_key_unless_a_new_one_is_given() {
     assert_eq!(status, StatusCode::OK, "{body}");
 }
 
+/// An edit that checks a new key takes a moment. A removal of the same
+/// connection in that moment wins: the edit does not bring the entry back, and
+/// no key is left in the credential store for it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_edit_does_not_bring_back_a_connection_removed_meanwhile() {
+    use std::sync::atomic::AtomicBool;
+    #[derive(Default)]
+    struct Gate {
+        closed: AtomicBool,
+        waiting: AtomicBool,
+    }
+    let gate = Arc::new(Gate::default());
+    let app = Router::new()
+        .fallback(|State(gate): State<Arc<Gate>>, body: String| async move {
+            let request: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+            match request["method"].as_str().unwrap_or("") {
+                "initialize" => {
+                    while gate.closed.load(Ordering::SeqCst) {
+                        gate.waiting.store(true, Ordering::SeqCst);
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    initialized("2025-11-25", "s")
+                }
+                "notifications/initialized" => StatusCode::ACCEPTED.into_response(),
+                _ => tool_list(&["ax_status"]),
+            }
+        })
+        .with_state(gate.clone());
+    let url = format!("{}/projects/alpha/mcp", serve(app).await);
+    let admin = Admin::start().await;
+    let id = admin.add("Alpha", &url, "first-key").await;
+    let path = format!("/api/connections/{id}");
+
+    gate.closed.store(true, Ordering::SeqCst);
+    let edit = admin.call(
+        "PUT",
+        &path,
+        json!({"name": "Renamed", "auth": {"type": "api_key", "key": "second-key"}}),
+    );
+    let remove = async {
+        while !gate.waiting.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let removed = admin.call("DELETE", &path, json!({})).await;
+        gate.closed.store(false, Ordering::SeqCst);
+        removed
+    };
+    let ((edit_status, edit_body), (remove_status, remove_body)) = tokio::join!(edit, remove);
+    assert_eq!(remove_status, StatusCode::OK, "{remove_body}");
+    assert_eq!(edit_status, StatusCode::NOT_FOUND, "{edit_body}");
+    assert_eq!(edit_body["code"], "unknown_connection");
+    let (_, list) = admin.get("/api/connections").await;
+    assert_eq!(list["connections"], json!([]), "{list}");
+    assert_eq!(admin.secrets.get(&id).unwrap(), None);
+}
+
 #[tokio::test]
 async fn a_saved_key_is_never_sent_to_another_address() {
     let upstream = Upstream::start().await;
