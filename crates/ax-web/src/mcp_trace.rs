@@ -3,7 +3,7 @@
 use std::convert::Infallible;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::{
     extract::{Query, State},
@@ -24,6 +24,11 @@ use ax_usage::verbose_enabled;
 
 const BATCH_LINES: usize = 400;
 const POLL_MS: u64 = 350;
+/// How long the choice of which project's log to follow is reused.
+const FOLLOW_REFRESH: Duration = Duration::from_secs(5);
+/// How much of today's log a newly connected client is sent, and the most
+/// read from any log in one poll.
+const SEED_MAX_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Follow this project's verbose log, or the most recently written log among
 /// recent workspaces when this project has never produced one (typical when
@@ -206,23 +211,37 @@ async fn handle_mcp_trace_events(
         let mut following_path = String::new();
         let mut seeded_path = String::new();
         let mut project_following = String::new();
-        let mut remote_seen=std::collections::BTreeMap::<String,usize>::new();
-        let mut remote_versions=std::collections::BTreeMap::new();
+        // Read offset per replicated log, so each poll reads only what was added.
+        let mut remote_offsets = std::collections::BTreeMap::<PathBuf, u64>::new();
+        // Which project to follow reads config and lists directories, so it is
+        // worked out off the hub lock and only every FOLLOW_REFRESH.
+        let mut follow_cache: Option<(PathBuf, PathBuf, Option<String>, Instant)> = None;
 
         loop {
-            let (path, root, hub_root, fallback) = {
-                let ws = hub.read().await;
-                let hub_root = ws.project_root.clone();
-                let (follow, fallback) = resolve_follow_root(&hub_root, allow_fallback);
-                (mcp_verbose_log_path(&follow), follow, hub_root, fallback)
-            };
+            let hub_root = hub.read().await.project_root.clone();
+            let fresh = follow_cache.as_ref().is_some_and(|(cached_hub, _, _, at)| {
+                *cached_hub == hub_root && at.elapsed() < FOLLOW_REFRESH
+            });
+            if !fresh {
+                let resolve_root = hub_root.clone();
+                let resolved = tokio::task::spawn_blocking(move || {
+                    resolve_follow_root(&resolve_root, allow_fallback)
+                })
+                .await
+                .unwrap_or_else(|_| (hub_root.clone(), None));
+                follow_cache = Some((hub_root.clone(), resolved.0, resolved.1, Instant::now()));
+            }
+            let (root, fallback) = follow_cache
+                .as_ref()
+                .map(|(_, follow, fallback, _)| (follow.clone(), fallback.clone()))
+                .unwrap_or_else(|| (hub_root.clone(), None));
+            let path = mcp_verbose_log_path(&root);
             let path_key = path.display().to_string();
             let follow_key = format!("{}|{}", hub_root.display(), root.display());
 
             if follow_key != project_following {
                 project_following = follow_key;
-                remote_seen.clear();
-                remote_versions.clear();
+                remote_offsets.clear();
                 following_path.clear();
                 seeded_path.clear();
                 offset = 0;
@@ -249,45 +268,49 @@ async fn handle_mcp_trace_events(
 
             if seeded_path != path_key {
                 seeded_path = path_key.clone();
-                if let Ok(text) = tokio::fs::read_to_string(&path).await {
-                    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+                if let Ok((lines, end)) = seed_log(&path).await {
                     for chunk in lines.chunks(BATCH_LINES) {
                         let payload = serde_json::to_string(chunk).unwrap_or_else(|_| "[]".into());
                         yield Ok(Event::default().event("batch").data(payload));
                     }
-                    offset = tokio::fs::metadata(&path)
-                        .await
-                        .map(|m| m.len())
-                        .unwrap_or(text.len() as u64);
+                    offset = end;
                     yield Ok(Event::default().event("ready").data(format!("following {offset}")));
                 } else {
                     yield Ok(Event::default().event("ready").data("waiting for log file"));
                 }
             }
 
-            let today=ax_usage::rotation_calendar_date(Some(&root),Utc::now());
-            for (day,remote_path) in ax_usage::replicated_log_files(&root) {
-                if day!=today {continue;}
-                let Ok(meta)=tokio::fs::metadata(&remote_path).await else {continue;};
-                let version=(meta.len(),meta.modified().ok());
-                if remote_versions.get(&remote_path)==Some(&version) {continue;}
-                remote_versions.insert(remote_path.clone(),version);
-                let origin=ax_usage::replicated_log_origin(&root,&remote_path);
-                if let Ok(text)=tokio::fs::read_to_string(&remote_path).await {
-                    let mut lines=Vec::new();let mut file_counts=std::collections::BTreeMap::<String,usize>::new();
-                    for line in text.split_inclusive('\n') { if !line.ends_with('\n') {continue;}
-                        let line=ax_usage::label_log_line(line.trim_end(),origin.as_deref());
-                        if !line.is_empty() {
-                            let count = file_counts.entry(line.clone()).or_default();
-                            *count += 1;
-                            let seen = remote_seen.entry(line.clone()).or_default();
-                            if *count > *seen {
-                                *seen = *count;
-                                lines.push(line);
-                            }
-                        }
-                    }
-                    for chunk in lines.chunks(BATCH_LINES) {let payload=serde_json::to_string(chunk).unwrap_or_else(|_|"[]".into()); yield Ok(Event::default().event("batch").data(payload));}
+            let today = ax_usage::rotation_calendar_date(Some(&root), Utc::now());
+            for (day, remote_path) in ax_usage::replicated_log_files(&root) {
+                if day != today {
+                    continue;
+                }
+                let Ok(meta) = tokio::fs::metadata(&remote_path).await else {
+                    continue;
+                };
+                let known = remote_offsets.get(&remote_path).copied();
+                if known == Some(meta.len()) {
+                    continue;
+                }
+                // First sight, or the replica was truncated or replaced: seed
+                // its tail; otherwise read only what was appended.
+                let read = match known {
+                    Some(offset) if meta.len() > offset => read_lines_from(&remote_path, offset).await,
+                    _ => seed_log(&remote_path).await,
+                };
+                let Ok((raw, end)) = read else {
+                    continue;
+                };
+                remote_offsets.insert(remote_path.clone(), end);
+                let origin = ax_usage::replicated_log_origin(&root, &remote_path);
+                let lines: Vec<String> = raw
+                    .iter()
+                    .map(|line| ax_usage::label_log_line(line.trim_end(), origin.as_deref()))
+                    .filter(|line| !line.is_empty())
+                    .collect();
+                for chunk in lines.chunks(BATCH_LINES) {
+                    let payload = serde_json::to_string(chunk).unwrap_or_else(|_| "[]".into());
+                    yield Ok(Event::default().event("batch").data(payload));
                 }
             }
             tokio::time::sleep(Duration::from_millis(POLL_MS)).await;
@@ -326,11 +349,68 @@ async fn handle_mcp_trace_events(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
+/// The lines a new client starts with (the last [`SEED_MAX_BYTES`] of the
+/// log, whole lines only) and the offset just past the last complete line, so
+/// a line being written, or appended after the read, comes from the tail.
+async fn seed_log(path: &Path) -> Result<(Vec<String>, u64), std::io::Error> {
+    let len = tokio::fs::metadata(path).await?.len();
+    if len <= SEED_MAX_BYTES {
+        return read_lines_window(path, 0, SEED_MAX_BYTES, false).await;
+    }
+    // Start one byte early: when that byte is a newline, the line at the
+    // window start is whole and kept.
+    let start = len - SEED_MAX_BYTES - 1;
+    read_lines_window(path, start, SEED_MAX_BYTES + 1, true).await
+}
+
+/// Complete lines from `offset` on (at most [`SEED_MAX_BYTES`] per call), and
+/// the offset just past the last one.
+async fn read_lines_from(path: &Path, offset: u64) -> Result<(Vec<String>, u64), std::io::Error> {
+    read_lines_window(path, offset, SEED_MAX_BYTES, false).await
+}
+
+/// Reads at most `max` bytes from `start` and returns the non-empty complete
+/// lines in them with the offset just past the last newline. With
+/// `skip_first`, the bytes up to the first newline end a line that began
+/// before `start` and are skipped. A single line longer than `max` is skipped
+/// rather than waited for forever.
+async fn read_lines_window(
+    path: &Path,
+    start: u64,
+    max: u64,
+    skip_first: bool,
+) -> Result<(Vec<String>, u64), std::io::Error> {
+    let mut file = tokio::fs::File::open(path).await?;
+    file.seek(SeekFrom::Start(start)).await?;
+    let mut buf = Vec::new();
+    file.take(max).read_to_end(&mut buf).await?;
+    let from = if skip_first {
+        match buf.iter().position(|&b| b == b'\n') {
+            Some(p) => p + 1,
+            None => return Ok((Vec::new(), start + buf.len() as u64)),
+        }
+    } else {
+        0
+    };
+    let end = match buf[from..].iter().rposition(|&b| b == b'\n') {
+        Some(p) => from + p + 1,
+        None if buf.len() as u64 >= max => buf.len(),
+        None => from,
+    };
+    let lines = String::from_utf8_lossy(&buf[from..end])
+        .lines()
+        .map(|l| l.trim_end_matches('\r'))
+        .filter(|l| !l.trim().is_empty())
+        .map(str::to_string)
+        .collect();
+    Ok((lines, start + end as u64))
+}
+
 async fn read_new_chunk(path: &Path, offset: u64) -> Result<(String, u64), std::io::Error> {
     let mut file = tokio::fs::File::open(path).await?;
     file.seek(SeekFrom::Start(offset)).await?;
     let mut buf = Vec::new();
-    file.read_to_end(&mut buf).await?;
+    file.take(SEED_MAX_BYTES).read_to_end(&mut buf).await?;
     // A character still being written stays for the next read.
     let complete = crate::utf8_stream::complete_len(&buf);
     let new_offset = offset + complete as u64;
@@ -359,6 +439,49 @@ mod tests {
         let (second, end) = read_new_chunk(&path, offset).await.unwrap();
         assert_eq!(format!("{first}{second}"), "tool ─ 🦀\n");
         assert_eq!(end, line.len() as u64);
+    }
+
+    #[tokio::test]
+    async fn the_seed_stops_before_a_line_still_being_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp-verbose.log");
+        fs::write(&path, "a\nb\npar").unwrap();
+        let (lines, offset) = seed_log(&path).await.unwrap();
+        assert_eq!(lines, vec!["a", "b"]);
+        assert_eq!(offset, 4, "the half line is read by the tail once complete");
+    }
+
+    #[tokio::test]
+    async fn the_seed_of_a_large_log_is_only_its_last_whole_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp-verbose.log");
+        let line = format!("{}\n", "x".repeat(99));
+        let count = (SEED_MAX_BYTES as usize / line.len()) * 3;
+        fs::write(&path, line.repeat(count)).unwrap();
+        let (lines, offset) = seed_log(&path).await.unwrap();
+        assert!(!lines.is_empty());
+        assert!(
+            lines.len() <= SEED_MAX_BYTES as usize / line.len(),
+            "{} lines seeded",
+            lines.len()
+        );
+        assert!(lines.iter().all(|l| l.len() == 99), "a cut line was seeded");
+        assert_eq!(offset, (line.len() * count) as u64);
+    }
+
+    #[tokio::test]
+    async fn complete_lines_are_read_from_an_offset_and_a_half_line_waits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("replica.log");
+        fs::write(&path, "one\ntwo\nthr").unwrap();
+        let (lines, offset) = read_lines_from(&path, 4).await.unwrap();
+        assert_eq!(lines, vec!["two"]);
+        assert_eq!(offset, 8);
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        std::io::Write::write_all(&mut file, b"ee\n").unwrap();
+        let (lines, offset) = read_lines_from(&path, offset).await.unwrap();
+        assert_eq!(lines, vec!["three"]);
+        assert_eq!(offset, 14);
     }
 
     #[test]
