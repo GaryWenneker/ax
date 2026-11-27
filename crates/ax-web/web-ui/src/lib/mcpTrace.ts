@@ -355,7 +355,37 @@ export function tryParseJson(raw: string): unknown | null {
  * Pull the primary payload blob from a trace line (args=, text=, message=)
  * and parse it when it is JSON from the agent/tool.
  */
+type EntryKey = Pick<TraceEntry, 'kind' | 'message'> & { tool?: string | null };
+type EntryMemo<T> = WeakMap<object, { kind: string; message: string; tool: string | null; value: T }>;
+
+/**
+ * Derived view of a trace entry, computed once per entry object. The Logging list renders
+ * every row many times; this keeps it from re-parsing the same JSON payload. The cached
+ * value is recomputed when the entry's kind, tool or message changes.
+ */
+export function memoByEntry<T>(cache: EntryMemo<T>, entry: EntryKey, compute: () => T): T {
+  const tool = entry.tool ?? null;
+  const hit = cache.get(entry);
+  if (hit && hit.kind === entry.kind && hit.message === entry.message && hit.tool === tool) {
+    return hit.value;
+  }
+  const value = compute();
+  cache.set(entry, { kind: entry.kind, message: entry.message, tool, value });
+  return value;
+}
+
+export function newEntryMemo<T>(): EntryMemo<T> {
+  return new WeakMap();
+}
+
+const payloadMemo = newEntryMemo<unknown | null>();
+
+/** Parsed JSON payload of the entry (shared per entry: treat it as read-only). */
 export function extractPayloadJson(entry: TraceEntry): unknown | null {
+  return memoByEntry(payloadMemo, entry, () => parsePayloadJson(entry));
+}
+
+function parsePayloadJson(entry: TraceEntry): unknown | null {
   const msg = entry.message;
   let candidate: string | null = null;
   switch (entry.kind) {
@@ -397,6 +427,16 @@ export function entryHasQueryPayload(entry: TraceEntry): boolean {
  * `key=value` fields (`prompt`, `query`, `text`, `message`, `q`).
  */
 export function entryTextPayloads(entry: TraceEntry): TextPayload[] {
+  return cachedTextPayloads(entry).slice();
+}
+
+const textPayloadMemo = newEntryMemo<readonly TextPayload[]>();
+
+function cachedTextPayloads(entry: TraceEntry): readonly TextPayload[] {
+  return memoByEntry(textPayloadMemo, entry, () => collectTextPayloads(entry));
+}
+
+function collectTextPayloads(entry: TraceEntry): TextPayload[] {
   const out: TextPayload[] = [];
   const seen = new Set<string>();
 
@@ -435,12 +475,12 @@ export function entryTextPayloads(entry: TraceEntry): TextPayload[] {
 
 /** True when the entry has any promoted text option (prompt/query/text/…). */
 export function entryHasTextPayload(entry: TraceEntry): boolean {
-  return entryTextPayloads(entry).length > 0;
+  return cachedTextPayloads(entry).length > 0;
 }
 
 /** Best text payload for list summary: prompt > query > text > message > q. */
 export function primaryTextPayload(entry: TraceEntry): TextPayload | null {
-  const all = entryTextPayloads(entry);
+  const all = cachedTextPayloads(entry);
   if (all.length === 0) return null;
   for (const leaf of TEXT_KEY_PRIORITY) {
     const hit = all.find((p) => p.leaf === leaf);
