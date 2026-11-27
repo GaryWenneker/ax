@@ -745,3 +745,13 @@
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #5b8def) 55%, transparent);
   background: color-mix(in srgb, var(--accent, #5b8def) 18%, transparent) !important;
 }
+
+/* "Load more" under the vault list. */
+.memory-load-more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 12px 0 4px;
+}

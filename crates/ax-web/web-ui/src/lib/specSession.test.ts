@@ -44,7 +44,7 @@ test('specs, memory, and logging link the same session in both directions', () =
   assert.match(specsPage, /linkedSessions\(spec\.sessions\)/);
   assert.match(specsPage, /searchParams\.get\('spec'\)/);
   assert.match(memory, /SessionHop/);
-  assert.match(memory, /fetchMemories\(\{ limit: 200, session: session \|\| undefined \}\)/);
+  assert.match(memory, /fetchMemories\(\{ limit: MEMORY_PAGE, session: session \|\| undefined \}\)/);
   assert.match(memory, /if \(session\) setQ\(''\)/);
   assert.match(memory, /typed !== sessionFilter/);
   assert.match(logging, /mcp-trace-heading[\s\S]{0,240}SessionHop session=\{sessionFilter\} here="logging"/);

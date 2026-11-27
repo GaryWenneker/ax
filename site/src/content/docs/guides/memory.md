@@ -405,7 +405,7 @@ The MCP server's `initialize` response includes guidance for agents:
 The **Memory** page in the Command Center (`ax ship --watch` or `ax web`) provides:
 
 - **Overview strip** — one compact row for how memories arrive (git, you or an agent, every turn) and the counts (total, git, manual/agent, search mode)
-- **Memory vault list** — the main view: memories sorted by recency, with kind icons, age, tags, and source badges
+- **Memory vault list** — the main view: memories sorted by recency, with kind icons, age, tags, and source badges. It loads 200 at a time; **Load more** adds older ones. The git, manual, and CLI-turn counts cover the loaded rows and say so while older ones are not loaded. A link to a memory outside the loaded rows still opens it
 - **Live hybrid search** — the search box runs the same recall algorithm agents use; scores shown per result
 - **Detail blade** — click a memory to slide a panel in from the right. It scrolls on its own and shows the id, kind, source, enabled state, created and updated times, confidence, recall score, tags, the full text, linked files, commits, and outcome when those were stored. `[[links]]` in the text are clickable, and **Linked from** lists the rules, skills, and memories that link to this one
 - **New memory modal** — composer with title, body, kind selector, and duplicate warning on save
