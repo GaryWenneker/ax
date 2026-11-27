@@ -165,17 +165,31 @@ pub fn update_locked<F>(path: &Path, update: F) -> io::Result<bool>
 where
     F: FnOnce(Option<Vec<u8>>) -> io::Result<Option<Vec<u8>>>,
 {
+    let mut lock_name = path.as_os_str().to_owned();
+    lock_name.push(".lock");
+    update_locked_at(path, Path::new(&lock_name), update)
+}
+
+/// [`update_locked`] with the advisory lock on `lock_path` instead of
+/// `<path>.lock`, for a file whose folder should not get a lock file next to
+/// it (such as a project's `ax.json`). Every writer of `path` must use the
+/// same `lock_path`.
+pub fn update_locked_at<F>(path: &Path, lock_path: &Path, update: F) -> io::Result<bool>
+where
+    F: FnOnce(Option<Vec<u8>>) -> io::Result<Option<Vec<u8>>>,
+{
     if let Some(dir) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         fs::create_dir_all(dir)?;
     }
-    let mut lock_name = path.as_os_str().to_owned();
-    lock_name.push(".lock");
+    if let Some(dir) = lock_path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(dir)?;
+    }
     let lock = OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
-        .open(PathBuf::from(lock_name))?;
+        .open(lock_path)?;
     lock.lock_exclusive()?;
     let current = match fs::read(path) {
         Ok(b) => Some(b),
@@ -227,6 +241,22 @@ pub fn read_to_end_bounded<R: Read>(reader: R, max_bytes: u64) -> io::Result<Vec
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn update_locked_at_keeps_the_lock_where_it_is_told() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ax.json");
+        let lock = dir.path().join(".ax").join("ax.json.lock");
+        let changed = super::update_locked_at(&path, &lock, |current| {
+            assert!(current.is_none());
+            Ok(Some(b"{}".to_vec()))
+        })
+        .unwrap();
+        assert!(changed);
+        assert!(lock.is_file());
+        assert!(!dir.path().join("ax.json.lock").exists());
+        assert_eq!(std::fs::read(&path).unwrap(), b"{}");
+    }
+
     #[cfg(unix)]
     #[test]
     fn atomic_write_private_leaves_a_0600_file() {

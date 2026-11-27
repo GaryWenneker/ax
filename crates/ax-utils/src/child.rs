@@ -119,10 +119,7 @@ pub fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<CmdOutpu
 
 /// [`run_with_timeout`], with the child leading its own process group so the
 /// deadline kills helpers it started too (for example `git-remote-https`).
-pub fn run_group_with_timeout(
-    cmd: &mut Command,
-    timeout: Duration,
-) -> Result<CmdOutput, RunError> {
+pub fn run_group_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<CmdOutput, RunError> {
     run(cmd, timeout, true)
 }
 
@@ -222,8 +219,9 @@ mod tests {
     fn a_hanging_group_and_its_children_are_killed_at_the_deadline() {
         let started = Instant::now();
         // The grandchild keeps the pipes open; the group kill must end it too.
-        let err = run_group_with_timeout(&mut sh("sleep 30 & sleep 30"), Duration::from_millis(300))
-            .expect_err("times out");
+        let err =
+            run_group_with_timeout(&mut sh("sleep 30 & sleep 30"), Duration::from_millis(300))
+                .expect_err("times out");
         assert!(err.to_string().contains("timed out"), "{err}");
         assert!(started.elapsed() < Duration::from_secs(5));
     }
@@ -232,8 +230,12 @@ mod tests {
     fn a_background_grandchild_holding_the_pipes_does_not_block_the_result() {
         for group in [false, true] {
             let started = Instant::now();
-            let out = run(&mut sh("sleep 30 & echo done"), Duration::from_secs(20), group)
-                .expect("runs");
+            let out = run(
+                &mut sh("sleep 30 & echo done"),
+                Duration::from_secs(20),
+                group,
+            )
+            .expect("runs");
             assert!(out.success());
             assert_eq!(out.stdout, "done\n");
             assert!(
