@@ -47,6 +47,33 @@ export type TraceKind =
   | 'agent'
   | 'other';
 
+/** The short badge for each kind, as the filter chips show it. */
+const TRACE_KIND_BADGES: Record<TraceKind, string> = {
+  inbound: 'IN',
+  enrich: 'ENR',
+  internal: 'INT',
+  outbound: 'OUT',
+  preview: 'PREV',
+  error: 'ERR',
+  plugin: 'PLG',
+  lsp: 'LSP',
+  ship: 'SHIP',
+  share: 'SHR',
+  workspace: 'WS',
+  embed: 'EMB',
+  action: 'ACT',
+  memory: 'MEM',
+  policy: 'POL',
+  cli: 'CLI',
+  hook: 'HOOK',
+  agent: 'AGT',
+  other: 'LOG',
+};
+
+export function traceKindBadge(kind: TraceKind): string {
+  return TRACE_KIND_BADGES[kind];
+}
+
 /** Human-readable text option keys (and leaf path segments) to promote in Logging. */
 export const TEXT_PAYLOAD_KEYS = ['prompt', 'query', 'text', 'message', 'q'] as const;
 export type TextPayloadKey = (typeof TEXT_PAYLOAD_KEYS)[number];

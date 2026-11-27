@@ -48,6 +48,7 @@ import {
   rankMotionActive,
   rankStarActive,
   traceEntriesFromLines,
+  traceKindBadge,
   appendTraceEntries,
   prependTraceEntries,
   MCP_TRACE_MAX_ENTRIES,
@@ -1321,39 +1322,7 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
                 onClick={() => toggleKind(kind)}
               >
                 <span className={`mcp-trace-badge mcp-trace-badge--${kind}`}>
-                  {kind === 'inbound'
-                    ? 'IN'
-                    : kind === 'outbound'
-                      ? 'OUT'
-                      : kind === 'preview'
-                        ? 'PREV'
-                        : kind === 'error'
-                          ? 'ERR'
-                          : kind === 'enrich'
-                            ? 'ENR'
-                            : kind === 'internal'
-                              ? 'INT'
-                              : kind === 'plugin'
-                                ? 'PLG'
-                                : kind === 'lsp'
-                                  ? 'LSP'
-                                  : kind === 'ship'
-                                    ? 'SHIP'
-                                    : kind === 'share'
-                                      ? 'SHR'
-                                      : kind === 'workspace'
-                                        ? 'WS'
-                                        : kind === 'embed'
-                                          ? 'EMB'
-                                          : kind === 'action'
-                                            ? 'ACT'
-                                            : kind === 'memory'
-                                              ? 'MEM'
-                                              : kind === 'policy'
-                                                ? 'POL'
-                                                : kind === 'cli'
-                                                  ? 'CLI'
-                                                  : 'LOG'}
+                  {traceKindBadge(kind)}
                 </span>
                 <span className="mcp-trace-filter-chip-label">{KIND_LABELS[kind]}</span>
                 <span className="mcp-trace-filter-chip-count">{count}</span>
