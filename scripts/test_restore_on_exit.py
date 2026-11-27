@@ -139,5 +139,58 @@ class MutatingScriptsUseTheGuard(unittest.TestCase):
             self.assertLess(first_guard, first_write, f"{rel}: guard before the first rewrite")
 
 
+def _fake_cargo(bin_dir: Path, exit_code: int) -> None:
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    cargo = bin_dir / "cargo"
+    cargo.write_text(f"#!/bin/sh\nexit {exit_code}\n")
+    cargo.chmod(0o755)
+
+
+class MutateSpecRegistry(unittest.TestCase):
+    """scripts/mutate-spec-registry.sh, run in a copy of the tree with a fake cargo."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        for rel in ("scripts/mutate-spec-registry.sh", "scripts/lib/restore-on-exit.sh",
+                    "crates/ax-usage/src/spec_registry.rs"):
+            dest = self.root / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes((ROOT / rel).read_bytes())
+        self.source = self.root / "crates/ax-usage/src/spec_registry.rs"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _run(self, cargo_exit: int) -> subprocess.CompletedProcess[str]:
+        _fake_cargo(self.root / "bin", cargo_exit)
+        env = {**os.environ, "PATH": f"{self.root / 'bin'}:{os.environ['PATH']}",
+               "TMPDIR": str(self.root)}
+        return subprocess.run(["bash", str(self.root / "scripts/mutate-spec-registry.sh")],
+                              capture_output=True, text=True, timeout=60, env=env)
+
+    def test_source_is_restored_byte_for_byte(self) -> None:
+        before = self.source.read_bytes()
+        result = self._run(cargo_exit=101)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("killed 2/2", result.stdout)
+        self.assertEqual(self.source.read_bytes(), before)
+
+    def test_source_is_restored_when_a_mutant_survives(self) -> None:
+        before = self.source.read_bytes()
+        result = self._run(cargo_exit=0)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.source.read_bytes(), before)
+
+    def test_a_missing_anchor_fails_instead_of_testing_unchanged_source(self) -> None:
+        text = self.source.read_text()
+        anchor = 'let detected = if plan_count > 0 { "plan" } else { "spec" };'
+        self.assertIn(anchor, text)
+        self.source.write_text(text.replace(anchor, "let detected = pick_kind(plan_count);"))
+        result = self._run(cargo_exit=101)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn("killed", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
