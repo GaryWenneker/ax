@@ -9,7 +9,7 @@ Extraction produces nodes and raw edges; **resolution** turns names into real co
 
 After parsing, ax resolves:
 
-- **Imports** → the source files they point at (including tsconfig path aliases and cargo workspace members).
+- **Imports** → the source files they point at (including tsconfig path aliases and cargo workspace members). Path aliases follow TypeScript's rules: an exact pattern matches only itself, `@/*` matches only imports that start with `@/`, the longest matching prefix wins, each target is tried in order, and targets are relative to `compilerOptions.baseUrl` when it is set.
 - **Calls** → their definitions, by import resolution and name matching.
 - **Inheritance** → `extends` / `implements` between types.
 
