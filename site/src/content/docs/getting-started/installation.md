@@ -245,6 +245,22 @@ ax uninstall          # remove MCP config from agents
 ax uninit [path]      # remove .ax/ from a project
 ```
 
+To remove the program itself on macOS, Linux or WSL2:
+
+```bash
+curl -fsSL https://getax.wenneker.io/install.sh | sh -s -- --uninstall
+```
+
+This stops ax, removes `~/.local/bin/ax`, the program folders in `~/.ax` (`current`, `versions`, leftover upgrade folders) and the `# ax PATH` lines the installer added to your shell startup files. Your ax data in `~/.ax` stays: the global database, company and user policy, memories, sign-ins and settings. Reinstalling picks them up again.
+
+To delete that data as well, add `--purge`. It asks for confirmation; when the script cannot ask (for example in CI), add `--yes`:
+
+```bash
+curl -fsSL https://getax.wenneker.io/install.sh | sh -s -- --uninstall --purge --yes
+```
+
+`--purge` only deletes a folder with an ax-specific name (such as `.ax`). It refuses your home folder and any other folder set through `AX_INSTALL_DIR` whose name is not ax-specific.
+
 ## Build ax yourself
 
 Building from source is for when you need the current `main` tree instead of the published binary. A beginning install does not need this.

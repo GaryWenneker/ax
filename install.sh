@@ -11,6 +11,9 @@
 # Pin a version: AX_VERSION=v2.0.14 curl -fsSL ... | sh
 # Upgrade: ax upgrade  (or re-run this script)
 # Uninstall: curl -fsSL https://getax.wenneker.io/install.sh | sh -s -- --uninstall
+#   Removes the program and the PATH lines; keeps ~/.ax data (database, policy,
+#   memories, sign-ins). Add --purge (and --yes when not interactive) to delete
+#   that data as well.
 set -eu
 
 REPO="${AX_GITHUB_REPO:-GaryWenneker/ax}"
@@ -72,12 +75,20 @@ clean_install_tree() {
   rm -rf "$INSTALL_DIR/current" "$INSTALL_DIR/versions"
 }
 
-if [ "${1:-}" = "--uninstall" ]; then
-  stop_ax_processes
-  rm -f "$BIN_DIR/ax"
-  rm -rf "$INSTALL_DIR"
-  echo "ax uninstalled (removed $INSTALL_DIR and $BIN_DIR/ax)."
-  exit 0
+ax_uninstall=0
+ax_purge=0
+ax_yes=0
+for ax_arg in "$@"; do
+  case "$ax_arg" in
+    --uninstall) ax_uninstall=1 ;;
+    --purge) ax_purge=1 ;;
+    --yes|-y) ax_yes=1 ;;
+    *) echo "ax: unknown option '$ax_arg' (supported: --uninstall [--purge [--yes]])." >&2; exit 1 ;;
+  esac
+done
+if [ "$ax_purge" = 1 ] && [ "$ax_uninstall" != 1 ]; then
+  echo "ax: --purge only works together with --uninstall." >&2
+  exit 1
 fi
 
 os="$(uname -s)"
@@ -330,10 +341,14 @@ quote_shell_path() {
   printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
+profile_path_line() {
+  ax_quoted_bin="$(quote_shell_path "$BIN_DIR")"
+  printf '%s\n' "case \"\$PATH:\" in $ax_quoted_bin:*|*:$ax_quoted_bin:*) ;; *) export PATH=$ax_quoted_bin:\"\$PATH\" ;; esac"
+}
+
 append_path_profile() {
   ax_profile="$1"
-  ax_quoted_bin="$(quote_shell_path "$BIN_DIR")"
-  ax_path_line="case \"\$PATH:\" in $ax_quoted_bin:*|*:$ax_quoted_bin:*) ;; *) export PATH=$ax_quoted_bin:\"\$PATH\" ;; esac"
+  ax_path_line="$(profile_path_line)"
   if [ -f "$ax_profile" ] && grep -Fqx "$ax_path_line" "$ax_profile"; then
     echo "PATH configured: $ax_profile (already present)"
     return 0
@@ -372,6 +387,93 @@ show_session_path() {
   echo "Open a new terminal, or for sh/bash/zsh in this terminal run:"
   printf '  export PATH=%s:"$PATH"\n' "$(quote_shell_path "$BIN_DIR")"
 }
+
+remove_path_profile() {
+  # Drops the block append_path_profile wrote; every other line stays as it was.
+  ax_profile="$1"
+  [ -f "$ax_profile" ] || return 0
+  ax_path_line="$(profile_path_line)"
+  grep -Fqx "$ax_path_line" "$ax_profile" || return 0
+  ax_profile_tmp="$(mktemp)"
+  if AX_PATH_LINE="$ax_path_line" awk '
+    { line[NR] = $0 }
+    END {
+      target = ENVIRON["AX_PATH_LINE"]
+      out = 0
+      for (i = 1; i <= NR; i++) {
+        if (line[i] == "# ax PATH" && line[i + 1] == target) {
+          if (out > 0 && kept[out] == "") out--
+          i++
+          continue
+        }
+        if (line[i] == target) continue
+        kept[++out] = line[i]
+      }
+      for (i = 1; i <= out; i++) print kept[i]
+    }' "$ax_profile" >"$ax_profile_tmp" && cat "$ax_profile_tmp" >"$ax_profile"; then
+    echo "PATH removed: $ax_profile"
+  else
+    echo "ax: could not update $ax_profile; remove the '# ax PATH' lines by hand." >&2
+  fi
+  rm -f "$ax_profile_tmp"
+}
+
+purge_target_is_safe() {
+  ax_dir="${INSTALL_DIR%/}"
+  [ -n "$ax_dir" ] || return 1
+  [ "$ax_dir" != "${HOME%/}" ] || return 1
+  case "${ax_dir##*/}" in
+    .ax|ax|.ax[-_.]*|ax[-_.]*|*[-_.]ax) return 0 ;;
+  esac
+  return 1
+}
+
+confirm_purge() {
+  [ "$ax_yes" = 1 ] && return 0
+  if [ -t 2 ] && { : </dev/tty; } 2>/dev/null; then
+    printf 'Delete %s with all ax data in it (database, policy, memories, sign-ins)? [y/N] ' "$INSTALL_DIR" >/dev/tty
+    ax_answer=""
+    read -r ax_answer </dev/tty || ax_answer=""
+    case "$ax_answer" in y|Y|yes|YES|Yes) return 0 ;; esac
+    return 1
+  fi
+  echo "ax: --purge deletes $INSTALL_DIR with all ax data in it; re-run with --uninstall --purge --yes to confirm." >&2
+  return 1
+}
+
+uninstall_ax() {
+  if [ "$ax_purge" = 1 ]; then
+    if ! purge_target_is_safe; then
+      echo "ax: refusing to purge '$INSTALL_DIR': it is not an ax-specific directory. Remove ax data by hand." >&2
+      exit 1
+    fi
+    confirm_purge || { echo "ax: nothing was removed." >&2; exit 1; }
+  fi
+  stop_ax_processes
+  rm -f "$BIN_DIR/ax"
+  if [ -d "$INSTALL_DIR" ]; then
+    clear_pending_upgrade_state
+    rm -rf "$INSTALL_DIR/current" "$INSTALL_DIR/versions"
+  fi
+  for ax_profile in "${ZDOTDIR:-$HOME}/.zshrc" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+    remove_path_profile "$ax_profile"
+  done
+  if [ "$ax_purge" = 1 ]; then
+    rm -rf "$INSTALL_DIR"
+    echo "ax uninstalled and purged (removed $BIN_DIR/ax and $INSTALL_DIR)."
+  else
+    rmdir "$INSTALL_DIR" 2>/dev/null || true
+    echo "ax uninstalled (removed $BIN_DIR/ax and the program in $INSTALL_DIR)."
+    if [ -d "$INSTALL_DIR" ]; then
+      echo "Kept ax data in $INSTALL_DIR. To delete it too: sh -s -- --uninstall --purge"
+    fi
+  fi
+}
+
+if [ "$ax_uninstall" = 1 ]; then
+  uninstall_ax
+  exit 0
+fi
 
 # Kill stale ax and remove previous install before download.
 clean_install_tree

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -272,6 +272,70 @@ test('a relative binary directory is resolved before persisting PATH', () => {
     });
     assert.equal(fresh.status, 0, fresh.stderr);
     assert.ok(fresh.stdout.includes(join(f.root, 'relative-bin/ax')));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+function runUninstall(env: NodeJS.ProcessEnv, ...flags: string[]) {
+  return spawnSync('sh', ['-s', '--', '--uninstall', ...flags], { env, input: readFileSync(installers[0], 'utf8'), encoding: 'utf8', timeout: 30_000 });
+}
+
+function seedUserData(installDir: string) {
+  mkdirSync(join(installDir, 'global_policy/rules'), { recursive: true });
+  mkdirSync(join(installDir, 'auth'), { recursive: true });
+  writeFileSync(join(installDir, 'global.db'), 'database');
+  writeFileSync(join(installDir, 'global_policy/rules/team.mdc'), 'rule');
+  writeFileSync(join(installDir, 'auth/token.json'), '{}');
+  writeFileSync(join(installDir, 'config.json'), '{}');
+  mkdirSync(join(installDir, 'versions/v8.0.0'), { recursive: true });
+  mkdirSync(join(installDir, 'upgrade-staging-3'), { recursive: true });
+  mkdirSync(join(installDir, 'current.old'), { recursive: true });
+}
+
+test('uninstall removes the program and PATH block but keeps ~/.ax data', () => {
+  const f = fixture();
+  try {
+    const rc = join(f.userHome, '.zshrc');
+    const original = '# user configuration\nexport AX_USER_SETTING=kept\n';
+    writeFileSync(rc, original);
+    assert.equal(runInstaller(installers[0], f.env).status, 0);
+    const installDir = f.env.AX_INSTALL_DIR as string;
+    seedUserData(installDir);
+    const removed = runUninstall(f.env);
+    assert.equal(removed.status, 0, removed.stderr);
+    for (const kept of ['global.db', 'global_policy/rules/team.mdc', 'auth/token.json', 'config.json']) {
+      assert.ok(existsSync(join(installDir, kept)), `${kept} must survive --uninstall`);
+    }
+    for (const gone of ['current', 'versions', 'upgrade-staging-3', 'current.old']) {
+      assert.ok(!existsSync(join(installDir, gone)), `${gone} must be removed`);
+    }
+    assert.ok(!existsSync(join(f.binaryDir, 'ax')));
+    assert.equal(readFileSync(rc, 'utf8'), original);
+    assert.match(removed.stdout, /--purge/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('uninstall --purge needs confirmation and refuses unsafe directories', () => {
+  const f = fixture();
+  try {
+    const installDir = join(f.userHome, '.ax');
+    f.env.AX_INSTALL_DIR = installDir;
+    seedUserData(installDir);
+    const unconfirmed = runUninstall(f.env, '--purge');
+    assert.notEqual(unconfirmed.status, 0);
+    assert.match(unconfirmed.stderr, /--yes/);
+    assert.ok(existsSync(join(installDir, 'global.db')));
+
+    for (const unsafe of [f.userHome, join(f.root, 'projects')]) {
+      mkdirSync(join(f.root, 'projects'), { recursive: true });
+      const refused = runUninstall({ ...f.env, AX_INSTALL_DIR: unsafe }, '--purge', '--yes');
+      assert.notEqual(refused.status, 0, `purge of ${unsafe} must be refused`);
+      assert.ok(existsSync(join(installDir, 'global.db')));
+      assert.ok(existsSync(join(f.root, 'projects')));
+    }
+
+    const purged = runUninstall(f.env, '--purge', '--yes');
+    assert.equal(purged.status, 0, purged.stderr);
+    assert.ok(!existsSync(installDir));
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
