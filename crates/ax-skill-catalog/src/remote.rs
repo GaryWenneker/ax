@@ -181,11 +181,15 @@ const GIT_LOCAL_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// A git command that never asks for input: terminal prompts and interactive
 /// credential managers are off, so a private or mistyped repository fails
-/// instead of waiting for a username on the server's terminal.
+/// instead of waiting for a username on the server's terminal. Messages are
+/// in the C locale, so [`clone_first_ref`] can recognize a missing branch on
+/// a system whose git is translated.
 fn git_command() -> Command {
     let mut cmd = Command::new("git");
     cmd.env("GIT_TERMINAL_PROMPT", "0")
-        .env("GCM_INTERACTIVE", "never");
+        .env("GCM_INTERACTIVE", "never")
+        .env("LC_ALL", "C")
+        .env("LANGUAGE", "C");
     cmd
 }
 
@@ -680,6 +684,18 @@ mod tests {
             "git@github.com:you/skills.git",
         ] {
             assert!(super::check_git_remote(url).is_ok(), "{url}");
+        }
+    }
+
+    #[test]
+    fn git_commands_run_in_the_c_locale() {
+        let cmd = super::git_command();
+        let envs: Vec<_> = cmd.get_envs().collect();
+        for key in ["LC_ALL", "LANGUAGE"] {
+            assert!(
+                envs.contains(&(std::ffi::OsStr::new(key), Some(std::ffi::OsStr::new("C")))),
+                "{key}"
+            );
         }
     }
 
