@@ -349,14 +349,39 @@ impl PolicyStore {
             });
         }
 
-        self.delete_rule(old_id)
-            .await
-            .map_err(|e| ValidationError {
-                error: e.to_string(),
+        // Save the new rule first: if that fails, the old one is untouched.
+        let new_doc = self.save_rule(frontmatter, body).await?;
+        if let Err(e) = self.delete_renamed_rule(old_id, &new_doc).await {
+            return Err(ValidationError {
+                error: format!(
+                    "saved `{}`, but the old rule `{old_id}` could not be removed: {e}",
+                    new_doc.frontmatter.id
+                ),
                 fields: Default::default(),
-            })?;
+            });
+        }
+        Ok(new_doc)
+    }
 
-        self.save_rule(frontmatter, body).await
+    /// Remove the old rule after a rename, keeping any file the new rule now
+    /// uses (a shared `source:` file).
+    async fn delete_renamed_rule(
+        &self,
+        old_id: &str,
+        new_doc: &PolicyRuleDoc,
+    ) -> Result<(), AxError> {
+        if let Some(doc) = self.get_rule_doc(old_id).await? {
+            let eff = self.item_effective_storage(doc.frontmatter.storage.as_deref());
+            if eff == PolicyStorage::Files {
+                let keep = [
+                    Some(new_doc.source_path.as_str()),
+                    new_doc.stub_path.as_deref(),
+                ];
+                self.remove_rule_files_except(&doc, &keep)?;
+            }
+        }
+        delete_rule_by_id(&self.pool, old_id).await?;
+        Ok(())
     }
 
     pub async fn save_skill(
@@ -550,15 +575,27 @@ impl PolicyStore {
     }
 
     fn remove_rule_files(&self, doc: &PolicyRuleDoc) -> Result<(), AxError> {
+        self.remove_rule_files_except(doc, &[])
+    }
+
+    /// Remove a rule's files, leaving any path listed in `keep`.
+    fn remove_rule_files_except(
+        &self,
+        doc: &PolicyRuleDoc,
+        keep: &[Option<&str>],
+    ) -> Result<(), AxError> {
+        let kept = |p: &Path| keep.iter().flatten().any(|k| Path::new(k) == p);
         if let Some(ref stub) = doc.stub_path {
             let p = Path::new(stub);
-            if p.is_file() {
+            if p.is_file() && !kept(p) {
                 std::fs::remove_file(p).map_err(|e| AxError::Other(e.to_string()))?;
             }
         }
         let path = Path::new(&doc.source_path);
         if path.is_file() {
-            std::fs::remove_file(path).map_err(|e| AxError::Other(e.to_string()))?;
+            if !kept(path) {
+                std::fs::remove_file(path).map_err(|e| AxError::Other(e.to_string()))?;
+            }
         } else {
             let scope = PolicyScope::parse(&doc.frontmatter.scope).unwrap_or(PolicyScope::Project);
             let fallback = rule_file(
@@ -859,6 +896,83 @@ mod tests {
             .expect_err("an empty id must be refused");
         assert_eq!(err.fields.get("id").map(String::as_str), Some("required"));
         assert!(!rules.join(".mdc").exists());
+    }
+
+    #[tokio::test]
+    async fn a_rename_that_fails_validation_keeps_the_old_rule() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = test_store(dir.path()).await;
+        let saved = store
+            .save_rule(rule_frontmatter("old-rule"), "Keep me.".into())
+            .await
+            .unwrap();
+        let old_file = PathBuf::from(&saved.source_path);
+        assert!(old_file.is_file());
+
+        let err = store
+            .rename_rule("old-rule", rule_frontmatter("Api Rules"), "Keep me.".into())
+            .await
+            .expect_err("a non-kebab id must be refused");
+        assert_eq!(
+            err.fields.get("id").map(String::as_str),
+            Some("must be kebab-case")
+        );
+        let mut bad_storage = rule_frontmatter("new-rule");
+        bad_storage.storage = Some("cloud".into());
+        store
+            .rename_rule("old-rule", bad_storage, "Keep me.".into())
+            .await
+            .expect_err("an unknown storage must be refused");
+
+        assert!(old_file.is_file());
+        let old = store.get_rule_doc("old-rule").await.unwrap().unwrap();
+        assert_eq!(old.body.trim(), "Keep me.");
+    }
+
+    #[tokio::test]
+    async fn a_rename_moves_the_rule_to_its_new_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = test_store(dir.path()).await;
+        let saved = store
+            .save_rule(rule_frontmatter("old-rule"), "Moved.".into())
+            .await
+            .unwrap();
+        let renamed = store
+            .rename_rule("old-rule", rule_frontmatter("new-rule"), "Moved.".into())
+            .await
+            .unwrap();
+        assert!(!Path::new(&saved.source_path).exists());
+        assert!(Path::new(&renamed.source_path).is_file());
+        assert!(store.get_rule_doc("old-rule").await.unwrap().is_none());
+        let new = store.get_rule_doc("new-rule").await.unwrap().unwrap();
+        assert_eq!(new.body.trim(), "Moved.");
+    }
+
+    #[tokio::test]
+    async fn a_rename_keeps_the_shared_source_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = dir.path().join("docs").join("team-rule.mdc");
+        std::fs::create_dir_all(shared.parent().unwrap()).unwrap();
+        std::fs::write(&shared, "placeholder\n").unwrap();
+        let store = test_store(dir.path()).await;
+        let mut fm = rule_frontmatter("old-rule");
+        fm.source = Some("docs/team-rule.mdc".into());
+        store.save_rule(fm.clone(), "Shared.".into()).await.unwrap();
+
+        fm.id = "new-rule".into();
+        let renamed = store
+            .rename_rule("old-rule", fm, "Shared.".into())
+            .await
+            .unwrap();
+        assert!(
+            shared.is_file(),
+            "the shared source must survive the rename"
+        );
+        assert!(std::fs::read_to_string(&shared)
+            .unwrap()
+            .contains("Shared."));
+        assert_ne!(renamed.stub_path, None);
+        assert!(store.get_rule_doc("old-rule").await.unwrap().is_none());
     }
 
     #[tokio::test]
