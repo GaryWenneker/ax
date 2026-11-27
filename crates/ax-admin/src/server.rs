@@ -68,6 +68,8 @@ pub struct App {
     remotes: Mutex<Remotes>,
     /// How long a finished sign-in may wait to be saved before it is dropped.
     sign_in_grace: Duration,
+    /// How often an open sign-in is asked where it stands.
+    sign_in_poll: Duration,
     pending: Mutex<HashMap<String, PendingLogin>>,
     /// Addresses with tokens from a finished sign-in that nobody saved, kept
     /// because another attempt for the address was open at that moment.
@@ -97,12 +99,26 @@ impl App {
         port: u16,
         sign_in_grace: Duration,
     ) -> Result<Arc<Self>, String> {
+        Self::with_sign_in_timing(home, secrets, logins, port, sign_in_grace, ABANDON_POLL)
+    }
+
+    /// Like `with_sign_in_grace`, and `sign_in_poll` sets how often an open
+    /// sign-in is asked where it stands.
+    pub fn with_sign_in_timing(
+        home: PathBuf,
+        secrets: Arc<dyn SecretStore>,
+        logins: Arc<dyn LoginBackend>,
+        port: u16,
+        sign_in_grace: Duration,
+        sign_in_poll: Duration,
+    ) -> Result<Arc<Self>, String> {
         Ok(Arc::new(Self {
             store: Arc::new(std::sync::Mutex::new(Store::open(&home)?)),
             secrets,
             logins,
             remotes: Mutex::new(Remotes::default()),
             sign_in_grace,
+            sign_in_poll,
             pending: Mutex::new(HashMap::new()),
             leftovers: Mutex::new(std::collections::HashSet::new()),
             csrf: format!(
@@ -543,19 +559,24 @@ impl App {
     }
 }
 
+/// How many polls of an open sign-in fit in its lifetime.
+fn polls_until_expiry(poll: Duration) -> u128 {
+    LOGIN_TTL.as_millis() / poll.as_millis().max(1)
+}
+
 /// Follows one sign-in to its end. The page normally saves it within a second
 /// of the browser answering. If the page is gone by then (closed, reloaded,
 /// lost its connection to ax-admin), the attempt is dropped after a grace
 /// period and its tokens removed, so no sign-in is left behind unseen.
 fn watch_sign_in(app: Arc<App>, id: String, url: String) {
     tokio::spawn(async move {
-        for _ in 0..(LOGIN_TTL.as_secs() * 2) {
+        for _ in 0..polls_until_expiry(app.sign_in_poll) {
             // Saved or cancelled meanwhile: those paths clean up themselves.
             if !app.pending.lock().await.contains_key(&id) {
                 return;
             }
             match app.logins.status(&id).await {
-                Some(LoginState::Pending) => tokio::time::sleep(ABANDON_POLL).await,
+                Some(LoginState::Pending) => tokio::time::sleep(app.sign_in_poll).await,
                 Some(LoginState::Connected) => {
                     tokio::time::sleep(app.sign_in_grace).await;
                     if app.pending.lock().await.remove(&id).is_some() {
@@ -579,9 +600,9 @@ fn watch_sign_in(app: Arc<App>, id: String, url: String) {
 /// its outcome and remove the tokens it stored, so nothing is left behind.
 fn abandon(app: Arc<App>, id: String, url: String) {
     tokio::spawn(async move {
-        for _ in 0..(LOGIN_TTL.as_secs() * 2) {
+        for _ in 0..polls_until_expiry(app.sign_in_poll) {
             match app.logins.status(&id).await {
-                Some(LoginState::Pending) => tokio::time::sleep(ABANDON_POLL).await,
+                Some(LoginState::Pending) => tokio::time::sleep(app.sign_in_poll).await,
                 Some(LoginState::Connected) => {
                     app.drop_unused_sign_in(&url).await;
                     return;

@@ -345,14 +345,21 @@ mod tests {
         assert_eq!(mode & 0o777, 0o600);
     }
 
-    #[cfg(unix)]
+    /// A directory where the lock file belongs makes every save fail, for
+    /// root too (file permissions do not stop root).
+    fn break_saves(dir: &Path) -> PathBuf {
+        let lock = dir.join("connections.json.lock");
+        let _ = std::fs::remove_file(&lock);
+        std::fs::create_dir(&lock).unwrap();
+        lock
+    }
+
     #[test]
     fn a_failed_save_changes_nothing_in_memory() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let mut store = Store::open(dir.path()).unwrap();
         store.upsert(connection("one"), true).unwrap();
-        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        let lock = break_saves(dir.path());
         assert!(store.upsert(connection("two"), true).is_err());
         assert!(store.remove("one").is_err());
         assert!(store
@@ -364,10 +371,11 @@ mod tests {
                 false
             )
             .is_err());
+        assert!(store.update("one", |c| c.name = "x".into()).is_err());
         assert_eq!(store.list().len(), 1);
         assert_eq!(store.list()[0].name, "one");
         assert_eq!(store.active_id(), Some("one"));
-        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::remove_dir(lock).unwrap();
         assert_eq!(Store::open(dir.path()).unwrap().list().len(), 1);
     }
 

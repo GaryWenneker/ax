@@ -36,7 +36,13 @@ const CONTEXT_KEY: &str = "alpha-context-secret-key";
 const ADMIN_KEY: &str = "alpha-admin-secret-key";
 const BETA_KEY: &str = "beta-context-secret-key";
 const PORT: u16 = 7080;
+/// How often ax-admin asks an open sign-in where it stands, in these tests.
+const SIGN_IN_POLL: Duration = Duration::from_millis(20);
 
+/// Points the usage database of the real server at a temporary file. Every
+/// test calls this before anything else: `call_once` holds back every other
+/// test thread until the variables are set, so no thread reads the
+/// environment while it changes.
 fn isolate_usage_db() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
@@ -266,9 +272,17 @@ impl Admin {
         logins: Arc<FakeLogins>,
         grace: Duration,
     ) -> Self {
-        let app =
-            App::with_sign_in_grace(home.clone(), secrets.clone(), logins.clone(), PORT, grace)
-                .unwrap();
+        // A short poll, so the fixed waits below cover many polls of every
+        // open sign-in even on a loaded machine.
+        let app = App::with_sign_in_timing(
+            home.clone(),
+            secrets.clone(),
+            logins.clone(),
+            PORT,
+            grace,
+            SIGN_IN_POLL,
+        )
+        .unwrap();
         let mut admin = Self {
             home,
             _home_guard: guard,
@@ -384,6 +398,7 @@ impl Admin {
 
 #[tokio::test]
 async fn a1_without_a_connection_the_remote_api_is_closed() {
+    isolate_usage_db();
     let admin = Admin::start().await;
     let (_, list) = admin.get("/api/connections").await;
     assert_eq!(list["connections"], json!([]));
@@ -407,6 +422,7 @@ async fn a1_without_a_connection_the_remote_api_is_closed() {
 
 #[tokio::test]
 async fn a2_a_connection_needs_an_address_and_credentials() {
+    isolate_usage_db();
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
     let url = upstream.url("alpha");
@@ -435,6 +451,7 @@ async fn a2_a_connection_needs_an_address_and_credentials() {
 
 #[tokio::test]
 async fn a3_a_valid_address_and_key_are_saved_activated_and_usable() {
+    isolate_usage_db();
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
     let (status, tested) = admin
@@ -488,6 +505,7 @@ async fn a3_a_valid_address_and_key_are_saved_activated_and_usable() {
 
 #[tokio::test]
 async fn a4_a_wrong_key_is_reported_and_not_saved() {
+    isolate_usage_db();
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
     for path in ["/api/connections", "/api/connections/test"] {
@@ -540,6 +558,7 @@ async fn record(State(hits): State<Arc<Hits>>, headers: HeaderMap) {
 
 #[tokio::test]
 async fn a5_unreachable_non_mcp_and_redirecting_addresses_are_distinct_errors() {
+    isolate_usage_db();
     let admin = Admin::start().await;
     let attempt = |url: String| {
         let admin = &admin;
@@ -618,6 +637,7 @@ async fn a5_unreachable_non_mcp_and_redirecting_addresses_are_distinct_errors() 
 
 #[tokio::test]
 async fn a6_switching_changes_which_server_answers() {
+    isolate_usage_db();
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
     let alpha = admin
@@ -694,6 +714,7 @@ async fn a6_switching_changes_which_server_answers() {
 
 #[tokio::test]
 async fn a7_removing_deletes_the_entry_and_its_key() {
+    isolate_usage_db();
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
     let alpha = admin
@@ -732,6 +753,7 @@ async fn a7_removing_deletes_the_entry_and_its_key() {
 
 #[tokio::test]
 async fn a8_a_restart_restores_connections_and_the_active_one() {
+    isolate_usage_db();
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
     let alpha = admin
@@ -757,6 +779,7 @@ async fn a8_a_restart_restores_connections_and_the_active_one() {
 
 #[tokio::test]
 async fn a8_editing_keeps_the_key_unless_a_new_one_is_given() {
+    isolate_usage_db();
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
     let id = admin
@@ -836,6 +859,7 @@ async fn a8_editing_keeps_the_key_unless_a_new_one_is_given() {
 /// no key is left in the credential store for it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_edit_does_not_bring_back_a_connection_removed_meanwhile() {
+    isolate_usage_db();
     use std::sync::atomic::AtomicBool;
     #[derive(Default)]
     struct Gate {
@@ -889,6 +913,7 @@ async fn an_edit_does_not_bring_back_a_connection_removed_meanwhile() {
 
 #[tokio::test]
 async fn a_saved_key_is_never_sent_to_another_address() {
+    isolate_usage_db();
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
     let id = admin.add("Alpha", &upstream.url("alpha"), ADMIN_KEY).await;
@@ -937,21 +962,28 @@ async fn a_saved_key_is_never_sent_to_another_address() {
     assert_eq!(admin.secrets.get(&id).unwrap().as_deref(), Some(ADMIN_KEY));
 }
 
-#[cfg(unix)]
 #[tokio::test]
 async fn a_failed_save_leaves_keys_and_connections_as_they_were() {
-    use std::os::unix::fs::PermissionsExt;
+    isolate_usage_db();
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
     let id = admin
         .add("Alpha", &upstream.url("alpha"), CONTEXT_KEY)
         .await;
-    let lock = |mode: u32| {
-        std::fs::set_permissions(&admin.home, std::fs::Permissions::from_mode(mode)).unwrap()
+    // A directory where the lock file belongs: connections.json can no longer
+    // be changed, for root too (file permissions do not stop root).
+    let lock_path = admin.home.join("connections.json.lock");
+    let lock = |broken: bool| {
+        let _ = std::fs::remove_file(&lock_path);
+        if broken {
+            std::fs::create_dir(&lock_path).unwrap()
+        } else {
+            std::fs::remove_dir(&lock_path).unwrap()
+        }
     };
 
-    lock(0o500); // connections.json can no longer be replaced
-                 // Editing: the new key is accepted by the server but the entry cannot be saved.
+    lock(true);
+    // Editing: the new key is accepted by the server but the entry cannot be saved.
     let (status, body) = admin
         .call(
             "PUT",
@@ -985,7 +1017,7 @@ async fn a_failed_save_leaves_keys_and_connections_as_they_were() {
     assert_eq!(list["connections"][0]["name"], "Alpha");
     assert_eq!(list["activeId"], id.as_str());
 
-    lock(0o700);
+    lock(false);
     // The failed removal already deleted the key; removing again completes it.
     let (status, _) = admin
         .call("DELETE", &format!("/api/connections/{id}"), json!({}))
@@ -1000,6 +1032,7 @@ async fn a_failed_save_leaves_keys_and_connections_as_they_were() {
 
 #[tokio::test]
 async fn a_call_for_a_connection_that_is_no_longer_active_is_refused() {
+    isolate_usage_db();
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
     let alpha = admin
@@ -1034,6 +1067,7 @@ async fn a_call_for_a_connection_that_is_no_longer_active_is_refused() {
 
 #[tokio::test]
 async fn a9_no_key_reaches_the_configuration_file_or_any_response() {
+    isolate_usage_db();
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
     let id = admin.add("Alpha", &upstream.url("alpha"), ADMIN_KEY).await;
@@ -1113,6 +1147,7 @@ async fn a9_no_key_reaches_the_configuration_file_or_any_response() {
 
 #[tokio::test]
 async fn a10_browser_sign_in_saves_only_after_it_succeeds() {
+    isolate_usage_db();
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
     *admin.logins.token.lock().unwrap() = CONTEXT_KEY.to_owned();
@@ -1213,6 +1248,7 @@ async fn a10_browser_sign_in_saves_only_after_it_succeeds() {
 
 #[tokio::test]
 async fn a10_a_finished_sign_in_is_saved_once_and_removed_with_its_tokens() {
+    isolate_usage_db();
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
     *admin.logins.token.lock().unwrap() = ADMIN_KEY.to_owned();
@@ -1317,6 +1353,7 @@ async fn a10_a_finished_sign_in_is_saved_once_and_removed_with_its_tokens() {
 
 #[tokio::test]
 async fn a10_a_sign_in_the_page_never_saved_is_dropped_with_its_tokens() {
+    isolate_usage_db();
     let upstream = Upstream::start().await;
     let guard = tempfile::tempdir().unwrap();
     let admin = Admin::build_with_grace(
@@ -1463,17 +1500,39 @@ async fn a10_a_sign_in_the_page_never_saved_is_dropped_with_its_tokens() {
 
 #[tokio::test]
 async fn a_slow_environment_does_not_hold_up_the_others() {
+    isolate_usage_db();
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
     let other = admin.add("Beta", &upstream.url("beta"), BETA_KEY).await;
     admin
         .add("Alpha", &upstream.url("alpha"), CONTEXT_KEY)
         .await;
-    // An address that takes seconds to say no.
-    let slow = serve(Router::new().fallback(|| async {
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        StatusCode::UNAUTHORIZED
-    }))
+    // An address that says no only once the work on the active environment is
+    // done, or after a minute. If the edit held that work up, the address is
+    // released by the minute and not by the work: the order shows it, not a
+    // measured duration.
+    #[derive(Default)]
+    struct Slow {
+        asked: std::sync::atomic::AtomicBool,
+        work_done: std::sync::atomic::AtomicBool,
+        released_by_work: std::sync::atomic::AtomicBool,
+    }
+    let gate = Arc::new(Slow::default());
+    let slow = serve(
+        Router::new()
+            .fallback(|State(gate): State<Arc<Slow>>| async move {
+                gate.asked.store(true, Ordering::SeqCst);
+                for _ in 0..600 {
+                    if gate.work_done.load(Ordering::SeqCst) {
+                        gate.released_by_work.store(true, Ordering::SeqCst);
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                StatusCode::UNAUTHORIZED
+            })
+            .with_state(gate.clone()),
+    )
     .await;
     let path = format!("/api/connections/{other}");
     let edit = admin.call(
@@ -1482,18 +1541,20 @@ async fn a_slow_environment_does_not_hold_up_the_others() {
         json!({"url": format!("{slow}/projects/beta/mcp"), "auth": {"type": "api_key", "key": "new-key"}}),
     );
     let work = async {
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        let started = std::time::Instant::now();
+        while !gate.asked.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         let (status, _) = admin.tool("ax_status", json!({})).await;
         let (info_status, _) = admin.get("/api/remote/info").await;
-        (status, info_status, started.elapsed())
+        gate.work_done.store(true, Ordering::SeqCst);
+        (status, info_status)
     };
-    let ((edit_status, edit_body), (status, info_status, took)) = tokio::join!(edit, work);
+    let ((edit_status, edit_body), (status, info_status)) = tokio::join!(edit, work);
     assert_eq!(edit_status, StatusCode::UNPROCESSABLE_ENTITY, "{edit_body}");
     assert_eq!((status, info_status), (StatusCode::OK, StatusCode::OK));
     assert!(
-        took < Duration::from_millis(1500),
-        "the active environment answered in {took:?}"
+        gate.released_by_work.load(Ordering::SeqCst),
+        "the active environment answered while the slow address was still checking"
     );
     // The refused edit changed nothing.
     assert_eq!(
@@ -1504,6 +1565,7 @@ async fn a_slow_environment_does_not_hold_up_the_others() {
 
 #[tokio::test]
 async fn a10_tokens_of_a_sign_in_nobody_keeps_are_removed() {
+    isolate_usage_db();
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
     *admin.logins.token.lock().unwrap() = CONTEXT_KEY.to_owned();
@@ -1709,6 +1771,7 @@ fn remote(url: url::Url) -> Remote {
 
 #[tokio::test]
 async fn b1_the_negotiated_protocol_version_and_session_are_sent_on_later_calls() {
+    isolate_usage_db();
     for version in ["2025-11-25", "2025-06-18", "2025-03-26"] {
         let (script, url) = scripted(move |method, _, _, _| match method {
             "initialize" => initialized(version, "session-1"),
@@ -1754,6 +1817,7 @@ fn expired() -> Response {
 
 #[tokio::test]
 async fn b2_an_expired_session_is_reopened_once() {
+    isolate_usage_db();
     // First tools/list fails with an expired session; the retry succeeds.
     let (script, url) = scripted(|method, nth, headers, _| match method {
         "initialize" => initialized("2025-11-25", if nth == 0 { "old" } else { "new" }),
@@ -1785,6 +1849,7 @@ async fn b2_an_expired_session_is_reopened_once() {
 /// that new session must be used, not thrown away and opened a third time.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn b2_two_calls_on_one_expired_session_reopen_it_once() {
+    isolate_usage_db();
     #[derive(Default)]
     struct Restarted {
         inits: AtomicUsize,
@@ -1862,6 +1927,7 @@ impl TokenSource for Rotating {
 
 #[tokio::test]
 async fn b3_a_rejected_oauth_token_is_refreshed_once_and_an_api_key_is_not() {
+    isolate_usage_db();
     let reply = |method: &str, _: usize, headers: &HeaderMap, _: &Value| {
         if headers["authorization"] != "Bearer fresh" {
             return StatusCode::UNAUTHORIZED.into_response();
@@ -1917,6 +1983,7 @@ async fn b3_a_rejected_oauth_token_is_refreshed_once_and_an_api_key_is_not() {
 
 #[tokio::test]
 async fn the_servers_timeouts_and_busy_answers_are_told_apart() {
+    isolate_usage_db();
     async fn outcome(status: StatusCode, body: Option<Value>) -> McpError {
         let (_, url) = scripted(move |method, _, _, _| match method {
             "initialize" => initialized("2025-11-25", "s"),
@@ -1982,6 +2049,7 @@ async fn the_servers_timeouts_and_busy_answers_are_told_apart() {
 
 #[tokio::test]
 async fn b4_b5_only_listed_tools_are_called_and_unknown_listed_tools_work() {
+    isolate_usage_db();
     let (script, url) = scripted(|method, _, _, request| match method {
         "initialize" => initialized("2025-11-25", "s"),
         "tools/list" => tool_list(&["ax_status", "ax_future_tool"]),
@@ -2029,6 +2097,7 @@ async fn b4_b5_only_listed_tools_are_called_and_unknown_listed_tools_work() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn b6_slow_and_oversized_answers_are_errors() {
+    isolate_usage_db();
     let limits = Limits {
         handshake: Duration::from_millis(300),
         call: Duration::from_millis(300),
@@ -2117,12 +2186,14 @@ impl<I: Iterator + Unpin> futures_core::Stream for Chunks<I> {
 
 #[tokio::test]
 async fn c1_the_listener_is_bound_to_loopback() {
+    isolate_usage_db();
     let listener = bind(0).await.unwrap();
     assert!(listener.local_addr().unwrap().ip().is_loopback());
 }
 
 #[tokio::test]
 async fn c2_other_hosts_and_origins_are_refused() {
+    isolate_usage_db();
     let admin = Admin::start().await;
     let get = |host: Option<&str>, origin: Option<&str>| {
         let mut request = Request::builder().method("GET").uri("/api/connections");
@@ -2187,6 +2258,7 @@ async fn c2_other_hosts_and_origins_are_refused() {
 
 #[tokio::test]
 async fn c3_changes_need_the_request_token() {
+    isolate_usage_db();
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
     let id = admin
@@ -2228,6 +2300,7 @@ async fn c3_changes_need_the_request_token() {
 
 #[tokio::test]
 async fn c4_responses_are_never_cached() {
+    isolate_usage_db();
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
     let check = |headers: &HeaderMap, what: &str| {
@@ -2276,6 +2349,7 @@ async fn c4_responses_are_never_cached() {
 
 #[tokio::test]
 async fn the_interface_is_served_with_a_restrictive_content_policy() {
+    isolate_usage_db();
     let admin = Admin::start().await;
     for path in ["/", "/memory", "/index.html"] {
         let response = admin
