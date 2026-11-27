@@ -47,7 +47,9 @@ function editorSnapshot(fm: unknown, body: string, ...lists: string[][]): string
 export default function PolicySkillInlineWorkspace({ skillName, origin, projectId, onClose, onSaved, openProperties = false, propertiesTick = 0, onDirtyChange }: Props) {
   const [fm, setFm] = useState<SkillFrontmatter | null>(null);
   const [body, setBody] = useState('');
-  const links = useItemLinks('skill', skillName, origin, body);
+  /** Bumped after each save so the links, which come from the saved body, load again. */
+  const [savedTick, setSavedTick] = useState(0);
+  const links = useItemLinks('skill', skillName, origin, body, savedTick);
   const [triggers, setTriggers] = useState<string[]>([]);
   const [tags, setTags] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -119,6 +121,7 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
       };
       await savePolicySkill(skillName, frontmatter, body, { origin, projectId });
       setSavedSnapshot(snapshotAtSave);
+      setSavedTick((t) => t + 1);
       onSaved?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed');
@@ -151,6 +154,7 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
                   setTriggers(normalized.triggers);
                   setTags(normalized.tags);
                   setSavedSnapshot(editorSnapshot(normalized, doc.body, normalized.triggers, normalized.tags));
+                  setSavedTick((t) => t + 1);
                   onSaved?.();
                 })
                 .catch((e: Error) => setError(e.message))
