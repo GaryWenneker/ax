@@ -830,6 +830,9 @@ pub struct ServeOptions {
     pub bind: String,
     /// When set, requires `?token=` / Bearer / cookie (also sets `AX_SHARE_TOKEN`).
     pub share_token: Option<String>,
+    /// Serve beyond loopback without a login or share token. Off by default;
+    /// `AX_WEB_ALLOW_ANONYMOUS_LAN=1` has the same effect.
+    pub allow_anonymous_lan: bool,
 }
 
 impl Default for ServeOptions {
@@ -840,6 +843,7 @@ impl Default for ServeOptions {
             open: false,
             bind: "127.0.0.1".into(),
             share_token: None,
+            allow_anonymous_lan: false,
         }
     }
 }
@@ -865,6 +869,26 @@ pub async fn serve_with(opts: ServeOptions) -> Result<(), String> {
         opts.bind.as_str(),
         "127.0.0.1" | "localhost" | "::1" | "[::1]"
     );
+    if !hub.local_only {
+        let login = match ax_global_db::global_db_path() {
+            Ok(path) => match ax_global_db::open_and_init(&path).await {
+                Ok(pool) => web_auth::web_login_enabled(&pool).await,
+                Err(_) => false,
+            },
+            Err(_) => false,
+        };
+        let allow_anonymous = opts.allow_anonymous_lan
+            || std::env::var("AX_WEB_ALLOW_ANONYMOUS_LAN").ok().as_deref() == Some("1");
+        if let Some(warning) = request_guard::lan_exposure(
+            &opts.bind,
+            opts.share_token.is_some(),
+            login,
+            allow_anonymous,
+        )? {
+            tracing::warn!("{warning}");
+            eprintln!("ax web: WARNING: {warning}");
+        }
+    }
     if !readonly {
         if let Err(error) = replication_setup::auto_start(&opts.root).await {
             tracing::warn!("replication automatic startup failed: {error}");

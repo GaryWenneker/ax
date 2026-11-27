@@ -1306,6 +1306,9 @@ Native wgpu Command Center (egui/eframe). Embeds `ax-web` in-process — same `/
 | `path` | optional | cwd | Project root (must contain `.ax/ax.db`) |
 | `--port` | number | `7070` | Embedded `ax-web` listen port |
 | `--bind` | string | `127.0.0.1` | Bind address |
+| `--allow-anonymous-lan` | flag | off | Serve a non-loopback `--bind` without sign-in |
+
+A bind address other than loopback needs Command Center sign-in (**Settings → Security**). Without it the server refuses to start, because anyone who can reach the address could read the project and run the agent. `--allow-anonymous-lan` (or `AX_WEB_ALLOW_ANONYMOUS_LAN=1`) starts it anyway and prints a warning. Even then, owner-only actions and the agent terminal work only from a browser on this computer at `http://127.0.0.1`.
 
 ```bash
 ax desktop

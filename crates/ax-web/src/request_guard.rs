@@ -177,6 +177,33 @@ pub(crate) async fn guard(
     next.run(req).await
 }
 
+/// Whether Command Center may serve on a non-loopback `bind`. Anyone on the
+/// network could otherwise read the project and run the agent terminal, so
+/// it needs web sign-in or a share token, unless the owner explicitly allows
+/// anonymous access. `Ok(Some(_))` is a warning to print.
+pub(crate) fn lan_exposure(
+    bind: &str,
+    share_token: bool,
+    login_enabled: bool,
+    allow_anonymous: bool,
+) -> Result<Option<String>, String> {
+    if share_token || login_enabled {
+        return Ok(None);
+    }
+    if allow_anonymous {
+        return Ok(Some(format!(
+            "serving on {bind} without sign-in or a share token: anyone who can reach this \
+             address can read the project and change it (--allow-anonymous-lan)"
+        )));
+    }
+    Err(format!(
+        "refusing to serve on {bind} without sign-in: anyone who can reach this address could \
+         read the project and run the agent. Turn on sign-in in Settings → Security (open \
+         http://127.0.0.1 first), use `ax share` for a read-only token link, or pass \
+         --allow-anonymous-lan to accept the risk"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,6 +264,18 @@ mod tests {
             proxied.insert(name, HeaderValue::from_static("127.0.0.1"));
             assert!(!peer_is_local(Some(loopback), &proxied), "{name}");
         }
+    }
+
+    #[test]
+    fn a_lan_bind_needs_sign_in_a_share_token_or_the_explicit_flag() {
+        let refused = lan_exposure("0.0.0.0", false, false, false).unwrap_err();
+        assert!(refused.contains("--allow-anonymous-lan"), "{refused}");
+        assert_eq!(lan_exposure("0.0.0.0", true, false, false), Ok(None));
+        assert_eq!(lan_exposure("0.0.0.0", false, true, false), Ok(None));
+        let warning = lan_exposure("0.0.0.0", false, false, true)
+            .unwrap()
+            .unwrap();
+        assert!(warning.contains("without sign-in"), "{warning}");
     }
 
     #[test]

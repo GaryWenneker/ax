@@ -39,6 +39,8 @@ impl EmbeddedServer {
                         open: false,
                         bind,
                         share_token: None,
+                        // Opt-in through AX_WEB_ALLOW_ANONYMOUS_LAN=1 (`--allow-anonymous-lan`).
+                        allow_anonymous_lan: false,
                     };
                     let serve = ax_web::serve_with(opts);
                     tokio::select! {

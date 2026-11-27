@@ -702,6 +702,11 @@ enum Commands {
             help = "Bind address for the embedded server"
         )]
         bind: String,
+        #[arg(
+            long,
+            help = "Serve a non-loopback bind without sign-in (anyone who can reach it can change the project)"
+        )]
+        allow_anonymous_lan: bool,
     },
     /// Share Command Center on the LAN with a token (read-only)
     Share {
@@ -2408,7 +2413,15 @@ fn run_desktop_on_os_main_thread() {
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 
     let result = match cli.command {
-        Some(Commands::Desktop { path, port, bind }) => {
+        Some(Commands::Desktop {
+            path,
+            port,
+            bind,
+            allow_anonymous_lan,
+        }) => {
+            if allow_anonymous_lan {
+                std::env::set_var("AX_WEB_ALLOW_ANONYMOUS_LAN", "1");
+            }
             if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -3191,7 +3204,17 @@ async fn async_main() {
             Err("internal: `ax desktop` must run on the OS main thread (handled in main())".into())
         }
         #[cfg(not(feature = "desktop"))]
-        Some(Commands::Desktop { path, port, bind }) => commands::desktop::run(path, port, bind),
+        Some(Commands::Desktop {
+            path,
+            port,
+            bind,
+            allow_anonymous_lan,
+        }) => {
+            if allow_anonymous_lan {
+                std::env::set_var("AX_WEB_ALLOW_ANONYMOUS_LAN", "1");
+            }
+            commands::desktop::run(path, port, bind)
+        }
         Some(Commands::Share {
             path,
             port,
