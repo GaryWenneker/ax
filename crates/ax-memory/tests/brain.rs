@@ -1889,3 +1889,71 @@ fn suggested_triggers_prefer_title_nouns_then_anchors_then_prompt_words() {
     );
     assert!(ax_memory::suggested_triggers("Update the function", &[], "the", &[]).is_empty());
 }
+
+#[tokio::test]
+async fn graph_episode_ignores_line_shifts() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    for n in 0..3 {
+        sqlx::query(
+            "INSERT INTO nodes (id, kind, name, qualified_name, file_path, language, start_line, end_line, start_column, end_column, signature, updated_at)
+             VALUES (?, 'function', ?, ?, 'src/shift.rs', 'rust', ?, ?, 0, 1, 'fn f()', 1)",
+        )
+        .bind(format!("shift-{n}"))
+        .bind(format!("f_{n}"))
+        .bind(format!("shift::f_{n}"))
+        .bind(10 * n + 1)
+        .bind(10 * n + 5)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    }
+    assert_eq!(capture_graph_episodes(db.pool()).await.unwrap(), 0);
+    // An import added at the top moves every symbol down one line.
+    sqlx::query("UPDATE nodes SET start_line = start_line + 1, end_line = end_line + 1")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        capture_graph_episodes(db.pool()).await.unwrap(),
+        0,
+        "moving lines is not a change"
+    );
+    let episodes: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM memories WHERE kind = 'graph_diff'")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(episodes, 0);
+    db.close().await;
+}
+
+#[tokio::test]
+async fn graph_episode_accepts_fingerprints_that_still_carry_line_numbers() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    sqlx::query(
+        "INSERT INTO nodes (id, kind, name, qualified_name, file_path, language, start_line, end_line, start_column, end_column, signature, updated_at)
+         VALUES ('legacy-1', 'function', 'run', 'run', 'src/run.rs', 'rust', 3, 9, 0, 1, 'fn run(a: u8 | u16)', 1)",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+    // State written before line numbers left the fingerprint.
+    sqlx::query(
+        "INSERT INTO graph_symbol_state (symbol_id, fingerprint)
+         VALUES ('legacy-1', 'run|function|src/run.rs|fn run(a: u8 | u16)|1|7')",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(capture_graph_episodes(db.pool()).await.unwrap(), 0);
+    let stored: String = sqlx::query_scalar(
+        "SELECT fingerprint FROM graph_symbol_state WHERE symbol_id = 'legacy-1'",
+    )
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(stored, "run|function|src/run.rs|fn run(a: u8 | u16)");
+    db.close().await;
+}
