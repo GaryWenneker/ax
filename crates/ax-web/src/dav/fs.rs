@@ -207,6 +207,14 @@ fn like_prefix(dir: &str) -> String {
     format!("{escaped}/%")
 }
 
+/// `path` is `dir` itself or lies below it.
+fn is_within(path: &str, dir: &str) -> bool {
+    path == dir
+        || path
+            .strip_prefix(dir)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
 /// Delete `path` and, when it is a folder, everything below it.
 async fn stored_delete_tree(pool: &SqlitePool, path: &str) -> FsResult<u64> {
     let res = sqlx::query("DELETE FROM dav_files WHERE path = ? OR path LIKE ? ESCAPE '\\'")
@@ -963,22 +971,36 @@ impl DavVault {
         }
     }
 
+    /// Move `from` and everything below it to `to` in one transaction, replacing
+    /// whatever was at `to`. A destination inside the source is refused.
     async fn rename_stored(&self, from: &str, to: &str) -> FsResult<()> {
+        if is_within(to, from) {
+            return Err(FsError::Forbidden);
+        }
         let pool = self.pool().await;
-        let rows: Vec<StoredRow> = {
-            let mut rows = stored_below(&pool, from).await?;
-            rows.extend(stored_get(&pool, from).await?);
-            rows
-        };
-        if rows.is_empty() {
+        let mut tx = pool.begin().await.map_err(db_err)?;
+        sqlx::query("DELETE FROM dav_files WHERE path = ? OR path LIKE ? ESCAPE '\\'")
+            .bind(to)
+            .bind(like_prefix(to))
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        let moved = sqlx::query(
+            "UPDATE dav_files SET path = ? || substr(path, ?), updated_at = ?
+             WHERE path = ? OR path LIKE ? ESCAPE '\\'",
+        )
+        .bind(to)
+        .bind(from.chars().count() as i64 + 1)
+        .bind(now_ms())
+        .bind(from)
+        .bind(like_prefix(from))
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        if moved.rows_affected() == 0 {
             return Err(FsError::NotFound);
         }
-        stored_delete_tree(&pool, to).await?;
-        for row in rows {
-            let new_path = format!("{to}{}", &row.path[from.len()..]);
-            stored_put(&pool, &new_path, row.is_dir, &row.content, None).await?;
-        }
-        stored_delete_tree(&pool, from).await.map(|_| ())
+        tx.commit().await.map_err(db_err)
     }
 }
 
@@ -1012,6 +1034,9 @@ struct VaultFile {
     pos: usize,
     modified_ms: i64,
     write: Option<WriteTarget>,
+    /// Bytes not yet committed. A file opened for writing starts dirty, so
+    /// creating an empty file commits it; a later flush with no new writes does not.
+    dirty: bool,
 }
 
 struct WriteTarget {
@@ -1038,6 +1063,7 @@ impl VaultFile {
         }
         self.data[self.pos..end].copy_from_slice(buf);
         self.pos = end;
+        self.dirty = true;
         Ok(())
     }
 }
@@ -1088,13 +1114,12 @@ impl DavFile for VaultFile {
     fn flush(&mut self) -> FsFuture<'_, ()> {
         async move {
             match &self.write {
-                Some(target) => {
-                    target
-                        .vault
-                        .commit(&target.path, std::mem::take(&mut self.data))
-                        .await
+                Some(target) if self.dirty => {
+                    target.vault.commit(&target.path, self.data.clone()).await?;
+                    self.dirty = false;
+                    Ok(())
                 }
-                None => Ok(()),
+                _ => Ok(()),
             }
         }
         .boxed()
@@ -1152,6 +1177,7 @@ impl DavFileSystem for DavVault {
                 data,
                 pos,
                 modified_ms: current.modified_ms,
+                dirty: write.is_some(),
                 write,
             }) as Box<dyn DavFile>)
         }

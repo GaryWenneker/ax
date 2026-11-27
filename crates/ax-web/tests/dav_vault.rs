@@ -773,3 +773,46 @@ async fn n6_put_over_5mb_is_rejected() {
         .body
         .contains("Write English."));
 }
+
+#[tokio::test]
+async fn n7_move_folder_into_itself_is_refused_and_keeps_files() {
+    let fx = fixture().await;
+    assert_ok(&send(&fx.app, "MKCOL", "/dav/attachments/", &[], Body::empty()).await);
+    assert_ok(&put(&fx.app, "/dav/attachments/a.txt", "one").await);
+    let res = mv(&fx.app, "/dav/attachments/", "/dav/attachments/old/").await;
+    assert!(!res.status.is_success(), "status {}", res.status);
+    assert_eq!(get(&fx.app, "/dav/attachments/a.txt").await.body, "one");
+}
+
+#[tokio::test]
+async fn n8_move_folder_replaces_destination_and_moves_every_row() {
+    let fx = fixture().await;
+    assert_ok(&send(&fx.app, "MKCOL", "/dav/src/", &[], Body::empty()).await);
+    assert_ok(&send(&fx.app, "MKCOL", "/dav/src/sub/", &[], Body::empty()).await);
+    assert_ok(&put(&fx.app, "/dav/src/a.txt", "one").await);
+    assert_ok(&put(&fx.app, "/dav/src/sub/b.txt", "two").await);
+    assert_ok(&put(&fx.app, "/dav/srcx.txt", "sibling").await);
+    assert_ok(&send(&fx.app, "MKCOL", "/dav/dst/", &[], Body::empty()).await);
+    assert_ok(&put(&fx.app, "/dav/dst/old.txt", "gone").await);
+    let dest = "http://localhost/dav/dst/";
+    let res = send(
+        &fx.app,
+        "MOVE",
+        "/dav/src/",
+        &[("Destination", dest), ("Overwrite", "T")],
+        Body::empty(),
+    )
+    .await;
+    assert_ok(&res);
+    assert_eq!(get(&fx.app, "/dav/dst/a.txt").await.body, "one");
+    assert_eq!(get(&fx.app, "/dav/dst/sub/b.txt").await.body, "two");
+    assert_eq!(get(&fx.app, "/dav/srcx.txt").await.body, "sibling");
+    assert_eq!(
+        get(&fx.app, "/dav/dst/old.txt").await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get(&fx.app, "/dav/src/a.txt").await.status,
+        StatusCode::NOT_FOUND
+    );
+}
