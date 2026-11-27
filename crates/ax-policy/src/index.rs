@@ -69,8 +69,6 @@ pub async fn import_policy_from_files(
 
     let mut rules_indexed = 0u32;
     let mut skills_indexed = 0u32;
-    let mut seen_rules = Vec::new();
-    let mut seen_skills = Vec::new();
     let mut skipped = Vec::new();
 
     // Hierarchical merge: company → workspace → project → private (later upserts win).
@@ -86,35 +84,77 @@ pub async fn import_policy_from_files(
         layers
     };
 
-    let global = crate::global_level::load_default().await;
+    // Later layers win: keep the last doc per id, in first-seen order.
+    let mut rules: Vec<(PolicyRuleDoc, String)> = Vec::new();
+    let mut skills: Vec<(PolicySkillDoc, String)> = Vec::new();
     for layer in &layer_list {
-        let mut layer_import = import_one_policy_dir(
-            pool,
+        let layer_import = import_one_policy_dir(
             project_root,
             &layer.dir,
             layer.scope,
             layer.preserve_item_scope,
-            global.as_ref(),
-        )
-        .await?;
-        rules_indexed += layer_import.rules;
-        skills_indexed += layer_import.skills;
-        seen_rules.append(&mut layer_import.rule_ids);
-        seen_skills.append(&mut layer_import.skill_names);
-        skipped.append(&mut layer_import.skipped);
+        );
+        rules_indexed += layer_import.rules.len() as u32;
+        skills_indexed += layer_import.skills.len() as u32;
+        for item in layer_import.rules {
+            last_wins(&mut rules, item, |(d, _)| d.frontmatter.id.as_str());
+        }
+        for item in layer_import.skills {
+            last_wins(&mut skills, item, |(d, _)| d.frontmatter.name.as_str());
+        }
+        skipped.extend(layer_import.skipped);
+    }
+    let seen_rules: Vec<String> = rules
+        .iter()
+        .map(|(d, _)| d.frontmatter.id.clone())
+        .collect();
+    let seen_skills: Vec<String> = skills
+        .iter()
+        .map(|(d, _)| d.frontmatter.name.clone())
+        .collect();
+
+    // One transaction: a reader never sees a half-updated policy, and rows whose content did
+    // not change are not rewritten (so the matcher cache generation stays the same).
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    let stored_rules = stored_state(&mut tx, PruneTable::Rules).await?;
+    let stored_skills = stored_state(&mut tx, PruneTable::Skills).await?;
+    let now = now_ms();
+    for (doc, hash) in &rules {
+        let current = StoredState::of(
+            hash,
+            &doc.frontmatter.scope,
+            &doc.source_path,
+            &doc.stub_path,
+        );
+        if stored_rules.get(&doc.frontmatter.id) != Some(&current) {
+            upsert_rule(&mut *tx, doc, hash, now).await?;
+        }
+    }
+    for (doc, hash) in &skills {
+        let current = StoredState::of(
+            hash,
+            &doc.frontmatter.scope,
+            &doc.source_path,
+            &doc.stub_path,
+        );
+        if stored_skills.get(&doc.frontmatter.name) != Some(&current) {
+            upsert_skill(&mut *tx, doc, hash, now).await?;
+        }
     }
 
     if mode == ImportMode::Replace {
         // Hybrid-aware prune: keep per-item database overrides not present on disk.
-        seen_rules.sort();
-        seen_rules.dedup();
-        seen_skills.sort();
-        seen_skills.dedup();
         // A file that exists but no longer reads or parses keeps the row it produced before.
         let kept_paths: Vec<String> = skipped.iter().map(|s| s.path.clone()).collect();
-        prune_hybrid(pool, PruneTable::Rules, &seen_rules, &kept_paths).await?;
-        prune_hybrid(pool, PruneTable::Skills, &seen_skills, &kept_paths).await?;
+        prune_hybrid(&mut tx, PruneTable::Rules, &seen_rules, &kept_paths).await?;
+        prune_hybrid(&mut tx, PruneTable::Skills, &seen_skills, &kept_paths).await?;
     }
+    tx.commit()
+        .await
+        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
 
     Ok(PolicyIndexResult {
         rules_indexed,
@@ -123,15 +163,72 @@ pub async fn import_policy_from_files(
     })
 }
 
-async fn import_one_policy_dir(
-    pool: &SqlitePool,
+fn last_wins<T>(items: &mut Vec<T>, item: T, key: impl Fn(&T) -> &str) {
+    match items
+        .iter()
+        .position(|existing| key(existing) == key(&item))
+    {
+        Some(i) => items[i] = item,
+        None => items.push(item),
+    }
+}
+
+/// The stored fields an import compares to decide whether a row needs rewriting.
+#[derive(Debug, PartialEq, Eq)]
+struct StoredState {
+    content_hash: String,
+    scope: String,
+    source_path: String,
+    stub_path: Option<String>,
+}
+
+impl StoredState {
+    fn of(hash: &str, scope: &str, source_path: &str, stub_path: &Option<String>) -> Self {
+        Self {
+            content_hash: hash.to_string(),
+            scope: crate::types::PolicyScope::parse(scope)
+                .unwrap_or(crate::types::PolicyScope::Project)
+                .as_str()
+                .to_string(),
+            source_path: source_path.to_string(),
+            stub_path: stub_path.clone(),
+        }
+    }
+}
+
+async fn stored_state(
+    conn: &mut sqlx::SqliteConnection,
+    table: PruneTable,
+) -> Result<std::collections::HashMap<String, StoredState>, AxError> {
+    let (table_name, key) = table.names();
+    let rows: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(&format!(
+        "SELECT {key}, content_hash, COALESCE(scope, 'project'), source_path, stub_path FROM {table_name}"
+    ))
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    Ok(rows
+        .into_iter()
+        .map(|(k, content_hash, scope, source_path, stub_path)| {
+            (
+                k,
+                StoredState {
+                    content_hash,
+                    scope,
+                    source_path,
+                    stub_path,
+                },
+            )
+        })
+        .collect())
+}
+
+fn import_one_policy_dir(
     project_root: &Path,
     policy_dir: &Path,
     scope: crate::types::PolicyScope,
     preserve_item_scope: bool,
-    // A longer global copy must not drop a project file of the same name.
-    _global: Option<&crate::global_level::GlobalLevel>,
-) -> Result<LayerImport, AxError> {
+) -> LayerImport {
     let mut out = LayerImport::default();
     let scope_s = scope.as_str().to_string();
 
@@ -172,9 +269,7 @@ async fn import_one_policy_dir(
                 continue;
             }
             let hash = blake3::hash(doc.raw.as_bytes()).to_hex().to_string();
-            upsert_rule(pool, &doc, &hash, now_ms()).await?;
-            out.rule_ids.push(doc.frontmatter.id.clone());
-            out.rules += 1;
+            out.rules.push((doc, hash));
         }
     }
 
@@ -217,22 +312,18 @@ async fn import_one_policy_dir(
                 continue;
             }
             let hash = blake3::hash(doc.raw.as_bytes()).to_hex().to_string();
-            upsert_skill(pool, &doc, &hash, now_ms()).await?;
-            out.skill_names.push(doc.frontmatter.name.clone());
-            out.skills += 1;
+            out.skills.push((doc, hash));
         }
     }
 
-    Ok(out)
+    out
 }
 
-/// What one policy layer contributed to an import.
+/// What one policy layer contributed to an import: parsed docs with their content hash.
 #[derive(Default)]
 struct LayerImport {
-    rules: u32,
-    skills: u32,
-    rule_ids: Vec<String>,
-    skill_names: Vec<String>,
+    rules: Vec<(PolicyRuleDoc, String)>,
+    skills: Vec<(PolicySkillDoc, String)>,
     skipped: Vec<crate::types::PolicySkip>,
 }
 
@@ -655,8 +746,8 @@ pub async fn policy_status(
     })
 }
 
-async fn upsert_rule(
-    pool: &SqlitePool,
+async fn upsert_rule<'e>(
+    exec: impl sqlx::SqliteExecutor<'e>,
     doc: &PolicyRuleDoc,
     hash: &str,
     now: i64,
@@ -697,7 +788,7 @@ async fn upsert_rule(
     .bind(&doc.stub_path)
     .bind(&fm.group)
     .bind(properties_json(&fm.properties))
-    .execute(pool)
+    .execute(exec)
     .await
     .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(())
@@ -711,8 +802,8 @@ fn parse_properties(raw: &str) -> crate::types::PolicyProperties {
     serde_json::from_str(raw).unwrap_or_default()
 }
 
-async fn upsert_skill(
-    pool: &SqlitePool,
+async fn upsert_skill<'e>(
+    exec: impl sqlx::SqliteExecutor<'e>,
     doc: &PolicySkillDoc,
     hash: &str,
     now: i64,
@@ -753,7 +844,7 @@ async fn upsert_skill(
     .bind(&doc.stub_path)
     .bind(&fm.group)
     .bind(properties_json(&fm.properties))
-    .execute(pool)
+    .execute(exec)
     .await
     .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(())
@@ -765,18 +856,24 @@ enum PruneTable {
     Skills,
 }
 
+impl PruneTable {
+    fn names(self) -> (&'static str, &'static str) {
+        match self {
+            PruneTable::Rules => ("policy_rules", "id"),
+            PruneTable::Skills => ("policy_skills", "name"),
+        }
+    }
+}
+
 /// Delete file-backed rows not on disk; keep `storage = 'database'` overrides and rows whose
 /// source file (or stub) is in `kept_paths` because it exists but could not be parsed.
 async fn prune_hybrid(
-    pool: &SqlitePool,
+    conn: &mut sqlx::SqliteConnection,
     table: PruneTable,
     keep: &[String],
     kept_paths: &[String],
 ) -> Result<(), AxError> {
-    let (table_name, key) = match table {
-        PruneTable::Rules => ("policy_rules", "id"),
-        PruneTable::Skills => ("policy_skills", "name"),
-    };
+    let (table_name, key) = table.names();
     let placeholders = |n: usize| vec!["?"; n].join(",");
     let mut sql = format!(
         "DELETE FROM {table_name} WHERE COALESCE(NULLIF(storage, ''), 'files') != 'database'"
@@ -799,7 +896,7 @@ async fn prune_hybrid(
             q = q.bind(path);
         }
     }
-    q.execute(pool)
+    q.execute(&mut *conn)
         .await
         .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(())
@@ -1639,6 +1736,60 @@ mod tests {
             .unwrap()
             .iter()
             .any(|s| s.name == "review"));
+    }
+
+    async fn row_stamps(pool: &SqlitePool) -> Vec<(String, i64)> {
+        sqlx::query_as(
+            "SELECT id, updated_at FROM policy_rules
+             UNION ALL SELECT name, updated_at FROM policy_skills ORDER BY 1",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_import_writes_nothing() {
+        let (dir, pool) = test_pool().await;
+        let root = dir.path();
+        fixture_policy(root);
+        // A rule with the same id in a second layer must not flip back and forth either.
+        let private = root.join(".ax/policy-private");
+        std::fs::create_dir_all(private.join("rules")).unwrap();
+        std::fs::write(
+            private.join("rules/longrule.mdc"),
+            "---\nid: longrule\nlevel: INFO\nalwaysApply: true\n---\n\nthe private copy\n",
+        )
+        .unwrap();
+        import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .unwrap();
+        let before = row_stamps(&pool).await;
+        let generation = policy_generation_for_test(&pool).await;
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .unwrap();
+        assert_eq!(row_stamps(&pool).await, before);
+        assert_eq!(policy_generation_for_test(&pool).await, generation);
+
+        // A real edit is still written.
+        write_rule(root, "utf8", "an edited body");
+        import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .unwrap();
+        let rules = list_rules(&pool).await.unwrap();
+        let row = rules.iter().find(|r| r.id == "utf8").unwrap();
+        assert!(row.body.contains("an edited body"), "{}", row.body);
+    }
+
+    async fn policy_generation_for_test(pool: &SqlitePool) -> String {
+        sqlx::query_scalar(
+            "SELECT group_concat(id || content_hash || updated_at, '|') FROM policy_rules",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
     }
 
     #[tokio::test]
