@@ -3,8 +3,10 @@
 //! A plugin under `<project>/.ax/plugins/<name>/` can run any command, so a
 //! cloned repository must not be able to run code just by being indexed.
 //! Plugins only run after `ax plugins trust`, which records the plugin
-//! folder and a hash of its `plugin.toml` in `~/.ax/plugin-trust.json`.
-//! Changing `plugin.toml` (for example its `command`) needs a new trust.
+//! folder and a hash of every file in it (`plugin.toml`, the scripts and
+//! wasm modules it runs, and anything else there) in
+//! `~/.ax/plugin-trust.json`. Changing, adding or removing any file in the
+//! plugin folder needs a new trust.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -25,8 +27,11 @@ struct TrustStore {
 struct TrustEntry {
     /// Canonical plugin folder.
     dir: String,
-    /// blake3 of the plugin.toml bytes.
-    manifest_hash: String,
+    /// [`crate::manifest::plugin_content_hash`] of the plugin folder. An
+    /// entry without one (from a store written before files were hashed)
+    /// still parses, but matches no plugin until it is trusted again.
+    #[serde(default)]
+    content_hash: String,
 }
 
 /// `~/.ax/plugin-trust.json` (honours `AX_HOME_DIR`).
@@ -44,7 +49,7 @@ fn canonical_dir(dir: &Path) -> String {
 fn entry_for(plugin: &LoadedPlugin) -> TrustEntry {
     TrustEntry {
         dir: canonical_dir(&plugin.dir),
-        manifest_hash: plugin.manifest_hash.clone(),
+        content_hash: plugin.content_hash.clone(),
     }
 }
 
@@ -71,7 +76,7 @@ fn load_store(store: &Path) -> TrustStore {
     }
 }
 
-/// Whether `plugin` (same folder, same plugin.toml) is in the trust store.
+/// Whether `plugin` (same folder, same files) is in the trust store.
 pub fn is_trusted_in(store: &Path, plugin: &LoadedPlugin) -> bool {
     let want = entry_for(plugin);
     load_store(store).trusted.contains(&want)

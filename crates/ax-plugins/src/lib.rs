@@ -29,5 +29,5 @@ pub mod trust;
 mod wasm_host;
 
 pub use host::{load_plugins, PluginHost, PluginRunError};
-pub use manifest::{discover_plugins, LoadedPlugin, PluginManifest};
+pub use manifest::{discover_plugins, plugin_content_hash, LoadedPlugin, PluginManifest};
 pub use trust::{is_trusted, trust_plugin, trust_store_path, untrust_plugin};

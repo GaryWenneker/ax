@@ -175,6 +175,9 @@ fn run_process_plugin(
     let mut child = Command::new(command)
         .args(&plugin.manifest.args)
         .current_dir(&cwd)
+        // Trust covers every file in the plugin folder; keep Python from
+        // writing `__pycache__` there and so dropping its own trust.
+        .env("PYTHONDONTWRITEBYTECODE", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -282,6 +285,7 @@ fn wait_with_timeout(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manifest::plugin_content_hash;
     use std::fs;
 
     #[test]
@@ -374,6 +378,91 @@ args = []
             crate::trust::untrust_in(&store, &p).unwrap();
         }
         assert!(PluginHost::load_with_store(dir.path(), &store).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn editing_a_trusted_plugin_script_drops_the_trust() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("ran");
+        let plug = dir.path().join(".ax/plugins/script");
+        fs::create_dir_all(&plug).unwrap();
+        fs::write(
+            plug.join("plugin.toml"),
+            "name = \"script\"\nextensions = [\".rs\"]\ncommand = \"sh\"\nargs = [\"run.sh\"]\n",
+        )
+        .unwrap();
+        let script = plug.join("run.sh");
+        fs::write(&script, "cat >/dev/null; echo '{}'\n").unwrap();
+        let store = dir.path().join("trust.json");
+        for p in discover_plugins(dir.path()) {
+            crate::trust::trust_in(&store, &p).unwrap();
+        }
+        assert!(!PluginHost::load_with_store(dir.path(), &store).is_empty());
+
+        // A `git pull` that changes only the script must not run the new code.
+        fs::write(
+            &script,
+            format!(
+                "touch '{}'; cat >/dev/null; echo '{{}}'\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        let host = PluginHost::load_with_store(dir.path(), &store);
+        assert!(
+            host.extract("a.rs", "").is_none(),
+            "edited script still trusted"
+        );
+        assert!(!marker.exists(), "edited script ran");
+        assert_eq!(host.untrusted().len(), 1);
+
+        // So must a new file next to it.
+        for p in discover_plugins(dir.path()) {
+            crate::trust::trust_in(&store, &p).unwrap();
+        }
+        assert!(!PluginHost::load_with_store(dir.path(), &store).is_empty());
+        fs::create_dir_all(plug.join("lib")).unwrap();
+        fs::write(plug.join("lib/helper.sh"), "true\n").unwrap();
+        assert!(PluginHost::load_with_store(dir.path(), &store).is_empty());
+    }
+
+    #[test]
+    fn a_trust_store_from_before_folder_hashing_still_parses() {
+        let dir = tempfile::tempdir().unwrap();
+        let plug = dir.path().join(".ax/plugins/demo");
+        fs::create_dir_all(&plug).unwrap();
+        fs::write(
+            plug.join("plugin.toml"),
+            "name = \"demo\"\ncommand = \"x\"\n",
+        )
+        .unwrap();
+        let p = discover_plugins(dir.path()).remove(0);
+        let store = dir.path().join("trust.json");
+        let old = serde_json::json!({ "trusted": [{
+            "dir": p.dir.canonicalize().unwrap().to_string_lossy(),
+            "manifest_hash": "abc",
+        }]});
+        fs::write(&store, old.to_string()).unwrap();
+        // The old entry matches nothing, and trusting again replaces it.
+        assert!(PluginHost::load_with_store(dir.path(), &store).is_empty());
+        crate::trust::trust_in(&store, &p).unwrap();
+        assert!(!PluginHost::load_with_store(dir.path(), &store).is_empty());
+        let saved = fs::read_to_string(&store).unwrap();
+        assert_eq!(saved.matches("\"dir\"").count(), 1, "{saved}");
+    }
+
+    #[test]
+    fn content_hash_covers_names_and_bytes() {
+        let a = tempfile::tempdir().unwrap();
+        fs::write(a.path().join("plugin.toml"), "x").unwrap();
+        let h1 = plugin_content_hash(a.path());
+        assert_eq!(h1, plugin_content_hash(a.path()), "not stable");
+        fs::write(a.path().join("plugin.toml"), "y").unwrap();
+        let h2 = plugin_content_hash(a.path());
+        assert_ne!(h1, h2);
+        fs::rename(a.path().join("plugin.toml"), a.path().join("other.toml")).unwrap();
+        assert_ne!(h2, plugin_content_hash(a.path()));
     }
 
     #[test]
@@ -508,6 +597,23 @@ args = []
         let host = wat_plugin_host(dir.path(), &guest("i64.const 4294967295"));
         let err = host.extract("a.rs", "").unwrap().1.expect_err("accepted");
         assert!(err.to_string().contains("too large"), "{err}");
+    }
+
+    #[cfg(feature = "wasm")]
+    #[test]
+    fn editing_a_trusted_wasm_module_drops_the_trust() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = wat_plugin_host(dir.path(), &guest("i64.const 0"));
+        assert!(!host.is_empty());
+        let store = dir.path().join("trust.json");
+        fs::write(
+            dir.path().join(".ax/plugins/w/extractor.wat"),
+            guest("(loop $l br $l) i64.const 0"),
+        )
+        .unwrap();
+        let host = PluginHost::load_with_store(dir.path(), &store);
+        assert!(host.is_empty(), "changed wasm module still trusted");
+        assert!(host.extract("a.rs", "").is_none());
     }
 
     #[cfg(feature = "wasm")]

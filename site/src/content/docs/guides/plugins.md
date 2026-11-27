@@ -16,7 +16,7 @@ ax plugins trust demo      # or only the named ones
 ax plugins untrust demo
 ```
 
-Until then indexing skips the plugin (and logs a warning), and its extensions go to the built-in extractors. Trust is kept in `~/.ax/plugin-trust.json` per plugin folder and is bound to the exact `plugin.toml`: when that file changes, for example a new `command`, the plugin stops running until you trust it again.
+Until then indexing skips the plugin (and logs a warning), and its extensions go to the built-in extractors. Trust is kept in `~/.ax/plugin-trust.json` per plugin folder and is bound to a hash of every file in that folder: `plugin.toml`, the script or wasm module it runs, and anything else there. When any of them changes, for example a new `command`, an edited `extract.py` after a `git pull`, or a new file, the plugin stops running until you trust it again. So a plugin should not write files into its own folder; ax sets `PYTHONDONTWRITEBYTECODE=1` so Python plugins do not.
 
 ## Process plugin
 

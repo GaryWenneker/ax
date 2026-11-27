@@ -6,9 +6,13 @@ before the built-in tree-sitter pool.
 
 A plugin runs a command with the user's rights, so a project plugin only runs
 after `ax plugins trust` (all plugins, or the named ones). Trust is stored in
-`~/.ax/plugin-trust.json` per plugin folder and is bound to the exact
-`plugin.toml`; after editing it, trust it again. `ax plugins list` shows what
-each plugin runs and whether it is trusted.
+`~/.ax/plugin-trust.json` per plugin folder and is bound to a hash of every
+file in that folder: `plugin.toml`, the scripts and wasm modules it runs, and
+anything else there. After any file in the folder changes (an edit, a
+`git pull`, a new or removed file), trust it again. A plugin should therefore
+not write files into its own folder; ax sets `PYTHONDONTWRITEBYTECODE=1` so
+Python plugins do not. `ax plugins list` shows what each plugin runs and
+whether it is trusted.
 
 ## Process plugin
 

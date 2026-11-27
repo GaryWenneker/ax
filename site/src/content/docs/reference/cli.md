@@ -206,7 +206,7 @@ ax watch --quiet
 
 ### `ax plugins`
 
-Lists the project's extractor plugins (`.ax/plugins/<name>/plugin.toml`) and controls which ones may run. A plugin can run any command, so `ax index`, `ax sync` and the MCP server skip every plugin until you trust it. Trust is stored in `~/.ax/plugin-trust.json` per plugin folder and is bound to the exact `plugin.toml`; editing that file needs a new `ax plugins trust`. See [Extractor plugins](/guides/plugins/).
+Lists the project's extractor plugins (`.ax/plugins/<name>/plugin.toml`) and controls which ones may run. A plugin can run any command, so `ax index`, `ax sync` and the MCP server skip every plugin until you trust it. Trust is stored in `~/.ax/plugin-trust.json` per plugin folder and is bound to a hash of every file in that folder (`plugin.toml`, the scripts or wasm module it runs, and anything else there); changing, adding or removing any of them needs a new `ax plugins trust`. See [Extractor plugins](/guides/plugins/).
 
 | Subcommand | Description |
 |---|---|
