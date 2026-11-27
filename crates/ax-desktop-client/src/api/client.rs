@@ -12,21 +12,44 @@ use serde::Serialize;
 use super::sse::{consume_sse_blocking, SseEvent};
 use super::types::*;
 
+/// How long a long-running command (LSP enrich, reconcile, savings import,
+/// ship commands) may take before the client
+/// gives up; the server keeps working either way.
+const LONG_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+/// Time allowed to open a connection, for ordinary requests and streams.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 #[derive(Clone)]
 pub struct ApiClient {
     base: String,
+    /// Ordinary requests: a total timeout covering the whole response.
     http: Client,
+    /// Server-sent event streams: only a connect timeout, so a long-lived
+    /// stream is never cut while events keep arriving.
+    stream_http: Client,
 }
 
 impl ApiClient {
     pub fn new(base_url: impl Into<String>) -> Self {
+        Self::with_request_timeout(base_url, std::time::Duration::from_secs(120))
+    }
+
+    /// Client whose ordinary requests give up after `timeout`.
+    pub fn with_request_timeout(base_url: impl Into<String>, timeout: std::time::Duration) -> Self {
         let http = Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
+            .timeout(timeout)
+            .connect_timeout(CONNECT_TIMEOUT)
             .build()
             .expect("reqwest client");
+        let stream_http = Client::builder()
+            .timeout(None)
+            .connect_timeout(CONNECT_TIMEOUT)
+            .build()
+            .expect("reqwest stream client");
         Self {
             base: base_url.into().trim_end_matches('/').to_string(),
             http,
+            stream_http,
         }
     }
 
@@ -57,12 +80,21 @@ impl ApiClient {
     }
 
     pub fn post_json<T: DeserializeOwned, B: Serialize>(&self, path: &str, body: &B) -> Result<T> {
-        let res = self
-            .http
-            .post(self.url(path))
-            .json(body)
-            .send()
-            .with_context(|| format!("POST {path}"))?;
+        self.post_json_with(path, body, None)
+    }
+
+    /// POST with its own total timeout instead of the client's default.
+    fn post_json_with<T: DeserializeOwned, B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<T> {
+        let mut req = self.http.post(self.url(path)).json(body);
+        if let Some(t) = timeout {
+            req = req.timeout(t);
+        }
+        let res = req.send().with_context(|| format!("POST {path}"))?;
         let status = res.status();
         let text = res.text().unwrap_or_default();
         if !status.is_success() {
@@ -188,7 +220,11 @@ impl ApiClient {
     }
 
     pub fn reconcile_unresolved(&self) -> Result<ReconcileResult> {
-        self.post_json("/api/unresolved/reconcile", &serde_json::json!({}))
+        self.post_json_with(
+            "/api/unresolved/reconcile",
+            &serde_json::json!({}),
+            Some(LONG_COMMAND_TIMEOUT),
+        )
     }
 
     pub fn lsp_status(&self) -> Result<LspStatus> {
@@ -196,7 +232,12 @@ impl ApiClient {
     }
 
     pub fn lsp_enrich(&self, limit: i64) -> Result<LspEnrichResponse> {
-        self.post_json("/api/lsp/enrich", &serde_json::json!({ "limit": limit }))
+        // A first enrich on a large workspace can take minutes.
+        self.post_json_with(
+            "/api/lsp/enrich",
+            &serde_json::json!({ "limit": limit }),
+            Some(LONG_COMMAND_TIMEOUT),
+        )
     }
 
     pub fn graph(&self, limit: i64, recompute: bool) -> Result<GraphPayload> {
@@ -233,7 +274,7 @@ impl ApiClient {
         tx: &Sender<Result<GraphStreamEvent, String>>,
     ) -> Result<()> {
         let res = self
-            .http
+            .stream_http
             .get(self.url(path))
             .header("Accept", "text/event-stream")
             .send()
@@ -316,7 +357,11 @@ impl ApiClient {
     }
 
     pub fn import_savings(&self) -> Result<SavingsImportResult> {
-        self.post_json("/api/usage/savings/import", &serde_json::json!({}))
+        self.post_json_with(
+            "/api/usage/savings/import",
+            &serde_json::json!({}),
+            Some(LONG_COMMAND_TIMEOUT),
+        )
     }
 
     pub fn pricing_catalog(&self, source: Option<&str>) -> Result<PricingCatalogResponse> {
@@ -373,7 +418,11 @@ impl ApiClient {
     }
 
     pub fn ship_command(&self, cmd: &str) -> Result<serde_json::Value> {
-        self.post_json("/api/ship/command", &serde_json::json!({ "cmd": cmd }))
+        self.post_json_with(
+            "/api/ship/command",
+            &serde_json::json!({ "cmd": cmd }),
+            Some(LONG_COMMAND_TIMEOUT),
+        )
     }
 
     pub fn stream_ship_events(&self) -> Receiver<Result<serde_json::Value, String>> {
@@ -382,7 +431,7 @@ impl ApiClient {
         thread::spawn(move || {
             loop {
                 let res = match client
-                    .http
+                    .stream_http
                     .get(client.url("/api/ship/events"))
                     .header("Accept", "text/event-stream")
                     .send()
@@ -463,7 +512,7 @@ impl ApiClient {
         let client = self.clone();
         thread::spawn(move || loop {
             let res = match client
-                .http
+                .stream_http
                 .get(client.url("/api/usage/mcp-trace/events"))
                 .header("Accept", "text/event-stream")
                 .send()
@@ -516,3 +565,67 @@ where
 }
 
 pub type SharedClient = Arc<ApiClient>;
+
+#[cfg(test)]
+mod timeout_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::time::Duration;
+
+    /// Serves every connection with `respond` on its own thread.
+    fn serve(respond: fn(TcpStream)) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                thread::spawn(move || respond(stream));
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn read_request(stream: &mut TcpStream) {
+        let mut buf = [0u8; 4096];
+        let _ = stream.read(&mut buf);
+    }
+
+    #[test]
+    fn sse_stream_is_not_cut_by_the_request_timeout() {
+        let base = serve(|mut s| {
+            read_request(&mut s);
+            let _ = s.write_all(
+                b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n",
+            );
+            let _ = s.write_all(b"event: line\ndata: first\n\n");
+            let _ = s.flush();
+            thread::sleep(Duration::from_millis(900));
+            let _ = s.write_all(b"event: line\ndata: second\n\n");
+            let _ = s.flush();
+            thread::sleep(Duration::from_secs(5));
+        });
+        let client = ApiClient::with_request_timeout(base, Duration::from_millis(300));
+        let rx = client.stream_mcp_trace();
+        let first = rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+        assert_eq!(first.1, "first");
+        let second = rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+        assert_eq!(second.1, "second", "stream was cut and reconnected");
+    }
+
+    #[test]
+    fn lsp_enrich_outlives_the_request_timeout() {
+        let base = serve(|mut s| {
+            read_request(&mut s);
+            thread::sleep(Duration::from_millis(900));
+            let body = r#"{"ok":true,"report":null,"error":null}"#;
+            let _ = write!(
+                s,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        });
+        let client = ApiClient::with_request_timeout(base, Duration::from_millis(300));
+        let res = client.lsp_enrich(10);
+        assert!(res.is_ok(), "{:?}", res.err());
+    }
+}
