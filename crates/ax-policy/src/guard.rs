@@ -64,8 +64,18 @@ pub async fn guard_operation_with_extra_skills(
         let id_lc = rule.id.to_lowercase();
         let tags: Vec<String> = rule.tags.iter().map(|t| t.to_lowercase()).collect();
 
-        if id_lc.contains("utf8") || id_lc.contains("encoding") || tags.iter().any(|t| t == "utf8")
-        {
+        // Built-in checks run for a rule that asks for them by tag (or names
+        // them in its id), never because a word merely appears inside the id.
+        let id_words: Vec<&str> = id_lc
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .collect();
+        let encoding_rule =
+            id_words.contains(&"utf8") || tags.iter().any(|t| t == "utf8" || t == "encoding");
+        let secrets_rule = id_words.iter().any(|w| *w == "secret" || *w == "secrets")
+            || tags.iter().any(|t| t == "secret" || t == "secrets");
+
+        if encoding_rule {
             if let Some(bytes) = content {
                 if has_utf8_bom(bytes) {
                     violations.push(GuardViolation {
@@ -81,7 +91,7 @@ pub async fn guard_operation_with_extra_skills(
             }
         }
 
-        if (id_lc.contains("secret") || tags.iter().any(|t| t == "secrets"))
+        if secrets_rule
             && is_sensitive_path(&rel_lc)
             && matches!(op, GuardOp::Write | GuardOp::Delete)
         {
@@ -458,11 +468,29 @@ fn skill_satisfies_require(skills: &[crate::types::PolicySkillRow], name: &str) 
     })
 }
 
+/// File names that usually hold secrets: `.env` and `.env.*` (except the
+/// `.example`, `.sample` and `.template` files meant to be committed), private
+/// SSH keys, key and certificate stores, and `secrets.*` / `credentials*`
+/// files. Takes the lower-cased project-relative path.
 fn is_sensitive_path(rel_lc: &str) -> bool {
-    rel_lc.ends_with(".env")
-        || rel_lc.contains("credentials")
-        || rel_lc.ends_with(".pem")
-        || rel_lc.ends_with(".key")
+    let name = rel_lc.rsplit('/').next().unwrap_or(rel_lc);
+    if name == ".env" {
+        return true;
+    }
+    if let Some(variant) = name.strip_prefix(".env.") {
+        return !matches!(variant, "example" | "sample" | "template" | "dist");
+    }
+    const KEY_FILES: &[&str] = &["id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"];
+    const KEY_EXTENSIONS: &[&str] = &[".pem", ".key", ".p12", ".pfx", ".jks", ".keystore"];
+    let stem = name
+        .trim_start_matches('.')
+        .split('.')
+        .next()
+        .unwrap_or(name);
+    KEY_FILES.contains(&name)
+        || KEY_EXTENSIONS.iter().any(|ext| name.ends_with(ext))
+        || stem == "secrets"
+        || stem == "credentials"
 }
 
 fn has_utf8_bom(bytes: &[u8]) -> bool {
@@ -1108,5 +1136,84 @@ mod tests {
             "{:?}",
             result.warnings
         );
+    }
+
+    async fn insert_tagged_rule(pool: &SqlitePool, id: &str, tags: &str) {
+        sqlx::query(
+            "INSERT INTO policy_rules (id, level, always_apply, globs, triggers, tags, priority, body, source_path, content_hash, updated_at, enabled, status, scope)
+             VALUES (?, 'CRITICAL', 1, '[]', '[]', ?, 100, '', '', '', 0, 1, 'approved', 'project')",
+        )
+        .bind(id)
+        .bind(tags)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn secrets_rule_covers_common_secret_file_names() {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        insert_tagged_rule(&pool, "keep-keys-out", "[\"secrets\"]").await;
+        let root = dir.path();
+        for blocked in [
+            ".env",
+            ".env.local",
+            "app/.env.production",
+            ".ssh/id_rsa",
+            "id_ed25519",
+            "secrets.json",
+            "config/secrets.yaml",
+            "certs/client.p12",
+            "certs/client.pfx",
+            "tls/server.pem",
+            "tls/server.key",
+            ".aws/credentials",
+            "credentials.json",
+        ] {
+            let result = guard_operation(&pool, root, &root.join(blocked), GuardOp::Delete, None)
+                .await
+                .unwrap();
+            assert!(!result.allowed, "{blocked} must be protected");
+        }
+        for allowed in [
+            "src/credentials_form.tsx",
+            ".env.example",
+            "docs/secrets-handling.md",
+            ".ssh/id_rsa.pub",
+            "src/keyboard.rs",
+        ] {
+            let result = guard_operation(&pool, root, &root.join(allowed), GuardOp::Delete, None)
+                .await
+                .unwrap();
+            assert!(result.allowed, "{allowed}: {:?}", result.violations);
+        }
+    }
+
+    #[tokio::test]
+    async fn builtin_checks_need_a_tag_or_a_whole_word_in_the_rule_id() {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        sqlx::query("DELETE FROM policy_rules")
+            .execute(&pool)
+            .await
+            .unwrap();
+        insert_tagged_rule(&pool, "url-encoding-policy", "[]").await;
+        insert_tagged_rule(&pool, "secretary-notes", "[]").await;
+        let root = dir.path();
+        let bom = [0xEF, 0xBB, 0xBF, b'x'];
+        let result = guard_operation(&pool, root, &root.join("a.rs"), GuardOp::Write, Some(&bom))
+            .await
+            .unwrap();
+        assert!(result.allowed, "{:?}", result.violations);
+        let result = guard_operation(&pool, root, &root.join(".env"), GuardOp::Delete, None)
+            .await
+            .unwrap();
+        assert!(result.allowed, "{:?}", result.violations);
+
+        // A rule named after secrets keeps working without a tag.
+        insert_tagged_rule(&pool, "no-secrets", "[]").await;
+        let result = guard_operation(&pool, root, &root.join(".env"), GuardOp::Delete, None)
+            .await
+            .unwrap();
+        assert!(!result.allowed);
     }
 }

@@ -396,6 +396,8 @@ Before matching, `ax_guard` resolves the path: `.` and `..` segments and symboli
 
 A directive whose `/regex/` or glob does not compile, or a rule glob that does not compile on a rule with content directives, blocks every write and delete until the rule is fixed; the violation names the broken value. Writes to policy files (`.agents/**`, `.ax/policy/**`) stay allowed with a warning so the rule can be repaired. Content that is not valid UTF-8 is still checked, with invalid bytes replaced. When a write comes without content and a content directive applies, the result carries a `warnings` entry saying the content was not checked.
 
+Two built-in checks need no directive. A CRITICAL rule tagged `utf8` or `encoding` (or with `utf8` as a word in its id) blocks content with a UTF-8 BOM, a UTF-16 BOM, or null-padded ASCII. A CRITICAL rule tagged `secrets` (or with `secret` or `secrets` as a word in its id) blocks writing or deleting files that usually hold secrets: `.env` and `.env.*` (not `.env.example`, `.env.sample`, `.env.template` or `.env.dist`), `id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, files ending in `.pem`, `.key`, `.p12`, `.pfx`, `.jks` or `.keystore`, and files named `secrets.*` or `credentials*`.
+
 ### Command Center: label filter
 
 On **Policy → Rules** and **Policy → Skills**:
