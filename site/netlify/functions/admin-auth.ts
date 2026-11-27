@@ -1,5 +1,7 @@
 import type { Handler } from '@netlify/functions';
-import { SignJWT } from 'jose';
+import { LoginLimiter, clientAddress, passwordMatches, signAdminToken } from '../admin-token.ts';
+
+const limiter = new LoginLimiter();
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -38,7 +40,18 @@ const handler: Handler = async (event) => {
     };
   }
 
-  if (!body.password || body.password !== adminPassword) {
+  const client = clientAddress(event.headers ?? {});
+  const wait = limiter.retryAfter(client);
+  if (wait > 0) {
+    return {
+      statusCode: 429,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json', 'Retry-After': String(wait) },
+      body: JSON.stringify({ error: 'Too many failed attempts. Try again later.' }),
+    };
+  }
+
+  if (typeof body.password !== 'string' || !body.password || !passwordMatches(body.password, adminPassword)) {
+    limiter.fail(client);
     return {
       statusCode: 401,
       headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
@@ -46,12 +59,8 @@ const handler: Handler = async (event) => {
     };
   }
 
-  const secretKey = new TextEncoder().encode(adminSecret);
-  const token = await new SignJWT({ admin: true })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setIssuedAt()
-    .setExpirationTime('8h')
-    .sign(secretKey);
+  limiter.succeed(client);
+  const token = await signAdminToken(adminSecret);
 
   return {
     statusCode: 200,

@@ -1,21 +1,11 @@
 import type { Handler } from '@netlify/functions';
-import { jwtVerify } from 'jose';
+import { verifyAdminToken } from '../admin-token.ts';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
 };
-
-async function verifyToken(authHeader: string | undefined, secret: string): Promise<boolean> {
-  if (!authHeader?.startsWith('Bearer ')) return false;
-  try {
-    await jwtVerify(authHeader.slice(7), new TextEncoder().encode(secret));
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 type HogRow = unknown[];
 
@@ -267,7 +257,7 @@ const handler: Handler = async (event) => {
     };
   }
 
-  if (!(await verifyToken(event.headers.authorization, adminSecret))) {
+  if (!(await verifyAdminToken(event.headers.authorization, adminSecret))) {
     return {
       statusCode: 401,
       headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
