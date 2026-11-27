@@ -12,9 +12,6 @@ use std::path::{Path, PathBuf};
 
 use crate::types::PolicyScope;
 
-const CONFIG_FILENAME: &str = "ax.json";
-const CONFIG_ALIAS: &str = ".ax.json";
-
 /// One merge layer: directory root + scope stamp for DB rows.
 #[derive(Debug, Clone)]
 pub struct PolicyLayer {
@@ -179,24 +176,11 @@ pub fn find_workspace_root(start: &Path) -> Option<PathBuf> {
 }
 
 fn workspace_has_members(root: &Path) -> bool {
-    for name in [CONFIG_FILENAME, CONFIG_ALIAS] {
-        let path = root.join(name);
-        if !path.is_file() {
-            continue;
-        }
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) else {
-            continue;
-        };
-        if let Some(members) = v.get("members").and_then(|m| m.as_array()) {
-            if !members.is_empty() {
-                return true;
-            }
-        }
-    }
-    false
+    std::fs::read_to_string(crate::config::config_path(root))
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .and_then(|v| v.get("members").and_then(|m| m.as_array()).map(|m| !m.is_empty()))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

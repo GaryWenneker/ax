@@ -105,11 +105,25 @@ impl Default for PolicyConfig {
     }
 }
 
+/// The config file of a project or workspace folder: `ax.json`, or
+/// `.ax.json` when only that one exists. Every read and write of the folder's
+/// settings goes through this path, so the two names never split a setting.
+pub fn config_path(dir: &Path) -> PathBuf {
+    let primary = dir.join(CONFIG_FILENAME);
+    if !primary.exists() {
+        let alias = dir.join(CONFIG_ALIAS);
+        if alias.exists() {
+            return alias;
+        }
+    }
+    primary
+}
+
 /// Merge global `~/.ax/config.json` `"policy"` section with per-project `ax.json`
 /// (and workspace root `ax.json` roots when present).
 pub fn load_policy_config(project_root: &Path) -> PolicyConfig {
     let global = read_policy_section(&global_config_path());
-    let local = read_policy_section(&project_root.join(CONFIG_FILENAME));
+    let local = read_policy_section(&config_path(project_root));
     let mut roots = Vec::new();
     append_roots(
         &mut roots,
@@ -121,7 +135,7 @@ pub fn load_policy_config(project_root: &Path) -> PolicyConfig {
     );
     if let Some(ws) = crate::hierarchy::find_workspace_root(project_root) {
         if ws != project_root {
-            let ws_section = read_policy_section(&ws.join(CONFIG_FILENAME));
+            let ws_section = read_policy_section(&config_path(&ws));
             append_roots(&mut roots, &ws_section.roots, &ws, project_root);
         }
     }
@@ -199,38 +213,29 @@ fn resolve_config_path(config_dir: &Path, raw: &str) -> PathBuf {
 
 fn current_member_name(project_root: &Path) -> Option<String> {
     let ws = crate::hierarchy::find_workspace_root(project_root)?;
-    for name in [CONFIG_FILENAME, CONFIG_ALIAS] {
-        let path = ws.join(name);
-        let Ok(content) = std::fs::read_to_string(&path) else {
+    let content = std::fs::read_to_string(config_path(&ws)).ok()?;
+    let v = serde_json::from_str::<serde_json::Value>(&content).ok()?;
+    let members = v.get("members").and_then(|m| m.as_array())?;
+    let project_canon = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf());
+    for m in members {
+        let rel = m.get("path").and_then(|p| p.as_str()).unwrap_or("");
+        if rel.is_empty() {
             continue;
-        };
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) else {
-            continue;
-        };
-        let Some(members) = v.get("members").and_then(|m| m.as_array()) else {
-            continue;
-        };
-        let project_canon = project_root
-            .canonicalize()
-            .unwrap_or_else(|_| project_root.to_path_buf());
-        for m in members {
-            let rel = m.get("path").and_then(|p| p.as_str()).unwrap_or("");
-            if rel.is_empty() {
-                continue;
+        }
+        let abs = ws.join(rel);
+        let abs_canon = abs.canonicalize().unwrap_or(abs);
+        if abs_canon == project_canon {
+            if let Some(n) = m.get("name").and_then(|n| n.as_str()) {
+                return Some(n.to_string());
             }
-            let abs = ws.join(rel);
-            let abs_canon = abs.canonicalize().unwrap_or(abs);
-            if abs_canon == project_canon {
-                if let Some(n) = m.get("name").and_then(|n| n.as_str()) {
-                    return Some(n.to_string());
-                }
-                return Some(
-                    Path::new(rel)
-                        .file_name()
-                        .map(|s| s.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| rel.to_string()),
-                );
-            }
+            return Some(
+                Path::new(rel)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| rel.to_string()),
+            );
         }
     }
     None
@@ -254,13 +259,13 @@ pub fn policy_sync_enabled(project_root: &Path) -> bool {
 
 /// Read / write top-level `policySync` in project ax.json.
 pub fn write_project_policy_sync(project_root: &Path, enabled: bool) -> Result<PathBuf, String> {
-    let path = project_root.join(CONFIG_FILENAME);
+    let path = config_path(project_root);
     write_root_bool_at(&path, "policySync", enabled)?;
     Ok(path)
 }
 
 pub fn write_project_require_review(project_root: &Path, enabled: bool) -> Result<PathBuf, String> {
-    let path = project_root.join(CONFIG_FILENAME);
+    let path = config_path(project_root);
     write_policy_bool_at(&path, "requireReview", enabled)?;
     Ok(path)
 }
@@ -294,18 +299,11 @@ fn write_config(path: &Path, root: &serde_json::Value) -> Result<(), String> {
 }
 
 fn read_root_bool(project_root: &Path, key: &str) -> bool {
-    for name in [CONFIG_FILENAME, CONFIG_ALIAS] {
-        let path = project_root.join(name);
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
-            if v.get(key).and_then(|x| x.as_bool()) == Some(true) {
-                return true;
-            }
-        }
-    }
-    false
+    std::fs::read_to_string(config_path(project_root))
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .and_then(|v| v.get(key).and_then(|x| x.as_bool()))
+        .unwrap_or(false)
 }
 
 fn write_root_bool_at(path: &Path, key: &str, value: bool) -> Result<(), String> {
@@ -386,7 +384,7 @@ pub struct PolicyStorageStatus {
 /// Resolved storage mode and which config layer set it.
 pub fn policy_storage_status(project_root: &Path) -> PolicyStorageStatus {
     let global = read_policy_section(&global_config_path());
-    let project_path = project_root.join(CONFIG_FILENAME);
+    let project_path = config_path(project_root);
     let local = read_policy_section(&project_path);
     let cfg = load_policy_config(project_root);
 
@@ -416,7 +414,7 @@ pub fn write_project_policy_storage(
     project_root: &Path,
     storage: PolicyStorage,
 ) -> Result<PathBuf, String> {
-    let path = project_root.join(CONFIG_FILENAME);
+    let path = config_path(project_root);
     write_policy_storage_at(&path, storage)?;
     Ok(path)
 }
@@ -454,12 +452,12 @@ fn write_policy_storage_at(path: &Path, storage: PolicyStorage) -> Result<(), St
 
 /// Stack ids saved in the project `ax.json` only (not the global config).
 pub fn read_project_stack_ids(project_root: &Path) -> Vec<String> {
-    read_policy_section(&project_root.join(CONFIG_FILENAME)).stacks
+    read_policy_section(&config_path(project_root)).stacks
 }
 
 /// `policy.stackDetect` from the project `ax.json` (`off` or `suggest`).
 pub fn read_project_stack_detect(project_root: &Path) -> String {
-    read_policy_section(&project_root.join(CONFIG_FILENAME))
+    read_policy_section(&config_path(project_root))
         .stack_detect
         .unwrap_or_else(|| "off".into())
 }
@@ -470,7 +468,7 @@ pub fn write_project_stacks(
     stacks: &[String],
     stack_detect: &str,
 ) -> Result<(), String> {
-    let path = project_root.join(CONFIG_FILENAME);
+    let path = config_path(project_root);
     let mut root = read_config_for_update(&path)?;
     let policy = root
         .as_object_mut()
@@ -500,7 +498,7 @@ pub fn write_project_stacks(
 
 /// `agents.ides` from the project `ax.json`; `None` when it was never saved.
 pub fn read_project_ides(project_root: &Path) -> Option<Vec<String>> {
-    let text = std::fs::read_to_string(project_root.join(CONFIG_FILENAME)).ok()?;
+    let text = std::fs::read_to_string(config_path(project_root)).ok()?;
     let root: serde_json::Value = serde_json::from_str(&text).ok()?;
     let list = root.get("agents")?.get("ides")?.as_array()?;
     Some(
@@ -512,7 +510,7 @@ pub fn read_project_ides(project_root: &Path) -> Option<Vec<String>> {
 
 /// Save `agents.ides` in the project `ax.json`, keeping every other key.
 pub fn write_project_ides(project_root: &Path, ides: &[String]) -> Result<(), String> {
-    let path = project_root.join(CONFIG_FILENAME);
+    let path = config_path(project_root);
     let mut root = read_config_for_update(&path)?;
     let obj = root
         .as_object_mut()
@@ -531,7 +529,7 @@ pub const DEFAULT_AGENTS_DIR: &str = ".agents";
 /// fails [`validate_agents_dir_name`] (a path, `..`, or a reserved folder) is
 /// ignored with a warning, so rules and skills always stay inside the project.
 pub fn configured_agents_dir(project_root: &Path) -> Option<String> {
-    let raw = read_policy_section(&project_root.join(CONFIG_FILENAME))
+    let raw = read_policy_section(&config_path(project_root))
         .agents_dir
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())?;
@@ -540,7 +538,7 @@ pub fn configured_agents_dir(project_root: &Path) -> Option<String> {
         Err(e) => {
             eprintln!(
                 "[ax policy] ignoring policy.agentsDir {raw:?} in {}: {e}; using {DEFAULT_AGENTS_DIR}",
-                project_root.join(CONFIG_FILENAME).display()
+                config_path(project_root).display()
             );
             None
         }
@@ -576,7 +574,7 @@ pub fn validate_agents_dir_name(raw: &str) -> Result<String, String> {
 /// Save `policy.agentsDir` in the project `ax.json`.
 pub fn write_project_agents_dir(project_root: &Path, raw: &str) -> Result<String, String> {
     let name = validate_agents_dir_name(raw)?;
-    let path = project_root.join(CONFIG_FILENAME);
+    let path = config_path(project_root);
     let mut root = read_config_for_update(&path)?;
     let policy = root
         .as_object_mut()
@@ -622,6 +620,35 @@ mod tests {
 
         std::fs::write(&path, r#"{"agents":{"ides":"cursor"}}"#).unwrap();
         assert_eq!(read_project_ides(dir.path()), None);
+    }
+
+    #[test]
+    fn dot_ax_json_alias_is_read_and_written_for_every_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        let alias = p.join(CONFIG_ALIAS);
+        std::fs::write(
+            &alias,
+            r#"{"policySync":true,"policy":{"agentsDir":"team-policy","storage":"database","stacks":["rust"]}}"#,
+        )
+        .unwrap();
+        assert_eq!(agents_dir_name(p), "team-policy");
+        assert_eq!(policy_storage_status(p).project_value.as_deref(), Some("database"));
+        assert_eq!(read_project_stack_ids(p), vec!["rust".to_string()]);
+        assert!(policy_sync_enabled(p));
+
+        let written = write_project_policy_sync(p, false).unwrap();
+        assert_eq!(written, alias);
+        assert!(!policy_sync_enabled(p), "the alias file holds the new value");
+        assert!(!p.join(CONFIG_FILENAME).exists(), "no second config file");
+        let saved: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&alias).unwrap()).unwrap();
+        assert_eq!(saved["policy"]["agentsDir"], "team-policy");
+
+        // ax.json wins when both exist.
+        std::fs::write(p.join(CONFIG_FILENAME), r#"{"policySync":false}"#).unwrap();
+        std::fs::write(&alias, r#"{"policySync":true}"#).unwrap();
+        assert!(!policy_sync_enabled(p));
     }
 
     #[test]

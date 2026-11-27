@@ -18,7 +18,7 @@ This scans for:
 - Cargo workspace members (`Cargo.toml` `[workspace].members`)
 - Nested directories that already contain `.ax/`
 
-It writes a `members` array into root `ax.json` (`.ax.json` is also accepted as an alias when reading):
+It writes a `members` array into root `ax.json`. A folder that has `.ax.json` and no `ax.json` uses `.ax.json` instead, for every setting ax reads or writes there (members, `policySync`, the `policy` section). When both files exist, `ax.json` wins:
 
 ```json
 {
