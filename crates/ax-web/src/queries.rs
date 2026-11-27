@@ -475,7 +475,7 @@ pub async fn get_nodes(pool: &SqlitePool, f: NodeFilter<'_>) -> anyhow::Result<N
     };
 
     if use_fts {
-        let q_term = format!("{}*", f.q.unwrap().trim());
+        let q_term = fts_prefix_term(f.q.unwrap_or_default());
         let count_sql = format!(
             r#"SELECT COUNT(*) FROM nodes_fts fts JOIN nodes n ON n.id = fts.id
                WHERE nodes_fts MATCH ? {}"#,
@@ -497,7 +497,7 @@ pub async fn get_nodes(pool: &SqlitePool, f: NodeFilter<'_>) -> anyhow::Result<N
         if let Some(fp) = f.file {
             count_q = count_q.bind(fp);
         }
-        let total = count_q.fetch_one(pool).await.unwrap_or(0);
+        let total = count_q.fetch_one(pool).await?;
 
         let fts_with_match = format!(
             r#"SELECT n.id, n.kind, n.name, n.qualified_name, n.file_path, n.language,
@@ -538,7 +538,7 @@ pub async fn get_nodes(pool: &SqlitePool, f: NodeFilter<'_>) -> anyhow::Result<N
         if let Some(fp) = f.file {
             rows_q = rows_q.bind(fp);
         }
-        rows_q = rows_q.bind(f.limit).bind(f.offset);
+        rows_q = rows_q.bind(f.limit.max(1)).bind(f.offset.max(0));
         let rows = rows_q.fetch_all(pool).await?;
         let nodes = rows.into_iter().map(row_to_node).collect();
         return Ok(NodePage { nodes, total });
@@ -563,7 +563,7 @@ pub async fn get_nodes(pool: &SqlitePool, f: NodeFilter<'_>) -> anyhow::Result<N
     if let Some(fp) = f.file {
         count_q = count_q.bind(fp);
     }
-    let total = count_q.fetch_one(pool).await.unwrap_or(0);
+    let total = count_q.fetch_one(pool).await?;
 
     let mut rows_q = sqlx::query_as::<
         _,
@@ -589,7 +589,7 @@ pub async fn get_nodes(pool: &SqlitePool, f: NodeFilter<'_>) -> anyhow::Result<N
     if let Some(fp) = f.file {
         rows_q = rows_q.bind(fp);
     }
-    rows_q = rows_q.bind(f.limit).bind(f.offset);
+    rows_q = rows_q.bind(f.limit.max(1)).bind(f.offset.max(0));
 
     let rows = rows_q.fetch_all(pool).await?;
     let nodes = rows.into_iter().map(row_to_node).collect();
@@ -877,7 +877,7 @@ pub async fn get_files(pool: &SqlitePool, f: FileFilter<'_>) -> anyhow::Result<F
     if let Some(prefix) = f.prefix.filter(|s| !s.is_empty()) {
         count_q = count_q.bind(prefix).bind(format!("{prefix}/%"));
     }
-    let total = count_q.fetch_one(pool).await.unwrap_or(0);
+    let total = count_q.fetch_one(pool).await?;
 
     let mut rows_q = sqlx::query_as::<_, (String, String, i64, i64, i64)>(&list_sql);
     if let Some(l) = f.lang {
@@ -889,7 +889,7 @@ pub async fn get_files(pool: &SqlitePool, f: FileFilter<'_>) -> anyhow::Result<F
     if let Some(prefix) = f.prefix.filter(|s| !s.is_empty()) {
         rows_q = rows_q.bind(prefix).bind(format!("{prefix}/%"));
     }
-    rows_q = rows_q.bind(f.limit).bind(f.offset);
+    rows_q = rows_q.bind(f.limit.max(1)).bind(f.offset.max(0));
 
     let rows = rows_q.fetch_all(pool).await?;
     let files = rows
@@ -920,11 +920,18 @@ pub struct SearchResult {
     pub snippet: Option<String>,
 }
 
+/// FTS5 prefix query for raw user text: the text is one quoted phrase (inner
+/// quotes doubled), so `(`, `-`, `:`, `*` and AND/OR/NOT are matched as text
+/// instead of parsed as query syntax.
+fn fts_prefix_term(q: &str) -> String {
+    format!("\"{}\"*", q.trim().replace('"', "\"\""))
+}
+
 pub async fn search(pool: &SqlitePool, q: &str, limit: i64) -> anyhow::Result<Vec<SearchResult>> {
     if q.trim().is_empty() {
         return Ok(vec![]);
     }
-    let term = format!("{}*", q.trim());
+    let term = fts_prefix_term(q);
 
     let rows = sqlx::query_as::<_, (String, String, String, String, String, i64, String, Option<String>)>(
         r#"SELECT n.id, n.kind, n.name, n.qualified_name, n.file_path, n.start_line, n.language, n.docstring
@@ -935,7 +942,7 @@ pub async fn search(pool: &SqlitePool, q: &str, limit: i64) -> anyhow::Result<Ve
            LIMIT ?"#,
     )
     .bind(&term)
-    .bind(limit)
+    .bind(limit.max(1))
     .fetch_all(pool)
     .await?;
 
@@ -1063,7 +1070,7 @@ pub async fn get_unresolved_refs(
         let pattern = format!("%{q}%");
         count_q = count_q.bind(pattern.clone()).bind(pattern);
     }
-    let total = count_q.fetch_one(pool).await.unwrap_or(0);
+    let total = count_q.fetch_one(pool).await?;
 
     let mut rows_q =
         sqlx::query_as::<_, (i64, String, String, String, i64, i64, String, String)>(&list_sql);
@@ -1074,7 +1081,7 @@ pub async fn get_unresolved_refs(
         let pattern = format!("%{q}%");
         rows_q = rows_q.bind(pattern.clone()).bind(pattern);
     }
-    rows_q = rows_q.bind(f.limit).bind(f.offset);
+    rows_q = rows_q.bind(f.limit.max(1)).bind(f.offset.max(0));
 
     let rows = rows_q.fetch_all(pool).await?;
     let refs = rows
@@ -1092,4 +1099,87 @@ pub async fn get_unresolved_refs(
         .collect();
 
     Ok(UnresolvedPage { refs, total })
+}
+
+#[cfg(test)]
+mod fts_tests {
+    use super::*;
+
+    async fn pool_with_nodes(dir: &std::path::Path) -> ax_db::Database {
+        let db = ax_db::Database::open(&dir.join("ax.db")).await.unwrap();
+        for (id, name) in [("n1", "foo"), ("n2", "foobar"), ("n3", "other")] {
+            sqlx::query(
+                "INSERT INTO nodes (id, kind, name, qualified_name, file_path, language,
+                 start_line, end_line, start_column, end_column, updated_at)
+                 VALUES (?, 'function', ?, ?, 'a.rs', 'rust', 1, 2, 0, 0, 0)",
+            )
+            .bind(id)
+            .bind(name)
+            .bind(name)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        }
+        db
+    }
+
+    fn filter(q: &str) -> NodeFilter<'_> {
+        NodeFilter {
+            kind: None,
+            lang: None,
+            file: None,
+            q: Some(q),
+            limit: 50,
+            offset: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn search_treats_fts_syntax_as_plain_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = pool_with_nodes(dir.path()).await;
+        for q in [
+            "foo(", "a-b", "C++", "\"x", "foo:", "NOT", "foo AND", "(", "*", "\"",
+        ] {
+            let res = search(db.pool(), q, 10).await;
+            assert!(res.is_ok(), "search({q:?}) failed: {:?}", res.err());
+            let page = get_nodes(db.pool(), filter(q)).await;
+            assert!(page.is_ok(), "get_nodes({q:?}) failed: {:?}", page.err());
+        }
+        let hits = search(db.pool(), "foo(", 10).await.unwrap();
+        let names: Vec<_> = hits.iter().map(|h| h.name.as_str()).collect();
+        assert!(
+            names.contains(&"foo") && names.contains(&"foobar"),
+            "{names:?}"
+        );
+        let page = get_nodes(db.pool(), filter("foo")).await.unwrap();
+        assert_eq!(page.total, 2);
+        assert_eq!(page.nodes.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn negative_limits_do_not_mean_unlimited() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = pool_with_nodes(dir.path()).await;
+        assert_eq!(search(db.pool(), "foo", -1).await.unwrap().len(), 1);
+        let mut f = filter("foo");
+        f.limit = -1;
+        f.offset = -3;
+        assert_eq!(get_nodes(db.pool(), f).await.unwrap().nodes.len(), 1);
+        let mut f = filter("");
+        f.q = None;
+        f.limit = -1;
+        assert_eq!(get_nodes(db.pool(), f).await.unwrap().nodes.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn count_errors_are_returned() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = pool_with_nodes(dir.path()).await;
+        sqlx::query("DROP TABLE nodes_fts")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        assert!(get_nodes(db.pool(), filter("foo")).await.is_err());
+    }
 }
