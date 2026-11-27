@@ -108,6 +108,12 @@ export type SharedEventSourceOptions = {
   events?: Record<string, EventHandler>;
   onError?: () => void;
   onOpen?: () => void;
+  /**
+   * Called when the stream opens again after this subscriber already saw it open
+   * (a browser retry or a hub reconnect). Events sent while it was down are not
+   * replayed, so a subscriber that tracks server state should reload here.
+   */
+  onReconnect?: () => void;
 };
 
 /** Subscribe to a shared SSE URL. Returns an unsubscribe function. */
@@ -159,6 +165,18 @@ export function subscribeSharedEventSource(
   }
   ensureConnected(hub);
 
+  let reopenHandler: (() => void) | null = null;
+  if (opts.onReconnect) {
+    const onReconnect = opts.onReconnect;
+    // A stream that is already open counts as seen: its next open is a reconnect.
+    let seenOpen = hub.es?.readyState === EventSource.OPEN;
+    reopenHandler = () => {
+      if (seenOpen) onReconnect();
+      seenOpen = true;
+    };
+    hub.openHandlers.add(reopenHandler);
+  }
+
   let released = false;
   return () => {
     // React may call a cleanup twice; release this subscriber's reference only once.
@@ -174,6 +192,7 @@ export function subscribeSharedEventSource(
     }
     if (opts.onError) hub!.errorHandlers.delete(opts.onError);
     if (opts.onOpen) hub!.openHandlers.delete(opts.onOpen);
+    if (reopenHandler) hub!.openHandlers.delete(reopenHandler);
 
     hub!.refCount = Math.max(0, hub!.refCount - 1);
     if (hub!.refCount === 0) {

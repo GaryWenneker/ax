@@ -12,6 +12,8 @@ export const GLOW_MS = 2600;
 /**
  * Call `reload` when one of `topics` changes on the server. While `paused`
  * (an open editor or form), the reload waits and runs once it is unpaused.
+ * A reconnect of the change stream also reloads, because changes made while
+ * it was down are not replayed.
  */
 export function useLive(topics: LiveTopic | readonly LiveTopic[], reload: () => void, paused = false): void {
   const reloadRef = useRef(reload);
@@ -37,6 +39,9 @@ export function useLive(topics: LiveTopic | readonly LiveTopic[], reload: () => 
           if (change && wanted.has(change.topic)) fire();
         },
       },
+      // The server does not replay changes made while the stream was down,
+      // so a reconnect counts as a change on every wanted topic.
+      onReconnect: fire,
     });
   }, [key]);
 

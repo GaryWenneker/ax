@@ -202,3 +202,34 @@ test('calling an unsubscribe twice only releases one reference', () => {
   b();
   assert.equal(live('/api/t').length, 0);
 });
+
+test('onReconnect skips the first open and fires on every later one', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let reconnects = 0;
+  const off = subscribeSharedEventSource('/api/rc', { onReconnect: () => { reconnects += 1; } });
+  const first = FakeEventSource.all[0];
+  first.open();
+  assert.equal(reconnects, 0, 'the first open is the initial connection');
+  // The browser's own retry after a soft error opens the same EventSource again.
+  first.fail(false);
+  first.open();
+  assert.equal(reconnects, 1);
+  // A hard close: the hub opens a new EventSource after the backoff.
+  first.fail(true);
+  t.mock.timers.tick(1000);
+  FakeEventSource.all[1].open();
+  assert.equal(reconnects, 2);
+  off();
+});
+
+test('onReconnect treats the next open as a reconnect when the stream was already open', () => {
+  let reconnects = 0;
+  const a = subscribeSharedEventSource('/api/rc2', {});
+  FakeEventSource.all[0].open();
+  const b = subscribeSharedEventSource('/api/rc2', { onReconnect: () => { reconnects += 1; } });
+  FakeEventSource.all[0].fail(false);
+  FakeEventSource.all[0].open();
+  assert.equal(reconnects, 1);
+  a();
+  b();
+});
