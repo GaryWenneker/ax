@@ -65,6 +65,7 @@ import {
 } from '../lib/mcpQuality';
 import { detectStructuredLang, highlightStructured } from '../lib/mcpSyntax';
 import { navigateRoute } from '../lib/routes';
+import { neighborId, neighborNav, type NeighborNav } from '../lib/rowNeighbors';
 import { subscribeSharedEventSource } from '../lib/sharedEventSource';
 import { fetchShipConfig } from '../shipApi';
 import SettingsSelect from './ui/SettingsSelect';
@@ -533,6 +534,12 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
     [entries, selectedId],
   );
   const selected = selectedIndex >= 0 ? entries[selectedIndex] : null;
+  /** Previous / Next in the inspector follow the rendered rows, the same order selectNeighbor uses. */
+  const [nav, setNav] = useState<NeighborNav>({ prev: false, next: false });
+  useLayoutEffect(() => {
+    const next = neighborNav(visibleRowIds(), selectedId);
+    setNav((cur) => (cur.prev === next.prev && cur.next === next.next ? cur : next));
+  });
   const cluster = useMemo(
     () => (selectedIndex >= 0 ? findCallCluster(entries, selectedIndex) : null),
     [entries, selectedIndex],
@@ -1136,12 +1143,10 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
   }
 
   function selectNeighbor(delta: number) {
-    const ids = visibleRowIds();
-    const current = ids.indexOf(selectedId ?? '');
-    const next = current + delta;
-    if (current < 0 || next < 0 || next >= ids.length) return;
-    setSelectedId(ids[next]);
-    setCursorId(ids[next]);
+    const next = neighborId(visibleRowIds(), selectedId, delta);
+    if (!next) return;
+    setSelectedId(next);
+    setCursorId(next);
   }
 
   function fillContinuity(id: string) {
@@ -1702,7 +1707,7 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
                   type="button"
                   className="detail-close"
                   aria-label="Previous event"
-                  disabled={selectedIndex <= 0}
+                  disabled={!nav.prev}
                   onClick={() => selectNeighbor(-1)}
                 >
                   <Codicon name="chevron-left" />
@@ -1711,7 +1716,7 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
                   type="button"
                   className="detail-close"
                   aria-label="Next event"
-                  disabled={selectedIndex >= entries.length - 1}
+                  disabled={!nav.next}
                   onClick={() => selectNeighbor(1)}
                 >
                   <Codicon name="chevron-right" />
