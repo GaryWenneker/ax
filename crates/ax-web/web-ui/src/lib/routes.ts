@@ -1,26 +1,35 @@
 /** Fixed path URLs for every Command Center page (no hash routing). */
 
-export type Page =
-  | 'stats'
-  | 'nodes'
-  | 'graph'
-  | 'files'
-  | 'search'
-  | 'memory'
-  | 'sonar'
-  | 'settings'
-  | 'logging'
-  | 'specs'
-  | 'savings'
-  | 'prices'
-  | 'unresolved'
-  | 'policy-rules'
-  | 'policy-rule-edit'
-  | 'policy-skills'
-  | 'policy-skill-edit'
-  | 'policy-match'
-  | 'policy-review'
-  | 'policy-sync';
+/** The one page table: page id → fixed path. Every other page list derives from it. */
+const PAGE_PATH = {
+  stats: '/stats',
+  nodes: '/nodes',
+  graph: '/graph',
+  files: '/files',
+  search: '/search',
+  memory: '/memory',
+  sonar: '/sonar',
+  settings: '/settings',
+  logging: '/logging',
+  specs: '/specs',
+  savings: '/savings',
+  prices: '/prices',
+  unresolved: '/unresolved',
+  'policy-rules': '/policy/rules',
+  'policy-rule-edit': '/policy/rules/edit',
+  'policy-skills': '/policy/skills',
+  'policy-skill-edit': '/policy/skills/edit',
+  'policy-match': '/policy/match',
+  'policy-review': '/policy/review',
+  'policy-sync': '/policy/sync',
+} as const satisfies Record<string, `/${string}`>;
+
+export type Page = keyof typeof PAGE_PATH;
+
+/** Every Command Center page, in table order. */
+export const PAGES: readonly Page[] = Object.keys(PAGE_PATH) as Page[];
+
+const VALID_PAGES: ReadonlySet<string> = new Set(PAGES);
 
 export type SonarTab = 'dashboard' | 'setup';
 
@@ -44,30 +53,9 @@ export interface RouteState {
   recallQuery?: string | null;
   /** Open one spec (`/specs?spec=…`). */
   specId?: string | null;
+  /** Settings section (`/settings?section=…`); Settings checks the id. */
+  section?: string | null;
 }
-
-const VALID_PAGES: Page[] = [
-  'stats',
-  'nodes',
-  'graph',
-  'files',
-  'search',
-  'memory',
-  'sonar',
-  'settings',
-  'logging',
-  'specs',
-  'savings',
-  'prices',
-  'unresolved',
-  'policy-rules',
-  'policy-rule-edit',
-  'policy-skills',
-  'policy-skill-edit',
-  'policy-match',
-  'policy-review',
-  'policy-sync',
-];
 
 /** Pages that use the full workspace width (split panes, graph canvas, terminal). */
 export const FULL_BLEED_PAGES: ReadonlySet<Page> = new Set([
@@ -76,59 +64,17 @@ export const FULL_BLEED_PAGES: ReadonlySet<Page> = new Set([
   'specs',
 ]);
 
-const PAGE_PATH: Record<Page, string> = {
-  stats: '/stats',
-  nodes: '/nodes',
-  graph: '/graph',
-  files: '/files',
-  search: '/search',
-  memory: '/memory',
-  sonar: '/sonar',
-  settings: '/settings',
-  logging: '/logging',
-  specs: '/specs',
-  savings: '/savings',
-  prices: '/prices',
-  unresolved: '/unresolved',
-  'policy-rules': '/policy/rules',
-  'policy-rule-edit': '/policy/rules/edit',
-  'policy-skills': '/policy/skills',
-  'policy-skill-edit': '/policy/skills/edit',
-  'policy-match': '/policy/match',
-  'policy-review': '/policy/review',
-  'policy-sync': '/policy/sync',
-};
-
 const PATH_PAGE: Record<string, Page> = Object.fromEntries(
   Object.entries(PAGE_PATH).map(([page, path]) => [path, page as Page]),
 ) as Record<string, Page>;
 
 PATH_PAGE['/'] = 'stats';
 
-/** Legacy hash segment → fixed path (preserves query string). */
-const LEGACY_HASH_PAGE: Record<string, Page> = {
-  stats: 'stats',
-  nodes: 'nodes',
-  graph: 'graph',
-  files: 'files',
-  search: 'search',
-  memory: 'memory',
+/** Legacy hash segment → page: every page id, plus retired pages that now land on Stats. */
+const LEGACY_HASH_PAGE: Readonly<Record<string, Page>> = {
+  ...Object.fromEntries(PAGES.map((page) => [page, page])),
   ship: 'stats',
-  sonar: 'sonar',
   agent: 'stats',
-  settings: 'settings',
-  logging: 'logging',
-  specs: 'specs',
-  savings: 'savings',
-  prices: 'prices',
-  unresolved: 'unresolved',
-  'policy-rules': 'policy-rules',
-  'policy-rule-edit': 'policy-rule-edit',
-  'policy-skills': 'policy-skills',
-  'policy-skill-edit': 'policy-skill-edit',
-  'policy-match': 'policy-match',
-  'policy-review': 'policy-review',
-  'policy-sync': 'policy-sync',
 };
 
 function normalizePathname(pathname: string): string {
@@ -166,6 +112,7 @@ export function parseLocation(loc: Location = window.location): RouteState & { v
     session: params.get('session'),
     recallQuery: params.get('q'),
     specId: params.get('spec'),
+    section: params.get('section'),
   };
 }
 
@@ -196,6 +143,7 @@ export function buildPath(state: Partial<RouteState> & Pick<RouteState, 'page'>)
   if (state.page === 'memory' && state.recallQuery) params.set('q', state.recallQuery);
   if (state.page === 'specs' && state.specId) params.set('spec', state.specId);
   if (state.page === 'sonar' && state.sonarTab === 'setup') params.set('tab', 'setup');
+  if (state.page === 'settings' && state.section) params.set('section', state.section);
   const qs = params.toString();
   return qs ? `${base}?${qs}` : base;
 }
@@ -215,6 +163,7 @@ export function navigateRoute(state: Partial<RouteState> & Pick<RouteState, 'pag
     session: state.session ?? null,
     recallQuery: state.recallQuery ?? null,
     specId: state.specId ?? null,
+    section: state.section ?? null,
   });
   const current = `${window.location.pathname}${window.location.search}`;
   if (current === path) return;
@@ -233,7 +182,7 @@ export function migrateLegacyHash(): string | null {
 
   const [segment, qs = ''] = hash.split('?');
   const page = LEGACY_HASH_PAGE[segment];
-  if (!page || !VALID_PAGES.includes(page)) return null;
+  if (!page || !VALID_PAGES.has(page)) return null;
 
   const params = new URLSearchParams(qs);
   const path = buildPath({
@@ -245,13 +194,14 @@ export function migrateLegacyHash(): string | null {
     sonarTab: params.get('tab') === 'setup' ? 'setup' : 'dashboard',
     ruleEditMode: params.get('mode') === 'edit' && page === 'policy-rule-edit',
     skillEditMode: params.get('mode') === 'edit' && page === 'policy-skill-edit',
+    section: params.get('section'),
   });
   window.history.replaceState(null, '', path);
   return path;
 }
 
 export function pageFromNavId(id: string): Page | null {
-  if (VALID_PAGES.includes(id as Page) && id !== 'policy-rule-edit' && id !== 'policy-skill-edit' && id !== 'policy-match') {
+  if (VALID_PAGES.has(id) && id !== 'policy-rule-edit' && id !== 'policy-skill-edit' && id !== 'policy-match') {
     return id as Page;
   }
   return null;

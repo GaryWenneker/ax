@@ -60,6 +60,7 @@ const EMPTY: Omit<RouteState, 'page'> = {
   session: null,
   recallQuery: null,
   specId: null,
+  section: null,
 };
 
 const CASES: Array<Partial<RouteState> & { page: Page }> = [
