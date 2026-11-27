@@ -145,11 +145,7 @@ impl OnnxMiniLm {
         if seq == 0 {
             return Err("empty tokenization".into());
         }
-        let type_ids: Vec<i64> = encoding
-            .get_type_ids()
-            .iter()
-            .map(|v| *v as i64)
-            .collect();
+        let type_ids: Vec<i64> = encoding.get_type_ids().iter().map(|v| *v as i64).collect();
 
         let ids_tensor = ort::value::Tensor::from_array(([1usize, seq], ids))
             .map_err(|e| format!("ids tensor: {e}"))?;

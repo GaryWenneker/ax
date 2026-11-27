@@ -79,7 +79,9 @@ impl LoginBackend for BrowserLogin {
             let status = ax_remote_client::client::login_status(id).await?;
             Some(match status.state.as_str() {
                 "connected" => LoginState::Connected,
-                "failed" => LoginState::Failed(status.message.unwrap_or_else(|| "Sign-in failed".into())),
+                "failed" => {
+                    LoginState::Failed(status.message.unwrap_or_else(|| "Sign-in failed".into()))
+                }
                 _ => LoginState::Pending,
             })
         })

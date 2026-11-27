@@ -1024,8 +1024,9 @@ mod tests {
         .await
         .unwrap();
 
-        let unfiltered =
-            search_semantic_query(pool, Some("target"), None).await.unwrap();
+        let unfiltered = search_semantic_query(pool, Some("target"), None)
+            .await
+            .unwrap();
         let hit_ids: Vec<_> = unfiltered["hits"]
             .as_array()
             .unwrap()
@@ -1035,13 +1036,10 @@ mod tests {
         assert!(hit_ids.contains(&"m-match"));
         assert!(!hit_ids.contains(&"m-wrong-dim"));
 
-        let filtered = search_semantic_query(
-            pool,
-            Some("target"),
-            Some(crate::lexical::CHALLENGER_ID),
-        )
-        .await
-        .unwrap();
+        let filtered =
+            search_semantic_query(pool, Some("target"), Some(crate::lexical::CHALLENGER_ID))
+                .await
+                .unwrap();
         let filtered_ids: Vec<_> = filtered["hits"]
             .as_array()
             .unwrap()
@@ -1071,16 +1069,15 @@ mod tests {
         )
         .await
         .unwrap();
-        let value = search_semantic_query(pool, Some("parser"), None).await.unwrap();
+        let value = search_semantic_query(pool, Some("parser"), None)
+            .await
+            .unwrap();
         assert_eq!(value["scannedMemoryColumn"], false);
         assert_eq!(value["fallback"], "hash-v1");
         assert_eq!(value["challengerAdmitted"], true);
         assert_eq!(value["hits"][0]["entityId"], "m-parser");
         assert!(value["hits"][0]["score"].as_f64().unwrap() > 0.99);
-        assert_eq!(
-            value["model"],
-            crate::runtime::semantic_search_model(true),
-        );
+        assert_eq!(value["model"], crate::runtime::semantic_search_model(true),);
         assert_ne!(value["model"], crate::lexical::CHALLENGER_ID);
     }
 

@@ -8,18 +8,17 @@ pub mod bakeoff;
 pub mod benchmark_abc;
 pub mod code_aware;
 pub mod code_discovery;
-pub mod speed;
-pub mod embed_bakeoff;
-#[cfg(feature = "neural-ort")]
-pub mod onnx_embed;
 pub mod config;
 pub mod dispatch;
-pub mod learn_validate;
-mod metrics;
-pub mod path_validate;
+pub mod embed_bakeoff;
 pub mod graph;
+pub mod learn_validate;
 pub mod learning;
 pub mod lexical;
+mod metrics;
+#[cfg(feature = "neural-ort")]
+pub mod onnx_embed;
+pub mod path_validate;
 pub mod predict;
 pub mod query_prior;
 pub mod rank;
@@ -27,6 +26,7 @@ pub mod recovery;
 pub mod rss;
 pub mod runtime;
 pub mod share;
+pub mod speed;
 pub mod status;
 pub mod store;
 

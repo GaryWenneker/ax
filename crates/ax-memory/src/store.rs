@@ -1388,7 +1388,8 @@ pub async fn session_ids(
             continue;
         }
         let marks = vec!["?"; chunk.len()].join(", ");
-        let sql = format!("SELECT id, COALESCE(session_id, '') FROM memories WHERE id IN ({marks})");
+        let sql =
+            format!("SELECT id, COALESCE(session_id, '') FROM memories WHERE id IN ({marks})");
         let mut query = sqlx::query_as::<_, (String, String)>(&sql);
         for id in chunk {
             query = query.bind(id);

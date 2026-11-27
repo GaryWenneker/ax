@@ -350,7 +350,11 @@ pub fn budget_snapshot(
         0.0
     } else {
         let p = average * f64::from(days_remaining);
-        if p.is_finite() { p } else { 0.0 }
+        if p.is_finite() {
+            p
+        } else {
+            0.0
+        }
     };
     BudgetSnapshot {
         spent,
