@@ -994,6 +994,8 @@ ax --version
 
 Self-update from GitHub Releases, with [getax.wenneker.io/releases](https://getax.wenneker.io/releases/latest.txt) as the fallback. Non-interactive — no confirmation prompt.
 
+For private repositories and higher rate limits, `ax upgrade` and `ax upgrade --check` send a GitHub token from `AX_GITHUB_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN`, or else from `gh auth token`. The `gh` call runs with stdin closed and is stopped after 3 seconds. The background update notice after other commands uses only the environment variables and never runs `gh`.
+
 Versions compare as semver: `2.1.0-rc.1` is lower than `2.1.0`, so a pre-release build is offered the final release. A release tag or `latest.txt` value that is not a `major.minor.patch` version (with an optional `-pre` suffix), such as `nightly` or an HTML error page, is ignored and never shown as an update.
 
 Every downloaded archive is checked against the release's `SHA256SUMS` (fetched from GitHub when possible, otherwise from getax) before it is extracted. A missing checksum list, a missing entry or a different digest stops the upgrade and leaves the installed binary alone. A `--local` archive is checked against a `SHA256SUMS` in the same folder when one is there.

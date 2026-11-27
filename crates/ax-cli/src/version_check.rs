@@ -97,28 +97,86 @@ pub fn github_repo() -> String {
     std::env::var("AX_GITHUB_REPO").unwrap_or_else(|_| DEFAULT_REPO.to_string())
 }
 
+/// How long `gh auth token` may take before the token lookup gives up.
+const GH_TOKEN_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// Token for private repos or higher API rate limits (`AX_GITHUB_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, then `gh auth token`).
+///
+/// The `gh` lookup runs with stdin closed and gives up after a few seconds, so a
+/// `gh` that prompts or hangs cannot stall the command.
 pub fn github_token() -> Option<String> {
-    for key in ["AX_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"] {
-        if let Ok(v) = std::env::var(key) {
-            let t = v.trim();
-            if !t.is_empty() {
-                return Some(t.to_string());
-            }
-        }
-    }
-    github_token_from_gh_cli()
+    github_token_from_env().or_else(|| gh_auth_token("gh", GH_TOKEN_TIMEOUT))
 }
 
-fn github_token_from_gh_cli() -> Option<String> {
-    let output = std::process::Command::new("gh")
-        .args(["auth", "token"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
+/// [`github_token`] for async callers: the `gh` lookup runs on a blocking thread,
+/// and only when `use_gh_cli` is set (the passive update notice skips it).
+async fn github_token_async(use_gh_cli: bool) -> Option<String> {
+    if let Some(t) = github_token_from_env() {
+        return Some(t);
+    }
+    if !use_gh_cli {
         return None;
     }
-    let t = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    tokio::task::spawn_blocking(|| gh_auth_token("gh", GH_TOKEN_TIMEOUT))
+        .await
+        .ok()
+        .flatten()
+}
+
+fn github_token_from_env() -> Option<String> {
+    ["AX_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"]
+        .iter()
+        .filter_map(|key| std::env::var(key).ok())
+        .map(|v| v.trim().to_string())
+        .find(|t| !t.is_empty())
+}
+
+/// Run `<program> auth token` with stdin closed; `None` on failure or after `timeout`.
+fn gh_auth_token(program: &str, timeout: Duration) -> Option<String> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::time::Instant;
+
+    let deadline = Instant::now() + timeout;
+    let mut child = Command::new(program)
+        .args(["auth", "token"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let Some(mut stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
+    };
+    // Read on a thread: a process that keeps stdout open must not block us past the deadline.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = (&mut stdout).take(64 * 1024).read_to_end(&mut buf);
+        let _ = tx.send(buf);
+    });
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    if !status.success() {
+        return None;
+    }
+    let out = rx
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .ok()?;
+    let t = String::from_utf8_lossy(&out).trim().to_string();
     if t.is_empty() {
         None
     } else {
@@ -336,9 +394,12 @@ fn parse_cdn_latest(text: &str) -> Result<String, String> {
     Ok(v)
 }
 
-pub async fn resolve_latest_version(repo: &str) -> Result<String, String> {
+/// Highest release version. `use_gh_cli` allows the `gh auth token` lookup
+/// (explicit checks); the passive notice after commands passes `false`.
+pub async fn resolve_latest_version(repo: &str, use_gh_cli: bool) -> Result<String, String> {
     let client = http_client()?;
-    collect_latest_candidates(&client, repo)
+    let token = github_token_async(use_gh_cli).await;
+    collect_latest_candidates(&client, repo, token.as_deref())
         .await
         .into_iter()
         .next()
@@ -354,7 +415,7 @@ pub async fn resolve_latest_installable_version(
     ext: &str,
 ) -> Result<String, String> {
     let client = http_client()?;
-    let token = github_token();
+    let token = github_token_async(true).await;
     let token_ref = token.as_deref();
     let asset_name = format!("ax-{bundle}.{ext}");
 
@@ -364,7 +425,7 @@ pub async fn resolve_latest_installable_version(
         return Ok(tag);
     }
 
-    let candidates = collect_latest_candidates(&client, repo).await;
+    let candidates = collect_latest_candidates(&client, repo, token_ref).await;
 
     for tag in &candidates {
         if release_asset_exists(&client, repo, tag, bundle, ext, token_ref).await {
@@ -446,9 +507,11 @@ async fn fetch_releases_with_assets(
         .collect())
 }
 
-async fn collect_latest_candidates(client: &reqwest::Client, repo: &str) -> Vec<String> {
-    let token = github_token();
-    let token_ref = token.as_deref();
+async fn collect_latest_candidates(
+    client: &reqwest::Client,
+    repo: &str,
+    token_ref: Option<&str>,
+) -> Vec<String> {
     let mut candidates = Vec::new();
 
     let url = format!("https://github.com/{repo}/releases/latest");
@@ -567,13 +630,17 @@ pub(crate) fn use_cached_latest(force_refresh: bool, cache_fresh: bool) -> bool 
     !force_refresh && cache_fresh
 }
 
-async fn latest_with_cache_opts(repo: &str, force_refresh: bool) -> Option<String> {
+async fn latest_with_cache_opts(
+    repo: &str,
+    force_refresh: bool,
+    use_gh_cli: bool,
+) -> Option<String> {
     if let Some(cache) = load_cache() {
         if use_cached_latest(force_refresh, cache_is_fresh(&cache)) {
             return Some(cache.latest);
         }
     }
-    match resolve_latest_version(repo).await {
+    match resolve_latest_version(repo, use_gh_cli).await {
         Ok(latest) => {
             save_cache(&latest);
             Some(latest)
@@ -586,7 +653,7 @@ async fn latest_with_cache_opts(repo: &str, force_refresh: bool) -> Option<Strin
 }
 
 async fn latest_with_cache(repo: &str) -> Option<String> {
-    latest_with_cache_opts(repo, false).await
+    latest_with_cache_opts(repo, false, true).await
 }
 
 pub fn print_update_notice(current: &str, latest: &str) {
@@ -608,7 +675,7 @@ pub async fn maybe_notify_update_with(force_refresh: bool) {
     }
     let current = current_version();
     let repo = github_repo();
-    let Some(latest) = latest_with_cache_opts(&repo, force_refresh).await else {
+    let Some(latest) = latest_with_cache_opts(&repo, force_refresh, false).await else {
         return;
     };
     if is_update_available(current, &latest) {
@@ -621,7 +688,7 @@ pub async fn run_check(force_refresh: bool) -> Result<(), String> {
     let current = current_version();
     let repo = github_repo();
     let latest = if force_refresh {
-        match resolve_latest_version(&repo).await {
+        match resolve_latest_version(&repo, true).await {
             Ok(latest) => {
                 save_cache(&latest);
                 latest
@@ -761,6 +828,47 @@ mod tests {
         assert!(sorted
             .windows(2)
             .all(|w| { compare_versions(&w[0], &w[1]).is_some_and(|c| c != Ordering::Less) }));
+    }
+
+    #[cfg(unix)]
+    fn fake_gh(dir: &std::path::Path, name: &str, body: &str) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gh_auth_token_gives_up_on_a_hanging_gh() {
+        let dir = tempfile::tempdir().unwrap();
+        let gh = fake_gh(dir.path(), "gh-hang", "sleep 10\necho late-token");
+        let started = std::time::Instant::now();
+        let token = gh_auth_token(&gh, Duration::from_millis(300));
+        assert_eq!(token, None);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "waited {:?} for a hanging gh",
+            started.elapsed()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gh_auth_token_reads_the_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let gh = fake_gh(dir.path(), "gh-ok", "echo ' gho_example '");
+        assert_eq!(
+            gh_auth_token(&gh, Duration::from_secs(5)).as_deref(),
+            Some("gho_example")
+        );
+        let failing = fake_gh(dir.path(), "gh-fail", "echo nope; exit 1");
+        assert_eq!(gh_auth_token(&failing, Duration::from_secs(5)), None);
+        assert_eq!(
+            gh_auth_token("/nonexistent/gh", Duration::from_secs(5)),
+            None
+        );
     }
 
     #[test]
