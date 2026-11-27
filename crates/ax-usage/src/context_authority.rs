@@ -639,36 +639,87 @@ pub async fn verify_manifest(pool: &sqlx::SqlitePool, manifest_id: &str) -> Resu
     Ok(manifest_seal(&manifest) == seal)
 }
 
+/// How many manifests [`list_manifest_summaries`] returns, newest first.
+pub const MANIFEST_LIST_LIMIT: i64 = 200;
+
+/// The newest [`MANIFEST_LIST_LIMIT`] manifests of a project.
 pub async fn list_manifest_summaries(
     pool: &sqlx::SqlitePool,
     project_id: &str,
 ) -> Result<Vec<ManifestSummary>, String> {
+    list_manifest_summaries_page(pool, project_id, MANIFEST_LIST_LIMIT, 0).await
+}
+
+#[derive(sqlx::FromRow)]
+struct ManifestListRow {
+    id: String,
+    project_id: String,
+    session_id: String,
+    turn_id: String,
+    agent_id: String,
+    provider_chat_id: Option<String>,
+    mode: String,
+    cutoff_ms: Option<i64>,
+    snapshot_id: Option<String>,
+    receipt_id: String,
+    model: String,
+    tool_versions: String,
+    commit_hash: String,
+    seal: String,
+    approval: String,
+    replay_score: Option<String>,
+}
+
+/// One page of a project's manifests, newest first. `limit` is clamped to 1..=1000. One query
+/// reads the sealed columns and the latest replay score; the seal is checked in memory.
+pub async fn list_manifest_summaries_page(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<ManifestSummary>, String> {
     require_text(project_id, "project")?;
     ensure_manifest_schema(pool).await?;
     ensure_replay_schema(pool).await?;
-    let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(
-        "SELECT id, session_id, turn_id, agent_id, approval
-         FROM context_manifests
-         WHERE project_id = ?1
-         ORDER BY created_at DESC, id",
+    let rows: Vec<ManifestListRow> = sqlx::query_as(
+        "SELECT m.id, m.project_id, m.session_id, m.turn_id, m.agent_id, m.provider_chat_id,
+                m.mode, m.cutoff_ms, m.snapshot_id, m.receipt_id, m.model, m.tool_versions,
+                m.commit_hash, m.seal, m.approval,
+                (SELECT r.score FROM replay_runs r WHERE r.manifest_id = m.id
+                 ORDER BY r.created_at DESC LIMIT 1) AS replay_score
+         FROM context_manifests m
+         WHERE m.project_id = ?1
+         ORDER BY m.created_at DESC, m.id
+         LIMIT ?2 OFFSET ?3",
     )
     .bind(project_id.trim())
+    .bind(limit.clamp(1, 1000))
+    .bind(offset.max(0))
     .fetch_all(pool)
     .await
     .map_err(|error| error.to_string())?;
     let mut out = Vec::with_capacity(rows.len());
-    for (id, session_id, turn_id, agent_id, approval) in rows {
-        let integrity_ok = verify_manifest(pool, &id).await.unwrap_or(false);
-        let replay_status: Option<String> = sqlx::query_scalar(
-            "SELECT score FROM replay_runs WHERE manifest_id = ?1 ORDER BY created_at DESC LIMIT 1",
-        )
-        .bind(&id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|error| error.to_string())?;
-        let replay_status = replay_status.unwrap_or_else(|| "not_run".into());
+    for row in rows {
+        let integrity_ok = parse_mode(&row.mode).is_ok_and(|mode| {
+            let manifest = ContextManifest {
+                project_id: row.project_id,
+                session_id: row.session_id.clone(),
+                turn_id: row.turn_id.clone(),
+                agent_id: row.agent_id.clone(),
+                provider_chat_id: row.provider_chat_id,
+                mode,
+                cutoff_ms: row.cutoff_ms,
+                snapshot_id: row.snapshot_id,
+                receipt_id: row.receipt_id,
+                model: row.model,
+                tool_versions: row.tool_versions,
+                commit_hash: row.commit_hash,
+            };
+            manifest_seal(&manifest) == row.seal
+        });
+        let replay_status = row.replay_score.unwrap_or_else(|| "not_run".into());
         let mut uncertainties = Vec::new();
-        if approval != "approved" {
+        if row.approval != "approved" {
             uncertainties.push("unapproved".into());
         }
         if !integrity_ok {
@@ -678,11 +729,11 @@ pub async fn list_manifest_summaries(
             uncertainties.push(replay_status.clone());
         }
         out.push(ManifestSummary {
-            id,
-            session_id,
-            turn_id,
-            agent_id,
-            approval,
+            id: row.id,
+            session_id: row.session_id,
+            turn_id: row.turn_id,
+            agent_id: row.agent_id,
+            approval: row.approval,
             integrity_ok,
             replay_status,
             uncertainties,
@@ -1018,6 +1069,13 @@ async fn ensure_replay_schema(pool: &sqlx::SqlitePool) -> Result<(), String> {
             approval TEXT NOT NULL,
             created_at INTEGER NOT NULL
         )",
+    )
+    .execute(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_replay_runs_manifest
+         ON replay_runs (manifest_id, created_at)",
     )
     .execute(pool)
     .await
@@ -2541,6 +2599,48 @@ mod tests {
             "list took {elapsed:?}"
         );
         assert!(summaries.iter().all(|row| !row.uncertainties.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn the_manifest_list_is_capped_and_reports_integrity_and_the_latest_replay() {
+        let (_dir, pool) = temp_pool().await;
+        let first = sealed_unapproved_manifest(&pool).await;
+        for index in 0..200 {
+            sqlx::query(
+                "INSERT INTO context_manifests
+                 SELECT ?1, project_id, session_id, turn_id, agent_id, provider_chat_id, mode,
+                        cutoff_ms, snapshot_id, receipt_id, model, tool_versions, commit_hash,
+                        seal, approval, actor_member_id, created_at + ?2
+                 FROM context_manifests WHERE id = ?3",
+            )
+            .bind(format!("copy-{index:03}"))
+            .bind(index + 1)
+            .bind(&first)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let listed = list_manifest_summaries(&pool, "ax").await.unwrap();
+        assert_eq!(listed.len() as i64, MANIFEST_LIST_LIMIT);
+        assert_eq!(listed[0].id, "copy-199", "newest first");
+        let rest =
+            list_manifest_summaries_page(&pool, "ax", MANIFEST_LIST_LIMIT, MANIFEST_LIST_LIMIT)
+                .await
+                .unwrap();
+        assert_eq!(rest.len(), 1);
+        assert_eq!(rest[0].id, first);
+
+        sqlx::query("UPDATE context_manifests SET commit_hash = 'tampered' WHERE id = 'copy-199'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        start_replay_for_manifest(&pool, "copy-198").await.unwrap();
+        let listed = list_manifest_summaries(&pool, "ax").await.unwrap();
+        assert!(!listed[0].integrity_ok);
+        assert!(listed[0].uncertainties.contains(&"integrity_failed".into()));
+        assert!(listed[1].integrity_ok);
+        assert_eq!(listed[1].replay_status, "not_tested");
+        assert_eq!(listed[2].replay_status, "not_run");
     }
 
     #[tokio::test]
