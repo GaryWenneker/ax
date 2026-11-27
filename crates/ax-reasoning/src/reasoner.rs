@@ -160,7 +160,8 @@ pub fn offload_status() -> serde_json::Value {
         "effort": cfg.effort,
         "style": cfg.style,
         "timeout_ms": cfg.timeout_ms,
-        "suggestion": if cfg.enabled {
+        "problem": cfg.problem,
+        "suggestion": if cfg.enabled || cfg.problem.is_some() {
             None
         } else {
             crate::config::suggested_key_env().map(|k| {

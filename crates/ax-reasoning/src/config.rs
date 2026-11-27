@@ -52,6 +52,8 @@ pub struct ResolvedOffload {
     pub strip: bool,
     pub debug: bool,
     pub origin: String,
+    /// Why offload is off although an endpoint is set (for status output).
+    pub problem: Option<String>,
 }
 
 pub fn config_dir() -> PathBuf {
@@ -355,12 +357,29 @@ pub async fn seed_offload_on_init() -> Result<OffloadInitReport, String> {
     })
 }
 
+/// Model used for an endpoint that is not in [`OFFLOAD_PROVIDERS`] when no
+/// model is set.
+const FALLBACK_MODEL: &str = "gpt-oss-120b";
+
+/// The known provider whose base URL is `url` (a trailing `/` is ignored).
+fn provider_for_url(url: &str) -> Option<&'static OffloadProviderSpec> {
+    let url = url.trim().trim_end_matches('/');
+    OFFLOAD_PROVIDERS
+        .iter()
+        .find(|spec| spec.url.eq_ignore_ascii_case(url))
+}
+
+/// Resolve the offload settings. The model is `AX_OFFLOAD_MODEL`, else the
+/// configured `model`, else the default model of the known provider at the
+/// endpoint. A known provider without a default model leaves offload off with
+/// a `problem` until a model is set; an unknown endpoint falls back to
+/// `gpt-oss-120b`.
 pub fn resolve_offload() -> ResolvedOffload {
     if std::env::var("AX_OFFLOAD_DISABLE").ok().as_deref() == Some("1") {
         return ResolvedOffload {
             enabled: false,
             url: None,
-            model: "gpt-oss-120b".into(),
+            model: FALLBACK_MODEL.into(),
             api_key: None,
             key_source: None,
             effort: "low".into(),
@@ -370,6 +389,7 @@ pub fn resolve_offload() -> ResolvedOffload {
             strip: false,
             debug: std::env::var("AX_OFFLOAD_DEBUG").ok().as_deref() == Some("1"),
             origin: "none".into(),
+            problem: None,
         };
     }
 
@@ -379,9 +399,25 @@ pub fn resolve_offload() -> ResolvedOffload {
     let had_env_url = env_url.is_some();
 
     let url = env_url.or_else(|| trimmed(c.url.as_deref()));
-    let model = trimmed(std::env::var("AX_OFFLOAD_MODEL").ok().as_deref())
-        .or_else(|| trimmed(c.model.as_deref()))
-        .unwrap_or_else(|| "gpt-oss-120b".into());
+    let set_model = trimmed(std::env::var("AX_OFFLOAD_MODEL").ok().as_deref())
+        .or_else(|| trimmed(c.model.as_deref()));
+    let provider = url.as_deref().and_then(provider_for_url);
+    let mut problem = None;
+    let model = match (set_model, provider) {
+        (Some(model), _) => model,
+        (None, Some(spec)) => match spec.default_model {
+            Some(model) => model.to_string(),
+            None => {
+                problem = Some(format!(
+                    "{} has no default model; set \"model\" in the offload section of ~/.ax/config.json or AX_OFFLOAD_MODEL",
+                    spec.name
+                ));
+                String::new()
+            }
+        },
+        // An endpoint ax does not know: keep the historical default.
+        (None, None) => FALLBACK_MODEL.into(),
+    };
 
     let mut api_key = None;
     let mut key_source = None;
@@ -411,7 +447,7 @@ pub fn resolve_offload() -> ResolvedOffload {
     }
 
     ResolvedOffload {
-        enabled: url.is_some(),
+        enabled: url.is_some() && problem.is_none(),
         url,
         model,
         api_key,
@@ -433,6 +469,7 @@ pub fn resolve_offload() -> ResolvedOffload {
         strip: std::env::var("AX_OFFLOAD_STRIP").ok().as_deref() == Some("1"),
         debug: std::env::var("AX_OFFLOAD_DEBUG").ok().as_deref() == Some("1"),
         origin: origin.to_string(),
+        problem,
     }
 }
 
@@ -465,6 +502,7 @@ mod tests {
         "AX_OFFLOAD_DISABLE",
         "AX_OFFLOAD_URL",
         "AX_OFFLOAD_KEY",
+        "AX_OFFLOAD_MODEL",
         "OPENAI_API_KEY",
         "CEREBRAS_API_KEY",
         "GROQ_API_KEY",
@@ -621,5 +659,58 @@ mod tests {
         assert_eq!(value["index"]["exclude"][0], "**/coverage/**");
         assert_eq!(value["offload"]["url"], "http://localhost:11434/v1");
         assert!(value["offload_catalog"].is_array());
+    }
+
+    fn configured(url: &str, model: Option<&str>) -> ResolvedOffload {
+        with_env(&[], |_| {
+            write_offload_config(Some(OffloadConfig {
+                url: Some(url.into()),
+                model: model.map(str::to_string),
+                ..OffloadConfig::default()
+            }))
+            .unwrap();
+            resolve_offload()
+        })
+    }
+
+    #[test]
+    fn a_known_provider_without_a_model_uses_its_default_model() {
+        let groq = configured("https://api.groq.com/openai/v1/", None);
+        assert!(groq.enabled);
+        assert_eq!(groq.model, "llama-3.3-70b-versatile");
+        assert_eq!(groq.problem, None);
+        let openai = with_env(&[("AX_OFFLOAD_URL", "https://api.openai.com/v1")], |_| {
+            resolve_offload()
+        });
+        assert_eq!(openai.model, "gpt-4o");
+        let cerebras = configured("https://api.cerebras.ai/v1", None);
+        assert_eq!(cerebras.model, "gpt-oss-120b");
+    }
+
+    #[test]
+    fn a_set_model_wins_over_the_provider_default() {
+        assert_eq!(
+            configured("https://api.groq.com/openai/v1", Some("mixtral")).model,
+            "mixtral"
+        );
+        let r = with_env(
+            &[
+                ("AX_OFFLOAD_URL", "https://openrouter.ai/api/v1"),
+                ("AX_OFFLOAD_MODEL", "openai/gpt-4o"),
+            ],
+            |_| resolve_offload(),
+        );
+        assert!(r.enabled);
+        assert_eq!(r.model, "openai/gpt-4o");
+    }
+
+    #[test]
+    fn a_provider_without_a_default_model_needs_one_before_offload_runs() {
+        let r = configured("https://api.together.xyz/v1", None);
+        assert!(!r.enabled, "no request that must fail");
+        assert_eq!(r.origin, "config");
+        let problem = r.problem.expect("status says why");
+        assert!(problem.contains("Together AI"), "{problem}");
+        assert!(problem.contains("AX_OFFLOAD_MODEL"), "{problem}");
     }
 }
