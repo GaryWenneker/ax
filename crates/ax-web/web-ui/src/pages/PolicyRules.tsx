@@ -46,6 +46,7 @@ import {
   type RuleSortKey,
   type SortDir,
 } from '../components/ui/policyListUtils';
+import { runThenReload } from '../lib/policyActions';
 import { usePageContext } from '../context/UiContext';
 import Codicon from '../components/Codicon';
 import { POLICY_SCOPES, type CaptureProposal, type PolicyRuleRow } from '../policyTypes';
@@ -407,14 +408,16 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
           }
         }
       }
-      if (action === 'move-global' || action === 'move-project' || (action === 'delete' && targets.some(isGlobalPolicy))) {
-        reloadRules();
-      }
       if (action === 'move-global' || action === 'delete') {
         if (targets.some((t) => t.id === selectedId)) selectRule(null);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Context menu action failed');
+    } finally {
+      // Reload even after a failure part-way through, so moved or deleted rows are not left on screen.
+      if (action === 'move-global' || action === 'move-project' || (action === 'delete' && targets.some(isGlobalPolicy))) {
+        reloadRules();
+      }
     }
   }
 
@@ -794,7 +797,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
                       const r = ruleByKey.get(key);
                       if (r && isGlobalPolicy(r)) {
                         if (confirm(`Delete rule "${id}" from global.db?`)) {
-                          void deletePolicyCopy('rule', id, r.projectId).then(reloadRules);
+                          void runThenReload(() => deletePolicyCopy('rule', id, r.projectId), reloadRules, setError, 'Delete failed');
                         }
                         return;
                       }

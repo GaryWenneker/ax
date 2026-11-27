@@ -45,6 +45,7 @@ import {
   type SkillSortKey,
   type SortDir,
 } from '../components/ui/policyListUtils';
+import { runThenReload } from '../lib/policyActions';
 import { usePageContext } from '../context/UiContext';
 import Codicon from '../components/Codicon';
 import { POLICY_SCOPES, type PolicySkillRow } from '../policyTypes';
@@ -393,14 +394,16 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
           }
         }
       }
-      if (action === 'move-global' || action === 'move-project' || (action === 'delete' && targets.some(isGlobalPolicy))) {
-        reloadSkills();
-      }
       if (action === 'move-global' || action === 'delete') {
         if (targets.some((t) => t.name === selectedName)) selectSkill(null);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Context menu action failed');
+    } finally {
+      // Reload even after a failure part-way through, so moved or deleted rows are not left on screen.
+      if (action === 'move-global' || action === 'move-project' || (action === 'delete' && targets.some(isGlobalPolicy))) {
+        reloadSkills();
+      }
     }
   }
 
@@ -651,7 +654,7 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
                       const s = skillByKey.get(key);
                       if (s && isGlobalPolicy(s)) {
                         if (confirm(`Delete skill "${id}" from global.db?`)) {
-                          void deletePolicyCopy('skill', id, s.projectId).then(reloadSkills);
+                          void runThenReload(() => deletePolicyCopy('skill', id, s.projectId), reloadSkills, setError, 'Delete failed');
                         }
                         return;
                       }
