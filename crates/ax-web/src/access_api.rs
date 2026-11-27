@@ -47,14 +47,7 @@ async fn authorize(State(hub): State<WebHub>, mut req: Request, next: Next) -> R
             Ok(Some(p)) => p,
             _ => return failure(StatusCode::UNAUTHORIZED, "Invalid client credential"),
         };
-        let path = req.uri().path();
-        let scope = if path.contains("/team") {
-            "admin:team"
-        } else if path.contains("/nodes") {
-            "admin:nodes"
-        } else {
-            "admin:clients"
-        };
+        let scope = required_scope(req.uri().path());
         if !principal.allows(scope) {
             let _ = access::audit(
                 &db,
@@ -87,13 +80,7 @@ async fn authorize(State(hub): State<WebHub>, mut req: Request, next: Next) -> R
         {
             return failure(StatusCode::FORBIDDEN, "Missing CSRF token");
         }
-        let required_scope = if req.uri().path().contains("/team") {
-            "admin:team"
-        } else if req.uri().path().contains("/nodes") {
-            "admin:nodes"
-        } else {
-            "admin:clients"
-        };
+        let required_scope = required_scope(req.uri().path());
         if !role.permits(required_scope) {
             return failure(StatusCode::FORBIDDEN, "Insufficient member permissions");
         }
@@ -136,6 +123,42 @@ async fn authorize(State(hub): State<WebHub>, mut req: Request, next: Next) -> R
         .headers_mut()
         .insert("cache-control", HeaderValue::from_static("no-store"));
     response
+}
+
+/// The admin scope an access route needs, decided by the route's first
+/// segment (after `/api/access` when present), never by an id further on.
+fn required_scope(path: &str) -> &'static str {
+    let route = path.strip_prefix("/api/access").unwrap_or(path);
+    match route.trim_start_matches('/').split('/').next() {
+        Some("team") => "admin:team",
+        Some("nodes") => "admin:nodes",
+        _ => "admin:clients",
+    }
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::required_scope;
+
+    #[test]
+    fn the_route_decides_the_scope_not_an_id_inside_it() {
+        for (path, scope) in [
+            ("/team", "admin:team"),
+            ("/team/abc", "admin:team"),
+            ("/api/access/team/abc", "admin:team"),
+            ("/nodes", "admin:nodes"),
+            ("/nodes/local/stop", "admin:nodes"),
+            ("/api/access/nodes", "admin:nodes"),
+            ("/clients", "admin:clients"),
+            ("/session", "admin:clients"),
+            ("/nodes/team-node/revoke", "admin:nodes"),
+            ("/clients/team-cli/revoke", "admin:clients"),
+            ("/clients/nodes-cli/token", "admin:clients"),
+            ("/credentials/teamx/revoke", "admin:clients"),
+        ] {
+            assert_eq!(required_scope(path), scope, "{path}");
+        }
+    }
 }
 
 fn failure(status: StatusCode, message: &str) -> Response {
