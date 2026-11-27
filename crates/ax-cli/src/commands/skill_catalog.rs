@@ -11,7 +11,7 @@ use ax_skill_catalog::{
 };
 use clap::{Args, Subcommand};
 
-use super::resolve_path;
+use super::resolve_project_root;
 
 #[derive(Subcommand)]
 pub enum SkillCommands {
@@ -193,7 +193,7 @@ fn search(query: &str, owner: Option<&str>, limit: u32, json: bool) -> Result<()
 }
 
 async fn add(args: SkillAddArgs) -> Result<(), String> {
-    let root = resolve_path(args.path);
+    let root = resolve_project_root(args.path);
     let source = parse_source(&args.source)?;
     let dest = skills_dir(&root, args.global)?;
     let only = match args.skill.as_slice() {
@@ -379,7 +379,7 @@ fn fetch_index(base: &str) -> Result<(String, String), String> {
 }
 
 fn list(path: Option<String>, global: bool, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let lock = LockFile::load(&lock_path(&root, global)?)?;
     if json {
         println!(
@@ -404,7 +404,7 @@ async fn update(
     global: bool,
     yes: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let lock = LockFile::load(&lock_path(&root, global)?)?;
     let selected: Vec<String> = if names.is_empty() {
         lock.skills.keys().cloned().collect()
@@ -427,7 +427,7 @@ async fn remove(names: Vec<String>, path: Option<String>, global: bool) -> Resul
     if names.is_empty() {
         return Err("name the skill to remove".into());
     }
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let lock_file = lock_path(&root, global)?;
     let mut lock = LockFile::load(&lock_file)?;
     let dest = skills_dir(&root, global)?;
@@ -453,7 +453,7 @@ fn publish(name: &str, remote: Option<String>, path: Option<String>) -> Result<(
     if name.is_empty() || name == "*" || name.contains(',') {
         return Err("publish one skill at a time".into());
     }
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let mut settings = load_settings(&root).unwrap_or_default();
     let remote = remote.unwrap_or_else(|| settings.publish_remote.clone());
     if remote.is_empty() {
@@ -481,7 +481,7 @@ fn report(on: bool, off: bool, path: Option<String>) -> Result<(), String> {
     if on == off {
         return Err("pass --on or --off".into());
     }
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let mut settings = load_settings(&root).unwrap_or_default();
     settings.report_installs = on;
     save_settings(&root, &settings)?;
@@ -522,7 +522,7 @@ async fn audit(
     global: bool,
 ) -> Result<(), String> {
     require_one_skill(&name)?;
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let mut report = if let Some(source) = source {
         audit_candidate(&source, &name)?
     } else {
@@ -658,7 +658,7 @@ pub async fn audit_rule(
     path: Option<String>,
 ) -> Result<(), String> {
     require_one_skill(&id)?;
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let names = known_skill_names(&root).await;
     let roots = ax_policy::hierarchy::policy_layer_dirs(&root);
     let file = find_rule_file(&roots, &id)?;
@@ -687,7 +687,7 @@ pub async fn audit_rule(
 }
 
 fn brief(name: Option<String>, path: Option<String>, global: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let audits = audits_dir(&root, global)?;
     match name {
         Some(name) => {

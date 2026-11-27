@@ -16,6 +16,12 @@ The MCP server (`ax serve --mcp`) is started by your agent — you do not run it
 
 Running `ax` with **no subcommand** starts the interactive installer (same as `ax install`).
 
+## Which project a command uses
+
+A command given a `path` uses that path. Without one, a command that reads or updates a project (`status`, `query`, `callers`, `explore`, `recall`, `policy`, `spec`, `neural`, `daemon`, `db`, …) and the agent hooks use the nearest directory at or above the current one that holds `.ax/ax.db`, the same way the MCP server finds its project. `~/.ax` is the global ax folder and is never taken for a project. So these commands work from any subdirectory of a project.
+
+`init`, `install`, `uninit`, `index`, `sync`, `ship` and `bootstrap` act on the current directory itself and never reach up into a parent project.
+
 ## Environment variables
 
 | Variable | Effect |

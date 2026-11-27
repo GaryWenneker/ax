@@ -2,11 +2,11 @@
 
 use ax_context::directory::{get_ax_dir, is_initialized};
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 use crate::ui::{info_line, ok_line};
 
 pub async fn run(path: Option<String>) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     if !is_initialized(&root) {
         return Err(format!(
             "project not initialized in {} — run ax init first",

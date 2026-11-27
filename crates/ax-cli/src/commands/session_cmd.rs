@@ -5,7 +5,7 @@ use std::io::Read;
 use serde_json::{json, Value};
 
 use crate::commands::preflight::invoke_shared_tool;
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 
 #[derive(Debug, Clone)]
 pub enum SessionAction {
@@ -29,7 +29,7 @@ pub struct SessionArgs {
 }
 
 pub async fn run(args: SessionArgs) -> Result<(), String> {
-    let root = resolve_path(args.path);
+    let root = resolve_project_root(args.path);
     let session = match (&args.action, &args.session) {
         (SessionAction::Start, None) => mint_session_id(),
         (SessionAction::Start, Some(id)) => id.clone(),

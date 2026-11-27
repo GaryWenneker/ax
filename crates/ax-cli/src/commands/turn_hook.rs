@@ -70,7 +70,7 @@ pub async fn run(phase: TurnPhase) -> Result<(), String> {
                 let root = input
                     .root
                     .clone()
-                    .unwrap_or_else(|| super::resolve_path(None));
+                    .unwrap_or_else(|| super::resolve_project_root(None));
                 // A missing snapshot only means this turn writes no memory.
                 let _ = tokio::task::spawn_blocking(move || start_turn(&root, &input)).await;
             }
@@ -81,7 +81,7 @@ pub async fn run(phase: TurnPhase) -> Result<(), String> {
                 let root = input
                     .root
                     .clone()
-                    .unwrap_or_else(|| super::resolve_path(None));
+                    .unwrap_or_else(|| super::resolve_project_root(None));
                 // A lost reply only means the turn memory has no outcome.
                 let _ = tokio::task::spawn_blocking(move || record_response(&root, &input)).await;
             }
@@ -102,7 +102,9 @@ pub(crate) async fn end_from_input(value: &serde_json::Value) {
     if input.event.as_deref() == Some("SubagentStop") {
         return;
     }
-    let root = input.root.unwrap_or_else(|| super::resolve_path(None));
+    let root = input
+        .root
+        .unwrap_or_else(|| super::resolve_project_root(None));
     // Memory capture must never fail or block the turn; a lost turn memory is acceptable.
     let _ = end_turn(&root, &input.conversation, input.reply, now_ms()).await;
 }

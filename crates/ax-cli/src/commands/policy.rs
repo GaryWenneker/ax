@@ -2,11 +2,11 @@ use ax_policy::{GuardOp, ImportMode, MatchInput, PolicyStorage};
 
 use owo_colors::OwoColorize;
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 use crate::ui::{dim, info_line, ok_line, warn_line};
 
 pub async fn run_index(path: Option<String>, force: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let trace = ax_usage::ToolTrace::begin(
         Some(&root),
         "ax_policy_index",
@@ -75,7 +75,7 @@ pub async fn run_index(path: Option<String>, force: bool) -> Result<(), String> 
 }
 
 pub async fn run_import(path: Option<String>) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     ax_usage::log_policy(Some(&root), "import start");
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let result =
@@ -106,7 +106,7 @@ pub async fn run_pull(
     path: Option<String>,
     name: Option<String>,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax_dir = root.join(".ax");
     if !ax_dir.is_dir() {
         return Err("project not initialized — run ax init first".into());
@@ -231,7 +231,7 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
 }
 
 pub async fn run_export(path: Option<String>, out: String) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let out_path = if std::path::Path::new(&out).is_absolute() {
         std::path::PathBuf::from(out)
@@ -255,7 +255,7 @@ pub async fn run_match(
     json: bool,
     full: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let trace = ax_usage::ToolTrace::begin(
         Some(&root),
         "ax_rules",
@@ -338,7 +338,7 @@ fn strip_match_bodies(value: &mut serde_json::Value) {
 }
 
 pub async fn run_dedup(path: Option<String>, dry_run: bool, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let report = ax_core::policy_dedup::run_default(Some((ax.db_pool(), &root)), dry_run).await;
     if json {
@@ -374,7 +374,7 @@ pub(crate) fn dedup_global_blocking() -> Result<ax_core::policy_dedup::DedupRepo
 }
 
 pub async fn run_rules(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let rules = ax_policy::list_rules(ax.db_pool())
         .await
@@ -393,7 +393,7 @@ pub async fn run_rules(path: Option<String>, json: bool) -> Result<(), String> {
 }
 
 pub async fn run_skills(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let trace = ax_usage::ToolTrace::begin(
         Some(&root),
         "ax_skill",
@@ -436,7 +436,7 @@ pub async fn run_skills(path: Option<String>, json: bool) -> Result<(), String> 
 }
 
 pub async fn run_skill(path: Option<String>, name: String) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let trace = ax_usage::ToolTrace::begin(
         Some(&root),
         "ax_skill",
@@ -478,7 +478,7 @@ pub async fn run_guard(
     delete: bool,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let operation = if delete { "delete" } else { "write" };
     let trace = ax_usage::ToolTrace::begin(
         Some(&root),
@@ -557,7 +557,7 @@ pub async fn run_guard(
 }
 
 pub async fn run_sync(path: Option<String>, fix: bool, force: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax_dir = root.join(".ax");
     if !ax_dir.is_dir() {
         return Err("project not initialized — run ax init first".into());
@@ -617,7 +617,7 @@ pub async fn run_sync(path: Option<String>, fix: bool, force: bool) -> Result<()
 }
 
 pub fn run_policy_history(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let events = ax_policy::history::read_events(&ax_policy::history::project_history_path(&root))
         .map_err(|err| err.to_string())?;
     if json {
@@ -645,7 +645,7 @@ pub async fn run_policy_restore_item(
     id: String,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let restored = ax_policy::restore_removed_item(&root, &id).map_err(|err| err.to_string())?;
     if let Ok(ax) = ax_core::Ax::open(&root).await {
         let _ = ax_policy::history::mirror_project(ax.db_pool(), &root).await;
@@ -673,7 +673,7 @@ struct PolicyTestResult {
 }
 
 pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let mut results: Vec<PolicyTestResult> = Vec::new();
 
@@ -889,7 +889,7 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
 }
 
 pub fn run_agents_dir(path: Option<String>, name: Option<String>) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let Some(raw) = name else {
         let current = ax_policy::agents_dir_name(&root);
         let defined = ax_policy::configured_agents_dir(&root).is_some();
@@ -913,7 +913,7 @@ pub fn run_agents_dir(path: Option<String>, name: Option<String>) -> Result<(), 
 }
 
 pub async fn run_storage_status(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let status = ax_policy::policy_storage_status(&root);
     if json {
         println!(
@@ -971,7 +971,7 @@ pub async fn run_storage_set_item(
     keep_file: bool,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let target = PolicyStorage::parse(&storage)
         .ok_or_else(|| "storage must be files or database".to_string())?;
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
@@ -1008,7 +1008,7 @@ pub async fn run_storage_set(
     keep_files: bool,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let _ = migrate;
     let do_migrate = !global;
 
@@ -1177,7 +1177,7 @@ pub async fn run_capture(
     yes: bool,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
 
     let mut proposal = ax_policy::propose_rule_from_prompt(&prompt, &files);
@@ -1269,7 +1269,7 @@ pub async fn run_disable(path: Option<String>, id: String) -> Result<(), String>
 }
 
 async fn set_enabled(path: Option<String>, id: &str, enabled: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let store = ax_policy::PolicyStore::new(ax.db_pool().clone(), root.clone());
     let found = store
@@ -1290,7 +1290,7 @@ pub async fn run_pack_export(
     out: Option<String>,
     quiet: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let out_path = out.as_ref().map(std::path::PathBuf::from);
     let result = ax_policy::export_pack(ax.db_pool(), &root, &tag, out_path.as_deref())
@@ -1311,7 +1311,7 @@ pub async fn run_pack_import(
     force: bool,
     quiet: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let pack_path = pack.as_ref().map(std::path::PathBuf::from);
     let result = ax_policy::import_pack(ax.db_pool(), &root, pack_path.as_deref(), force)
@@ -1346,7 +1346,7 @@ pub async fn run_pack_import(
 }
 
 pub async fn run_pack_status(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let status = ax_policy::pack_status(ax.db_pool(), &root)
         .await
@@ -1400,7 +1400,7 @@ pub async fn run_pack_install(
     }
 
     let pack_name = name.unwrap();
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let result =
         ax_policy::install_builtin_pack(&root, &pack_name, force).map_err(|e| e.to_string())?;
 
@@ -1440,7 +1440,7 @@ pub async fn run_pack_install(
 }
 
 pub async fn run_review_list(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let items = ax_policy::list_pending(&root).map_err(|e| e.to_string())?;
     if json {
         println!(
@@ -1461,7 +1461,7 @@ pub async fn run_review_list(path: Option<String>, json: bool) -> Result<(), Str
 }
 
 pub async fn run_review_show(path: Option<String>, id: String, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let diff = ax_policy::pending_diff(&root, &id).map_err(|e| e.to_string())?;
     if json {
         println!(
@@ -1482,7 +1482,7 @@ pub async fn run_review_show(path: Option<String>, id: String, json: bool) -> Re
 }
 
 pub async fn run_review_approve(path: Option<String>, id: String) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let result = ax_policy::approve_pending(ax.db_pool(), &root, &id)
         .await
@@ -1492,7 +1492,7 @@ pub async fn run_review_approve(path: Option<String>, id: String) -> Result<(), 
 }
 
 pub async fn run_review_reject(path: Option<String>, id: String) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let result = ax_policy::reject_pending(ax.db_pool(), &root, &id)
         .await
@@ -1517,7 +1517,7 @@ pub async fn run_pack_zip(
     rules: Option<String>,
     skills: Option<String>,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let spec = ax_policy::PackSpec {
         name,
         description: description.unwrap_or_default(),
@@ -1544,7 +1544,7 @@ pub async fn run_policy_restore(
     preview: bool,
     decisions: Option<String>,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let bytes = std::fs::read(&zip).map_err(|e| format!("{zip}: {e}"))?;
     if preview {
         let p = ax_policy::preview_policy_zip(&root, &bytes).map_err(|e| e.to_string())?;
@@ -1615,7 +1615,7 @@ pub fn run_stack_list(json: bool) -> Result<(), String> {
 }
 
 pub fn run_stack_detect(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let found = ax_policy::detect_stacks(&root);
     if json {
         let rows: Vec<_> = found
@@ -1653,7 +1653,7 @@ pub async fn run_stack_apply(
     yes: bool,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let chosen = if ids.is_empty() {
         let configured = ax_policy::read_configured_stacks(&root);
         if !configured.is_empty() {
@@ -1717,7 +1717,7 @@ pub async fn run_stack_apply(
 }
 
 pub async fn run_stack_remove(path: Option<String>, id: String, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let removed = ax_policy::remove_stack(&root, &id)?;
     reindex_policy(&root).await?;
     if json {
@@ -1735,7 +1735,7 @@ pub async fn run_stack_remove(path: Option<String>, id: String, json: bool) -> R
 }
 
 pub fn run_stack_status(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let rows = ax_policy::stack_status(&root);
     if json {
         println!(
@@ -1770,7 +1770,7 @@ pub fn run_stack_status(path: Option<String>, json: bool) -> Result<(), String> 
 }
 
 pub async fn run_stack_upgrade(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let report = ax_policy::upgrade_stacks(&root)?;
     reindex_policy(&root).await?;
     if json {

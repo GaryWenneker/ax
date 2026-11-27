@@ -16,7 +16,7 @@ use std::process::Command;
 
 use ax_policy::{guard_operation, GuardOp};
 
-use crate::commands::resolve_path;
+use crate::commands::{find_project_root, resolve_project_root};
 
 const MAX_FILES_SCANNED: usize = 40;
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
@@ -52,11 +52,12 @@ pub async fn run() -> Result<(), String> {
         .get("cwd")
         .and_then(|v| v.as_str())
         .map(PathBuf::from)
-        .unwrap_or_else(|| resolve_path(None));
+        .unwrap_or_else(|| resolve_project_root(None));
 
     let _ = ingest_transcript_tail(&cwd, &input).await;
 
-    let Ok(ax) = ax_core::Ax::open(&cwd).await else {
+    let root = find_project_root(&cwd).unwrap_or_else(|| cwd.clone());
+    let Ok(ax) = ax_core::Ax::open(&root).await else {
         return Ok(());
     };
     if !ax.policy_exists() {
@@ -183,7 +184,7 @@ async fn ingest_transcript_tail(cwd: &Path, input: &serde_json::Value) {
     };
     let tail: Vec<&str> = text.lines().rev().take(200).collect();
     let tail = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
-    let Some(root) = ax_context::directory::find_nearest_ax_root(cwd) else {
+    let Some(root) = find_project_root(cwd) else {
         return;
     };
     let Some(session) = session

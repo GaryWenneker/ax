@@ -1,8 +1,8 @@
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 use crate::ui::{dim, info_line, kv_line, ok_line, warn_line, SpinnerGuard};
 
 pub async fn run(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     ax_usage::log_cli(Some(&root), "cmd=status start");
     let _spinner = SpinnerGuard::new("Loading index stats...", json);
     let ax = match ax_core::Ax::open(&root).await {

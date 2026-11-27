@@ -1,6 +1,6 @@
 use std::io::{self, Read};
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 use crate::ui::SpinnerGuard;
 
 #[derive(Debug, clap::Args)]
@@ -30,7 +30,7 @@ pub struct AffectedArgs {
 }
 
 pub async fn run(args: AffectedArgs) -> Result<(), String> {
-    let root = resolve_path(None);
+    let root = resolve_project_root(None);
     let _spinner = SpinnerGuard::new("Finding affected tests...", false);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
 

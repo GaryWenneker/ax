@@ -3685,7 +3685,7 @@ async fn async_main() {
             },
         },
         Some(Commands::Serve { mcp, daemon, path }) if mcp && daemon => {
-            let root = commands::resolve_path(path);
+            let root = commands::resolve_target_dir(path);
             start_replication(&root).await;
             ax_mcp::run_daemon(root).await.map_err(|e| e.to_string())
         }
@@ -3714,7 +3714,7 @@ async fn async_main() {
             ax_telemetry::flush_global(ax_telemetry::DEFAULT_FLUSH_TIMEOUT_MS).await;
             // Transport-agnostic activity: one central recorder for every CLI command.
             // Skips hooks (cmd_name is None for those). Session from AX_SESSION when set.
-            let root = commands::resolve_path(None);
+            let root = commands::resolve_project_root(None);
             let session = std::env::var("AX_SESSION")
                 .ok()
                 .filter(|s| !s.trim().is_empty());

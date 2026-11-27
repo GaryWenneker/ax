@@ -9,7 +9,7 @@ use ax_context::{
 use ax_policy::{detect_directive, MatchInput};
 use ax_types::ExploreOptions;
 
-use crate::commands::resolve_path;
+use crate::commands::{find_project_root, resolve_project_root};
 
 const MAX_INJECT_CHARS: usize = 16000;
 
@@ -38,10 +38,11 @@ pub async fn run() -> Result<(), String> {
         .get("cwd")
         .and_then(|v| v.as_str())
         .map(PathBuf::from)
-        .unwrap_or_else(|| resolve_path(None));
+        .unwrap_or_else(|| resolve_project_root(None));
+    let project = find_project_root(&cwd);
     if !prompt.is_empty() {
         if let (Some(root), Some(session)) = (
-            ax_context::directory::find_nearest_ax_root(&cwd),
+            project.clone(),
             ax_usage::parse_cursor_hook_session_id(&input),
         ) {
             if ax_usage::session_from_args(&serde_json::json!({"session":session})).is_some() {
@@ -65,7 +66,8 @@ pub async fn run() -> Result<(), String> {
     let mut out = String::new();
 
     if std::env::var("AX_NO_POLICY").ok().as_deref() != Some("1") {
-        if let Ok(ax) = ax_core::Ax::open(&cwd).await {
+        let root = project.clone().unwrap_or_else(|| cwd.clone());
+        if let Ok(ax) = ax_core::Ax::open(&root).await {
             if ax.policy_exists() {
                 let match_input = MatchInput {
                     prompt: prompt.clone(),

@@ -8,7 +8,7 @@ use ax_db::integrity::{
 };
 use serde::Serialize;
 
-use super::resolve_path;
+use super::resolve_project_root;
 
 pub async fn run_check(
     path: Option<String>,
@@ -16,7 +16,7 @@ pub async fn run_check(
     quick: bool,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let targets = targets(&root, &which)?;
     let model = active_model();
     let mut reports = Vec::new();
@@ -52,7 +52,7 @@ pub async fn run_repair(
     stop_writers: bool,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path.clone());
+    let root = resolve_project_root(path.clone());
     if stop_writers {
         super::daemon::run(path, super::daemon::DaemonAction::Stop).await?;
     }

@@ -7,7 +7,7 @@ use ax_core::{
     OkfPublishOptions,
 };
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 use crate::ui::SpinnerGuard;
 
 pub struct ExportOkfArgs {
@@ -23,7 +23,7 @@ pub struct ExportOkfArgs {
 }
 
 pub async fn run(args: ExportOkfArgs) -> Result<(), String> {
-    let root = resolve_path(args.path);
+    let root = resolve_project_root(args.path);
     let cfg = OkfConfig::load(&root);
     let out_override = args.out.map(PathBuf::from);
     let out_dir = match &out_override {

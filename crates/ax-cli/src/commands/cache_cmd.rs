@@ -4,7 +4,7 @@ use std::io::Read;
 
 use serde_json::json;
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 
 #[derive(Debug, Clone)]
 pub enum CacheAction {
@@ -28,7 +28,7 @@ pub struct CacheArgs {
 }
 
 pub async fn run(args: CacheArgs) -> Result<(), String> {
-    let root = resolve_path(args.path);
+    let root = resolve_project_root(args.path);
     match args.action {
         CacheAction::Stash { label } => {
             let text = if args.text_stdin {

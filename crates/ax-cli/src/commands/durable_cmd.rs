@@ -4,7 +4,7 @@ use std::io::Read;
 
 use serde_json::{json, Value};
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 
 #[derive(Debug, Clone)]
 pub enum DurableAction {
@@ -32,7 +32,7 @@ pub struct DurableArgs {
 }
 
 pub async fn run(args: DurableArgs) -> Result<(), String> {
-    let root = resolve_path(args.path);
+    let root = resolve_project_root(args.path);
     let mut request = if args.input_stdin || args.body_stdin {
         let raw = read_stdin()?;
         if args.body_stdin {

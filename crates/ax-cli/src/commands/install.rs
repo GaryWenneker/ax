@@ -1,4 +1,4 @@
-use crate::commands::resolve_path;
+use crate::commands::resolve_target_dir;
 
 pub fn run(
     yes: bool,
@@ -7,7 +7,7 @@ pub fn run(
     mode: Option<String>,
     path: Option<String>,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_target_dir(path);
     let cli_only = mode
         .as_deref()
         .map(|m| m.eq_ignore_ascii_case("cli-only") || m.eq_ignore_ascii_case("cli_only"))

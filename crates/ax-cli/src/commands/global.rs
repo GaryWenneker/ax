@@ -1,6 +1,6 @@
 //! `ax global` — init / sync / status for ~/.ax/global.db
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 use crate::ui::{kv_line, ok_line};
 
 pub async fn run_init() -> Result<(), String> {
@@ -12,7 +12,7 @@ pub async fn run_init() -> Result<(), String> {
 }
 
 pub async fn run_sync(path: Option<String>) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let global_path = ax_global_db::global_db_path().map_err(|e| e.to_string())?;
     let pool = ax_global_db::open_and_init(&global_path)
         .await

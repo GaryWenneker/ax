@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use ax_types::{EdgeKind, NodeKind};
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 use crate::ui::SpinnerGuard;
 
 #[derive(Debug, Default, serde::Serialize)]
@@ -17,7 +17,7 @@ struct ValidateReport {
 }
 
 pub async fn run(path: Option<String>, ci: bool, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     ax_usage::log_cli(Some(&root), "cmd=validate start");
     let _spinner = SpinnerGuard::new("Validating graph hygiene...", false);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;

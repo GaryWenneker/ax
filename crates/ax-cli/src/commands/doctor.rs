@@ -2,7 +2,7 @@
 
 use serde_json::json;
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DoctorMode {
@@ -11,7 +11,7 @@ pub enum DoctorMode {
 }
 
 pub async fn run(mode: DoctorMode, path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let mut checks = Vec::new();
 
     checks.push(check(

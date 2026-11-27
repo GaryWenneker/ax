@@ -6,7 +6,7 @@ use ax_context::directory::is_initialized;
 use ax_extraction::orchestrator::IndexOptions;
 use ax_sync::git_hooks::install_git_sync_hooks;
 
-use crate::commands::{check_unsafe_root, resolve_path};
+use crate::commands::{check_unsafe_root, resolve_target_dir};
 use crate::installer::{run_installer, InstallOptions};
 use crate::ui::install_log::tildify;
 use crate::ui::{
@@ -82,7 +82,7 @@ async fn run_inner(
     savings: bool,
     interactive: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_target_dir(path);
     check_unsafe_root(&root)?;
 
     if workspace {

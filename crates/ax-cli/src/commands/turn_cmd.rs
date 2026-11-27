@@ -5,7 +5,7 @@ use std::io::Read;
 use serde_json::{json, Value};
 
 use crate::commands::preflight::invoke_shared_tool;
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 
 #[derive(Debug, Clone)]
 pub enum TurnAction {
@@ -31,7 +31,7 @@ pub struct TurnArgs {
 }
 
 pub async fn run(args: TurnArgs) -> Result<(), String> {
-    let root = resolve_path(args.path.clone());
+    let root = resolve_project_root(args.path.clone());
     match args.action {
         TurnAction::Begin => {
             let prompt = if args.prompt_stdin {
