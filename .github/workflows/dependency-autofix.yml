@@ -34,6 +34,12 @@ jobs:
             path: telemetry-worker
           - name: command-center
             path: crates/ax-web/web-ui
+          - name: ax-admin
+            path: crates/ax-admin/web-ui
+          - name: vscode
+            path: ide/vscode
+          - name: obsidian
+            path: obsidian/getax
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

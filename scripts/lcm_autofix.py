@@ -8,6 +8,11 @@ import sys
 from pathlib import Path
 
 SEVERITIES = ("critical", "high", "moderate", "low", "info")
+# Folders holding an npm lockfile; matches NPM_LOCKFILES in check_dependency_age.py.
+PROJECTS = (
+    "site", "telemetry-worker", "crates/ax-web/web-ui",
+    "crates/ax-admin/web-ui", "ide/vscode", "obsidian/getax",
+)
 
 
 class RejectedCandidate(Exception):
@@ -67,9 +72,7 @@ def check_candidate(project: str, before: dict, after: dict, changes: set[str]) 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--project", required=True, choices=(
-        "site", "telemetry-worker", "crates/ax-web/web-ui",
-    ))
+    parser.add_argument("--project", required=True, choices=PROJECTS)
     parser.add_argument("--before", required=True, type=Path)
     parser.add_argument("--after", required=True, type=Path)
     parser.add_argument("--github-output", required=True, type=Path)
