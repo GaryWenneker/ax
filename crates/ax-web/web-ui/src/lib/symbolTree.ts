@@ -70,7 +70,8 @@ function findContainingParent(node: NodeRow, candidates: NodeRow[]): NodeRow | n
   for (const candidate of candidates) {
     if (!strictlyContains(candidate, node)) continue;
     const s = span(candidate);
-    if (s < bestSpan) {
+    // On a tie (a module that spans the whole file) the deeper kind is the closer parent.
+    if (s < bestSpan || (s === bestSpan && best && kindRank(candidate.kind) > kindRank(best.kind))) {
       bestSpan = s;
       best = candidate;
     }
