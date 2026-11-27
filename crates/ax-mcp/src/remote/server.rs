@@ -28,6 +28,9 @@ const MAX_SESSIONS_PER_PRINCIPAL: usize = 8;
 const MAX_REQUESTS: usize = 16;
 /// Requests one principal may have in flight, so it cannot use up the shared slots.
 const MAX_REQUESTS_PER_PRINCIPAL: usize = 4;
+/// Requests being authenticated at once. Kept apart from the request slots, so
+/// callers without a valid token never make the server busy for those with one.
+const MAX_AUTHENTICATING: usize = 32;
 /// Chat ids and cache ids one principal keeps per project; the oldest are
 /// forgotten first.
 const MAX_HANDLES: usize = 4096;
@@ -150,6 +153,8 @@ pub struct RemoteState {
     /// Per (principal id, project id): the chat and cache ids it was issued.
     handles: Arc<std::sync::Mutex<HashMap<HandleOwner, OwnedHandles>>>,
     concurrency: Arc<Semaphore>,
+    /// Bounds the token checks (database lookups, a key refresh) running at once.
+    authenticating: Arc<Semaphore>,
     /// Per principal id: its share of the request slots.
     principal_slots: Arc<std::sync::Mutex<HashMap<String, Arc<Semaphore>>>>,
     /// Per project: tool calls share this lock, an index-changing admin call
@@ -177,6 +182,7 @@ impl RemoteState {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             handles: Arc::default(),
             concurrency: Arc::new(Semaphore::new(MAX_REQUESTS)),
+            authenticating: Arc::new(Semaphore::new(MAX_AUTHENTICATING)),
             principal_slots: Arc::default(),
             mutations: Arc::new(Mutex::new(HashMap::new())),
             admin_slots: Arc::new(Semaphore::new(ADMIN_MUTATION_SLOTS)),
@@ -553,20 +559,26 @@ async fn post(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    // Taken before authentication, so database work for any caller is bounded too.
-    let permit = match state.concurrency.clone().try_acquire_owned() {
-        Ok(p) => p,
-        Err(_) => return error(StatusCode::TOO_MANY_REQUESTS, "Server is busy"),
-    };
-    let (principal, project, client) = match authorize(&state, &headers, &project_id).await {
-        Ok(v) => v,
-        Err(e) => return *e,
+    // Authentication has its own small pool: the shared request slots and the
+    // principal's slots are taken only once the caller is known.
+    let (principal, project, client) = {
+        let Ok(_authenticating) = state.authenticating.clone().try_acquire_owned() else {
+            return error(StatusCode::TOO_MANY_REQUESTS, "Server is busy");
+        };
+        match authorize(&state, &headers, &project_id).await {
+            Ok(v) => v,
+            Err(e) => return *e,
+        }
     };
     let Ok(principal_permit) = state.principal_slots(&principal.id).try_acquire_owned() else {
         return error(
             StatusCode::TOO_MANY_REQUESTS,
             "Too many requests in flight for this connection",
         );
+    };
+    let permit = match state.concurrency.clone().try_acquire_owned() {
+        Ok(p) => p,
+        Err(_) => return error(StatusCode::TOO_MANY_REQUESTS, "Server is busy"),
     };
     if headers
         .get("content-type")

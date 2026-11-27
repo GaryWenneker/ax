@@ -44,7 +44,10 @@ fn setup() -> (tempfile::TempDir, RemoteState, Router) {
             write_subjects: vec![],
             admin_subjects: vec![],
         }],
-        api_keys: vec![key("key-a"), key("key-b")],
+        api_keys: ["key-a", "key-b", "key-c", "key-d", "key-e"]
+            .into_iter()
+            .map(key)
+            .collect(),
         allowed_origins: vec![],
     });
     let verifier = TokenVerifier::with_keys(
@@ -165,4 +168,35 @@ async fn one_principal_cannot_hold_every_request_slot() {
         admitted <= 4,
         "{admitted} calls of one principal ran at once"
     );
+}
+
+#[tokio::test]
+async fn callers_without_a_valid_token_never_find_the_server_busy() {
+    let (_dir, state, app) = setup();
+    // Four principals with four calls each fill every shared request slot.
+    let mut sessions = Vec::new();
+    for token in ["key-a", "key-b", "key-c", "key-d"] {
+        for _ in 0..4 {
+            sessions.push((token, initialize(&app, token).await.1.unwrap()));
+        }
+    }
+    let held = state.hold_project("alpha").await;
+    let mut calls = Vec::new();
+    for (token, session) in sessions {
+        let app = app.clone();
+        calls.push(tokio::spawn(async move {
+            post(&app, token, Some(&session), tool_call()).await.0
+        }));
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let (status, _) = initialize(&app, "not-a-valid-token").await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "an unauthenticated request must be refused for its token, not counted against the shared slots"
+    );
+    drop(held);
+    for call in calls {
+        call.await.unwrap();
+    }
 }
