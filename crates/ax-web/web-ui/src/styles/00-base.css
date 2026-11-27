@@ -48,11 +48,9 @@
   /* Shared gutters inside settings-card / PageCard (all pages) */
   --card-pad-x: clamp(14px, 2vw, 20px);
   --card-pad-y: 14px;
-  --bp-sm: 640px;
-  --bp-md: 900px;
-  --bp-lg: 1200px;
-  --bp-xl: 1377px;
-  --bp-ultra: 1920px;
+  /* Breakpoints are written as numbers in each @media query (custom properties
+     do not work there): 640 small, 900 shell drawer (max-width: 899px below it,
+     min-width: 900px from it), 1200 large, 1377 wide, 1920 ultra-wide. */
 
   --fs-base: 13px;
   --fs-sm: 12px;

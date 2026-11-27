@@ -253,8 +253,8 @@
   }
 }
 
-/* Align with shell drawer breakpoint (--bp-md ≈ 900px). Was 769px — left a
-   dead zone where the sidebar was off-canvas but the hamburger stayed hidden. */
+/* Matches the shell drawer breakpoint (900px), so the hamburger shows exactly
+   while the sidebar is off-canvas. */
 @media (min-width: 900px) {
   .hamburger { display: none !important; }
 }

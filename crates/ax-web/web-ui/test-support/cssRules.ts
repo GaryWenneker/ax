@@ -1,8 +1,14 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 export interface CssRule {
   /** Selectors of the rule, split on top-level commas. */
   selectors: string[];
   /** Declarations as lower-case property → value, last one wins. */
   declarations: Map<string, string>;
+  /** Preludes of the enclosing at-rules, outermost first, such as `@media (max-width: 899px)`. */
+  conditions: string[];
 }
 
 function splitTopLevel(text: string, separator: string): string[] {
@@ -29,7 +35,7 @@ function splitTopLevel(text: string, separator: string): string[] {
 export function cssRules(css: string): CssRule[] {
   const text = css.replace(/\/\*[\s\S]*?\*\//g, '');
   const rules: CssRule[] = [];
-  const walk = (from: number, to: number) => {
+  const walk = (from: number, to: number, conditions: string[]) => {
     let i = from;
     while (i < to) {
       const open = text.indexOf('{', i);
@@ -44,19 +50,19 @@ export function cssRules(css: string): CssRule[] {
       }
       const body = text.slice(open + 1, close - 1);
       if (prelude.startsWith('@')) {
-        if (body.includes('{')) walk(open + 1, close - 1);
+        if (body.includes('{')) walk(open + 1, close - 1, [...conditions, prelude]);
       } else {
         const declarations = new Map<string, string>();
         for (const decl of splitTopLevel(body, ';')) {
           const colon = decl.indexOf(':');
           if (colon > 0) declarations.set(decl.slice(0, colon).trim().toLowerCase(), decl.slice(colon + 1).trim());
         }
-        rules.push({ selectors: splitTopLevel(prelude, ','), declarations });
+        rules.push({ selectors: splitTopLevel(prelude, ','), declarations, conditions });
       }
       i = close;
     }
   };
-  walk(0, text.length);
+  walk(0, text.length, []);
   return rules;
 }
 
@@ -76,4 +82,16 @@ export function portalOrbitGlowOff(css: string): boolean {
     return animated.length > 0 && animated.every((rule) =>
       (rule.declarations.get('animation') ?? rule.declarations.get('animation-name')) === 'none');
   });
+}
+
+/** The app's own stylesheets under src/, keyed by path relative to src/. */
+export function appStylesheets(): Map<string, string> {
+  const root = new URL('../src/', import.meta.url);
+  const files = new Map<string, string>();
+  for (const entry of readdirSync(root, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.css')) continue;
+    const full = join(entry.parentPath, entry.name);
+    files.set(relative(fileURLToPath(root), full), readFileSync(full, 'utf8'));
+  }
+  return files;
 }
