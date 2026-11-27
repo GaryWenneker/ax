@@ -179,14 +179,16 @@ The cleanup runs after `ax sync`, `ax index` and the watch sync, after every pol
 
 ### Database migration scan
 
-When switching to **database** with `--migrate`, ax does not import only `.ax/policy/`. It **recursively scans the project** for:
+When switching to **database** with `--migrate`, ax scans the project's policy folders, not only `.ax/policy/`:
 
-| Pattern | Examples |
+| Kind | Folders |
 |---|---|
-| `*.mdc` with YAML frontmatter | `.agents/rules/`, `.ax/policy/rules/` (legacy), `.cursor/rules/`, nested packages |
-| `**/SKILL.md` with frontmatter | `.agents/skills/`, `.ax/policy/skills/` (legacy), `.cursor/skills/`, monorepo subfolders |
+| Rules (`*.mdc` with YAML frontmatter) | the agents folder (`policy.agentsDir`, default `.agents/rules/`), `.ax/policy/rules/` (legacy), `.cursor/rules/` (also in nested packages) |
+| Skills (`SKILL.md` with frontmatter) | the agents folder (`.agents/skills/`), `.ax/policy/skills/` (legacy), `.cursor/skills/` and `.claude/skills/` (also in nested packages) |
 
-Skipped automatically: `node_modules`, `target`, `dist`, IDE bootstrap (`.cursor/rules/ax.mdc`), invalid frontmatter, duplicate ids.
+Rule and skill files anywhere else (templates, fixtures, docs) are ignored. Pending items (`.ax/policy/pending/`), disabled items (`.ax/policy-inactive/`) and private items (`.ax/policy-private/`) are listed as skipped and never imported: approve or enable them first. Also skipped: `node_modules`, `target`, `dist`, IDE bootstrap (`.cursor/rules/ax.mdc`) and invalid frontmatter.
+
+When two files share a rule id or skill name, the one in the higher-precedence folder wins: the agents folder, then `.ax/policy/`, then `.cursor/`, then `.claude/`, then nested packages. The others are listed as duplicates.
 
 **Two-step flow:**
 
