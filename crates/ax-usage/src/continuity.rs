@@ -5,7 +5,10 @@
 //! and is never delivered to a new chat. This module proves the harness. It does
 //! not claim a live model matched a long conversation.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
+
+use chrono::{DateTime, Utc};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -319,29 +322,70 @@ pub fn select_context(items: &[KnowledgeItem], query: &Query) -> Vec<KnowledgeIt
 
 fn in_mode(item: &KnowledgeItem, query: &Query) -> bool {
     match query.mode {
-        TestMode::Historical => item.at.as_str() <= query.cutoff.as_str(),
+        TestMode::Historical => compare_at(&item.at, &query.cutoff) != Ordering::Greater,
         TestMode::Current => true,
     }
 }
 
+/// Keep one item per decision key: the latest instant, then the highest
+/// version, then the highest id, so a tie never delivers two current truths.
 fn resolve_conflicts(items: &mut Vec<KnowledgeItem>) {
-    let mut winner: BTreeMap<String, String> = BTreeMap::new();
-    for item in items.iter() {
-        let Some(key) = item.decision_key.as_ref() else {
+    let mut winner: BTreeMap<&str, usize> = BTreeMap::new();
+    for (index, item) in items.iter().enumerate() {
+        let Some(key) = item.decision_key.as_deref() else {
             continue;
         };
         let replace = winner
             .get(key)
-            .map(|at| item.at.as_str() >= at.as_str())
+            .map(|&best| newer(item, &items[best]) == Ordering::Greater)
             .unwrap_or(true);
         if replace {
-            winner.insert(key.clone(), item.at.clone());
+            winner.insert(key, index);
         }
     }
-    items.retain(|item| match &item.decision_key {
-        Some(key) => winner.get(key).map(String::as_str) == Some(item.at.as_str()),
-        None => true,
+    let keep: BTreeSet<usize> = winner.into_values().collect();
+    let mut index = 0;
+    items.retain(|item| {
+        let kept = item.decision_key.is_none() || keep.contains(&index);
+        index += 1;
+        kept
     });
+}
+
+fn newer(left: &KnowledgeItem, right: &KnowledgeItem) -> Ordering {
+    compare_at(&left.at, &right.at)
+        .then_with(|| compare_version(&left.version, &right.version))
+        .then_with(|| left.id.cmp(&right.id))
+}
+
+/// Order two RFC 3339 timestamps by instant, so `+02:00` offsets and
+/// fractional seconds compare correctly. Text that does not parse falls back
+/// to string order.
+fn compare_at(left: &str, right: &str) -> Ordering {
+    let instant = |at: &str| {
+        DateTime::parse_from_rfc3339(at.trim())
+            .ok()
+            .map(|d| d.with_timezone(&Utc))
+    };
+    match (instant(left), instant(right)) {
+        (Some(a), Some(b)) => a.cmp(&b),
+        _ => left.cmp(right),
+    }
+}
+
+/// Order versions such as `v9` and `v10` by their number; versions without a
+/// plain number fall back to string order.
+fn compare_version(left: &str, right: &str) -> Ordering {
+    let number = |v: &str| {
+        v.trim()
+            .trim_start_matches(|c: char| !c.is_ascii_digit())
+            .parse::<u64>()
+            .ok()
+    };
+    match (number(left), number(right)) {
+        (Some(a), Some(b)) => a.cmp(&b).then_with(|| left.cmp(right)),
+        _ => left.cmp(right),
+    }
 }
 
 fn overlaps(item_tags: &[String], query_tags: &[String]) -> bool {
@@ -467,7 +511,7 @@ pub struct SealMeta {
 pub fn seal_checkpoint(items: &[KnowledgeItem], meta: &SealMeta) -> Result<Checkpoint, String> {
     let kept: Vec<KnowledgeItem> = items
         .iter()
-        .filter(|item| item.at.as_str() <= meta.cutoff.as_str())
+        .filter(|item| compare_at(&item.at, &meta.cutoff) != Ordering::Greater)
         .filter(|item| item.kind != ItemKind::Transcript && item.kind != ItemKind::Handoff)
         .filter(|item| !item.text.contains(TRANSCRIPT_MARK))
         .cloned()
@@ -492,7 +536,7 @@ pub fn seal_checkpoint(items: &[KnowledgeItem], meta: &SealMeta) -> Result<Check
         knowledge_version: kept
             .iter()
             .map(|item| item.version.as_str())
-            .max()
+            .max_by(|a, b| compare_version(a, b))
             .unwrap_or("0")
             .to_string(),
         knowledge_at: meta.cutoff.clone(),
@@ -1537,6 +1581,125 @@ mod tests {
             Checkpoint::from_bytes(&bytes).unwrap().hash(),
             checkpoint.hash()
         );
+    }
+
+    fn current_query(mode: TestMode, cutoff: &str) -> Query {
+        Query {
+            arm: Arm::NewWithAx,
+            mode,
+            tags: vec!["work".into()],
+            cutoff: cutoff.into(),
+            explain: false,
+            now: "2026-11-20T00:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn conflicts_compare_instants_not_timestamp_text() {
+        let later = item(
+            "utc",
+            ItemKind::Decision,
+            "later",
+            "2026-06-01T00:00:00Z",
+            false,
+            None,
+        )
+        .with_key("storage");
+        // 23:30 UTC on 31 May: earlier, although its text sorts after the other.
+        let earlier = item(
+            "offset",
+            ItemKind::Decision,
+            "earlier",
+            "2026-06-01T01:30:00+02:00",
+            false,
+            None,
+        )
+        .with_key("storage");
+        let picked = select_context(&[earlier, later], &current_query(TestMode::Current, ""));
+        let texts: Vec<&str> = picked.iter().map(|i| i.text.as_str()).collect();
+        assert_eq!(texts, vec!["later"]);
+    }
+
+    #[test]
+    fn a_tie_on_the_same_instant_keeps_exactly_one_decision() {
+        let mut first = item(
+            "a",
+            ItemKind::Decision,
+            "old",
+            "2026-06-01T00:00:00Z",
+            false,
+            None,
+        )
+        .with_key("storage");
+        let mut second = item(
+            "b",
+            ItemKind::Decision,
+            "new",
+            "2026-06-01T00:00:00Z",
+            false,
+            None,
+        )
+        .with_key("storage");
+        first.version = "v10".into();
+        second.version = "v9".into();
+        let picked = select_context(
+            &[second.clone(), first.clone()],
+            &current_query(TestMode::Current, ""),
+        );
+        let texts: Vec<&str> = picked.iter().map(|i| i.text.as_str()).collect();
+        assert_eq!(texts, vec!["old"], "the higher version wins a tie");
+        let again = select_context(&[first, second], &current_query(TestMode::Current, ""));
+        assert_eq!(again, picked);
+    }
+
+    #[test]
+    fn historical_mode_compares_the_cutoff_as_an_instant() {
+        // 23:00 UTC on 31 May, before the 23:30 UTC cutoff.
+        let before = item(
+            "before",
+            ItemKind::Memory,
+            "before",
+            "2026-06-01T01:00:00+02:00",
+            false,
+            None,
+        );
+        let picked = select_context(
+            &[before],
+            &current_query(TestMode::Historical, "2026-05-31T23:30:00Z"),
+        );
+        assert_eq!(picked.len(), 1);
+    }
+
+    #[test]
+    fn a_checkpoint_reports_the_numerically_highest_version() {
+        let mut objective = item(
+            "goal",
+            ItemKind::Objective,
+            "goal",
+            "2026-06-01T00:00:00Z",
+            false,
+            None,
+        );
+        objective.version = "v9".into();
+        let mut memory = item(
+            "m",
+            ItemKind::Memory,
+            "m",
+            "2026-06-01T00:00:00Z",
+            false,
+            None,
+        );
+        memory.version = "v10".into();
+        let checkpoint = seal_checkpoint(
+            &[objective, memory],
+            &SealMeta {
+                id: "cp".into(),
+                commit: "abc".into(),
+                cutoff: "2026-06-02T00:00:00Z".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(checkpoint.envelope.body.knowledge_version, "v10");
     }
 
     #[test]
