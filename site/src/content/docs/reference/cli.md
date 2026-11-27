@@ -666,6 +666,8 @@ Configure it in `ax.json` under `docsCatalog`. Every key is optional, and there 
 
 Every path key must stay inside the project: absolute paths, `..` and symbolic links that lead out of the project are refused, and the sync stops with an error naming the key. `wiki_apps_subdir`, `wiki_integrations_dir` and `wiki_products_page` must be relative paths inside the wiki. A `wiki_remote` that starts with `-` is refused, because git would read it as an option.
 
+The wiki `git clone` and `git pull` never prompt: they run without a terminal or credential prompt and stop with an error after 10 minutes. A private wiki therefore needs credentials git can use on its own (a credential helper, an SSH key or a token in the URL).
+
 ```json
 {
   "docsCatalog": {
