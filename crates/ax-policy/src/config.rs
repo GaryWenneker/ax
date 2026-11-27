@@ -646,13 +646,19 @@ mod tests {
         )
         .unwrap();
         assert_eq!(agents_dir_name(p), "team-policy");
-        assert_eq!(policy_storage_status(p).project_value.as_deref(), Some("database"));
+        assert_eq!(
+            policy_storage_status(p).project_value.as_deref(),
+            Some("database")
+        );
         assert_eq!(read_project_stack_ids(p), vec!["rust".to_string()]);
         assert!(policy_sync_enabled(p));
 
         let written = write_project_policy_sync(p, false).unwrap();
         assert_eq!(written, alias);
-        assert!(!policy_sync_enabled(p), "the alias file holds the new value");
+        assert!(
+            !policy_sync_enabled(p),
+            "the alias file holds the new value"
+        );
         assert!(!p.join(CONFIG_FILENAME).exists(), "no second config file");
         let saved: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&alias).unwrap()).unwrap();
@@ -679,9 +685,8 @@ mod tests {
                                    {"id":"all","path":"team"}]}}"#,
         )
         .unwrap();
-        let ids = |p: &Path| -> Vec<String> {
-            load_policy_roots(p).into_iter().map(|r| r.id).collect()
-        };
+        let ids =
+            |p: &Path| -> Vec<String> { load_policy_roots(p).into_iter().map(|r| r.id).collect() };
         assert_eq!(ids(&ws.join("svc")), vec!["api-only", "all"]);
         assert_eq!(ids(&ws.join("web")), vec!["all"]);
     }

@@ -187,7 +187,11 @@ fn workspace_has_members(root: &Path) -> bool {
     std::fs::read_to_string(crate::config::config_path(root))
         .ok()
         .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
-        .and_then(|v| v.get("members").and_then(|m| m.as_array()).map(|m| !m.is_empty()))
+        .and_then(|v| {
+            v.get("members")
+                .and_then(|m| m.as_array())
+                .map(|m| !m.is_empty())
+        })
         .unwrap_or(false)
 }
 

@@ -425,7 +425,11 @@ fn verify_graph(graph: &DomainFile) -> Result<Vec<String>, String> {
             "relationship {} -{}-> {} is dangling",
             edge.source, edge.kind, edge.target
         );
-        if seed_edges.contains(&(edge.source.as_str(), edge.kind.as_str(), edge.target.as_str())) {
+        if seed_edges.contains(&(
+            edge.source.as_str(),
+            edge.kind.as_str(),
+            edge.target.as_str(),
+        )) {
             return Err(format!("seed {msg}"));
         }
         warnings.push(msg);

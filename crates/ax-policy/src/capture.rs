@@ -442,7 +442,11 @@ mod tests {
         ] {
             let p = propose_rule_from_prompt(prompt, &[]);
             assert!(p.detected, "{prompt}");
-            assert!(crate::parse::is_kebab_case(&p.suggested_id), "{}", p.suggested_id);
+            assert!(
+                crate::parse::is_kebab_case(&p.suggested_id),
+                "{}",
+                p.suggested_id
+            );
             assert!(!p.suggested_id.is_empty());
             assert!(p.preview.contains("---"));
             let title = p.body.lines().next().unwrap_or_default();
