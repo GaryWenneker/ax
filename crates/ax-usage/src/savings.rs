@@ -1548,18 +1548,43 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
         i64,
         i64,
     );
-    const SESSIONS_SQL: &str = "SELECT s.agent, s.session_id, s.read_calls, s.grep_calls, s.ax_calls,
+    // Every MCP call belongs to at most one session: among the sessions whose
+    // window contains it, the one in the call's project, then the one started
+    // last. Overlapping sessions never count the same call twice.
+    const SESSIONS_SQL: &str = "WITH in_range AS (
+           SELECT * FROM agent_session_log s
+           WHERE COALESCE(s.started_at, s.source_mtime) >= ?1
+             AND COALESCE(s.started_at, s.source_mtime) <= ?2
+         ),
+         windows AS MATERIALIZED (
+           SELECT s.id, s.started_at, s.ended_at,
+                  (SELECT e.project FROM agent_usage_event e
+                    WHERE e.agent = s.agent AND e.session_id = s.session_id
+                      AND e.project IS NOT NULL
+                    LIMIT 1) AS project
+           FROM agent_session_log s
+           WHERE s.started_at IS NOT NULL AND s.ended_at IS NOT NULL
+         ),
+         owned AS MATERIALIZED (
+           SELECT m.savings_eligible, m.tokens_saved_est,
+                  (SELECT c.id FROM (
+                     SELECT w.id, w.started_at,
+                            COALESCE(w.project = m.project, 0) AS same_project
+                     FROM windows w
+                     WHERE m.created_at BETWEEN w.started_at AND w.ended_at) c
+                    ORDER BY c.same_project DESC, c.started_at DESC, c.id DESC
+                    LIMIT 1) AS owner
+           FROM mcp_call_log m
+           WHERE m.created_at >= (SELECT MIN(started_at) FROM in_range)
+             AND m.created_at <= (SELECT MAX(ended_at) FROM in_range)
+         )
+         SELECT s.agent, s.session_id, s.read_calls, s.grep_calls, s.ax_calls,
                 s.session_input_tokens, s.session_output_tokens, s.model,
                 s.started_at, s.ended_at,
-                (SELECT COUNT(*) FROM mcp_call_log m
-                  WHERE s.started_at IS NOT NULL AND s.ended_at IS NOT NULL
-                    AND m.created_at BETWEEN s.started_at AND s.ended_at),
-                (SELECT COALESCE(SUM(m.tokens_saved_est), 0) FROM mcp_call_log m
-                  WHERE s.started_at IS NOT NULL AND s.ended_at IS NOT NULL
-                    AND m.savings_eligible = 1
-                    AND m.created_at BETWEEN s.started_at AND s.ended_at)
-         FROM agent_session_log s
-         WHERE COALESCE(s.started_at, s.source_mtime) >= ? AND COALESCE(s.started_at, s.source_mtime) <= ?
+                (SELECT COUNT(*) FROM owned o WHERE o.owner = s.id),
+                (SELECT COALESCE(SUM(o.tokens_saved_est), 0) FROM owned o
+                  WHERE o.owner = s.id AND o.savings_eligible = 1)
+         FROM in_range s
          ORDER BY COALESCE(s.started_at, s.source_mtime) DESC";
 
     let session_rows: Vec<AgentSessionRow> = sqlx::query_as::<_, SessionTuple>(SESSIONS_SQL)
@@ -3202,5 +3227,61 @@ mod tests {
                 ("cursor".into(), "chat-2".into(), Some("other-place".into())),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn overlapping_sessions_do_not_share_mcp_calls() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let db = temp_usage_db_path("overlap");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+        let pool = open_pool().await.expect("pool");
+        let now = chrono::Utc::now().timestamp_millis();
+        let hour = 3_600_000;
+        // Session a (project /p/a) runs for two hours; session b (project /p/b)
+        // starts later and overlaps it.
+        for (agent, id, start, end, project) in [
+            ("cursor", "a", now - 2 * hour, now, "/p/a"),
+            ("claude", "b", now - hour, now, "/p/b"),
+        ] {
+            sqlx::query("INSERT INTO agent_session_log(agent,session_id,source_mtime,started_at,ended_at,model) VALUES (?,?,?,?,?,'m')")
+                .bind(agent).bind(id).bind(end).bind(start).bind(end)
+                .execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO agent_usage_event(agent,session_id,turn_id,project,confidence,created_at) VALUES (?,?,'0',?,'estimated',?)")
+                .bind(agent).bind(id).bind(project).bind(start)
+                .execute(&pool).await.unwrap();
+        }
+        for (at, project, saved) in [
+            (now - 90 * 60_000, Some("/p/a"), 100), // only a is open
+            (now - 30 * 60_000, Some("/p/a"), 10),  // both open, a's project
+            (now - 20 * 60_000, Some("/p/b"), 1),   // both open, b's project
+            (now - 10 * 60_000, None, 1000),        // both open, unknown project
+        ] {
+            sqlx::query("INSERT INTO mcp_call_log(tool,project,response_chars,response_tokens_est,ok,created_at,savings_eligible,tokens_saved_est) VALUES ('ax_node',?,1,1,1,?,1,?)")
+                .bind(project).bind(at).bind(saved)
+                .execute(&pool).await.unwrap();
+        }
+        let summary = query_savings_summary(&SavingsQuery {
+            period: UsagePeriod::Week,
+            from: None,
+            to: None,
+        })
+        .await
+        .expect("summary");
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(&db);
+        let by_id = |id: &str| {
+            summary
+                .agent_sessions
+                .iter()
+                .find(|s| s.session_id == id)
+                .map(|s| (s.mcp_calls_in_window, s.tokens_saved_in_window))
+                .unwrap()
+        };
+        assert_eq!(by_id("a"), (2, 110));
+        // The unknown-project call goes to the most recently started session.
+        assert_eq!(by_id("b"), (2, 1001));
+        let by_model: i64 = summary.by_model.iter().map(|r| r.tokens_saved_est).sum();
+        assert_eq!(by_model, summary.tokens_saved_est);
     }
 }
