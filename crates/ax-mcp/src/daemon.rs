@@ -257,12 +257,21 @@ impl DaemonLifecycle {
         let timeout = self.idle_timeout_ms;
         let handle = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(timeout)).await;
-            if !me.is_stopping() && me.client_count() == 0 {
-                me.shutdown("idle timeout").await;
+            if me.idle_expired().await {
                 std::process::exit(0);
             }
         });
         *self.idle_task.write().await = Some(handle);
+    }
+
+    /// The idle timer fired: shuts the daemon down when no client is connected.
+    /// Returns true when it shut down.
+    async fn idle_expired(self: &Arc<Self>) -> bool {
+        if self.is_stopping() || self.client_count() > 0 {
+            return false;
+        }
+        self.shutdown("idle timeout").await;
+        true
     }
 
     pub async fn disarm_idle(self: &Arc<Self>) {
@@ -919,6 +928,77 @@ mod tests {
         };
         std::fs::write(&pid_path, serde_json::to_string(&lock).unwrap()).unwrap();
         pid_path
+    }
+
+    fn lifecycle_with_idle(root: &Path, idle_timeout_ms: u64) -> Arc<DaemonLifecycle> {
+        Arc::new(DaemonLifecycle {
+            clients: AtomicUsize::new(0),
+            stopping: AtomicBool::new(false),
+            last_activity: Mutex::new(Instant::now()),
+            idle_timeout_ms,
+            max_idle_ms: 0,
+            idle_task: RwLock::new(None),
+            project_root: root.to_path_buf(),
+            pid_path: Some(daemon_pid_path(root)),
+        })
+    }
+
+    fn ax_dir() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        std::fs::create_dir_all(root.join(".ax")).unwrap();
+        (dir, root)
+    }
+
+    #[tokio::test]
+    async fn the_idle_timer_does_not_stop_a_daemon_with_a_client() {
+        let (_dir, root) = ax_dir();
+        let pid_path = write_files_of(&root, std::process::id());
+        let lifecycle = lifecycle_with_idle(&root, 60_000);
+        lifecycle.on_client_connected().await;
+        assert!(!lifecycle.idle_expired().await);
+        assert!(!lifecycle.is_stopping());
+        assert!(pid_path.exists() && read_daemon_info(&root).is_some());
+    }
+
+    #[tokio::test]
+    async fn the_idle_timer_stops_a_daemon_without_clients() {
+        let (_dir, root) = ax_dir();
+        let pid_path = write_files_of(&root, std::process::id());
+        let lifecycle = lifecycle_with_idle(&root, 60_000);
+        assert!(lifecycle.idle_expired().await);
+        assert!(lifecycle.is_stopping());
+        assert!(!pid_path.exists() && read_daemon_info(&root).is_none());
+        // A second expiry after shutdown does nothing.
+        assert!(!lifecycle.idle_expired().await);
+    }
+
+    #[tokio::test]
+    async fn a_connecting_client_disarms_the_idle_timer_and_the_last_disconnect_rearms_it() {
+        let (_dir, root) = ax_dir();
+        let lifecycle = lifecycle_with_idle(&root, 60_000);
+        lifecycle.arm_idle().await;
+        assert!(lifecycle.idle_task.read().await.is_some());
+        lifecycle.on_client_connected().await;
+        lifecycle.on_client_connected().await;
+        assert!(lifecycle.idle_task.read().await.is_none());
+        lifecycle.on_client_disconnected().await;
+        assert!(
+            lifecycle.idle_task.read().await.is_none(),
+            "armed while a client is still connected"
+        );
+        lifecycle.on_client_disconnected().await;
+        assert!(lifecycle.idle_task.read().await.is_some());
+        assert_eq!(lifecycle.client_count(), 0);
+        lifecycle.disarm_idle().await;
+    }
+
+    #[tokio::test]
+    async fn an_idle_timeout_of_zero_never_arms() {
+        let (_dir, root) = ax_dir();
+        let lifecycle = lifecycle_with_idle(&root, 0);
+        lifecycle.arm_idle().await;
+        assert!(lifecycle.idle_task.read().await.is_none());
     }
 
     #[tokio::test]
