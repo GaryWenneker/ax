@@ -787,6 +787,23 @@ pub struct SessionCostCoverage {
     pub by_day: Vec<SessionDaySpend>,
     /// Recorded session time, rounded up to the next minute. Zero when no session has an end at or after its start.
     pub minutes: u64,
+    /// One entry per imported session, so a cost report can merge only the sessions
+    /// that have no quoted usage events of their own.
+    #[serde(skip)]
+    pub sessions: Vec<SessionCostEntry>,
+}
+
+/// Catalog spend and token counts of one imported session.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SessionCostEntry {
+    pub agent: String,
+    pub session_id: String,
+    pub model: String,
+    pub usd: f64,
+    /// Local calendar day the session started, as `YYYY-MM-DD`.
+    pub day: Option<String>,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
 }
 
 pub(crate) fn session_cost_coverage(sessions: &[AgentSessionRow]) -> SessionCostCoverage {
@@ -799,6 +816,7 @@ pub(crate) fn session_cost_coverage(sessions: &[AgentSessionRow]) -> SessionCost
     let mut output_known = false;
     let mut spend_usd = 0.0;
     let mut total_ms = 0i64;
+    let mut entries = Vec::with_capacity(sessions.len());
     for session in sessions {
         let usd = session
             .session_cost_usd_est
@@ -806,10 +824,20 @@ pub(crate) fn session_cost_coverage(sessions: &[AgentSessionRow]) -> SessionCost
             .unwrap_or(0.0);
         let model = session_model_label(&session.model);
         let agent = agent_label(&session.agent);
+        let day = session.started_at.and_then(local_iso_day);
+        entries.push(SessionCostEntry {
+            agent: session.agent.clone(),
+            session_id: session.session_id.clone(),
+            model: model.clone(),
+            usd,
+            day: day.clone(),
+            input_tokens: session.session_input_tokens.map(|n| n.max(0)),
+            output_tokens: session.session_output_tokens.map(|n| n.max(0)),
+        });
         *models.entry(model).or_default() += usd;
         *agents.entry(agent).or_default() += usd;
         spend_usd += usd;
-        if let Some(day) = session.started_at.and_then(local_iso_day) {
+        if let Some(day) = day {
             *days.entry(day).or_default() += usd;
         }
         if let Some(n) = session.session_input_tokens {
@@ -841,6 +869,7 @@ pub(crate) fn session_cost_coverage(sessions: &[AgentSessionRow]) -> SessionCost
         spend_usd,
         by_day,
         minutes: minutes_from_span_ms(total_ms),
+        sessions: entries,
     }
 }
 

@@ -5,6 +5,8 @@ description: Quote local agent usage, plan a monthly budget, and simulate cycles
 
 Ax reads Claude Code and Cursor session logs already on disk, quotes each turn from the price catalog, and compares the known total with a budget in `~/.ax/config.json`. A missing price stays **unknown**. Catalog quotes are **estimated**. **Actual** is a provider invoice, which Ax does not receive.
 
+Spend known only from imported sessions (for example Cursor sessions without per-turn usage) is merged per session with the quoted turns: a session whose turns have a catalog price counts once, from those turns, and every other imported session adds its catalog spend. `ax costs` prints how many imported sessions it added and how many it left out.
+
 `ax savings` is a separate counterfactual: tokens avoided versus opening whole files, priced on the reference input rate.
 
 ## Set a budget
