@@ -368,6 +368,71 @@ const SONAR_STATUS_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 /// Pause between readiness requests.
 const SONAR_STATUS_POLL: Duration = Duration::from_secs(3);
 
+/// Whether the host part of a SonarQube URL is a loopback name
+/// (`localhost`, `127.x.x.x` or `::1`).
+pub fn is_loopback_sonar_host(host: &str) -> bool {
+    let rest = host.split_once("://").map_or(host, |(_, r)| r);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let authority = authority.rsplit_once('@').map_or(authority, |(_, a)| a);
+    let name = if let Some(v6) = authority.strip_prefix('[') {
+        v6.split(']').next().unwrap_or("")
+    } else {
+        authority.split(':').next().unwrap_or("")
+    };
+    let name = name.to_ascii_lowercase();
+    name == "localhost"
+        || name == "::1"
+        || name
+            .parse::<std::net::Ipv4Addr>()
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
+/// Extra `run` arguments and the SonarQube URL for a scanner container.
+/// When SonarQube is the ax-managed container on [`SONAR_NETWORK`]
+/// (`sonar_on_network` names it), the scanner joins that network and talks
+/// to the container directly, because the port is published on the host's
+/// loopback only. Otherwise the configured host is used, with `localhost`
+/// mapped to `host.containers.internal`.
+pub fn scanner_container_target(
+    host: &str,
+    sonar_on_network: Option<&str>,
+) -> (Vec<String>, String) {
+    match sonar_on_network {
+        Some(name) if is_loopback_sonar_host(host) => (
+            vec!["--network".into(), SONAR_NETWORK.into()],
+            format!("http://{name}:9000"),
+        ),
+        _ => (Vec::new(), crate::bootstrap::scanner_host_url(host)),
+    }
+}
+
+/// Whether container `name` is attached to [`SONAR_NETWORK`].
+pub fn container_on_sonar_network(runtime: ContainerRuntime, name: &str) -> bool {
+    Command::new(runtime.cli())
+        .args([
+            "inspect",
+            "--format",
+            "{{json .NetworkSettings.Networks}}",
+            name,
+        ])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .is_some_and(|o| String::from_utf8_lossy(&o.stdout).contains(SONAR_NETWORK))
+}
+
+/// `-p` value for the SonarQube container: loopback only when the
+/// configured host is a loopback name, so the instance (which ax drives with
+/// the default admin login) is not reachable from the network. Configure a
+/// non-loopback `host` to publish it on all interfaces.
+fn sonar_publish_arg(host: &str, host_port: u16) -> String {
+    if is_loopback_sonar_host(host) {
+        format!("127.0.0.1:{host_port}:9000")
+    } else {
+        format!("{host_port}:9000")
+    }
+}
+
 /// Whether a `/api/system/status` body says the server is `UP`. SonarQube
 /// answers HTTP 200 with `STARTING` or `DB_MIGRATION_NEEDED` before its API
 /// can serve requests, so the status code alone does not mean ready.
@@ -703,7 +768,7 @@ fn create_postgres_container(
     wait_for_postgres_sync(runtime, db_name, 60, log)
 }
 
-fn sonar_run_args(host_port: u16, sonar_name: &str, db_name: &str) -> Vec<String> {
+fn sonar_run_args(host: &str, host_port: u16, sonar_name: &str, db_name: &str) -> Vec<String> {
     vec![
         "run".into(),
         "-d".into(),
@@ -712,7 +777,7 @@ fn sonar_run_args(host_port: u16, sonar_name: &str, db_name: &str) -> Vec<String
         "--network".into(),
         SONAR_NETWORK.into(),
         "-p".into(),
-        format!("{host_port}:9000"),
+        sonar_publish_arg(host, host_port),
         "--shm-size".into(),
         SONAR_SHM_SIZE.into(),
         "--memory".into(),
@@ -741,6 +806,7 @@ fn sonar_run_args(host_port: u16, sonar_name: &str, db_name: &str) -> Vec<String
 
 fn create_sonar_app_container(
     runtime: ContainerRuntime,
+    host: &str,
     sonar_name: &str,
     db_name: &str,
     host_port: u16,
@@ -752,10 +818,11 @@ fn create_sonar_app_container(
     ensure_network(runtime, log)?;
     create_postgres_container(runtime, db_name, log)?;
     log.push(format!(
-        "$ {} run -d --name {sonar_name} --network {SONAR_NETWORK} -p {host_port}:9000 --memory {SONAR_CONTAINER_MEMORY} {SONAR_IMAGE}",
-        runtime.cli()
+        "$ {} run -d --name {sonar_name} --network {SONAR_NETWORK} -p {} --memory {SONAR_CONTAINER_MEMORY} {SONAR_IMAGE}",
+        runtime.cli(),
+        sonar_publish_arg(host, host_port)
     ));
-    let args = sonar_run_args(host_port, sonar_name, db_name);
+    let args = sonar_run_args(host, host_port, sonar_name, db_name);
     let status = Command::new(runtime.cli())
         .args(&args)
         .status()
@@ -874,7 +941,7 @@ pub async fn ensure_sonar_live_with_log(
         if sonar_stack_needs_postgres_upgrade(runtime, container_name) {
             log.push(SONAR_POSTGRES_UPGRADE_HINT.to_string());
             remove_container_logged(runtime, container_name, log)?;
-            create_sonar_container_logged(runtime, container_name, host_port, log).await?;
+            create_sonar_container_logged(runtime, host, container_name, host_port, log).await?;
         } else {
             // Always attempt start when the container exists (idempotent if already up; 3 retries).
             if existing.running {
@@ -886,7 +953,7 @@ pub async fn ensure_sonar_live_with_log(
         log.push(format!(
             "No container '{container_name}' — creating PostgreSQL-backed stack with {SONAR_IMAGE}."
         ));
-        create_sonar_container_logged(runtime, container_name, host_port, log).await?;
+        create_sonar_container_logged(runtime, host, container_name, host_port, log).await?;
     }
 
     if !sonar_reachable_sync(host) {
@@ -1049,6 +1116,7 @@ async fn pull_image_logged(
 
 async fn create_sonar_container_logged(
     runtime: ContainerRuntime,
+    host: &str,
     name: &str,
     host_port: u16,
     log: &InstallLog,
@@ -1059,7 +1127,7 @@ async fn create_sonar_container_logged(
     pull_image_logged(runtime, POSTGRES_IMAGE, log).await?;
     pull_image_logged(runtime, SONAR_IMAGE, log).await?;
     let db_name = db_container_name(name);
-    create_sonar_app_container(runtime, name, &db_name, host_port, log)
+    create_sonar_app_container(runtime, host, name, &db_name, host_port, log)
 }
 
 async fn wait_for_sonar_logged(
@@ -1081,6 +1149,47 @@ async fn wait_for_sonar_logged(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn publish_arg(args: &[String]) -> String {
+        let i = args.iter().position(|a| a == "-p").expect("-p");
+        args[i + 1].clone()
+    }
+
+    #[test]
+    fn sonar_is_published_on_loopback_for_a_local_host() {
+        for host in [
+            "http://localhost:9000",
+            "http://127.0.0.1:9000/",
+            "http://[::1]:9000",
+            "http://LOCALHOST:9000",
+        ] {
+            let args = sonar_run_args(host, 9000, "sonarqube", "sonarqube-db");
+            assert_eq!(publish_arg(&args), "127.0.0.1:9000:9000", "{host}");
+        }
+    }
+
+    #[test]
+    fn sonar_is_published_on_all_interfaces_only_for_a_named_host() {
+        let args = sonar_run_args("http://sonarqube.vsc:9100", 9100, "sonarqube", "db");
+        assert_eq!(publish_arg(&args), "9100:9000");
+    }
+
+    #[test]
+    fn scanner_reaches_an_ax_managed_sonar_over_its_network() {
+        let (extra, host) = scanner_container_target("http://localhost:9000", Some("sonarqube"));
+        assert_eq!(
+            extra,
+            vec!["--network".to_string(), SONAR_NETWORK.to_string()]
+        );
+        assert_eq!(host, "http://sonarqube:9000");
+        let (extra, host) = scanner_container_target("http://localhost:9000", None);
+        assert!(extra.is_empty());
+        assert_eq!(host, "http://host.containers.internal:9000");
+        let (extra, host) =
+            scanner_container_target("http://sonarqube.vsc:9000", Some("sonarqube"));
+        assert!(extra.is_empty());
+        assert_eq!(host, "http://sonarqube.vsc:9000");
+    }
 
     #[test]
     fn status_body_is_up_only_for_up() {

@@ -167,6 +167,10 @@ revert_on_fail = false
 
 Sonar setup saves the generated scanner token in `.ax/sonar.token`. On Unix the file is readable and writable by its owner only (mode 0600). The scanner reads the token from that file and gets it passed explicitly; ax does not export it into its own process environment. On Windows ax also stores the token in the user environment variable named by `token_env`. That name must be a plain variable name (letters, digits and `_`, not starting with a digit); any other name is skipped with a warning.
 
+### SonarQube network exposure
+
+When `host` is a loopback address (`localhost`, `127.0.0.1` or `[::1]`), ax publishes the SonarQube container on `127.0.0.1` only, so other machines on the network cannot reach it or try the default `admin` login. A container scanner joins the `ax-sonar-net` network and talks to the SonarQube container directly. To reach SonarQube from other machines, set `host` to a name or address other than loopback (for example `http://sonarqube.vsc:9000`); the port is then published on all interfaces. A container created before this change keeps its old port binding until you reset the stack.
+
 ### SonarQube project keys
 
 ax records the SonarQube projects it creates in `.ax/sonar-projects.json`. When `project_key` changes, a project that ax created under the old workspace key (`<folder>-<repo>`) is renamed to the new key (`<project_key>-<repo>`) before a scan. Projects that ax did not create are never renamed, and ax never deletes a project: when both the old and the new key exist, the old project stays and the log says so, so you can delete it in SonarQube yourself.

@@ -26,8 +26,8 @@ const DEFAULT_EXCLUSIONS: &str = "\
 **/*.dylib";
 
 use crate::bootstrap::{
-    canonical_repo_project_key, read_sonar_token, scanner_available, scanner_host_url,
-    sonar_reachable, workspace_sonar_key,
+    canonical_repo_project_key, read_sonar_token, scanner_available, sonar_reachable,
+    workspace_sonar_key,
 };
 use crate::container::{
     find_container_any, resolve_runtime, start_sonar_stack, InstallLog, SONAR_SCANNER_IMAGE,
@@ -507,7 +507,14 @@ impl SonarClient {
         let mount = project_root
             .canonicalize()
             .map_err(|e| format!("project path: {e}"))?;
-        let host = scanner_host_url(&self.config.host);
+        let sonar_name = self
+            .config
+            .podman_container
+            .as_deref()
+            .filter(|n| !n.is_empty())
+            .filter(|n| crate::container::container_on_sonar_network(runtime, n));
+        let (network_args, host) =
+            crate::container::scanner_container_target(&self.config.host, sonar_name);
 
         info!(
             "Running SonarScanner via {} ({}) — native scanner not found on PATH",
@@ -516,6 +523,7 @@ impl SonarClient {
         );
 
         let mut args = vec!["run".to_string(), "--rm".to_string()];
+        args.extend(network_args);
         if let Some(t) = token {
             args.push("-e".to_string());
             args.push(format!("SONAR_TOKEN={t}"));
