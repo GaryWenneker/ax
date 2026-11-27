@@ -1,69 +1,66 @@
 #!/usr/bin/env bash
-# Gauntlet: Command Center macOS theme preset.
+# Gauntlet: Command Center theme contrast (the azure-light and azure-dark
+# presets). The wcag-contrast rule names this script as its enforcement.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+UI="crates/ax-web/web-ui"
+THEMES="$ROOT/$UI/src/lib/themes.ts"
+
+# require <description> <grep args...>: fail unless the pattern is found.
+require() {
+  local what="$1"
+  shift
+  grep -q "$@" || { echo "FAIL: $what" >&2; exit 1; }
+}
 
 echo "== theme unit tests =="
-(cd crates/ax-web/web-ui && node --experimental-strip-types --test src/lib/themes.test.ts)
+(cd "$UI" && node --experimental-strip-types --test src/lib/themes.test.ts)
 
 echo "== wiring =="
-grep -q "id: 'macos'" crates/ax-web/web-ui/src/lib/themes.ts \
-  || { echo "FAIL: missing macos preset" >&2; exit 1; }
-grep -q "setProperty('--accent-text'" crates/ax-web/web-ui/src/lib/themes.ts \
-  || { echo "FAIL: applyTheme missing --accent-text" >&2; exit 1; }
-grep -q "setProperty('--accent-on-fill'" crates/ax-web/web-ui/src/lib/themes.ts \
-  || { echo "FAIL: applyTheme missing --accent-on-fill" >&2; exit 1; }
-grep -q 'accent: '\''#64d2ff'\''' crates/ax-web/web-ui/src/lib/themes.ts \
-  || { echo "FAIL: macos accent must be #64d2ff" >&2; exit 1; }
-grep -q 'var(--accent-on-fill' crates/ax-web/web-ui/src/styles/*.css \
-  || { echo "FAIL: macos nav must use --accent-on-fill" >&2; exit 1; }
-grep -q 'policy-table thead th:first-child' crates/ax-web/web-ui/src/styles/*.css \
-  || { echo "FAIL: missing grouped-table header indent" >&2; exit 1; }
-grep -q 'flex-direction: row' crates/ax-web/web-ui/src/styles/*.css \
-  || { echo "FAIL: missing tag row wrap" >&2; exit 1; }
-grep -q 'statusbarInk(fill)' crates/ax-web/web-ui/src/lib/themes.ts \
-  || { echo "FAIL: statusbar ink must use painted fill" >&2; exit 1; }
-grep -q 'id: wcag-contrast' .agents/rules/wcag-contrast.mdc \
-  || { echo "FAIL: missing CRITICAL wcag-contrast rule" >&2; exit 1; }
+require "missing azure-light preset" "id: 'azure-light'" "$THEMES"
+require "missing azure-dark preset" "id: 'azure-dark'" "$THEMES"
+require "applyTheme missing --accent-text" "setProperty('--accent-text'" "$THEMES"
+require "applyTheme missing --accent-on-fill" "setProperty('--accent-on-fill', onFill)" "$THEMES"
+require "accent-on-fill ink must come from the painted fill" "const onFill = statusbarInk(fill).fg" "$THEMES"
+require "status bar ink must come from the status bar surface" "const ink = statusbarInk(theme.bgSide)" "$THEMES"
+require "no stylesheet uses --accent-on-fill" -r "var(--accent-on-fill" "$UI/src/styles"
+require "missing CRITICAL wcag-contrast rule" "id: wcag-contrast" .agents/rules/wcag-contrast.mdc
 
 echo "== negative control (grep gate) =="
-if grep -q 'data-ax-theme="macos-does-not-exist"' crates/ax-web/web-ui/src/styles/*.css; then
+if (require "expected" "id: 'theme-that-does-not-exist'" "$THEMES") 2>/dev/null; then
   echo "FAIL: negative control passed (vacuous grep)" >&2
   exit 1
 fi
 
 echo "== tsc =="
-(cd crates/ax-web/web-ui && npx tsc --noEmit)
+(cd "$UI" && npx tsc --noEmit)
 
 echo "== manual mutation =="
-THEMES="$ROOT/crates/ax-web/web-ui/src/lib/themes.ts"
 ORIG="$(mktemp)"
+OUT="$(mktemp)"
 cp "$THEMES" "$ORIG"
+trap 'cp "$ORIG" "$THEMES"; rm -f "$ORIG" "$OUT"' EXIT
 kill_mutant() {
   local name="$1"
-  if (cd crates/ax-web/web-ui && node --experimental-strip-types --test src/lib/themes.test.ts) >/tmp/macos-theme-mutant.out 2>&1; then
+  if (cd "$UI" && node --experimental-strip-types --test src/lib/themes.test.ts) >"$OUT" 2>&1; then
     echo "FAIL: mutant $name survived" >&2
-    cat /tmp/macos-theme-mutant.out >&2
-    cp "$ORIG" "$THEMES"
+    cat "$OUT" >&2
     exit 1
   fi
   echo "killed $name"
+  cp "$ORIG" "$THEMES"
 }
 
-perl -i -pe "s/id: 'macos'/id: 'mac-os'/" "$THEMES"
-kill_mutant "rename-id"
-cp "$ORIG" "$THEMES"
+perl -i -pe "s/id: 'azure-dark'/id: 'azure-night'/" "$THEMES"
+kill_mutant "rename-dark-id"
 
-perl -i -pe "s/accent: '#64d2ff'/accent: '#0a84ff'/" "$THEMES"
-kill_mutant "wrong-accent"
-cp "$ORIG" "$THEMES"
+perl -i -pe "s/const ink = statusbarInk\(theme.bgSide\)/const ink = statusbarInk(fill)/" "$THEMES"
+kill_mutant "statusbar-ink-from-accent"
 
-perl -i -pe "s/statusbarInk\(fill\)/statusbarInk(theme.statusbarBg || theme.accent)/" "$THEMES"
-kill_mutant "ink-from-statusbarBg"
-cp "$ORIG" "$THEMES"
+perl -i -pe "s/light:'#386900'/light:'#b9ff6a'/" "$THEMES"
+kill_mutant "light-accent-unreadable"
 
 diff -q "$ORIG" "$THEMES" >/dev/null
-rm -f "$ORIG"
 
 echo "gauntlet-macos-theme: ok"
