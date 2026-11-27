@@ -277,7 +277,7 @@ async fn send_hello(
 ) -> std::io::Result<()> {
     let hello = build_hello(project_root, port, socket_path);
     let line = serde_json::to_string(&hello)? + "\n";
-    session.write_bytes(line.as_bytes()).await?;
+    write_or_close(session, line.as_bytes()).await?;
     Ok(())
 }
 
@@ -588,6 +588,21 @@ async fn start_daemon_core(
     Ok(lifecycle)
 }
 
+/// How long one write to a client may take before the connection is closed.
+const CLIENT_WRITE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Writes to a client, closing the connection (an error) when the client has
+/// not taken the bytes within [`CLIENT_WRITE_TIMEOUT`].
+async fn write_or_close(session: &mut DaemonSession, data: &[u8]) -> std::io::Result<()> {
+    match tokio::time::timeout(CLIENT_WRITE_TIMEOUT, session.write_bytes(data)).await {
+        Ok(result) => result,
+        Err(_) => Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "client stopped reading; connection closed",
+        )),
+    }
+}
+
 async fn serve_session(
     mut session: DaemonSession,
     engine: Arc<Mutex<McpEngine>>,
@@ -599,6 +614,19 @@ async fn serve_session(
     static NEXT_CONNECTION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let connection = NEXT_CONNECTION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     send_hello(&mut session, project_root, port, socket_path).await?;
+    let result = serve_requests(&mut session, &engine, project_root, &lifecycle, connection).await;
+    // Ends the connection's policy session however the connection ended.
+    engine.lock().await.policy_sessions().end(connection);
+    result
+}
+
+async fn serve_requests(
+    session: &mut DaemonSession,
+    engine: &Mutex<McpEngine>,
+    project_root: &Path,
+    lifecycle: &DaemonLifecycle,
+    connection: u64,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut line = String::new();
 
     while session.read_line(&mut line).await? > 0 {
@@ -622,20 +650,25 @@ async fn serve_session(
                     }),
                 };
                 let out = serde_json::to_string(&err)? + "\n";
-                session.write_bytes(out.as_bytes()).await?;
+                write_or_close(session, out.as_bytes()).await?;
                 line.clear();
                 continue;
             }
         };
 
-        let mut eng = engine.lock().await;
-        eng.policy_sessions().set_active(connection);
-        let outcome = handle_request(
-            &mut eng,
-            &req.method,
-            req.params.unwrap_or(serde_json::Value::Null),
-        )
-        .await;
+        // The engine is shared by every connection. Its lock covers the
+        // request only and is released before anything is written back, so
+        // a client that stops reading cannot stall the other clients.
+        let outcome = {
+            let mut eng = engine.lock().await;
+            eng.policy_sessions().set_active(connection);
+            handle_request(
+                &mut eng,
+                &req.method,
+                req.params.unwrap_or(serde_json::Value::Null),
+            )
+            .await
+        };
         if crate::transport::is_notification(&req.id) {
             line.clear();
             continue;
@@ -660,21 +693,20 @@ async fn serve_session(
             },
         };
         let out = serde_json::to_string(&response)? + "\n";
-        session.write_bytes(out.as_bytes()).await?;
+        write_or_close(session, out.as_bytes()).await?;
         // Verbose traces: MCP logging notifications (Cursor Output via stdout) +
         // ax_log side-channel (proxy → stderr) + local log file.
         if !outcome.verbose_lines.is_empty() {
             crate::verbose::append_verbose_log_file(&outcome.verbose_lines, Some(project_root));
             for text in &outcome.verbose_lines {
                 let notif = crate::verbose::format_mcp_log_notification(text);
-                session.write_bytes(notif.as_bytes()).await?;
+                write_or_close(session, notif.as_bytes()).await?;
                 let log_line = crate::verbose::format_ax_log_line(text);
-                session.write_bytes(log_line.as_bytes()).await?;
+                write_or_close(session, log_line.as_bytes()).await?;
             }
         }
         line.clear();
     }
-    engine.lock().await.policy_sessions().end(connection);
     Ok(())
 }
 
@@ -782,5 +814,47 @@ mod tests {
         )
         .await;
         assert_eq!(*served.lock().unwrap(), vec![1, 2]);
+    }
+    async fn read_json_line(session: &mut DaemonSession) -> serde_json::Value {
+        let mut line = String::new();
+        session.read_line(&mut line).await.unwrap();
+        serde_json::from_str(line.trim()).unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_client_that_stops_reading_does_not_block_other_clients() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let engine = Arc::new(Mutex::new(McpEngine::with_project_root(root.clone())));
+        let lifecycle = DaemonLifecycle::new(root.clone(), None);
+        let serve = |io: tokio::io::DuplexStream| {
+            let (engine, root, lc) = (engine.clone(), root.clone(), lifecycle.clone());
+            tokio::spawn(async move {
+                let _ = serve_session(DaemonSession::from_io(io), engine, &root, 0, None, lc).await;
+            })
+        };
+        let list = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n";
+
+        // Window A reads the hello, then stops reading its responses.
+        let (a_client, a_server) = tokio::io::duplex(8 * 1024);
+        serve(a_server);
+        let mut a = DaemonSession::from_io(a_client);
+        assert_eq!(read_json_line(&mut a).await["type"], "hello");
+        for _ in 0..4 {
+            a.write_bytes(list).await.unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Window B must still get its answer.
+        let (b_client, b_server) = tokio::io::duplex(1024 * 1024);
+        serve(b_server);
+        let mut b = DaemonSession::from_io(b_client);
+        assert_eq!(read_json_line(&mut b).await["type"], "hello");
+        b.write_bytes(list).await.unwrap();
+        let answer = tokio::time::timeout(Duration::from_secs(10), read_json_line(&mut b))
+            .await
+            .expect("window B was blocked by window A's stalled socket");
+        assert!(answer["result"]["tools"].is_array(), "{answer}");
+        drop(a);
     }
 }
