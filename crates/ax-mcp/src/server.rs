@@ -208,7 +208,13 @@ pub async fn handle_request(engine: &mut McpEngine, method: &str, params: Value)
             }
             let verbose = verbose_enabled(project_root.as_deref());
             if verbose {
-                let (result, verbose_lines) = with_trace_buffer(async {
+                // Resolved once per call; remote callers never get the host's Cursor session.
+                let session = if engine.is_remote() {
+                    None
+                } else {
+                    crate::verbose::active_session_id()
+                };
+                let (result, verbose_lines) = with_trace_buffer(session, async {
                     call_tool_and_wrap(engine, &name, args, project_root.as_deref(), true).await
                 })
                 .await;
@@ -450,9 +456,9 @@ async fn call_tool_and_wrap(
             }
         }
     }
+    // Record in memory only; the background flush persists the queue off this task.
     if let Ok(mut t) = telemetry().lock() {
         t.record_usage("mcp_tool", name, result.is_ok(), None);
-        t.persist_sync();
     }
     ax_telemetry::trigger_background_flush();
     let result = result.map(|value| record_policy_delivery(engine, value));
@@ -510,7 +516,7 @@ async fn call_tool_and_wrap(
                         removed_tokens,
                     } => {
                         if let Some(line) = ax_usage::format_context_store_line(
-                            crate::verbose::active_session_id().as_deref(),
+                            crate::verbose::trace_session().as_deref(),
                             id,
                             *original_tokens,
                             *sent_tokens,
@@ -1380,6 +1386,37 @@ mod policy_integration {
             "policy.rules should count the fixture rules, got {rules}"
         );
     }
+
+    async fn traced_search(engine: &mut McpEngine) -> Vec<String> {
+        let call = json!({ "name": "ax_search", "arguments": { "query": "lean_structured" } });
+        let outcome = handle_request(engine, "tools/call", call).await;
+        assert!(outcome.result.is_ok(), "{:?}", outcome.result);
+        outcome.verbose_lines
+    }
+
+    #[tokio::test]
+    async fn remote_traces_never_carry_the_host_cursor_session() {
+        let _env = crate::test_env::exclusive().await;
+        let _sid = crate::test_env::EnvVar::set("AX_CURSOR_SESSION_ID", "host-cursor-sid");
+        let dir = policy_fixture().await;
+
+        let mut local = engine_for(dir.path());
+        let lines = traced_search(&mut local).await;
+        assert!(!lines.is_empty());
+        assert!(
+            lines.iter().all(|l| l.contains("session=host-cursor-sid")),
+            "{lines:?}"
+        );
+
+        let mut remote = McpEngine::for_remote(dir.path().to_path_buf());
+        let lines = traced_search(&mut remote).await;
+        assert!(!lines.is_empty());
+        assert!(
+            lines.iter().all(|l| !l.contains("host-cursor-sid")),
+            "{lines:?}"
+        );
+    }
+
 }
 
 #[cfg(test)]
@@ -2754,4 +2791,5 @@ mod error_codes {
         let unknown = handle_request(&mut engine, "resources/list", json!({})).await;
         assert_eq!(unknown.error_code, METHOD_NOT_FOUND);
     }
+
 }
