@@ -72,8 +72,8 @@
     Content-Type = "application/json; charset=utf-8"
     Cache-Control = "public, max-age=300"
 
-# Admin pages hold the admin bearer token in sessionStorage, so only our own scripts
-# (plus the integrity-pinned Chart.js on the dashboard) may run there.
+# The admin token lives in an HttpOnly cookie scoped to /v1/admin; still, only our own
+# scripts (plus the integrity-pinned Chart.js on the dashboard) may run on the admin pages.
 [[headers]]
   for = "/admin/dashboard/*"
   [headers.values]

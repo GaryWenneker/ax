@@ -48,3 +48,13 @@ test('the admin login page sends a CSP that blocks third-party scripts', () => {
   assert.deepEqual(directive(csp, 'connect-src'), ["'self'"]);
   assert.deepEqual(directive(csp, 'frame-ancestors'), ["'none'"]);
 });
+
+test('admin pages keep the admin token out of page scripts and let password managers fill the login', () => {
+  for (const page of adminPages) {
+    const source = read(`src/pages/admin/${page}`);
+    assert.doesNotMatch(source, /sessionStorage|localStorage|document\.cookie|Authorization/, `${page}: the HttpOnly cookie carries the token`);
+  }
+  const loginPage = read('src/pages/admin/login.astro');
+  assert.doesNotMatch(loginPage, /autocomplete="off"/);
+  assert.match(loginPage, /autocomplete="current-password"/);
+});

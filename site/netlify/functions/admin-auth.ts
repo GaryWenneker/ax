@@ -1,20 +1,28 @@
 import type { Handler } from '@netlify/functions';
-import { LoginLimiter, clientAddress, passwordMatches, signAdminToken } from '../admin-token.ts';
+import {
+  LoginLimiter, adminCookie, clearedAdminCookie, clientAddress, passwordMatches, sameOrigin, signAdminToken,
+} from '../admin-token.ts';
 
 const limiter = new LoginLimiter();
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+// Same-origin only: the admin pages live on this site, and the token travels in
+// an HttpOnly cookie, so no cross-origin (CORS) access is offered.
+const CORS_HEADERS = { 'Cache-Control': 'no-store' };
 
 const handler: Handler = async (event) => {
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 204, headers: CORS_HEADERS, body: '' };
+  if (!sameOrigin(event.headers ?? {})) {
+    return {
+      statusCode: 403,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: 'Cross-origin request refused' }),
+    };
+  }
+  // Sign out: the cookie is HttpOnly, so only the server can remove it.
+  if (event.httpMethod === 'DELETE') {
+    return { statusCode: 204, headers: { ...CORS_HEADERS, 'Set-Cookie': clearedAdminCookie() }, body: '' };
   }
   if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, headers: CORS_HEADERS, body: 'Method Not Allowed' };
+    return { statusCode: 405, headers: { ...CORS_HEADERS, Allow: 'POST, DELETE' }, body: 'Method Not Allowed' };
   }
 
   const adminPassword = process.env.ADMIN_PASSWORD;
@@ -64,8 +72,8 @@ const handler: Handler = async (event) => {
 
   return {
     statusCode: 200,
-    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token }),
+    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json', 'Set-Cookie': adminCookie(token) },
+    body: JSON.stringify({ ok: true }),
   };
 };
 

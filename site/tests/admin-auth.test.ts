@@ -21,38 +21,91 @@ function freshIp(): string {
 	return `198.51.100.${ipCounter}`;
 }
 
-async function attempt(password: string, ip: string) {
+const HOST = 'getax.wenneker.io';
+type Res = { statusCode: number; headers: Record<string, string>; body: string };
+
+async function attempt(password: string, ip: string, extra: Record<string, string> = {}) {
 	return (await (login as any)({
 		httpMethod: 'POST',
-		headers: { 'x-nf-client-connection-ip': ip },
+		headers: { 'x-nf-client-connection-ip': ip, host: HOST, origin: `https://${HOST}`, ...extra },
 		body: JSON.stringify({ password }),
-	})) as { statusCode: number; headers: Record<string, string>; body: string };
+	})) as Res;
 }
 
-async function dashboard(token: string) {
+/** The admin token from a login's Set-Cookie header. */
+function cookieToken(res: Res): string {
+	const cookie = res.headers['Set-Cookie'] ?? '';
+	const token = cookie.match(/^ax_admin=([^;]+)/)?.[1];
+	assert.ok(token, `login sets the ax_admin cookie: ${cookie}`);
+	return token;
+}
+
+async function dashboard(token: string, extra: Record<string, string> = {}) {
 	const realFetch = globalThis.fetch;
 	globalThis.fetch = (async () =>
 		new Response(JSON.stringify({ results: [], columns: [] }), { status: 200 })) as typeof fetch;
 	try {
 		return (await (telemetry as any)({
 			httpMethod: 'GET',
-			headers: { authorization: `Bearer ${token}` },
+			headers: { cookie: `other=1; ax_admin=${token}`, host: HOST, ...extra },
 			queryStringParameters: { type: 'dashboard', days: '7' },
-		})) as { statusCode: number; body: string };
+		})) as Res;
 	} finally {
 		globalThis.fetch = realFetch;
 	}
 }
 
-test('the right password returns a token for the admin dashboard', async () => {
+test('the right password sets an HttpOnly admin cookie that opens the dashboard', async () => {
 	const res = await attempt(PASSWORD, freshIp());
 	assert.equal(res.statusCode, 200);
-	const { token } = JSON.parse(res.body);
+	const cookie = res.headers['Set-Cookie'];
+	for (const attr of ['HttpOnly', 'Secure', 'SameSite=Strict', 'Path=/v1/admin']) {
+		assert.ok(cookie.split(/;\s*/).includes(attr), `cookie has ${attr}: ${cookie}`);
+	}
+	const token = cookieToken(res);
+	assert.ok(!res.body.includes(token), 'the token never reaches page scripts');
+	assert.equal(res.headers['Access-Control-Allow-Origin'], undefined);
 	const claims = decodeJwt(token);
 	assert.equal(claims.admin, true);
 	assert.equal(claims.iss, 'getax-admin');
 	assert.equal(claims.aud, 'getax-admin-dashboard');
 	assert.equal((await dashboard(token)).statusCode, 200);
+});
+
+test('the dashboard API needs the cookie: a bearer header alone or no credentials get 401', async () => {
+	const token = cookieToken(await attempt(PASSWORD, freshIp()));
+	const realFetch = globalThis.fetch;
+	globalThis.fetch = (async () => new Response('{"results":[]}', { status: 200 })) as typeof fetch;
+	try {
+		for (const headers of [{ authorization: `Bearer ${token}`, host: HOST }, { host: HOST }]) {
+			const res = (await (telemetry as any)({ httpMethod: 'GET', headers, queryStringParameters: {} })) as Res;
+			assert.equal(res.statusCode, 401);
+		}
+	} finally {
+		globalThis.fetch = realFetch;
+	}
+});
+
+test('requests from another origin are refused before the password or cookie is checked', async () => {
+	const evil = { origin: 'https://evil.example' };
+	assert.equal((await attempt(PASSWORD, freshIp(), evil)).statusCode, 403);
+	assert.equal((await attempt(PASSWORD, freshIp(), { 'sec-fetch-site': 'cross-site' })).statusCode, 403);
+	const token = cookieToken(await attempt(PASSWORD, freshIp()));
+	assert.equal((await dashboard(token, evil)).statusCode, 403);
+	assert.equal((await dashboard(token, { 'sec-fetch-site': 'same-site' })).statusCode, 403);
+	assert.equal((await dashboard(token, { 'sec-fetch-site': 'same-origin' })).statusCode, 200);
+});
+
+test('signing out clears the admin cookie', async () => {
+	const res = (await (login as any)({
+		httpMethod: 'DELETE',
+		headers: { host: HOST, origin: `https://${HOST}` },
+	})) as Res;
+	assert.equal(res.statusCode, 204);
+	const cookie = res.headers['Set-Cookie'];
+	assert.match(cookie, /^ax_admin=;/);
+	assert.ok(cookie.split(/;\s*/).includes('Max-Age=0'), cookie);
+	assert.ok(cookie.split(/;\s*/).includes('Path=/v1/admin'), cookie);
 });
 
 test('a wrong password is refused', async () => {

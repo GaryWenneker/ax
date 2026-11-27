@@ -7,6 +7,50 @@ export const ADMIN_ISSUER = 'getax-admin';
 export const ADMIN_AUDIENCE = 'getax-admin-dashboard';
 export const ADMIN_TOKEN_TTL = '8h';
 
+/** The cookie that carries the admin token. HttpOnly, so page scripts never see it. */
+export const ADMIN_COOKIE = 'ax_admin';
+/** Only the admin API receives the cookie, never the documentation pages. */
+export const ADMIN_COOKIE_PATH = '/v1/admin';
+const ADMIN_COOKIE_MAX_AGE = 8 * 60 * 60;
+
+/** Set-Cookie value that hands the browser the admin token for ADMIN_TOKEN_TTL. */
+export function adminCookie(token: string): string {
+	return `${ADMIN_COOKIE}=${token}; Path=${ADMIN_COOKIE_PATH}; HttpOnly; Secure; SameSite=Strict; Max-Age=${ADMIN_COOKIE_MAX_AGE}`;
+}
+
+/** Set-Cookie value that removes the admin cookie (sign out). */
+export function clearedAdminCookie(): string {
+	return `${ADMIN_COOKIE}=; Path=${ADMIN_COOKIE_PATH}; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
+}
+
+/** The admin token from the request's Cookie header, if any. */
+export function adminCookieToken(headers: Record<string, string | undefined>): string | undefined {
+	for (const part of (headers.cookie ?? '').split(';')) {
+		const eq = part.indexOf('=');
+		if (eq > 0 && part.slice(0, eq).trim() === ADMIN_COOKIE) return part.slice(eq + 1).trim() || undefined;
+	}
+	return undefined;
+}
+
+/**
+ * False when the browser says the request comes from another site: an Origin
+ * whose host differs from the request's Host, or a Sec-Fetch-Site other than
+ * same-origin or none. Requests without either header (curl, tests) pass;
+ * they carry no ambient cookie unless the caller sets one.
+ */
+export function sameOrigin(headers: Record<string, string | undefined>): boolean {
+	const site = headers['sec-fetch-site'];
+	if (site && site !== 'same-origin' && site !== 'none') return false;
+	const origin = headers.origin;
+	if (!origin) return true;
+	const hosts = [headers.host, headers['x-forwarded-host']].filter(Boolean);
+	try {
+		return hosts.includes(new URL(origin).host);
+	} catch {
+		return false;
+	}
+}
+
 /** Failed logins allowed per client address within one window. */
 export const MAX_FAILED_LOGINS = 5;
 /** Length of the failure window, and of the lockout that follows it. */
@@ -30,10 +74,10 @@ export async function signAdminToken(secret: string): Promise<string> {
 }
 
 /** True only for an unexpired HS256 token from the admin login with `admin: true`. */
-export async function verifyAdminToken(authHeader: string | undefined, secret: string): Promise<boolean> {
-	if (!authHeader?.startsWith('Bearer ')) return false;
+export async function verifyAdminToken(token: string | undefined, secret: string): Promise<boolean> {
+	if (!token) return false;
 	try {
-		const { payload } = await jwtVerify(authHeader.slice(7), new TextEncoder().encode(secret), {
+		const { payload } = await jwtVerify(token, new TextEncoder().encode(secret), {
 			algorithms: ['HS256'],
 			issuer: ADMIN_ISSUER,
 			audience: ADMIN_AUDIENCE,

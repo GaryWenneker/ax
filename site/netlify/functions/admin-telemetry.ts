@@ -1,11 +1,9 @@
 import type { Handler } from '@netlify/functions';
-import { verifyAdminToken } from '../admin-token.ts';
+import { adminCookieToken, sameOrigin, verifyAdminToken } from '../admin-token.ts';
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
-};
+// Same-origin only: the admin token arrives in an HttpOnly cookie set by
+// admin-auth, so no cross-origin (CORS) access is offered.
+const CORS_HEADERS = { 'Cache-Control': 'no-store' };
 
 type HogRow = unknown[];
 
@@ -237,8 +235,12 @@ export function parseDays(raw: string | undefined): number {
 }
 
 const handler: Handler = async (event) => {
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 204, headers: CORS_HEADERS, body: '' };
+  if (!sameOrigin(event.headers ?? {})) {
+    return {
+      statusCode: 403,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: 'Cross-origin request refused' }),
+    };
   }
 
   const adminSecret = process.env.ADMIN_SECRET;
@@ -260,7 +262,7 @@ const handler: Handler = async (event) => {
     };
   }
 
-  if (!(await verifyAdminToken(event.headers.authorization, adminSecret))) {
+  if (!(await verifyAdminToken(adminCookieToken(event.headers ?? {}), adminSecret))) {
     return {
       statusCode: 401,
       headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },

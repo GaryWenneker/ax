@@ -15,7 +15,7 @@ beforeEach(() => {
 type Res = { statusCode: number; body: string };
 
 /** Calls the handler with a stubbed PostHog and returns the response plus every HogQL query sent. */
-async function call(params: Record<string, string>, authorization?: string): Promise<{ res: Res; queries: string[] }> {
+async function call(params: Record<string, string>, cookie?: string): Promise<{ res: Res; queries: string[] }> {
 	const queries: string[] = [];
 	const realFetch = globalThis.fetch;
 	globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
@@ -24,7 +24,7 @@ async function call(params: Record<string, string>, authorization?: string): Pro
 	}) as typeof fetch;
 	try {
 		const headers: Record<string, string> = {};
-		if (authorization) headers.authorization = authorization;
+		if (cookie) headers.cookie = cookie;
 		const res = (await (telemetry as any)({ httpMethod: 'GET', headers, queryStringParameters: params })) as Res;
 		return { res, queries };
 	} finally {
@@ -32,12 +32,13 @@ async function call(params: Record<string, string>, authorization?: string): Pro
 	}
 }
 
-async function bearer(): Promise<string> {
-	return `Bearer ${await signAdminToken(SECRET)}`;
+/** The Cookie header a signed-in admin's browser sends. */
+async function signedIn(): Promise<string> {
+	return `ax_admin=${await signAdminToken(SECRET)}`;
 }
 
 test('a non-numeric days value falls back to 30 days instead of NaN', async () => {
-	const { res, queries } = await call({ type: 'dashboard', days: 'x' }, await bearer());
+	const { res, queries } = await call({ type: 'dashboard', days: 'x' }, await signedIn());
 	assert.equal(res.statusCode, 200);
 	assert.ok(queries.length > 0);
 	for (const q of queries) assert.ok(!q.includes('NaN'), q);
@@ -47,14 +48,14 @@ test('a non-numeric days value falls back to 30 days instead of NaN', async () =
 });
 
 test('days is clamped to 1..90', async () => {
-	const high = JSON.parse((await call({ days: '500' }, await bearer())).res.body);
+	const high = JSON.parse((await call({ days: '500' }, await signedIn())).res.body);
 	assert.equal(high.overview.days, 90);
-	const low = JSON.parse((await call({ days: '-3' }, await bearer())).res.body);
+	const low = JSON.parse((await call({ days: '-3' }, await signedIn())).res.body);
 	assert.equal(low.overview.days, 1);
 });
 
 test('an unknown type is refused before any PostHog query', async () => {
-	const { res, queries } = await call({ type: 'foo' }, await bearer());
+	const { res, queries } = await call({ type: 'foo' }, await signedIn());
 	assert.equal(res.statusCode, 400);
 	assert.equal(queries.length, 0);
 });
@@ -75,7 +76,7 @@ test('an unauthenticated caller does not learn which secrets are missing', async
 
 test('a signed-in admin is told which PostHog settings are missing', async () => {
 	delete process.env.POSTHOG_PROJECT_ID;
-	const { res, queries } = await call({ type: 'dashboard' }, await bearer());
+	const { res, queries } = await call({ type: 'dashboard' }, await signedIn());
 	assert.equal(res.statusCode, 503);
 	assert.deepEqual(JSON.parse(res.body).missing_env, ['POSTHOG_PROJECT_ID']);
 	assert.equal(queries.length, 0);

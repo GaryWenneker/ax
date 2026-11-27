@@ -138,10 +138,6 @@ import LogoMark from '../../components/LogoMark.astro';
       /** Changing the range quickly overlaps loads; only the newest may render. */
       const loads = latestRequests();
 
-      function getToken(): string | null {
-        return sessionStorage.getItem('ax_admin_token');
-      }
-
       function destroyCharts(): void {
         for (const chart of chartInstances) {
           try {
@@ -154,13 +150,15 @@ import LogoMark from '../../components/LogoMark.astro';
       }
 
       async function apiFetch(days: number, signal: AbortSignal): Promise<unknown> {
-        const token = getToken();
-        if (!token) return null;
+        // The HttpOnly admin cookie from the login authenticates this request.
         const res = await fetch(`/v1/admin/telemetry?type=dashboard&days=${days}`, {
-          headers: { Authorization: `Bearer ${token}` },
+          credentials: 'same-origin',
           signal,
         });
-        if (res.status === 401) return null;
+        if (res.status === 401) {
+          window.location.href = '/admin/login';
+          return null;
+        }
         if (!res.ok) {
           let detail = `HTTP ${res.status}`;
           try {
@@ -339,26 +337,23 @@ import LogoMark from '../../components/LogoMark.astro';
         }
       }
 
-      // Auth guard
-      if (!getToken()) {
-        window.location.href = '/admin/login';
-      } else {
-        const daysSelect = document.getElementById('days-select') as HTMLSelectElement;
+      // Without a valid admin cookie the first load answers 401 and returns to the login.
+      const daysSelect = document.getElementById('days-select') as HTMLSelectElement;
+      load(parseInt(daysSelect.value, 10));
+
+      daysSelect.addEventListener('change', () => {
         load(parseInt(daysSelect.value, 10));
+      });
 
-        daysSelect.addEventListener('change', () => {
-          load(parseInt(daysSelect.value, 10));
-        });
+      document.getElementById('retry-btn')!.addEventListener('click', () => {
+        load(parseInt(daysSelect.value, 10));
+      });
 
-        document.getElementById('retry-btn')!.addEventListener('click', () => {
-          load(parseInt(daysSelect.value, 10));
-        });
-
-        document.getElementById('logout-btn')!.addEventListener('click', () => {
-          sessionStorage.removeItem('ax_admin_token');
-          window.location.href = '/admin/login';
-        });
-      }
+      document.getElementById('logout-btn')!.addEventListener('click', async () => {
+        // The cookie is HttpOnly, so the server removes it.
+        await fetch('/v1/admin/login', { method: 'DELETE', credentials: 'same-origin' }).catch(() => undefined);
+        window.location.href = '/admin/login';
+      });
     </script>
 
     <style>
