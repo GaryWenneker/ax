@@ -709,6 +709,10 @@ Run `ax policy sync` to verify managed policy files and warn about duplicate `.c
 3. If DB is empty but `.ax/policy/` exists: `ax policy import` or `ax policy index --force`.
 4. Restart daemon: `ax daemon stop`, then reload MCP.
 
+### A rule or skill file has a typo
+
+When a policy file exists but cannot be read or parsed (a YAML typo in the frontmatter, for example), the index skips it and keeps the version it indexed before, so a broken edit never removes a CRITICAL rule. `ax policy index` prints each skipped file with the reason, and `ax_policy_index` returns them in `skipped`. In database mode, a rule or skill with `storage: files` whose file is missing, unparseable or now holds another id keeps its stored row the same way. Fix the file and index again; delete the file to remove the rule.
+
 ### `ax policy guard` CLI errors
 
 Use file-first syntax (write check is default):
