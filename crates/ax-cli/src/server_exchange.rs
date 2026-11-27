@@ -240,7 +240,13 @@ pub async fn publish(
     sqlx::query("CREATE TABLE IF NOT EXISTS ax_node_contributions (seq INTEGER PRIMARY KEY AUTOINCREMENT, cluster_id TEXT NOT NULL, project_id TEXT NOT NULL, node_id TEXT NOT NULL, revision TEXT NOT NULL, snapshot TEXT NOT NULL, UNIQUE(cluster_id,project_id,node_id,revision))")
         .execute(pool).await.map_err(|e| e.to_string())?;
     sqlx::query("CREATE TABLE IF NOT EXISTS ax_node_datasets (cluster_id TEXT NOT NULL,project_id TEXT NOT NULL,node_id TEXT NOT NULL,manifest TEXT NOT NULL,PRIMARY KEY(cluster_id,project_id,node_id))").execute(pool).await.map_err(|e|e.to_string())?;
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    // IMMEDIATE takes the write lock up front: retain() reads before it writes, and a
+    // deferred transaction that upgrades after another exchange committed fails with
+    // SQLITE_BUSY_SNAPSHOT instead of waiting behind busy_timeout.
+    let mut tx = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|e| e.to_string())?;
     retain(&mut tx, &project.path, &native).await?;
     if let Some(snapshot) = incoming {
         retain(&mut tx, &project.path, snapshot).await?;
@@ -634,6 +640,31 @@ mod tests {
         ax.index_policy(true).await.unwrap();
         let native = server_snapshot::export_native(&c, "project").await.unwrap();
         assert!(native.files["state/rules.json"].contains("Locally edited safety rule"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_exchanges_queue_instead_of_failing_busy() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ax = ax_core::Ax::init(dir.path()).await.unwrap();
+        let c = std::sync::Arc::new(config(dir.path()));
+        publish(&c, "project", None).await.unwrap();
+        for round in 0..3 {
+            let tasks: Vec<_> = (0..4)
+                .map(|i| {
+                    let c = c.clone();
+                    tokio::spawn(async move {
+                        let incoming =
+                            snapshot(&format!("replica-{i}"), Some(&format!("round {round}")));
+                        publish(&c, "project", Some(&incoming)).await
+                    })
+                })
+                .collect();
+            for task in tasks {
+                task.await
+                    .unwrap()
+                    .expect("a concurrent exchange must not fail with SQLITE_BUSY");
+            }
+        }
     }
 
     #[tokio::test]
