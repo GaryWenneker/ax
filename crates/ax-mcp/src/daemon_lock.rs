@@ -148,7 +148,7 @@ pub fn clear_stale_daemon_lock(pid_path: &Path, expected_pid: Option<u32>) {
         if expected_pid.is_some_and(|p| p != existing.pid) {
             return;
         }
-        if is_pid_alive(existing.pid) {
+        if is_daemon_pid(existing.pid, Some(existing.started_at)) {
             return;
         }
     } else if let Some(pid) = expected_pid {
@@ -181,6 +181,140 @@ pub fn is_pid_alive(pid: u32) -> bool {
         true,
     );
     sys.process(Pid::from_u32(pid)).is_some()
+}
+
+/// Whole seconds a process start time (which sysinfo reports in seconds) may lie
+/// after the time the daemon wrote into its file and still be that daemon.
+const START_SLACK_SECS: u64 = 2;
+
+/// True when `pid` is alive and can be the ax daemon that wrote a file stamped
+/// `started_at_ms` (milliseconds since the epoch; `None` or 0 when unknown).
+///
+/// A pid alone is not enough: after a crash or reboot the pid in `daemon.json`
+/// or `daemon.pid` can belong to any other process. The process must run an
+/// `ax` binary (or this binary) and must have started before the file was written.
+pub fn is_daemon_pid(pid: u32, started_at_ms: Option<u64>) -> bool {
+    use sysinfo::{Pid, ProcessRefreshKind, System, UpdateKind};
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::Some(&[Pid::from_u32(pid)]),
+        true,
+        ProcessRefreshKind::nothing().with_exe(UpdateKind::Always),
+    );
+    let Some(process) = sys.process(Pid::from_u32(pid)) else {
+        return false;
+    };
+    let exe_stem = process
+        .exe()
+        .and_then(|p| p.file_stem())
+        .or_else(|| Path::new(process.name()).file_stem())
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    could_be_daemon(&exe_stem, process.start_time(), started_at_ms)
+}
+
+/// The decision behind [`is_daemon_pid`], given the process's executable stem and
+/// start time (seconds since the epoch).
+fn could_be_daemon(exe_stem: &str, process_start_secs: u64, started_at_ms: Option<u64>) -> bool {
+    let own_stem = crate::exe_identity::current_exe_path()
+        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()));
+    let is_ax = exe_stem.eq_ignore_ascii_case("ax")
+        || own_stem.is_some_and(|own| own.eq_ignore_ascii_case(exe_stem));
+    let started_in_time = match started_at_ms.filter(|ms| *ms > 0) {
+        Some(ms) => process_start_secs <= ms / 1000 + START_SLACK_SECS,
+        None => true,
+    };
+    is_ax && started_in_time
+}
+
+/// What [`stop_daemon_pid`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopOutcome {
+    /// No process with that pid runs.
+    NotRunning,
+    /// A process runs with that pid, but it is not the ax daemon: it was left alone.
+    NotADaemon,
+    /// The daemon exited after the polite stop request.
+    Stopped,
+    /// The daemon ignored the stop request and was force-killed.
+    Killed,
+    /// The daemon still runs after the force-kill.
+    StillRunning,
+}
+
+impl StopOutcome {
+    /// The daemon with that pid no longer runs.
+    pub fn is_gone(self) -> bool {
+        matches!(self, Self::NotRunning | Self::Stopped | Self::Killed)
+    }
+}
+
+/// How long [`stop_daemon_pid`] waits after SIGTERM before it force-kills.
+pub const DAEMON_STOP_GRACE: Duration = Duration::from_secs(5);
+
+/// Stops the ax daemon with `pid`: checks that the pid is that daemon
+/// ([`is_daemon_pid`]), asks it to stop (SIGTERM, so it removes its files and
+/// records a clean shutdown), waits up to `grace`, then force-kills it.
+pub fn stop_daemon_pid(pid: u32, started_at_ms: Option<u64>, grace: Duration) -> StopOutcome {
+    stop_pid_with(pid, grace, |pid| is_daemon_pid(pid, started_at_ms))
+}
+
+fn stop_pid_with(pid: u32, grace: Duration, is_ours: impl Fn(u32) -> bool) -> StopOutcome {
+    if !is_pid_alive(pid) {
+        return StopOutcome::NotRunning;
+    }
+    if !is_ours(pid) {
+        return StopOutcome::NotADaemon;
+    }
+    if pid == std::process::id() {
+        return StopOutcome::NotADaemon;
+    }
+    let _ = term_pid(pid);
+    if wait_until_gone(pid, grace) {
+        return StopOutcome::Stopped;
+    }
+    let _ = kill_pid(pid);
+    if wait_until_gone(pid, Duration::from_secs(2)) {
+        StopOutcome::Killed
+    } else {
+        StopOutcome::StillRunning
+    }
+}
+
+fn wait_until_gone(pid: u32, timeout: Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if !is_pid_alive(pid) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Ask a process to stop (Unix SIGTERM, Windows `taskkill` without `/F`).
+fn term_pid(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string()])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(unix)]
+    {
+        std::process::Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
 }
 
 /// Force-stop a process by PID (Windows `taskkill` / Unix `kill -9`).
@@ -343,6 +477,102 @@ mod tests {
             assert_eq!(acquired, 1, "daemons that acquired the same lock");
             assert_eq!(unreadable, 0, "a taken lock was seen without its contents");
         }
+    }
+
+    fn now_ms() -> u64 {
+        SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+    }
+
+    /// A child process that is reaped as soon as it exits, so it is not seen as a
+    /// live zombie.
+    #[cfg(unix)]
+    fn reaped_child(script: &str) -> u32 {
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", script])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        std::thread::spawn(move || child.wait());
+        // Give the shell time to install its traps.
+        std::thread::sleep(Duration::from_millis(300));
+        pid
+    }
+
+    #[test]
+    fn a_live_pid_that_started_after_the_lock_is_not_the_daemon() {
+        let me = std::process::id();
+        assert!(
+            is_daemon_pid(me, Some(now_ms())),
+            "this process, lock written now"
+        );
+        let a_day_ago = now_ms() - 24 * 3600 * 1000;
+        assert!(
+            !is_daemon_pid(me, Some(a_day_ago)),
+            "a pid that started after its lock was written is a recycled pid"
+        );
+    }
+
+    #[test]
+    fn only_an_ax_binary_can_be_the_daemon() {
+        let now = 2_000_000;
+        assert!(could_be_daemon("ax", now, Some(now * 1000)));
+        assert!(could_be_daemon("AX", now, None));
+        assert!(!could_be_daemon("Code Helper", now, Some(now * 1000)));
+        assert!(!could_be_daemon("sleep", now, None));
+        assert!(!could_be_daemon("ax", now + 60, Some(now * 1000)));
+        assert!(
+            could_be_daemon("ax", now + 1, Some(now * 1000)),
+            "start time is rounded to seconds"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stop_leaves_a_process_that_is_not_the_daemon_alone() {
+        let pid = reaped_child("sleep 30");
+        assert_eq!(
+            stop_daemon_pid(pid, Some(now_ms()), Duration::from_millis(200)),
+            StopOutcome::NotADaemon
+        );
+        assert!(is_pid_alive(pid), "a process that is not ax was stopped");
+        let _ = kill_pid(pid);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stop_asks_politely_first_and_then_force_kills() {
+        let polite = reaped_child("trap 'exit 0' TERM; while true; do sleep 0.05; done");
+        assert_eq!(
+            stop_pid_with(polite, Duration::from_secs(5), |_| true),
+            StopOutcome::Stopped
+        );
+        let stubborn = reaped_child("trap '' TERM; while true; do sleep 0.05; done");
+        assert_eq!(
+            stop_pid_with(stubborn, Duration::from_millis(300), |_| true),
+            StopOutcome::Killed
+        );
+        assert!(!is_pid_alive(stubborn));
+    }
+
+    #[test]
+    fn a_lock_whose_pid_was_recycled_is_cleared() {
+        let (_dir, root) = lock_root();
+        let pid_path = daemon_pid_path(&root);
+        let info = DaemonLockInfo {
+            pid: std::process::id(),
+            version: "test".into(),
+            socket_path: "sock".into(),
+            started_at: now_ms() - 24 * 3600 * 1000,
+        };
+        fs::write(&pid_path, serde_json::to_string(&info).unwrap()).unwrap();
+        clear_stale_daemon_lock(&pid_path, None);
+        assert!(
+            !pid_path.exists(),
+            "a lock of a recycled pid kept new daemons out"
+        );
     }
 
     #[test]

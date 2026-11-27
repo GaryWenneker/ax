@@ -957,8 +957,8 @@ The daemon follows its binary. It checks every 30 seconds (`AX_DAEMON_EXE_CHECK_
 |---|---|
 | `path` | Optional project root (before subcommand) |
 | `status` | Show pid, port, socket from `.ax/daemon.json` (default) |
-| `stop` | Stop the running daemon |
-| `restart` | Stop + start a fresh daemon (Command Center **Reload MCP** uses the same path) |
+| `stop` | Stop the running daemon: checks that the pid in `.ax/daemon.json` is an ax daemon (an `ax` binary that started before the file was written), sends SIGTERM so it shuts down cleanly, waits up to 5 seconds, then force-kills it. A pid that belongs to another process is left running |
+| `restart` | Stop (the same way) + start a fresh daemon (Command Center **Reload MCP** uses the same path). Restarts are serialized by `.ax/daemon-restart.lock`, so restarts started from several proxies or windows at once never stop each other's new daemon; a proxy whose restart finds the daemon already on its build skips it |
 
 ```bash
 ax daemon status

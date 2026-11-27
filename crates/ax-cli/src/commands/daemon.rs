@@ -40,8 +40,6 @@ pub async fn run(path: Option<String>, action: DaemonAction) -> Result<(), Strin
             Ok(())
         }
         DaemonAction::Stop => {
-            // Restart helper stops cleanly; reuse it then kill the fresh daemon? No —
-            // keep stop semantics: only stop, do not start.
             let report = stop_only(&root).await?;
             println!("{}", ok_line(report));
             Ok(())
@@ -75,18 +73,33 @@ pub async fn run(path: Option<String>, action: DaemonAction) -> Result<(), Strin
 }
 
 async fn stop_only(root: &std::path::Path) -> Result<String, String> {
-    use ax_mcp::daemon::remove_daemon_info;
-    use ax_mcp::daemon_lock::{kill_pid, release_daemon_lock};
+    use ax_mcp::daemon::remove_daemon_info_if_owned;
+    use ax_mcp::daemon_lock::{
+        release_daemon_lock_if_owned, stop_daemon_pid, StopOutcome, DAEMON_STOP_GRACE,
+    };
     use ax_mcp::daemon_paths::daemon_pid_path;
 
-    if let Some(info) = read_daemon_info(root) {
-        if is_pid_alive(info.pid) {
-            let _ = kill_pid(info.pid);
-        }
-        remove_daemon_info(root);
-        release_daemon_lock(&daemon_pid_path(root));
-        Ok(format!("stopped daemon pid {}", info.pid))
-    } else {
-        Ok("no daemon running".into())
+    let Some(info) = read_daemon_info(root) else {
+        return Ok("no daemon running".into());
+    };
+    let (pid, started_at) = (info.pid, info.started_at);
+    let outcome =
+        tokio::task::spawn_blocking(move || stop_daemon_pid(pid, started_at, DAEMON_STOP_GRACE))
+            .await
+            .map_err(|e| format!("stop task failed: {e}"))?;
+    if outcome == StopOutcome::StillRunning {
+        return Err(format!("ax daemon pid {pid} did not stop"));
     }
+    // The daemon removes its own files on a clean stop; these are left after a
+    // force-kill, or describe a daemon that is gone.
+    remove_daemon_info_if_owned(root, pid);
+    release_daemon_lock_if_owned(&daemon_pid_path(root), pid);
+    Ok(match outcome {
+        StopOutcome::Stopped => format!("stopped daemon pid {pid}"),
+        StopOutcome::Killed => format!("daemon pid {pid} did not stop in time and was killed"),
+        StopOutcome::NotADaemon => {
+            format!("pid {pid} is not an ax daemon; left it running and removed the stale files")
+        }
+        _ => format!("daemon pid {pid} was not running; removed its files"),
+    })
 }

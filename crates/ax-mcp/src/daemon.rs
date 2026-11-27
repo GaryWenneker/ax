@@ -15,7 +15,7 @@ use ax_context::directory::get_ax_dir;
 
 use crate::daemon_conn::{connect_path, connect_tcp, DaemonSession};
 use crate::daemon_lock::{
-    clear_stale_daemon_lock, is_pid_alive, release_daemon_lock_if_owned, rewrite_lock_socket_path,
+    clear_stale_daemon_lock, is_daemon_pid, release_daemon_lock_if_owned, rewrite_lock_socket_path,
     try_acquire_daemon_lock, AcquireResult,
 };
 use crate::daemon_paths::{daemon_pid_path, daemon_socket_candidates};
@@ -59,6 +59,10 @@ pub struct DaemonInfo {
     /// Secret a TCP client sends as its first line. Only TCP daemons have one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
+    /// When the daemon wrote this file, in milliseconds since the epoch. A process
+    /// with the same pid that started later is not this daemon.
+    #[serde(default, rename = "startedAt", skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<u64>,
 }
 
 /// The binary this daemon was started from, taken once at startup.
@@ -85,6 +89,10 @@ pub fn write_daemon_info(
         project_root: project_root.to_string_lossy().replace('\\', "/"),
         exe: daemon_exe(),
         token,
+        started_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_millis() as u64),
     };
     let content = serde_json::to_string_pretty(&info)?;
     write_private(&daemon_info_path(project_root), content.as_bytes())
@@ -378,7 +386,7 @@ fn acquire_daemon_lock_or_exit(project_root: &Path) -> PathBuf {
             Ok(AcquireResult::Acquired { pid_path, .. }) => return pid_path,
             Ok(AcquireResult::Taken { existing, pid_path }) => {
                 if let Some(info) = existing {
-                    if is_pid_alive(info.pid) {
+                    if is_daemon_pid(info.pid, Some(info.started_at)) {
                         tracing::info!(
                             "another ax daemon (pid {}) holds the lock; exiting",
                             info.pid
@@ -671,14 +679,32 @@ async fn start_daemon_core(
     let lc_signal = Arc::clone(&lifecycle);
     let root_signal = project_root.clone();
     tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            lc_signal.shutdown("SIGINT").await;
-            remove_daemon_info_if_owned(&root_signal, std::process::id());
-            std::process::exit(0);
-        }
+        let reason = stop_signal().await;
+        lc_signal.shutdown(reason).await;
+        remove_daemon_info_if_owned(&root_signal, std::process::id());
+        std::process::exit(0);
     });
 
     Ok(lifecycle)
+}
+
+/// Waits for SIGINT or (Unix) SIGTERM, the signal `ax daemon stop` sends first.
+async fn stop_signal() -> &'static str {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        if let Ok(mut term) = signal(SignalKind::terminate()) {
+            tokio::select! {
+                Ok(()) = tokio::signal::ctrl_c() => return "SIGINT",
+                Some(()) = term.recv() => return "SIGTERM",
+                else => {}
+            }
+        }
+    }
+    if tokio::signal::ctrl_c().await.is_err() {
+        std::future::pending::<()>().await;
+    }
+    "SIGINT"
 }
 
 /// How long one write to a client may take before the connection is closed.
@@ -913,6 +939,7 @@ mod tests {
             project_root: root.to_string_lossy().into_owned(),
             exe: None,
             token: None,
+            started_at: None,
         };
         std::fs::write(
             daemon_info_path(root),
