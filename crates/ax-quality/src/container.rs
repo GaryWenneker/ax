@@ -1507,4 +1507,25 @@ esac
         assert!(ticks >= 30, "runtime was blocked: only {ticks} ticks");
         assert!(fake.calls().contains("ps -a"));
     }
+
+    #[test]
+    fn ensure_running_keeps_container_commands_off_the_runtime() {
+        let fake = FakeCli::new();
+        fake.file("hang-ps", "");
+        test_hooks::set_timeout_cap(Some(Duration::from_millis(500)));
+        let client = crate::sonar::SonarClient::new(crate::sonar::SonarConfig {
+            enabled: true,
+            host: "http://127.0.0.1:1".into(),
+            container_runtime: "podman".into(),
+            ..Default::default()
+        });
+        let outcome = run_with_ticker(Duration::from_secs(20), async move {
+            client.ensure_running().await
+        });
+        let (result, ticks) = outcome.expect("ensure_running returned within 20s");
+        assert!(result.is_err(), "no container is found, so it fails");
+        // The stuck `ps` lasts ~0.5s per runtime probe; a blocked runtime shows ~0 ticks.
+        assert!(ticks >= 20, "runtime was blocked: only {ticks} ticks");
+        assert!(fake.calls().contains("ps -a"));
+    }
 }
