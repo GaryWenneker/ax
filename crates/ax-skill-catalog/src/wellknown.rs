@@ -152,19 +152,31 @@ fn extract_tar_gz(bytes: &[u8], dest: &Path) -> Result<(), String> {
     for entry in archive.entries().map_err(|e| e.to_string())? {
         let mut entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path().map_err(|e| e.to_string())?;
-        if path
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir))
-        {
-            return Err("tar entry escapes the archive".into());
+        // Only plain names (and `.`) may appear: an absolute path, a drive
+        // prefix or `..` would make `dest.join` land outside `dest`.
+        let mut rel = std::path::PathBuf::new();
+        for component in path.components() {
+            match component {
+                std::path::Component::Normal(part) => rel.push(part),
+                std::path::Component::CurDir => {}
+                _ => return Err("tar entry escapes the archive".into()),
+            }
         }
         count += 1;
         if count > crate::install::COPY_MAX_FILES {
             return Err("archive has too many files".into());
         }
-        let target = dest.join(path.as_ref());
-        if entry.header().entry_type().is_dir() {
+        if rel.as_os_str().is_empty() {
+            continue;
+        }
+        let target = dest.join(&rel);
+        let kind = entry.header().entry_type();
+        if kind.is_dir() {
             fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+            continue;
+        }
+        // Links, devices and other special entries are not skill content.
+        if !kind.is_file() {
             continue;
         }
         if let Some(parent) = target.parent() {
@@ -194,6 +206,93 @@ mod tests {
         })
         .unwrap();
         assert_eq!(receipt.name, "pdf");
+        assert!(receipt.directory.join("scripts/run.py").is_file());
+    }
+    /// A gzip tar with raw member names, as a hostile archive would carry them.
+    fn raw_tar_gz(entries: &[(&str, tar::EntryType, &[u8])]) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        for (name, kind, data) in entries {
+            let mut header = tar::Header::new_old();
+            {
+                let old = header.as_old_mut();
+                old.name[..name.len()].copy_from_slice(name.as_bytes());
+            }
+            header.set_entry_type(*kind);
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append(&header, *data).unwrap();
+        }
+        let tar = builder.into_inner().unwrap();
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut gz, &tar).unwrap();
+        gz.finish().unwrap()
+    }
+
+    fn install_tar(bytes: Vec<u8>) -> (tempfile::TempDir, Result<InstallReceipt, String>) {
+        let dest = tempfile::tempdir().unwrap();
+        let index =
+            r#"{"skills":[{"name":"pdf","description":"d","url":"https://host/pdf.tar.gz"}]}"#;
+        let result =
+            materialize_well_known(index, "pdf", dest.path(), false, |_| Ok(bytes.clone()));
+        (dest, result)
+    }
+
+    #[test]
+    fn a_tar_entry_with_an_absolute_path_is_refused() {
+        let outside = tempfile::tempdir().unwrap();
+        let victim = outside.path().join("victim.txt");
+        std::fs::write(&victim, "keep me").unwrap();
+        let name = victim.display().to_string();
+        let bytes = raw_tar_gz(&[
+            (
+                "SKILL.md",
+                tar::EntryType::Regular,
+                b"---\nname: pdf\n---\n",
+            ),
+            (name.as_str(), tar::EntryType::Regular, b"pwned"),
+        ]);
+        let (_dest, result) = install_tar(bytes);
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep me");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_tar_entry_with_a_parent_dir_is_refused() {
+        let bytes = raw_tar_gz(&[("../escape.txt", tar::EntryType::Regular, b"x")]);
+        let (dest, result) = install_tar(bytes);
+        assert!(result.is_err());
+        assert!(!dest.path().join("escape.txt").exists());
+    }
+
+    #[test]
+    fn a_tar_link_entry_is_skipped() {
+        let bytes = raw_tar_gz(&[
+            (
+                "SKILL.md",
+                tar::EntryType::Regular,
+                b"---\nname: pdf\n---\n",
+            ),
+            ("link", tar::EntryType::Symlink, b""),
+        ]);
+        let (dest, result) = install_tar(bytes);
+        let receipt = result.unwrap();
+        assert!(receipt.directory.join("SKILL.md").is_file());
+        assert!(std::fs::symlink_metadata(dest.path().join("pdf/link")).is_err());
+    }
+
+    #[test]
+    fn a_plain_tar_installs() {
+        let bytes = raw_tar_gz(&[
+            (
+                "./SKILL.md",
+                tar::EntryType::Regular,
+                b"---\nname: pdf\n---\n",
+            ),
+            ("scripts/run.py", tar::EntryType::Regular, b"print(1)\n"),
+        ]);
+        let (_dest, result) = install_tar(bytes);
+        let receipt = result.unwrap();
         assert!(receipt.directory.join("scripts/run.py").is_file());
     }
 }
