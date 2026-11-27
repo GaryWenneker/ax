@@ -93,10 +93,10 @@ async fn put_settings(
     Json(body): Json<SettingsBody>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let root = hub.read().await.project_root.clone();
-    let settings = ax_skill_catalog::CatalogSettings {
-        report_installs: body.report_installs,
-        publish_remote: body.publish_remote,
-    };
+    // Keep fields this page does not edit, such as `allowPrivateHosts`.
+    let mut settings = ax_skill_catalog::load_settings(&root).unwrap_or_default();
+    settings.report_installs = body.report_installs;
+    settings.publish_remote = body.publish_remote;
     ax_skill_catalog::save_settings(&root, &settings).map_err(bad)?;
     Ok(Json(json!({
         "reportInstalls": settings.report_installs,

@@ -27,7 +27,18 @@ impl Fetched {
     }
 }
 
+/// [`fetch_source_allowing`] with no private hosts allowed.
 pub fn fetch_source(source: &SkillSource) -> Result<Fetched, String> {
+    fetch_source_allowing(source, &[])
+}
+
+/// Fetches a source. A well-known index is downloaded with
+/// [`http_bytes_allowing`], so `allow_private_hosts` names the hosts that may
+/// resolve to a private address.
+pub fn fetch_source_allowing(
+    source: &SkillSource,
+    allow_private_hosts: &[String],
+) -> Result<Fetched, String> {
     match source {
         SkillSource::Local { path } => Ok(Fetched {
             tree: PathBuf::from(path),
@@ -71,7 +82,7 @@ pub fn fetch_source(source: &SkillSource) -> Result<Fetched, String> {
             })
         }
         SkillSource::WellKnown { base_url, .. } => {
-            let (index_url, body) = fetch_index(base_url)?;
+            let (index_url, body) = fetch_index(base_url, allow_private_hosts)?;
             let file_base = index_url.trim_end_matches("/index.json").to_string();
             Ok(Fetched {
                 tree: PathBuf::new(),
@@ -87,7 +98,10 @@ pub fn fetch_source(source: &SkillSource) -> Result<Fetched, String> {
     }
 }
 
-pub fn fetch_index(base: &str) -> Result<(String, String), String> {
+fn fetch_index(
+    base: &str,
+    allow_private_hosts: &[String],
+) -> Result<(String, String), String> {
     let base = base.trim_end_matches('/');
     let urls = if base.contains("/.well-known/") {
         vec![format!("{base}/index.json")]
@@ -99,7 +113,7 @@ pub fn fetch_index(base: &str) -> Result<(String, String), String> {
     };
     let mut errors = Vec::new();
     for url in urls {
-        match http_text(&url) {
+        match http_text_allowing(&url, allow_private_hosts) {
             Ok(body) if body.contains("skills") => return Ok((url, body)),
             Ok(_) => errors.push(format!("{url} was not a skill index")),
             Err(err) => errors.push(err),
@@ -320,7 +334,12 @@ pub fn git_publish(repo: &Path, name: &str) -> Result<(), String> {
 }
 
 pub fn http_text(url: &str) -> Result<String, String> {
-    String::from_utf8(http_bytes(url)?).map_err(|e| e.to_string())
+    http_text_allowing(url, &[])
+}
+
+/// [`http_bytes_allowing`], decoded as UTF-8.
+pub fn http_text_allowing(url: &str, allow_private_hosts: &[String]) -> Result<String, String> {
+    String::from_utf8(http_bytes_allowing(url, allow_private_hosts)?).map_err(|e| e.to_string())
 }
 
 /// Largest body a skill download may have.
@@ -347,18 +366,32 @@ fn system_resolve(host: &str, port: u16) -> Result<Vec<SocketAddr>, String> {
         .map_err(|e| format!("could not resolve {host}: {e}"))
 }
 
+/// GET `url`, refusing local hosts and private addresses.
 pub fn http_bytes(url: &str) -> Result<Vec<u8>, String> {
-    fetch_vetted(url, &system_resolve, &private_ip)
+    http_bytes_allowing(url, &[])
+}
+
+/// GET `url`, refusing local hosts and private addresses unless the URL's host
+/// (or a redirect hop's host) is named in `allow_private_hosts`. The names
+/// come from `allowPrivateHosts` in `.ax/skill-catalog.json`; each use is
+/// logged.
+pub fn http_bytes_allowing(url: &str, allow_private_hosts: &[String]) -> Result<Vec<u8>, String> {
+    fetch_vetted(url, &system_resolve, &private_ip, allow_private_hosts)
 }
 
 /// GET `url`, refusing private targets. The host is resolved once, the
 /// addresses are checked, and the connection is pinned to exactly those
 /// addresses, so a second DNS answer cannot point it somewhere else.
 /// Redirects are followed by hand so every hop goes through the same check.
-fn fetch_vetted(url: &str, resolve: Resolve, blocked: Blocked) -> Result<Vec<u8>, String> {
+fn fetch_vetted(
+    url: &str,
+    resolve: Resolve,
+    blocked: Blocked,
+    allow: &[String],
+) -> Result<Vec<u8>, String> {
     let mut current = url.to_string();
     for _ in 0..=MAX_REDIRECTS {
-        let vetted = vet(&current, resolve, blocked)?;
+        let vetted = vet(&current, resolve, blocked, allow)?;
         let mut builder = reqwest::blocking::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(HTTP_TIMEOUT);
@@ -409,10 +442,19 @@ fn fetch_vetted(url: &str, resolve: Resolve, blocked: Blocked) -> Result<Vec<u8>
 
 #[cfg(test)]
 fn vetted_download(url: &str) -> Result<reqwest::Url, String> {
-    vet(url, &system_resolve, &private_ip).map(|vetted| vetted.url)
+    vet(url, &system_resolve, &private_ip, &[]).map(|vetted| vetted.url)
 }
 
-fn vet(url: &str, resolve: Resolve, blocked: Blocked) -> Result<Vetted, String> {
+/// Normal form of a host name for comparing with the allow list.
+fn host_key(host: &str) -> String {
+    host.trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim_end_matches('.')
+        .to_ascii_lowercase()
+}
+
+fn vet(url: &str, resolve: Resolve, blocked: Blocked, allow: &[String]) -> Result<Vetted, String> {
     const PRIVATE: &str = "skill downloads cannot target a private address";
     let parsed = reqwest::Url::parse(url).map_err(|e| e.to_string())?;
     if parsed.scheme() != "https" && parsed.scheme() != "http" {
@@ -430,8 +472,18 @@ fn vet(url: &str, resolve: Resolve, blocked: Blocked) -> Result<Vetted, String> 
         .strip_prefix('[')
         .and_then(|inner| inner.strip_suffix(']'))
         .unwrap_or(host);
+    let allowed = {
+        let key = host_key(host);
+        allow.iter().any(|entry| host_key(entry) == key)
+    };
+    if allowed {
+        tracing::warn!(
+            host,
+            "skill download allowed to a private host by allowPrivateHosts"
+        );
+    }
     if let Ok(ip) = bare.parse::<IpAddr>() {
-        if blocked(ip) {
+        if blocked(ip) && !allowed {
             return Err(PRIVATE.into());
         }
         return Ok(Vetted {
@@ -441,7 +493,9 @@ fn vet(url: &str, resolve: Resolve, blocked: Blocked) -> Result<Vetted, String> 
     }
     let domain = host.to_string();
     let name = domain.trim_end_matches('.').to_ascii_lowercase();
-    if name == "localhost" || name.ends_with(".localhost") || name.ends_with(".local") {
+    if !allowed
+        && (name == "localhost" || name.ends_with(".localhost") || name.ends_with(".local"))
+    {
         return Err("skill downloads cannot target a local host".into());
     }
     let port = parsed.port_or_known_default().unwrap_or(443);
@@ -449,7 +503,7 @@ fn vet(url: &str, resolve: Resolve, blocked: Blocked) -> Result<Vetted, String> 
     if addrs.is_empty() {
         return Err("skill download host did not resolve".into());
     }
-    if addrs.iter().any(|addr| blocked(addr.ip())) {
+    if !allowed && addrs.iter().any(|addr| blocked(addr.ip())) {
         return Err(PRIVATE.into());
     }
     Ok(Vetted {
@@ -695,6 +749,7 @@ mod tests {
             &format!("http://skills.invalid:{port}/index.json"),
             &resolve,
             &v4_private_only,
+            &[],
         )
         .unwrap();
         assert_eq!(body, b"/index.json");
@@ -724,6 +779,7 @@ mod tests {
             &format!("http://big.invalid:{port}/skill.zip"),
             &resolve,
             &v4_private_only,
+            &[],
         )
         .unwrap_err();
         assert!(err.contains("larger than 25 MiB"), "{err}");
@@ -738,6 +794,7 @@ mod tests {
             &format!("http://a.invalid:{port}/redirect"),
             &resolve,
             &v4_private_only,
+            &[],
         )
         .unwrap();
         assert_eq!(body, b"/next");
@@ -754,8 +811,61 @@ mod tests {
             &format!("http://a.invalid:{port}/redirect"),
             &resolve,
             &v4_private_only,
+            &[],
         )
         .unwrap_err();
+        assert!(err.contains("private address"), "{err}");
+    }
+
+    #[test]
+    fn an_allow_listed_private_host_is_fetched_and_others_are_refused() {
+        let port = tiny_http(1, String::new());
+        let resolve = move |host: &str, _: u16| {
+            Ok(vec![if host == "skills.intranet.invalid" {
+                std::net::SocketAddr::from(([127, 0, 0, 1], port))
+            } else {
+                std::net::SocketAddr::from(([10, 0, 0, 1], port))
+            }])
+        };
+        let allow = vec!["Skills.Intranet.invalid".to_string()];
+        let body = super::fetch_vetted(
+            &format!("http://skills.intranet.invalid:{port}/index.json"),
+            &resolve,
+            &super::private_ip,
+            &allow,
+        )
+        .unwrap();
+        assert_eq!(body, b"/index.json");
+
+        // A host on the list that resolves to 10.0.0.1 passes the check.
+        let ten = |_: &str, _: u16| Ok(vec![std::net::SocketAddr::from(([10, 0, 0, 1], 443))]);
+        let allow = vec!["skills.corp.invalid".to_string()];
+        assert!(super::vet(
+            "https://skills.corp.invalid/index.json",
+            &ten,
+            &super::private_ip,
+            &allow
+        )
+        .is_ok());
+        // A host not on the list that resolves to 10.0.0.1 is refused.
+        let err = super::vet(
+            "https://other.corp.invalid/index.json",
+            &ten,
+            &super::private_ip,
+            &allow,
+        )
+        .err()
+        .unwrap();
+        assert!(err.contains("private address"), "{err}");
+        // The strict default has no list.
+        let err = super::vet(
+            "https://skills.corp.invalid/index.json",
+            &ten,
+            &super::private_ip,
+            &[],
+        )
+        .err()
+        .unwrap();
         assert!(err.contains("private address"), "{err}");
     }
 

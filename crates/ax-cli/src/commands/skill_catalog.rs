@@ -218,7 +218,9 @@ async fn install_one(
     global: bool,
     replace: bool,
 ) -> Result<(), String> {
-    let fetched = fetch_source(source)?;
+    let settings = load_settings(root).unwrap_or_default();
+    let allow = settings.allow_private_hosts.clone();
+    let fetched = fetch_source(source, &allow)?;
     let receipts = if let Some(index) = fetched.well_known_index.clone() {
         let name = only
             .map(str::to_string)
@@ -239,14 +241,13 @@ async fn install_one(
                 } else {
                     format!("{base}/{name}/{file}")
                 };
-                http_bytes(&url)
+                http_bytes(&url, &allow)
             },
         )?]
     } else {
         install_tree(&fetched.skill_tree(), dest, only, replace)?
     };
     let mut lock = LockFile::load(&lock_path(root, global)?)?;
-    let settings = load_settings(root).unwrap_or_default();
     for receipt in &receipts {
         println!(
             "installed {}\nsource {}\ncommit {}\nhash {}\ndir {}",
@@ -269,7 +270,7 @@ async fn install_one(
         if let Some(url) =
             install_report_url(settings.report_installs, &fetched.source_id, &receipt.name)
         {
-            let _ = http_text(&url);
+            let _ = http_text(&url, &[]);
         }
     }
     lock.save(&lock_path(root, global)?)?;
@@ -425,7 +426,8 @@ async fn audit(
     require_one_skill(&name)?;
     let root = resolve_path(path);
     let mut report = if let Some(source) = source {
-        audit_candidate(&source, &name)?
+        let allow = load_settings(&root).unwrap_or_default().allow_private_hosts;
+        audit_candidate(&source, &name, &allow)?
     } else {
         let names = known_skill_names(&root).await;
         let mut roots = ax_policy::hierarchy::policy_layer_dirs(&root);
@@ -476,9 +478,13 @@ async fn audit(
     Ok(())
 }
 
-fn audit_candidate(source_text: &str, name: &str) -> Result<SkillAuditReport, String> {
+fn audit_candidate(
+    source_text: &str,
+    name: &str,
+    allow: &[String],
+) -> Result<SkillAuditReport, String> {
     let source = parse_source(source_text)?;
-    let fetched = fetch_source(&source)?;
+    let fetched = fetch_source(&source, allow)?;
     let dir = if let Some(index) = fetched.well_known_index.clone() {
         let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
         let dest = temp.path().join("skills");
@@ -489,7 +495,7 @@ fn audit_candidate(source_text: &str, name: &str) -> Result<SkillAuditReport, St
             } else {
                 format!("{base}/{name}/{file}")
             };
-            http_bytes(&url)
+            http_bytes(&url, allow)
         })?;
         let mut report = audit_directory(&dest.join(name))?;
         report.candidate = true;
@@ -657,16 +663,17 @@ fn blocking<T>(work: impl FnOnce() -> T) -> T {
     }
 }
 
-fn fetch_source(source: &SkillSource) -> Result<Fetched, String> {
-    blocking(|| ax_skill_catalog::fetch_source(source))
+/// `allow` is `allowPrivateHosts` from `.ax/skill-catalog.json`.
+fn fetch_source(source: &SkillSource, allow: &[String]) -> Result<Fetched, String> {
+    blocking(|| ax_skill_catalog::fetch_source_allowing(source, allow))
 }
 
-fn http_text(url: &str) -> Result<String, String> {
-    blocking(|| ax_skill_catalog::http_text(url))
+fn http_text(url: &str, allow: &[String]) -> Result<String, String> {
+    blocking(|| ax_skill_catalog::http_text_allowing(url, allow))
 }
 
-fn http_bytes(url: &str) -> Result<Vec<u8>, String> {
-    blocking(|| ax_skill_catalog::http_bytes(url))
+fn http_bytes(url: &str, allow: &[String]) -> Result<Vec<u8>, String> {
+    blocking(|| ax_skill_catalog::http_bytes_allowing(url, allow))
 }
 
 #[cfg(test)]
@@ -680,7 +687,7 @@ mod tests {
             "http://169.254.169.254/latest/meta-data",
             "http://localhost:9/index.json",
         ] {
-            let err = http_bytes(url).unwrap_err();
+            let err = http_bytes(url, &[]).unwrap_err();
             assert!(
                 err.contains("private address") || err.contains("local host"),
                 "{url}: {err}"
