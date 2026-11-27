@@ -1028,6 +1028,8 @@ ax telemetry on
 ax telemetry off
 ```
 
+`ax install` without `--yes` asks once whether to share usage data and stores the answer. When it runs without a terminal (a script, CI or an IDE task), it does not ask and stores nothing, so the question comes back on the next interactive install.
+
 ---
 
 ## Context savings

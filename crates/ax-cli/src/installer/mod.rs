@@ -21,9 +21,10 @@ pub fn run_installer(project_root: &Path, opts: InstallOptions) -> Result<(), St
     if !opts.yes && opts.targets.is_empty() {
         if let Ok(mut t) = telemetry().lock() {
             if !t.has_stored_choice() {
-                let on = crate::commands::telemetry::ask_installer_consent();
-                t.set_enabled(on, "installer");
-                t.persist_sync();
+                if let Some(on) = crate::commands::telemetry::ask_installer_consent() {
+                    t.set_enabled(on, "installer");
+                    t.persist_sync();
+                }
             }
         }
     }
