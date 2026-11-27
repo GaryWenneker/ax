@@ -67,7 +67,7 @@ impl ToolHandler {
                     .search_nodes(
                         query,
                         &SearchOptions {
-                            limit: Some(20),
+                            limit: Some(capped_limit(&params, 20, MAX_SEARCH_LIMIT) as u32),
                             ..Default::default()
                         },
                     )
@@ -176,7 +176,7 @@ impl ToolHandler {
                     .map_err(|e| e.to_string())?;
                 if let Some(first) = nodes.first() {
                     let callers = ax
-                        .get_callers(&first.node.id, 3)
+                        .get_callers(&first.node.id, graph_depth(&params))
                         .await
                         .map_err(|e| e.to_string())?;
                     let text = format_nodes_text(&format!("Callers of '{sym}'"), &callers);
@@ -199,7 +199,7 @@ impl ToolHandler {
                     .map_err(|e| e.to_string())?;
                 if let Some(first) = nodes.first() {
                     let callees = ax
-                        .get_callees(&first.node.id, 3)
+                        .get_callees(&first.node.id, graph_depth(&params))
                         .await
                         .map_err(|e| e.to_string())?;
                     let text = format_nodes_text(&format!("Callees of '{sym}'"), &callees);
@@ -222,7 +222,7 @@ impl ToolHandler {
                     .map_err(|e| e.to_string())?;
                 if let Some(first) = nodes.first() {
                     let sg = ax
-                        .get_impact_radius(&first.node.id, 3)
+                        .get_impact_radius(&first.node.id, graph_depth(&params))
                         .await
                         .map_err(|e| e.to_string())?;
                     let text = format_subgraph_text(sym, &sg);
@@ -236,7 +236,7 @@ impl ToolHandler {
                 }
             }
             "ax_cycles" => {
-                let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+                let limit = capped_limit(&params, 50, MAX_LIST_LIMIT);
                 let cycles = ax.find_cycles(limit).await.map_err(|e| e.to_string())?;
                 let text = if cycles.is_empty() {
                     "No call-graph cycles found.".to_string()
@@ -327,7 +327,7 @@ impl ToolHandler {
                 if module.is_empty() {
                     return Err("module is required".into());
                 }
-                let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(200) as usize;
+                let limit = capped_limit(&params, 200, MAX_LIST_LIMIT);
                 let nodes = ax
                     .module_api(module, limit)
                     .await
@@ -2545,7 +2545,7 @@ fn format_subgraph_text(sym: &str, sg: &Subgraph) -> String {
     out
 }
 
-fn explore_tool() -> Value {
+pub(crate) fn explore_tool() -> Value {
     json!({
         "name": "ax_explore",
         "description": "Semantic search + graph traversal with numbered source and call spine",
@@ -2617,9 +2617,9 @@ fn capture_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "prompt": { "type": "string" },
+                "prompt": { "type": "string", "description": "The user prompt (propose)" },
                 "files": { "type": "array", "items": { "type": "string" } },
-                "action": { "type": "string", "enum": ["propose", "save"] },
+                "action": { "type": "string", "enum": ["propose", "save"], "description": "propose (default) needs prompt; save needs rule" },
                 "rule": {
                     "type": "object",
                     "properties": {
@@ -2627,8 +2627,7 @@ fn capture_tool() -> Value {
                         "body": { "type": "string" }
                     }
                 }
-            },
-            "required": ["prompt"]
+            }
         }
     })
 }
@@ -2667,7 +2666,7 @@ fn guard_tool() -> Value {
                 "content": { "type": "string", "description": "Proposed file content for new files (UTF-8 check)" },
                 "contentBase64": { "type": "string", "description": "Base64-encoded proposed content" }
             },
-            "required": ["path"]
+            "description": "Pass path, paths or file."
         }
     })
 }
@@ -2731,15 +2730,15 @@ fn extra_tools() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "name": { "type": "string", "description": "Symbol name or qualified name" },
-                    "limit": { "type": "number", "description": "Max matches (default 3)" },
-                    "maxLinesPerSnippet": { "type": "number", "description": "Source lines per match (default 400)" },
+                    "limit": { "type": "number", "description": "Max matches (default 3, maximum 50)" },
+                    "maxLinesPerSnippet": { "type": "number", "description": "Source lines per match (default 400, maximum 2000)" },
                     "mode": { "type": "string", "enum": ["signature"], "description": "signature: path, lines, and declaration only" },
-                    "maxSourceChars": { "type": "number", "description": "Source chars per match (default 24000)" }
+                    "maxSourceChars": { "type": "number", "description": "Source chars per match (default 24000, maximum 200000)" }
                 },
                 "required": ["name"]
             }
         }),
-        json!({ "name": "ax_search", "description": "FTS symbol search", "inputSchema": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] } }),
+        json!({ "name": "ax_search", "description": "FTS symbol search", "inputSchema": { "type": "object", "properties": { "query": { "type": "string" }, "limit": { "type": "number", "description": "Max results (default 20, maximum 100)" } }, "required": ["query"] } }),
         json!({ "name": "ax_status", "description": "Index stats and staleness", "inputSchema": { "type": "object", "properties": {} } }),
         json!({
             "name": "ax_budget",
@@ -2848,16 +2847,16 @@ fn extra_tools() -> Vec<Value> {
                 }
             }
         }),
-        json!({ "name": "ax_callers", "description": "Find callers", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
-        json!({ "name": "ax_callees", "description": "Find callees", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
-        json!({ "name": "ax_impact", "description": "Impact radius", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
+        json!({ "name": "ax_callers", "description": "Find callers", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" }, "depth": { "type": "number", "description": "Hops to follow (default 3, maximum 6)" } }, "required": ["symbol"] } }),
+        json!({ "name": "ax_callees", "description": "Find callees", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" }, "depth": { "type": "number", "description": "Hops to follow (default 3, maximum 6)" } }, "required": ["symbol"] } }),
+        json!({ "name": "ax_impact", "description": "Impact radius", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" }, "depth": { "type": "number", "description": "Hops to follow (default 3, maximum 6)" } }, "required": ["symbol"] } }),
         json!({
             "name": "ax_cycles",
             "description": "List call-graph cycles (non-trivial SCCs on Calls/References edges).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "limit": { "type": "number", "description": "Max cycles to return (default 50)" }
+                    "limit": { "type": "number", "description": "Max cycles to return (default 50, maximum 500)" }
                 }
             }
         }),
@@ -2880,7 +2879,7 @@ fn extra_tools() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "module": { "type": "string", "description": "Module name or path prefix, e.g. ax-mcp or crates/ax-mcp" },
-                    "limit": { "type": "number", "description": "Max symbols (default 200)" }
+                    "limit": { "type": "number", "description": "Max symbols (default 200, maximum 500)" }
                 },
                 "required": ["module"]
             }
@@ -2945,8 +2944,8 @@ fn extra_tools() -> Vec<Value> {
                     "tags": { "type": "array", "items": { "type": "string" } },
                     "files": { "type": "array", "items": { "type": "string" }, "description": "Related project-relative file paths" },
                     "triggers": { "type": "array", "items": { "type": "string" }, "description": "Exact cue names. CLI: --trigger NAME. The reply includes suggested_triggers; those names are not stored unless you pass them." },
-                    "action": { "type": "string", "enum": ["confirm"], "description": "confirm enables a candidate long-term memory. CLI: ax remember --confirm ID" },
-                    "id": { "type": "string", "description": "Memory id to confirm" }
+                    "action": { "type": "string", "enum": ["confirm", "useful", "wrong", "purge"], "description": "Acts on the memory named by id instead of storing one. confirm enables a candidate long-term memory (CLI: ax remember --confirm ID); useful and wrong record feedback; purge deletes the memory permanently." },
+                    "id": { "type": "string", "description": "Memory id the action applies to" }
                 }
             }
         }),
@@ -3342,22 +3341,48 @@ fn keep_exact_entries(result: &mut ax_types::ExploreResult, name: &str) {
     }
 }
 
+/// Upper bounds for caller-supplied graph sizes; larger values are lowered to these.
+const MAX_EXPLORE_LIMIT: u32 = 50;
+const MAX_EXPLORE_DEPTH: u32 = 6;
+const MAX_LINES_PER_SNIPPET: u32 = 2_000;
+const MAX_SOURCE_CHARS: u32 = 200_000;
+/// Upper bound for `limit` on list tools such as `ax_cycles` and `ax_api`.
+const MAX_LIST_LIMIT: usize = 500;
+const MAX_SEARCH_LIMIT: usize = 100;
+
+/// `depth` for ax_callers, ax_callees and ax_impact: default 3, between 1 and the explore maximum.
+fn graph_depth(params: &Value) -> u32 {
+    capped_u32(params, "depth", MAX_EXPLORE_DEPTH)
+        .unwrap_or(3)
+        .max(1)
+}
+
+fn capped_u32(params: &Value, key: &str, max: u32) -> Option<u32> {
+    params
+        .get(key)
+        .and_then(Value::as_u64)
+        .map(|n| n.min(u64::from(max)) as u32)
+}
+
+/// `limit` from `params`, `default` when absent, never above `max`.
+fn capped_limit(params: &Value, default: usize, max: usize) -> usize {
+    params
+        .get("limit")
+        .and_then(Value::as_u64)
+        .map_or(default, |n| usize::try_from(n).unwrap_or(usize::MAX))
+        .min(max)
+}
+
 fn explore_opts_from_params(params: &Value) -> ExploreOptions {
-    let mut opts = ExploreOptions::default();
-    if let Some(n) = params.get("limit").and_then(|v| v.as_u64()) {
-        opts.limit = Some(n as u32);
-    }
-    if let Some(n) = params.get("depth").and_then(|v| v.as_u64()) {
-        opts.depth = Some(n as u32);
-    }
+    let mut opts = ExploreOptions {
+        limit: capped_u32(params, "limit", MAX_EXPLORE_LIMIT),
+        depth: capped_u32(params, "depth", MAX_EXPLORE_DEPTH),
+        max_lines_per_snippet: capped_u32(params, "maxLinesPerSnippet", MAX_LINES_PER_SNIPPET),
+        max_source_chars: capped_u32(params, "maxSourceChars", MAX_SOURCE_CHARS),
+        ..ExploreOptions::default()
+    };
     if let Some(b) = params.get("includeCode").and_then(|v| v.as_bool()) {
         opts.include_code = Some(b);
-    }
-    if let Some(n) = params.get("maxLinesPerSnippet").and_then(|v| v.as_u64()) {
-        opts.max_lines_per_snippet = Some(n as u32);
-    }
-    if let Some(n) = params.get("maxSourceChars").and_then(|v| v.as_u64()) {
-        opts.max_source_chars = Some(n as u32);
     }
     opts
 }
@@ -3428,6 +3453,67 @@ pub fn server_instructions(has_policy: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explore_options_are_capped_and_never_wrap() {
+        let huge = serde_json::json!({
+            "limit": 4_000_000_000u64,
+            "depth": 100_000,
+            "maxLinesPerSnippet": 4_294_967_297u64,
+            "maxSourceChars": 4_000_000_000u64,
+        });
+        let opts = explore_opts_from_params(&huge);
+        assert_eq!(opts.limit, Some(MAX_EXPLORE_LIMIT));
+        assert_eq!(opts.depth, Some(MAX_EXPLORE_DEPTH));
+        assert_eq!(opts.max_lines_per_snippet, Some(MAX_LINES_PER_SNIPPET));
+        assert_eq!(opts.max_source_chars, Some(MAX_SOURCE_CHARS));
+        let small = serde_json::json!({ "limit": 3, "depth": 2, "maxLinesPerSnippet": 40, "maxSourceChars": 900 });
+        let opts = explore_opts_from_params(&small);
+        assert_eq!(
+            (
+                opts.limit,
+                opts.depth,
+                opts.max_lines_per_snippet,
+                opts.max_source_chars
+            ),
+            (Some(3), Some(2), Some(40), Some(900))
+        );
+    }
+
+    #[test]
+    fn schemas_accept_what_the_handlers_accept() {
+        let mut defs = ToolHandler::tool_definitions(&["ax_remember"]);
+        defs.extend([guard_tool(), capture_tool()]);
+        let def = |name: &str| defs.iter().find(|d| d["name"] == name).expect(name).clone();
+        let required = |name: &str| -> Vec<String> {
+            def(name)["inputSchema"]["required"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        // ax_guard runs on paths[] or file alone; action=save needs no prompt.
+        assert!(!required("ax_guard").contains(&"path".to_string()));
+        assert!(!required("ax_policy_capture").contains(&"prompt".to_string()));
+        let actions = def("ax_remember")["inputSchema"]["properties"]["action"]["enum"].clone();
+        assert_eq!(
+            actions,
+            serde_json::json!(["confirm", "useful", "wrong", "purge"])
+        );
+    }
+
+    #[test]
+    fn list_limits_default_and_cap() {
+        let none = serde_json::json!({});
+        assert_eq!(capped_limit(&none, 50, MAX_LIST_LIMIT), 50);
+        let huge = serde_json::json!({ "limit": u64::MAX });
+        assert_eq!(capped_limit(&huge, 50, MAX_LIST_LIMIT), MAX_LIST_LIMIT);
+        let small = serde_json::json!({ "limit": 7 });
+        assert_eq!(capped_limit(&small, 50, MAX_LIST_LIMIT), 7);
+    }
 
     #[test]
     fn base64_decode_honors_padding_and_rejects_bad_input() {

@@ -12,8 +12,7 @@ use crate::ppid_watchdog::spawn_ppid_watchdog;
 use crate::proxy::attach_or_spawn;
 use crate::tools::{server_instructions, ToolHandler};
 use crate::transport::{
-    is_notification, StdioTransport, INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND,
-    PARSE_ERROR,
+    is_notification, StdioTransport, INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND, PARSE_ERROR,
 };
 use crate::verbose::{
     deliver_local, format_mcp_log_notification, push_error, push_inbound, push_internal, push_line,
@@ -841,12 +840,15 @@ fn token_budget_hint(tool: &str, response_tokens: i64) -> Option<String> {
     if response_tokens < TOKEN_HINT_THRESHOLD || tool == "ax_preflight" {
         return None;
     }
+    // Advice names only parameters the tool's schema accepts.
     let advice = match tool {
-        "ax_explore" | "ax_context" => "narrow the question or pass a smaller depth",
-        "ax_search" | "ax_files" | "ax_recall" => "add a `limit` or a more specific query",
-        "ax_impact" | "ax_affected" | "ax_callers" | "ax_callees" => {
+        "ax_explore" => "narrow the question or pass a smaller depth or limit",
+        "ax_context" => "narrow the task",
+        "ax_search" | "ax_recall" => "add a `limit` or a more specific query",
+        "ax_impact" | "ax_callers" | "ax_callees" => {
             "reduce depth or target a more specific symbol"
         }
+        "ax_affected" => "pass fewer files",
         _ => "use a more specific query",
     };
     Some(ax_usage::format_ax_tagged(format!(
@@ -875,6 +877,33 @@ mod wrap_tests {
     fn preflight_gets_no_token_budget_banner() {
         assert!(token_budget_hint("ax_preflight", 9_000).is_none());
         assert!(token_budget_hint("ax_explore", 9_000).is_some());
+    }
+
+    #[test]
+    fn token_budget_advice_names_only_parameters_the_tool_accepts() {
+        let tools = [
+            "ax_explore",
+            "ax_context",
+            "ax_search",
+            "ax_files",
+            "ax_recall",
+            "ax_impact",
+            "ax_affected",
+            "ax_callers",
+            "ax_callees",
+        ];
+        let mut defs = crate::tools::ToolHandler::tool_definitions(&tools);
+        defs.push(crate::tools::explore_tool());
+        for name in tools {
+            let hint = token_budget_hint(name, 9_000).expect(name);
+            let def = defs.iter().find(|d| d["name"] == name).expect(name);
+            let props = &def["inputSchema"]["properties"];
+            for param in ["limit", "depth"] {
+                if hint.contains(param) {
+                    assert!(props.get(param).is_some(), "{name} lacks {param}: {hint}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -1416,7 +1445,6 @@ mod policy_integration {
             "{lines:?}"
         );
     }
-
 }
 
 #[cfg(test)]
@@ -2791,5 +2819,4 @@ mod error_codes {
         let unknown = handle_request(&mut engine, "resources/list", json!({})).await;
         assert_eq!(unknown.error_code, METHOD_NOT_FOUND);
     }
-
 }

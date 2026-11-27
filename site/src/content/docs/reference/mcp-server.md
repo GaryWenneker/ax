@@ -126,7 +126,7 @@ The [memory vault](/guides/memory/) adds three tools:
 
 | Tool | Purpose |
 |---|---|
-| `ax_remember` | Store a durable memory with `triggers` (CLI: `ax remember --trigger`). The reply includes `suggested_triggers`. Confirm a candidate with `action=confirm` and `id` (CLI: `ax remember --confirm`). |
+| `ax_remember` | Store a durable memory with `triggers` (CLI: `ax remember --trigger`). The reply includes `suggested_triggers`. Confirm a candidate with `action=confirm` and `id` (CLI: `ax remember --confirm`). `action=useful` or `action=wrong` records feedback on a memory; `action=purge` deletes it permanently, so the remote catalog marks the tool destructive. |
 | `ax_recall` | Exact `cue` before free-text `query` (CLI: `ax recall --cue`). `id` returns the body and its cues. `depth=archive` searches old memory and is not injected (CLI: `--depth archive`). `depth=backup` searches `.ax/backups/memory/` snapshots and is not injected (CLI: `--depth backup`). |
 | `ax_history` | When did I change X. `depth=archive` includes demoted turns, graph diffs, and logs (CLI: `ax history --depth archive`). `id` returns one turn in full. |
 
@@ -265,6 +265,8 @@ MCP lines are prefixed with `[ax-mcp]`. From **ax 8.4.4**, matching CLI graph/po
 | `AX_CONTEXT_MAX_BLOCK_CHARS` | 1200 | Max characters per `ax_context` code block |
 
 Explicit tool params (`maxLinesPerSnippet`, `maxSourceChars`) still override the env defaults per call.
+
+Caller-supplied sizes have upper bounds; a larger value is lowered to the bound. `ax_explore` and `ax_node` take at most `limit` 50, `depth` 6, `maxLinesPerSnippet` 2000 and `maxSourceChars` 200000. `ax_cycles` and `ax_api` return at most 500 rows. `ax_search` takes `limit` (default 20, at most 100); `ax_callers`, `ax_callees` and `ax_impact` take `depth` (default 3, at most 6).
 
 ## Architecture tools
 

@@ -61,6 +61,15 @@ const CONTEXT_TOOLS: &[&str] = &[
     "ax_policy_capture",
 ];
 const WRITE_TOOLS: &[&str] = &["ax_remember"];
+/// Argument names a caller may use to name its chat. Remote calls validate all
+/// of them, accept at most one, and replace them with `session`.
+const CHAT_ID_KEYS: [&str; 5] = [
+    "session",
+    "sessionId",
+    "conversation",
+    "conversationId",
+    "chatId",
+];
 /// Management tools. Listed and callable only with `ax:admin` and an explicit
 /// admin grant on the project (see `Principal::can_admin`).
 const ADMIN_TOOLS: &[&str] = &[
@@ -795,13 +804,7 @@ async fn post(
         }
         // Validate every public identity before normalization. Invalid IDs must not
         // silently turn into a newly minted chat or overwrite the selected project.
-        for key in [
-            "session",
-            "sessionId",
-            "conversation",
-            "conversationId",
-            "chatId",
-        ] {
+        for key in CHAT_ID_KEYS {
             if let Some(value) = args.get(key) {
                 if ax_usage::session_from_args(&json!({"session":value})).is_none() {
                     return rpc(
@@ -814,16 +817,10 @@ async fn post(
         if crate::request_context::validate(&project.root, &args).is_err() {
             return rpc(request.id, Err(("Invalid tool context arguments", -32602)));
         }
-        let supplied_ids: HashSet<_> = [
-            "session",
-            "sessionId",
-            "conversation",
-            "conversationId",
-            "chatId",
-        ]
-        .into_iter()
-        .filter_map(|key| args.get(key).and_then(Value::as_str))
-        .collect();
+        let supplied_ids: HashSet<_> = CHAT_ID_KEYS
+            .into_iter()
+            .filter_map(|key| args.get(key).and_then(Value::as_str))
+            .collect();
         if supplied_ids.len() > 1 {
             return rpc(request.id, Err(("Conflicting chat identifiers", -32602)));
         }
@@ -857,13 +854,7 @@ async fn post(
         } else {
             engine.current_chat.clone().expect("chat checked")
         };
-        for key in [
-            "session",
-            "sessionId",
-            "conversation",
-            "conversationId",
-            "chatId",
-        ] {
+        for key in CHAT_ID_KEYS {
             args.as_object_mut().expect("object checked").remove(key);
         }
         args["session"] = json!(chat);
@@ -981,7 +972,10 @@ async fn post(
             );
             ax_usage::log_workspace(
                 Some(&project.root),
-                format!("request failed method={} via=remote-mcp: {message}", request.method),
+                format!(
+                    "request failed method={} via=remote-mcp: {message}",
+                    request.method
+                ),
             );
             return rpc(request.id, Err(("Ax request failed", outcome.error_code)));
         }
@@ -1022,8 +1016,9 @@ async fn post(
                         name.as_str(),
                         "ax_session" | "ax_durable" | "ax_stash" | "ax_policy_capture"
                     );
-                tool["annotations"] =
-                    json!({"readOnlyHint":read_only,"destructiveHint":false,"openWorldHint":false});
+                // ax_remember action=purge deletes a memory permanently.
+                let destructive = name == "ax_remember";
+                tool["annotations"] = json!({"readOnlyHint":read_only,"destructiveHint":destructive,"openWorldHint":false});
                 if let Some(props) = tool
                     .pointer_mut("/inputSchema/properties")
                     .and_then(Value::as_object_mut)
