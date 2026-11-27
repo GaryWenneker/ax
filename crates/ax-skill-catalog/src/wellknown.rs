@@ -105,15 +105,15 @@ pub fn materialize_well_known(
             }
             let mut used = 0u64;
             for file in &skill.files {
-                if file.contains("..") || file.starts_with('/') {
-                    return Err(format!("refusing well-known path {file}"));
-                }
+                // Only plain relative names: no absolute path, drive or UNC
+                // prefix and no `..`, with backslashes read as separators.
+                let target = ax_utils::contained_join(dir, file)
+                    .map_err(|e| format!("refusing well-known path {file}: {e}"))?;
                 let bytes = fetch(file)?;
                 used += bytes.len() as u64;
                 if used > COPY_MAX_BYTES {
                     return Err(TOO_LARGE.into());
                 }
-                let target = dir.join(file);
                 if let Some(parent) = target.parent() {
                     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                 }
@@ -316,6 +316,47 @@ mod tests {
             .unwrap_err();
         assert!(err.contains("skill name"), "{err}");
         assert!(!root.path().join("escape").exists());
+    }
+
+    #[test]
+    fn a_listed_file_with_a_drive_or_unc_prefix_is_refused() {
+        for bad in [
+            "C:\\Users\\x\\file",
+            "\\\\server\\share\\file",
+            "scripts\\..\\..\\escape",
+            "/etc/passwd",
+            "../escape",
+        ] {
+            let dest = tempfile::tempdir().unwrap();
+            let index = serde_json::json!({"skills":[{"name":"pdf","description":"d","files":["SKILL.md", bad]}]})
+                .to_string();
+            let err = materialize_well_known(&index, "pdf", dest.path(), false, |file| {
+                Ok(if file == "SKILL.md" {
+                    PDF_V1.to_vec()
+                } else {
+                    b"x".to_vec()
+                })
+            })
+            .unwrap_err();
+            assert!(err.contains("refusing well-known path"), "{bad}: {err}");
+            assert!(!dest.path().join("pdf").exists(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_listed_file_whose_name_contains_two_dots_installs() {
+        let dest = tempfile::tempdir().unwrap();
+        let index =
+            r#"{"skills":[{"name":"pdf","description":"d","files":["SKILL.md","notes..v2.md"]}]}"#;
+        let receipt = materialize_well_known(index, "pdf", dest.path(), false, |file| {
+            Ok(if file == "SKILL.md" {
+                PDF_V1.to_vec()
+            } else {
+                b"x".to_vec()
+            })
+        })
+        .unwrap();
+        assert!(receipt.directory.join("notes..v2.md").is_file());
     }
 
     #[test]
