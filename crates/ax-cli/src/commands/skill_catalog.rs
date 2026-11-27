@@ -243,8 +243,7 @@ async fn install_one(
             },
         )?]
     } else {
-        let tree = only_path(source, &fetched.tree);
-        install_tree(&tree, dest, only, replace)?
+        install_tree(&fetched.skill_tree(), dest, only, replace)?
     };
     let mut lock = LockFile::load(&lock_path(root, global)?)?;
     let settings = load_settings(root).unwrap_or_default();
@@ -278,15 +277,6 @@ async fn install_one(
         reindex(root).await;
     }
     Ok(())
-}
-
-fn only_path(source: &SkillSource, tree: &Path) -> PathBuf {
-    match source {
-        SkillSource::Git {
-            path: Some(path), ..
-        } => tree.join(path),
-        _ => tree.to_path_buf(),
-    }
 }
 
 fn list(path: Option<String>, global: bool, json: bool) -> Result<(), String> {
@@ -507,7 +497,7 @@ fn audit_candidate(source_text: &str, name: &str) -> Result<SkillAuditReport, St
         report.sha = fetched.sha;
         return Ok(report);
     } else {
-        find_skill_dir(&only_path(&source, &fetched.tree), name)?
+        find_skill_dir(&fetched.skill_tree(), name)?
     };
     let mut report = audit_directory(&dir)?;
     report.candidate = true;

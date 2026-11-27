@@ -1,4 +1,4 @@
-use crate::source::{GitHost, SkillSource};
+use crate::source::{ref_candidates, GitHost, SkillSource};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -11,7 +11,20 @@ pub struct Fetched {
     pub source_type: String,
     pub well_known_index: Option<String>,
     pub file_base: String,
+    /// The skill folder inside `tree` that a git source points at, after
+    /// any branch name with a slash has been split off.
+    pub skill_path: Option<String>,
     _temp: Option<tempfile::TempDir>,
+}
+
+impl Fetched {
+    /// `tree`, narrowed to the folder the source URL points at.
+    pub fn skill_tree(&self) -> PathBuf {
+        match &self.skill_path {
+            Some(path) => self.tree.join(path),
+            None => self.tree.clone(),
+        }
+    }
 }
 
 pub fn fetch_source(source: &SkillSource) -> Result<Fetched, String> {
@@ -23,6 +36,7 @@ pub fn fetch_source(source: &SkillSource) -> Result<Fetched, String> {
             source_type: "local".into(),
             well_known_index: None,
             file_base: String::new(),
+            skill_path: None,
             _temp: None,
         }),
         SkillSource::Git {
@@ -30,23 +44,29 @@ pub fn fetch_source(source: &SkillSource) -> Result<Fetched, String> {
             source_id,
             reference,
             host,
-            ..
+            path,
         } => {
             let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
-            git_clone(clone_url, reference.as_deref(), temp.path())?;
-            let sha = git_rev(temp.path()).unwrap_or_else(|_| "unknown".into());
+            let (tree, skill_path) = clone_first_ref(
+                reference.as_deref(),
+                path.as_deref(),
+                temp.path(),
+                |r, dest| git_clone(clone_url, r, dest),
+            )?;
+            let sha = git_rev(&tree).unwrap_or_else(|_| "unknown".into());
             let source_type = match host {
                 GitHost::GitHub => "github",
                 GitHost::GitLab => "gitlab",
                 GitHost::Azure => "azure",
             };
             Ok(Fetched {
-                tree: temp.path().to_path_buf(),
+                tree,
                 sha,
                 source_id: source_id.clone(),
                 source_type: source_type.into(),
                 well_known_index: None,
                 file_base: String::new(),
+                skill_path,
                 _temp: Some(temp),
             })
         }
@@ -60,6 +80,7 @@ pub fn fetch_source(source: &SkillSource) -> Result<Fetched, String> {
                 source_type: "well-known".into(),
                 well_known_index: Some(body),
                 file_base,
+                skill_path: None,
                 _temp: None,
             })
         }
@@ -156,6 +177,33 @@ fn git_command() -> Command {
 
 fn run_git(cmd: &mut Command, timeout: Duration) -> Result<crate::process::CmdOutput, String> {
     crate::process::run_with_timeout(cmd, timeout)
+}
+
+/// Clones with each (reference, path) pair from [`ref_candidates`] until one
+/// works, so a tree URL whose branch name holds a slash still resolves. Only a
+/// missing remote branch moves on to the next pair; any other error stops.
+/// Returns the clone folder (under `root`) and the skill path inside it.
+fn clone_first_ref(
+    reference: Option<&str>,
+    path: Option<&str>,
+    root: &Path,
+    mut clone: impl FnMut(Option<&str>, &Path) -> Result<(), String>,
+) -> Result<(PathBuf, Option<String>), String> {
+    let mut first_err = None;
+    for (i, (reference, path)) in ref_candidates(reference, path).into_iter().enumerate() {
+        let dest = root.join(format!("repo-{i}"));
+        match clone(reference.as_deref(), &dest) {
+            Ok(()) => return Ok((dest, path)),
+            Err(e) => {
+                let missing_branch = e.contains("not found in upstream");
+                first_err.get_or_insert(e);
+                if !missing_branch {
+                    break;
+                }
+            }
+        }
+    }
+    Err(first_err.unwrap_or_else(|| "git clone failed".into()))
 }
 
 pub fn git_clone(url: &str, reference: Option<&str>, dest: &Path) -> Result<(), String> {
@@ -475,6 +523,45 @@ pub fn encode(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::vetted_download;
+
+    #[test]
+    fn a_slashed_branch_in_a_tree_url_is_found_by_retrying() {
+        let root = tempfile::tempdir().unwrap();
+        let mut tried = Vec::new();
+        let (tree, path) = super::clone_first_ref(
+            Some("feature"),
+            Some("x/skills/pdf"),
+            root.path(),
+            |reference, _dest| {
+                let reference = reference.unwrap().to_string();
+                tried.push(reference.clone());
+                if reference == "feature/x" {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "git clone failed: fatal: Remote branch {reference} not found in upstream origin"
+                    ))
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(tried, ["feature", "feature/x"]);
+        assert_eq!(path.as_deref(), Some("skills/pdf"));
+        assert!(tree.starts_with(root.path()));
+    }
+
+    #[test]
+    fn a_clone_error_that_is_not_a_missing_branch_is_not_retried() {
+        let root = tempfile::tempdir().unwrap();
+        let mut calls = 0;
+        let err = super::clone_first_ref(Some("main"), Some("a/b"), root.path(), |_, _| {
+            calls += 1;
+            Err("git clone failed: repository not found".into())
+        })
+        .unwrap_err();
+        assert_eq!(calls, 1);
+        assert!(err.contains("repository not found"), "{err}");
+    }
 
     /// A server that accepts connections and never answers.
     fn silent_server() -> (std::net::TcpListener, u16) {

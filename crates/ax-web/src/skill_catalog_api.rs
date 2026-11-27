@@ -331,12 +331,7 @@ fn install_blocking(
             },
         )?]
     } else {
-        let tree = match &source {
-            ax_skill_catalog::SkillSource::Git {
-                path: Some(path), ..
-            } => fetched.tree.join(path),
-            _ => fetched.tree.clone(),
-        };
+        let tree = fetched.skill_tree();
         ax_skill_catalog::install_tree(&tree, &dest, skill, replace)?
     };
     let lock_path = root.join(".ax").join("skills-lock.json");
@@ -432,12 +427,7 @@ fn audit_source(
         report.sha = fetched.sha;
         return Ok(report);
     } else {
-        let tree = match &source {
-            ax_skill_catalog::SkillSource::Git {
-                path: Some(path), ..
-            } => fetched.tree.join(path),
-            _ => fetched.tree.clone(),
-        };
+        let tree = fetched.skill_tree();
         ax_skill_catalog::find_skill_dir(&tree, name)?
     };
     let mut report = ax_skill_catalog::audit_directory(&dir)?;
