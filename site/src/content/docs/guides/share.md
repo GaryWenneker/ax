@@ -16,6 +16,8 @@ In read-only mode every route that writes answers 403, including importing agent
 
 A browser that opens `?token=…` receives an `HttpOnly` `ax_share` cookie and continues at the same path without the token in the address. Scripts can send `Authorization: Bearer …` or the `ax_share` cookie.
 
+The token is compared in constant time. A connection address that presents a wrong token (or a wrong `axc_` client credential) 20 times within a minute gets `429 Too Many Requests` for every credential it presents until that minute ends. Behind a tunnel every visitor arrives from `127.0.0.1`, so they share this limit. Failed client credentials are written to the security audit log. Node credentials (`axn_`) are only accepted by the replication server; the Command Center answers them with 401.
+
 For remote collaborators, wrap localhost with a tunnel:
 
 ```bash

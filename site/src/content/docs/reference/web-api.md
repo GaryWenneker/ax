@@ -147,7 +147,7 @@ The `/api/ship/sonar/*` endpoints (discover, install, start, stop, bootstrap, se
 | GET | `/api/usage/savings` | Savings dashboard data |
 | POST | `/api/usage/savings/import` | Import IDE session logs |
 | GET | `/api/usage/savings/call/{id}` | One recorded tool call |
-| POST | `/api/usage/tokenize` | Token count for a text |
+| POST | `/api/usage/tokenize` | Token count for a text (body up to 512 KiB; text beyond the tokenizer's input cap is answered as truncated) |
 | GET | `/api/usage/pricing` | Model price catalog |
 | GET | `/api/usage/pricing/status` | Last price sync |
 | GET | `/api/usage/pricing/history` | Price over time |
