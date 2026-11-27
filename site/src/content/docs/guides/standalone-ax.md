@@ -79,6 +79,10 @@ ax server run \
   --push-port 9072
 ```
 
+`--allow-private-http` accepts a private or link-local interface address (for example `--bind 192.168.1.20:9070`) or a wildcard. A wildcard is accepted only when every interface it listens on has a private address: `0.0.0.0` checks the IPv4 addresses, `::` checks all of them. Inside a Docker container that is the case. On a host with a public address the server refuses to start and names that address; bind the private interface address instead.
+
+With `--managed`, the control routes used by the Command Center answer on `127.0.0.1` with the same port. For a specific interface address Ax opens a second listener on `127.0.0.1`; for a wildcard bind the main listener serves them and answers only connections from this machine.
+
 **Do not expose plain HTTP or the Ax Command Center to the public Internet.** Put a properly configured HTTPS reverse proxy in front of the authenticated HTTP endpoint.
 
 ## 3. Join a replica
