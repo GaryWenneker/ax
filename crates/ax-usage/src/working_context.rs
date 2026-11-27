@@ -196,6 +196,18 @@ fn ensure_fits(ctx: &WorkingContext, fingerprint: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The fingerprint a changed snapshot is stored with. Notes that are stale
+/// stay stale when an item is added or one section is replaced: the older
+/// items were never checked against the current index. Only `compact`, an
+/// update that replaces every section, or a write to empty notes confirms them.
+fn next_fingerprint(current: &WorkingContext, fingerprint: &str, replaces_all: bool) -> String {
+    if replaces_all || current.is_empty() || !is_stale(current, fingerprint) {
+        fingerprint.to_string()
+    } else {
+        current.index_fingerprint.clone()
+    }
+}
+
 /// Returns the stored snapshot after the action. `None` means it was cleared.
 fn transition(
     current: &WorkingContext,
@@ -236,7 +248,7 @@ fn transition(
                 return Err("add needs an objective or a section".into());
             }
             if content_hash(&next) != content_hash(current) {
-                next.index_fingerprint = fingerprint.to_string();
+                next.index_fingerprint = next_fingerprint(current, fingerprint, false);
             }
             ensure_fits(&next, fingerprint)?;
             Ok(Some(next))
@@ -248,17 +260,20 @@ fn transition(
                 next.objective = objective;
                 touched = true;
             }
+            let mut replaced = 0;
             for name in SECTIONS {
                 if let Some(items) = parse_section(request, name)? {
                     *next.section_mut(name) = items;
                     touched = true;
+                    replaced += 1;
                 }
             }
             if !touched {
                 return Err("update needs an objective or a section".into());
             }
             if content_hash(&next) != content_hash(current) {
-                next.index_fingerprint = fingerprint.to_string();
+                let replaces_all = replaced == SECTIONS.len();
+                next.index_fingerprint = next_fingerprint(current, fingerprint, replaces_all);
             }
             ensure_fits(&next, fingerprint)?;
             Ok(Some(next))
@@ -1267,6 +1282,39 @@ mod tests {
         .await
         .unwrap();
         assert!(stale.contains("stale=true"), "{stale}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_new_item_does_not_clear_a_stale_fingerprint() {
+        let (dir, pool) = pool().await;
+        let ask = |request: Value, fp: &'static str| {
+            let (pool, dir) = (pool.clone(), dir.clone());
+            async move {
+                apply_with(&pool, &dir, "chat-1", &request, fp, true)
+                    .await
+                    .unwrap()
+            }
+        };
+        ask(json!({"action": "add", "facts": ["old fact"]}), "fp-1").await;
+        let added = ask(json!({"action": "add", "open_questions": ["new?"]}), "fp-2").await;
+        assert!(added.contains("stale=true"), "add: {added}");
+        let updated = ask(json!({"action": "update", "decisions": ["d"]}), "fp-2").await;
+        assert!(updated.contains("stale=true"), "partial update: {updated}");
+        let replaced = ask(
+            json!({
+                "action": "update",
+                "objective": "o",
+                "facts": ["checked"],
+                "files": [],
+                "symbols": [],
+                "decisions": [],
+                "open_questions": []
+            }),
+            "fp-2",
+        )
+        .await;
+        assert!(replaced.contains("stale=false"), "full update: {replaced}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
