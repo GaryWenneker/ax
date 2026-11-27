@@ -264,7 +264,12 @@ pub async fn export_native(config: &ServerConfig, project_id: &str) -> Result<Sn
         item.storage_is_override = false;
     }
 
-    ax_usage::migrate_legacy_log(Some(&project.path)).map_err(|e| e.to_string())?;
+    // The migration reads and rewrites log files; keep it off the async workers.
+    let log_root = project.path.clone();
+    tokio::task::spawn_blocking(move || ax_usage::migrate_legacy_log(Some(&log_root)))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
     let mut dataset = ax_db::replication::export(&project.path, &config.node_id, pool)
         .await
         .map_err(|e| e.to_string())?;
