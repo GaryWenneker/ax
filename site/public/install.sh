@@ -45,10 +45,11 @@ clear_pending_upgrade_state() {
     echo "ax: cleared stuck upgrade-status.txt" >&2
   fi
   find "$INSTALL_DIR" -maxdepth 1 -type d -name 'upgrade-staging-*' -exec rm -rf {} + 2>/dev/null || true
-  if [ -d "$INSTALL_DIR/current.old" ]; then
-    rm -rf "$INSTALL_DIR/current.old"
-    echo "ax: removed parked current.old" >&2
-  fi
+  for ax_old in "$INSTALL_DIR"/current.old "$INSTALL_DIR"/current.old.*; do
+    if [ -d "$ax_old" ] && rm -rf "$ax_old" 2>/dev/null; then
+      echo "ax: removed parked ${ax_old##*/}" >&2
+    fi
+  done
 }
 
 skip_github_token() {
@@ -77,16 +78,21 @@ swap_install_tree() {
   ax_live="$INSTALL_DIR/current"
   stop_ax_processes
   clear_pending_upgrade_state
-  if [ -e "$ax_live" ] && ! mv "$ax_live" "$ax_live.old"; then
+  # mv into an existing directory would nest the live tree inside it, so a parked
+  # tree that could not be removed gets a unique name instead.
+  ax_parked="$ax_live.old"
+  rm -rf "$ax_parked" 2>/dev/null || true
+  if [ -e "$ax_parked" ]; then ax_parked="$ax_live.old.$$"; fi
+  if [ -e "$ax_live" ] && ! mv "$ax_live" "$ax_parked"; then
     echo "ax: cannot move $ax_live aside; the current install was left as it was." >&2
     return 1
   fi
   if mv "$ax_new" "$ax_live"; then
-    rm -rf "$ax_live.old" "$INSTALL_DIR/versions"
+    rm -rf "$ax_parked" "$INSTALL_DIR/versions"
     return 0
   fi
   echo "ax: could not activate the new install; restoring the previous one." >&2
-  if [ -e "$ax_live.old" ]; then mv "$ax_live.old" "$ax_live"; fi
+  if [ -e "$ax_parked" ]; then mv "$ax_parked" "$ax_live"; fi
   return 1
 }
 

@@ -55,12 +55,15 @@ function Clear-AxPendingUpgradeState {
       Remove-Item -Recurse -Force $_.FullName -ErrorAction SilentlyContinue
       Write-Host "ax: removed leftover $($_.Name)" -ForegroundColor Yellow
     }
-  # Parked tree from a failed Windows activate (current.old next to current).
-  $parked = Join-Path $InstallRoot 'current.old'
-  if (Test-Path $parked) {
-    Remove-Item -Recurse -Force $parked -ErrorAction SilentlyContinue
-    Write-Host "ax: removed parked current.old" -ForegroundColor Yellow
-  }
+  # Parked trees from a failed Windows activate (current.old or current.old-<id> next to current).
+  Get-ChildItem -LiteralPath $InstallRoot -Directory -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -eq 'current.old' -or $_.Name -like 'current.old-*' } |
+    ForEach-Object {
+      Remove-Item -Recurse -Force -LiteralPath $_.FullName -ErrorAction SilentlyContinue
+      if (-not (Test-Path -LiteralPath $_.FullName)) {
+        Write-Host "ax: removed parked $($_.Name)" -ForegroundColor Yellow
+      }
+    }
 }
 
 # Set when GitHub rejects or rate-limits the token: later requests in this install go
@@ -98,7 +101,16 @@ function Switch-AxInstallTree {
   )
   Stop-AxProcesses
   Clear-AxPendingUpgradeState -InstallRoot $installDir
+  # Move-Item into an existing directory would nest the live tree inside it, so a
+  # parked tree that cannot be removed (a locked file) gets a unique name instead.
   $parked = "$Live.old"
+  if (Test-Path -LiteralPath $parked) {
+    try {
+      Remove-Item -Recurse -Force -LiteralPath $parked -ErrorAction Stop
+    } catch {
+      $parked = "$Live.old-$([guid]::NewGuid().ToString('N'))"
+    }
+  }
   if (Test-Path -LiteralPath $Live) {
     try {
       Move-Item -LiteralPath $Live -Destination $parked -ErrorAction Stop

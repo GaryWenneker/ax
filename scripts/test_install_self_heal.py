@@ -121,5 +121,104 @@ class PendingUpgradeCleanup(unittest.TestCase):
             self.assertEqual(out.returncode, 0, out.stderr)
             self.assert_cleaned(root)
 
+def _stale_park_fixture(root: Path) -> None:
+    # A parked tree from an earlier install that could not be removed.
+    (root / "current.old").mkdir()
+    (root / "current.old" / "ax.exe").write_text("stale", encoding="utf-8")
+    (root / "current").mkdir()
+    (root / "current" / "ax.exe").write_text("live", encoding="utf-8")
+
+
+class SwapWithStaleParkedTree(unittest.TestCase):
+    """A failed activation restores exactly the tree that was live, even over a stale current.old."""
+
+    def assert_live_restored(self, root: Path) -> None:
+        self.assertEqual((root / "current" / "ax.exe").read_text(encoding="utf-8"), "live")
+        self.assertFalse((root / "current" / "current").exists())
+
+    def test_install_sh_restores_the_live_tree(self) -> None:
+        func = _function(_read(INSTALL_SH), r"^swap_install_tree\(\) \{")
+        stubs = "stop_ax_processes() { :; }\nclear_pending_upgrade_state() { :; }\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _stale_park_fixture(root)
+            out = subprocess.run(["sh", "-c", stubs + func + 'swap_install_tree "$INSTALL_DIR/missing-new-tree"\n'],
+                                 env={**os.environ, "INSTALL_DIR": str(root)},
+                                 capture_output=True, text=True, timeout=60)
+            self.assertNotEqual(out.returncode, 0)
+            self.assert_live_restored(root)
+
+    def test_install_sh_restores_the_live_tree_when_the_stale_tree_cannot_be_removed(self) -> None:
+        func = _function(_read(INSTALL_SH), r"^swap_install_tree\(\) \{")
+        stubs = "stop_ax_processes() { :; }\nclear_pending_upgrade_state() { :; }\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _stale_park_fixture(root)
+            # A read-only directory keeps its files: rm -rf fails, as on a locked tree.
+            (root / "current.old").chmod(0o555)
+            try:
+                out = subprocess.run(["sh", "-c", stubs + func + 'swap_install_tree "$INSTALL_DIR/missing-new-tree"\n'],
+                                     env={**os.environ, "INSTALL_DIR": str(root)},
+                                     capture_output=True, text=True, timeout=60)
+            finally:
+                (root / "current.old").chmod(0o755)
+            self.assertNotEqual(out.returncode, 0)
+            self.assert_live_restored(root)
+            self.assertEqual((root / "current.old" / "ax.exe").read_text(encoding="utf-8"), "stale")
+
+    @unittest.skipUnless(shutil.which("pwsh"), "pwsh is not installed")
+    def test_install_ps1_restores_the_live_tree_when_the_stale_tree_cannot_be_removed(self) -> None:
+        func = _function(_read(INSTALL_PS1), r"^function Switch-AxInstallTree \{")
+        stubs = "function Stop-AxProcesses {}\nfunction Clear-AxPendingUpgradeState { param($InstallRoot) }\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _stale_park_fixture(root)
+            (root / "current.old").chmod(0o555)
+            try:
+                script = (stubs + func + "$installDir = $env:AX_TEST_ROOT\n"
+                          "try { Switch-AxInstallTree -NewTree (Join-Path $installDir 'missing-new-tree')"
+                          " -Live (Join-Path $installDir 'current'); exit 0 } catch { Write-Host $_; exit 3 }\n")
+                out = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command", script],
+                                     env={**os.environ, "AX_TEST_ROOT": str(root)},
+                                     capture_output=True, text=True, timeout=60)
+            finally:
+                (root / "current.old").chmod(0o755)
+            self.assertEqual(out.returncode, 3, out.stdout + out.stderr)
+            self.assert_live_restored(root)
+            self.assertEqual((root / "current.old" / "ax.exe").read_text(encoding="utf-8"), "stale")
+
+    def test_install_sh_activates_over_a_stale_parked_tree(self) -> None:
+        func = _function(_read(INSTALL_SH), r"^swap_install_tree\(\) \{")
+        stubs = "stop_ax_processes() { :; }\nclear_pending_upgrade_state() { :; }\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _stale_park_fixture(root)
+            (root / "new").mkdir()
+            (root / "new" / "ax.exe").write_text("new", encoding="utf-8")
+            out = subprocess.run(["sh", "-c", stubs + func + 'swap_install_tree "$INSTALL_DIR/new"\n'],
+                                 env={**os.environ, "INSTALL_DIR": str(root)},
+                                 capture_output=True, text=True, timeout=60)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertEqual((root / "current" / "ax.exe").read_text(encoding="utf-8"), "new")
+            self.assertEqual(sorted(p.name for p in root.iterdir()), ["current"])
+
+    @unittest.skipUnless(shutil.which("pwsh"), "pwsh is not installed")
+    def test_install_ps1_restores_the_live_tree(self) -> None:
+        func = _function(_read(INSTALL_PS1), r"^function Switch-AxInstallTree \{")
+        # The stub leaves current.old in place, as a locked file would.
+        stubs = "function Stop-AxProcesses {}\nfunction Clear-AxPendingUpgradeState { param($InstallRoot) }\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _stale_park_fixture(root)
+            script = (stubs + func + "$installDir = $env:AX_TEST_ROOT\n"
+                      "try { Switch-AxInstallTree -NewTree (Join-Path $installDir 'missing-new-tree')"
+                      " -Live (Join-Path $installDir 'current'); exit 0 } catch { Write-Host $_; exit 3 }\n")
+            out = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command", script],
+                                 env={**os.environ, "AX_TEST_ROOT": str(root)},
+                                 capture_output=True, text=True, timeout=60)
+            self.assertEqual(out.returncode, 3, out.stdout + out.stderr)
+            self.assert_live_restored(root)
+
+
 if __name__ == "__main__":
     unittest.main()
