@@ -190,9 +190,12 @@ mkdir -p "$BIN_DIR" 2>/dev/null || die "cannot create $BIN_DIR; run as root or p
 [ -w "$BIN_DIR" ] || die "$BIN_DIR is not writable; run as root (sudo) or pass --bin-dir"
 cp "$SRC" "$TARGET_BIN.new"
 chmod 0755 "$TARGET_BIN.new"
+# Check the new binary runs here before it replaces a working install.
+if ! "$TARGET_BIN.new" version >/dev/null 2>&1; then
+  rm -f "$TARGET_BIN.new"
+  die "the downloaded ax does not run on this host; kept the existing $TARGET_BIN"
+fi
 mv -f "$TARGET_BIN.new" "$TARGET_BIN"
-
-"$TARGET_BIN" version >/dev/null 2>&1 || die "installed $TARGET_BIN but it does not run on this host"
 say "installed $("$TARGET_BIN" version 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')"
 case ":${PATH:-}:" in
   *":$BIN_DIR:"*) ;;

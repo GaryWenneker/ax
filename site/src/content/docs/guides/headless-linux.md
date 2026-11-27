@@ -55,7 +55,7 @@ As root it installs to `/usr/local/bin`, otherwise to `~/.local/bin`. Options: `
 curl -fsSL https://getax.wenneker.io/install-slim.sh | sh -s -- --bin-dir /opt/ax/bin
 ```
 
-The installer does not touch agent configuration or create an `~/.ax` install tree, and the headless build never updates itself: run the installer again to upgrade. It refuses to replace a full ax at the same path unless you pass `--force`.
+The installer does not touch agent configuration or create an `~/.ax` install tree, and the headless build never updates itself: run the installer again to upgrade. It refuses to replace a full ax at the same path unless you pass `--force`. It runs the downloaded binary once before it replaces anything, so a binary that does not run on the host leaves your existing `ax` in place.
 
 Container images, for `linux/amd64` and `linux/arm64`, are tagged with the release version without the `v`, and the newest release also as `latest`, `latest-ubuntu` and `latest-server`:
 
