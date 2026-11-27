@@ -288,9 +288,11 @@ the buttons:
   answers `/health` until the clone and `ax init` finish; the `startupMinutes`
   parameter (5-40, default 40) is how long the startup probe waits for that.
 - Render: `render.yaml` at the repository root.
-- Build the image locally with `docker build -f slim/Dockerfile --target server .`
-- Koyeb: a deploy URL with the image, command and variables
+- Koyeb: a deploy URL with the `-server` image and variables, with no command
+  override, so the image's `ax-serve-repo` entry point runs
   (`site/src/lib/cloud-deploy.mjs`).
+
+Build the image locally with `docker build -f slim/Dockerfile --target server .`
 
 Locally, the same container:
 

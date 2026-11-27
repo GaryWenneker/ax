@@ -80,6 +80,16 @@ test('Render blueprint and Koyeb link use the server image without a command ove
 	assert.ok((koyeb.searchParams.get('env[AX_API_KEY]') ?? '').length < 32, 'placeholder key must be rejected');
 });
 
+test('slim README describes the Koyeb link without a command override', () => {
+	const readme = read(repo, 'slim', 'README.md');
+	const bullet = readme.match(/^- Koyeb:[^\n]*(?:\n {2}[^\n]*)*/m);
+	assert.ok(bullet, 'README has a Koyeb bullet');
+	assert.doesNotMatch(bullet[0], /image, command/);
+	assert.match(bullet[0], /no\s+command\s+override/);
+	const platforms = readme.slice(readme.indexOf('- Azure: `slim/azure/azuredeploy-server.json`'), bullet.index! + bullet[0].length);
+	assert.doesNotMatch(platforms, /^- Build the image locally/m, 'the local build is not a deploy platform');
+});
+
 test('docs link every deploy button to the same URLs the homepage uses', () => {
 	for (const id of ['azure-server', 'render', 'koyeb']) {
 		assert.ok(guide.includes(`](${byId[id].url})`), `guide: ${id}`);
