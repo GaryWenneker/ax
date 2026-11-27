@@ -388,12 +388,32 @@ fn cluster_verbose_lines(lines: &[VerboseLine]) -> Vec<VerboseCluster> {
     clusters
 }
 
+/// Domain `[ax] 🪓 <domain> <message>` lines, one `<domain> <message>` per line.
+///
+/// MCP trace lines are left out: their tool arguments and reply previews carry
+/// free text (prompts) that must not trigger or hide domain findings.
 fn domain_blob_from(lines: &[VerboseLine]) -> String {
     lines
         .iter()
-        .map(|l| l.body.as_str())
+        .filter(|l| !l.is_mcp)
+        .filter_map(|l| {
+            let rest = l.body.strip_prefix("[ax]")?.trim_start();
+            let rest = rest
+                .strip_prefix(crate::log_brand::AX_LOG_ICON)
+                .unwrap_or(rest)
+                .trim_start();
+            Some(rest)
+        })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// True when a line of the domain blob is `<domain> <rest>` and `pred(rest)` holds.
+fn domain_line_matches(blob: &str, domain: &str, pred: impl Fn(&str) -> bool) -> bool {
+    blob.lines().any(|line| {
+        let (d, rest) = line.split_once(' ').unwrap_or((line, ""));
+        d == domain && pred(rest)
+    })
 }
 
 fn parse_verbose_log(text: &str, since_ms: i64) -> (Vec<VerboseLine>, Vec<VerboseCluster>) {
@@ -1020,9 +1040,10 @@ fn score_and_findings(
         tokens_at_risk += 500;
     }
 
-    // v4 domain lines (workspace/lsp/ship-ci/…) — scanned separately from MCP clusters
+    // Domain lines (workspace/lsp/ship-ci/…), matched per line on the domain prefix.
     let joined = domain_blob;
-    if joined.contains("ship-ci") && joined.contains("status=failed") {
+    let has_word = |rest: &str, word: &str| rest.split_whitespace().any(|t| t == word);
+    if domain_line_matches(joined, "ship-ci", |rest| has_word(rest, "status=failed")) {
         score -= 15;
         findings.push(Finding {
             id: "ship-ci-failed".into(),
@@ -1037,7 +1058,7 @@ fn score_and_findings(
             log_line_hint: Some("ship-ci status=failed".into()),
         });
     }
-    if joined.contains("plugin") && joined.contains("fail") {
+    if domain_line_matches(joined, "plugin", |rest| has_word(rest, "fail")) {
         score -= 8;
         findings.push(Finding {
             id: "plugin-extract-errors".into(),
@@ -1063,7 +1084,8 @@ fn score_and_findings(
     ]
     .iter()
     .any(|bin| command_on_path(bin));
-    if lsp_on_path && enrichment.inbound_count > 0 && !joined.contains("lsp enrich") {
+    let lsp_enrich_ran = domain_line_matches(joined, "lsp", |rest| rest.starts_with("enrich"));
+    if lsp_on_path && enrichment.inbound_count > 0 && !lsp_enrich_ran {
         score -= 5;
         findings.push(Finding {
             id: "lsp-available-unused".into(),
@@ -1082,7 +1104,9 @@ fn score_and_findings(
     }
 
     // ShareReadonlyWrite
-    if joined.contains("readonly write denied") {
+    if domain_line_matches(joined, "share", |rest| {
+        rest.contains("readonly write denied")
+    }) {
         score -= 4;
         findings.push(Finding {
             id: "share-readonly-write".into(),
@@ -1099,7 +1123,10 @@ fn score_and_findings(
     }
 
     // EmbedBackend — informational only
-    if let Some(backend_line) = joined.lines().find(|l| l.contains("embed backend=")) {
+    if let Some(backend_line) = joined
+        .lines()
+        .find(|l| l.starts_with("embed ") && l.contains("backend="))
+    {
         let backend = backend_line
             .split("backend=")
             .nth(1)
@@ -1918,6 +1945,94 @@ mod tests {
         let blob = domain_blob_from(&lines);
         assert!(blob.contains("lsp enrich"));
         assert!(blob.contains("workspace switch"));
+    }
+
+    fn domain_findings(text: &str) -> Vec<String> {
+        let (lines, _) = parse_verbose_log(text, 0);
+        let blob = domain_blob_from(&lines);
+        let (_, findings, _) = score_and_findings(
+            &[],
+            &[],
+            &ToolMix::default(),
+            &EnrichmentMetrics::default(),
+            100.0,
+            ScoreMode {
+                mode: "verbose_only",
+                verbose_present: true,
+                verbose_enabled: true,
+            },
+            &blob,
+        );
+        findings.into_iter().map(|f| f.check).collect()
+    }
+
+    #[test]
+    fn domain_checks_ignore_keywords_inside_tool_arguments() {
+        let text = "\
+2026-07-26T13:02:14.805Z [ax-mcp] 🪓 inbound tool=ax_preflight args={\"prompt\":\"why does the plugin loader fail? ship-ci status=failed readonly write denied embed backend=onnx lsp enrich\"}\n\
+2026-07-26T13:02:14.900Z [ax-mcp] 🪓 outbound preview tool=ax_preflight text=plugin fail ship-ci status=failed\n";
+        let checks = domain_findings(text);
+        for check in [
+            "PluginExtractErrors",
+            "ShipCiFailed",
+            "ShareReadonlyWrite",
+            "EmbedBackend",
+        ] {
+            assert!(
+                !checks.iter().any(|c| c == check),
+                "{check} must not fire from MCP args: {checks:?}"
+            );
+        }
+        let (lines, _) = parse_verbose_log(text, 0);
+        assert!(
+            !domain_line_matches(&domain_blob_from(&lines), "lsp", |rest| rest
+                .starts_with("enrich")),
+            "a prompt mentioning `lsp enrich` must not count as an enrich run"
+        );
+    }
+
+    #[test]
+    fn domain_checks_need_both_halves_on_one_domain_line() {
+        // `plugin … ok` on one line and `fail` on another must not combine.
+        let text = "\
+2026-07-26T13:02:14.805Z [ax] 🪓 plugin extract name=echo ext=.rs path=src/a.rs ok tool=plugin\n\
+2026-07-26T13:02:15.000Z [ax] 🪓 lsp enrich fail via=mcp tool=lsp\n\
+2026-07-26T13:02:16.000Z [ax] 🪓 ship-ci start tool=ship-ci\n\
+2026-07-26T13:02:17.000Z [ax] 🪓 ship status=failed tool=ship\n";
+        let checks = domain_findings(text);
+        assert!(
+            !checks.iter().any(|c| c == "PluginExtractErrors"),
+            "{checks:?}"
+        );
+        assert!(!checks.iter().any(|c| c == "ShipCiFailed"), "{checks:?}");
+    }
+
+    #[test]
+    fn domain_checks_fire_on_real_domain_lines() {
+        let text = "\
+2026-07-26T13:02:14.805Z [ax] 🪓 plugin extract name=echo ext=.rs path=src/a.rs fail tool=plugin\n\
+2026-07-26T13:02:15.000Z [ax] 🪓 ship-ci status=failed steps=3 tool=ship-ci\n\
+2026-07-26T13:02:16.000Z [ax] 🪓 share readonly write denied tool=share\n\
+2026-07-26T13:02:17.000Z [ax] 🪓 embed backend=onnx model=m tool=embed\n\
+2026-07-26T13:02:18.000Z [ax] 🪓 lsp enrich start limit=200 tool=lsp\n";
+        let checks = domain_findings(text);
+        for check in [
+            "PluginExtractErrors",
+            "ShipCiFailed",
+            "ShareReadonlyWrite",
+            "EmbedBackend",
+        ] {
+            assert!(
+                checks.iter().any(|c| c == check),
+                "{check} missing: {checks:?}"
+            );
+        }
+        let (lines, _) = parse_verbose_log(text, 0);
+        assert!(domain_line_matches(
+            &domain_blob_from(&lines),
+            "lsp",
+            |rest| rest.starts_with("enrich")
+        ));
     }
 
     #[test]
