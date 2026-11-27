@@ -113,6 +113,17 @@ CREATE TABLE IF NOT EXISTS plan_selections (
     compatibility TEXT NOT NULL DEFAULT 'current',
     UNIQUE (workstream_id, plan_id, plan_version, session_id, turn_id)
 );
+CREATE TABLE IF NOT EXISTS import_review (
+    id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (id, turn_id, source)
+);
 "#;
 
 fn now_ms() -> i64 {
@@ -148,7 +159,55 @@ pub struct CreatedSpecPlan {
     pub plan_version: i64,
 }
 
+/// Remembers which pools already ran a schema migration, so the migration
+/// (which writes) runs once per pool and later reads stay read-only.
+///
+/// A pool is identified by its shared connect options. Each entry keeps a weak
+/// reference to them, so the address cannot be reused by a new pool while the
+/// entry exists; entries of dropped pools are pruned.
+pub(crate) struct MigratedPools(
+    std::sync::Mutex<Vec<std::sync::Weak<sqlx::sqlite::SqliteConnectOptions>>>,
+);
+
+impl MigratedPools {
+    pub(crate) const fn new() -> Self {
+        Self(std::sync::Mutex::new(Vec::new()))
+    }
+
+    pub(crate) fn contains(&self, pool: &SqlitePool) -> bool {
+        let options = pool.connect_options();
+        let mut seen = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
+        seen.retain(|entry| entry.strong_count() > 0);
+        seen.iter()
+            .any(|entry| std::ptr::eq(entry.as_ptr(), std::sync::Arc::as_ptr(&options)))
+    }
+
+    pub(crate) fn insert(&self, pool: &SqlitePool) {
+        if self.contains(pool) {
+            return;
+        }
+        let options = pool.connect_options();
+        self.0
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .push(std::sync::Arc::downgrade(&options));
+    }
+}
+
+static HIERARCHY_MIGRATED: MigratedPools = MigratedPools::new();
+
+/// Create or upgrade the hierarchy tables. The work runs once per pool; later
+/// calls return at once, so read paths never take the write lock.
 pub async fn ensure_hierarchy_schema(pool: &SqlitePool) -> Result<(), String> {
+    if HIERARCHY_MIGRATED.contains(pool) {
+        return Ok(());
+    }
+    migrate_hierarchy_schema(pool).await?;
+    HIERARCHY_MIGRATED.insert(pool);
+    Ok(())
+}
+
+async fn migrate_hierarchy_schema(pool: &SqlitePool) -> Result<(), String> {
     for statement in SCHEMA.split(';') {
         let statement = statement.trim();
         if statement.is_empty() {
@@ -1984,22 +2043,6 @@ pub async fn queue_finished_plan(
 ) -> Result<(), String> {
     ensure_hierarchy_schema(pool).await?;
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS import_review (
-            id TEXT NOT NULL,
-            turn_id TEXT NOT NULL,
-            source TEXT NOT NULL,
-            project_id TEXT NOT NULL,
-            title TEXT NOT NULL,
-            body TEXT NOT NULL,
-            session_id TEXT NOT NULL,
-            created_at INTEGER NOT NULL,
-            PRIMARY KEY (id, turn_id, source)
-        )",
-    )
-    .execute(pool)
-    .await
-    .map_err(|error| error.to_string())?;
-    sqlx::query(
         "INSERT OR IGNORE INTO import_review
          (id, turn_id, source, project_id, title, body, session_id, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -2027,15 +2070,6 @@ pub async fn import_review_from_json(pool: &SqlitePool) -> serde_json::Value {
 
 pub async fn import_review_ids(pool: &SqlitePool) -> Result<Vec<String>, String> {
     ensure_hierarchy_schema(pool).await?;
-    let table: Option<String> = sqlx::query_scalar(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'import_review'",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|error| error.to_string())?;
-    if table.is_none() {
-        return Ok(Vec::new());
-    }
     sqlx::query_scalar("SELECT id FROM import_review ORDER BY id")
         .fetch_all(pool)
         .await
@@ -3837,6 +3871,52 @@ mod tests {
         billing_workstream(&pool).await;
         select_plan(&pool, pick(1, "turn-2")).await.unwrap();
         assert_eq!(compatibility(&pool, "plan-ledger").await, "current");
+    }
+
+    /// A pool on a WAL file with a short busy timeout, so a read that needs
+    /// the write lock fails fast instead of waiting.
+    async fn short_timeout_pool(path: &std::path::Path) -> SqlitePool {
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            .busy_timeout(std::time::Duration::from_millis(50));
+        sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(options)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn reads_do_not_need_the_write_lock_after_the_schema_exists() {
+        use sqlx::Connection;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reads.db");
+        let pool = short_timeout_pool(&path).await;
+        ensure_hierarchy_schema(&pool).await.unwrap();
+        // Warm every connection so none has to open while the lock is held.
+        let warm: Vec<_> = vec![pool.acquire().await.unwrap(), pool.acquire().await.unwrap()];
+        drop(warm);
+
+        let mut writer = sqlx::SqliteConnection::connect_with(
+            &sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .busy_timeout(std::time::Duration::from_millis(50)),
+        )
+        .await
+        .unwrap();
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut writer)
+            .await
+            .unwrap();
+
+        assert_eq!(hierarchy_enabled(&pool).await, Ok(false));
+        assert_eq!(specs_for_session(&pool, "s").await, Ok(Vec::new()));
+        assert_eq!(selected_plans(&pool, "w").await, Ok(Vec::new()));
+        assert_eq!(import_review_ids(&pool).await, Ok(Vec::new()));
+
+        sqlx::query("ROLLBACK").execute(&mut writer).await.unwrap();
     }
 
     async fn compatibility(pool: &SqlitePool, plan_id: &str) -> String {

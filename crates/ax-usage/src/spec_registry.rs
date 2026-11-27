@@ -87,7 +87,14 @@ pub fn is_plan_request(prompt: &str) -> bool {
     .any(|phrase| lower.contains(phrase))
 }
 
+static REGISTRY_MIGRATED: crate::spec_hierarchy::MigratedPools =
+    crate::spec_hierarchy::MigratedPools::new();
+
+/// Create the registry tables. The work runs once per pool.
 pub async fn ensure_spec_schema(pool: &SqlitePool) -> Result<(), String> {
+    if REGISTRY_MIGRATED.contains(pool) {
+        return Ok(());
+    }
     for statement in SCHEMA.split(';') {
         let statement = statement.trim();
         if statement.is_empty() {
@@ -98,6 +105,7 @@ pub async fn ensure_spec_schema(pool: &SqlitePool) -> Result<(), String> {
             .await
             .map_err(|error| error.to_string())?;
     }
+    REGISTRY_MIGRATED.insert(pool);
     Ok(())
 }
 
