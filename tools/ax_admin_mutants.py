@@ -14,8 +14,11 @@ next mutant. A build error, a missing anchor or a passing test is a failure of t
 Files are restored from their original bytes after every mutant, also when the
 run is interrupted.
 """
+from __future__ import annotations
+
 import hashlib
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -171,6 +174,30 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def run_tests(argv: list[str], env: dict[str, str]) -> tuple[int, str] | None:
+    """Run one test command; None when it hangs past MUTANT_TIMEOUT.
+
+    The command runs in its own process group. On a timeout, or when the run is
+    interrupted, the whole group is killed: cargo, the test binary it started and
+    any server a test spawned. An orphan left running would make the next
+    mutants' tests fail for its own reasons and record false kills.
+    """
+    proc = subprocess.Popen(argv, cwd=ROOT, env=env, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    try:
+        out, _ = proc.communicate(timeout=MUTANT_TIMEOUT)
+        return proc.returncode, out
+    except subprocess.TimeoutExpired:
+        return None
+    finally:
+        if proc.returncode is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.communicate()
+
+
 def run_mutant(mutant) -> str:
     ident, what, rel, old, new, command, test_filter = mutant
     path = ROOT / rel
@@ -179,23 +206,17 @@ def run_mutant(mutant) -> str:
     if text.count(old) != 1:
         return f"BROKEN (anchor found {text.count(old)} times)"
     before = digest(path)
-    timed_out = False
     try:
         path.write_bytes(text.replace(old, new).encode("utf-8"))
         env = dict(os.environ, AX_SKIP_WEB_BUILD="1")
-        try:
-            done = subprocess.run(command + [test_filter], cwd=ROOT, env=env,
-                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                  timeout=MUTANT_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            timed_out = True
+        done = run_tests(command + [test_filter], env)
     finally:
         path.write_bytes(original)
     if digest(path) != before:
         return "BROKEN (file not restored)"
-    if timed_out:
+    if done is None:
         return f"killed by timeout (no result after {MUTANT_TIMEOUT} s)"
-    out = done.stdout
+    returncode, out = done
     ran = [line for line in out.splitlines() if line.startswith("test result:")]
     if "error: could not compile" in out or "error[E" in out:
         return "BROKEN (does not compile)"
@@ -203,7 +224,7 @@ def run_mutant(mutant) -> str:
         return "BROKEN (no test ran)"
     if not any(" 0 passed; 0 failed" not in line for line in ran):
         return "BROKEN (filter matched no test)"
-    if done.returncode != 0 and any("FAILED" in line for line in ran):
+    if returncode != 0 and any("FAILED" in line for line in ran):
         failed = [line.split()[1] for line in out.splitlines() if line.startswith("test ") and line.endswith("FAILED")]
         return "killed by " + ", ".join(sorted(set(failed)))
     return "SURVIVED"

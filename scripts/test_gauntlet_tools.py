@@ -53,6 +53,36 @@ class MutantTimeoutTest(unittest.TestCase):
             self.assertIn("mutants killed", lines[-1])
             self.assertEqual(status, 1)
 
+    def test_a_timeout_kills_the_whole_test_process_tree(self):
+        mutants = load_mutants()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            target = tmp / "src.rs"
+            target.write_text("const WAIT: u32 = 2;\n")
+            pidfile = tmp / "grandchild.pid"
+            # A fake cargo that starts a test binary (a sleeping grandchild) and waits for it.
+            cargo = tmp / "cargo"
+            cargo.write_text(f"#!/bin/sh\nsleep 60 &\necho $! > '{pidfile}'\nwait\n")
+            cargo.chmod(0o755)
+            mutant = ("H01", "hangs", "src.rs", "= 2;", "= 30;", [str(cargo)], "filter")
+            with mock.patch.object(mutants, "ROOT", tmp), \
+                    mock.patch.object(mutants, "MUTANT_TIMEOUT", 1):
+                result = mutants.run_mutant(mutant)
+            self.assertTrue(result.startswith("killed by timeout"), result)
+            self.assertEqual(target.read_text(), "const WAIT: u32 = 2;\n")
+            pid = int(pidfile.read_text())
+            deadline = time.time() + 5
+            alive = True
+            while alive and time.time() < deadline:
+                try:
+                    os.kill(pid, 0)
+                    time.sleep(0.05)
+                except ProcessLookupError:
+                    alive = False
+            if alive:
+                os.kill(pid, signal.SIGKILL)
+            self.assertFalse(alive, "the grandchild outlived the timeout")
+
 
 class TestBaselineTest(unittest.TestCase):
     """tools/check-test-baseline.sh, used by gauntlet-ax-admin.sh L4."""
