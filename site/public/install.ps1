@@ -5,8 +5,9 @@
 #   irm https://getax.wenneker.io/install.ps1 | iex
 #
 # Always installs the latest published release (highest semver with assets).
-# Self-heals before download: stops ax, clears stuck upgrade-status/staging,
-# drops invalid AX_VERSION pins, and retries GitHub without a rejected token
+# Resolves, downloads and unpacks the release first; only then it stops ax,
+# clears stuck upgrade-status/staging and swaps the new program in. It also
+# drops invalid AX_VERSION pins and retries GitHub without a rejected token
 # (stored GITHUB_TOKEN/GH_TOKEN values are never changed).
 # Pin a version: $env:AX_VERSION = 'v2.0.14'; irm ... | iex
 # Upgrade: ax upgrade  (or re-run this script)
@@ -89,21 +90,36 @@ function Get-AxHttpStatus {
   return $null
 }
 
-function Clear-AxInstallState {
+function Switch-AxInstallTree {
+  # Replaces the working install with an unpacked one; on failure the old one comes back.
+  param(
+    [Parameter(Mandatory = $true)][string]$NewTree,
+    [Parameter(Mandatory = $true)][string]$Live
+  )
   Stop-AxProcesses
   Clear-AxPendingUpgradeState -InstallRoot $installDir
-  if (Test-Path $installDir) {
-    $current = Join-Path $installDir 'current'
-    if (Test-Path $current) {
+  $parked = "$Live.old"
+  if (Test-Path -LiteralPath $Live) {
+    try {
+      Move-Item -LiteralPath $Live -Destination $parked -ErrorAction Stop
+    } catch {
+      Start-Sleep -Seconds 1
+      Stop-AxProcesses
       try {
-        Remove-Item -Recurse -Force $current
+        Move-Item -LiteralPath $Live -Destination $parked -ErrorAction Stop
       } catch {
-        Start-Sleep -Seconds 1
-        Stop-AxProcesses
-        Remove-Item -Recurse -Force $current
+        Remove-Item -Recurse -Force -LiteralPath $NewTree -ErrorAction SilentlyContinue
+        throw "ax: cannot move $Live aside ($_); the current install was left as it was."
       }
     }
   }
+  try {
+    Move-Item -LiteralPath $NewTree -Destination $Live -ErrorAction Stop
+  } catch {
+    if (Test-Path -LiteralPath $parked) { Move-Item -LiteralPath $parked -Destination $Live -ErrorAction SilentlyContinue }
+    throw "ax: could not activate the new install ($_); the previous install was restored."
+  }
+  if (Test-Path -LiteralPath $parked) { Remove-Item -Recurse -Force -LiteralPath $parked -ErrorAction SilentlyContinue }
 }
 
 function Copy-AxExeForce {
@@ -400,9 +416,8 @@ function Set-UserPathFirst([string]$entry) {
 }
 
 # ---- install steps ----
-# Kill stale ax and wipe previous install before resolving/downloading.
-Clear-AxInstallState
-
+# Resolve, download and unpack first: a failure up to the swap leaves the working
+# install and the running ax processes alone.
 $version = Resolve-AxVersion
 
 $getaxUrl = "$downloadBase/$version/ax-$target.zip"
@@ -429,17 +444,27 @@ if (-not $downloaded) {
 }
 Write-Host "  downloaded from: $downloadFrom" -ForegroundColor DarkGray
 
-Stop-AxProcesses
-
-$dest = Join-Path $installDir 'current'
-New-Item -ItemType Directory -Force -Path $dest | Out-Null
-Expand-Archive -Path $zip -DestinationPath $dest -Force
-$inner = Join-Path $dest "ax-$target"
-if (Test-Path $inner) {
-  Get-ChildItem -Force $inner | Move-Item -Destination $dest -Force
-  Remove-Item -Recurse -Force $inner
+New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+$staged = Join-Path $installDir (".install-new-" + [guid]::NewGuid().ToString('N'))
+try {
+  Expand-Archive -Path $zip -DestinationPath $staged -Force
+  $inner = Join-Path $staged "ax-$target"
+  if (Test-Path $inner) {
+    Get-ChildItem -Force $inner | Move-Item -Destination $staged -Force
+    Remove-Item -Recurse -Force $inner
+  }
+  if (-not (Test-Path (Join-Path $staged 'ax.exe'))) {
+    throw "ax: ax.exe not found in the downloaded bundle; the current install was left as it was."
+  }
+} catch {
+  Remove-Item -Recurse -Force -LiteralPath $staged -ErrorAction SilentlyContinue
+  Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
+  throw
 }
 Remove-Item -Recurse -Force $tmp
+
+$dest = Join-Path $installDir 'current'
+Switch-AxInstallTree -NewTree $staged -Live $dest
 
 $binDir = Join-Path $dest 'bin'
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null

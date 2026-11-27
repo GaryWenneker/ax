@@ -31,10 +31,10 @@ class InstallSelfHealContract(unittest.TestCase):
         self.assertIn("upgrade-staging-*", text)
         self.assertIn("current.old", text)
         self.assertIn("Clear-AxPendingUpgradeState -InstallRoot $installDir", text)
-        # Must run before version resolution.
-        clear_at = text.index("Clear-AxInstallState")
+        # The working install is only touched after the version resolves and the download succeeds.
         resolve_at = text.index("$version = Resolve-AxVersion")
-        self.assertLess(clear_at, resolve_at)
+        swap_at = text.index("Switch-AxInstallTree -NewTree")
+        self.assertLess(resolve_at, swap_at)
 
     def test_ps1_skips_rejected_github_tokens_without_changing_the_environment(self) -> None:
         # The token is skipped for this install only; User and Machine variables stay as they are.
@@ -44,21 +44,20 @@ class InstallSelfHealContract(unittest.TestCase):
         # Rate limits (HTTP 403) are recognized before the auth-failure branch.
         self.assertLess(text.index("-match 'rate limit'"), text.index("Bad credentials'"))
 
-    def test_sh_clears_pending_upgrade_before_resolve(self) -> None:
+    def test_sh_swaps_install_only_after_resolve(self) -> None:
         text = _read(INSTALL_SH)
         self.assertIn("clear_pending_upgrade_state()", text)
         self.assertIn("upgrade-status.txt", text)
         self.assertIn("clear_pending_upgrade_state", text)
         self.assertIn("skip_github_token", text)
         self.assertNotIn("disable_stale_github_tokens", text)
-        clean_at = text.index("clean_install_tree")
-        # The invocation (not only the definition) must precede resolve_version assignment.
+        # The working install is only touched after the version resolves and the download succeeds.
         invoke_matches = list(
-            re.finditer(r"^clean_install_tree\s*$", text, flags=re.MULTILINE)
+            re.finditer(r"^swap_install_tree ", text, flags=re.MULTILINE)
         )
-        self.assertTrue(invoke_matches, "clean_install_tree must be invoked")
+        self.assertTrue(invoke_matches, "swap_install_tree must be invoked")
         resolve_at = text.index('version="$(resolve_version)"')
-        self.assertLess(invoke_matches[-1].start(), resolve_at)
+        self.assertLess(resolve_at, invoke_matches[-1].start())
 
     def test_pending_upgrade_fixture_cleanup_contract(self) -> None:
         """Simulate the file operations Clear-AxPendingUpgradeState / clear_pending_upgrade_state perform."""

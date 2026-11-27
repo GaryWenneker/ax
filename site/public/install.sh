@@ -6,8 +6,9 @@
 #   curl -fsSL https://getax.wenneker.io/install.sh | sh
 #
 # Always installs the latest published release (highest semver with assets).
-# Self-heals before download: stops ax, clears stuck upgrade-status/staging,
-# drops invalid AX_VERSION pins, and retries GitHub without a rejected token
+# Resolves, downloads and unpacks the release first; only then it stops ax,
+# clears stuck upgrade-status/staging and swaps the new program in. It also
+# drops invalid AX_VERSION pins and retries GitHub without a rejected token
 # (stored GITHUB_TOKEN/GH_TOKEN values are never changed).
 # Pin a version: AX_VERSION=v2.0.14 curl -fsSL ... | sh
 # Upgrade: ax upgrade  (or re-run this script)
@@ -70,10 +71,23 @@ suggest_token_cleanup() {
   fi
 }
 
-clean_install_tree() {
+swap_install_tree() {
+  # Replaces the working install with an unpacked one; on failure the old one comes back.
+  ax_new="$1"
+  ax_live="$INSTALL_DIR/current"
   stop_ax_processes
   clear_pending_upgrade_state
-  rm -rf "$INSTALL_DIR/current" "$INSTALL_DIR/versions"
+  if [ -e "$ax_live" ] && ! mv "$ax_live" "$ax_live.old"; then
+    echo "ax: cannot move $ax_live aside; the current install was left as it was." >&2
+    return 1
+  fi
+  if mv "$ax_new" "$ax_live"; then
+    rm -rf "$ax_live.old" "$INSTALL_DIR/versions"
+    return 0
+  fi
+  echo "ax: could not activate the new install; restoring the previous one." >&2
+  if [ -e "$ax_live.old" ]; then mv "$ax_live.old" "$ax_live"; fi
+  return 1
 }
 
 ax_uninstall=0
@@ -487,9 +501,9 @@ if [ "$ax_uninstall" = 1 ]; then
   exit 0
 fi
 
-# Kill stale ax and remove previous install before download.
-clean_install_tree
-
+# ---- install steps ----
+# Resolve, download and unpack first: a failure up to the swap leaves the working
+# install and the running ax processes alone.
 version="$(resolve_version)" || {
   echo "ax: could not resolve a release with downloadable assets; set AX_VERSION." >&2
   exit 1
@@ -514,12 +528,19 @@ else
   exit 1
 fi
 
-stop_ax_processes
+mkdir -p "$INSTALL_DIR"
+staged="$INSTALL_DIR/.install-new-$$"
+rm -rf "$staged"
+mkdir -p "$staged"
+trap 'rm -rf "$tmp" "$staged"' EXIT
+if ! tar -xzf "$tmp/ax.tar.gz" -C "$staged" --strip-components=1 || [ ! -f "$staged/ax" ]; then
+  echo "ax: the downloaded archive does not contain ax; the current install was left as it was." >&2
+  exit 1
+fi
+chmod +x "$staged/ax" 2>/dev/null || true
 
 dest="$INSTALL_DIR/current"
-mkdir -p "$dest"
-tar -xzf "$tmp/ax.tar.gz" -C "$dest" --strip-components=1
-chmod +x "$dest/ax" 2>/dev/null || true
+swap_install_tree "$staged" || exit 1
 
 mkdir -p "$BIN_DIR"
 sync_local_ax_instances "$dest/ax"

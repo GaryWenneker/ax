@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -74,6 +74,7 @@ else if(name==='sort') {
   else if(url?.includes('/releases/tags/')) emit(url.endsWith('v8.1.0')||url.endsWith('v7.9.0')?release('v8.1.0'):{assets:[]});
   else if(url?.endsWith('latest.txt')) emit('8.1.0');
   else if(args.includes('-r')) {if(wantCode) process.stdout.write('404'); process.exit(22);}
+  else if(url?.includes('/v8.1.0/') && env.AX_TEST_DOWNLOAD_FAIL==='1') process.exit(22);
   else if(url?.includes('/v8.1.0/')) {copyFileSync(env.AX_TEST_ARCHIVE,args[args.indexOf('-o')+1]); if(wantCode) process.stdout.write('200');}
   else process.exit(22);
 } else process.exit(1);
@@ -105,7 +106,7 @@ for (const os of ['Darwin', 'Linux']) {
     test(`release API chooses the highest stable ${os}/${arch} asset from JSON input`, () => {
       const f = fixture({ os, arch });
       try {
-        const definitions = readFileSync(installers[0], 'utf8').split('# Kill stale ax and remove previous install before download.')[0];
+        const definitions = readFileSync(installers[0], 'utf8').split('# ---- install steps ----')[0];
         const result = spawnSync('sh', ['-s'], { env: f.env, input: `${definitions}\nresolve_version_from_api\n`, encoding: 'utf8' });
         assert.equal(result.status, 0, result.stderr);
         assert.equal(result.stdout.trim(), 'v8.1.0');
@@ -342,6 +343,25 @@ test('uninstall --purge needs confirmation and refuses unsafe directories', () =
     const purged = runUninstall(f.env, '--purge', '--yes');
     assert.equal(purged.status, 0, purged.stderr);
     assert.ok(!existsSync(installDir));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('a failed download keeps the working install and running ax processes', () => {
+  const f = fixture();
+  try {
+    assert.equal(runInstaller(installers[0], f.env).status, 0);
+    const current = join(f.env.AX_INSTALL_DIR as string, 'current/ax');
+    assert.ok(existsSync(current));
+    assert.deepEqual(readdirSync(f.env.AX_INSTALL_DIR as string), ['current'], 'no staging or parked folders stay behind');
+    writeFileSync(f.trace, '');
+    const failed = runInstaller(installers[0], { ...f.env, AX_TEST_DOWNLOAD_FAIL: '1' });
+    assert.notEqual(failed.status, 0);
+    assert.match(failed.stderr, /download failed/);
+    assert.ok(existsSync(current), 'the working program in current/ is kept');
+    assert.equal(spawnSync(current, ['version'], { encoding: 'utf8' }).stdout.trim(), 'ax 8.1.0');
+    assert.equal(spawnSync(join(f.binaryDir, 'ax'), ['version'], { encoding: 'utf8' }).status, 0);
+    const trace = readFileSync(f.trace, 'utf8');
+    assert.ok(!trace.includes('"name":"pkill"'), 'running ax processes are only stopped once the new program is ready');
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
