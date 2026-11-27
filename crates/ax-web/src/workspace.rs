@@ -437,7 +437,13 @@ struct AddRecentBody {
     path: String,
 }
 
-async fn handle_add_recent(Json(body): Json<AddRecentBody>) -> impl IntoResponse {
+async fn handle_add_recent(
+    State(hub): State<WebHub>,
+    Json(body): Json<AddRecentBody>,
+) -> impl IntoResponse {
+    if hub.readonly {
+        return Json(serde_json::json!({ "ok": false, "error": "Read-only mode" })).into_response();
+    }
     let path = PathBuf::from(&body.path);
     let abs = canonical_or(&path);
     match touch_recent_project(&abs, is_initialized(&abs)) {
@@ -617,5 +623,35 @@ pub fn router_hub(hub: WebHub) -> Router {
         .route("/recent/add", post(handle_add_recent))
         .route("/purge-plan", get(handle_purge_plan))
         .route("/purge", post(handle_purge))
+        .layer(axum::middleware::from_fn_with_state(
+            hub.clone(),
+            local_or_signed_in,
+        ))
         .with_state(hub)
+}
+
+/// These routes read and change folders anywhere on this computer. They
+/// serve a member who passed web sign-in (as Admin or Owner, see
+/// [`crate::web_auth::gate`]) or, with sign-in off, only the browser of the
+/// person at this computer on the loopback address.
+async fn local_or_signed_in(
+    State(hub): State<WebHub>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let signed_in = req
+        .extensions()
+        .get::<crate::web_auth::SignedIn>()
+        .is_some();
+    if signed_in || crate::local_owner::browser_serves(req.headers(), hub.port) {
+        return next.run(req).await;
+    }
+    (
+        axum::http::StatusCode::FORBIDDEN,
+        Json(serde_json::json!({
+            "ok": false,
+            "error": "Open the Command Center on this computer or sign in"
+        })),
+    )
+        .into_response()
 }

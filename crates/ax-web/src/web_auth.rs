@@ -1481,8 +1481,13 @@ pub async fn gate(State(hub): State<WebHub>, mut req: Request, next: Next) -> Re
         return err(StatusCode::FORBIDDEN, "Write permission required").into_response();
     }
     req.extensions_mut().insert(member_id);
+    req.extensions_mut().insert(SignedIn);
     next.run(req).await
 }
+
+/// Set by [`gate`] on a request that passed web sign-in and its role rules.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SignedIn;
 async fn no_store(req: Request, next: Next) -> Response {
     let mut response = next.run(req).await;
     response
