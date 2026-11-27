@@ -360,26 +360,39 @@ pub async fn open_pool() -> Result<SqlitePool, AxError> {
     Ok(pool)
 }
 
+/// How long a statement waits for another writer, and a caller waits for a
+/// free connection, before failing. The usage database serves interactive
+/// tool calls, so a contended file fails fast instead of stalling a call.
+/// `AX_USAGE_DB_BUSY_TIMEOUT_SECS` overrides it (whole seconds, 1 to 600).
+fn usage_db_wait() -> std::time::Duration {
+    let secs = std::env::var("AX_USAGE_DB_BUSY_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map_or(10, |secs| secs.clamp(1, 600));
+    std::time::Duration::from_secs(secs)
+}
+
 pub(crate) async fn open_pool_at(path: &std::path::Path) -> Result<SqlitePool, AxError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     }
 
+    let wait = usage_db_wait();
     let options = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Normal)
-        .busy_timeout(std::time::Duration::from_secs(180))
+        .busy_timeout(wait)
         .disable_statement_logging();
 
     let pool = SqlitePoolOptions::new()
         .max_connections(3)
-        .acquire_timeout(std::time::Duration::from_secs(180))
-        .after_connect(|conn, _meta| {
+        .acquire_timeout(wait)
+        .after_connect(move |conn, _meta| {
             Box::pin(async move {
-                sqlx::query("PRAGMA busy_timeout = 180000")
+                sqlx::query(&format!("PRAGMA busy_timeout = {}", wait.as_millis()))
                     .execute(&mut *conn)
                     .await?;
                 Ok(())
@@ -470,6 +483,19 @@ mod tests {
         pool.close().await;
         let pool = open_pool_at(&path).await.unwrap();
         assert!(!index_exists(&pool, "idx_mcp_call_log_tool").await);
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn a_busy_database_fails_within_seconds_instead_of_minutes() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_pool_at(&dir.path().join("usage.db")).await.unwrap();
+        let busy: (i64,) = sqlx::query_as("PRAGMA busy_timeout")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(busy.0 > 0 && busy.0 <= 10_000, "busy_timeout {} ms", busy.0);
+        assert!(pool.options().get_acquire_timeout() <= std::time::Duration::from_secs(10));
         pool.close().await;
     }
 
