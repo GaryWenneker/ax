@@ -226,6 +226,16 @@ async function buildDashboard(
   };
 }
 
+const TYPES = new Set(['dashboard', 'overview', 'timeline', 'tools', 'os']);
+const DEFAULT_DAYS = 30;
+
+/** Days of history to report: a whole number in 1..90, or 30 when `raw` is missing or not a number. */
+export function parseDays(raw: string | undefined): number {
+  const n = Number.parseInt(raw ?? '', 10);
+  if (!Number.isFinite(n)) return DEFAULT_DAYS;
+  return Math.min(Math.max(n, 1), 90);
+}
+
 const handler: Handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 204, headers: CORS_HEADERS, body: '' };
@@ -240,20 +250,13 @@ const handler: Handler = async (event) => {
     'https://us.posthog.com'
   ).replace(/\/$/, '');
 
-  if (!adminSecret || !posthogKey || !projectId) {
-    const missing = [
-      !adminSecret && 'ADMIN_SECRET',
-      !posthogKey && 'POSTHOG_PERSONAL_KEY',
-      !projectId && 'POSTHOG_PROJECT_ID',
-    ].filter(Boolean);
+  // Without ADMIN_SECRET no caller can be authenticated; say only that the dashboard is not set up.
+  if (!adminSecret) {
+    console.error('admin-telemetry: ADMIN_SECRET is not set');
     return {
       statusCode: 503,
       headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        error: 'Telemetry dashboard not configured',
-        missing_env: missing,
-        hint: 'Set POSTHOG_PERSONAL_KEY (personal API key with project read) and POSTHOG_PROJECT_ID on Netlify.',
-      }),
+      body: JSON.stringify({ error: 'Telemetry dashboard not configured' }),
     };
   }
 
@@ -265,9 +268,30 @@ const handler: Handler = async (event) => {
     };
   }
 
+  // Only a signed-in admin learns which PostHog settings are missing.
+  if (!posthogKey || !projectId) {
+    const missing = [!posthogKey && 'POSTHOG_PERSONAL_KEY', !projectId && 'POSTHOG_PROJECT_ID'].filter(Boolean);
+    return {
+      statusCode: 503,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        error: 'Telemetry dashboard not configured',
+        missing_env: missing,
+        hint: 'Set POSTHOG_PERSONAL_KEY (personal API key with project read) and POSTHOG_PROJECT_ID on Netlify.',
+      }),
+    };
+  }
+
   const params = event.queryStringParameters ?? {};
   const type = params.type ?? 'dashboard';
-  const days = Math.min(Math.max(parseInt(params.days ?? '30', 10), 1), 90);
+  const days = parseDays(params.days);
+  if (!TYPES.has(type)) {
+    return {
+      statusCode: 400,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: `Unknown type: ${type}` }),
+    };
+  }
 
   try {
     if (type === 'dashboard') {
