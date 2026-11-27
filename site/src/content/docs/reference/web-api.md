@@ -64,6 +64,17 @@ description: Every HTTP endpoint served by ax web / ax ship --watch, grouped by 
 | GET | `/api/policy/review/{id}` | One staged item |
 | POST | `/api/policy/review/{id}/approve` | Accept a staged item |
 | POST | `/api/policy/review/{id}/reject` | Reject a staged item |
+| GET | `/api/policy/skills/catalog/search` | Search the public skill catalog |
+| POST | `/api/policy/skills/catalog/install` | Install a skill from a catalog source |
+| GET | `/api/policy/skills/catalog/installed` | Skills installed from the catalog |
+| GET, PUT | `/api/policy/skills/catalog/settings` | Install reporting and the publish repository |
+| GET | `/api/policy/skills/catalog/audits`, `/api/policy/rules/catalog/audits` | Latest audit reports |
+| POST | `/api/policy/skills/catalog/audit` | Audit a skill before installing it |
+| GET, POST | `/api/policy/skills/{name}/audit` | Read or run a skill audit |
+| POST | `/api/policy/rules/{id}/audit` | Run a rule audit |
+| POST | `/api/policy/skills/{name}/publish` | Publish one skill to the publish repository |
+
+Read-only mode (`ax share`, `AX_WEB_READONLY=1`) refuses every catalog route that writes: install, settings, audits and publish. The publish repository must be an `https://` or `ssh://` URL, an scp-style `user@host:path`, or a folder inside the project (relative folders are relative to the project, optionally prefixed with `well-known:`); other values get `400`.
 | GET, PUT | `/api/policy/settings` | Policy settings (folder, storage mode) |
 
 ### Remote policy share
