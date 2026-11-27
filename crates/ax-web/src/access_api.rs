@@ -1,4 +1,4 @@
-use ax_global_db::{access, global_db_path, open_and_init};
+use ax_global_db::access;
 use axum::{
     extract::{Path, Request, State},
     http::{header, HeaderValue, StatusCode},
@@ -161,8 +161,7 @@ struct CreateClient {
 }
 
 pub(crate) async fn pool() -> Result<sqlx::SqlitePool, String> {
-    let path = global_db_path().map_err(|e| e.to_string())?;
-    let pool = open_and_init(&path).await.map_err(|e| e.to_string())?;
+    let pool = crate::global_pool::global_pool().await?;
     let _ = access::bootstrap_owner(&pool, "local-owner", "Local owner", None)
         .await
         .map_err(|e| e.to_string())?;

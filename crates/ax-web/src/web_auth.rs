@@ -5,7 +5,7 @@ use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
-use ax_global_db::{access, global_db_path, open_and_init};
+use ax_global_db::access;
 use axum::{
     extract::{ConnectInfo, Path, Request, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
@@ -60,9 +60,7 @@ fn local_request(headers: &HeaderMap, peer: SocketAddr, port: u16) -> bool {
 }
 
 async fn db() -> Result<SqlitePool, ErrorResponse> {
-    let path = global_db_path()
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Database unavailable"))?;
-    open_and_init(&path)
+    crate::global_pool::global_pool()
         .await
         .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Database unavailable"))
 }
@@ -1398,7 +1396,7 @@ mod tests {
     #[tokio::test]
     async fn revoking_two_owner_passkeys_preserves_one() {
         let directory = tempfile::tempdir().unwrap();
-        let pool = open_and_init(&directory.path().join("auth.db"))
+        let pool = ax_global_db::open_and_init(&directory.path().join("auth.db"))
             .await
             .unwrap();
         access::bootstrap_owner(&pool, "owner", "Local owner", None)
@@ -1436,7 +1434,7 @@ mod tests {
     #[tokio::test]
     async fn recovery_verifiers_are_consumed_once() {
         let directory = tempfile::tempdir().unwrap();
-        let pool = open_and_init(&directory.path().join("auth.db"))
+        let pool = ax_global_db::open_and_init(&directory.path().join("auth.db"))
             .await
             .unwrap();
         access::bootstrap_owner(&pool, "owner", "Owner", None)

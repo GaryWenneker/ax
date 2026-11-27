@@ -737,10 +737,7 @@ pub(crate) async fn open_global_pool(
     root: &std::path::Path,
     project_id: Option<i64>,
 ) -> Result<(sqlx::SqlitePool, i64), String> {
-    let gpath = ax_global_db::global_db_path().map_err(|e| e.to_string())?;
-    let gpool = ax_global_db::open_and_init(&gpath)
-        .await
-        .map_err(|e| e.to_string())?;
+    let gpool = crate::global_pool::global_pool().await?;
     let pid = ax_global_db::policy::resolve_project_id(&gpool, root, project_id)
         .await
         .map_err(|e| e.to_string())?;
@@ -944,13 +941,9 @@ async fn delete_policy_copy(
     let ws = hub.read().await;
     let root = ws.policy.store.project_root().to_path_buf();
     drop(ws);
-    let gpath = match ax_global_db::global_db_path() {
+    let gpool = match crate::global_pool::global_pool().await {
         Ok(p) => p,
-        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    };
-    let gpool = match ax_global_db::open_and_init(&gpath).await {
-        Ok(p) => p,
-        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e),
     };
     let pid =
         match ax_global_db::policy::resolve_project_id(&gpool, &root, payload.project_id).await {
@@ -1736,7 +1729,7 @@ async fn annotate_policy_list<T: serde::Serialize>(
         .collect();
     if let Ok(gpath) = ax_global_db::global_db_path() {
         if gpath.is_file() {
-            if let Ok(gpool) = ax_global_db::open_and_init(&gpath).await {
+            if let Ok(gpool) = crate::global_pool::pool_at(&gpath).await {
                 let _ = ax_global_db::policy::extend_with_foreign_policy(
                     &gpool,
                     project_root,

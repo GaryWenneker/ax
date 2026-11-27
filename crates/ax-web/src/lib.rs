@@ -19,6 +19,7 @@ mod docs_catalog;
 mod domain_graph;
 mod folder_picker;
 mod global_policy;
+mod global_pool;
 mod graph_export;
 mod links_api;
 mod local_mcp_export;

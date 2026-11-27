@@ -116,16 +116,11 @@ async fn save(
     doc: impl FnOnce(String) -> serde_json::Result<Value>,
 ) -> Result<(), String> {
     let (pool, pid) = crate::policy::open_global_pool(root, project_id).await?;
-    let result = async {
-        let value = doc(format!("global.db:{pid}:{name}")).map_err(|e| e.to_string())?;
-        let flat = ax_global_db::policy::flatten_list_item(value, policy_kind(kind), name);
-        ax_global_db::policy::upsert_policy_item(&pool, pid, policy_kind(kind), name, &flat)
-            .await
-            .map_err(|e| e.to_string())
-    }
-    .await;
-    pool.close().await;
-    result
+    let value = doc(format!("global.db:{pid}:{name}")).map_err(|e| e.to_string())?;
+    let flat = ax_global_db::policy::flatten_list_item(value, policy_kind(kind), name);
+    ax_global_db::policy::upsert_policy_item(&pool, pid, policy_kind(kind), name, &flat)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 pub async fn save_rule(

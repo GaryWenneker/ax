@@ -176,7 +176,7 @@ async fn known_skill_names(hub: &WebHub) -> (PathBuf, Vec<String>) {
     }
     drop(ws);
     if let Ok(path) = ax_global_db::global_db_path() {
-        if let Ok(pool) = ax_global_db::open_and_init(&path).await {
+        if let Ok(pool) = crate::global_pool::pool_at(&path).await {
             if let Ok(rows) = ax_global_db::policy::list_skill_payloads(&pool).await {
                 names.extend(rows.into_iter().map(|(id, _)| id));
             }

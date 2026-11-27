@@ -23,11 +23,7 @@ pub(crate) async fn enforce_share_token(
     if let Some(token) =
         client_token.filter(|token| token.starts_with("axc_") || token.starts_with("axn_"))
     {
-        let db_path = match ax_global_db::global_db_path() {
-            Ok(p) => p,
-            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        };
-        let db = match ax_global_db::open_and_init(&db_path).await {
+        let db = match crate::global_pool::global_pool().await {
             Ok(db) => db,
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         };
