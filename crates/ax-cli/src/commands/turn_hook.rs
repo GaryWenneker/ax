@@ -49,6 +49,9 @@ const TITLE_CHARS: usize = 80;
 const MAX_COMMITS: &str = "50";
 const MAX_FILES_IN_BODY: usize = 30;
 const MAX_FILES: usize = 200;
+/// Dirty files up to this size are hashed by content; larger ones are
+/// fingerprinted by size and modification time so a turn never reads them.
+const MAX_HASHED_BYTES: u64 = 32 * 1024 * 1024;
 
 /// Hook entry point. Always returns `Ok` and prints nothing: memory capture never blocks a turn.
 pub async fn run(phase: TurnPhase) -> Result<(), String> {
@@ -227,16 +230,48 @@ fn outcome_text(reply: &str) -> String {
     format!("{}[truncated]", clip(&redacted, OUTCOME_CHARS))
 }
 
+/// What a turn end needs, computed with one working-tree scan and one log.
+struct TurnEnd {
+    /// The turn id from this conversation's own snapshot.
+    turn: String,
+    /// The turn memory, or `None` when the turn changed nothing.
+    record: Option<TurnRecord>,
+    /// Short hashes of the commits made during the turn.
+    commits: Vec<String>,
+}
+
+/// The end of the turn since this conversation's last snapshot. `None` when
+/// there is no snapshot or git could not be read.
+fn turn_end(root: &Path, conversation: &str, reply: Option<&str>) -> Option<TurnEnd> {
+    let snapshot = read_snapshot(root, conversation)?;
+    let now_dirty = dirty_files(root)?;
+    let commits = commits_since(root, snapshot.head.as_deref())?;
+    Some(TurnEnd {
+        turn: snapshot.turn.clone(),
+        commits: commits.iter().map(|commit| commit.hash.clone()).collect(),
+        record: build_record(root, conversation, reply, snapshot, &now_dirty, &commits),
+    })
+}
+
 /// The memory for the turn since the last snapshot, or `None` when it changed nothing.
 /// `reply` (Claude `last_assistant_message`) wins over the reply kept in the snapshot.
+#[cfg(test)]
 pub(crate) fn turn_record(
     root: &Path,
     conversation: &str,
     reply: Option<&str>,
 ) -> Option<TurnRecord> {
-    let snapshot = read_snapshot(root, conversation)?;
-    let now_dirty = dirty_files(root)?;
-    let commits = commits_since(root, snapshot.head.as_deref())?;
+    turn_end(root, conversation, reply)?.record
+}
+
+fn build_record(
+    root: &Path,
+    conversation: &str,
+    reply: Option<&str>,
+    snapshot: Snapshot,
+    now_dirty: &BTreeMap<String, String>,
+    commits: &[Commit],
+) -> Option<TurnRecord> {
 
     let mut files: Vec<String> = snapshot
         .dirty
@@ -265,7 +300,7 @@ pub(crate) fn turn_record(
         body: turn_body(
             &snapshot.prompt,
             &files,
-            &commits,
+            commits,
             &changes,
             reply.map(outcome_text).or(snapshot.outcome).as_deref(),
         ),
@@ -273,31 +308,41 @@ pub(crate) fn turn_record(
     })
 }
 
-/// Write the turn memory and prune expired ones. Returns the memory id when one exists.
-async fn finish_named_turn(root: &Path, conversation: &str, reply: Option<&str>) {
-    let Some((session, turn_id)) = current_ids(root) else {
-        return;
+/// Close this conversation's row in `agent_turns` with the outcome, files and
+/// commits. The turn id comes from the conversation's own snapshot, so another
+/// session starting in the same project in the meantime does not hide it;
+/// without a snapshot it falls back to `turns/current.json` when that names
+/// this conversation.
+async fn finish_named_turn(
+    root: &Path,
+    conversation: &str,
+    reply: Option<&str>,
+    end: Option<&TurnEnd>,
+) {
+    let turn_id = match end {
+        Some(end) => end.turn.clone(),
+        None => match current_ids(root) {
+            Some((session, turn)) if session == conversation => turn,
+            _ => return,
+        },
     };
-    if session != conversation {
+    if turn_id.is_empty() {
         return;
     }
-    let files = turn_record(root, conversation, reply)
-        .map(|record| record.files)
+    let files = end
+        .and_then(|end| end.record.as_ref())
+        .map(|record| record.files.clone())
         .unwrap_or_default();
-    let commits = read_snapshot(root, conversation)
-        .and_then(|snapshot| commits_since(root, snapshot.head.as_deref()))
-        .unwrap_or_default()
-        .into_iter()
-        .map(|commit| commit.hash)
-        .collect();
-    let Ok(db) = ax_db::Database::open(&root.join(".ax").join("ax.db")).await else {
+    let commits = end.map(|end| end.commits.clone()).unwrap_or_default();
+    let db_path = ax_context::directory::get_ax_dir(root).join("ax.db");
+    let Ok(db) = ax_db::Database::open(&db_path).await else {
         return;
     };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
-    let _ = ax_memory::save_file_changes(db.pool(), &files, &session, &turn_id, now).await;
+    let _ = ax_memory::save_file_changes(db.pool(), &files, conversation, &turn_id, now).await;
     let _ = ax_db::hook_turns::finish_hook_turn(
         db.pool(),
         &ax_db::hook_turns::HookTurnEnd {
@@ -312,7 +357,7 @@ async fn finish_named_turn(root: &Path, conversation: &str, reply: Option<&str>)
 }
 
 fn current_ids(root: &Path) -> Option<(String, String)> {
-    let text = std::fs::read_to_string(root.join(".ax").join("turns").join("current.json")).ok()?;
+    let text = std::fs::read_to_string(turns_dir(root).join("current.json")).ok()?;
     let value: serde_json::Value = serde_json::from_str(&text).ok()?;
     let session = value.get("session_id")?.as_str()?.trim();
     let turn = value.get("turn_id")?.as_str()?.trim();
@@ -328,14 +373,16 @@ pub(crate) async fn end_turn(
     reply: Option<String>,
     now_ms: i64,
 ) -> Option<String> {
-    finish_named_turn(root, conversation, reply.as_deref()).await;
+    let (dir, id, text) = (root.to_path_buf(), conversation.to_string(), reply.clone());
+    let end = tokio::task::spawn_blocking(move || turn_end(&dir, &id, text.as_deref()))
+        .await
+        .ok()
+        .flatten();
+    finish_named_turn(root, conversation, reply.as_deref(), end.as_ref()).await;
     if !per_turn_enabled(root) {
         return None;
     }
-    let (dir, id) = (root.to_path_buf(), conversation.to_string());
-    let record = tokio::task::spawn_blocking(move || turn_record(&dir, &id, reply.as_deref()))
-        .await
-        .ok()??;
+    let record = end?.record?;
     let ax = ax_core::Ax::open(root).await.ok()?;
     ax_memory::save_turn(ax.db_pool(), &record, now_ms)
         .await
@@ -463,6 +510,8 @@ fn head(root: &Path) -> Option<String> {
 /// is not `root` when the ax project is a subdirectory of the repository; the
 /// files are read from the top level.
 fn dirty_files(root: &Path) -> Option<BTreeMap<String, String>> {
+    #[cfg(test)]
+    tests::count_dirty_pass(root);
     let out = git_output(root, &git_status::STATUS_ARGS)?;
     let top = git_status::toplevel(root)?;
     let top = top.canonicalize().unwrap_or(top);
@@ -487,13 +536,37 @@ fn dirty_files(root: &Path) -> Option<BTreeMap<String, String>> {
         if let Some(source) = entry.source {
             dirty.insert(source, "-".to_string());
         }
-        let hash = std::fs::read(top.join(&entry.path)).map_or_else(
-            |_| "-".to_string(),
-            |bytes| blake3::hash(&bytes).to_hex().to_string(),
-        );
+        let hash = content_fingerprint(&top.join(&entry.path));
         dirty.insert(entry.path, hash);
     }
     Some(dirty)
+}
+
+/// A blake3 content hash read in chunks; for a file over [`MAX_HASHED_BYTES`]
+/// its size and modification time instead; `-` when it cannot be read.
+fn content_fingerprint(path: &Path) -> String {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return "-".to_string();
+    };
+    let Ok(meta) = file.metadata() else {
+        return "-".to_string();
+    };
+    if !meta.is_file() {
+        return "-".to_string();
+    }
+    if meta.len() > MAX_HASHED_BYTES {
+        let mtime = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_nanos());
+        return format!("size:{}:mtime:{mtime}", meta.len());
+    }
+    let mut hasher = blake3::Hasher::new();
+    match std::io::copy(&mut file, &mut hasher) {
+        Ok(_) => hasher.finalize().to_hex().to_string(),
+        Err(_) => "-".to_string(),
+    }
 }
 
 /// ax's own database, logs and snapshots under `.ax/`; the shareable `policy/` and `memory/`
@@ -608,6 +681,62 @@ mod tests {
             Some(&expected),
             "{dirty:?}"
         );
+    }
+
+    static DIRTY_PASSES: std::sync::Mutex<BTreeMap<PathBuf, usize>> =
+        std::sync::Mutex::new(BTreeMap::new());
+
+    pub(super) fn count_dirty_pass(root: &Path) {
+        *DIRTY_PASSES
+            .lock()
+            .unwrap()
+            .entry(root.to_path_buf())
+            .or_default() += 1;
+    }
+
+    fn dirty_passes(root: &Path) -> usize {
+        DIRTY_PASSES
+            .lock()
+            .unwrap()
+            .get(root)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    #[tokio::test]
+    async fn ending_a_turn_scans_the_working_tree_once() {
+        let dir = repo();
+        let root = dir.path();
+        drop(ax_core::Ax::init(root).await.unwrap());
+        start_turn(root, &input("fix", Some("gen-1"))).unwrap();
+        assert_eq!(dirty_passes(root), 1);
+        write(root, "src/a.rs", "fn a() { 1 }\n");
+        assert!(end_turn(root, "conv-1", Some("done".into()), NOW)
+            .await
+            .is_some());
+        assert_eq!(dirty_passes(root), 2, "start plus one pass at the end");
+    }
+
+    #[test]
+    fn dirty_files_fingerprints_large_files_without_hashing_them() {
+        let dir = repo();
+        let root = dir.path();
+        let big = std::fs::File::create(root.join("data.bin")).unwrap();
+        big.set_len(MAX_HASHED_BYTES + 1).unwrap();
+        drop(big);
+        let first = dirty_files(root).unwrap()["data.bin"].clone();
+        assert!(first.starts_with("size:"), "{first}");
+        let big = std::fs::OpenOptions::new()
+            .write(true)
+            .open(root.join("data.bin"))
+            .unwrap();
+        big.set_len(MAX_HASHED_BYTES + 2).unwrap();
+        drop(big);
+        let second = dirty_files(root).unwrap()["data.bin"].clone();
+        assert_ne!(first, second, "a changed large file must still count");
+        write(root, "small.txt", "x");
+        let small = dirty_files(root).unwrap()["small.txt"].clone();
+        assert_eq!(small, blake3::hash(b"x").to_hex().to_string());
     }
 
     #[test]
@@ -1053,12 +1182,13 @@ mod tests {
         }
         db.close().await;
 
+        start_turn(root, &input("Fix the cache bug", Some("gen-1"))).unwrap();
+        // Another session's prompt makes it the project's current turn.
         std::fs::write(
             root.join(".ax/turns/current.json"),
             r#"{"session_id":"other","turn_id":"gen-2"}"#,
         )
         .unwrap();
-        start_turn(root, &input("Fix the cache bug", Some("g1"))).unwrap();
         write(root, "src/a.rs", "fn a() { 1 }\n");
         end_turn(
             root,
@@ -1075,32 +1205,109 @@ mod tests {
                 .fetch_one(db.pool())
                 .await
                 .unwrap();
-        db.close().await;
-        assert_eq!(other, None);
-
-        std::fs::write(
-            root.join(".ax/turns/current.json"),
-            r#"{"session_id":"conv-1","turn_id":"gen-1"}"#,
-        )
-        .unwrap();
-        end_turn(
-            root,
-            "conv-1",
-            Some("use key sk-abcdefghijklmnopqrstuvwx now".into()),
-            NOW,
-        )
-        .await;
-        let db = ax_db::Database::open(&root.join(".ax/ax.db"))
-            .await
-            .unwrap();
         let row: (String, String) =
             sqlx::query_as("SELECT outcome, files FROM agent_turns WHERE id = 'gen-1'")
                 .fetch_one(db.pool())
                 .await
                 .unwrap();
         db.close().await;
+        assert_eq!(other, None);
         assert_eq!(row.0, "use key [redacted] now");
         assert!(row.1.contains("src/a.rs"), "{}", row.1);
+    }
+
+    #[tokio::test]
+    async fn a_later_session_starting_does_not_lose_the_first_sessions_turn_end() {
+        let dir = repo();
+        let root = dir.path();
+        drop(ax_core::Ax::init(root).await.unwrap());
+        let db = ax_db::Database::open(&root.join(".ax/ax.db"))
+            .await
+            .unwrap();
+        for (session, id) in [("conv-1", "gen-a"), ("conv-2", "gen-b")] {
+            ax_db::hook_turns::record_hook_turn(
+                db.pool(),
+                &ax_db::hook_turns::HookTurn {
+                    project_id: root.display().to_string(),
+                    session_id: session.into(),
+                    turn_id: id.into(),
+                    prompt: "work".into(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        db.close().await;
+
+        // Session A starts, then session B starts and becomes current.json.
+        start_turn(root, &input("A works", Some("gen-a"))).unwrap();
+        let b = HookInput {
+            conversation: "conv-2".into(),
+            ..input("B works", Some("gen-b"))
+        };
+        start_turn(root, &b).unwrap();
+        write(root, "src/a.rs", "fn a() { by_a() }\n");
+
+        end_turn(root, "conv-1", Some("A is done".into()), NOW).await;
+
+        let db = ax_db::Database::open(&root.join(".ax/ax.db"))
+            .await
+            .unwrap();
+        let a: (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT outcome, files FROM agent_turns WHERE id = 'gen-a'")
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        let b: Option<String> =
+            sqlx::query_scalar("SELECT outcome FROM agent_turns WHERE id = 'gen-b'")
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        db.close().await;
+        assert_eq!(a.0.as_deref(), Some("A is done"));
+        assert!(a.1.unwrap_or_default().contains("src/a.rs"));
+        assert_eq!(b, None);
+    }
+
+    #[tokio::test]
+    async fn without_a_snapshot_the_turn_end_uses_current_json_for_this_session() {
+        let dir = repo();
+        let root = dir.path();
+        drop(ax_core::Ax::init(root).await.unwrap());
+        let db = ax_db::Database::open(&root.join(".ax/ax.db"))
+            .await
+            .unwrap();
+        ax_db::hook_turns::record_hook_turn(
+            db.pool(),
+            &ax_db::hook_turns::HookTurn {
+                project_id: root.display().to_string(),
+                session_id: "conv-1".into(),
+                turn_id: "gen-1".into(),
+                prompt: "work".into(),
+            },
+        )
+        .await
+        .unwrap();
+        db.close().await;
+        std::fs::create_dir_all(root.join(".ax/turns")).unwrap();
+        std::fs::write(
+            root.join(".ax/turns/current.json"),
+            r#"{"session_id":"conv-1","turn_id":"gen-1"}"#,
+        )
+        .unwrap();
+
+        end_turn(root, "conv-1", Some("done".into()), NOW).await;
+
+        let db = ax_db::Database::open(&root.join(".ax/ax.db"))
+            .await
+            .unwrap();
+        let outcome: Option<String> =
+            sqlx::query_scalar("SELECT outcome FROM agent_turns WHERE id = 'gen-1'")
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        db.close().await;
+        assert_eq!(outcome.as_deref(), Some("done"));
     }
 
     fn reply_input(text: &str) -> HookInput {
