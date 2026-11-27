@@ -47,6 +47,16 @@ impl DaemonSession {
         self.reader.read_line(line).await
     }
 
+    /// Like `read_line`, reading at most `limit` bytes.
+    pub async fn read_line_limited(
+        &mut self,
+        line: &mut String,
+        limit: u64,
+    ) -> std::io::Result<usize> {
+        use tokio::io::AsyncReadExt;
+        (&mut self.reader).take(limit).read_line(line).await
+    }
+
     pub async fn write_bytes(&mut self, data: &[u8]) -> std::io::Result<()> {
         self.writer.write_all(data).await?;
         self.writer.flush().await?;

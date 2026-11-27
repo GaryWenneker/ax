@@ -318,7 +318,7 @@ Enforcement lives in `crates/ax-context/tests/no_query_time_disk_reads.rs`, a fa
 
 `ax serve --mcp` prefers a **per-project daemon**: the IDE process is a thin stdio proxy; one daemon owns `.ax/ax.db`. That lets several IDEs share one writer.
 
-The daemon listens on a Unix socket (`.ax/daemon.sock`, or one in the temp directory when that path is too long) or, on Windows, a named pipe. Only when no socket can be bound does it listen on TCP `127.0.0.1` instead. A failed accept, for example when the process runs out of file descriptors, is logged and retried; it never starts a second daemon in the same process.
+The daemon listens on a Unix socket (`.ax/daemon.sock`; when that path is too long, one in `$XDG_RUNTIME_DIR` on Linux or the temp directory otherwise) or, on Windows, a named pipe. Only when no socket can be bound does it listen on TCP `127.0.0.1` instead. A TCP daemon writes a random token to `.ax/daemon.json`, which is readable by its owner only, and every TCP client must send that token as its first line; any other first line (an HTTP request from a web page, for example) closes the connection before anything is answered or run. A failed accept, for example when the process runs out of file descriptors, is logged and retried; it never starts a second daemon in the same process.
 
 All connected clients share the daemon's engine. It runs one request at a time and is released before the answer is written, so a client that stops reading its answers does not hold up the others. A client that has not taken an answer within 60 seconds is disconnected; its proxy reconnects.
 

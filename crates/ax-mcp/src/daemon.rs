@@ -56,6 +56,9 @@ pub struct DaemonInfo {
     pub project_root: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exe: Option<ExeIdentity>,
+    /// Secret a TCP client sends as its first line. Only TCP daemons have one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
 }
 
 /// The binary this daemon was started from, taken once at startup.
@@ -72,6 +75,7 @@ pub fn write_daemon_info(
     project_root: &Path,
     port: u16,
     socket_path: Option<String>,
+    token: Option<String>,
 ) -> std::io::Result<()> {
     let info = DaemonInfo {
         pid: std::process::id(),
@@ -80,10 +84,75 @@ pub fn write_daemon_info(
         version: env!("CARGO_PKG_VERSION").to_string(),
         project_root: project_root.to_string_lossy().replace('\\', "/"),
         exe: daemon_exe(),
+        token,
     };
     let content = serde_json::to_string_pretty(&info)?;
-    std::fs::write(daemon_info_path(project_root), content)?;
-    Ok(())
+    write_private(&daemon_info_path(project_root), content.as_bytes())
+}
+
+/// Writes `path` readable by its owner only (it may hold the TCP token):
+/// a temporary file created with that mode is renamed over it.
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
+    let result = (|| {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        #[cfg(windows)]
+        if path.exists() {
+            std::fs::remove_file(path)?;
+        }
+        std::fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+/// A new random secret for a TCP daemon.
+fn new_daemon_token() -> String {
+    format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    )
+}
+
+/// Longest first line a TCP client may send before it is authenticated.
+const TOKEN_LINE_LIMIT: u64 = 256;
+/// How long a TCP client has to send its token.
+const TOKEN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Reads the first line of a TCP session and checks it against `token`.
+async fn token_matches(session: &mut DaemonSession, token: &str) -> bool {
+    let mut line = String::new();
+    let read = tokio::time::timeout(
+        TOKEN_TIMEOUT,
+        session.read_line_limited(&mut line, TOKEN_LINE_LIMIT),
+    )
+    .await;
+    if !matches!(read, Ok(Ok(n)) if n > 0) {
+        return false;
+    }
+    let given = line.trim_end_matches(['\r', '\n']).as_bytes();
+    let expected = token.as_bytes();
+    // Compares every byte, so the time taken does not reveal a prefix.
+    given.len() == expected.len()
+        && given
+            .iter()
+            .zip(expected)
+            .fold(0u8, |diff, (a, b)| diff | (a ^ b))
+            == 0
 }
 
 pub fn read_daemon_info(project_root: &Path) -> Option<DaemonInfo> {
@@ -392,7 +461,7 @@ async fn run_socket_daemon(
         mut server,
         path: pipe_name,
     } = socket;
-    write_daemon_info(&project_root, 0, Some(pipe_name.clone()))?;
+    write_daemon_info(&project_root, 0, Some(pipe_name.clone()), None)?;
     let _ = rewrite_lock_socket_path(&pid_path, &pipe_name);
     let _liveness = install_main_thread_watchdog();
     tracing::info!(
@@ -436,7 +505,7 @@ async fn run_socket_daemon(
         tokio::spawn(async move {
             lc.on_client_connected().await;
             let session = DaemonSession::from_io(connected);
-            let result = serve_session(session, engine, &root, 0, Some(sp), lc.clone()).await;
+            let result = serve_session(session, engine, &root, 0, Some(sp), None, lc.clone()).await;
             lc.on_client_disconnected().await;
             if let Err(e) = result {
                 tracing::warn!("daemon client: {}", e);
@@ -456,7 +525,7 @@ async fn run_socket_daemon(
         listener,
         path: socket_path,
     } = socket;
-    write_daemon_info(&project_root, 0, Some(socket_path.clone()))?;
+    write_daemon_info(&project_root, 0, Some(socket_path.clone()), None)?;
     let _ = rewrite_lock_socket_path(&pid_path, &socket_path);
     let _liveness = install_main_thread_watchdog();
     tracing::info!(
@@ -482,7 +551,8 @@ async fn run_socket_daemon(
             tokio::spawn(async move {
                 lc.on_client_connected().await;
                 let session = DaemonSession::from_unix(stream);
-                let result = serve_session(session, engine, &root, 0, Some(sp), lc.clone()).await;
+                let result =
+                    serve_session(session, engine, &root, 0, Some(sp), None, lc.clone()).await;
                 lc.on_client_disconnected().await;
                 if let Err(e) = result {
                     tracing::warn!("daemon client: {}", e);
@@ -500,7 +570,8 @@ async fn run_tcp_daemon(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
-    write_daemon_info(&project_root, port, None)?;
+    let token = new_daemon_token();
+    write_daemon_info(&project_root, port, None, Some(token.clone()))?;
     let _liveness = install_main_thread_watchdog();
     tracing::info!(
         "ax daemon on 127.0.0.1:{} pid {} idle {}ms",
@@ -521,10 +592,13 @@ async fn run_tcp_daemon(
             let engine = engine.clone();
             let root = project_root.clone();
             let lc = Arc::clone(&lifecycle);
+            let token = token.clone();
             tokio::spawn(async move {
                 lc.on_client_connected().await;
                 let session = DaemonSession::from_tcp(stream);
-                let result = serve_session(session, engine, &root, port, None, lc.clone()).await;
+                let result =
+                    serve_session(session, engine, &root, port, None, Some(token), lc.clone())
+                        .await;
                 lc.on_client_disconnected().await;
                 if let Err(e) = result {
                     tracing::warn!("daemon client: {}", e);
@@ -609,8 +683,18 @@ async fn serve_session(
     project_root: &Path,
     port: u16,
     socket_path: Option<String>,
+    token: Option<String>,
     lifecycle: Arc<DaemonLifecycle>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // A TCP port can be reached by any local process, and by web pages. Such
+    // a client must send the token from daemon.json as its first line; any
+    // other first line (an HTTP request, for example) closes the connection
+    // before anything is answered or run.
+    if let Some(token) = &token {
+        if !token_matches(&mut session, token).await {
+            return Err("TCP client did not send the daemon token; connection closed".into());
+        }
+    }
     static NEXT_CONNECTION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let connection = NEXT_CONNECTION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     send_hello(&mut session, project_root, port, socket_path).await?;
@@ -727,6 +811,10 @@ pub async fn connect_any(project_root: &Path) -> Option<(DaemonSession, DaemonHe
 
     let socket_candidates: Vec<String> = if let Some(path) = info.socket_path.clone() {
         vec![path]
+    } else if info.token.is_some() {
+        // A TCP daemon: a socket at a default path is not this daemon's and
+        // may belong to another user.
+        Vec::new()
     } else {
         daemon_socket_candidates(project_root)
     };
@@ -741,6 +829,12 @@ pub async fn connect_any(project_root: &Path) -> Option<(DaemonSession, DaemonHe
 
     if info.port > 0 {
         if let Some(mut session) = connect_tcp(info.port).await {
+            if let Some(token) = &info.token {
+                let line = format!("{token}\n");
+                if session.write_bytes(line.as_bytes()).await.is_err() {
+                    return None;
+                }
+            }
             if let Some(hello) = read_hello(&mut session).await {
                 return Some((session, hello));
             }
@@ -830,7 +924,8 @@ mod tests {
         let serve = |io: tokio::io::DuplexStream| {
             let (engine, root, lc) = (engine.clone(), root.clone(), lifecycle.clone());
             tokio::spawn(async move {
-                let _ = serve_session(DaemonSession::from_io(io), engine, &root, 0, None, lc).await;
+                let _ = serve_session(DaemonSession::from_io(io), engine, &root, 0, None, None, lc)
+                    .await;
             })
         };
         let list = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n";
@@ -856,5 +951,111 @@ mod tests {
             .expect("window B was blocked by window A's stalled socket");
         assert!(answer["result"]["tools"].is_array(), "{answer}");
         drop(a);
+    }
+    const TOKEN: &str = "0123456789abcdef0123456789abcdef";
+
+    fn spawn_tcp_style_session(io: tokio::io::DuplexStream, root: PathBuf) {
+        let engine = Arc::new(Mutex::new(McpEngine::with_project_root(root.clone())));
+        let lifecycle = DaemonLifecycle::new(root.clone(), None);
+        tokio::spawn(async move {
+            let session = DaemonSession::from_io(io);
+            let _ = serve_session(
+                session,
+                engine,
+                &root,
+                4242,
+                None,
+                Some(TOKEN.to_string()),
+                lifecycle,
+            )
+            .await;
+        });
+    }
+
+    #[tokio::test]
+    async fn a_tcp_session_without_the_token_is_closed_before_anything_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let (client, server) = tokio::io::duplex(1024 * 1024);
+        spawn_tcp_style_session(server, dir.path().to_path_buf());
+        let mut client = DaemonSession::from_io(client);
+        // What a web page's fetch() to the port sends: HTTP headers, then a
+        // JSON-RPC line as the body.
+        client
+            .write_bytes(
+                b"POST / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n\
+                  {\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n",
+            )
+            .await
+            .unwrap();
+        let mut all = String::new();
+        let read = tokio::time::timeout(Duration::from_secs(10), async {
+            let mut line = String::new();
+            while client.read_line(&mut line).await.unwrap_or(0) > 0 {
+                all.push_str(&line);
+                line.clear();
+            }
+        })
+        .await;
+        assert!(read.is_ok(), "the connection was not closed");
+        assert!(all.is_empty(), "an unauthenticated client got: {all}");
+    }
+
+    #[tokio::test]
+    async fn a_tcp_session_with_the_token_is_served() {
+        let dir = tempfile::tempdir().unwrap();
+        let (client, server) = tokio::io::duplex(1024 * 1024);
+        spawn_tcp_style_session(server, dir.path().to_path_buf());
+        let mut client = DaemonSession::from_io(client);
+        client
+            .write_bytes(format!("{TOKEN}\n").as_bytes())
+            .await
+            .unwrap();
+        assert_eq!(read_json_line(&mut client).await["type"], "hello");
+        client
+            .write_bytes(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n")
+            .await
+            .unwrap();
+        assert!(read_json_line(&mut client).await["result"]["tools"].is_array());
+    }
+
+    #[tokio::test]
+    async fn connect_any_sends_the_token_to_a_tcp_daemon() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        std::fs::create_dir_all(get_ax_dir(&root)).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        write_daemon_info(&root, port, None, Some(TOKEN.to_string())).unwrap();
+        let hello_root = root.clone();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut session = DaemonSession::from_tcp(stream);
+            let mut first = String::new();
+            let got =
+                tokio::time::timeout(Duration::from_secs(2), session.read_line(&mut first)).await;
+            if got.is_ok() && first.trim() == TOKEN {
+                let _ = send_hello(&mut session, &hello_root, port, None).await;
+            }
+        });
+        let connected = connect_any(&root).await;
+        assert!(connected.is_some(), "the client did not send the token");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_info_with_a_token_is_private_to_the_user() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(get_ax_dir(dir.path())).unwrap();
+        write_daemon_info(dir.path(), 1, None, Some(TOKEN.to_string())).unwrap();
+        let mode = std::fs::metadata(daemon_info_path(dir.path()))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o077, 0, "daemon.json mode {mode:o}");
+        assert_eq!(
+            read_daemon_info(dir.path()).unwrap().token.as_deref(),
+            Some(TOKEN)
+        );
     }
 }
