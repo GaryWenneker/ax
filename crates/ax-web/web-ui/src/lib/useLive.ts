@@ -32,7 +32,7 @@ export function useLive(topics: LiveTopic | readonly LiveTopic[], reload: () => 
       }
       reloadRef.current();
     });
-    return subscribeSharedEventSource(CHANGES_URL, {
+    const unsubscribe = subscribeSharedEventSource(CHANGES_URL, {
       events: {
         change: (ev) => {
           const change = parseChange(String(ev.data));
@@ -43,6 +43,11 @@ export function useLive(topics: LiveTopic | readonly LiveTopic[], reload: () => 
       // so a reconnect counts as a change on every wanted topic.
       onReconnect: fire,
     });
+    return () => {
+      unsubscribe();
+      // A reload armed just before unmount or a topic change must not run.
+      fire.cancel();
+    };
   }, [key]);
 
   useEffect(() => {
