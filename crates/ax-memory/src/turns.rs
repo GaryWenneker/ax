@@ -35,7 +35,10 @@ pub const HUNK_CAP_BYTES: usize = 64 * 1024;
 pub fn compress_hunk(text: &str) -> String {
     let redacted = redact_secrets(text);
     let capped = if redacted.len() > HUNK_CAP_BYTES {
-        format!("{}\n…truncated…", &redacted[..HUNK_CAP_BYTES])
+        format!(
+            "{}\n…truncated…",
+            ax_utils::prefix_bytes(&redacted, HUNK_CAP_BYTES)
+        )
     } else {
         redacted
     };
@@ -759,7 +762,8 @@ fn write_backup(dir: &Path, stem: &str, now_ms: i64, rows: &[MemoryRow]) -> Resu
         lines.push('\n');
     }
     std::fs::create_dir_all(dir).map_err(io_err)?;
-    let day = &crate::history::format_when(now_ms)[..10];
+    let when = crate::history::format_when(now_ms);
+    let day = when.get(..10).unwrap_or("undated");
     let path = dir.join(format!("{stem}-{day}.jsonl"));
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -1149,5 +1153,37 @@ diff --git a/b.rs b/b.rs
         );
         assert!(git_web_file_url("git@github.com:org/repo.git", "not-a-rev", "a.rs").is_none());
         assert!(git_web_file_url("git@github.com:org/repo.git", "abc1234", "../x").is_none());
+    }
+}
+
+#[cfg(test)]
+mod hunk_tests {
+    use super::{compress_hunk, write_backup, HUNK_CAP_BYTES};
+
+    fn decompress(hex: &str) -> String {
+        let bytes: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        String::from_utf8(zstd::decode_all(bytes.as_slice()).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_large_hunk_is_cut_on_a_char_boundary() {
+        // Two ASCII bytes shift the 3-byte chars so the cap lands mid-char.
+        let text = format!("xx{}", "€".repeat(HUNK_CAP_BYTES));
+        assert!(!text.is_char_boundary(HUNK_CAP_BYTES));
+        let out = decompress(&compress_hunk(&text));
+        assert!(out.ends_with("\n…truncated…"));
+        let kept = out.trim_end_matches("\n…truncated…");
+        assert!(kept.len() <= HUNK_CAP_BYTES);
+        assert!(kept.len() > HUNK_CAP_BYTES - 4);
+    }
+
+    #[test]
+    fn a_backup_with_an_unformattable_time_does_not_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        write_backup(dir.path(), "turns", i64::MAX, &[]).unwrap();
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 }
