@@ -611,6 +611,8 @@ ax memory export --tag team --out ./shared-memories.jsonl
 
 Import JSONL memories (upsert by id). Used after `git pull` or via the post-merge hook when `"memorySync": true` is set in `ax.json`.
 
+Imported rows are untrusted data: they get the source `import`, and a row whose text reads like an instruction to the agent waits as a candidate until you confirm it (`ax remember --confirm`). The import skips lines with an unknown kind, turns and folder docs, and ids you purged. An existing memory is replaced only when it is itself shared (imported earlier or tagged `shared`) and the shared line is newer; a local memory you never shared is never overwritten.
+
 ```bash
 ax memory import
 ax memory import --path ./shared-memories.jsonl

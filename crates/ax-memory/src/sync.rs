@@ -85,11 +85,37 @@ pub async fn export_shared(
     })
 }
 
-/// Import JSONL memories. New ids are inserted. An existing id is updated
-/// only when the shared row is strictly newer than the local one, and then
-/// keeps the shared row's `updated_at`; a local copy that is as new or newer
-/// is never replaced. Every line is parsed before anything is written, so a
-/// malformed file changes nothing.
+/// Source stamped on every row written by an import. It marks the text as
+/// untrusted data (see [`crate::provenance::trust_level_for`]).
+pub const IMPORT_SOURCE: &str = "import";
+
+/// Sources that mark a local row as a copy of shared data, so a newer shared
+/// line may replace it. `git-sync` is the source older imports wrote.
+fn came_from_import(source: &str) -> bool {
+    source == IMPORT_SOURCE || source == "git-sync"
+}
+
+/// A kind the vault knows and that is not recall-only (turns and folder docs
+/// are never shared).
+fn importable_kind(kind: &str) -> bool {
+    crate::types::MEMORY_KINDS.contains(&kind) && !crate::folder_sync::is_recall_only(kind)
+}
+
+/// Import JSONL memories as untrusted data.
+///
+/// - A line with an unknown or recall-only kind, an empty id, or the id of a
+///   purged (tombstoned) memory is skipped.
+/// - New ids are inserted with source `import`, so they are untrusted and get
+///   the same tier, search text, cues and flags as any remembered memory.
+/// - An existing id is replaced only when the local row is itself shared
+///   (it came from an import or carries the `shared` tag) and the shared line
+///   is strictly newer. The row then keeps the shared `updated_at` and becomes
+///   untrusted. A local memory that was never shared is never replaced.
+/// - A row whose text reads like an instruction to the agent is stored as a
+///   `candidate`; it is not recalled until someone confirms it.
+///
+/// Every line is parsed before anything is written, so a malformed file
+/// changes nothing.
 pub async fn import_shared(pool: &SqlitePool, path: &Path) -> Result<MemoryImportResult, AxError> {
     if !path.is_file() {
         return Ok(MemoryImportResult::default());
@@ -108,9 +134,21 @@ pub async fn import_shared(pool: &SqlitePool, path: &Path) -> Result<MemoryImpor
 
     let mut result = MemoryImportResult::default();
     for row in rows {
+        if row.id.trim().is_empty()
+            || !importable_kind(&row.kind)
+            || is_tombstoned(pool, &row.id).await?
+        {
+            result.skipped += 1;
+            continue;
+        }
         match get(pool, &row.id).await? {
             Some(existing) => {
-                if existing.updated_at >= row.updated_at {
+                let shared_locally = came_from_import(&existing.source)
+                    || existing
+                        .tags
+                        .iter()
+                        .any(|t| t.eq_ignore_ascii_case("shared"));
+                if !shared_locally || existing.updated_at >= row.updated_at {
                     result.skipped += 1;
                     continue;
                 }
@@ -118,12 +156,12 @@ pub async fn import_shared(pool: &SqlitePool, path: &Path) -> Result<MemoryImpor
                     pool,
                     &row.id,
                     RememberInput {
-                        title: row.title,
-                        body: row.body,
-                        kind: Some(row.kind),
-                        tags: row.tags,
-                        files: row.files,
-                        source: Some("git-sync".into()),
+                        title: row.title.clone(),
+                        body: row.body.clone(),
+                        kind: Some(row.kind.clone()),
+                        tags: row.tags.clone(),
+                        files: row.files.clone(),
+                        source: Some(IMPORT_SOURCE.into()),
                     },
                 )
                 .await?;
@@ -134,13 +172,13 @@ pub async fn import_shared(pool: &SqlitePool, path: &Path) -> Result<MemoryImpor
                         .execute(pool)
                         .await
                         .map_err(db_err)?;
+                    mark_imported(pool, &row).await?;
                     result.updated += 1;
                 } else {
                     result.skipped += 1;
                 }
             }
             None => {
-                // Preserve original id when inserting.
                 insert_with_id(pool, &row).await?;
                 result.inserted += 1;
             }
@@ -149,29 +187,62 @@ pub async fn import_shared(pool: &SqlitePool, path: &Path) -> Result<MemoryImpor
     Ok(result)
 }
 
+async fn is_tombstoned(pool: &SqlitePool, id: &str) -> Result<bool, AxError> {
+    let tomb: Option<String> =
+        sqlx::query_scalar("SELECT memory_id FROM memory_tombstones WHERE memory_id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(db_err)?;
+    Ok(tomb.is_some())
+}
+
+/// Insert a shared row under its own id through the normal remember path,
+/// then keep its timestamps, confidence and enabled flag.
 async fn insert_with_id(pool: &SqlitePool, row: &MemoryRow) -> Result<(), AxError> {
-    let embedding = crate::embed::embedding_to_blob(&crate::embed::embed_text(&format!(
-        "{} {} {}",
-        row.title,
-        row.body,
-        row.tags.join(" ")
-    )));
-    sqlx::query(
-        r#"INSERT INTO memories (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, embedding, enabled)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+    crate::store::remember_with_id(
+        pool,
+        row.id.clone(),
+        RememberInput {
+            title: row.title.clone(),
+            body: row.body.clone(),
+            kind: Some(row.kind.clone()),
+            tags: row.tags.clone(),
+            files: row.files.clone(),
+            source: Some(IMPORT_SOURCE.into()),
+        },
     )
-    .bind(&row.id)
-    .bind(&row.kind)
-    .bind(&row.title)
-    .bind(&row.body)
-    .bind(serde_json::to_string(&row.tags).unwrap_or_else(|_| "[]".into()))
-    .bind(serde_json::to_string(&row.files).unwrap_or_else(|_| "[]".into()))
-    .bind(row.confidence)
-    .bind("git-sync")
+    .await?;
+    sqlx::query(
+        "UPDATE memories SET created_at = ?, updated_at = ?, confidence = ?, enabled = ? WHERE id = ?",
+    )
     .bind(row.created_at)
     .bind(row.updated_at)
-    .bind(embedding)
-    .bind(if row.enabled { 1 } else { 0 })
+    .bind(row.confidence.clamp(0.0, 1.0))
+    .bind(i64::from(row.enabled))
+    .bind(&row.id)
+    .execute(pool)
+    .await
+    .map_err(db_err)?;
+    mark_imported(pool, row).await
+}
+
+/// Stamp an imported row as untrusted shared data, and hold instruction-like
+/// text back as a candidate.
+async fn mark_imported(pool: &SqlitePool, row: &MemoryRow) -> Result<(), AxError> {
+    let instruction =
+        crate::instruction_like::is_instruction_like(&format!("{} {}", row.title, row.body));
+    sqlx::query(
+        "UPDATE memories SET source = ?, origin = ?, trust_level = ?,
+             status = CASE WHEN ? THEN ? ELSE status END
+         WHERE id = ?",
+    )
+    .bind(IMPORT_SOURCE)
+    .bind(crate::provenance::origin_for(IMPORT_SOURCE))
+    .bind(crate::provenance::trust_level_for(IMPORT_SOURCE, &row.kind))
+    .bind(instruction)
+    .bind(crate::brain::STATUS_CANDIDATE)
+    .bind(&row.id)
     .execute(pool)
     .await
     .map_err(db_err)?;
