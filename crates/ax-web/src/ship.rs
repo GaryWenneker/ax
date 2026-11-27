@@ -81,7 +81,37 @@ pub fn router_hub(hub: WebHub) -> Router {
             "/sonar/ui/{*path}",
             axum::routing::any(crate::sonar_proxy::handle_sonar_ui_proxy),
         )
+        .route_layer(axum::middleware::from_fn(same_origin_without_json))
         .with_state(hub)
+}
+
+/// A write without a JSON body is a "simple" request that another website can
+/// send without a CORS preflight (a form post or a no-cors fetch). Ship writes
+/// like these start or stop SonarQube, replace its token or run a scan, so they
+/// must come from a page this Command Center served. JSON writes keep working
+/// for non-browser clients because browsers preflight them.
+async fn same_origin_without_json(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let json = req
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(';').next())
+        .is_some_and(|v| v.trim().eq_ignore_ascii_case("application/json"));
+    if !json {
+        if let Err(reason) =
+            crate::sonar_proxy::proxy_write_allowed(req.method(), req.headers(), false)
+        {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({ "ok": false, "error": reason })),
+            )
+                .into_response();
+        }
+    }
+    next.run(req).await
 }
 
 fn readonly_err() -> (StatusCode, Json<serde_json::Value>) {

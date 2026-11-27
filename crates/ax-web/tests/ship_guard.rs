@@ -127,3 +127,85 @@ async fn sonar_login_check_only_reaches_the_configured_or_a_loopback_host() {
         assert!(body.contains("\"reachable\":false"), "{host}: {body}");
     }
 }
+
+async fn post_raw(app: &Router, uri: &str, headers: &[(&str, &str)]) -> StatusCode {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("host", "127.0.0.1:7070");
+    for (name, value) in headers {
+        builder = builder.header(*name, *value);
+    }
+    let mut req = builder.body(Body::empty()).unwrap();
+    let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
+    req.extensions_mut().insert(ConnectInfo(peer));
+    tokio::time::timeout(Duration::from_secs(10), app.clone().oneshot(req))
+        .await
+        .expect("route answered")
+        .unwrap()
+        .status()
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // process-global env; the guard must cover the awaits
+async fn body_less_sonar_actions_refuse_other_sites_and_origin_less_requests() {
+    let _lock = env_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path(), false).await;
+    for uri in [
+        "/api/ship/sonar/regenerate-token",
+        "/api/ship/sonar/stop",
+        "/api/ship/sonar/start/stream",
+        "/api/ship/sonar/scan",
+        "/api/ship/sonar/bootstrap",
+    ] {
+        // A cross-site form or no-cors fetch: no JSON body, so no CORS preflight.
+        assert_eq!(
+            post_raw(
+                &app,
+                uri,
+                &[
+                    ("origin", "https://evil.example"),
+                    ("content-type", "application/x-www-form-urlencoded")
+                ]
+            )
+            .await,
+            StatusCode::FORBIDDEN,
+            "{uri} cross-site"
+        );
+        assert_eq!(
+            post_raw(&app, uri, &[]).await,
+            StatusCode::FORBIDDEN,
+            "{uri} without Origin"
+        );
+    }
+    // The Command Center's own page passes.
+    assert_ne!(
+        post_raw(
+            &app,
+            "/api/ship/sonar/regenerate-token",
+            &[
+                ("origin", "http://127.0.0.1:7070"),
+                ("sec-fetch-site", "same-origin")
+            ]
+        )
+        .await,
+        StatusCode::FORBIDDEN
+    );
+    // JSON requests need a CORS preflight, so non-browser clients keep working
+    // without an Origin.
+    let (status, _) = {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/api/ship/command")
+            .header("host", "127.0.0.1:7070")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"cmd":"unknown"}"#))
+            .unwrap();
+        let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
+        req.extensions_mut().insert(ConnectInfo(peer));
+        let response = app.clone().oneshot(req).await.unwrap();
+        (response.status(), ())
+    };
+    assert_eq!(status, StatusCode::OK);
+}

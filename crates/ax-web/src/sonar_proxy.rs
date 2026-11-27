@@ -576,7 +576,7 @@ async fn proxy_credentials(hub: &WebHub) -> (String, String) {
 /// credentials, so a request that can change SonarQube must come from a page
 /// this Command Center served: never in read-only mode, never cross-site, and
 /// with an `Origin` that names the same host as the request. Reads pass.
-fn proxy_write_allowed(
+pub(crate) fn proxy_write_allowed(
     method: &Method,
     headers: &HeaderMap,
     readonly: bool,
