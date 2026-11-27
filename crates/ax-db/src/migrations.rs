@@ -696,42 +696,86 @@ pub async fn get_current_version(pool: &SqlitePool) -> Result<i32, AxError> {
     Ok(result.unwrap_or(0))
 }
 
+/// Applies every migration newer than `from_version`. Each migration runs in
+/// its own `BEGIN IMMEDIATE` transaction on one connection: the version is
+/// checked again under the write lock (another process may have applied it
+/// since `from_version` was read), and the statements and the version row
+/// commit together, so a crash never leaves a migration half applied.
 pub async fn run_migrations(pool: &SqlitePool, from_version: i32) -> Result<(), AxError> {
-    for migration in MIGRATIONS {
-        if migration.version <= from_version {
-            continue;
-        }
-        for trimmed in crate::schema::split_statements(migration.sql) {
-            let result = sqlx::query(&trimmed).execute(pool).await;
-            if let Err(e) = result {
-                let msg = e.to_string();
-                if msg.contains("duplicate column") || msg.contains("already exists") {
-                    continue;
-                }
-                return Err(AxError::Database(DatabaseError::new(format!(
-                    "migration v{}: {e}",
-                    migration.version
-                ))));
+    run_migration_list(pool, from_version, MIGRATIONS).await
+}
+
+async fn run_migration_list(
+    pool: &SqlitePool,
+    from_version: i32,
+    migrations: &[Migration],
+) -> Result<(), AxError> {
+    let db_err = |e: sqlx::Error| AxError::Database(DatabaseError::new(e.to_string()));
+    let pending: Vec<&Migration> = migrations
+        .iter()
+        .filter(|m| m.version > from_version)
+        .collect();
+    if pending.is_empty() {
+        return Ok(());
+    }
+    let mut conn = pool.acquire().await.map_err(db_err)?;
+    for migration in pending {
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut *conn)
+            .await
+            .map_err(db_err)?;
+        match apply_migration(&mut conn, migration).await {
+            Ok(()) => {
+                sqlx::query("COMMIT")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(db_err)?;
+            }
+            Err(e) => {
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                return Err(e);
             }
         }
-        record_migration(pool, migration.version, migration.description).await?;
     }
     Ok(())
 }
 
-async fn record_migration(
-    pool: &SqlitePool,
-    version: i32,
-    description: &str,
+/// Runs one migration inside the caller's transaction, unless it is already
+/// recorded.
+async fn apply_migration(
+    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    migration: &Migration,
 ) -> Result<(), AxError> {
-    let now = chrono_now_ms();
-    sqlx::query("INSERT INTO schema_versions (version, applied_at, description) VALUES (?, ?, ?)")
-        .bind(version)
-        .bind(now)
-        .bind(description)
-        .execute(pool)
+    let applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM schema_versions WHERE version = ?")
+        .bind(migration.version)
+        .fetch_one(&mut **conn)
         .await
         .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    if applied > 0 {
+        return Ok(());
+    }
+    for trimmed in crate::schema::split_statements(migration.sql) {
+        let result = sqlx::query(&trimmed).execute(&mut **conn).await;
+        if let Err(e) = result {
+            let msg = e.to_string();
+            if msg.contains("duplicate column") || msg.contains("already exists") {
+                continue;
+            }
+            return Err(AxError::Database(DatabaseError::new(format!(
+                "migration v{}: {e}",
+                migration.version
+            ))));
+        }
+    }
+    sqlx::query(
+        "INSERT OR IGNORE INTO schema_versions (version, applied_at, description) VALUES (?, ?, ?)",
+    )
+    .bind(migration.version)
+    .bind(chrono_now_ms())
+    .bind(migration.description)
+    .execute(&mut **conn)
+    .await
+    .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(())
 }
 
@@ -745,4 +789,34 @@ fn chrono_now_ms() -> i64 {
 pub async fn needs_migration(pool: &SqlitePool) -> Result<bool, AxError> {
     let current = get_current_version(pool).await?;
     Ok(current < CURRENT_SCHEMA_VERSION)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_failing_migration_leaves_nothing_half_applied() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::Database::open(&dir.path().join("ax.db"))
+            .await
+            .unwrap();
+        let pool = db.pool();
+        let from = get_current_version(pool).await.unwrap();
+        let broken = [Migration {
+            version: from + 1,
+            description: "test: second statement fails",
+            sql: "CREATE TABLE half_applied (x INTEGER);
+                  INSERT INTO no_such_table VALUES (1);",
+        }];
+        assert!(run_migration_list(pool, from, &broken).await.is_err());
+        let table: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE name = 'half_applied'")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        assert_eq!(table, 0, "the first statement was rolled back");
+        assert_eq!(get_current_version(pool).await.unwrap(), from);
+        db.close().await;
+    }
 }
