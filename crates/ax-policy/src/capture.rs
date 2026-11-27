@@ -281,11 +281,20 @@ fn empty_proposal() -> CaptureProposal {
     }
 }
 
-fn extract_directive_body(prompt: &str) -> Option<(&'static str, String)> {
-    let lower = prompt.to_lowercase();
+/// Byte offset of the first case-insensitive match of the ASCII `needle` in
+/// `haystack`. Searching the original text (not a lowercased copy, whose byte
+/// lengths can differ) keeps the offset valid for slicing `haystack`.
+fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
+    let (h, n) = (haystack.as_bytes(), needle.as_bytes());
+    if n.is_empty() || h.len() < n.len() {
+        return None;
+    }
+    (0..=h.len() - n.len()).find(|&i| h[i..i + n.len()].eq_ignore_ascii_case(n))
+}
 
+fn extract_directive_body(prompt: &str) -> Option<(&'static str, String)> {
     for marker in EXPLICIT_MARKERS {
-        if let Some(pos) = lower.find(marker) {
+        if let Some(pos) = find_ascii_ci(prompt, marker) {
             let rest = prompt[pos + marker.len()..].trim_start_matches([':', ' ', '-']);
             if rest.len() >= 8 {
                 return Some(("high", rest.to_string()));
@@ -294,7 +303,7 @@ fn extract_directive_body(prompt: &str) -> Option<(&'static str, String)> {
     }
 
     for prefix in DIRECTIVE_PREFIXES {
-        if let Some(pos) = lower.find(prefix) {
+        if let Some(pos) = find_ascii_ci(prompt, prefix) {
             let rest = prompt[pos + prefix.len()..].trim();
             // Short remainder ("… moet altijd werken") still counts — keep
             // text from the prefix so the body stays ≥ 8 chars.
@@ -329,8 +338,7 @@ fn title_from_body(text: &str) -> String {
     }
     let mut title = words.join(" ");
     if title.len() > 72 {
-        title.truncate(72);
-        title = title.trim_end().to_string();
+        title = ax_utils::prefix_bytes(&title, 72).trim_end().to_string();
     }
     title
 }
@@ -482,5 +490,54 @@ mod tests {
     fn globs_from_open_files() {
         let p = propose_rule_from_prompt("je moet altijd types gebruiken", &["src/App.tsx".into()]);
         assert!(p.frontmatter.globs.iter().any(|g| g.contains("tsx")));
+    }
+    #[test]
+    fn a_prompt_whose_lowercase_changes_byte_length_does_not_panic() {
+        // 'İ' is 2 bytes but lowercases to 3, which shifts later offsets.
+        let proposal = propose_rule_from_prompt("İ never öğren bunu lütfen", &[]);
+        assert!(proposal.detected);
+        assert!(
+            proposal.body.contains("öğren bunu lütfen"),
+            "{}",
+            proposal.body
+        );
+        // The Kelvin sign shrinks from 3 bytes to 1 when lowercased.
+        let proposal =
+            propose_rule_from_prompt("\u{212A}\u{212A}\u{212A} always use tabs in this repo", &[]);
+        assert!(
+            proposal.body.ends_with("\n\ntabs in this repo"),
+            "{}",
+            proposal.body
+        );
+    }
+
+    #[test]
+    fn a_marker_is_found_case_insensitively_on_the_original_text() {
+        let proposal = propose_rule_from_prompt("İİ @RULE: keep commits small please", &[]);
+        assert!(proposal.detected);
+        assert!(
+            proposal.body.contains("keep commits small please"),
+            "{}",
+            proposal.body
+        );
+    }
+
+    #[test]
+    fn a_long_non_ascii_title_is_cut_on_a_character_boundary() {
+        let prompt =
+            "always пишите комментарии ааааааааааа бббббббббббб вввввввввв гггггггг ддддддддд";
+        let proposal = propose_rule_from_prompt(prompt, &[]);
+        assert!(proposal.detected);
+        let title = title_from_body(
+            "пишите комментарии ааааааааааа бббббббббббб вввввввввв гггггггг ддддддддд",
+        );
+        assert!(title.len() <= 72);
+        assert!(title.starts_with("пишите"));
+    }
+    #[test]
+    fn directive_prefixes_and_markers_are_ascii_for_the_case_insensitive_search() {
+        for needle in DIRECTIVE_PREFIXES.iter().chain(EXPLICIT_MARKERS) {
+            assert!(needle.is_ascii(), "{needle}");
+        }
     }
 }
