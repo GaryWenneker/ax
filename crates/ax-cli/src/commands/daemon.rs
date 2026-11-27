@@ -3,7 +3,6 @@
 use ax_context::directory::{get_ax_dir, is_initialized};
 use ax_mcp::daemon::{read_daemon_info, try_connect, DaemonInfo, DAEMON_INFO_FILE};
 use ax_mcp::daemon_lock::is_pid_alive;
-use ax_mcp::exe_identity::ExeIdentity;
 use ax_mcp::restart_daemon;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -224,6 +223,7 @@ async fn wait_for_exit(pid: u32, limit: Duration) -> bool {
 mod tests {
     use super::*;
     use ax_mcp::daemon::daemon_info_path;
+    use ax_mcp::exe_identity::ExeIdentity;
 
     /// Starts `script` under `sh` in the background, detached from this test process so
     /// init reaps it, and returns its pid.
