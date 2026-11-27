@@ -62,6 +62,7 @@ Initialize each project normally with `ax init`. Create a private JSON configura
 
 - `public_url` is the stable external HTTPS origin, without a path or query. It is also the OAuth resource/audience. Local ephemeral port numbers never become the public resource identifier.
 - `issuer` must exactly match the access token's `iss`, including a significant trailing slash. The configured JWKS endpoint supplies public signing keys. Ax caches them and refreshes them in the background every five minutes; when the endpoint is slow or down, tokens keep verifying with the cached keys. A token whose `kid` is not in the cache makes Ax fetch the keys once, so a rotated key works right away; such fetches happen at most once every 30 seconds. This implementation accepts **RS256 JWT access tokens with `kid`**; opaque tokens and other algorithms are not supported.
+- `oauth.clock_skew_seconds` (optional, default `60`, at most `300`) is how far the identity provider's clock may differ from the Ax host's when a token's `exp`, `nbf` and `iat` are checked. A token issued by a provider whose clock runs a few seconds ahead is accepted right away. Set it to `0` to check those times exactly.
 - `subjects` grants the named OAuth identities access to this project. No implicit access is granted to other signed-in users.
 - `write_subjects` must be a subset of `subjects`. Memory/policy writes additionally require the `ax:write` token scope.
 - `admin_subjects` (optional) must be a subset of `write_subjects`. See [Admin access](#admin-access).
