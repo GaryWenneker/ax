@@ -348,8 +348,11 @@ pub async fn price_as_of(model: Option<&str>, date: &str) -> (ModelPricing, Stri
         }
         return price_for_model_with_source(m);
     }
-    // Reference model as-of date.
+    // Reference model as-of date, in the same order as a named model.
     let ref_model = pricing_config().reference_model.clone();
+    if let Some(p) = user_override_for(&ref_model) {
+        return (p, "user".into());
+    }
     if let Ok(Some((p, src))) = crate::pricing_sync::lookup_price_as_of(&ref_model, date).await {
         return (p, src);
     }
