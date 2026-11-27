@@ -1,4 +1,6 @@
-use crate::install::{content_hash, InstallReceipt, COPY_MAX_BYTES};
+#[cfg(test)]
+use crate::install::content_hash;
+use crate::install::{install_staged, InstallReceipt, COPY_MAX_BYTES};
 use std::fs;
 use std::io::Read;
 use std::path::Path;
@@ -70,53 +72,43 @@ pub fn materialize_well_known(
         .iter()
         .find(|s| s.name == skill_name)
         .ok_or_else(|| format!("well-known index has no skill {skill_name}"))?;
-    let dir = dest_skills.join(&skill.name);
-    if dir.exists() {
-        if !replace {
-            return Err(format!("skill {} already installed", skill.name));
-        }
-        fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+    crate::validate::validate_skill_name(&skill.name)?;
+    if dest_skills.join(&skill.name).exists() && !replace {
+        return Err(format!("skill {} already installed", skill.name));
     }
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    if skill.files.is_empty() {
-        let url = skill
-            .archive_url
-            .as_deref()
-            .ok_or_else(|| format!("skill {} has no files", skill.name))?;
-        let bytes = fetch(url)?;
-        if bytes.len() as u64 > COPY_MAX_BYTES {
-            return Err("well-known skill is larger than the size cap".into());
-        }
-        if url.ends_with(".md") {
-            fs::write(dir.join("SKILL.md"), &bytes).map_err(|e| e.to_string())?;
-        } else if url.ends_with(".zip") {
-            extract_zip(&bytes, &dir)?;
-        } else if url.ends_with(".tar.gz") || url.ends_with(".tgz") {
-            extract_tar_gz(&bytes, &dir)?;
+    install_staged(dest_skills, &skill.name, |dir| {
+        if skill.files.is_empty() {
+            let url = skill
+                .archive_url
+                .as_deref()
+                .ok_or_else(|| format!("skill {} has no files", skill.name))?;
+            let bytes = fetch(url)?;
+            if bytes.len() as u64 > COPY_MAX_BYTES {
+                return Err("well-known skill is larger than the size cap".into());
+            }
+            if url.ends_with(".md") {
+                fs::write(dir.join("SKILL.md"), &bytes).map_err(|e| e.to_string())?;
+            } else if url.ends_with(".zip") {
+                extract_zip(&bytes, dir)?;
+            } else if url.ends_with(".tar.gz") || url.ends_with(".tgz") {
+                extract_tar_gz(&bytes, dir)?;
+            } else {
+                return Err(format!("unsupported well-known artifact: {url}"));
+            }
         } else {
-            return Err(format!("unsupported well-known artifact: {url}"));
-        }
-    } else {
-        for file in &skill.files {
-            if file.contains("..") || file.starts_with('/') {
-                return Err(format!("refusing well-known path {file}"));
+            for file in &skill.files {
+                if file.contains("..") || file.starts_with('/') {
+                    return Err(format!("refusing well-known path {file}"));
+                }
+                let bytes = fetch(file)?;
+                let target = dir.join(file);
+                if let Some(parent) = target.parent() {
+                    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                fs::write(target, bytes).map_err(|e| e.to_string())?;
             }
-            let bytes = fetch(file)?;
-            let target = dir.join(file);
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            fs::write(target, bytes).map_err(|e| e.to_string())?;
         }
-    }
-    if !dir.join("SKILL.md").is_file() {
-        return Err("well-known skill has no SKILL.md".into());
-    }
-    let hash = content_hash(&dir)?;
-    Ok(InstallReceipt {
-        name: skill.name.clone(),
-        hash,
-        directory: dir,
+        Ok(())
     })
 }
 
@@ -208,6 +200,111 @@ mod tests {
         assert_eq!(receipt.name, "pdf");
         assert!(receipt.directory.join("scripts/run.py").is_file());
     }
+    const PDF_V1: &[u8] = b"---\nname: pdf\ndescription: Read PDFs.\n---\n\nv1\n";
+    const PDF_INDEX: &str = r#"{"skills":[{"name":"pdf","description":"Read PDFs.","files":["SKILL.md","scripts/run.py"]}]}"#;
+
+    fn install_v1(dest: &Path) {
+        materialize_well_known(PDF_INDEX, "pdf", dest, false, |file| {
+            Ok(match file {
+                "SKILL.md" => PDF_V1.to_vec(),
+                _ => b"print(1)\n".to_vec(),
+            })
+        })
+        .unwrap();
+    }
+
+    fn leftovers(dest: &Path) -> Vec<String> {
+        std::fs::read_dir(dest)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name != "pdf")
+            .collect()
+    }
+
+    #[test]
+    fn a_failed_replace_keeps_the_installed_skill() {
+        let dest = tempfile::tempdir().unwrap();
+        install_v1(dest.path());
+        let err = materialize_well_known(PDF_INDEX, "pdf", dest.path(), true, |file| match file {
+            "SKILL.md" => Ok(b"---\nname: pdf\ndescription: Read PDFs.\n---\n\nv2\n".to_vec()),
+            _ => Err("500 Internal Server Error".into()),
+        })
+        .unwrap_err();
+        assert!(err.contains("500"), "{err}");
+        let kept = std::fs::read(dest.path().join("pdf/SKILL.md")).unwrap();
+        assert_eq!(kept, PDF_V1);
+        assert!(dest.path().join("pdf/scripts/run.py").is_file());
+        assert!(
+            leftovers(dest.path()).is_empty(),
+            "{:?}",
+            leftovers(dest.path())
+        );
+    }
+
+    #[test]
+    fn a_skill_whose_frontmatter_names_another_skill_is_refused() {
+        let dest = tempfile::tempdir().unwrap();
+        install_v1(dest.path());
+        let err = materialize_well_known(PDF_INDEX, "pdf", dest.path(), true, |file| {
+            Ok(match file {
+                "SKILL.md" => b"---\nname: other\ndescription: Not pdf.\n---\n".to_vec(),
+                _ => b"print(2)\n".to_vec(),
+            })
+        })
+        .unwrap_err();
+        assert!(err.contains("other"), "{err}");
+        assert_eq!(
+            std::fs::read(dest.path().join("pdf/SKILL.md")).unwrap(),
+            PDF_V1
+        );
+        assert!(leftovers(dest.path()).is_empty());
+    }
+
+    #[test]
+    fn a_failed_first_install_leaves_nothing_behind() {
+        let dest = tempfile::tempdir().unwrap();
+        let err = materialize_well_known(PDF_INDEX, "pdf", dest.path(), false, |file| match file {
+            "SKILL.md" => Ok(PDF_V1.to_vec()),
+            _ => Err("timeout".into()),
+        })
+        .unwrap_err();
+        assert!(err.contains("timeout"));
+        assert!(!dest.path().join("pdf").exists());
+        assert!(leftovers(dest.path()).is_empty());
+        // A retry is not blocked by a half-written directory.
+        install_v1(dest.path());
+    }
+
+    #[test]
+    fn an_index_name_that_is_not_a_skill_name_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let dest = root.path().join("skills");
+        std::fs::create_dir_all(&dest).unwrap();
+        let index = r#"{"skills":[{"name":"../escape","description":"d","files":["SKILL.md"]}]}"#;
+        let err = materialize_well_known(index, "../escape", &dest, false, |_| Ok(PDF_V1.to_vec()))
+            .unwrap_err();
+        assert!(err.contains("skill name"), "{err}");
+        assert!(!root.path().join("escape").exists());
+    }
+
+    #[test]
+    fn a_replace_swaps_in_the_new_version() {
+        let dest = tempfile::tempdir().unwrap();
+        install_v1(dest.path());
+        let v2 = b"---\nname: pdf\ndescription: Read PDFs.\n---\n\nv2\n";
+        let receipt = materialize_well_known(PDF_INDEX, "pdf", dest.path(), true, |file| {
+            Ok(match file {
+                "SKILL.md" => v2.to_vec(),
+                _ => b"print(2)\n".to_vec(),
+            })
+        })
+        .unwrap();
+        assert_eq!(receipt.directory, dest.path().join("pdf"));
+        assert_eq!(std::fs::read(dest.path().join("pdf/SKILL.md")).unwrap(), v2);
+        assert_eq!(receipt.hash, content_hash(&receipt.directory).unwrap());
+        assert!(leftovers(dest.path()).is_empty());
+    }
+
     /// A gzip tar with raw member names, as a hostile archive would carry them.
     fn raw_tar_gz(entries: &[(&str, tar::EntryType, &[u8])]) -> Vec<u8> {
         let mut builder = tar::Builder::new(Vec::new());
@@ -248,7 +345,7 @@ mod tests {
             (
                 "SKILL.md",
                 tar::EntryType::Regular,
-                b"---\nname: pdf\n---\n",
+                b"---\nname: pdf\ndescription: Read PDFs.\n---\n",
             ),
             (name.as_str(), tar::EntryType::Regular, b"pwned"),
         ]);
@@ -271,7 +368,7 @@ mod tests {
             (
                 "SKILL.md",
                 tar::EntryType::Regular,
-                b"---\nname: pdf\n---\n",
+                b"---\nname: pdf\ndescription: Read PDFs.\n---\n",
             ),
             ("link", tar::EntryType::Symlink, b""),
         ]);
@@ -287,7 +384,7 @@ mod tests {
             (
                 "./SKILL.md",
                 tar::EntryType::Regular,
-                b"---\nname: pdf\n---\n",
+                b"---\nname: pdf\ndescription: Read PDFs.\n---\n",
             ),
             ("scripts/run.py", tar::EntryType::Regular, b"print(1)\n"),
         ]);

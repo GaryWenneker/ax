@@ -160,20 +160,72 @@ fn copy_skill(
                 "skill {name} already installed with hash {existing}; pass --yes to replace with {hash}"
             ));
         }
-        fs::remove_dir_all(&dest).map_err(|e| e.to_string())?;
     }
-    fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
     let mut files = Vec::new();
-    let mut count = 0usize;
-    let mut bytes = 0u64;
-    collect_files(src, src, &mut files, &mut count, &mut bytes)?;
-    for (rel, data) in files {
-        let target = dest.join(&rel);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    collect_files(src, src, &mut files, &mut 0, &mut 0)?;
+    install_staged(dest_skills, name, |staging| {
+        for (rel, data) in files {
+            let target = staging.join(&rel);
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            fs::write(target, data).map_err(|e| e.to_string())?;
         }
-        fs::write(target, data).map_err(|e| e.to_string())?;
+        Ok(())
+    })
+}
+
+/// Builds a skill in a staging directory next to `dest_skills/name`, checks
+/// it (SKILL.md frontmatter that names this skill, file and size caps), and
+/// only then swaps it in. The installed copy, if any, is moved aside first and
+/// deleted last, so a failed download or a bad skill leaves it untouched.
+pub(crate) fn install_staged(
+    dest_skills: &Path,
+    name: &str,
+    fill: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<InstallReceipt, String> {
+    crate::validate::validate_skill_name(name)?;
+    fs::create_dir_all(dest_skills).map_err(|e| e.to_string())?;
+    let dest = dest_skills.join(name);
+    let staging = tempfile::Builder::new()
+        .prefix(".ax-skill-new-")
+        .tempdir_in(dest_skills)
+        .map_err(|e| e.to_string())?;
+    fill(staging.path())?;
+    let skill_md = staging.path().join("SKILL.md");
+    if !fs::symlink_metadata(&skill_md).is_ok_and(|meta| meta.is_file()) {
+        return Err(format!("skill {name} has no SKILL.md"));
     }
+    let raw = ax_utils::read_bounded(&skill_md, COPY_MAX_BYTES).map_err(|e| e.to_string())?;
+    let meta = read_catalog_meta(&String::from_utf8_lossy(&raw))?;
+    if meta.name != name {
+        return Err(format!(
+            "skill name {} in SKILL.md must match the skill {name}",
+            meta.name
+        ));
+    }
+    // Enforces the file-count and size caps on what was written.
+    let hash = content_hash(staging.path())?;
+    let old = if dest.exists() {
+        let aside = tempfile::Builder::new()
+            .prefix(".ax-skill-old-")
+            .tempdir_in(dest_skills)
+            .map_err(|e| e.to_string())?;
+        let aside_dir = aside.path().join(name);
+        fs::rename(&dest, &aside_dir).map_err(|e| e.to_string())?;
+        Some((aside, aside_dir))
+    } else {
+        None
+    };
+    if let Err(err) = fs::rename(staging.path(), &dest) {
+        if let Some((_, aside_dir)) = &old {
+            let _ = fs::rename(aside_dir, &dest);
+        }
+        return Err(format!("could not install skill {name}: {err}"));
+    }
+    // Dropping the TempDir guards removes the old copy; the staging path is gone.
+    drop(old);
+    drop(staging);
     Ok(InstallReceipt {
         name: name.to_string(),
         hash,
@@ -316,6 +368,30 @@ mod tests {
         let dest = tempfile::tempdir().unwrap();
         let err = install_tree(src.path(), dest.path(), Some("other"), false).unwrap_err();
         assert!(err.contains("skill not in source"), "{err}");
+    }
+
+    #[test]
+    fn a_replace_swaps_the_whole_directory_and_leaves_no_staging() {
+        let src = tempfile::tempdir().unwrap();
+        let dest = tempfile::tempdir().unwrap();
+        skill(src.path(), "pdf", "one");
+        fs::write(src.path().join("pdf/old.txt"), b"old").unwrap();
+        install_tree(src.path(), dest.path(), None, false).unwrap();
+        fs::remove_file(src.path().join("pdf/old.txt")).unwrap();
+        skill(src.path(), "pdf", "two");
+        let receipts = install_tree(src.path(), dest.path(), Some("pdf"), true).unwrap();
+        assert_eq!(
+            receipts[0].hash,
+            content_hash(src.path().join("pdf").as_path()).unwrap()
+        );
+        assert!(!dest.path().join("pdf/old.txt").exists());
+        let body = fs::read_to_string(dest.path().join("pdf/SKILL.md")).unwrap();
+        assert!(body.contains("two"));
+        let names: Vec<_> = fs::read_dir(dest.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["pdf".to_string()]);
     }
 
     #[test]
