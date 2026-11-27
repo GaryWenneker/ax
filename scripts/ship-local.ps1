@@ -3,7 +3,7 @@
 # Usage:
 #   .\scripts\ship-local.ps1                    # build + package win32-x64 zip in dist/
 #   .\scripts\ship-local.ps1 -Upgrade           # also run ax upgrade --local
-#   .\scripts\ship-local.ps1 -Bump patch        # bump Cargo.toml first (2.1.0 -> 2.1.1)
+#   .\scripts\ship-local.ps1 -Bump patch        # set the next version locally first (2.1.0 -> 2.1.1)
 #   .\scripts\ship-local.ps1 -SkipBuild         # package existing release binary only
 #
 param(
@@ -47,35 +47,20 @@ function Get-NextVersion {
     }
 }
 
-function Set-WorkspaceVersion {
+function Set-AxLocalVersion {
     param([string]$Version)
-    Write-Step "Bumping workspace to $Version"
-    Get-ChildItem -Path (Join-Path $root 'crates') -Recurse -Filter Cargo.toml | ForEach-Object {
-        $text = [IO.File]::ReadAllText($_.FullName)
-        $updated = [regex]::Replace($text, '(?m)^version = ".*"', "version = `"$Version`"", 1)
-        if ($updated -ne $text) {
-            [IO.File]::WriteAllText($_.FullName, $updated)
-        }
-    }
-    $pkgPath = Join-Path $root 'crates\ax-web\web-ui\package.json'
-    if (Test-Path $pkgPath) {
-        $json = [IO.File]::ReadAllText($pkgPath)
-        $updatedJson = [regex]::Replace($json, '(?<="version"\s*:\s*")[^"]+', $Version, 1)
-        [IO.File]::WriteAllText($pkgPath, $updatedJson)
-    }
-    $utf8 = New-Object System.Text.UTF8Encoding $false
-    [IO.File]::WriteAllText(
-        (Join-Path $root 'site\public\releases\latest.txt'),
-        "v$Version`n",
-        $utf8
-    )
-    cargo generate-lockfile
-    if ($LASTEXITCODE -ne 0) { throw 'cargo generate-lockfile failed' }
+    Write-Step "Setting workspace version to $Version (local build only)"
+    $python = if (Get-Command python3 -ErrorAction SilentlyContinue) { 'python3' } else { 'python' }
+    & $python (Join-Path $PSScriptRoot 'set-version.py') $Version
+    if ($LASTEXITCODE -ne 0) { throw 'set-version.py failed' }
+    cargo update --workspace --offline
+    if ($LASTEXITCODE -ne 0) { throw 'cargo update --workspace --offline failed' }
+    Write-Host 'Version changes reach a release only through a PR to main; release-tag.ps1 refuses a local bump.' -ForegroundColor Yellow
 }
 
 if ($Bump) {
     $next = Get-NextVersion -Current (Get-AxCargoVersion) -Kind $Bump
-    Set-WorkspaceVersion -Version $next
+    Set-AxLocalVersion -Version $next
 }
 
 $version = Get-AxCargoVersion
@@ -108,8 +93,8 @@ Write-Host "Local upgrade:" -ForegroundColor Yellow
 Write-Host "  ax upgrade --local"
 Write-Host "  ax upgrade --local dist\ax-win32-x64.zip"
 Write-Host ""
-Write-Host "Publish release (GitHub + getax):" -ForegroundColor Yellow
-Write-Host "  .\scripts\release-tag.ps1 -Force -Wait"
+Write-Host "Publish release (GitHub + getax), after the version is merged to main through a PR:" -ForegroundColor Yellow
+Write-Host "  .\scripts\release-tag.ps1 -Wait"
 
 if ($Upgrade) {
     Write-Step 'ax upgrade --local'
