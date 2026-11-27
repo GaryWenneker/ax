@@ -21,6 +21,16 @@ import { workspaceFromHierarchy, workspaceFromLegacy, type WorkspaceDoc } from '
 import type { ListColumn } from '../components/ui/ListColumns';
 import { editorResetForLoad, specDocKey } from '../lib/specDocLoad';
 import {
+  diffSelection,
+  filterSpecs,
+  initialVersion,
+  specRouteSearch,
+  specRouteTarget,
+  type SpecsBladeTab,
+  type SpecsKindFilter,
+  type SpecsStatusFilter,
+} from '../lib/specsPageModel';
+import {
   approveSpec,
   createAlternativePlan,
   fetchPlanRevisions,
@@ -46,9 +56,9 @@ type SpecItem = {
   latestBasedOn?: number | null;
 };
 
-type KindFilter = 'all' | 'plan' | 'spec';
-type StatusFilter = 'all' | 'draft' | 'approved' | 'change_requested';
-type BladeTab = 'agreement' | 'plans' | 'authority';
+type KindFilter = SpecsKindFilter;
+type StatusFilter = SpecsStatusFilter;
+type BladeTab = SpecsBladeTab;
 type EditorTarget = 'spec' | 'plan';
 type SpecsView = 'workspace' | 'documents';
 
@@ -196,19 +206,8 @@ function jumpColumn(ids: string[], kind: 'logging' | 'memory') {
 }
 
 function syncRoute(specId: string | null, planId: string | null, tab: BladeTab) {
-  const url = new URL(window.location.href);
-  if (!specId) {
-    url.searchParams.delete('spec');
-    url.searchParams.delete('plan');
-    url.searchParams.delete('tab');
-  } else {
-    url.searchParams.set('spec', specId);
-    if (planId) url.searchParams.set('plan', planId);
-    else url.searchParams.delete('plan');
-    if (tab === 'agreement') url.searchParams.delete('tab');
-    else url.searchParams.set('tab', tab);
-  }
-  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  const { pathname, search, hash } = window.location;
+  window.history.replaceState({}, '', `${pathname}${specRouteSearch(search, specId, planId, tab)}${hash}`);
 }
 
 export default function SpecsPage() {
@@ -306,10 +305,7 @@ export default function SpecsPage() {
       const rows: SpecRevision[] = Array.isArray(data.revisions) ? data.revisions : [];
       loadedDoc.current = key;
       setRevisions(rows);
-      const approved = rows.find((row) => row.status === 'approved');
-      const newest = rows.length > 0 ? rows[rows.length - 1].version : null;
-      const exists = version != null && rows.some((row) => row.version === version);
-      showVersion(rows, exists ? version : approved?.version ?? newest, false);
+      showVersion(rows, initialVersion(rows, version), false);
     } catch (err) {
       if (token !== loadToken.current) return;
       setDocError(`Could not load this spec: ${err instanceof Error ? err.message : String(err)}`);
@@ -330,10 +326,7 @@ export default function SpecsPage() {
       const rows: SpecRevision[] = Array.isArray(data.revisions) ? data.revisions : [];
       loadedDoc.current = key;
       setRevisions(rows);
-      const approved = rows.find((row) => row.status === 'approved');
-      const newest = rows.length > 0 ? rows[rows.length - 1].version : null;
-      const exists = version != null && rows.some((row) => row.version === version);
-      showVersion(rows, exists ? version : approved?.version ?? newest, false);
+      showVersion(rows, initialVersion(rows, version), false);
     } catch (err) {
       if (token !== loadToken.current) return;
       setDocError(`Could not load this plan: ${err instanceof Error ? err.message : String(err)}`);
@@ -397,26 +390,21 @@ export default function SpecsPage() {
 
   useEffect(() => {
     function openFromRoute() {
-      const searchParams = new URLSearchParams(window.location.search);
-      const id = searchParams.get('spec');
-      if (!id) return;
+      const target = specRouteTarget(window.location.search);
+      if (!target) return;
       const open = openState.current;
       if (open.dirty) {
         setNotice('Discard or save unsaved changes before opening another document.');
         syncRoute(open.selected, open.selectedPlan, open.bladeTab);
         return;
       }
-      const plan = searchParams.get('plan');
-      const tabParam = searchParams.get('tab');
-      const tab: BladeTab =
-        plan ? 'plans' : tabParam === 'plans' || tabParam === 'authority' ? tabParam : 'agreement';
       setClosing(false);
-      setSelected(id);
-      setBladeTab(tab);
-      if (plan) {
-        void loadPlanRevisions(plan, null);
+      setSelected(target.specId);
+      setBladeTab(target.tab);
+      if (target.planId) {
+        void loadPlanRevisions(target.planId, null);
       } else {
-        void loadRevisions(id, null);
+        void loadRevisions(target.specId, null);
       }
     }
     openFromRoute();
@@ -589,10 +577,7 @@ export default function SpecsPage() {
     syncRoute(doc.id, null, 'agreement');
   }
 
-  const current = revisions.find((row) => row.version === openVersion);
-  const currentIndex = revisions.findIndex((row) => row.version === openVersion);
-  const older = currentIndex > 0 ? revisions.slice(0, currentIndex) : [];
-  const base = older.find((row) => row.version === baseChoice) ?? older[older.length - 1] ?? null;
+  const { current, older, base } = diffSelection(revisions, openVersion, baseChoice);
   const baseBody = base?.body ?? null;
   const currentBody = current?.body ?? null;
   // Typing in the filter re-renders the page; the diff only depends on the two bodies.
@@ -611,14 +596,7 @@ export default function SpecsPage() {
       });
   const openPlans: HierarchyPlan[] =
     hierarchy && selected ? plansForSpec(hierarchy, selected) : [];
-  const visible = specs.filter((spec) => {
-    if (kindFilter === 'plan' && spec.kind !== 'plan') return false;
-    if (kindFilter === 'spec' && spec.kind !== 'spec') return false;
-    if (statusFilter !== 'all' && spec.latestStatus !== statusFilter) return false;
-    if (!needle) return true;
-    const haystack = `${spec.title} ${spec.id} ${spec.path} ${spec.sessions}`.toLowerCase();
-    return haystack.includes(needle);
-  });
+  const visible = filterSpecs(specs, kindFilter, statusFilter, query);
   const ordered = sortSpecs(visible, 'newest');
   const windowed = ordered.slice(0, shown);
   useEffect(() => {
