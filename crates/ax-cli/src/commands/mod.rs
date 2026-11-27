@@ -24,6 +24,7 @@ pub mod export;
 pub mod export_concepts;
 pub mod export_okf;
 pub mod files;
+pub mod git_status;
 pub mod global;
 pub mod impact;
 pub mod index;

@@ -911,7 +911,7 @@ rustup component add rust-analyzer
 
 ### `ax stop-hook`
 
-Claude Code `Stop` / `SubagentStop` hook target — internal command wired automatically by `ax install` for Claude Code, not meant to be run manually. Reads Claude's JSON payload on stdin, runs `ax_guard`-equivalent checks against every uncommitted file (`git status --porcelain`), and on a CRITICAL violation prints `{"decision": "block", "reason": "..."}` so Claude fixes the issue before the turn actually ends. Honors `stop_hook_active` to avoid infinite loops and no-ops when there's no indexed policy. It also writes the [per-turn memory](/guides/memory/#per-turn-memories) for the turn.
+Claude Code `Stop` / `SubagentStop` hook target — internal command wired automatically by `ax install` for Claude Code, not meant to be run manually. Reads Claude's JSON payload on stdin, runs `ax_guard`-equivalent checks against the uncommitted files inside the ax project (`git status --porcelain -z --untracked-files=all`, so new files in new folders and non-ASCII names count, and a project in a subfolder of the repository works), up to 40 files per turn (the block reason says how many were left out), and on a CRITICAL violation prints `{"decision": "block", "reason": "..."}` so Claude fixes the issue before the turn actually ends. Honors `stop_hook_active` to avoid infinite loops and no-ops when there's no indexed policy. It also writes the [per-turn memory](/guides/memory/#per-turn-memories) for the turn.
 
 | Env var | Effect |
 |---|---|

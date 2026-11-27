@@ -5,6 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use ax_memory::TurnRecord;
+
+use crate::commands::git_status;
 use serde::{Deserialize, Serialize};
 
 /// Which side of an agent turn the hook runs on.
@@ -377,23 +379,11 @@ fn file_change_lines(root: &Path, since: Option<&str>, files: &[String]) -> Vec<
             }
         }
     }
-    if let Some(out) = git_output(
-        root,
-        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-    ) {
-        let text = String::from_utf8_lossy(&out);
-        let mut entries = text.split('\0');
-        while let Some(entry) = entries.next() {
-            if entry.len() < 4 {
-                continue;
-            }
-            let (status, path) = entry.split_at(3);
-            if status.starts_with('R') || status.starts_with('C') {
-                entries.next();
-            }
-            if status.starts_with('?') && wanted.contains(path) {
+    if let Some(out) = git_output(root, &git_status::STATUS_ARGS) {
+        for entry in git_status::parse_porcelain_z(&out) {
+            if entry.is_untracked() && wanted.contains(entry.path.as_str()) {
                 found
-                    .entry(path.to_string())
+                    .entry(entry.path)
                     .or_insert(ax_memory::FileChangeKind::Added);
             }
         }
@@ -468,35 +458,40 @@ fn head(root: &Path) -> Option<String> {
 }
 
 /// Dirty paths (tracked changes and untracked files) mapped to a content hash; `-` when deleted.
+///
+/// Keys are relative to the repository top level, as git prints them, which
+/// is not `root` when the ax project is a subdirectory of the repository; the
+/// files are read from the top level.
 fn dirty_files(root: &Path) -> Option<BTreeMap<String, String>> {
-    let out = git_output(
-        root,
-        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-    )?;
-    let text = String::from_utf8_lossy(&out);
-    let mut entries = text.split('\0');
+    let out = git_output(root, &git_status::STATUS_ARGS)?;
+    let top = git_status::toplevel(root)?;
+    let top = top.canonicalize().unwrap_or(top);
+    // `root` relative to the top level, so `.ax/` runtime files are recognised
+    // in a subdirectory project too.
+    let prefix = root
+        .canonicalize()
+        .ok()
+        .and_then(|r| r.strip_prefix(&top).ok().map(Path::to_path_buf))
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .filter(|p| !p.is_empty())
+        .map(|p| format!("{p}/"));
     let mut dirty = BTreeMap::new();
-    while let Some(entry) = entries.next() {
-        if entry.len() < 4 {
-            continue;
-        }
-        let (status, path) = entry.split_at(3);
-        let source = if status.starts_with('R') || status.starts_with('C') {
-            entries.next()
-        } else {
-            None
+    for entry in git_status::parse_porcelain_z(&out) {
+        let in_root = match &prefix {
+            Some(prefix) => entry.path.strip_prefix(prefix.as_str()),
+            None => Some(entry.path.as_str()),
         };
-        if is_ax_runtime_file(path) {
+        if in_root.is_some_and(is_ax_runtime_file) {
             continue;
         }
-        if let Some(source) = source {
-            dirty.insert(source.to_string(), "-".to_string());
+        if let Some(source) = entry.source {
+            dirty.insert(source, "-".to_string());
         }
-        let hash = std::fs::read(root.join(path)).map_or_else(
+        let hash = std::fs::read(top.join(&entry.path)).map_or_else(
             |_| "-".to_string(),
             |bytes| blake3::hash(&bytes).to_hex().to_string(),
         );
-        dirty.insert(path.to_string(), hash);
+        dirty.insert(entry.path, hash);
     }
     Some(dirty)
 }
@@ -596,6 +591,23 @@ mod tests {
         git(root, &["commit", "-q", "-m", "initial"]);
         std::fs::create_dir_all(root.join(".ax")).unwrap();
         dir
+    }
+
+    #[test]
+    fn dirty_files_hashes_content_when_project_is_a_repo_subdirectory() {
+        let dir = repo();
+        let api = dir.path().join("services/api");
+        write(dir.path(), "services/api/src/b.rs", "fn b() {}\n");
+        git(dir.path(), &["add", "."]);
+        git(dir.path(), &["commit", "-q", "-m", "api"]);
+        write(dir.path(), "services/api/src/b.rs", "fn changed() {}\n");
+        let dirty = dirty_files(&api).unwrap();
+        let expected = blake3::hash(b"fn changed() {}\n").to_hex().to_string();
+        assert_eq!(
+            dirty.get("services/api/src/b.rs"),
+            Some(&expected),
+            "{dirty:?}"
+        );
     }
 
     #[test]
