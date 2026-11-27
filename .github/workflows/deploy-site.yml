@@ -16,7 +16,8 @@ concurrency:
   group: docs-${{ github.ref }}
   cancel-in-progress: true
 
-# Validate documentation and retain an artifact. Deployments are managed separately.
+# Build and test the documentation. Only a run from main deploys it to GitHub Pages,
+# and only after the published release has every platform asset.
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -37,7 +38,7 @@ jobs:
       - name: Install Chrome for share-card screenshots
         run: sudo npx puppeteer browsers install chrome --install-deps
       - name: Resolve complete published release for production downloads
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -67,6 +68,7 @@ jobs:
 
   deploy:
     needs: build
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

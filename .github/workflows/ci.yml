@@ -27,6 +27,8 @@ jobs:
           fetch-depth: 0
       - name: Verify change classification
         run: python -m unittest discover -s scripts -p 'test_ci_changes.py'
+      - name: Verify workflow contracts
+        run: python -m unittest discover -s scripts -p 'test_workflows.py'
       - name: Classify changed paths
         id: paths
         env:
