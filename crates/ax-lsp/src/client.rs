@@ -400,26 +400,31 @@ fn read_message_from(reader: &mut impl BufRead) -> Result<Value, String> {
     serde_json::from_slice(&buf).map_err(|e| e.to_string())
 }
 
+/// `file://` URI for `path`, percent-encoded (spaces, `#`, `%`, non-ASCII).
 pub fn path_to_uri(path: &Path) -> String {
     let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let abs = strip_verbatim_prefix(&abs);
+    if let Ok(url) = url::Url::from_file_path(&abs) {
+        return url.to_string();
+    }
+    // Relative or otherwise unusual path: build the URI by hand, still encoded.
     let mut s = abs.to_string_lossy().replace('\\', "/");
-    #[cfg(windows)]
-    {
-        if let Some(rest) = s.strip_prefix("//?/") {
-            s = rest.to_string();
-        }
-        if !s.starts_with('/') {
-            s = format!("/{s}");
+    if !s.starts_with('/') {
+        s = format!("/{s}");
+    }
+    format!("file://{}", percent_encode_path(&s))
+}
+
+fn percent_encode_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for b in path.bytes() {
+        if b.is_ascii_alphanumeric() || b"/-._~:".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
         }
     }
-    #[cfg(not(windows))]
-    {
-        if !s.starts_with('/') {
-            s = format!("/{s}");
-        }
-    }
-    format!("file://{s}")
+    out
 }
 
 /// Strip Windows `\\?\` / `\\?\UNC\` extended-length prefixes from canonicalize.
@@ -440,7 +445,14 @@ pub fn strip_verbatim_prefix(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+/// Local path for a `file://` URI, with percent-escapes decoded as UTF-8.
 pub fn uri_to_path(uri: &str) -> Option<PathBuf> {
+    if let Some(path) = url::Url::parse(uri)
+        .ok()
+        .and_then(|u| u.to_file_path().ok())
+    {
+        return Some(path);
+    }
     let path = uri.strip_prefix("file://")?;
     let path = percent_decode(path);
     #[cfg(windows)]
@@ -455,24 +467,24 @@ pub fn uri_to_path(uri: &str) -> Option<PathBuf> {
     }
 }
 
+/// Decode `%XX` escapes into bytes, then read the bytes as UTF-8.
 fn percent_decode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
     let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) =
-                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
-            {
-                out.push(b as char);
+        if bytes[i] == b'%' && i + 3 <= bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("");
+            if let Ok(b) = u8::from_str_radix(hex, 16) {
+                out.push(b);
                 i += 3;
                 continue;
             }
         }
-        out.push(bytes[i] as char);
+        out.push(bytes[i]);
         i += 1;
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn parse_definition_result(result: &Value) -> Option<LspLocation> {
@@ -515,23 +527,29 @@ pub fn language_id_for_ext(ext: &str) -> &'static str {
     }
 }
 
-/// Prefer the column of `name` on the given 1-based line when the stored column
-/// points at a call receiver (e.g. `session_id.into()` stored at `session_id`).
+/// LSP `character` (UTF-16 code units) of `name` on the given 1-based line.
+/// Prefers the occurrence at or after the stored byte `column`, which may point
+/// at a call receiver (e.g. `session_id.into()` stored at `session_id`). A
+/// stale column inside a multi-byte character is moved back to its start.
 pub fn column_for_name(content: &str, line_1based: i32, column: i32, name: &str) -> u32 {
     let line = content
         .lines()
         .nth(line_1based.max(1) as usize - 1)
         .unwrap_or("");
-    let start = (column.max(0) as usize).min(line.len());
+    let start = ax_utils::floor_char_boundary(line, column.max(0) as usize);
+    let mut byte = start;
     if !name.is_empty() {
         if let Some(rel) = line[start..].find(name) {
-            return (start + rel) as u32;
-        }
-        if let Some(abs) = line.find(name) {
-            return abs as u32;
+            byte = start + rel;
+        } else if let Some(abs) = line.find(name) {
+            byte = abs;
         }
     }
-    start as u32
+    utf16_len(&line[..byte])
+}
+
+fn utf16_len(text: &str) -> u32 {
+    u32::try_from(text.encode_utf16().count()).unwrap_or(u32::MAX)
 }
 
 #[cfg(test)]
@@ -611,6 +629,41 @@ mod tests {
         let p = PathBuf::from(r"\\?\UNC\server\share\file.rs");
         let stripped = strip_verbatim_prefix(&p);
         assert_eq!(stripped, PathBuf::from(r"\\server\share\file.rs"));
+    }
+
+    #[test]
+    fn column_for_name_counts_utf16_units() {
+        let src = "let na\u{ef}ve = \u{fc}ber.call();\n";
+        assert_eq!(column_for_name(src, 1, 0, "call"), 17);
+        // Astral characters are two UTF-16 units.
+        let src = "f(\u{1F600}, g());\n";
+        assert_eq!(column_for_name(src, 1, 0, "g"), 6);
+    }
+
+    #[test]
+    fn column_for_name_survives_a_stale_column_inside_a_character() {
+        let src = "\u{e9}.x();\n";
+        assert_eq!(column_for_name(src, 1, 1, "x"), 2);
+        assert_eq!(column_for_name(src, 1, 1, ""), 0);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn uris_percent_encode_and_decode_utf8() {
+        let uri = path_to_uri(Path::new("/no/such/My Projects/a#b%c.rs"));
+        assert_eq!(uri, "file:///no/such/My%20Projects/a%23b%25c.rs");
+        assert_eq!(
+            uri_to_path(&uri),
+            Some(PathBuf::from("/no/such/My Projects/a#b%c.rs"))
+        );
+        assert_eq!(
+            uri_to_path("file:///src/caf%C3%A9.rs"),
+            Some(PathBuf::from("/src/caf\u{e9}.rs"))
+        );
+        assert_eq!(
+            uri_to_path("file:///src/a%41"),
+            Some(PathBuf::from("/src/aA"))
+        );
     }
 
     #[test]
