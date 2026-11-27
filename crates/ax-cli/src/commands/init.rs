@@ -334,11 +334,21 @@ async fn run_inner(
                     );
                 }
                 println!();
+            } else if let Some(s) = &report.suggested {
+                let key_env = s.key_env.as_deref().unwrap_or("");
+                println!(
+                    "  {}",
+                    dim(&format!(
+                        "Found {key_env}. Offload stays off; to send explore context to {} run: ax offload set-endpoint {} --key-env {key_env}",
+                        s.name, s.url
+                    ))
+                );
+                println!();
             } else if report.catalog_written {
                 println!(
                     "  {}",
                     dim(
-                        "No API keys detected — set OPENAI_API_KEY, CEREBRAS_API_KEY, GROQ_API_KEY, etc. then run ax explore"
+                        "Offload is off. To use it, run: ax offload set-endpoint <url> --key-env <VAR>"
                     )
                 );
                 println!();

@@ -1217,11 +1217,11 @@ ax cursor auth use enterprise
 
 ### `ax offload`
 
-Configure optional LLM offload for `ax explore` (BYO OpenAI-compatible API). Stored in `~/.ax/config.json`.
+Configure optional LLM offload for `ax explore` (BYO OpenAI-compatible API). Stored in `~/.ax/config.json`. Offload is off until you save an endpoint here or set `AX_OFFLOAD_URL`; an API key in the environment alone does not enable it.
 
 #### `ax offload status`
 
-Show current endpoint and key env var name.
+Show current endpoint and key env var name. When offload is off and a provider key is in the environment, `suggestion` names the command that would enable it.
 
 ```bash
 ax offload status

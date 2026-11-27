@@ -182,6 +182,9 @@ pub struct OffloadInitReport {
     pub catalog_written: bool,
     pub active: Option<OffloadProviderEntry>,
     pub discovered: Vec<String>,
+    /// First provider whose API key is in the environment. Offload stays off until
+    /// the user saves an endpoint (`ax offload set-endpoint`); this is only a hint.
+    pub suggested: Option<OffloadProviderEntry>,
     pub skipped_existing: bool,
 }
 
@@ -226,6 +229,8 @@ async fn ollama_reachable() -> bool {
         .unwrap_or(false)
 }
 
+/// First provider whose API key is set in the environment: `(url, key, key_env)`.
+/// Used only to suggest an endpoint; it never enables offload on its own.
 fn detect_provider() -> (Option<String>, Option<String>, Option<String>) {
     for spec in OFFLOAD_PROVIDERS {
         if let Some(key_env) = spec.key_env {
@@ -263,7 +268,11 @@ fn write_provider_catalog() -> Result<bool, String> {
     Ok(true)
 }
 
-/// Seed provider catalog and wire active offload during `ax init`.
+/// Seed the provider catalog during `ax init` and report which providers have a key.
+///
+/// This never writes an active `offload` section: offload stays off until the user
+/// saves an endpoint with `ax offload set-endpoint`. A discovered provider is
+/// returned as `suggested`.
 pub async fn seed_offload_on_init() -> Result<OffloadInitReport, String> {
     let catalog_written = write_provider_catalog()?;
     let mut discovered: Vec<String> = discover_providers_from_env()
@@ -298,39 +307,27 @@ pub async fn seed_offload_on_init() -> Result<OffloadInitReport, String> {
             catalog_written,
             active,
             discovered,
+            suggested: None,
             skipped_existing: true,
         });
     }
 
-    let mut active = None;
-    let discovered_set: std::collections::HashSet<&str> =
-        discovered.iter().map(|s| s.as_str()).collect();
-    for spec in OFFLOAD_PROVIDERS {
-        if !discovered_set.contains(spec.id) {
-            continue;
-        }
-        let cfg = OffloadConfig {
-            url: Some(spec.url.to_string()),
-            model: spec.default_model.map(str::to_string),
-            key_env: spec.key_env.map(str::to_string),
-            effort: None,
-            style: None,
-        };
-        write_offload_config(Some(cfg))?;
-        active = Some(OffloadProviderEntry {
+    let suggested = OFFLOAD_PROVIDERS
+        .iter()
+        .find(|spec| discovered.iter().any(|d| d == spec.id))
+        .map(|spec| OffloadProviderEntry {
             id: spec.id.to_string(),
             name: spec.name.to_string(),
             url: spec.url.to_string(),
             key_env: spec.key_env.map(str::to_string),
             model: spec.default_model.map(str::to_string),
         });
-        break;
-    }
 
     Ok(OffloadInitReport {
         catalog_written,
-        active,
+        active: None,
         discovered,
+        suggested,
         skipped_existing: false,
     })
 }
@@ -358,7 +355,7 @@ pub fn resolve_offload() -> ResolvedOffload {
     let env_key = trimmed(std::env::var("AX_OFFLOAD_KEY").ok().as_deref());
     let had_env_url = env_url.is_some();
 
-    let mut url = env_url.or_else(|| trimmed(c.url.as_deref()));
+    let url = env_url.or_else(|| trimmed(c.url.as_deref()));
     let model = trimmed(std::env::var("AX_OFFLOAD_MODEL").ok().as_deref())
         .or_else(|| trimmed(c.model.as_deref()))
         .unwrap_or_else(|| "gpt-oss-120b".into());
@@ -376,24 +373,18 @@ pub fn resolve_offload() -> ResolvedOffload {
         }
     }
 
-    let mut origin = if had_env_url {
+    // Offload is opt-in: only an endpoint saved in config or AX_OFFLOAD_URL turns it on.
+    // A provider API key in the environment alone never sends source anywhere.
+    let origin = if had_env_url {
         "env"
-    } else if trimmed(c.url.as_deref()).is_some() {
+    } else if url.is_some() {
         "config"
     } else {
         "none"
     };
-
     if url.is_none() {
-        let (auto_url, auto_key, auto_src) = detect_provider();
-        if let Some(u) = auto_url {
-            url = Some(u);
-            if api_key.is_none() {
-                api_key = auto_key;
-                key_source = auto_src;
-            }
-            origin = "auto";
-        }
+        api_key = None;
+        key_source = None;
     }
 
     ResolvedOffload {
@@ -422,6 +413,12 @@ pub fn resolve_offload() -> ResolvedOffload {
     }
 }
 
+/// Env var of the first provider whose API key is set, when offload is not configured.
+/// For status output only: offload stays off until an endpoint is saved.
+pub fn suggested_key_env() -> Option<String> {
+    detect_provider().2
+}
+
 pub fn is_offload_enabled() -> bool {
     resolve_offload().enabled
 }
@@ -437,17 +434,110 @@ mod tests {
         assert!(OFFLOAD_PROVIDERS.iter().any(|p| p.id == "ollama"));
     }
 
+    /// Tests in this module change process-wide env vars; run them one at a time.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    const OFFLOAD_ENV: &[&str] = &[
+        "AX_HOME_DIR",
+        "AX_OFFLOAD_DISABLE",
+        "AX_OFFLOAD_URL",
+        "AX_OFFLOAD_KEY",
+        "OPENAI_API_KEY",
+        "CEREBRAS_API_KEY",
+        "GROQ_API_KEY",
+        "TOGETHER_API_KEY",
+        "FIREWORKS_API_KEY",
+        "OPENROUTER_API_KEY",
+    ];
+
+    /// Runs `f` with a fresh home dir, no offload env, then `vars` set; restores the env after.
+    fn with_env<T>(vars: &[(&str, &str)], f: impl FnOnce(&std::path::Path) -> T) -> T {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved: Vec<(&str, Option<String>)> = OFFLOAD_ENV
+            .iter()
+            .map(|k| (*k, std::env::var(k).ok()))
+            .collect();
+        for k in OFFLOAD_ENV {
+            std::env::remove_var(k);
+        }
+        let home = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("AX_HOME_DIR", home.path());
+        for (k, v) in vars {
+            std::env::set_var(k, v);
+        }
+        let out = f(home.path());
+        for (k, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+        out
+    }
+
     #[test]
     fn auto_detect_openai_key() {
-        let prev = std::env::var("OPENAI_API_KEY").ok();
-        std::env::set_var("OPENAI_API_KEY", "sk-test-key");
-        let (url, key, src) = detect_provider();
-        std::env::remove_var("OPENAI_API_KEY");
-        if let Some(v) = prev {
-            std::env::set_var("OPENAI_API_KEY", v);
-        }
+        let (url, key, src) = with_env(&[("OPENAI_API_KEY", "sk-test-key")], |_| detect_provider());
         assert_eq!(url.as_deref(), Some("https://api.openai.com/v1"));
         assert_eq!(key.as_deref(), Some("sk-test-key"));
         assert_eq!(src.as_deref(), Some("OPENAI_API_KEY"));
+    }
+
+    #[test]
+    fn provider_key_alone_does_not_enable_offload() {
+        let r = with_env(&[("CEREBRAS_API_KEY", "csk-test")], |_| resolve_offload());
+        assert!(!r.enabled, "an API key in the env must not turn offload on");
+        assert_eq!(r.url, None);
+        assert_eq!(r.api_key, None);
+        assert_eq!(r.origin, "none");
+    }
+
+    #[test]
+    fn configured_url_enables_offload() {
+        let r = with_env(&[("OPENAI_API_KEY", "sk-test")], |_| {
+            write_offload_config(Some(OffloadConfig {
+                url: Some("https://api.openai.com/v1".into()),
+                key_env: Some("OPENAI_API_KEY".into()),
+                ..OffloadConfig::default()
+            }))
+            .unwrap();
+            resolve_offload()
+        });
+        assert!(r.enabled);
+        assert_eq!(r.origin, "config");
+        assert_eq!(r.api_key.as_deref(), Some("sk-test"));
+    }
+
+    #[test]
+    fn env_url_enables_offload() {
+        let r = with_env(&[("AX_OFFLOAD_URL", "http://localhost:11434/v1")], |_| {
+            resolve_offload()
+        });
+        assert!(r.enabled);
+        assert_eq!(r.origin, "env");
+    }
+
+    #[test]
+    fn init_does_not_activate_offload_from_env_key() {
+        let (report, cfg, text) = with_env(&[("OPENAI_API_KEY", "sk-test")], |home| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let report = rt.block_on(seed_offload_on_init()).unwrap();
+            let text = std::fs::read_to_string(home.join(".ax/config.json")).unwrap();
+            (report, read_offload_config(), text)
+        });
+        assert!(report.active.is_none(), "init must not activate offload");
+        assert_eq!(
+            report.suggested.as_ref().map(|p| p.id.as_str()),
+            Some("openai")
+        );
+        assert!(cfg.url.is_none());
+        assert!(text.contains("offload_catalog"));
+        assert!(
+            !text.contains("\"offload\""),
+            "no active offload section: {text}"
+        );
     }
 }

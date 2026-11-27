@@ -160,5 +160,12 @@ pub fn offload_status() -> serde_json::Value {
         "effort": cfg.effort,
         "style": cfg.style,
         "timeout_ms": cfg.timeout_ms,
+        "suggestion": if cfg.enabled {
+            None
+        } else {
+            crate::config::suggested_key_env().map(|k| {
+                format!("found {k}; offload is off until you run `ax offload set-endpoint <url> --key-env {k}`")
+            })
+        },
     })
 }

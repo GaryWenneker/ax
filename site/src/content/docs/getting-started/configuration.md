@@ -173,13 +173,15 @@ Stored in `~/.ax/config.json` under a separate `"offload"` key. Lets ax delegate
 
 | Key | Default | Description |
 |---|---|---|
-| `url` | — | OpenAI-compatible base URL (required to enable offload) |
+| `url` | — | OpenAI-compatible base URL. Offload is on only when this (or `AX_OFFLOAD_URL`) is set |
 | `model` | `gpt-oss-120b` | Model name |
 | `key_env` | — | Name of the env var that holds the API key |
 | `effort` | `low` | `low` / `medium` / `high` |
 | `style` | `plain` | Response style hint |
 
 All keys can also be set via environment variables (`AX_OFFLOAD_URL`, `AX_OFFLOAD_MODEL`, `AX_OFFLOAD_KEY`, `AX_OFFLOAD_EFFORT`, `AX_OFFLOAD_STYLE`). Env vars take precedence over the file.
+
+Offload is off by default. An API key in your environment (`OPENAI_API_KEY`, `CEREBRAS_API_KEY`, and so on) does not turn it on: ax sends explore context to an outside model only after you save an endpoint with `ax offload set-endpoint <url> --key-env <VAR>` or set `AX_OFFLOAD_URL`. `ax init` and `ax offload status` name a provider whose key they find, as a suggestion. `AX_OFFLOAD_DISABLE=1` turns offload off even when an endpoint is configured.
 
 MCP graph calls log estimated context-token savings in **`~/.ax/usage.db`**. Query with [`ax savings`](/reference/cli/#ax-savings) or the **Savings** page in `ax web`. See [Token savings](/guides/token-savings/). Imported agent turns are quoted separately with [`ax costs`](/reference/cli/#ax-costs) and compared to a local plan with [`ax budget`](/reference/cli/#ax-budget). See [Agent budget](/guides/budget/). Pi runs stay in Pi; Ax can record their estimates with [`ax agent economics`](/reference/cli/#ax-agent-economics). See [Pi integration](/guides/pi/).
 
