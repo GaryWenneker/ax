@@ -579,8 +579,14 @@ export default function SpecsPage() {
   const currentIndex = revisions.findIndex((row) => row.version === openVersion);
   const older = currentIndex > 0 ? revisions.slice(0, currentIndex) : [];
   const base = older.find((row) => row.version === baseChoice) ?? older[older.length - 1] ?? null;
-  const hunks = current && base ? unifiedDiff(base.body, current.body) : [];
-  const diffText = formatUnifiedDiff(hunks);
+  const baseBody = base?.body ?? null;
+  const currentBody = current?.body ?? null;
+  // Typing in the filter re-renders the page; the diff only depends on the two bodies.
+  const hunks = useMemo(
+    () => (baseBody !== null && currentBody !== null ? unifiedDiff(baseBody, currentBody) : []),
+    [baseBody, currentBody],
+  );
+  const diffText = useMemo(() => formatUnifiedDiff(hunks), [hunks]);
   const needle = query.trim().toLowerCase();
   const hierarchyMode = hierarchy !== null;
   const treeRows = hierarchy === null
