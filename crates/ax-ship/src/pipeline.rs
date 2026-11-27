@@ -46,6 +46,35 @@ impl ShipPipeline {
 
     pub async fn run_evaluate(&self) -> Result<ShipReport, String> {
         let mut logger = RunLogger::start(&self.project_root, Some(self.bus.clone()));
+        let mut checkpoint_roots: Vec<(PathBuf, Checkpoint)> = Vec::new();
+        match self
+            .evaluate_steps(&mut logger, &mut checkpoint_roots)
+            .await
+        {
+            Ok((report, passed)) => {
+                logger.finish(passed);
+                Ok(report)
+            }
+            Err(e) => {
+                // A step failed after the checkpoints were made: treat the run
+                // as failed so `revert_on_fail` undoes them, and close the log.
+                if !checkpoint_roots.is_empty() {
+                    self.resolve_auto_commit_outcome(&checkpoint_roots, false, &mut logger);
+                }
+                logger.line(format!("Evaluate failed: {e}"));
+                logger.finish(false);
+                Err(e)
+            }
+        }
+    }
+
+    /// The gate steps. Returns the report and whether the gate passed; the
+    /// caller closes the run log and handles checkpoints on an error.
+    async fn evaluate_steps(
+        &self,
+        logger: &mut RunLogger,
+        checkpoint_roots: &mut Vec<(PathBuf, Checkpoint)>,
+    ) -> Result<(ShipReport, bool), String> {
         logger.line("Evaluate started");
         let mut steps = Vec::new();
         let base = self.config.ship.target_branch.clone();
@@ -71,7 +100,6 @@ impl ShipPipeline {
         if let Err(ref e) = index_result {
             self.step_fail("index", e);
             logger.step_fail("index", e);
-            logger.finish(false);
             return Err(e.clone());
         }
         let index_detail = index_result.ok().map(|r| {
@@ -92,7 +120,6 @@ impl ShipPipeline {
 
         let git_roots = resolve_git_roots(&self.project_root, &self.config)?;
 
-        let mut checkpoint_roots: Vec<(PathBuf, Checkpoint)> = Vec::new();
         if self.config.auto_commit.enabled {
             logger.line(
                 "Auto-commit enabled — checkpointing uncommitted changes before the gate runs",
@@ -129,13 +156,11 @@ impl ShipPipeline {
                 let detail = "base ref not found — skipping".to_string();
                 self.step_ok("diff", Some(detail.clone()));
                 logger.step_ok("diff", Some(&detail));
-                logger.finish(true);
-                return Ok(empty_report());
+                return Ok((empty_report(), true));
             }
             Err(e) => {
                 self.step_fail("diff", &e);
                 logger.step_fail("diff", &e);
-                logger.finish(false);
                 return Err(e);
             }
         };
@@ -268,7 +293,7 @@ impl ShipPipeline {
                     },
                     full_sonar,
                     bus,
-                    &mut logger,
+                    logger,
                 )
                 .await;
                 let scan_ok = sonar_scan.is_ok();
@@ -359,7 +384,7 @@ impl ShipPipeline {
         let passed = tests_ok && sonar_passed;
 
         let auto_commit_outcome = if self.config.auto_commit.enabled {
-            Some(self.resolve_auto_commit_outcome(&checkpoint_roots, passed, &mut logger))
+            Some(self.resolve_auto_commit_outcome(checkpoint_roots, passed, logger))
         } else {
             None
         };
@@ -385,8 +410,7 @@ impl ShipPipeline {
         } else {
             "Quality gate failed"
         });
-        logger.finish(passed);
-        Ok(ShipReport::from_pipeline(result))
+        Ok((ShipReport::from_pipeline(result), passed))
     }
 
     pub async fn create_draft_pr(
