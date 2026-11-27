@@ -319,6 +319,22 @@ fn import_one_policy_dir(
     out
 }
 
+fn skip_file_owned(
+    skipped: &mut Vec<crate::types::PolicySkip>,
+    what: &str,
+    path: &Path,
+    reason: String,
+) {
+    eprintln!(
+        "[ax policy] keep stored {what}, file-owned source {} unusable: {reason}",
+        path.display()
+    );
+    skipped.push(crate::types::PolicySkip {
+        path: path.to_string_lossy().into_owned(),
+        reason,
+    });
+}
+
 /// What one policy layer contributed to an import: parsed docs with their content hash.
 #[derive(Default)]
 struct LayerImport {
@@ -542,6 +558,19 @@ pub async fn ensure_policy_ready(
             } else {
                 // Only rows explicitly authored in files may refresh in database mode.
                 // A stale export of a database-owned row is never imported here.
+                // A file that is missing, unreadable or renamed to another id keeps its stored
+                // row and is reported in `skipped`; it never fails the whole call.
+                let mut skipped = Vec::new();
+                let (stored_rules, stored_skills) = {
+                    let mut conn = pool
+                        .acquire()
+                        .await
+                        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+                    (
+                        stored_state(&mut conn, PruneTable::Rules).await?,
+                        stored_state(&mut conn, PruneTable::Skills).await?,
+                    )
+                };
                 for row in list_rules(pool).await? {
                     if effective_storage(config.storage, row.storage.as_deref())
                         != PolicyStorage::Files
@@ -549,25 +578,33 @@ pub async fn ensure_policy_ready(
                         continue;
                     }
                     let path = Path::new(&row.source_path);
-                    let raw =
-                        std::fs::read_to_string(path).map_err(|e| AxError::Other(e.to_string()))?;
-                    let mut doc =
-                        parse_rule_file(path, &raw).map_err(|e| AxError::Other(e.error))?;
-                    if doc.frontmatter.id != row.id {
-                        return Err(AxError::Other(
-                            "file-owned rule changed identity; explicitly re-index policy".into(),
-                        ));
-                    }
-                    doc.frontmatter.scope = row.scope;
-                    materialize_rule_stub(project_root, &mut doc).map_err(AxError::Other)?;
+                    let doc = std::fs::read_to_string(path)
+                        .map_err(|e| e.to_string())
+                        .and_then(|raw| {
+                            parse_rule_file(path, &raw)
+                                .map_err(|e| crate::parse::format_validation(&e))
+                        })
+                        .and_then(|mut doc| {
+                            if doc.frontmatter.id != row.id {
+                                return Err(format!(
+                                    "file now holds rule `{}` instead of `{}`; re-index policy",
+                                    doc.frontmatter.id, row.id
+                                ));
+                            }
+                            doc.frontmatter.scope = row.scope.clone();
+                            materialize_rule_stub(project_root, &mut doc)?;
+                            Ok(doc)
+                        });
+                    let doc = match doc {
+                        Ok(doc) => doc,
+                        Err(reason) => {
+                            skip_file_owned(&mut skipped, "rule", path, reason);
+                            continue;
+                        }
+                    };
                     let hash = blake3::hash(doc.raw.as_bytes()).to_hex().to_string();
-                    let previous: String =
-                        sqlx::query_scalar("SELECT content_hash FROM policy_rules WHERE id = ?")
-                            .bind(&doc.frontmatter.id)
-                            .fetch_one(pool)
-                            .await
-                            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
-                    if hash != previous {
+                    let previous = stored_rules.get(&row.id).map(|s| s.content_hash.as_str());
+                    if previous != Some(hash.as_str()) {
                         upsert_rule(pool, &doc, &hash, now_ms()).await?;
                     }
                 }
@@ -578,29 +615,39 @@ pub async fn ensure_policy_ready(
                         continue;
                     }
                     let path = Path::new(&row.source_path);
-                    let raw =
-                        std::fs::read_to_string(path).map_err(|e| AxError::Other(e.to_string()))?;
-                    let mut doc =
-                        parse_skill_file(path, &raw).map_err(|e| AxError::Other(e.error))?;
-                    if doc.frontmatter.name != row.name {
-                        return Err(AxError::Other(
-                            "file-owned skill changed identity; explicitly re-index policy".into(),
-                        ));
-                    }
-                    doc.frontmatter.scope = row.scope;
-                    materialize_skill_stub(project_root, &mut doc).map_err(AxError::Other)?;
+                    let doc = std::fs::read_to_string(path)
+                        .map_err(|e| e.to_string())
+                        .and_then(|raw| {
+                            parse_skill_file(path, &raw)
+                                .map_err(|e| crate::parse::format_validation(&e))
+                        })
+                        .and_then(|mut doc| {
+                            if doc.frontmatter.name != row.name {
+                                return Err(format!(
+                                    "file now holds skill `{}` instead of `{}`; re-index policy",
+                                    doc.frontmatter.name, row.name
+                                ));
+                            }
+                            doc.frontmatter.scope = row.scope.clone();
+                            materialize_skill_stub(project_root, &mut doc)?;
+                            Ok(doc)
+                        });
+                    let doc = match doc {
+                        Ok(doc) => doc,
+                        Err(reason) => {
+                            skip_file_owned(&mut skipped, "skill", path, reason);
+                            continue;
+                        }
+                    };
                     let hash = blake3::hash(doc.raw.as_bytes()).to_hex().to_string();
-                    let previous: String =
-                        sqlx::query_scalar("SELECT content_hash FROM policy_skills WHERE name = ?")
-                            .bind(&doc.frontmatter.name)
-                            .fetch_one(pool)
-                            .await
-                            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
-                    if hash != previous {
+                    let previous = stored_skills
+                        .get(&row.name)
+                        .map(|s| s.content_hash.as_str());
+                    if previous != Some(hash.as_str()) {
                         upsert_skill(pool, &doc, &hash, now_ms()).await?;
                     }
                 }
-                Ok(counts)
+                Ok(PolicyIndexResult { skipped, ..counts })
             }
         }
         PolicyStorage::Files => {
@@ -1528,6 +1575,53 @@ mod tests {
         assert!(counts.rules_indexed >= 1);
         let rules = list_rules(&pool).await.unwrap();
         assert!(rules.iter().any(|r| r.id == "disk-rule"));
+    }
+
+    #[tokio::test]
+    async fn a_missing_file_owned_source_does_not_fail_database_mode() {
+        let (dir, pool) = test_pool().await;
+        let root = dir.path();
+        std::fs::write(root.join("ax.json"), r#"{"policy":{"storage":"database"}}"#).unwrap();
+        std::fs::create_dir_all(root.join(".agents/rules")).unwrap();
+        let file_rule = root.join(".agents/rules/file-owned.mdc");
+        std::fs::write(
+            &file_rule,
+            "---\nid: file-owned\nlevel: INFO\nalwaysApply: true\nstorage: files\n---\n\nfrom a file\n",
+        )
+        .unwrap();
+        write_skill(root, "kept-skill", "skill body");
+        let skill_file_path = root.join(".agents/skills/kept-skill/SKILL.md");
+        std::fs::write(
+            &skill_file_path,
+            "---\nname: kept-skill\ndescription: d\nstorage: files\n---\n\nskill body\n",
+        )
+        .unwrap();
+        write_rule(root, "db-owned", "database row");
+        ensure_policy_ready(&pool, root).await.unwrap();
+        assert!(list_rules(&pool)
+            .await
+            .unwrap()
+            .iter()
+            .any(|r| r.id == "file-owned"));
+
+        std::fs::remove_file(&file_rule).unwrap();
+        std::fs::write(&skill_file_path, "---\nname: [broken\n---\n").unwrap();
+        let ready = ensure_policy_ready(&pool, root)
+            .await
+            .expect("one missing file must not fail the whole call");
+        assert!(ready
+            .skipped
+            .iter()
+            .any(|s| s.path.ends_with("file-owned.mdc")));
+        assert!(ready.skipped.iter().any(|s| s.path.ends_with("SKILL.md")));
+        let rules = list_rules(&pool).await.unwrap();
+        assert!(rules.iter().any(|r| r.id == "file-owned"), "row is kept");
+        assert!(rules.iter().any(|r| r.id == "db-owned"));
+        assert!(list_skills(&pool)
+            .await
+            .unwrap()
+            .iter()
+            .any(|s| s.name == "kept-skill" && s.body.contains("skill body")));
     }
 
     #[tokio::test]
