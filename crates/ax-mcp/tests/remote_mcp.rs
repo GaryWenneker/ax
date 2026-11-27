@@ -1,68 +1,38 @@
 //! Remote boundary tests use real Ax projects and the HTTP router, without an external issuer.
+mod common;
+
 use ax_mcp::remote::{
     auth::TokenVerifier,
-    config::{ApiKey, OAuthConfig, Project, RemoteConfig},
+    config::RemoteConfig,
     server::{bind, router, RemoteState},
 };
 use axum::{
-    body::{to_bytes, Body},
+    body::Body,
     http::{Request, StatusCode},
     Router,
 };
-use jsonwebtoken::{encode, jwk::JwkSet, Algorithm, EncodingKey, Header};
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use tower::ServiceExt;
 
 async fn fixture() -> (tempfile::TempDir, Router, Arc<RemoteConfig>) {
+    common::isolate_process();
     let dir = tempfile::tempdir().unwrap();
     let mut projects = Vec::new();
     for id in ["alpha", "beta"] {
-        let root = dir.path().join(id);
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(
-            root.join("lib.rs"),
-            "pub fn remote_fixture() -> u32 { 1 }\n",
-        )
-        .unwrap();
-        let mut ax = ax_core::Ax::init(&root).await.unwrap();
-        ax.index_all(
-            ax_extraction::orchestrator::IndexOptions {
-                quiet: true,
-                ..Default::default()
-            },
-            None,
-        )
-        .await
-        .unwrap();
-        drop(ax);
-        projects.push(Project {
-            id: id.into(),
-            root,
-            subjects: vec![id.into()],
-            write_subjects: vec![id.into()],
-            admin_subjects: vec![],
-        });
+        projects.push(common::indexed_project(dir.path(), id).await);
     }
-    let mut config = RemoteConfig {
-        public_url: "https://ax.example.com".into(),
-        oauth: OAuthConfig {
-            built_in: false,
-            issuer: "https://issuer.example.com/".into(),
-            jwks_uri: "https://issuer.example.com/jwks".into(),
-            clock_skew_seconds: ax_mcp::remote::config::DEFAULT_CLOCK_SKEW_SECONDS,
-        },
+    let mut config = common::remote_config(
         projects,
-        api_keys: vec![ApiKey {
-            id: "ide".into(),
-            sha256: hex::encode(Sha256::digest(b"test-ide-key")),
-            projects: vec!["alpha".into()],
-            write: false,
-            admin: false,
-        }],
-        allowed_origins: vec![],
-    };
+        vec![common::api_key(
+            "ide",
+            "test-ide-key",
+            "alpha",
+            false,
+            false,
+        )],
+    );
     config.validate().unwrap();
     let config = Arc::new(config);
     let verifier = verifier(config.clone());
@@ -71,56 +41,29 @@ async fn fixture() -> (tempfile::TempDir, Router, Arc<RemoteConfig>) {
 }
 
 fn verifier(config: Arc<RemoteConfig>) -> TokenVerifier {
-    TokenVerifier::with_keys(config, test_material().jwks.clone(), reqwest::Client::new())
+    TokenVerifier::with_keys(
+        config,
+        common::signing().jwks.clone(),
+        reqwest::Client::new(),
+    )
 }
 
 fn claims(sub: &str) -> Value {
-    json!({"sub":sub,"iss":"https://issuer.example.com/","aud":"https://ax.example.com","exp":ax_mcp::remote::credentials::now()+3600,"scope":"ax:context"})
+    common::claims(sub, "ax:context")
 }
+
 fn token(claims: &Value) -> String {
-    let mut header = Header::new(Algorithm::RS256);
-    header.kid = Some("ax-test-key".into());
-    encode(
-        &header,
-        claims,
-        &EncodingKey::from_rsa_pem(test_material().pem.as_bytes()).unwrap(),
-    )
-    .unwrap()
+    common::sign(claims)
 }
 
-struct TestMaterial {
-    pem: String,
-    jwks: JwkSet,
-}
-
-fn test_material() -> &'static TestMaterial {
-    static MATERIAL: OnceLock<TestMaterial> = OnceLock::new();
-    MATERIAL.get_or_init(|| {
-        use base64::Engine;
-        // The rsa crate has no patched release for RUSTSEC-2023-0071.
-        let key = openssl::rsa::Rsa::generate(2048).expect("test key");
-        let n = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.n().to_vec());
-        let e = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.e().to_vec());
-        let pem = String::from_utf8(
-            openssl::pkey::PKey::from_rsa(key)
-                .expect("pkey")
-                .private_key_to_pem_pkcs8()
-                .expect("pem"),
-        )
-        .expect("pem utf8");
-        let jwks = serde_json::from_value(json!({
-            "keys": [{
-                "kty": "RSA",
-                "alg": "RS256",
-                "use": "sig",
-                "kid": "ax-test-key",
-                "n": n,
-                "e": e
-            }]
-        }))
-        .expect("jwks");
-        TestMaterial { pem, jwks }
-    })
+#[tokio::test]
+async fn remote_tests_never_write_the_real_usage_database() {
+    let (_dir, _app, _config) = fixture().await;
+    let db = std::env::var_os("AX_USAGE_DB").expect("AX_USAGE_DB is set");
+    let tmp = std::env::temp_dir().canonicalize().unwrap();
+    let db = std::path::PathBuf::from(db);
+    let parent = db.parent().unwrap().canonicalize().unwrap();
+    assert!(parent.starts_with(&tmp), "{}", db.display());
 }
 
 #[test]
@@ -143,39 +86,18 @@ async fn post(
     session: Option<&str>,
     value: Value,
 ) -> (StatusCode, axum::http::HeaderMap, Value) {
-    let mut request = Request::builder()
-        .method("POST")
-        .uri(format!("/projects/{project}/mcp"))
-        .header("accept", "application/json, text/event-stream")
-        .header("content-type", "application/json");
-    if let Some(token) = token {
-        request = request.header("authorization", format!("Bearer {token}"));
-    }
-    if let Some(session) = session {
-        request = request
-            .header("mcp-session-id", session)
-            .header("mcp-protocol-version", "2025-11-25");
-    }
-    let response = app
-        .clone()
-        .oneshot(request.body(Body::from(value.to_string())).unwrap())
-        .await
-        .unwrap();
-    let status = response.status();
-    let headers = response.headers().clone();
-    let bytes = to_bytes(response.into_body(), 8 * 1024 * 1024)
-        .await
-        .unwrap();
-    let body = if bytes.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(&bytes).unwrap()
-    };
-    (status, headers, body)
+    common::post(app, project, token, session, value).await
 }
+
 async fn initialize(app: &Router, project: &str, token: &str) -> String {
-    let (status, headers, body) = post(app, project, Some(token), None,
-        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}})).await;
+    let (status, headers, body) = post(
+        app,
+        project,
+        Some(token),
+        None,
+        common::initialize_request("test"),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["result"]["protocolVersion"], "2025-11-25");
     headers["mcp-session-id"].to_str().unwrap().to_owned()

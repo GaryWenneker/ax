@@ -1,8 +1,10 @@
 //! Admin extension of the remote MCP server (docs/specs/ax-admin/SPEC.md, E1-E7).
 //! Real Ax projects behind the real HTTP router; API keys only.
+mod common;
+
 use ax_mcp::remote::{
     auth::TokenVerifier,
-    config::{ApiKey, OAuthConfig, Project, RemoteConfig},
+    config::{ApiKey, Project, RemoteConfig},
     server::{router, RemoteState},
 };
 use axum::{
@@ -10,10 +12,10 @@ use axum::{
     http::{Request, StatusCode},
     Router,
 };
-use jsonwebtoken::{encode, jwk::JwkSet, Algorithm, EncodingKey, Header};
+use jsonwebtoken::jwk::JwkSet;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::sync::{Arc, Once, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 use tower::ServiceExt;
 
@@ -67,113 +69,28 @@ const RECORDED_WRITE_LIST: &[&str] = &[
 ];
 
 fn isolate_usage_db() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        let dir = tempfile::tempdir().unwrap().keep();
-        std::env::set_var("AX_USAGE_DB", dir.join("usage.db"));
-        std::env::remove_var("AX_MCP_TOOLS");
-    });
+    common::isolate_process();
 }
 
 fn key(id: &str, secret: &str, project: &str, write: bool, admin: bool) -> ApiKey {
-    ApiKey {
-        id: id.into(),
-        sha256: hex::encode(Sha256::digest(secret.as_bytes())),
-        projects: vec![project.into()],
-        write,
-        admin,
-    }
+    common::api_key(id, secret, project, write, admin)
 }
 
 async fn project(dir: &std::path::Path, id: &str) -> Project {
-    let root = dir.join(id);
-    std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(
-        root.join("lib.rs"),
-        "pub fn remote_fixture() -> u32 { 1 }\n",
-    )
-    .unwrap();
-    let mut ax = ax_core::Ax::init(&root).await.unwrap();
-    ax.index_all(
-        ax_extraction::orchestrator::IndexOptions {
-            quiet: true,
-            ..Default::default()
-        },
-        None,
-    )
-    .await
-    .unwrap();
-    drop(ax);
-    Project {
-        id: id.into(),
-        root,
-        subjects: vec![id.into()],
-        write_subjects: vec![id.into()],
-        admin_subjects: vec![],
-    }
+    common::indexed_project(dir, id).await
 }
 
 fn base_config(projects: Vec<Project>, api_keys: Vec<ApiKey>) -> RemoteConfig {
-    RemoteConfig {
-        public_url: "https://ax.example.com".into(),
-        oauth: OAuthConfig {
-            built_in: false,
-            issuer: "https://issuer.example.com/".into(),
-            jwks_uri: "https://issuer.example.com/jwks".into(),
-            clock_skew_seconds: ax_mcp::remote::config::DEFAULT_CLOCK_SKEW_SECONDS,
-        },
-        projects,
-        api_keys,
-        allowed_origins: vec![],
-    }
+    common::remote_config(projects, api_keys)
 }
 
 async fn fixture() -> (tempfile::TempDir, Router) {
     fixture_with(|state| state).await
 }
 
-struct Signing {
-    pem: String,
-    jwks: JwkSet,
-}
-
-fn signing() -> &'static Signing {
-    static SIGNING: OnceLock<Signing> = OnceLock::new();
-    SIGNING.get_or_init(|| {
-        use base64::Engine;
-        let key = openssl::rsa::Rsa::generate(2048).expect("test key");
-        let b64 = |n: Vec<u8>| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(n);
-        let (n, e) = (b64(key.n().to_vec()), b64(key.e().to_vec()));
-        let pem = String::from_utf8(
-            openssl::pkey::PKey::from_rsa(key)
-                .expect("pkey")
-                .private_key_to_pem_pkcs8()
-                .expect("pem"),
-        )
-        .expect("utf8");
-        let jwks = serde_json::from_value(
-            json!({"keys":[{"kty":"RSA","alg":"RS256","use":"sig","kid":"admin-test","n":n,"e":e}]}),
-        )
-        .expect("jwks");
-        Signing { pem, jwks }
-    })
-}
-
 /// An access token from the external provider for `subject` with `scope`.
 fn jwt(subject: &str, scope: &str) -> String {
-    let mut header = Header::new(Algorithm::RS256);
-    header.kid = Some("admin-test".into());
-    let exp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-        + 3600;
-    encode(
-        &header,
-        &json!({"sub":subject,"iss":"https://issuer.example.com/","aud":"https://ax.example.com","exp":exp,"scope":scope}),
-        &EncodingKey::from_rsa_pem(signing().pem.as_bytes()).unwrap(),
-    )
-    .unwrap()
+    common::sign(&common::claims(subject, scope))
 }
 
 /// Two projects. alpha's subject "alpha" is an admin subject; "ann" may only
@@ -201,7 +118,7 @@ async fn fixture_with(
     let config = Arc::new(config);
     let verifier = TokenVerifier::with_keys(
         config.clone(),
-        signing().jwks.clone(),
+        common::signing().jwks.clone(),
         reqwest::Client::new(),
     );
     (dir, router(adjust(RemoteState::new(config, verifier))))
@@ -214,30 +131,11 @@ async fn send(
     session: Option<&str>,
     body: Value,
 ) -> (StatusCode, Option<String>, Value) {
-    let mut request = Request::post(format!("/projects/{project}/mcp"))
-        .header("authorization", format!("Bearer {secret}"))
-        .header("content-type", "application/json")
-        .header("accept", "application/json, text/event-stream");
-    if let Some(session) = session {
-        request = request
-            .header("mcp-session-id", session)
-            .header("mcp-protocol-version", "2025-11-25");
-    }
-    let response = app
-        .clone()
-        .oneshot(request.body(Body::from(body.to_string())).unwrap())
-        .await
-        .unwrap();
-    let status = response.status();
-    let session = response
-        .headers()
+    let (status, headers, value) = common::post(app, project, Some(secret), session, body).await;
+    let session = headers
         .get("mcp-session-id")
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
-    let bytes = to_bytes(response.into_body(), 8 * 1024 * 1024)
-        .await
-        .unwrap();
-    let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     (status, session, value)
 }
 
@@ -247,7 +145,7 @@ async fn open(app: &Router, project: &str, secret: &str) -> String {
         project,
         secret,
         None,
-        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"admin-test","version":"1"}}}),
+        common::initialize_request("admin-test"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -385,6 +283,12 @@ async fn e2_admin_tools_are_described_as_admin_scoped_without_project_arguments(
     assert_eq!(read_only("ax_files"), json!(true));
     assert_eq!(read_only("ax_index"), json!(false));
     assert_eq!(read_only("ax_sync"), json!(false));
+    let destructive = |name: &str| {
+        tools.iter().find(|t| t["name"] == name).unwrap()["annotations"]["destructiveHint"].clone()
+    };
+    // ax_remember action=purge deletes a memory for good.
+    assert_eq!(destructive("ax_remember"), json!(true));
+    assert_eq!(destructive("ax_logs"), json!(false));
 }
 
 #[tokio::test]
