@@ -75,7 +75,7 @@ pub const PENDING_LISTED: usize = 20;
 /// single preflight 146,000 characters.
 pub fn listed_pending(pending: &[PendingFile]) -> (Vec<PendingFile>, usize) {
     let mut listed = pending.to_vec();
-    listed.sort_by(|a, b| b.last_seen_ms.cmp(&a.last_seen_ms));
+    listed.sort_by_key(|file| std::cmp::Reverse(file.last_seen_ms));
     listed.truncate(PENDING_LISTED);
     (listed, pending.len())
 }

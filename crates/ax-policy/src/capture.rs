@@ -536,6 +536,8 @@ mod tests {
             "dus dat betekent dat je grondig onderzoek moet doen met meerdere testen.",
             "jij weet het beste wat gedaan moet worden. dus ik vertrouw erop dat je de juiste dingen doet.",
             "I never use that flag, why does it fail?",
+            "I never use that flag in production builds.",
+            "Ik gebruik altijd pnpm en ik moet altijd wachten.",
             "the build is always slow on this machine",
         ] {
             assert!(!propose_rule_from_prompt(prompt, &[]).detected, "{prompt}");

@@ -1217,6 +1217,33 @@ mod policy_integration {
     }
 
     #[tokio::test]
+    async fn a3_error_replies_are_text_only_for_claude_and_structured_for_others() {
+        for (client, structured) in [("claude-code", false), ("gauntlet", true)] {
+            let root = session_fixture().await;
+            let mut engine = McpEngine::with_project_root(root.clone());
+            handle_request(
+                &mut engine,
+                "initialize",
+                json!({ "clientInfo": { "name": client } }),
+            )
+            .await;
+            let call = json!({ "name": "ax_skill", "arguments": { "name": "no-such-skill" } });
+            let out = handle_request(&mut engine, "tools/call", call)
+                .await
+                .result
+                .expect("error reply");
+            let _ = std::fs::remove_dir_all(root);
+            assert_eq!(out["isError"], true, "{client}: {out}");
+            assert!(!out["content"][0]["text"].as_str().unwrap().is_empty());
+            assert_eq!(
+                out.get("structuredContent").is_some(),
+                structured,
+                "{client}: {out}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn a1_other_clients_keep_the_lean_payload() {
         let out = preflight_as("gauntlet", "fix a bug").await;
         assert_eq!(out["structuredContent"]["session"]["id"], "a-test-chat");
