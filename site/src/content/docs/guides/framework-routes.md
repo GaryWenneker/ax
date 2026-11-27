@@ -22,7 +22,7 @@ ax detects web-framework routing files and emits `route` nodes linked by `refere
 | **ASP.NET** | `[HttpGet("/x")]` attributes on action methods |
 | **Vapor** | `app.get("x", use: handler)` |
 | **React Router** / **SvelteKit** | Route component nodes |
-| **Vue Router** / **Nuxt** | `pages/` file-based routes, `server/api/` endpoints, route middleware |
+| **Vue Router** / **Nuxt** | `pages/` file-based routes from `.vue` files; `server/api/` endpoints and route middleware from JS/TS files |
 | **Astro** | `src/pages/` file-based routes (`.astro` pages + `.ts` endpoints, `[param]`/`[...rest]` syntax) |
 
 Route resolution is automatic — there's nothing to configure. If a framework file is recognized, its routes appear in the graph after the next index or sync.
