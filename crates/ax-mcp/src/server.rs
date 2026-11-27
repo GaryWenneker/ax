@@ -1007,26 +1007,84 @@ mod wrap_tests {
 #[cfg(test)]
 mod policy_integration {
     use super::*;
-    use std::path::PathBuf;
+    use std::path::Path;
 
-    fn repo_root() -> Option<PathBuf> {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .canonicalize()
-            .ok()?;
-        if root.join(".ax").join("ax.db").exists() {
-            Some(root)
-        } else {
-            None
+    const FIXTURE_RULES: [&str; 4] = [
+        "fixture-alpha",
+        "fixture-beta",
+        "fixture-gamma",
+        "fixture-delta",
+    ];
+
+    /// An indexed project with its own policy and code, so these tests assert
+    /// the same things on every machine and never read this repository's
+    /// live index or policy.
+    async fn policy_fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let rules = root.join(".agents").join("rules");
+        std::fs::create_dir_all(&rules).unwrap();
+        for id in FIXTURE_RULES {
+            std::fs::write(
+                rules.join(format!("{id}.mdc")),
+                format!(
+                    "---\nid: {id}\nlevel: WARNING\nalwaysApply: true\n---\n\n## Rule {id}\n\n{}",
+                    format!("- {id} applies to every change in this fixture.\n").repeat(20)
+                ),
+            )
+            .unwrap();
         }
+        let skill = root.join(".agents").join("skills").join("fixture-skill");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(
+            skill.join("SKILL.md"),
+            format!(
+                "---\nname: fixture-skill\ndescription: Steps for the policy integration fixture.\n---\n# Fixture skill\n\n## FIXTURE-SKILL-BODY\n\n{}",
+                "- Follow the fixture step.\n".repeat(20)
+            ),
+        )
+        .unwrap();
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let steps: String = (0..30)
+            .map(|i| format!("    let s{i} = value.rotate_left({i});\n"))
+            .collect();
+        std::fs::write(
+            src.join("server.rs"),
+            format!(
+                "pub fn lean_structured(name: &str, value: u64) -> u64 {{\n{steps}    let _ = name;\n    explore_entries_compact(value)\n}}\n\
+                 pub fn explore_entries_compact(value: u64) -> u64 {{ value }}\n\
+                 pub fn lean_caller() -> u64 {{ lean_structured(\"x\", 1) }}\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(src.join("tools.rs"), "pub fn skill() -> u32 { 1 }\n").unwrap();
+        std::fs::write(src.join("other.rs"), "pub fn skill() -> u32 { 2 }\n").unwrap();
+        let mut ax = ax_core::Ax::init(root).await.unwrap();
+        ax.index_all(
+            ax_extraction::orchestrator::IndexOptions {
+                quiet: true,
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        ax_policy::index_policy(ax.db_pool(), root, true)
+            .await
+            .unwrap();
+        dir
+    }
+
+    fn engine_for(root: &Path) -> McpEngine {
+        McpEngine::with_project_root(root.to_path_buf())
     }
 
     #[tokio::test]
     async fn mcp_ax_rules_returns_indexed_rules() {
-        let Some(root) = repo_root() else {
-            return;
-        };
-        let mut engine = McpEngine::with_project_root(root);
+        let _env = crate::test_env::shared().await;
+        let dir = policy_fixture().await;
+        let mut engine = engine_for(dir.path());
         let result = handle_request(
             &mut engine,
             "tools/call",
@@ -1042,11 +1100,13 @@ mod policy_integration {
             .get("rules")
             .and_then(|v| v.as_array())
             .expect("rules array");
-        assert!(
-            rules.len() >= 4,
-            "expected indexed rules, got {}",
-            rules.len()
-        );
+        let ids: Vec<&str> = rules
+            .iter()
+            .filter_map(|r| r.get("id").and_then(Value::as_str))
+            .collect();
+        for id in FIXTURE_RULES {
+            assert!(ids.contains(&id), "{id} missing from {ids:?}");
+        }
     }
 
     fn reply_text(result: &Value) -> String {
@@ -1058,8 +1118,9 @@ mod policy_integration {
 
     /// A project whose only policy is three always-apply rules without links, so reply sizes
     /// depend on session skipping alone and not on this repo's live policy.
-    async fn session_fixture() -> PathBuf {
-        let root = std::env::temp_dir().join(format!("ax-mcp-session-{}", uuid::Uuid::new_v4()));
+    async fn session_fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
         let rules = root.join(".agents").join("rules");
         std::fs::create_dir_all(&rules).unwrap();
         for id in ["alpha", "beta", "gamma"] {
@@ -1073,17 +1134,18 @@ mod policy_integration {
             )
             .unwrap();
         }
-        let ax = ax_core::Ax::init(&root).await.unwrap();
-        ax_policy::index_policy(ax.db_pool(), &root, true)
+        let ax = ax_core::Ax::init(root).await.unwrap();
+        ax_policy::index_policy(ax.db_pool(), root, true)
             .await
             .unwrap();
-        root
+        dir
     }
 
     #[tokio::test]
     async fn second_preflight_on_a_connection_skips_unchanged_bodies() {
-        let root = session_fixture().await;
-        let mut engine = McpEngine::with_project_root(root.clone());
+        let _env = crate::test_env::shared().await;
+        let dir = session_fixture().await;
+        let mut engine = engine_for(dir.path());
         handle_request(
             &mut engine,
             "initialize",
@@ -1112,15 +1174,13 @@ mod policy_integration {
             first.len(),
             second.len()
         );
-        let _ = std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]
     async fn node_signature_mode_returns_location_and_declaration_only() {
-        let Some(root) = repo_root() else {
-            return;
-        };
-        let mut engine = McpEngine::with_project_root(root);
+        let _env = crate::test_env::shared().await;
+        let dir = policy_fixture().await;
+        let mut engine = engine_for(dir.path());
         let call = |mode: Option<&str>| {
             let mut args = json!({ "name": "lean_structured" });
             if let Some(m) = mode {
@@ -1137,7 +1197,7 @@ mod policy_integration {
             .result
             .expect("full");
         let (sig, full) = (reply_text(&sig), reply_text(&full));
-        assert!(sig.contains("crates/ax-mcp/src/server.rs"), "{sig}");
+        assert!(sig.contains("src/server.rs"), "{sig}");
         assert!(sig.contains("fn lean_structured"), "{sig}");
         assert!(!sig.contains("explore_entries_compact(value)"), "{sig}");
         assert!(!sig.contains("### Callers"), "{sig}");
@@ -1152,10 +1212,9 @@ mod policy_integration {
 
     #[tokio::test]
     async fn unchanged_catalog_and_memory_titles_are_sent_once_per_session() {
-        let Some(root) = repo_root() else {
-            return;
-        };
-        let mut engine = McpEngine::with_project_root(root);
+        let _env = crate::test_env::shared().await;
+        let dir = policy_fixture().await;
+        let mut engine = engine_for(dir.path());
         handle_request(
             &mut engine,
             "initialize",
@@ -1211,11 +1270,10 @@ mod policy_integration {
 
     #[tokio::test]
     async fn node_with_exact_qualified_name_returns_only_that_symbol() {
-        let Some(root) = repo_root() else {
-            return;
-        };
-        let mut engine = McpEngine::with_project_root(root);
-        let call = json!({ "name": "ax_node", "arguments": { "name": "crates/ax-mcp/src/tools.rs::skill" } });
+        let _env = crate::test_env::shared().await;
+        let dir = policy_fixture().await;
+        let mut engine = engine_for(dir.path());
+        let call = json!({ "name": "ax_node", "arguments": { "name": "src/tools.rs::skill" } });
         let text = reply_text(
             &handle_request(&mut engine, "tools/call", call)
                 .await
@@ -1223,15 +1281,15 @@ mod policy_integration {
                 .expect("node"),
         );
         assert_eq!(text.matches("## Entry").count(), 1, "{text}");
-        assert!(text.contains("crates/ax-mcp/src/tools.rs::skill"), "{text}");
+        assert!(text.contains("src/tools.rs::skill"), "{text}");
+        assert!(!text.contains("src/other.rs"), "{text}");
     }
 
     #[tokio::test]
     async fn second_skill_load_in_a_session_is_a_short_notice() {
-        let Some(root) = repo_root() else {
-            return;
-        };
-        let mut engine = McpEngine::with_project_root(root);
+        let _env = crate::test_env::shared().await;
+        let dir = policy_fixture().await;
+        let mut engine = engine_for(dir.path());
         handle_request(
             &mut engine,
             "initialize",
@@ -1243,7 +1301,7 @@ mod policy_integration {
             .await
             .result
             .expect("preflight");
-        let call = json!({ "name": "ax_skill", "arguments": { "name": "startup" } });
+        let call = json!({ "name": "ax_skill", "arguments": { "name": "fixture-skill" } });
         let first = reply_text(
             &handle_request(&mut engine, "tools/call", call.clone())
                 .await
@@ -1257,23 +1315,22 @@ mod policy_integration {
                 .expect("second"),
         );
         assert!(
-            first.contains("SS-00"),
+            first.contains("FIXTURE-SKILL-BODY"),
             "first load must carry the body:\n{first}"
         );
         assert!(
-            !second.contains("SS-00"),
+            !second.contains("FIXTURE-SKILL-BODY"),
             "second load resent the body:\n{second}"
         );
-        assert!(second.contains("startup"), "{second}");
+        assert!(second.contains("fixture-skill"), "{second}");
         assert!(second.len() < 400, "{second}");
     }
 
     #[tokio::test]
     async fn new_initialize_resends_bodies() {
-        let Some(root) = repo_root() else {
-            return;
-        };
-        let mut engine = McpEngine::with_project_root(root);
+        let _env = crate::test_env::shared().await;
+        let dir = policy_fixture().await;
+        let mut engine = engine_for(dir.path());
         let call = json!({ "name": "ax_preflight", "arguments": { "prompt": "fix a bug", "session": "policy-test-chat" } });
         handle_request(
             &mut engine,
@@ -1301,10 +1358,9 @@ mod policy_integration {
 
     #[tokio::test]
     async fn mcp_ax_status_policy_counts() {
-        let Some(root) = repo_root() else {
-            return;
-        };
-        let mut engine = McpEngine::with_project_root(root);
+        let _env = crate::test_env::shared().await;
+        let dir = policy_fixture().await;
+        let mut engine = engine_for(dir.path());
         let result = handle_request(
             &mut engine,
             "tools/call",
@@ -1318,7 +1374,10 @@ mod policy_integration {
             .expect("MCP structuredContent");
         let policy = structured.get("policy").expect("policy block");
         let rules = policy.get("rules").and_then(|v| v.as_u64()).unwrap_or(0);
-        assert!(rules >= 4, "policy.rules should be >= 4, got {rules}");
+        assert!(
+            rules >= FIXTURE_RULES.len() as u64,
+            "policy.rules should count the fixture rules, got {rules}"
+        );
     }
 }
 
@@ -1380,22 +1439,13 @@ mod hook_repair {
 mod reuse_integration {
     use super::*;
 
-    async fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
-        static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-        LOCK.lock().await
-    }
-
-    fn isolate_usage_db() {
-        static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-        ONCE.get_or_init(|| {
-            let db =
-                std::env::temp_dir().join(format!("ax-reuse-usage-{}.db", uuid::Uuid::new_v4()));
-            std::env::set_var("AX_USAGE_DB", db);
-        });
+    /// These tests point `AX_HOME_DIR` at their own home, so they hold the
+    /// crate-wide environment lock alone.
+    async fn env_lock() -> tokio::sync::RwLockWriteGuard<'static, ()> {
+        crate::test_env::exclusive().await
     }
 
     async fn fixture() -> (tempfile::TempDir, McpEngine) {
-        isolate_usage_db();
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         std::fs::create_dir_all(root.join("src")).unwrap();
@@ -1487,22 +1537,12 @@ mod reuse_integration {
             .to_string()
     }
 
-    struct HomeGuard(Option<std::ffi::OsString>);
+    struct HomeGuard(#[allow(dead_code)] crate::test_env::EnvVar);
 
     impl HomeGuard {
+        /// Only while holding [`env_lock`].
         fn set(path: &std::path::Path) -> Self {
-            let prev = std::env::var_os("AX_HOME_DIR");
-            std::env::set_var("AX_HOME_DIR", path);
-            Self(prev)
-        }
-    }
-
-    impl Drop for HomeGuard {
-        fn drop(&mut self) {
-            match self.0.take() {
-                Some(value) => std::env::set_var("AX_HOME_DIR", value),
-                None => std::env::remove_var("AX_HOME_DIR"),
-            }
+            Self(crate::test_env::EnvVar::set("AX_HOME_DIR", path))
         }
     }
 

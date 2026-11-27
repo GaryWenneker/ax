@@ -3836,6 +3836,7 @@ mod tests {
 
     #[tokio::test]
     async fn r1_preflight_injects_turns_that_changed_an_open_file() {
+        let _env = crate::test_env::shared().await;
         let (dir, mut ax) = project_with_turn("Fixed it, 11 languages load.").await;
         let open = ax.project_root().join("src/a.rs");
         let inject = preflight_inject(
@@ -3864,6 +3865,7 @@ mod tests {
 
     #[tokio::test]
     async fn r2_preflight_without_related_turns_has_no_block() {
+        let _env = crate::test_env::shared().await;
         let (_dir, mut ax) = project_with_turn("Done.").await;
         let inject = preflight_inject(
             &mut ax,
@@ -3876,6 +3878,7 @@ mod tests {
 
     #[tokio::test]
     async fn h2_history_question_points_the_agent_to_ax_history() {
+        let _env = crate::test_env::shared().await;
         let (_dir, mut ax) = project_with_turn("Done.").await;
         let inject = preflight_inject(
             &mut ax,
@@ -3888,6 +3891,7 @@ mod tests {
 
     #[tokio::test]
     async fn ax_history_lists_turns_and_gives_one_in_full_by_id() {
+        let _env = crate::test_env::shared().await;
         let outcome = "o".repeat(5_000);
         let (_dir, mut ax) = project_with_turn(&outcome).await;
         let listed = ToolHandler::call_tool(&mut ax, "ax_history", json!({ "query": "src/a.rs" }))
@@ -3920,6 +3924,7 @@ mod tests {
 
     #[tokio::test]
     async fn ax_history_since_filters_and_rejects_bad_dates() {
+        let _env = crate::test_env::shared().await;
         let (_dir, mut ax) = project_with_turn("Done.").await;
         let later = ToolHandler::call_tool(
             &mut ax,

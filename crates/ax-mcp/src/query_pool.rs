@@ -10,7 +10,12 @@ pub const QUERY_POOL_SIZE_ENV: &str = "AX_QUERY_POOL_SIZE";
 const MAX_POOL_SIZE: usize = 16;
 
 pub fn resolve_pool_size() -> usize {
-    match std::env::var(QUERY_POOL_SIZE_ENV).ok() {
+    pool_size_from(std::env::var(QUERY_POOL_SIZE_ENV).ok().as_deref())
+}
+
+/// The pool size for a raw `AX_QUERY_POOL_SIZE` value (`None` when unset).
+fn pool_size_from(value: Option<&str>) -> usize {
+    match value {
         None => default_pool_size(),
         Some(s) if s.trim().is_empty() => default_pool_size(),
         Some(s) => {
@@ -92,10 +97,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_pool_size_zero_disables() {
-        std::env::set_var(QUERY_POOL_SIZE_ENV, "0");
-        assert_eq!(resolve_pool_size(), 0);
-        std::env::remove_var(QUERY_POOL_SIZE_ENV);
+    fn pool_size_zero_disables() {
+        // Tested without touching the process environment, which engines
+        // built by tests running in parallel read.
+        assert_eq!(pool_size_from(Some("0")), 0);
+        assert_eq!(pool_size_from(Some("-3")), 0);
+        assert_eq!(pool_size_from(Some("many")), 0);
+        assert_eq!(pool_size_from(Some("2")), 2);
+        assert_eq!(pool_size_from(Some("100000")), MAX_POOL_SIZE);
+        assert_eq!(pool_size_from(None), default_pool_size());
+        assert_eq!(pool_size_from(Some("  ")), default_pool_size());
     }
 
     #[test]

@@ -24,6 +24,8 @@ pub mod request_context;
 pub mod server;
 pub mod smart_output;
 pub mod staleness;
+#[cfg(test)]
+pub(crate) mod test_env;
 pub mod tool_filter;
 pub mod tools;
 pub mod transport;

@@ -1090,6 +1090,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_client_that_stops_reading_does_not_block_other_clients() {
+        let _env = crate::test_env::shared().await;
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
         let engine = Arc::new(Mutex::new(McpEngine::with_project_root(root.clone())));
@@ -1147,6 +1148,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_tcp_session_without_the_token_is_closed_before_anything_runs() {
+        let _env = crate::test_env::shared().await;
         let dir = tempfile::tempdir().unwrap();
         let (client, server) = tokio::io::duplex(1024 * 1024);
         spawn_tcp_style_session(server, dir.path().to_path_buf());
@@ -1175,6 +1177,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_tcp_session_with_the_token_is_served() {
+        let _env = crate::test_env::shared().await;
         let dir = tempfile::tempdir().unwrap();
         let (client, server) = tokio::io::duplex(1024 * 1024);
         spawn_tcp_style_session(server, dir.path().to_path_buf());

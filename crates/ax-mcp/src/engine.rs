@@ -319,6 +319,7 @@ mod tests {
 
     #[tokio::test]
     async fn first_request_does_not_wait_for_the_catch_up_sync() {
+        let _env = crate::test_env::shared().await;
         let (_dir, root) = project().await;
         let mut engine = McpEngine::with_project_root(root);
         engine.catch_up_runner = stalled_catch_up();
@@ -339,6 +340,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_policy_tool_first_also_starts_the_catch_up() {
+        let _env = crate::test_env::shared().await;
         let (_dir, root) = project().await;
         let mut engine = McpEngine::with_project_root(root);
         engine.catch_up_runner = stalled_catch_up();
@@ -351,6 +353,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_catch_up_flag_clears_when_the_sync_finishes() {
+        let _env = crate::test_env::shared().await;
         let (_dir, root) = project().await;
         let mut engine = McpEngine::with_project_root(root);
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
@@ -386,6 +389,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_real_catch_up_indexes_files_changed_while_no_server_ran() {
+        let _env = crate::test_env::shared().await;
         let (_dir, root) = project().await;
         std::fs::write(root.join("late.rs"), "pub fn written_while_offline() {}\n").unwrap();
         run_catch_up(root.clone()).await;
@@ -405,6 +409,7 @@ mod tests {
 
     #[tokio::test]
     async fn policy_tool_calls_keep_one_ax_handle() {
+        let _env = crate::test_env::shared().await;
         let (_dir, root) = project().await;
         let mut engine = McpEngine::with_project_root(root);
         engine.catch_up_runner = no_catch_up();
@@ -417,6 +422,7 @@ mod tests {
 
     #[tokio::test]
     async fn policy_tool_calls_see_rules_saved_by_another_process() {
+        let _env = crate::test_env::shared().await;
         let (_dir, root) = project().await;
         let mut engine = McpEngine::with_project_root(root.clone());
         engine.catch_up_runner = no_catch_up();

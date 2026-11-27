@@ -6,6 +6,39 @@ use serde_json::{json, Value};
 const POLICY: &str = "If role is Reader, deny writes unless an explicit grant exists.\nThe finding is unverified. Preserve `reader_id`. Unicode: café, Δ, 🪓.";
 const EXPERIMENT_GUIDANCE: &str = "Write explanations in clear technical English.";
 
+/// The tests in this binary run in parallel threads of one process. One of
+/// them changes `AX_HOME_DIR` and `AX_CONTEXT_CACHE`, so it holds this lock
+/// alone; the others read the environment and share it.
+static ENV: tokio::sync::RwLock<()> = tokio::sync::RwLock::const_new(());
+static BASE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Point the home and usage database at a temporary directory once, so no
+/// test touches the developer's real data. Called with the write lock held.
+fn isolate_process() {
+    BASE.get_or_init(|| {
+        let base =
+            std::env::temp_dir().join(format!("ax-preflight-contract-{}", std::process::id()));
+        std::fs::create_dir_all(base.join("home")).unwrap();
+        std::env::set_var("AX_HOME_DIR", base.join("home"));
+        std::env::set_var("AX_USAGE_DB", base.join("usage.db"));
+        base
+    });
+}
+
+async fn env_shared() -> tokio::sync::RwLockReadGuard<'static, ()> {
+    if BASE.get().is_none() {
+        let _write = ENV.write().await;
+        isolate_process();
+    }
+    ENV.read().await
+}
+
+async fn env_exclusive() -> tokio::sync::RwLockWriteGuard<'static, ()> {
+    let guard = ENV.write().await;
+    isolate_process();
+    guard
+}
+
 async fn fixture() -> (tempfile::TempDir, Ax) {
     let dir = tempfile::tempdir().unwrap();
     let ax = Ax::init(dir.path()).await.unwrap();
@@ -31,6 +64,7 @@ fn assert_standard(out: &Value, text: &str) {
 
 #[tokio::test]
 async fn preflight_schema_has_no_writing_style_selector() {
+    let _env = env_shared().await;
     let tools = ToolHandler::list_tools(false).await;
     let tool = tools["tools"]
         .as_array()
@@ -43,6 +77,7 @@ async fn preflight_schema_has_no_writing_style_selector() {
 
 #[tokio::test]
 async fn raw_preflight_keeps_standard_output_with_obsolete_arguments() {
+    let _env = env_shared().await;
     let (_dir, mut ax) = fixture().await;
     for value in [
         json!("standard"),
@@ -70,6 +105,7 @@ async fn raw_preflight_keeps_standard_output_with_obsolete_arguments() {
 
 #[tokio::test]
 async fn wire_preflight_preserves_cold_warm_reset_delivery() {
+    let _env = env_shared().await;
     let (dir, _ax) = fixture().await;
     let mut engine = McpEngine::with_project_root(dir.path().to_path_buf());
     for (reset, expected_source, value) in [
@@ -96,6 +132,7 @@ async fn wire_preflight_preserves_cold_warm_reset_delivery() {
 
 #[tokio::test]
 async fn embedded_preflight_ignores_obsolete_style_validation() {
+    let _env = env_shared().await;
     let (dir, _ax) = fixture().await;
     let mut engine = McpEngine::with_project_root(dir.path().to_path_buf());
     for value in [json!("ste-inspired"), json!(null), json!("unknown")] {
@@ -146,6 +183,7 @@ fn assert_live_plan(text: &str) {
 
 #[tokio::test]
 async fn a_live_plan_is_in_preflight_without_cache_or_index() {
+    let _env = env_exclusive().await;
     let home = tempfile::tempdir().unwrap();
     let _restore = RestoreEnv(vec![
         ("AX_HOME_DIR", std::env::var_os("AX_HOME_DIR")),
