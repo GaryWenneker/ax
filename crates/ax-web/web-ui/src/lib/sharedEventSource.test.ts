@@ -143,15 +143,38 @@ test('unsubscribing during a pending reconnect cancels it', (t) => {
   assert.equal(FakeEventSource.all.length, 1);
 });
 
-test('a late batch subscriber reopens the stream so it receives the snapshot', () => {
+test('a late replaySnapshot subscriber reopens an open stream so it receives the snapshot', () => {
   const offA = subscribeSharedEventSource('/api/b', { events: { batch: () => {} } });
   FakeEventSource.all[0].open();
   const got: string[] = [];
-  const offB = subscribeSharedEventSource('/api/b', { events: { batch: (ev) => got.push(ev.data) } });
+  const offB = subscribeSharedEventSource('/api/b', { events: { batch: (ev) => got.push(ev.data) }, replaySnapshot: true });
   assert.equal(FakeEventSource.all.length, 2);
   assert.equal(live('/api/b').length, 1);
   FakeEventSource.all[1].emit('batch', 'snapshot');
   assert.deepEqual(got, ['snapshot']);
+  offA();
+  offB();
+});
+
+test('listening for an event named batch does not reconnect the other subscribers', () => {
+  let opens = 0;
+  const offA = subscribeSharedEventSource('/api/n', { events: { line: () => {} }, onOpen: () => { opens += 1; } });
+  FakeEventSource.all[0].open();
+  const offB = subscribeSharedEventSource('/api/n', { events: { batch: () => {} } });
+  assert.equal(FakeEventSource.all.length, 1);
+  assert.equal(opens, 1);
+  offA();
+  offB();
+});
+
+test('a replaySnapshot subscriber joining a stream that is still connecting shares it', () => {
+  const got: string[] = [];
+  const offA = subscribeSharedEventSource('/api/c', { events: { batch: (ev) => got.push(`a:${ev.data}`) }, replaySnapshot: true });
+  const offB = subscribeSharedEventSource('/api/c', { events: { batch: (ev) => got.push(`b:${ev.data}`) }, replaySnapshot: true });
+  assert.equal(FakeEventSource.all.length, 1);
+  FakeEventSource.all[0].open();
+  FakeEventSource.all[0].emit('batch', 'snapshot');
+  assert.deepEqual(got, ['a:snapshot', 'b:snapshot']);
   offA();
   offB();
 });

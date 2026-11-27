@@ -828,6 +828,8 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
           setErr(null);
         }
       },
+      // The table starts from the server's `batch` snapshot of today's log.
+      replaySnapshot: true,
     });
 
     return () => {

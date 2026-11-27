@@ -114,6 +114,14 @@ export type SharedEventSourceOptions = {
    * replayed, so a subscriber that tracks server state should reload here.
    */
   onReconnect?: () => void;
+  /**
+   * This subscriber needs the snapshot the server sends when a connection opens.
+   * When it joins a stream that is already open, the shared connection is closed
+   * and reopened for it, so every subscriber of the URL sees `onOpen` and the
+   * snapshot again. A stream that is still connecting is shared as is, because
+   * its snapshot has not been sent yet.
+   */
+  replaySnapshot?: boolean;
 };
 
 /** Subscribe to a shared SSE URL. Returns an unsubscribe function. */
@@ -158,9 +166,9 @@ export function subscribeSharedEventSource(
   if (opts.onOpen) hub.openHandlers.add(opts.onOpen);
 
   // A connection opened for another subscriber already sent its snapshot.
-  // Late listeners, such as Logging after the status bar, would otherwise
-  // miss that snapshot and fall back to yesterday's file.
-  if (opts.events?.batch && hub.es && hub.es.readyState !== EventSource.CLOSED) {
+  // A late subscriber that needs it, such as Logging after the status bar,
+  // would otherwise miss that snapshot and fall back to yesterday's file.
+  if (opts.replaySnapshot && hub.es && hub.es.readyState === EventSource.OPEN) {
     tearDownEs(hub);
   }
   ensureConnected(hub);
