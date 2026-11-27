@@ -7,43 +7,57 @@ import {
   type LinkKind,
   type LinkTarget,
 } from '../lib/linkPicker';
+import { createRefreshingCache } from '../lib/refreshingCache';
+import { WORKSPACE_SWITCHED } from '../workspaceEvents';
 
 export type LinkTargets = LinkTarget[] | 'error' | null;
 
-let cache: Promise<LinkTarget[]> | null = null;
+/** How long a loaded target list is reused before opening the picker loads it again. */
+const TARGETS_MAX_AGE_MS = 5000;
 
-function loadTargets(): Promise<LinkTarget[]> {
-  cache ??= fetch('/api/links/graph')
-    .then((res) => {
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json() as Promise<unknown>;
-    })
-    .then((g) => {
-      const nodes = (g as { nodes?: unknown } | null)?.nodes; // only read as unknown, then checked
-      if (!Array.isArray(nodes)) throw new Error('bad /api/links/graph payload');
-      return nodes.filter(isLinkTarget);
-    })
-    .catch((e) => {
-      cache = null;
-      throw e;
-    });
-  return cache;
-}
+const targetCache = createRefreshingCache<LinkTarget[]>(
+  () =>
+    fetch('/api/links/graph')
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json() as Promise<unknown>;
+      })
+      .then((g) => {
+        const nodes = (g as { nodes?: unknown } | null)?.nodes; // only read as unknown, then checked
+        if (!Array.isArray(nodes)) throw new Error('bad /api/links/graph payload');
+        return nodes.filter(isLinkTarget);
+      }),
+  TARGETS_MAX_AGE_MS,
+);
 
-/** Link targets for the `[[` picker, loaded once per page while `active`. */
-export function useLinkTargets(active: boolean): LinkTargets {
+/**
+ * Link targets for the `[[` picker. They load while `mounted`, load again when the picker
+ * opens (`open`) and the list is older than a few seconds, after an error, and after a
+ * workspace switch, so new, renamed or deleted items show up without a reload.
+ */
+export function useLinkTargets(mounted: boolean, open = false): LinkTargets {
   const [targets, setTargets] = useState<LinkTargets>(null);
+  const [epoch, setEpoch] = useState(0);
   useEffect(() => {
-    if (!active || targets) return;
+    const switched = () => {
+      targetCache.clear();
+      setTargets(null);
+      setEpoch((e) => e + 1);
+    };
+    window.addEventListener(WORKSPACE_SWITCHED, switched);
+    return () => window.removeEventListener(WORKSPACE_SWITCHED, switched);
+  }, []);
+  useEffect(() => {
+    if (!mounted && !open) return;
     let live = true;
-    loadTargets().then(
+    targetCache.get().then(
       (t) => live && setTargets(t),
       () => live && setTargets('error'),
     );
     return () => {
       live = false;
     };
-  }, [active, targets]);
+  }, [mounted, open, epoch]);
   return targets;
 }
 
@@ -69,7 +83,7 @@ const NO_COUNTS: Record<LinkKind, number> = { rule: 0, skill: 0, memory: 0 };
  * Targets load when the editor mounts, so a quick search + Enter does not land before they arrive.
  */
 export function useLinkSearch(active: boolean, query: string, selfKey?: string, allowUrl = false): LinkSearch {
-  const targets = useLinkTargets(true);
+  const targets = useLinkTargets(true, active);
   const [kind, setKind] = useState<LinkKind | null>(null);
   if (!active && kind !== null) setKind(null);
   const parsed = useMemo(() => parseLinkQuery(query), [query]);
