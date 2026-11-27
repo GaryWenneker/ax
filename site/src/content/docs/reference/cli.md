@@ -120,14 +120,14 @@ ax init --all
 
 ### `ax bootstrap [path]`
 
-Apply the versioned architecture seed. The seed version is independent of the ax binary version. A second run does not duplicate entities, relationships, rules, or skills. The command does not start Pi.
+Apply the versioned architecture seed. The seed version is independent of the ax binary version. A second run does not duplicate entities, relationships, rules, or skills. The command does not start Pi. The seed entries in `.ax/domain-graph.json` are checked before any rule or skill file is written, so a failed check changes nothing. Problems in nodes and edges you wrote yourself (a missing summary, an edge to a missing node) are printed as warnings and do not stop the run. Rule ids in `.ax/seed/project.json` must be kebab-case.
 
 | Argument / flag | Type | Description |
 |---|---|---|
 | `path` | optional | Project root (default: current directory) |
 | `--dry-run` | flag | Print the seed plan and write nothing |
 | `--verify` | flag | Check required entities, relationships, rules, and skills. Exit non-zero when any are missing |
-| `--json` | flag | Machine-readable result (`seedVersion`, `status`, `entitiesCreated`, `relationshipsCreated`, `rulesCreated`, `skillsCreated`) |
+| `--json` | flag | Machine-readable result (`seedVersion`, `status`, `entitiesCreated`, `relationshipsCreated`, `rulesCreated`, `skillsCreated`, `warnings`) |
 
 ```bash
 ax bootstrap

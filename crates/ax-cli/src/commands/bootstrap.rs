@@ -39,6 +39,9 @@ pub fn run(
         println!("{}", report_json(&report)?);
     } else {
         println!("{}", report.plan);
+        for warning in &report.warnings {
+            eprintln!("warning: {warning}");
+        }
     }
     Ok(())
 }
@@ -53,6 +56,7 @@ fn report_json(report: &BootstrapReport) -> Result<String, String> {
         "relationshipsCreated": report.relationships_created,
         "rulesCreated": report.rules_created,
         "skillsCreated": report.skills_created,
+        "warnings": report.warnings,
     }))
     .map_err(|err| err.to_string())
 }
