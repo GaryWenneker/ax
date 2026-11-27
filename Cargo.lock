@@ -893,6 +893,7 @@ dependencies = [
  "ax-utils",
  "blake3",
  "chrono",
+ "globset",
  "rust-stemmers",
  "serde",
  "serde_json",

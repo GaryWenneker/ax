@@ -525,7 +525,7 @@ Store a durable project memory (decision, fix, convention). Flags similar existi
 | `--trigger` | string (repeat) | Exact cue name. Same as `ax_remember` `triggers` |
 | `--confirm` | string | Confirm a candidate memory by id. Same as `ax_remember` `action=confirm` |
 | `--purge` | string | Purge a memory by id (row, cues, links, vectors, tombstone). Same as `ax_remember` `action=purge` |
-| `--when` | string | Prospective trigger (`file:glob` \| `symbol:name` \| `error:pat` \| `command:pat`). Stored as a `when:` tag |
+| `--when` | string | Prospective trigger (`file:glob` \| `symbol:name` \| `error:pat` \| `command:pat`). Stored as a `when:` tag. A file glob matches the whole project-relative path: `*` stays within one folder, `**` spans folders, and a pattern without `/` (`*.sql`, `Cargo.toml`) matches the file name in any folder. For the other kinds, a glob must match the whole value and plain text matches anywhere in it |
 | `--json` | flag | JSON output, including `suggested_triggers` on a saved memory |
 
 ```bash
