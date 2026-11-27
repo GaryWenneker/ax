@@ -16,6 +16,7 @@ mod durable;
 mod log_brand;
 mod mcp_audit;
 mod mcp_verbose_log;
+mod output_format;
 mod period;
 mod pricing;
 mod pricing_fetch;
@@ -99,6 +100,10 @@ pub use mcp_verbose_log::{
     previous_calendar_day, read_log_for_day, read_merged_verbose_log, read_ship_timezone,
     replicated_log_files, replicated_log_origin, rotation_calendar_date, verbose_enabled,
     LEGACY_LOG_NAME,
+};
+pub use output_format::{
+    load_output_format, load_output_format_from, parse_output_format, render_mcp_output,
+    save_output_format, save_output_format_at, McpOutputFormat,
 };
 pub use period::{resolve_period, UsagePeriod};
 pub use pricing::{
