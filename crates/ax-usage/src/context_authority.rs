@@ -1,5 +1,12 @@
 //! Plan B contract: authority states, resolver input, selection receipts, manifest seals.
-//! The resolver, replay runner, and 95% score are not implemented here.
+//! The replay runner and 95% score are not implemented here.
+//!
+//! Experimental: the product reaches only [`list_manifest_summaries`] and
+//! [`start_replay_for_manifest`]. Nothing outside tests calls the approval functions,
+//! [`store_manifest`] or [`resolve_context`] yet. Approvals require an active member with the
+//! owner, admin or approver role and a reason, and each one stores the actor, reason and time
+//! in `context_approvals` ([`load_approval`]). `actor_kind` is supplied by the caller, so a
+//! caller that wires approval must derive it from its authenticated transport.
 
 use sha2::Digest;
 
@@ -419,20 +426,14 @@ pub async fn approve_receipt(
         return Err("integrity_failed".into());
     }
     require_approver_member(membership, actor_member_id).await?;
-    let result = sqlx::query(
-        "UPDATE selection_receipts
-         SET approval = 'approved', actor_member_id = ?2
-         WHERE id = ?1 AND approval = 'unapproved'",
+    record_approval(
+        pool,
+        ApprovalSubject::Receipt,
+        receipt_id,
+        actor_member_id,
+        reason,
     )
-    .bind(receipt_id)
-    .bind(actor_member_id)
-    .execute(pool)
     .await
-    .map_err(|error| error.to_string())?;
-    if result.rows_affected() != 1 {
-        return Err("missing receipt".into());
-    }
-    Ok(())
 }
 
 pub async fn verify_receipt(pool: &sqlx::SqlitePool, receipt_id: &str) -> Result<bool, String> {
@@ -567,20 +568,14 @@ pub async fn approve_manifest(
         return Err("integrity_failed".into());
     }
     require_approver_member(membership, actor_member_id).await?;
-    let result = sqlx::query(
-        "UPDATE context_manifests
-         SET approval = 'approved', actor_member_id = ?2
-         WHERE id = ?1 AND approval = 'unapproved'",
+    record_approval(
+        pool,
+        ApprovalSubject::Manifest,
+        manifest_id,
+        actor_member_id,
+        reason,
     )
-    .bind(manifest_id)
-    .bind(actor_member_id)
-    .execute(pool)
     .await
-    .map_err(|error| error.to_string())?;
-    if result.rows_affected() != 1 {
-        return Err("missing manifest".into());
-    }
-    Ok(())
 }
 
 type ManifestColumns = (
@@ -844,9 +839,13 @@ pub async fn load_replay_run(
     })
 }
 
+/// Approve a replay run. The same rules as a manifest approval apply: a human actor, a
+/// reason, and an active member with the owner, admin or approver role.
 pub async fn approve_replay_run(
     pool: &sqlx::SqlitePool,
+    membership: &sqlx::SqlitePool,
     run_id: &str,
+    actor_member_id: &str,
     actor_kind: &str,
     reason: &str,
 ) -> Result<(), String> {
@@ -856,17 +855,154 @@ pub async fn approve_replay_run(
     if reason.trim().is_empty() {
         return Err("reason required".into());
     }
-    let result = sqlx::query(
-        "UPDATE replay_runs SET approval = 'approved' WHERE id = ?1 AND approval = 'unapproved'",
+    ensure_replay_schema(pool).await?;
+    require_approver_member(membership, actor_member_id).await?;
+    record_approval(
+        pool,
+        ApprovalSubject::Replay,
+        run_id,
+        actor_member_id,
+        reason,
     )
-    .bind(run_id)
+    .await
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalSubject {
+    Receipt,
+    Manifest,
+    Replay,
+}
+
+impl ApprovalSubject {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Receipt => "receipt",
+            Self::Manifest => "manifest",
+            Self::Replay => "replay",
+        }
+    }
+
+    fn table(self) -> &'static str {
+        match self {
+            Self::Receipt => "selection_receipts",
+            Self::Manifest => "context_manifests",
+            Self::Replay => "replay_runs",
+        }
+    }
+}
+
+/// Who approved a receipt, manifest or replay run, why, and when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalRecord {
+    pub subject: String,
+    pub subject_id: String,
+    pub actor_member_id: String,
+    pub reason: String,
+    pub approved_at_ms: i64,
+}
+
+async fn ensure_approval_schema(pool: &sqlx::SqlitePool) -> Result<(), String> {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS context_approvals (
+            subject_kind TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            actor_member_id TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            approved_at INTEGER NOT NULL,
+            PRIMARY KEY (subject_kind, subject_id)
+        )",
+    )
     .execute(pool)
     .await
     .map_err(|error| error.to_string())?;
-    if result.rows_affected() != 1 {
-        return Err("missing replay".into());
-    }
     Ok(())
+}
+
+/// Mark the subject approved and store the audit row in one transaction. A subject that is
+/// already approved returns `"<subject> already approved"`; an unknown one `"missing <subject>"`.
+async fn record_approval(
+    pool: &sqlx::SqlitePool,
+    subject: ApprovalSubject,
+    subject_id: &str,
+    actor_member_id: &str,
+    reason: &str,
+) -> Result<(), String> {
+    ensure_approval_schema(pool).await?;
+    let approved_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0);
+    let table = subject.table();
+    let set_actor = if subject == ApprovalSubject::Replay {
+        ""
+    } else {
+        ", actor_member_id = ?2"
+    };
+    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let result = sqlx::query(&format!(
+        "UPDATE {table} SET approval = 'approved'{set_actor}
+         WHERE id = ?1 AND approval = 'unapproved'"
+    ))
+    .bind(subject_id)
+    .bind(actor_member_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    if result.rows_affected() != 1 {
+        let approval: Option<String> =
+            sqlx::query_scalar(&format!("SELECT approval FROM {table} WHERE id = ?1"))
+                .bind(subject_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|error| error.to_string())?;
+        return Err(match approval.as_deref() {
+            Some("approved") => format!("{} already approved", subject.as_str()),
+            Some(other) => format!("{} is {other}", subject.as_str()),
+            None => format!("missing {}", subject.as_str()),
+        });
+    }
+    sqlx::query(
+        "INSERT OR REPLACE INTO context_approvals
+         (subject_kind, subject_id, actor_member_id, reason, approved_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+    )
+    .bind(subject.as_str())
+    .bind(subject_id)
+    .bind(actor_member_id)
+    .bind(reason.trim())
+    .bind(approved_at)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    tx.commit().await.map_err(|error| error.to_string())
+}
+
+/// The stored approval of a receipt, manifest or replay run, if it was approved.
+pub async fn load_approval(
+    pool: &sqlx::SqlitePool,
+    subject: ApprovalSubject,
+    subject_id: &str,
+) -> Result<Option<ApprovalRecord>, String> {
+    ensure_approval_schema(pool).await?;
+    let row: Option<(String, String, i64)> = sqlx::query_as(
+        "SELECT actor_member_id, reason, approved_at FROM context_approvals
+         WHERE subject_kind = ?1 AND subject_id = ?2",
+    )
+    .bind(subject.as_str())
+    .bind(subject_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(
+        row.map(|(actor_member_id, reason, approved_at_ms)| ApprovalRecord {
+            subject: subject.as_str().into(),
+            subject_id: subject_id.into(),
+            actor_member_id,
+            reason,
+            approved_at_ms,
+        }),
+    )
 }
 
 async fn ensure_replay_schema(pool: &sqlx::SqlitePool) -> Result<(), String> {
@@ -1962,13 +2098,36 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(score, "not_tested");
-        let agent = approve_replay_run(&pool, &run_id, "agent", "pass")
-            .await
-            .unwrap_err();
+        let agent = approve_replay_run(
+            &pool,
+            &membership,
+            &run_id,
+            "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7",
+            "agent",
+            "pass",
+        )
+        .await
+        .unwrap_err();
         assert!(agent.contains("agent"), "{agent}");
-        approve_replay_run(&pool, &run_id, "human", "manual protocol checked")
+        approve_replay_run(
+            &pool,
+            &membership,
+            &run_id,
+            "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7",
+            "human",
+            "manual protocol checked",
+        )
+        .await
+        .unwrap();
+        let record = load_approval(&pool, ApprovalSubject::Replay, &run_id)
             .await
+            .unwrap()
             .unwrap();
+        assert_eq!(record.reason, "manual protocol checked");
+        assert_eq!(
+            record.actor_member_id,
+            "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7"
+        );
         sqlx::query("UPDATE context_manifests SET commit_hash = 'fff' WHERE id = ?1")
             .bind(&id)
             .execute(&pool)
@@ -2536,7 +2695,94 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(again.contains("missing"), "{again}");
+        assert!(again.contains("already approved"), "{again}");
+    }
+
+    #[tokio::test]
+    async fn an_approval_records_who_approved_why_and_when() {
+        let (dir, pool) = temp_pool().await;
+        let manifest_id = sealed_unapproved_manifest(&pool).await;
+        let membership =
+            membership_pool(&dir, "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7", "owner").await;
+        approve_manifest(
+            &pool,
+            &membership,
+            &manifest_id,
+            "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7",
+            "human",
+            "manifest matches the PR",
+        )
+        .await
+        .unwrap();
+        let (actor, reason, at): (String, String, i64) = sqlx::query_as(
+            "SELECT actor_member_id, reason, approved_at FROM context_approvals
+             WHERE subject_kind = 'manifest' AND subject_id = ?1",
+        )
+        .bind(&manifest_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(actor, "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7");
+        assert_eq!(reason, "manifest matches the PR");
+        assert!(at > 0);
+    }
+
+    #[tokio::test]
+    async fn replay_approval_requires_an_approver_member() {
+        let (dir, pool) = temp_pool().await;
+        let manifest_id = sealed_unapproved_manifest(&pool).await;
+        let run = start_replay_for_manifest(&pool, &manifest_id)
+            .await
+            .unwrap();
+        let membership =
+            membership_pool(&dir, "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7", "owner").await;
+        let outsider = approve_replay_run(
+            &pool,
+            &membership,
+            &run.id,
+            "someone-else",
+            "human",
+            "looks right",
+        )
+        .await
+        .unwrap_err();
+        assert!(outsider.contains("approver"), "{outsider}");
+        assert_eq!(
+            load_replay_run(&pool, &run.id).await.unwrap().approval,
+            "unapproved"
+        );
+        approve_replay_run(
+            &pool,
+            &membership,
+            &run.id,
+            "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7",
+            "human",
+            "looks right",
+        )
+        .await
+        .unwrap();
+        let again = approve_replay_run(
+            &pool,
+            &membership,
+            &run.id,
+            "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7",
+            "human",
+            "twice",
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(again, "replay already approved");
+        let missing = approve_replay_run(
+            &pool,
+            &membership,
+            "no-such-run",
+            "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7",
+            "human",
+            "x",
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(missing, "missing replay");
     }
 
     #[tokio::test]
