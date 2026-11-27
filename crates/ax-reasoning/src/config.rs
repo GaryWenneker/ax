@@ -50,8 +50,10 @@ pub struct ResolvedOffload {
     pub effort: Option<String>,
     pub style: String,
     pub timeout_ms: u64,
-    /// How long offload is skipped after the endpoint could not be reached
-    /// (`AX_OFFLOAD_BACKOFF_MS`, default 30 s; `0` retries every time).
+    /// How long offload is skipped after the endpoint could not be reached or
+    /// dropped the connection without a reply; a request that only times out
+    /// does not start it (`AX_OFFLOAD_BACKOFF_MS`, default 30 s; `0` retries
+    /// every time).
     pub backoff_ms: u64,
     pub max_tokens: u32,
     pub strip: bool,

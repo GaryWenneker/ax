@@ -212,8 +212,9 @@ async fn request_offload(
     let Some(url) = url else {
         return (None, "no_endpoint");
     };
-    // After a transport failure the endpoint is skipped for a while, so a dead
-    // endpoint does not delay every explore by the full timeout.
+    // After a transport failure (no connection, or a connection dropped without
+    // a reply) the endpoint is skipped for a while, so a dead endpoint does not
+    // delay every explore. A request that only times out does not start it.
     if backing_off(&url) {
         return (None, "backoff");
     }
@@ -289,6 +290,12 @@ async fn request_offload(
             let text = ax_utils::truncate_chars(text.trim(), ERROR_BODY_CHARS, "…");
             set_last_error(Some(format!("{url} returned {status}: {text}")), cfg.debug);
             (None, "rejected")
+        }
+        Err(e) if e.is_timeout() => {
+            // The endpoint answered the connection but was slower than the
+            // timeout; the next explore tries again instead of backing off.
+            set_last_error(Some(format!("{url}: {e}")), cfg.debug);
+            (None, "timeout")
         }
         Err(e) => {
             // reqwest errors name the URL and cause, never the request headers.
@@ -524,6 +531,52 @@ mod tests {
         assert_eq!(server.join().unwrap(), 1, "no request during the back-off");
         let err = err.unwrap_or_default();
         assert!(err.contains("backing off"), "{err}");
+    }
+
+    /// The first request gets no reply until well after the client timeout;
+    /// every later request gets a valid answer at once.
+    fn slow_then_serve(window: std::time::Duration) -> (String, std::thread::JoinHandle<usize>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/v1", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + window;
+            let mut connections = 0;
+            let mut held = Vec::new();
+            while std::time::Instant::now() < deadline {
+                let Ok((stream, _)) = listener.accept() else {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                };
+                stream.set_nonblocking(false).unwrap();
+                connections += 1;
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                if !read_request(&mut reader) {
+                    continue;
+                }
+                if connections == 1 {
+                    held.push(stream); // keep it open without replying
+                    continue;
+                }
+                let mut writer = stream;
+                let _ = write!(
+                    writer,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{OK}",
+                    OK.len()
+                );
+            }
+            connections
+        });
+        (url, handle)
+    }
+
+    #[test]
+    fn a_slow_reply_that_times_out_does_not_pause_offload() {
+        let (url, server) = slow_then_serve(std::time::Duration::from_millis(1500));
+        let (first, second, _) = two_requests(&url, &[("AX_OFFLOAD_TIMEOUT_MS", "200")]);
+        assert!(first.is_none());
+        assert!(second.is_some(), "a timeout must not start the back-off");
+        assert_eq!(server.join().unwrap(), 2);
     }
 
     #[test]

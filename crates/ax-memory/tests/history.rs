@@ -373,7 +373,6 @@ fn format_when_is_date_and_minutes() {
     assert!(text.starts_with("2026-09-2"), "{text}");
 }
 
-
 const LANG_FILE: &str = "crates/ax-core/src/review_language.rs";
 /// 2026-09-20T10:00:00Z, one day before `NOW`.
 const COMMIT_DATE: &str = "2026-09-20T10:00:00Z";

@@ -190,7 +190,7 @@ Request limits are set with environment variables only:
 |---|---|---|
 | `AX_OFFLOAD_TIMEOUT_MS` | `20000` | Longest wait for one request. Zero or an invalid value uses the default. Connecting to the endpoint (DNS and connect) is limited to 2 seconds |
 | `AX_OFFLOAD_MAXTOKENS` | `12000` | `max_tokens` sent with each request. Zero or an invalid value uses the default |
-| `AX_OFFLOAD_BACKOFF_MS` | `30000` | After the endpoint cannot be reached, explores skip offload for this long and return the plain output at once. `0` retries on every explore |
+| `AX_OFFLOAD_BACKOFF_MS` | `30000` | After the endpoint cannot be reached or drops the connection without a reply, explores skip offload for this long and return the plain output at once. A slow reply that hits `AX_OFFLOAD_TIMEOUT_MS` does not start the back-off. `0` retries on every explore |
 | `AX_OFFLOAD_STRIP` | off | `1` removes ax's own navigation hints from the explore output before it is sent; retrieved source lines are never changed |
 
 `ax offload status` shows every one of these values.
