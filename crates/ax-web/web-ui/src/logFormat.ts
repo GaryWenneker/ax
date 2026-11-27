@@ -1,8 +1,13 @@
-/** Normalize legacy unix-second timestamps in log lines to local date/time. */
+/**
+ * Normalize a leading unix timestamp in a log line to local date/time.
+ * A value above 1e12 is milliseconds, a smaller one seconds; a stamp that
+ * is not a valid date is left as it is.
+ */
 export function formatLogLine(line: string): string {
-  return line.replace(/^\[(\d{10,})\]/, (_, raw) => {
-    const date = new Date(Number(raw) * 1000);
-    if (Number.isNaN(date.getTime())) return line;
+  return line.replace(/^\[(\d{10,})\]/, (match, raw: string) => {
+    const n = Number(raw);
+    const date = new Date(n > 1e12 ? n : n * 1000);
+    if (Number.isNaN(date.getTime())) return match;
     return `[${date.toLocaleString()}]`;
   });
 }

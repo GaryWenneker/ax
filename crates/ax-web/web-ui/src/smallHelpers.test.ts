@@ -14,6 +14,12 @@ describe('formatLogLine', () => {
     assert.equal(formatLogLine('[2026-11-27 10:00:00] ▶ index'), '[2026-11-27 10:00:00] ▶ index');
     assert.equal(formatLogLine('no stamp'), 'no stamp');
   });
+  it('keeps an out-of-range stamp as it is and does not repeat the line', () => {
+    assert.equal(formatLogLine('[99999999999999999999] step failed'), '[99999999999999999999] step failed');
+  });
+  it('reads a 13-digit stamp as milliseconds', () => {
+    assert.equal(formatLogLine('[1795727205254] ok'), `[${new Date(1795727205254).toLocaleString()}] ok`);
+  });
 });
 
 describe('liveActivityLabel', () => {
