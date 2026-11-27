@@ -297,3 +297,33 @@ async fn index_names_each_maintenance_step() {
     );
     ax.destroy().await.unwrap();
 }
+
+#[tokio::test]
+async fn incremental_index_keeps_project_wide_resolution_stats() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "src/app.ts",
+        "export function greet() { console.log(\"hi\"); missingHelper(); }\n",
+    );
+    write(dir.path(), "src/util.ts", "export const ZERO = 0;\n");
+    let mut ax = Ax::init(dir.path()).await.unwrap();
+    ax.index_all(quiet_opts(), None).await.unwrap();
+    let before = ax.get_stats().await.unwrap();
+    assert!(
+        before.resolution_total.unwrap_or(0) > 0,
+        "full index records project-wide totals: {before:?}"
+    );
+
+    // A file with no references at all.
+    write(dir.path(), "src/util.ts", "export const ONE = 1;\n");
+    ax.index_files(&["src/util.ts".into()], quiet_opts(), &mut None)
+        .await
+        .unwrap();
+    let after = ax.get_stats().await.unwrap();
+    assert_eq!(after.resolution_total, before.resolution_total);
+    assert_eq!(after.resolution_resolved, before.resolution_resolved);
+    assert_eq!(after.resolution_unresolved, before.resolution_unresolved);
+
+    ax.destroy().await.unwrap();
+}

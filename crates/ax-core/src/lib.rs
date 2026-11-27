@@ -1086,21 +1086,25 @@ async fn finalize_after_extract(
     let resolution = resolver
         .resolve_all(queries, scope, on_progress.as_mut())
         .await?;
-    queries
-        .set_metadata("resolution_total", &resolution.stats.total.to_string())
-        .await?;
-    queries
-        .set_metadata(
-            "resolution_resolved",
-            &resolution.stats.resolved.to_string(),
-        )
-        .await?;
-    queries
-        .set_metadata(
-            "resolution_unresolved",
-            &resolution.stats.unresolved.to_string(),
-        )
-        .await?;
+    // A scoped run counts only the references of the files it touched, so
+    // only a project-wide run may replace the project-wide totals.
+    if scope.is_none_or(|paths| paths.is_empty()) {
+        queries
+            .set_metadata("resolution_total", &resolution.stats.total.to_string())
+            .await?;
+        queries
+            .set_metadata(
+                "resolution_resolved",
+                &resolution.stats.resolved.to_string(),
+            )
+            .await?;
+        queries
+            .set_metadata(
+                "resolution_unresolved",
+                &resolution.stats.unresolved.to_string(),
+            )
+            .await?;
+    }
     report_optimizing(on_progress, "markdown docs");
     let docs_indexed =
         ax_extraction::markdown::index_markdown(project_root, queries, exclude).await?;
