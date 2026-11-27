@@ -1179,7 +1179,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         inject.push('\n');
     }
     if has_directive {
-        inject.push_str("<ax_capture_hint>Directive detected — a ready rule proposal is in captureProposal. Ask the user captureProposal.questions, then call ax_policy_capture({ action: \"save\", rule }) after they confirm.</ax_capture_hint>");
+        inject.push_str("<ax_capture_hint>Directive detected — the proposed rule and its questions follow. Ask the user each question, then call ax_policy_capture({ action: \"save\", rule }) after they confirm; ax_policy_capture({ action: \"propose\", prompt }) returns the rule again.</ax_capture_hint>");
         crate::verbose::push_line("enrich directive capture_hint appended");
     } else {
         crate::verbose::push_line("enrich directive none");

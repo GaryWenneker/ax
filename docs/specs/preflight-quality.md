@@ -238,3 +238,19 @@ Scenario: C5 an unrelated longer word does not match
   In both classes the body is the whole sentence that carries the prefix, and a sentence
   ending in `?` is never a directive. No existing test is edited.
 
+- R4 (2026-11-27): A refined before RED, after reading the existing tests.
+  - 13 assertions in `crates/ax-mcp/tests/` and 3 unit tests in `server.rs` read the lean
+    `structuredContent` (session id, policySources, project path) and state that explore,
+    preflight and context "keep structured". Dropping it for every client would break that
+    asserted contract, so A1/A3 now apply per client: a reply is text-only (no
+    `structuredContent`, for every tool) when the client named in `initialize` shows
+    `structuredContent` to the model instead of `content.text`. Today that is a client whose
+    name contains `claude` (verified in this session with Claude Code). Every other client
+    keeps the lean payload exactly as before.
+  - `AX_MCP_STRUCTURED=off|lean` forces text-only or lean for any client; `AX_MCP_FULL=1`
+    still wins and returns the full payload (A4, N3).
+  - A2: the preflight text already carries the `<ax_chat session=…>` line, the directive
+    preview with every interview question, and the budget note (verified in the audit
+    output), so no new tags are added. The test asserts they are in the text of a text-only
+    reply. The capture hint no longer points at a `captureProposal` field the model cannot see.
+

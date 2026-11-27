@@ -49,6 +49,13 @@ impl PolicySessions {
         );
     }
 
+    /// The client name the active connection sent in `initialize`; empty when unknown.
+    pub fn client_name(&self) -> &str {
+        self.entries
+            .get(&self.active)
+            .map_or("", |entry| entry.client_name.as_str())
+    }
+
     pub fn view(&mut self, chat_id: Option<&str>, now: Instant, ttl: Duration) -> SessionView {
         let entry = self.entries.entry(self.active).or_default();
         let expired = entry
