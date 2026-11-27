@@ -21,6 +21,7 @@ import { POLICY_SCOPES, type SkillFrontmatter } from '../policyTypes';
 import { SKILL_PROPERTY_RESERVED } from '../lib/policyProperties';
 import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
 import SettingsSelect from '../components/ui/SettingsSelect';
+import { splitPolicyList } from '../lib/policyList';
 
 interface Props {
   skillName: string | null;
@@ -42,10 +43,6 @@ const emptyFm = (): SkillFrontmatter => ({
   scope: 'project',
   group: 'ungrouped',
 });
-
-function parseCsv(s: string): string[] {
-  return s.split(',').map((x) => x.trim()).filter(Boolean);
-}
 
 function normalizeSkillFm(fm: SkillFrontmatter): SkillFrontmatter {
   return {
@@ -95,7 +92,7 @@ export default function PolicySkillEditor({ skillName, origin, projectId, onBack
     setSaving(true);
     setError('');
     try {
-      const tags = parseCsv(tagsText);
+      const tags = splitPolicyList(tagsText);
       if (tags.length === 0) {
         setError('At least one tag is required so skills can be filtered in the list.');
         return;
@@ -103,7 +100,7 @@ export default function PolicySkillEditor({ skillName, origin, projectId, onBack
       const frontmatter: SkillFrontmatter = {
         ...fm,
         enabled: fm.enabled !== false,
-        triggers: parseCsv(triggersText),
+        triggers: splitPolicyList(triggersText),
         tags,
       };
       await savePolicySkill(skillName, frontmatter, body, originQ);

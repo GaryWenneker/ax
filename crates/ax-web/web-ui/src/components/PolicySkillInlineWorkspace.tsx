@@ -12,6 +12,7 @@ import { SKILL_PROPERTY_RESERVED } from '../lib/policyProperties';
 import { POLICY_SCOPES, type SkillFrontmatter } from '../policyTypes';
 import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
 import SettingsSelect from './ui/SettingsSelect';
+import { cleanPolicyList } from '../lib/policyList';
 
 interface Props {
   skillName: string;
@@ -24,10 +25,6 @@ interface Props {
   propertiesTick?: number;
   /** Called with true while the editor holds changes that are not saved yet. */
   onDirtyChange?: (dirty: boolean) => void;
-}
-
-function parseCsv(s: string): string[] {
-  return s.split(',').map((x) => x.trim()).filter(Boolean);
 }
 
 function normalizeSkillFm(fm: SkillFrontmatter): SkillFrontmatter {
@@ -43,16 +40,16 @@ function normalizeSkillFm(fm: SkillFrontmatter): SkillFrontmatter {
   };
 }
 
-function editorSnapshot(fm: unknown, body: string, ...texts: string[]): string {
-  return JSON.stringify([fm, body, ...texts]);
+function editorSnapshot(fm: unknown, body: string, ...lists: string[][]): string {
+  return JSON.stringify([fm, body, ...lists]);
 }
 
 export default function PolicySkillInlineWorkspace({ skillName, origin, projectId, onClose, onSaved, openProperties = false, propertiesTick = 0, onDirtyChange }: Props) {
   const [fm, setFm] = useState<SkillFrontmatter | null>(null);
   const [body, setBody] = useState('');
   const links = useItemLinks('skill', skillName, origin, body);
-  const [triggersText, setTriggersText] = useState('');
-  const [tagsText, setTagsText] = useState('');
+  const [triggers, setTriggers] = useState<string[]>([]);
+  const [tags, setTags] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -62,7 +59,7 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
   const prevSkillNameRef = useRef<string | null>(null);
   /** Snapshot of the editor right after load or save; differs once there are unsaved edits. */
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
-  const currentSnapshot = fm ? editorSnapshot(fm, body, triggersText, tagsText) : null;
+  const currentSnapshot = fm ? editorSnapshot(fm, body, triggers, tags) : null;
   const dirty = savedSnapshot !== null && currentSnapshot !== null && currentSnapshot !== savedSnapshot;
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -84,9 +81,9 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
         const normalized = normalizeSkillFm(doc.frontmatter);
         setFm(normalized);
         setBody(doc.body);
-        setTriggersText(normalized.triggers.join(', '));
-        setTagsText(normalized.tags.join(', '));
-        setSavedSnapshot(editorSnapshot(normalized, doc.body, normalized.triggers.join(', '), normalized.tags.join(', ')));
+        setTriggers(normalized.triggers);
+        setTags(normalized.tags);
+        setSavedSnapshot(editorSnapshot(normalized, doc.body, normalized.triggers, normalized.tags));
       })
       .catch((e: Error) => {
         if (!cancelled) setError(e.message);
@@ -109,16 +106,16 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
     setSaving(true);
     setError('');
     try {
-      const tags = parseCsv(tagsText);
-      if (tags.length === 0) {
+      const savedTags = cleanPolicyList(tags);
+      if (savedTags.length === 0) {
         setError('At least one tag is required so skills can be filtered in the list.');
         return;
       }
       const frontmatter: SkillFrontmatter = {
         ...fm,
         enabled: fm.enabled !== false,
-        triggers: parseCsv(triggersText),
-        tags,
+        triggers: cleanPolicyList(triggers),
+        tags: savedTags,
       };
       await savePolicySkill(skillName, frontmatter, body, { origin, projectId });
       setSavedSnapshot(snapshotAtSave);
@@ -151,9 +148,9 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
                   const normalized = normalizeSkillFm(doc.frontmatter);
                   setFm(normalized);
                   setBody(doc.body);
-                  setTriggersText(normalized.triggers.join(', '));
-                  setTagsText(normalized.tags.join(', '));
-                  setSavedSnapshot(editorSnapshot(normalized, doc.body, normalized.triggers.join(', '), normalized.tags.join(', ')));
+                  setTriggers(normalized.triggers);
+                  setTags(normalized.tags);
+                  setSavedSnapshot(editorSnapshot(normalized, doc.body, normalized.triggers, normalized.tags));
                   onSaved?.();
                 })
                 .catch((e: Error) => setError(e.message))
@@ -278,12 +275,12 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
                 />
               </PageRow>
               <PageRow title="Triggers">
-                <PolicyChipField label="Triggers" values={parseCsv(triggersText)} suggestions={['implement', 'review', 'test', 'mcp', 'preflight', 'always', 'never']} onChange={(next) => setTriggersText(next.join(', '))} />
+                <PolicyChipField label="Triggers" values={triggers} suggestions={['implement', 'review', 'test', 'mcp', 'preflight', 'always', 'never']} onChange={setTriggers} />
               </PageRow>
               <PageRow title="Tags">
                 <div className="policy-chips">
-                  <button type="button" className="btn" onClick={() => setTagsText([...parseCsv(tagsText), ...suggestTags(body, fm.name, parseCsv(tagsText))].join(', '))}>Autotag</button>
-                  <PolicyChipField label="Tags" values={parseCsv(tagsText)} suggestions={['policy', 'mcp', 'frontend', 'security', 'testing', 'docs']} onChange={(next) => setTagsText(next.join(', '))} />
+                  <button type="button" className="btn" onClick={() => setTags([...tags, ...suggestTags(body, fm.name, tags)])}>Autotag</button>
+                  <PolicyChipField label="Tags" values={tags} suggestions={['policy', 'mcp', 'frontend', 'security', 'testing', 'docs']} onChange={setTags} />
                 </div>
               </PageRow>
               <PageRow title="Context task">

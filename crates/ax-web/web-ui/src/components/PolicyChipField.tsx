@@ -1,6 +1,10 @@
 import { useMemo, useState } from 'react';
+import { insideBraces } from '../lib/policyList';
 
-/** Small removable tokens with prefix suggestions. */
+/**
+ * Small removable tokens with prefix suggestions. Enter adds the typed value; a comma adds it
+ * too, except inside `{...}` so brace globs such as `*.{ts,tsx}` can be typed as one value.
+ */
 export default function PolicyChipField({
   label,
   values,
@@ -58,7 +62,7 @@ export default function PolicyChipField({
         placeholder={`Add ${label.toLowerCase()}`}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ',') {
+          if (e.key === 'Enter' || (e.key === ',' && !insideBraces(draft))) {
             e.preventDefault();
             add(draft);
           } else if (e.key === 'Backspace' && !draft && values.length > 0) {

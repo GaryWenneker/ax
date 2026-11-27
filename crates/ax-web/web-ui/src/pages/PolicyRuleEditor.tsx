@@ -21,6 +21,7 @@ import { POLICY_SCOPES, type RuleFrontmatter } from '../policyTypes';
 import { RULE_PROPERTY_RESERVED } from '../lib/policyProperties';
 import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
 import SettingsSelect from '../components/ui/SettingsSelect';
+import { splitPolicyList } from '../lib/policyList';
 
 interface Props {
   ruleId: string | null;
@@ -43,10 +44,6 @@ const emptyFm = (): RuleFrontmatter => ({
   scope: 'project',
   group: 'ungrouped',
 });
-
-function parseCsv(s: string): string[] {
-  return s.split(',').map((x) => x.trim()).filter(Boolean);
-}
 
 function normalizeRuleFm(fm: RuleFrontmatter): RuleFrontmatter {
   return {
@@ -98,13 +95,13 @@ export default function PolicyRuleEditor({ ruleId, origin, projectId, onBack }: 
     setSaving(true);
     setError('');
     try {
-      const tags = parseCsv(tagsText);
+      const tags = splitPolicyList(tagsText);
       if (tags.length === 0) {
         setError('At least one tag is required so rules can be filtered in the list.');
         return;
       }
-      const globs = parseCsv(globsText);
-      const triggers = parseCsv(triggersText);
+      const globs = splitPolicyList(globsText);
+      const triggers = splitPolicyList(triggersText);
       if (!fm.alwaysApply && globs.length === 0 && triggers.length === 0) {
         setError('Turn on Always apply, or set at least one glob or trigger — otherwise the rule never matches.');
         return;
