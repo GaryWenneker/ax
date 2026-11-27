@@ -1,0 +1,746 @@
+/* Memory vault rows — compact commit-graph layout. */
+:is(.memory-vault-list, .calm-list) .page-item--graph {
+  position: relative;
+  min-height: 42px;
+  padding: 4px 8px 4px 32px;
+  gap: 10px;
+  border-bottom: none;
+  border-left: none;
+}
+:is(.memory-vault-list, .calm-list) .page-item--graph::before {
+  content: "";
+  position: absolute;
+  left: 12.5px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    #9cdcfe 0 3px,
+    transparent 3px 8px
+  );
+  background-attachment: fixed;
+  pointer-events: none;
+}
+:is(.memory-vault-list, .calm-list) .page-item--graph:first-child::before { top: 50%; }
+:is(.memory-vault-list, .calm-list) .page-item--graph:last-child::before { bottom: 50%; }
+:is(.memory-vault-list, .calm-list) .page-item--graph:only-child::before { display: none; }
+:is(.memory-vault-list, .calm-list) .page-item-node {
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  border-radius: 50%;
+  border: 2px solid #9cdcfe;
+  background: var(--bg-panel);
+  box-shadow: 0 0 0 3px var(--bg-panel);
+  z-index: 1;
+}
+.memory-vault-list .memory-conv {
+  --conv-color: hsl(var(--conv-hue) 70% 62%);
+}
+.memory-vault-list .memory-conv .page-item-node {
+  border-color: var(--conv-color);
+  background: color-mix(in srgb, var(--conv-color) 35%, var(--bg-panel));
+}
+.memory-vault-list .memory-conv:is(.memory-conv--prev, .memory-conv--next)::after {
+  content: "";
+  position: absolute;
+  left: 11.5px;
+  width: 3px;
+  top: 50%;
+  bottom: 50%;
+  background: var(--conv-color);
+  pointer-events: none;
+}
+.memory-vault-list .memory-conv--prev::after { top: 0; }
+.memory-vault-list .memory-conv--next::after { bottom: 0; }
+.memory-vault-list .memory-conv .memory-conv-badge .badge-icon { color: var(--conv-color); }
+:is(.memory-vault-list, .calm-list) .page-item--graph > .settings-toggle {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+:is(.memory-vault-list, .calm-list) .page-item--graph:is(:hover, :focus-within) > .settings-toggle,
+:is(.memory-vault-list, .calm-list) .page-item--graph > .settings-toggle:not(.on) {
+  opacity: 1;
+}
+:is(.memory-vault-list, .calm-list) .page-item--graph:hover { background: #2a2d2e; }
+:is(.memory-vault-list, .calm-list) .page-item--selected.page-item--graph {
+  background-color: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 0;
+  box-shadow: inset 2px 0 0 var(--accent-text);
+}
+:is(.memory-vault-list, .calm-list) .page-item--graph:hover .page-item-node {
+  background: #2a2d2e;
+  box-shadow: 0 0 0 3px #2a2d2e;
+}
+:is(.memory-vault-list, .calm-list) .page-item--selected.page-item--graph .page-item-node,
+:is(.memory-vault-list, .calm-list) .page-item--selected.page-item--graph:hover .page-item-node {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-text) 16%, var(--bg-panel));
+  overflow: visible;
+}
+:is(.memory-vault-list, .calm-list) .page-item--selected.page-item--graph .page-item-node::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  margin: -10px 0 0 -10px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 1.5px, #9cdcfe 1px, transparent 1.2px),
+    radial-gradient(circle at calc(100% - 1.5px) 50%, #9cdcfe 1px, transparent 1.2px),
+    radial-gradient(circle at 50% calc(100% - 1.5px), #9cdcfe 1px, transparent 1.2px),
+    radial-gradient(circle at 1.5px 50%, #9cdcfe 1px, transparent 1.2px),
+    radial-gradient(circle at 80% 20%, #9cdcfe 1px, transparent 1.2px),
+    radial-gradient(circle at 80% 80%, #9cdcfe 1px, transparent 1.2px),
+    radial-gradient(circle at 20% 80%, #9cdcfe 1px, transparent 1.2px),
+    radial-gradient(circle at 20% 20%, #9cdcfe 1px, transparent 1.2px);
+  animation: ax-node-orbit 2.8s linear infinite;
+  pointer-events: none;
+}
+:is(.memory-vault-list, .calm-list) .page-item--selected.page-item--graph .page-item-node::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #9cdcfe;
+  box-shadow: none;
+  animation: ax-node-breathe 2.6s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes ax-node-orbit {
+  to { transform: rotate(-360deg); }
+}
+@keyframes ax-node-breathe {
+  0%, 100% { transform: translate(-50%, -50%) scale(0.86); opacity: 0.72; }
+  50% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(.memory-vault-list, .calm-list) .page-item--selected.page-item--graph .page-item-node::before {
+    animation: none;
+  }
+  :is(.memory-vault-list, .calm-list) .page-item--selected.page-item--graph .page-item-node::after {
+    animation: none;
+    transform: translate(-50%, -50%);
+    opacity: 1;
+  }
+}
+.memory-vault-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.settings-page.memory-page .settings-stack > .settings-card:last-child .settings-card-body {
+  overflow: hidden;
+}
+.settings-card-body:has(.page-item-list) {
+  min-height: 0;
+}
+.page-split-main,
+.files-tree-pane,
+.edge-list,
+.page-table-wrap,
+.settings-card-body:has(> .page-item-list) > .page-item-list,
+.policy-list,
+.mcp-trace-list {
+  overflow-y: auto;
+  min-height: 0;
+}
+:is(.memory-vault-list, .calm-list) .page-item-body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+}
+:is(.memory-vault-list, .calm-list) .page-item-sub {
+  margin-top: 0;
+  font-family: inherit;
+  font-size: 11px;
+  color: #cccccc;
+}
+:is(.memory-vault-list, .calm-list) .page-item-title-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+:is(.memory-vault-list, .calm-list) .page-item-title {
+  flex: 0 1 auto;
+  font-weight: 400;
+  font-size: 13px;
+  color: #cccccc;
+}
+:is(.memory-vault-list, .calm-list) .page-item-badges {
+  flex: 0 0 auto;
+  gap: 4px;
+}
+:is(.memory-vault-list, .calm-list) .page-item-badge {
+  white-space: nowrap;
+}
+:is(.memory-vault-list, .calm-list) .page-item-meta {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: #cccccc;
+  font-size: 11px;
+  white-space: nowrap;
+}
+:is(.memory-vault-list, .calm-list) .settings-toggle {
+  width: 28px;
+  height: 16px;
+  border-radius: 8px;
+}
+:is(.memory-vault-list, .calm-list) .settings-toggle-thumb {
+  width: 10px;
+  height: 10px;
+  top: 2px;
+  left: 2px;
+}
+:is(.memory-vault-list, .calm-list) .settings-toggle.on .settings-toggle-thumb {
+  transform: translateX(12px);
+}
+
+/* Memory page composer */
+.memory-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.memory-composer-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.memory-composer-body {
+  resize: vertical;
+  min-height: 96px;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+
+.memory-inbox-filters {
+  display: inline-flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.memory-inbox-chip,
+.memory-related-chip {
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.memory-inbox-chip.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.memory-related-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 12px;
+}
+
+.memory-archive-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* Memory — compact overview above the vault list */
+.mem-overview {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+}
+
+.mem-how-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mem-how-card {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mem-how-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+  color: var(--accent-text);
+  line-height: 1;
+}
+
+.mem-how-title {
+  font-weight: 600;
+  font-size: var(--fs-xs);
+  color: var(--text-hi);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mem-stats-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.mem-stat {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.mem-stat-value {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--accent-text);
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.mem-stat-label {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Memory detail — slide-out blade on the right of the workspace */
+.memory-blade {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(480px, 100%);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 14%, transparent), transparent 160px),
+    var(--bg-panel);
+  border-left: 1px solid color-mix(in srgb, var(--accent-text) 45%, var(--border));
+  box-shadow: inset 3px 0 0 var(--accent), -8px 0 24px rgba(0, 0, 0, 0.28);
+  animation: memory-blade-in 0.16s ease-out;
+}
+
+.workspace:has(.memory-blade) > .container {
+  padding-right: min(480px, 100%);
+}
+
+@keyframes memory-blade-in {
+  from { transform: translateX(24px); }
+  to { transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .memory-blade { animation: none; }
+}
+
+@media (max-width: 899px) {
+  .memory-blade { width: 100%; }
+  .workspace:has(.memory-blade) > .container { padding-right: 8px; }
+  .mem-how-grid { grid-template-columns: 1fr; }
+}
+
+.memory-blade .detail-title {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  align-items: flex-start;
+  line-height: 1.35;
+}
+
+.memory-blade-body {
+  overscroll-behavior: contain;
+}
+
+.memory-file--added .edge-name,
+.memory-file--added .edge-item-icon { color: var(--ok); }
+.memory-file--modified .edge-name,
+.memory-file--modified .edge-item-icon { color: #e3942d; }
+.memory-file--deleted .edge-name,
+.memory-file--deleted .edge-item-icon { color: var(--danger); }
+
+.memory-blade .edge-item {
+  min-height: 22px;
+  padding: 0 6px;
+  gap: 6px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 12px;
+}
+.memory-blade .edge-item:hover { background: #2a2d2e; }
+.memory-commit {
+  cursor: pointer;
+}
+.memory-commit .edge-name {
+  flex: 0 0 auto;
+  color: #9cdcfe;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.memory-commit-subject {
+  flex: 1 1 auto;
+  color: #cccccc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.memory-diff-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.55);
+}
+.memory-diff-pop {
+  position: fixed;
+  z-index: 1101;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #1e1e1e;
+  color: #cccccc;
+  border: 1px solid #8a8a8a;
+  border-radius: 8px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.72), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.memory-diff-head,
+.memory-diff-path,
+.memory-diff-note {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  color: #cccccc;
+}
+.memory-diff-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: #1e1e1e;
+  border-bottom: 1px solid #3c3c3c;
+  font-weight: 400;
+}
+.memory-diff-head-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memory-diff-hash {
+  margin-right: 8px;
+  color: #9cdcfe;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.memory-diff-close {
+  flex: none;
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid #8a8a8a;
+  border-radius: 4px;
+  background: #2a2d2e;
+  color: #ffffff;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.memory-diff-close:hover { background: #3c3c3c; }
+.memory-file { cursor: pointer; }
+.memory-file .edge-name { flex: 1; min-width: 0; }
+.memory-file-link {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  padding: 2px 4px;
+  border-radius: 4px;
+  color: var(--text-dim);
+  text-decoration: none;
+}
+.memory-file-link:hover { color: var(--accent-text); background: rgba(255,255,255,0.08); }
+.memory-diff-path {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  background: #1e1e1e;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  padding-bottom: 2px;
+}
+.memory-diff-path-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memory-diff-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background: #1e1e1e;
+}
+.memory-diff-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  min-height: 28px;
+  border-bottom: 1px solid #3c3c3c;
+  background: #181818;
+}
+.memory-diff-tab {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  height: 28px;
+  max-width: 220px;
+  padding: 0 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: #cccccc;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.memory-diff-tab[aria-selected="true"] {
+  background: #1e1e1e;
+  border-bottom-color: #9cdcfe;
+}
+.memory-diff-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+.memory-diff-stat {
+  display: inline-flex;
+  gap: 6px;
+  flex: none;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.memory-diff-add { color: #d2ffe0; }
+.memory-diff-del { color: #ffd2cf; }
+.memory-diff-hunk-head {
+  padding: 1px 8px;
+  color: #9cdcfe;
+  background: #181818;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.memory-diff-note { margin: 0; }
+.memory-diff-hunk + .memory-diff-hunk { margin-top: 6px; }
+.memory-diff-line {
+  display: grid;
+  grid-template-columns: 2.6em 2.6em 0.8em max-content;
+  column-gap: 6px;
+  padding: 0 8px;
+  white-space: pre;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.memory-diff-line--context { color: #cccccc; }
+.memory-diff-line--added { color: #d2ffe0; background: #14301c; }
+.memory-diff-line--removed { color: #ffd2cf; background: #3a1518; }
+.memory-diff-no {
+  color: #e8e8e8;
+  text-align: right;
+}
+.memory-diff-text { white-space: pre; }
+
+/* The editor preview wants a tall pane. In the memory blade that leaves a
+   520px empty well under a short paragraph, so the files sit far below. */
+.memory-blade .memory-md.md-preview-wrap {
+  flex: none;
+  min-height: 0;
+  padding: 0;
+  overflow: visible;
+}
+.memory-blade .memory-md .wmde-markdown {
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  word-break: break-word;
+}
+.memory-blade .memory-md .wmde-markdown img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+.md-preview-wrap--zoomable .wmde-markdown img {
+  cursor: zoom-in;
+}
+.memory-image-badge {
+  padding-inline: 4px;
+}
+.memory-image-badge .badge-icon {
+  margin: 0;
+}
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 6000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.78);
+}
+.image-lightbox-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(92vw, 1400px);
+  color: var(--vscode-foreground, #ccc);
+  font-size: 12px;
+}
+.image-lightbox-caption {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.image-lightbox-zoom {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+.image-lightbox-frame {
+  overflow: hidden;
+  max-width: 92vw;
+  max-height: calc(92vh - 32px);
+  border-radius: 6px;
+  cursor: zoom-in;
+  touch-action: none;
+}
+.image-lightbox-frame--zoomed {
+  cursor: grab;
+}
+.image-lightbox-frame--zoomed:active {
+  cursor: grabbing;
+}
+.image-lightbox-frame img {
+  display: block;
+  max-width: 92vw;
+  max-height: calc(92vh - 32px);
+  transform-origin: 0 0;
+  user-select: none;
+}
+.memory-blade .memory-md .wmde-markdown pre {
+  overflow: auto;
+  max-width: 100%;
+}
+.memory-blade .memory-md .wmde-markdown h1,
+.memory-blade .memory-md .wmde-markdown h2,
+.memory-blade .memory-md .wmde-markdown h3 {
+  font-size: 1.05em;
+  line-height: 1.35;
+}
+
+.memory-blade-prose {
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.page-pagination {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.page-level-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.page-level-badge--critical {
+  background: rgba(160, 110, 110, 0.12);
+  color: #b8a0a0;
+  border: 1px solid rgba(160, 110, 110, 0.22);
+}
+
+.page-level-badge--warning {
+  background: rgba(160, 145, 90, 0.1);
+  color: #b0a888;
+  border: 1px solid rgba(160, 145, 90, 0.2);
+}
+
+.page-level-badge--info {
+  background: rgba(100, 130, 160, 0.1);
+  color: #98a8b8;
+  border: 1px solid rgba(100, 130, 160, 0.2);
+}
+
+.page-level-badge--btn {
+  appearance: none;
+  cursor: pointer;
+  font: inherit;
+  line-height: inherit;
+}
+
+.page-level-badge--btn:hover {
+  filter: brightness(1.12);
+}
+
+.page-level-badge--active {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #5b8def) 55%, transparent);
+  background: color-mix(in srgb, var(--accent, #5b8def) 18%, transparent) !important;
+}

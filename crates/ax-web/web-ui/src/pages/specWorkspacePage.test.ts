@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { readGlobalStyles } from '../../test-support/globalStyles.ts';
 
 const ws = readFileSync(new URL('./SpecWorkspace.tsx', import.meta.url), 'utf8');
 const page = readFileSync(new URL('./Specs.tsx', import.meta.url), 'utf8');
-const css = readFileSync(new URL('../index.css', import.meta.url), 'utf8');
+const css = readGlobalStyles();
 
 test('the workspace has an explorer, a document pane, and a context panel', () => {
   assert.match(ws, /aria-label="Specification explorer"/);

@@ -1,0 +1,455 @@
+/* ---- Mobile ---- */
+.hamburger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border-hi);
+  color: var(--text-dim);
+  padding: 2px 6px;
+  cursor: pointer;
+  min-height: 26px;
+  min-width: 26px;
+  font-size: var(--fs-md);
+}
+
+.hamburger:hover { color: var(--text); }
+
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 199;
+}
+
+@media (max-width: 899px) {
+  .hamburger { display: flex; }
+
+  .sidebar-resize-handle { display: none; }
+  .blade-resize-handle { display: none; }
+
+  .sidebar {
+    position: fixed;
+    left: -100%;
+    top: calc(var(--titlebar-h) + var(--titlebar-wave-h));
+    bottom: calc(var(--statusbar-h) + env(safe-area-inset-bottom, 0px));
+    z-index: 200;
+    background: var(--bg-side);
+    transition: left 0.2s;
+    width: min(100vw, 260px);
+    height: auto;
+  }
+
+  .sidebar.open { left: 0; }
+
+  .sidebar-overlay.open { display: block; }
+
+  .workspace > .container {
+    padding: 8px;
+    padding-bottom: calc(var(--statusbar-h) + env(safe-area-inset-bottom, 0px) + 6px);
+  }
+
+  :root {
+    --statusbar-h: 52px;
+  }
+
+  /* Icon dock — equal tabs, no desktop chip clutter. */
+  .statusbar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 300;
+    display: flex;
+    align-items: stretch;
+    justify-content: stretch;
+    height: calc(var(--statusbar-h) + env(safe-area-inset-bottom, 0px));
+    min-height: calc(var(--statusbar-h) + env(safe-area-inset-bottom, 0px));
+    padding: 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    /* visible so dock popovers are not clipped; panels use position:fixed anyway */
+    overflow: visible;
+    gap: 0;
+  }
+
+  /* Activity / Logging panels → full-width sheet above the dock */
+  .statusbar .status-panel,
+  .statusbar-right .status-panel {
+    position: fixed;
+    left: 10px;
+    right: 10px;
+    bottom: calc(var(--statusbar-h) + env(safe-area-inset-bottom, 0px) + 10px);
+    top: auto;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    max-height: min(52dvh, 380px);
+    overflow: auto;
+    z-index: 360;
+    border-radius: 12px;
+    box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.55);
+  }
+
+  .statusbar-left {
+    display: none !important;
+  }
+
+  .statusbar-center {
+    display: none !important;
+  }
+
+  .statusbar-right {
+    flex: 1;
+    display: flex !important;
+    align-items: stretch;
+    justify-content: space-around;
+    width: 100%;
+    max-width: none;
+    gap: 0;
+    min-width: 0;
+  }
+
+  .status-sep,
+  .status-lbl,
+  .status-val,
+  .status-logging-info,
+  .status-logging-dot,
+  .status-quality-badge {
+    display: none !important;
+  }
+
+  /* Keep Activity + Logging + Quality (+ Switch on Logging, Share when active). */
+  .statusbar-right .status-chip-wrap:not(:has(.status-logging)):not(:has(.status-activity)) {
+    display: none !important;
+  }
+
+  .statusbar-right > .status-item:not(.status-project):not(.status-logging):not(.status-activity):not(.status-readonly):not(.status-quality),
+  .statusbar-right > .status-chip-wrap:not(:has(.status-logging)):not(:has(.status-activity)) {
+    display: none !important;
+  }
+
+  .statusbar-right .status-chip-wrap:has(.status-logging),
+  .statusbar-right .status-chip-wrap:has(.status-activity),
+  .statusbar-right > .status-item.status-logging,
+  .statusbar-right > .status-item.status-activity,
+  .statusbar-right > .status-item.status-project,
+  .statusbar-right > .status-item.status-readonly,
+  .statusbar-right > .status-item.status-quality {
+    display: flex !important;
+    flex: 1 1 0;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    min-height: 100%;
+    max-width: none;
+    padding: 0;
+    margin: 0;
+    border-radius: 0;
+  }
+
+  .statusbar-right .status-chip-wrap {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex !important;
+  }
+
+  .statusbar-right .status-chip-wrap .status-item {
+    flex: 1;
+    width: 100%;
+    min-height: 100%;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .status-item--clickable,
+  .status-project,
+  .status-logging,
+  .status-activity,
+  .status-readonly,
+  .status-quality {
+    min-width: 48px;
+    min-height: 48px;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .statusbar .codicon,
+  .statusbar .status-icon,
+  .statusbar .status-project-icon {
+    font-size: 22px;
+    width: 22px;
+    height: 22px;
+    line-height: 1;
+  }
+
+  .filter-input,
+  .filter-select,
+  .search-input,
+  .form-panel input,
+  .form-panel select,
+  .form-panel textarea {
+    font-size: 16px;
+    min-height: 44px;
+    max-width: none;
+  }
+
+  .btn { min-height: 40px; }
+
+  .nav-item { min-height: 44px; padding: 8px 12px; }
+
+  .detail-panel:not(.detail-panel--blade) {
+    width: 100vw;
+    height: 100dvh;
+  }
+
+  .files-split--with-preview.files-split--with-detail,
+  .page-split--with-detail {
+    grid-template-columns: 1fr;
+  }
+
+  .editor-grid { grid-template-columns: 1fr; }
+
+  .graph-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .graph-toolbar-left,
+  .graph-toolbar-right {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .graph-toolbar-right {
+    gap: 8px;
+  }
+
+  .graph-search {
+    min-width: 0;
+    flex: 1 1 100%;
+    min-height: 44px;
+  }
+
+  .graph-density {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+
+  .graph-density-slider {
+    max-width: none;
+  }
+
+  .graph-body {
+    min-height: 240px;
+  }
+
+  .graph-legend {
+    max-width: 42%;
+    right: 6px;
+    top: 6px;
+    padding: 6px 8px;
+  }
+}
+
+/* Align with shell drawer breakpoint (--bp-md ≈ 900px). Was 769px — left a
+   dead zone where the sidebar was off-canvas but the hamburger stayed hidden. */
+@media (min-width: 900px) {
+  .hamburger { display: none !important; }
+}
+
+@media (max-width: 899px) {
+  .titlebar {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .hamburger {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .ax-modal-overlay,
+  .project-browser-overlay {
+    align-items: flex-end;
+    justify-content: stretch;
+    padding: 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .ax-modal,
+  .ax-modal--lg,
+  .ax-modal--xl,
+  .ax-modal--full,
+  .project-browser-modal {
+    width: 100%;
+    max-width: none;
+    max-height: min(92dvh, 100%);
+    border-radius: 12px 12px 0 0;
+    padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Logging: scroll sideways instead of overlapping/crushing columns */
+  .mcp-trace-scroller,
+  .page-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .mcp-trace-table {
+    width: max-content;
+    min-width: 720px;
+    table-layout: fixed;
+  }
+
+  .mcp-col-time {
+    width: 9.5rem;
+    min-width: 11.5rem;
+  }
+
+  .mcp-col-kind {
+    width: 3.5rem;
+    min-width: 3.5rem;
+  }
+
+  .mcp-col-tool {
+    width: 8.5rem;
+    min-width: 8.5rem;
+  }
+
+  .mcp-col-summary {
+    width: 18rem;
+    min-width: 14rem;
+  }
+
+  .mcp-col-meta {
+    width: 7.5rem;
+    min-width: 6.5rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .mcp-trace-scroller,
+  .page-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .mcp-trace-filters {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .mcp-trace-filter-chip {
+    min-height: 36px;
+  }
+
+  .settings-card .settings-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .settings-input--wide,
+  .settings-input--narrow {
+    max-width: none;
+    width: 100%;
+  }
+
+  .settings-card-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .settings-card-footer .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Logging: reclaim viewport — compact toolbar, no banner/paths/quality strip. */
+  .mcp-trace-shell--page .mcp-trace-project-banner,
+  .mcp-trace-shell--page .mcp-q-strip,
+  .mcp-trace-shell--page .mcp-trace-hint,
+  .mcp-trace-shell--page .mcp-trace-title,
+  .mcp-trace-shell--page .mcp-trace-keys,
+  .mcp-trace-shell--page .mcp-trace-project-chip-label,
+  .mcp-trace-shell--page .mcp-trace-full-btn {
+    display: none !important;
+  }
+
+  .mcp-trace-shell--page .mcp-trace-toolbar {
+    padding: 4px 6px;
+    gap: 4px;
+    min-height: 40px;
+  }
+
+  .mcp-trace-shell--page .mcp-trace-toolbar-left {
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .mcp-trace-shell--page .mcp-trace-header-actions {
+    gap: 2px;
+  }
+
+  .mcp-trace-shell--page .mcp-trace-icon-btn {
+    min-width: 36px;
+    min-height: 36px;
+    padding: 0 6px;
+  }
+
+  .mcp-trace-shell--page .mcp-trace-btn-label {
+    display: none;
+  }
+
+  .mcp-trace-shell--page .mcp-trace-filters {
+    padding: 6px 8px 8px;
+    gap: 6px;
+  }
+
+  .mcp-trace-shell--page .mcp-trace-filter-kinds {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    gap: 4px;
+    padding-bottom: 2px;
+  }
+
+  .mcp-trace-shell--page .mcp-trace-filter-chip {
+    flex: 0 0 auto;
+    min-height: 32px;
+    padding: 2px 6px;
+  }
+
+  .mcp-trace-shell--page .mcp-trace-filter-field-label {
+    display: none;
+  }
+
+  .mcp-trace-shell--page .mcp-trace-filter-controls {
+    gap: 6px;
+  }
+
+  .mcp-trace-shell--page .mcp-trace-filter-select,
+  .mcp-trace-shell--page .mcp-trace-filter-input {
+    min-height: 36px;
+    font-size: 16px;
+  }
+
+  .mcp-trace-filters-toggle--lit {
+    outline: 1px solid var(--accent);
+  }
+
+  .mcp-trace-shell--page.mcp-trace-shell--filters-collapsed .mcp-trace-scroller {
+    /* Table owns the viewport when chrome is collapsed. */
+    min-height: 0;
+  }
+
+  .logging-page--immersive {
+    padding: 0;
+  }
+
+  .logging-page--immersive .mcp-trace-card--page,
+  .logging-page--immersive .mcp-trace-shell--page {
+    margin: 0;
+    border-radius: 0;
+  }
+}

@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
+import { readGlobalStyles } from '../test-support/globalStyles.ts';
 
 const app = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
-const indexCss = readFileSync(new URL('./index.css', import.meta.url), 'utf8');
+const indexCss = readGlobalStyles();
 const portalCss = readFileSync(new URL('./portal.css', import.meta.url), 'utf8');
 
 describe('B1 App shell never mounts titlebar waves', () => {
@@ -15,7 +16,7 @@ describe('B1 App shell never mounts titlebar waves', () => {
 describe('B2 wave ribbon height is zero', () => {
   it('assigns --titlebar-wave-h only as 0px', () => {
     const values = [...indexCss.matchAll(/--titlebar-wave-h:\s*([^;]+);/g)].map((m) => m[1].trim());
-    assert.ok(values.length >= 1, 'index.css must set --titlebar-wave-h');
+    assert.ok(values.length >= 1, 'the global styles must set --titlebar-wave-h');
     for (const value of values) {
       assert.equal(value, '0px');
     }

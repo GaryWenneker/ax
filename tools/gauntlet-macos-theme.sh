@@ -16,11 +16,11 @@ grep -q "setProperty('--accent-on-fill'" crates/ax-web/web-ui/src/lib/themes.ts 
   || { echo "FAIL: applyTheme missing --accent-on-fill" >&2; exit 1; }
 grep -q 'accent: '\''#64d2ff'\''' crates/ax-web/web-ui/src/lib/themes.ts \
   || { echo "FAIL: macos accent must be #64d2ff" >&2; exit 1; }
-grep -q 'var(--accent-on-fill' crates/ax-web/web-ui/src/index.css \
+grep -q 'var(--accent-on-fill' crates/ax-web/web-ui/src/styles/*.css \
   || { echo "FAIL: macos nav must use --accent-on-fill" >&2; exit 1; }
-grep -q 'policy-table thead th:first-child' crates/ax-web/web-ui/src/index.css \
+grep -q 'policy-table thead th:first-child' crates/ax-web/web-ui/src/styles/*.css \
   || { echo "FAIL: missing grouped-table header indent" >&2; exit 1; }
-grep -q 'flex-direction: row' crates/ax-web/web-ui/src/index.css \
+grep -q 'flex-direction: row' crates/ax-web/web-ui/src/styles/*.css \
   || { echo "FAIL: missing tag row wrap" >&2; exit 1; }
 grep -q 'statusbarInk(fill)' crates/ax-web/web-ui/src/lib/themes.ts \
   || { echo "FAIL: statusbar ink must use painted fill" >&2; exit 1; }
@@ -28,7 +28,7 @@ grep -q 'id: wcag-contrast' .agents/rules/wcag-contrast.mdc \
   || { echo "FAIL: missing CRITICAL wcag-contrast rule" >&2; exit 1; }
 
 echo "== negative control (grep gate) =="
-if grep -q 'data-ax-theme="macos-does-not-exist"' crates/ax-web/web-ui/src/index.css; then
+if grep -q 'data-ax-theme="macos-does-not-exist"' crates/ax-web/web-ui/src/styles/*.css; then
   echo "FAIL: negative control passed (vacuous grep)" >&2
   exit 1
 fi

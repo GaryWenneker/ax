@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { readGlobalStyles } from '../../test-support/globalStyles.ts';
 
 const panel = readFileSync(new URL('./ContinuityPanel.tsx', import.meta.url), 'utf8');
-const css = readFileSync(new URL('../index.css', import.meta.url), 'utf8');
+const css = readGlobalStyles();
 
 const fields = [
   'External chat id',

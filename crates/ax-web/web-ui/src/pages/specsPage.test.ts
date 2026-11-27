@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { readGlobalStyles } from '../../test-support/globalStyles.ts';
 
 const page = [
   readFileSync(new URL('./Specs.tsx', import.meta.url), 'utf8'),
@@ -8,7 +9,7 @@ const page = [
 ].join('\n');
 const routes = readFileSync(new URL('../lib/routes.ts', import.meta.url), 'utf8');
 const nav = readFileSync(new URL('../lib/nav.ts', import.meta.url), 'utf8');
-const css = readFileSync(new URL('../index.css', import.meta.url), 'utf8');
+const css = readGlobalStyles();
 
 test('the specs page lists path, status, project, and session through the calm list', () => {
   assert.match(page, /className="calm-list specs-list"/);

@@ -28,7 +28,7 @@ test('docs use the landing graphite/lime theme and responsive moving overprint',
 
 test('Command Center uses the same Ax_ wordmark instead of old image assets', () => {
   const app = file('crates/ax-web/web-ui/src/App.tsx');
-  const css = file('crates/ax-web/web-ui/src/index.css');
+  const css = file('crates/ax-web/web-ui/src/styles/23-brand.css');
   assert.match(app, /className="ax-app-wordmark" aria-label="Ax home">Ax<span aria-hidden="true">_<\/span>/);
   assert.match(app, /className="ax-app-wordmark ax-app-wordmark--sidebar"/);
   assert.doesNotMatch(app, /src="\/ax-mark\.png"|src="\/ax-logo\.png"/);

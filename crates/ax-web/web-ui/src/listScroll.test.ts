@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
+import { readGlobalStyles } from '../test-support/globalStyles.ts';
 
 const portal = readFileSync(new URL('./portal.css', import.meta.url), 'utf8');
-const index = readFileSync(new URL('./index.css', import.meta.url), 'utf8');
+const index = readGlobalStyles();
 
 describe('record rows do not trap the list wheel', () => {
   it('L1 grouped lists inside the page scroller are not scrollports', () => {

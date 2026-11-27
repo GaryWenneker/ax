@@ -1,0 +1,121 @@
+/* ---- Global Open-project mint chrome (all pages) ---- */
+.page-item:hover {
+  background: var(--ax-project-bg, color-mix(in srgb, var(--accent) 8%, transparent));
+}
+.page-item--selected {
+  border-left-color: var(--accent-text);
+  background-color: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent-text);
+}
+.page-item-badge {
+  border-color: var(--ax-project-border, var(--border));
+  color: var(--accent-text);
+  background: var(--ax-project-bg, transparent);
+}
+.page-filter-bar {
+  border-color: var(--ax-project-border, var(--border));
+  background: linear-gradient(145deg, var(--ax-project-bg, transparent), transparent 80%);
+  border-radius: 8px;
+}
+.ax-modal,
+.project-browser-modal {
+  border-color: var(--ax-project-border, var(--border));
+}
+.ax-modal-title,
+.project-browser-header h2 {
+  color: var(--text-hi);
+}
+.settings-stack > .settings-card + .settings-card {
+  margin-top: 2px;
+}
+.ship-step--active,
+.ship-step--active .ship-step-icon {
+  color: var(--accent-text);
+}
+.theme-swatch--active {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 1px var(--ax-project-glow, color-mix(in srgb, var(--accent) 20%, transparent));
+}
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--accent-text);
+}
+a:not(.nav-item):not(.btn):not(.btn-secondary):not(.status-panel-link):not(.ax-app-wordmark) {
+  color: var(--accent-text);
+}
+a:not(.nav-item):not(.btn):not(.btn-secondary):not(.status-panel-link):not(.ax-app-wordmark):hover {
+  color: color-mix(in srgb, var(--accent) 80%, #fff);
+}
+
+
+/* Prices page */
+.prices-page .prices-list-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.prices-page .prices-list-card > .settings-card-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.prices-table-scroll {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: min(42vh, 420px);
+  overflow: auto;
+}
+.prices-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.prices-status strong {
+  color: var(--text-hi);
+  font-weight: 600;
+}
+.prices-chart-wrap {
+  margin-top: 8px;
+}
+.prices-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.prices-chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.prices-chart-swatch {
+  width: 14px;
+  height: 3px;
+  border-radius: 1px;
+  display: inline-block;
+}
+.prices-chart-swatch--in {
+  background: #5eb8ff;
+}
+.prices-chart-swatch--out {
+  background: #e0a030;
+}
+.prices-chart {
+  width: 100%;
+  max-width: 640px;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+.prices-chart-title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-family: var(--mono, ui-monospace, monospace);
+  color: var(--text-hi);
+}
