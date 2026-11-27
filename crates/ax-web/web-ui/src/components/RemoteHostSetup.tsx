@@ -20,6 +20,7 @@ export default function RemoteHostSetup({ workspaceId, csrf, onChanged }: { work
   const [vscodeId, setVscodeId] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [pollError, setPollError] = useState('');
   const alive = useRef(true);
   const working = useRef(false);
   const epoch = useRef(0);
@@ -28,12 +29,13 @@ export default function RemoteHostSetup({ workspaceId, csrf, onChanged }: { work
     const next = await publicationRequest<HostState>('/host');
     const approvals = await publicationRequest<{ workspaceId: string; requests: Approval[] }>('/host/authorizations');
     if (!alive.current || version !== epoch.current || next.workspaceId !== workspaceId || approvals.workspaceId !== workspaceId) return;
-    setHost(next.host); setRequests(approvals.requests); setReady(true);
+    setHost(next.host); setRequests(approvals.requests); setReady(true); setPollError('');
   }, [workspaceId]);
   useEffect(() => {
     alive.current = true;
-    void load().catch(e => alive.current && setError(e instanceof Error ? e.message : String(e)));
-    const timer = setInterval(() => { if (!working.current) void load().catch(e => alive.current && setError(e instanceof Error ? e.message : String(e))); }, 5000);
+    const pollFailed = (e: unknown) => { if (alive.current) setPollError(e instanceof Error ? e.message : String(e)); };
+    void load().catch(pollFailed);
+    const timer = setInterval(() => { if (!working.current) void load().catch(pollFailed); }, 5000);
     return () => { alive.current = false; ++epoch.current; clearInterval(timer); };
   }, [load]);
   async function act(operation: () => Promise<void>) {
@@ -61,10 +63,11 @@ export default function RemoteHostSetup({ workspaceId, csrf, onChanged }: { work
   async function decide(request: Approval, decision: string) {
     await publicationRequest(`/host/authorizations/${encodeURIComponent(request.id)}`, { method: 'POST', csrf, body: { workspaceId, decision } });
   }
+  const shownError = error || pollError;
   return <section className="remote-host-setup" aria-label="Remote MCP host">
     <h3>Host this project</h3>
     <p>Run a remote MCP service on this computer. Ax generates the server file and native client ID, stores its settings and starts it automatically.</p>
-    <div className="service-toolbar"><ServiceStatus state={error || host?.status === 'error' ? 'error' : host?.status === 'running' ? 'running' : 'stopped'} label={host?.status === 'running' ? 'Remote MCP running' : host ? 'Remote MCP stopped' : 'Remote MCP not configured'} active={host?.status === 'running'} />
+    <div className="service-toolbar"><ServiceStatus state={shownError || host?.status === 'error' ? 'error' : host?.status === 'running' ? 'running' : 'stopped'} label={host?.status === 'running' ? 'Remote MCP running' : host ? 'Remote MCP stopped' : 'Remote MCP not configured'} active={host?.status === 'running'} />
       {!host ? <button type="button" className="btn primary" disabled={!ready || busy} onClick={() => setOpen(true)}>Set up remote MCP</button> : <div className="access-actions">
         <button type="button" className="btn" disabled={busy} onClick={() => void act(() => change(host.status === 'running' ? 'stop' : 'start'))}>{host.status === 'running' ? 'Stop host' : 'Start host'}</button>
         <button type="button" className="btn danger" disabled={busy} onClick={() => setConfirmRemove(true)}>Remove host</button>
@@ -78,7 +81,7 @@ export default function RemoteHostSetup({ workspaceId, csrf, onChanged }: { work
         {request.revoked || ['denied', 'expired'].includes(request.status) ? <button type="button" className="btn danger" disabled={busy} onClick={() => setRemoveRequest(request)}>Remove connection</button> : request.status === 'pending' ? <><button type="button" className="btn primary" disabled={busy} onClick={() => void act(() => decide(request, 'approve'))}>{request.scope.includes('ax:write') ? 'Approve read and write' : 'Approve context access'}</button><button type="button" className="btn" disabled={busy} onClick={() => void act(() => decide(request, 'deny'))}>Deny</button></> : <button type="button" className="btn danger" disabled={busy} onClick={() => void act(() => decide(request, 'revoke'))}>Revoke access</button>}
       </div></article>)}
     </div>}
-    {error && !open && <p role="alert">{error}</p>}
+    {shownError && !open && <p role="alert">{shownError}</p>}
     {removeRequest && <ModalShell title="Remove inactive OAuth connection?" onClose={() => !busy && setRemoveRequest(null)}><p>Remove this inactive connection and its stored token records. Access will remain invalid; a new connection requires authentication and host approval.</p><div className="access-actions"><button type="button" className="btn" disabled={busy} onClick={() => setRemoveRequest(null)}>Cancel</button><button type="button" className="btn danger" disabled={busy} onClick={() => void act(async () => { await decide(removeRequest, 'remove'); setRemoveRequest(null); })}>Remove connection</button></div></ModalShell>}
     {open && <ModalShell title="Set up remote MCP host" onClose={() => !busy && setOpen(false)}><form className="access-form" onSubmit={setup}>
       <p>Enter the HTTPS address that routes to this computer. Ax creates the configuration and OAuth client ID and starts the service. Route that address to the proxy target shown after setup.</p>
