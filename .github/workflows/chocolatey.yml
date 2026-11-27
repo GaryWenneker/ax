@@ -40,8 +40,8 @@ jobs:
         id: meta
         shell: pwsh
         run: |
-          $tag = "${{ inputs.tag }}".Trim()
-          if ($tag -notmatch '^v?\d+\.\d+\.\d+') { throw "Invalid tag: $tag" }
+          $tag = "$env:REQUESTED_TAG".Trim()
+          if ($tag -notmatch '^v?\d+\.\d+\.\d+$') { throw "Invalid tag: $tag" }
           $version = if ($tag.StartsWith('v')) { $tag.Substring(1) } else { $tag }
           $tag = "v$version"
           # Ensure the release exists and is published.
@@ -57,6 +57,7 @@ jobs:
           "tag=$tag" >> $env:GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.tag }}
 
       - name: choco pack
         id: pack

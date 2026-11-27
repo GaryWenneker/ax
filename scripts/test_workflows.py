@@ -126,6 +126,51 @@ class ActionPins(unittest.TestCase):
         self.assertIn('package-ecosystem: "github-actions"', text)
 
 
+def run_blocks(text: str) -> list[tuple[int, str]]:
+    """Return (line number, body) for every `run:` script in a workflow."""
+    lines = text.splitlines()
+    blocks = []
+    for i, line in enumerate(lines):
+        m = re.match(r"^(\s*)(?:-\s+)?run:\s*(.*)$", line)
+        if not m:
+            continue
+        indent = len(m.group(1))
+        body = [m.group(2)]
+        for nxt in lines[i + 1 :]:
+            if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= indent:
+                break
+            body.append(nxt)
+        blocks.append((i + 1, "\n".join(body)))
+    return blocks
+
+
+class ExpressionInjection(unittest.TestCase):
+    # Values a dispatcher, issue author or pull request author controls.
+    UNTRUSTED = re.compile(
+        r"\$\{\{[^}]*\b(?:github\.event\.)?inputs\.|"
+        r"\$\{\{[^}]*github\.event\.(?:issue|comment|review|pull_request|head_commit|commits)[^}]*"
+        r"\.(?:title|body|message|name|label|ref)\b|"
+        r"\$\{\{[^}]*github\.head_ref"
+    )
+
+    def test_untrusted_values_reach_scripts_only_through_env(self) -> None:
+        for path in WORKFLOWS:
+            for number, body in run_blocks(path.read_text(encoding="utf-8")):
+                self.assertIsNone(
+                    self.UNTRUSTED.search(body),
+                    f"{path.name}:{number}: pass the value through env: and read it as an environment variable",
+                )
+
+    def test_detects_an_input_expanded_in_a_script(self) -> None:
+        text = "jobs:\n  a:\n    steps:\n      - run: |\n          $tag = \"${{ inputs.tag }}\"\n"
+        (_, body), = run_blocks(text)
+        self.assertIsNotNone(self.UNTRUSTED.search(body))
+
+    def test_chocolatey_tag_check_is_anchored(self) -> None:
+        text = (ROOT / ".github" / "workflows" / "chocolatey.yml").read_text(encoding="utf-8")
+        self.assertIn(r"'^v?\d+\.\d+\.\d+$'", text)
+
+
 class Permissions(unittest.TestCase):
     def test_multi_job_workflows_grant_write_only_per_job(self) -> None:
         for path in WORKFLOWS:
