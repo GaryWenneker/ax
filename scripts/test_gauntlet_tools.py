@@ -7,9 +7,12 @@ import importlib.util
 import os
 import re
 import shutil
+import signal
+import socket
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -228,6 +231,156 @@ class NegativeControlTest(unittest.TestCase):
         text = (TOOLS / "gauntlet-macos-dev-ax-path.sh").read_text()
         self.assertTrue(re.search(r'is_macho "\$bin"', text), "the control does not check $bin")
         self.assertTrue(re.search(r'is_macho "\$shim"', text), "the shim is not checked with is_macho")
+
+
+FAKE_AX = """#!{python}
+import http.server, os, sys, threading
+port = int(sys.argv[sys.argv.index("--port") + 1])
+with open(os.environ["FAKE_AX_PID"], "w") as out:
+    out.write(str(os.getpid()))
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        with open(os.environ["FAKE_AX_LOG"], "a") as log:
+            log.write(self.path + "\\n")
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"this checkout")
+    def log_message(self, *args):
+        pass
+server = http.server.HTTPServer(("127.0.0.1", port), Handler)
+threading.Timer(60, server.shutdown).start()
+server.serve_forever()
+"""
+FAKE_NPX = """#!/bin/sh
+echo "$* $AX_WEB_URL" >> "$FAKE_NPX_LOG"
+"""
+FAKE_NODE = """#!/bin/sh
+cat >/dev/null
+"""
+
+
+def free_port():
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+class CaretGauntletServerTest(unittest.TestCase):
+    """gauntlet-md-editor-caret.sh and .ps1 start this checkout's ax web themselves."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        for name, body in (("ax", FAKE_AX.format(python=sys.executable)), ("npx", FAKE_NPX),
+                           ("node", FAKE_NODE)):
+            path = self.bin / name
+            path.write_text(body)
+            path.chmod(0o755)
+        self.pid_file = self.tmp / "ax.pid"
+        self.requests = self.tmp / "requests.log"
+        self.npx_log = self.tmp / "npx.log"
+        self.addCleanup(self.stop_fake_ax)
+
+    def stop_fake_ax(self):
+        if self.pid_file.exists():
+            try:
+                os.kill(int(self.pid_file.read_text()), signal.SIGKILL)
+            except (ProcessLookupError, ValueError):
+                pass
+
+    def env(self, **extra):
+        env = {"PATH": f"{self.bin}:/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(self.tmp),
+               "TMPDIR": str(self.tmp), "AX_BIN": str(self.bin / "ax"),
+               "FAKE_AX_PID": str(self.pid_file), "FAKE_AX_LOG": str(self.requests),
+               "FAKE_NPX_LOG": str(self.npx_log)}
+        env.update(extra)
+        return env
+
+    def run_script(self, command, env):
+        # Output goes to files, not pipes: a server left running would hold a pipe open
+        # and make the run look as if it waited for the server to stop.
+        out, err = self.tmp / "stdout", self.tmp / "stderr"
+        with out.open("w") as stdout, err.open("w") as stderr:
+            done = subprocess.run(command, env=env, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
+                                  timeout=120)
+        return subprocess.CompletedProcess(command, done.returncode, out.read_text(), err.read_text())
+
+    def run_sh(self, **extra):
+        return self.run_script(["/bin/bash", str(TOOLS / "gauntlet-md-editor-caret.sh")], self.env(**extra))
+
+    def run_ps1(self, **extra):
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("pwsh is not installed")
+        env = self.env(**extra)
+        env["PATH"] = f"{env['PATH']}:{Path(pwsh).parent}"
+        return self.run_script([pwsh, "-NoProfile", "-File", str(TOOLS / "gauntlet-md-editor-caret.ps1")], env)
+
+    def assert_used_and_stopped_own_server(self, run):
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertTrue(self.pid_file.exists(), "the checkout's ax web was not started")
+        pid = int(self.pid_file.read_text())
+        port = None
+        for line in self.npx_log.read_text().splitlines():
+            if line.startswith("playwright"):
+                port = int(line.rsplit(":", 1)[1])
+        self.assertIsNotNone(port, self.npx_log.read_text())
+        with socket.socket() as sock:
+            self.assertNotEqual(sock.connect_ex(("127.0.0.1", port)), 0, "ax web is still running")
+        for _ in range(50):
+            if not alive(pid):
+                break
+            time.sleep(0.1)
+        self.assertFalse(alive(pid), "ax web is still running")
+
+    def test_sh_starts_and_stops_its_own_server(self):
+        self.assert_used_and_stopped_own_server(self.run_sh())
+
+    def test_ps1_starts_and_stops_its_own_server(self):
+        self.assert_used_and_stopped_own_server(self.run_ps1())
+
+    def foreign_server(self):
+        port = free_port()
+        server = subprocess.Popen([sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=self.tmp)
+        self.addCleanup(server.wait)
+        self.addCleanup(server.kill)
+        for _ in range(100):
+            with socket.socket() as sock:
+                if sock.connect_ex(("127.0.0.1", port)) == 0:
+                    return port
+            time.sleep(0.05)
+        self.fail("the foreign server did not start")
+
+    def test_sh_does_not_test_a_server_it_did_not_start(self):
+        run = self.run_sh(AX_WEB_PORT=str(self.foreign_server()))
+        self.assertNotEqual(run.returncode, 0, run.stdout)
+        self.assertIn("already answers", run.stderr)
+        self.assertFalse(self.pid_file.exists(), "ax web was started on a busy port")
+        self.assertNotIn("playwright", self.npx_log.read_text() if self.npx_log.exists() else "")
+
+    def test_ps1_does_not_test_a_server_it_did_not_start(self):
+        run = self.run_ps1(AX_WEB_PORT=str(self.foreign_server()))
+        self.assertNotEqual(run.returncode, 0, run.stdout)
+        self.assertIn("already answers", run.stdout + run.stderr)
+        self.assertFalse(self.pid_file.exists(), "ax web was started on a busy port")
+        self.assertNotIn("playwright", self.npx_log.read_text() if self.npx_log.exists() else "")
+
+    def test_ps1_stops_polling_once_the_server_answers(self):
+        run = self.run_ps1(AX_WEB_PORT=str(free_port()))
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        polls = self.requests.read_text().splitlines()
+        self.assertLessEqual(len(polls), 2, polls)
 
 
 if __name__ == "__main__":

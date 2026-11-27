@@ -1,29 +1,45 @@
 #!/usr/bin/env bash
 # Markdown editor caret/overlay metric gauntlet (Command Center).
+#
+# Tests this checkout's build: it starts AX_BIN (default target-dev/debug/ax) as
+# `ax web` on a free port, or on AX_WEB_PORT when set, and stops it on exit. A
+# port that already answers is an error, so an installed ax web is never tested
+# by mistake (and `ax web` would stop whatever listens there).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 WEB_UI="$ROOT/crates/ax-web/web-ui"
-PORT="${AX_WEB_PORT:-7070}"
+AX_BIN="${AX_BIN:-$ROOT/target-dev/debug/ax}"
+[[ -x "$AX_BIN" ]] || { echo "FAIL: $AX_BIN is missing; build it with cargo build -p ax-cli" >&2; exit 1; }
+PORT="${AX_WEB_PORT:-$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')}"
 URL="http://127.0.0.1:${PORT}"
 export AX_WEB_URL="$URL"
 
 echo "== tsc =="
 (cd "$WEB_UI" && npx tsc --noEmit)
 
-echo "== ensure ax web =="
-STARTED_WEB=0
-if ! curl -fsS -m 2 "$URL/" >/dev/null; then
-  echo "starting ax web on ${PORT}"
-  (cd "$ROOT" && ax web --port "$PORT" >/tmp/ax-web-caret-gauntlet.log 2>&1) &
-  STARTED_WEB=1
-  for _ in $(seq 1 40); do
-    if curl -fsS -m 1 "$URL/" >/dev/null 2>&1; then break; fi
-    sleep 0.5
-  done
+echo "== start this checkout's ax web =="
+if curl -fsS -m 2 "$URL/" >/dev/null 2>&1; then
+  echo "FAIL: something already answers on $URL; free the port or set AX_WEB_PORT" >&2
+  exit 1
 fi
-curl -fsS -m 3 "$URL/" >/dev/null
+WEB_LOG="$(mktemp "${TMPDIR:-/tmp}/ax-web-caret-gauntlet.XXXXXX")"
+"$AX_BIN" web "$ROOT" --port "$PORT" >"$WEB_LOG" 2>&1 &
+WEB_PID=$!
+stop_web() {
+  kill "$WEB_PID" 2>/dev/null || true
+  wait "$WEB_PID" 2>/dev/null || true
+  rm -f "$WEB_LOG"
+}
+trap stop_web EXIT
+echo "started $AX_BIN web on ${PORT} (pid $WEB_PID)"
+for _ in $(seq 1 40); do
+  kill -0 "$WEB_PID" 2>/dev/null || { cat "$WEB_LOG" >&2; echo "FAIL: ax web exited" >&2; exit 1; }
+  if curl -fsS -m 1 "$URL/" >/dev/null 2>&1; then break; fi
+  sleep 0.5
+done
+curl -fsS -m 3 "$URL/" >/dev/null || { cat "$WEB_LOG" >&2; echo "FAIL: ax web did not answer on $URL" >&2; exit 1; }
 
 echo "== playwright md-editor-caret (desktop-chrome) =="
 (cd "$WEB_UI" && npx playwright test e2e/md-editor-caret.spec.ts --project=desktop-chrome)
@@ -60,9 +76,5 @@ if (metrics.code === metrics.ta) {
 console.log('mutant killed: overlay', metrics.code, 'textarea', metrics.ta);
 EOF
 )
-
-if [ "$STARTED_WEB" = "1" ]; then
-  echo "(left ax web running on ${PORT})"
-fi
 
 echo "gauntlet-md-editor-caret: ok"
