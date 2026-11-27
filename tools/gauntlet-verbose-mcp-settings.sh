@@ -6,11 +6,6 @@ cd "$ROOT"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-# Negative control: this script must fail when the Logging switch still exists.
-if [[ "${GAUNTLET_NEGATIVE:-}" == "1" ]]; then
-  echo "== negative control (expect fail) =="
-fi
-
 echo "== S1 Settings has Verbose MCP logging toggle =="
 grep -q 'title="Verbose MCP logging"' crates/ax-web/web-ui/src/pages/Settings.tsx \
   || fail "Settings.tsx missing SettingRow title Verbose MCP logging"
