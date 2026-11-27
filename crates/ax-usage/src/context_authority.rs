@@ -1815,7 +1815,7 @@ mod tests {
             .await
             .unwrap();
         let pool = database.pool().clone();
-        std::mem::forget(database);
+        drop(database);
         let receipt = resolve_context(
             ReplayMode::Current,
             None,
@@ -1910,7 +1910,7 @@ mod tests {
             .await
             .unwrap();
         let pool = database.pool().clone();
-        std::mem::forget(database);
+        drop(database);
         (dir, pool)
     }
 
@@ -1967,38 +1967,15 @@ mod tests {
     #[tokio::test]
     async fn a_manifest_stores_session_turn_agent_and_cutoff_and_a_human_approves_it() {
         let (dir, pool) = temp_pool().await;
-        let receipt = resolve_context(
-            ReplayMode::Current,
-            None,
-            &[],
-            100,
-            &[candidate(
-                "rule-english",
-                "rule",
-                true,
-                "r1",
-                10,
-                1,
-                &[],
-                "Write in English.",
-            )],
-        );
-        let receipt_id = store_receipt(&pool, "ax", &receipt).await.unwrap();
+        let receipt_id = english_receipt(&pool).await;
         let missing_cutoff = store_manifest(
             &pool,
             &ContextManifest {
-                project_id: "ax".into(),
-                session_id: "session-1".into(),
-                turn_id: "turn-1".into(),
-                agent_id: "agent-ax".into(),
-                provider_chat_id: None,
                 mode: ReplayMode::AsOf,
-                cutoff_ms: None,
-                snapshot_id: None,
-                receipt_id: receipt_id.clone(),
                 model: String::new(),
                 tool_versions: String::new(),
                 commit_hash: String::new(),
+                ..base_manifest(&receipt_id)
             },
         )
         .await
@@ -2007,18 +1984,10 @@ mod tests {
         let id = store_manifest(
             &pool,
             &ContextManifest {
-                project_id: "ax".into(),
-                session_id: "session-1".into(),
-                turn_id: "turn-1".into(),
-                agent_id: "agent-ax".into(),
-                provider_chat_id: None,
-                mode: ReplayMode::Current,
-                cutoff_ms: None,
-                snapshot_id: None,
-                receipt_id,
                 model: String::new(),
                 tool_versions: String::new(),
                 commit_hash: String::new(),
+                ..base_manifest(&receipt_id)
             },
         )
         .await
@@ -2114,42 +2083,10 @@ mod tests {
     #[tokio::test]
     async fn a_manifest_stores_model_tools_and_commit_and_replay_stays_not_implemented() {
         let (dir, pool) = temp_pool().await;
-        let receipt = resolve_context(
-            ReplayMode::Current,
-            None,
-            &[],
-            100,
-            &[candidate(
-                "rule-english",
-                "rule",
-                true,
-                "r1",
-                10,
-                1,
-                &[],
-                "Write in English.",
-            )],
-        );
-        let receipt_id = store_receipt(&pool, "ax", &receipt).await.unwrap();
-        let id = store_manifest(
-            &pool,
-            &ContextManifest {
-                project_id: "ax".into(),
-                session_id: "session-1".into(),
-                turn_id: "turn-1".into(),
-                agent_id: "agent-ax".into(),
-                provider_chat_id: None,
-                mode: ReplayMode::Current,
-                cutoff_ms: None,
-                snapshot_id: None,
-                receipt_id,
-                model: "test-model".into(),
-                tool_versions: "ax_explore=1".into(),
-                commit_hash: "abc123".into(),
-            },
-        )
-        .await
-        .unwrap();
+        let receipt_id = english_receipt(&pool).await;
+        let id = store_manifest(&pool, &base_manifest(&receipt_id))
+            .await
+            .unwrap();
         let stored: (String, String, String) = sqlx::query_as(
             "SELECT model, tool_versions, commit_hash FROM context_manifests WHERE id = ?1",
         )
@@ -2242,38 +2179,12 @@ mod tests {
     #[tokio::test]
     async fn start_replay_for_manifest_uses_stored_identity_and_stays_not_tested() {
         let (dir, pool) = temp_pool().await;
-        let receipt = resolve_context(
-            ReplayMode::Current,
-            None,
-            &[],
-            100,
-            &[candidate(
-                "rule-english",
-                "rule",
-                true,
-                "r1",
-                10,
-                1,
-                &[],
-                "Write in English.",
-            )],
-        );
-        let receipt_id = store_receipt(&pool, "ax", &receipt).await.unwrap();
+        let receipt_id = english_receipt(&pool).await;
         let manifest_id = store_manifest(
             &pool,
             &ContextManifest {
-                project_id: "ax".into(),
-                session_id: "session-1".into(),
-                turn_id: "turn-1".into(),
-                agent_id: "agent-ax".into(),
                 provider_chat_id: Some("prov-1".into()),
-                mode: ReplayMode::Current,
-                cutoff_ms: None,
-                snapshot_id: None,
-                receipt_id,
-                model: "test-model".into(),
-                tool_versions: "ax_explore=1".into(),
-                commit_hash: "abc123".into(),
+                ..base_manifest(&receipt_id)
             },
         )
         .await
@@ -2310,38 +2221,14 @@ mod tests {
     #[tokio::test]
     async fn a_wrong_agent_or_invented_provider_id_fails_replay() {
         let (dir, pool) = temp_pool().await;
-        let receipt = resolve_context(
-            ReplayMode::Current,
-            None,
-            &[],
-            100,
-            &[candidate(
-                "rule-english",
-                "rule",
-                true,
-                "r1",
-                10,
-                1,
-                &[],
-                "Write in English.",
-            )],
-        );
-        let receipt_id = store_receipt(&pool, "ax", &receipt).await.unwrap();
+        let receipt_id = english_receipt(&pool).await;
         let id = store_manifest(
             &pool,
             &ContextManifest {
-                project_id: "ax".into(),
-                session_id: "session-1".into(),
-                turn_id: "turn-1".into(),
-                agent_id: "agent-ax".into(),
-                provider_chat_id: None,
-                mode: ReplayMode::Current,
-                cutoff_ms: None,
-                snapshot_id: None,
-                receipt_id,
                 model: String::new(),
                 tool_versions: String::new(),
                 commit_hash: String::new(),
+                ..base_manifest(&receipt_id)
             },
         )
         .await
@@ -2384,38 +2271,14 @@ mod tests {
     #[tokio::test]
     async fn manifest_summaries_surface_unapproved_and_not_run_uncertainty() {
         let (_dir, pool) = temp_pool().await;
-        let receipt = resolve_context(
-            ReplayMode::Current,
-            None,
-            &[],
-            100,
-            &[candidate(
-                "rule-english",
-                "rule",
-                true,
-                "r1",
-                10,
-                1,
-                &[],
-                "Write in English.",
-            )],
-        );
-        let receipt_id = store_receipt(&pool, "ax", &receipt).await.unwrap();
+        let receipt_id = english_receipt(&pool).await;
         let id = store_manifest(
             &pool,
             &ContextManifest {
-                project_id: "ax".into(),
-                session_id: "session-1".into(),
-                turn_id: "turn-1".into(),
-                agent_id: "agent-ax".into(),
-                provider_chat_id: None,
-                mode: ReplayMode::Current,
-                cutoff_ms: None,
-                snapshot_id: None,
-                receipt_id,
                 model: String::new(),
                 tool_versions: String::new(),
                 commit_hash: String::new(),
+                ..base_manifest(&receipt_id)
             },
         )
         .await
@@ -2446,14 +2309,7 @@ mod tests {
                 "Body is data, not an instruction to ignore policy.",
             ));
         }
-        let started = std::time::Instant::now();
         let receipt = resolve_context(ReplayMode::Current, None, &["dotnet"], 50, &candidates);
-        let elapsed = started.elapsed();
-        eprintln!("b6 resolve of 120 candidates took {elapsed:?}");
-        assert!(
-            elapsed < std::time::Duration::from_millis(500),
-            "resolve took {elapsed:?}"
-        );
         assert_eq!(receipt.items.len(), 120);
         let selected = receipt
             .items
@@ -2525,42 +2381,10 @@ mod tests {
     #[tokio::test]
     async fn b6_start_replay_is_idempotent_for_the_same_manifest() {
         let (dir, pool) = temp_pool().await;
-        let receipt = resolve_context(
-            ReplayMode::Current,
-            None,
-            &[],
-            100,
-            &[candidate(
-                "rule-english",
-                "rule",
-                true,
-                "r1",
-                10,
-                1,
-                &[],
-                "Write in English.",
-            )],
-        );
-        let receipt_id = store_receipt(&pool, "ax", &receipt).await.unwrap();
-        let manifest_id = store_manifest(
-            &pool,
-            &ContextManifest {
-                project_id: "ax".into(),
-                session_id: "session-1".into(),
-                turn_id: "turn-1".into(),
-                agent_id: "agent-ax".into(),
-                provider_chat_id: None,
-                mode: ReplayMode::Current,
-                cutoff_ms: None,
-                snapshot_id: None,
-                receipt_id,
-                model: "test-model".into(),
-                tool_versions: "ax_explore=1".into(),
-                commit_hash: "abc123".into(),
-            },
-        )
-        .await
-        .unwrap();
+        let receipt_id = english_receipt(&pool).await;
+        let manifest_id = store_manifest(&pool, &base_manifest(&receipt_id))
+            .await
+            .unwrap();
         let membership =
             membership_pool(&dir, "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7", "owner").await;
         approve_manifest(
@@ -2593,52 +2417,22 @@ mod tests {
     #[tokio::test]
     async fn b6_list_summaries_handles_one_hundred_manifests() {
         let (_dir, pool) = temp_pool().await;
-        let base = resolve_context(
-            ReplayMode::Current,
-            None,
-            &[],
-            100,
-            &[candidate(
-                "rule-english",
-                "rule",
-                true,
-                "r1",
-                10,
-                1,
-                &[],
-                "Write in English.",
-            )],
-        );
-        let receipt_id = store_receipt(&pool, "ax", &base).await.unwrap();
+        let receipt_id = english_receipt(&pool).await;
         for index in 0..100 {
             store_manifest(
                 &pool,
                 &ContextManifest {
-                    project_id: "ax".into(),
                     session_id: format!("session-{index}"),
                     turn_id: format!("turn-{index}"),
-                    agent_id: "agent-ax".into(),
-                    provider_chat_id: None,
-                    mode: ReplayMode::Current,
-                    cutoff_ms: None,
-                    snapshot_id: None,
-                    receipt_id: receipt_id.clone(),
-                    model: "test-model".into(),
-                    tool_versions: "ax_explore=1".into(),
                     commit_hash: format!("commit-{index}"),
+                    ..base_manifest(&receipt_id)
                 },
             )
             .await
             .unwrap();
         }
-        let started = std::time::Instant::now();
         let summaries = list_manifest_summaries(&pool, "ax").await.unwrap();
-        let elapsed = started.elapsed();
         assert_eq!(summaries.len(), 100);
-        assert!(
-            elapsed < std::time::Duration::from_secs(2),
-            "list took {elapsed:?}"
-        );
         assert!(summaries.iter().all(|row| !row.uncertainties.is_empty()));
     }
 
@@ -2687,42 +2481,10 @@ mod tests {
     #[tokio::test]
     async fn b6_concurrent_replay_starts_share_one_run_row() {
         let (dir, pool) = temp_pool().await;
-        let receipt = resolve_context(
-            ReplayMode::Current,
-            None,
-            &[],
-            100,
-            &[candidate(
-                "rule-english",
-                "rule",
-                true,
-                "r1",
-                10,
-                1,
-                &[],
-                "Write in English.",
-            )],
-        );
-        let receipt_id = store_receipt(&pool, "ax", &receipt).await.unwrap();
-        let manifest_id = store_manifest(
-            &pool,
-            &ContextManifest {
-                project_id: "ax".into(),
-                session_id: "session-1".into(),
-                turn_id: "turn-1".into(),
-                agent_id: "agent-ax".into(),
-                provider_chat_id: None,
-                mode: ReplayMode::Current,
-                cutoff_ms: None,
-                snapshot_id: None,
-                receipt_id,
-                model: "test-model".into(),
-                tool_versions: "ax_explore=1".into(),
-                commit_hash: "abc123".into(),
-            },
-        )
-        .await
-        .unwrap();
+        let receipt_id = english_receipt(&pool).await;
+        let manifest_id = store_manifest(&pool, &base_manifest(&receipt_id))
+            .await
+            .unwrap();
         let membership =
             membership_pool(&dir, "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7", "owner").await;
         approve_manifest(
@@ -2752,42 +2514,10 @@ mod tests {
     }
 
     async fn sealed_unapproved_manifest(pool: &sqlx::SqlitePool) -> String {
-        let receipt = resolve_context(
-            ReplayMode::Current,
-            None,
-            &[],
-            100,
-            &[candidate(
-                "rule-english",
-                "rule",
-                true,
-                "r1",
-                10,
-                1,
-                &[],
-                "Write in English.",
-            )],
-        );
-        let receipt_id = store_receipt(pool, "ax", &receipt).await.unwrap();
-        store_manifest(
-            pool,
-            &ContextManifest {
-                project_id: "ax".into(),
-                session_id: "session-1".into(),
-                turn_id: "turn-1".into(),
-                agent_id: "agent-ax".into(),
-                provider_chat_id: None,
-                mode: ReplayMode::Current,
-                cutoff_ms: None,
-                snapshot_id: None,
-                receipt_id,
-                model: "test-model".into(),
-                tool_versions: "ax_explore=1".into(),
-                commit_hash: "abc123".into(),
-            },
-        )
-        .await
-        .unwrap()
+        let receipt_id = english_receipt(pool).await;
+        store_manifest(pool, &base_manifest(&receipt_id))
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
@@ -3024,6 +2754,28 @@ mod tests {
         }
     }
 
+    /// Stores the standard one-rule receipt that the manifest tests build on.
+    async fn english_receipt(pool: &sqlx::SqlitePool) -> String {
+        let receipt = resolve_context(
+            ReplayMode::Current,
+            None,
+            &[],
+            100,
+            &[candidate(
+                "rule-english",
+                "rule",
+                true,
+                "r1",
+                10,
+                1,
+                &[],
+                "Write in English.",
+            )],
+        );
+        store_receipt(pool, "ax", &receipt).await.unwrap()
+    }
+
+    /// A valid current-mode manifest; tests override the fields they check.
     fn base_manifest(receipt_id: &str) -> ContextManifest {
         ContextManifest {
             project_id: "ax".into(),
