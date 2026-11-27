@@ -3,6 +3,7 @@ import { accessJson } from '../lib/accessApi';
 import { memoryRowAge } from '../memoryHeadline';
 import { useNow } from '../lib/useNow';
 import { replicationErrorSlot, type ReplicationErrorSlot } from '../lib/replicationErrors';
+import { savedAdvertise } from '../lib/replicationAdvertise';
 import ModalShell from './ModalShell';
 import Codicon from './Codicon';
 import ServiceStatus, { type ServiceState } from './ServiceStatus';
@@ -55,8 +56,9 @@ export default function ReplicationSetup({ locked, onChanged }: { locked: boolea
       setRole(saved.config.role); setCluster(saved.config.cluster_id);
       setProject(saved.config.projects[0]?.id ?? ''); setPort(String(saved.port));
       setPrimary(saved.config.primary_url ?? '');
-      const endpoint = saved.advertise ? new URL(saved.advertise) : null;
-      if (endpoint?.protocol === 'http:') { setIp(endpoint.hostname.replace(/^\[|\]$/g, '')); setAdvertise(''); } else setAdvertise(saved.advertise ?? '');
+      const endpoint = savedAdvertise(saved.advertise);
+      if (endpoint.ip !== null) setIp(endpoint.ip);
+      setAdvertise(endpoint.advertise);
     }
   }, []);
   useEffect(() => {
