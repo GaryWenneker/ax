@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use axum::{
     extract::{Query, State},
+    http::HeaderMap,
     response::sse::{Event, KeepAlive, Sse},
     routing::get,
     Json, Router,
@@ -77,8 +78,18 @@ fn recent_project_paths() -> Vec<PathBuf> {
         .collect()
 }
 
-fn resolve_follow_root(hub_root: &Path) -> (PathBuf, Option<String>) {
+/// The project whose log to follow. Following another recent project is only
+/// for the local owner's own writable Command Center (`allow_fallback`); a
+/// read-only (share) viewer or any other caller sees only this project's log.
+fn resolve_follow_root(hub_root: &Path, allow_fallback: bool) -> (PathBuf, Option<String>) {
+    if !allow_fallback {
+        return (hub_root.to_path_buf(), None);
+    }
     pick_trace_project_root(hub_root, &recent_project_paths())
+}
+
+fn fallback_allowed(hub: &WebHub, headers: &HeaderMap) -> bool {
+    !hub.readonly && crate::local_owner::browser_serves(headers, hub.port)
 }
 
 pub fn mcp_verbose_log_path(project_root: &Path) -> PathBuf {
@@ -128,9 +139,12 @@ async fn hub_project(hub: &WebHub) -> PathBuf {
     ws.project_root.clone()
 }
 
-async fn handle_mcp_trace_path(State(hub): State<WebHub>) -> Json<serde_json::Value> {
+async fn handle_mcp_trace_path(
+    State(hub): State<WebHub>,
+    headers: HeaderMap,
+) -> Json<serde_json::Value> {
     let hub_root = hub_project(&hub).await;
-    let (follow, fallback) = resolve_follow_root(&hub_root);
+    let (follow, fallback) = resolve_follow_root(&hub_root, fallback_allowed(&hub, &headers));
     Json(project_meta(&hub_root, &follow, fallback.as_deref()))
 }
 
@@ -141,10 +155,11 @@ struct ChunkQuery {
 
 async fn handle_mcp_trace_chunk(
     State(hub): State<WebHub>,
+    headers: HeaderMap,
     Query(q): Query<ChunkQuery>,
 ) -> Json<serde_json::Value> {
     let hub_root = hub_project(&hub).await;
-    let (root, _fallback) = resolve_follow_root(&hub_root);
+    let (root, _fallback) = resolve_follow_root(&hub_root, fallback_allowed(&hub, &headers));
     let before = match NaiveDate::parse_from_str(q.day.trim(), "%Y-%m-%d") {
         Ok(d) => d,
         Err(_) => {
@@ -182,7 +197,9 @@ async fn handle_mcp_trace_chunk(
 
 async fn handle_mcp_trace_events(
     State(hub): State<WebHub>,
+    headers: HeaderMap,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let allow_fallback = fallback_allowed(&hub, &headers);
     let stream = async_stream::stream! {
         let mut offset: u64 = 0;
         let mut pending = String::new();
@@ -196,7 +213,7 @@ async fn handle_mcp_trace_events(
             let (path, root, hub_root, fallback) = {
                 let ws = hub.read().await;
                 let hub_root = ws.project_root.clone();
-                let (follow, fallback) = resolve_follow_root(&hub_root);
+                let (follow, fallback) = resolve_follow_root(&hub_root, allow_fallback);
                 (mcp_verbose_log_path(&follow), follow, hub_root, fallback)
             };
             let path_key = path.display().to_string();

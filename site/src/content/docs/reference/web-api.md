@@ -155,7 +155,7 @@ The `/api/ship/sonar/*` endpoints (discover, install, start, stop, bootstrap, se
 | POST | `/api/usage/pricing/sync` | Sync prices now |
 | GET | `/api/usage/mcp-trace/events` | Live MCP verbose stream (SSE) |
 | GET | `/api/usage/mcp-trace/chunk` | Older log lines |
-| GET | `/api/usage/mcp-trace/path` | Path of today's log file |
+| GET | `/api/usage/mcp-trace/path` | Path of today's log file. When this project has no verbose log, the local owner's own writable Command Center follows the most recently written log of another recent project; read-only (share) viewers and other callers only ever see this project's log |
 | GET | `/api/usage/mcp-quality` | Quality metrics (Q slide-out) |
 | GET | `/api/usage/mcp-quality/events` | Quality updates (SSE) |
 | POST | `/api/usage/mcp-audit` | Run the audit (`ax mcp audit`). `session` is a session id or one of this project's agent transcript files; other paths get 400. Refused in read-only mode |
