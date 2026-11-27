@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::Duration;
 
 use ax_agent::chat::chunk_text;
 use ax_agent::config::{load_agents_config, save_agents_config, AgentsConfig};
@@ -393,14 +394,16 @@ async fn handle_auth_stream(
         let mut cmd = std::process::Command::new(&spec.program);
         cmd.args(&spec.args);
         apply_env(&mut cmd, &spec.extra_env);
-        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-        match cmd.spawn() {
-            Ok(mut child) => {
-                send(
-                    serde_json::json!({"type":"line","text":"Auth process started — complete login in the opened window or terminal."}),
-                );
-                let status = child.wait();
-                let ok = status.map(|s| s.success()).unwrap_or(false);
+        send(
+            serde_json::json!({"type":"line","text":"Auth process started — complete login in the opened window or terminal."}),
+        );
+        let line_tx = tx.clone();
+        let on_line = move |line: String| {
+            let _ = line_tx.send(serde_json::json!({"type":"line","text": line}).to_string());
+        };
+        match wait_streaming(cmd, AUTH_TIMEOUT, on_line, || tx.is_closed()) {
+            Ok(status) => {
+                let ok = status.success();
                 if ok
                     || ax_agent::profiles::detect_auth_status(&agent_id, &data_dir)
                         == AuthStatus::Authenticated
@@ -416,7 +419,7 @@ async fn handle_auth_stream(
             }
             Err(e) => {
                 send(
-                    serde_json::json!({"type":"line","text": format!("Could not start auth ({e}). Log in manually with the CLI, then click Mark authenticated.")}),
+                    serde_json::json!({"type":"line","text": format!("Auth did not finish ({e}). Log in manually with the CLI, then click Mark authenticated.")}),
                 );
                 send(
                     serde_json::json!({"type":"done","ok":false,"manual":true,"error":e.to_string()}),
@@ -501,7 +504,10 @@ async fn handle_chat_stream(
     let ws = hub.read().await;
     let root = ws.project_root.clone();
     drop(ws);
-    tokio::spawn(async move {
+    // When the browser closes the stream, stop the run: dropping it kills an
+    // external agent process (see `output_with_timeout`).
+    let closed = tx.clone();
+    let run = async move {
         let _ = tx.send(serde_json::json!({"type":"system","text": format!("Agent: {agent} · Profile: {profile_id} · Mode: {mode}")}).to_string());
 
         let explicit_external = explicit_external;
@@ -541,6 +547,12 @@ async fn handle_chat_stream(
             run_builtin_turn(&tx, &prompt, &root).await;
         }
         let _ = tx.send(serde_json::json!({"type":"done","session_id": session_id}).to_string());
+    };
+    tokio::spawn(async move {
+        tokio::select! {
+            () = run => {}
+            () = closed.closed() => {}
+        }
     });
 
     sse_from_channel(rx).into_response()
@@ -627,8 +639,7 @@ async fn run_external_prompt(
     cmd.args(&spec.args);
     apply_env_tokio(&mut cmd, &spec.extra_env);
     cmd.current_dir(project_root);
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let output = cmd.output().await.map_err(|e| e.to_string())?;
+    let output = output_with_timeout(cmd, AGENT_RUN_TIMEOUT).await?;
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr);
         let out = String::from_utf8_lossy(&output.stdout);
@@ -640,6 +651,111 @@ async fn run_external_prompt(
         return Err(msg);
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// How long a sign-in CLI may run before it is stopped.
+const AUTH_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+/// How long one external agent run may take before it is stopped.
+const AGENT_RUN_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
+/// Longest piece of one output line sent to the browser.
+const LINE_CAP: u64 = 8 * 1024;
+
+/// Reads `pipe` line by line (long lines in pieces) until it closes.
+fn spawn_line_reader(
+    pipe: impl std::io::Read + Send + 'static,
+    on_line: std::sync::Arc<dyn Fn(String) + Send + Sync>,
+    done: std::sync::mpsc::Sender<()>,
+) {
+    std::thread::spawn(move || {
+        use std::io::{BufRead, Read};
+        let mut reader = std::io::BufReader::new(pipe);
+        let mut buf = Vec::new();
+        loop {
+            buf.clear();
+            match (&mut reader).take(LINE_CAP).read_until(b'\n', &mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    let text = String::from_utf8_lossy(&buf);
+                    let text = text.trim_end_matches(['\r', '\n']);
+                    if !text.is_empty() {
+                        on_line(text.to_string());
+                    }
+                }
+            }
+        }
+        let _ = done.send(());
+    });
+}
+
+/// Runs `cmd` to the end and returns its exit status. Its stdout and stderr
+/// lines go to `on_line` as they arrive, so a chatty child never blocks on a
+/// full pipe. The child is killed when `timeout` passes or as soon as
+/// `cancelled` returns true.
+fn wait_streaming(
+    mut cmd: std::process::Command,
+    timeout: Duration,
+    on_line: impl Fn(String) + Send + Sync + 'static,
+    cancelled: impl Fn() -> bool,
+) -> Result<std::process::ExitStatus, String> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    let on_line: std::sync::Arc<dyn Fn(String) + Send + Sync> = std::sync::Arc::new(on_line);
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let mut readers = 0;
+    if let Some(out) = child.stdout.take() {
+        spawn_line_reader(out, on_line.clone(), done_tx.clone());
+        readers += 1;
+    }
+    if let Some(err) = child.stderr.take() {
+        spawn_line_reader(err, on_line, done_tx);
+        readers += 1;
+    }
+    let deadline = std::time::Instant::now() + timeout;
+    let outcome = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) => {}
+            Err(e) => break Err(e.to_string()),
+        }
+        if cancelled() {
+            break Err("stopped because the browser closed the stream".to_string());
+        }
+        if std::time::Instant::now() >= deadline {
+            break Err(format!("stopped after {} seconds", timeout.as_secs()));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    if outcome.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    // Let the readers pass on the last lines. A helper the child left
+    // running may keep a pipe open, so this wait is bounded.
+    for _ in 0..readers {
+        if done_rx.recv_timeout(Duration::from_secs(2)).is_err() {
+            break;
+        }
+    }
+    outcome
+}
+
+/// Runs `cmd` and collects its output. The child is killed when `limit`
+/// passes or when the returned future is dropped (the browser went away).
+async fn output_with_timeout(
+    mut cmd: tokio::process::Command,
+    limit: Duration,
+) -> Result<std::process::Output, String> {
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    match tokio::time::timeout(limit, cmd.output()).await {
+        Ok(output) => output.map_err(|e| e.to_string()),
+        Err(_) => Err(format!(
+            "the agent run was stopped after {} seconds",
+            limit.as_secs()
+        )),
+    }
 }
 
 fn sse_from_channel(
@@ -710,4 +826,142 @@ pub fn router_hub(hub: WebHub) -> Router {
             refuse_writes_when_readonly,
         ))
         .with_state(hub)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    fn sh(script: &str) -> std::process::Command {
+        let mut cmd = std::process::Command::new("sh");
+        cmd.arg("-c").arg(script);
+        cmd
+    }
+
+    /// Runs `f` on a thread and fails if it does not finish in time.
+    fn finishes_within<T: Send + 'static>(secs: u64, f: impl FnOnce() -> T + Send + 'static) -> T {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        rx.recv_timeout(Duration::from_secs(secs))
+            .expect("the child process run did not finish")
+    }
+
+    #[test]
+    fn a_chatty_auth_cli_does_not_block_on_a_full_pipe() {
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let seen = lines.clone();
+        // 200 KiB on stdout and stderr, far beyond a pipe buffer.
+        let status = finishes_within(20, move || {
+            wait_streaming(
+                sh("i=0; while [ $i -lt 4000 ]; do echo line-$i-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; echo err-$i-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx >&2; i=$((i+1)); done"),
+                Duration::from_secs(60),
+                move |line| seen.lock().unwrap().push(line),
+                || false,
+            )
+        })
+        .unwrap();
+        assert!(status.success());
+        let lines = lines.lock().unwrap();
+        assert!(lines.iter().any(|l| l.starts_with("line-3999-")));
+        assert!(lines.iter().any(|l| l.starts_with("err-3999-")));
+    }
+
+    #[test]
+    fn a_stuck_auth_cli_is_stopped_at_the_timeout() {
+        let started = std::time::Instant::now();
+        let result = finishes_within(20, || {
+            wait_streaming(sh("sleep 60"), Duration::from_millis(300), |_| {}, || false)
+        });
+        assert!(result.is_err());
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn an_auth_cli_is_stopped_when_the_client_goes_away() {
+        let result = finishes_within(20, || {
+            wait_streaming(sh("sleep 60"), Duration::from_secs(60), |_| {}, || true)
+        });
+        assert!(result.is_err());
+    }
+
+    fn alive(pid: &str) -> bool {
+        std::process::Command::new("kill")
+            .arg("-0")
+            .arg(pid)
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    async fn pid_from(file: &std::path::Path) -> String {
+        for _ in 0..100 {
+            if let Ok(text) = std::fs::read_to_string(file) {
+                if !text.trim().is_empty() {
+                    return text.trim().to_string();
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("the child never wrote its pid");
+    }
+
+    fn sleeper(pid_file: &std::path::Path) -> tokio::process::Command {
+        let mut cmd = tokio::process::Command::new("sh");
+        cmd.arg("-c")
+            .arg(format!("echo $$ > '{}'; exec sleep 60", pid_file.display()));
+        cmd
+    }
+
+    async fn gone(pid: &str) -> bool {
+        for _ in 0..100 {
+            if !alive(pid) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn an_external_agent_run_is_killed_when_it_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("pid");
+        let run = tokio::spawn(output_with_timeout(sleeper(&file), Duration::from_secs(60)));
+        let pid = pid_from(&file).await;
+        run.abort();
+        let _ = run.await;
+        let stopped = gone(&pid).await;
+        if !stopped {
+            let _ = std::process::Command::new("kill").arg(&pid).status();
+        }
+        assert!(
+            stopped,
+            "the agent process kept running after its run was dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_external_agent_run_is_killed_at_the_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("pid");
+        let run = tokio::spawn(output_with_timeout(
+            sleeper(&file),
+            Duration::from_millis(500),
+        ));
+        let pid = pid_from(&file).await;
+        let result = tokio::time::timeout(Duration::from_secs(10), run).await;
+        let stopped = gone(&pid).await;
+        if !stopped {
+            let _ = std::process::Command::new("kill").arg(&pid).status();
+        }
+        assert!(
+            matches!(result, Ok(Ok(Err(_)))),
+            "the run did not end with an error at the timeout"
+        );
+        assert!(stopped);
+    }
 }

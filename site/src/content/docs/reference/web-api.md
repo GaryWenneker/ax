@@ -184,12 +184,12 @@ The `/api/ship/sonar/*` endpoints (discover, install, start, stop, bootstrap, se
 | GET, POST | `/api/agent/profiles` | List / create agent profiles |
 | PUT | `/api/agent/profiles/active` | Set the active profile |
 | PUT, DELETE | `/api/agent/profiles/{agent}/{id}` | Edit / delete a profile |
-| POST | `/api/agent/profiles/{agent}/{id}/auth/stream` | Sign a profile in (SSE) |
+| POST | `/api/agent/profiles/{agent}/{id}/auth/stream` | Sign a profile in (SSE with the CLI's output lines; stopped after 15 minutes or when the stream closes) |
 | POST | `/api/agent/profiles/{agent}/{id}/authenticated` | Mark a profile as signed in |
 
 `/api/agent/chat/stream` and `/api/agent/pty/ws` belonged to the removed Agent page. The `config` and `profiles` endpoints still exist, but no Command Center screen uses them anymore.
 
-In read-only mode every `/api/agent` request other than `GET` and `HEAD` returns 403. `/api/agent/chat/stream` starts an agent with tool access in the project, so like the terminal socket it answers only the local browser (a loopback peer on the loopback address); other callers get 403.
+In read-only mode every `/api/agent` request other than `GET` and `HEAD` returns 403. `/api/agent/chat/stream` starts an agent with tool access in the project, so like the terminal socket it answers only the local browser (a loopback peer on the loopback address); other callers get 403. An external agent run is stopped after 30 minutes or as soon as the browser closes the stream.
 
 ## Operations and integrations
 
