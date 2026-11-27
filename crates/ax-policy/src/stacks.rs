@@ -297,10 +297,11 @@ pub fn apply(root: &Path, ids: &[String], force: bool) -> Result<ApplyReport, St
             };
             if user_edit && !force {
                 report.skipped_user_edit.push(label);
+                // Keep the hash of what ax wrote. A file ax never wrote gets
+                // no entry, so it keeps counting as the user's own file and
+                // remove() leaves it alone.
                 if let Some(prev) = locked {
                     files.insert(file.rel.to_string(), prev);
-                } else if let Some(disk) = existing_hash {
-                    files.insert(file.rel.to_string(), disk);
                 }
                 continue;
             }
@@ -396,7 +397,13 @@ pub fn status(root: &Path) -> Vec<StackStatus> {
                     .and_then(|dir| fs::read_to_string(dest_for_rel(dir, file.rel)).ok());
                 let disk_hash = disk.as_deref().map(content_hash);
                 let template_hash = content_hash(file.body);
-                if locked.map(|h| h != &template_hash).unwrap_or(true) {
+                // A file with no lock entry that exists is the user's own:
+                // an upgrade leaves it alone, so it does not count.
+                let outdated = match locked {
+                    Some(h) => h != &template_hash,
+                    None => disk_hash.is_none(),
+                };
+                if outdated {
                     upgrade = true;
                 }
                 if (disk_hash.as_ref() != locked
@@ -771,6 +778,35 @@ mod tests {
             .iter()
             .any(|s| s.contains("php-review")));
         assert_eq!(fs::read_to_string(&skill).unwrap(), "local change\n");
+    }
+
+    #[test]
+    fn a_file_the_user_had_before_apply_survives_upgrade_and_remove() {
+        let dir = tempdir().unwrap();
+        let skill = dir.path().join(".agents/skills/react-review/SKILL.md");
+        fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        fs::write(&skill, "my own review\n").unwrap();
+
+        let first = apply(dir.path(), &["react".into()], false).unwrap();
+        assert!(first
+            .skipped_user_edit
+            .iter()
+            .any(|s| s.contains("react-review")));
+        let second = upgrade(dir.path()).unwrap();
+        assert!(second
+            .skipped_user_edit
+            .iter()
+            .any(|s| s.contains("react-review")));
+        assert_eq!(fs::read_to_string(&skill).unwrap(), "my own review\n");
+        let react = status(dir.path())
+            .into_iter()
+            .find(|s| s.id == "react")
+            .unwrap();
+        assert!(!react.upgrade_available);
+
+        let removed = remove(dir.path(), "react").unwrap();
+        assert!(!removed.iter().any(|r| r.contains("react-review")));
+        assert_eq!(fs::read_to_string(&skill).unwrap(), "my own review\n");
     }
 
     const DOTNET_REVIEW_REL: &str = "skills/dotnet-code-review/SKILL.md";
