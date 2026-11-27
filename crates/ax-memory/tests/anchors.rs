@@ -248,3 +248,40 @@ async fn reanchor_closes_a_removed_symbol_whose_candidates_fill_a_page() {
     assert_eq!(anchors_of(pool, "m2").await[0].0, "zz.rs::db_err2");
     db.close().await;
 }
+
+#[tokio::test]
+async fn reanchor_skips_a_new_key_shared_by_an_old_key_past_the_page() {
+    let (_dir, db) = open_db().await;
+    let pool = db.pool();
+    // Two removed keys share one body and one rename target. The second one sorts
+    // after a page full of other candidates, so it is not in the first page.
+    for (key, memory) in [("a.rs::shared", "m1"), ("z.rs::shared", "m2")] {
+        insert_node(pool, key, "shared", key).await;
+        record(pool, key, "shared\nbody", key, 10).await;
+        anchor_memory(pool, memory, key, 1).await.unwrap();
+        delete_node(pool, key).await;
+    }
+    insert_node(pool, "n.rs::shared", "shared", "n.rs").await;
+    record(pool, "n.rs::shared", "shared\nbody", "n.rs", 20).await;
+    // Filler: an old key between them with more candidates than one page holds.
+    insert_node(pool, "m.rs::trivial", "trivial", "m.rs").await;
+    record(pool, "m.rs::trivial", "{}", "m.rs", 10).await;
+    anchor_memory(pool, "m3", "m.rs::trivial", 1).await.unwrap();
+    delete_node(pool, "m.rs::trivial").await;
+    for i in 0..520 {
+        let key = format!("p{i:04}.rs::trivial");
+        insert_node(pool, &key, "trivial", &key).await;
+        record(pool, &key, "{}", &key, 20).await;
+    }
+
+    let mut moved = 0;
+    for _ in 0..3 {
+        moved += reanchor_renames(pool).await.unwrap();
+    }
+    assert_eq!(moved, 0);
+    assert_eq!(anchors_of(pool, "m1").await[0].0, "a.rs::shared");
+    assert_eq!(anchors_of(pool, "m2").await[0].0, "z.rs::shared");
+    assert_eq!(open_versions(pool, "a.rs::shared").await, 0);
+    assert_eq!(open_versions(pool, "z.rs::shared").await, 0);
+    db.close().await;
+}

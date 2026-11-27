@@ -143,14 +143,31 @@ const RENAME_PAGE: usize = 500;
 /// - the new key is in `nodes`, has the same kind and live body hash, and its first
 ///   version is not older than the old key's live version (it appeared afterwards);
 /// - the match is unique both ways: one candidate for the old key, one old key for
-///   the new key. Same-signature symbols elsewhere make the pair ambiguous; those
-///   anchors are left alone and later flagged as orphans.
+///   the new key across the whole table, not just the page read in this pass.
+///   Same-signature symbols elsewhere make the pair ambiguous; those anchors are
+///   left alone and later flagged as orphans.
 ///
 /// The old key's open version is closed whether or not the move went ahead, so a
 /// removed symbol leaves the join after one pass.
 pub async fn reanchor_renames(pool: &SqlitePool) -> Result<usize, AxError> {
-    let pairs: Vec<(String, String)> = sqlx::query_as(
-        "SELECT a.node_key, b.node_key
+    // `olds` counts every removed key that matches the new key, over the whole table
+    // and not only this page. A removed key closed by an earlier pass still counts when
+    // it was open after the new key appeared and kept its anchors (it was ambiguous), so
+    // a later pass cannot treat the new key as unique once its rival has been closed.
+    let pairs: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT a.node_key, b.node_key,
+                (SELECT COUNT(DISTINCT a2.node_key) FROM graph_node_versions a2
+                 WHERE a2.body_hash = b.body_hash AND a2.kind = b.kind
+                   AND a2.node_key <> b.node_key
+                   AND NOT EXISTS (SELECT 1 FROM nodes WHERE id = a2.node_key)
+                   AND EXISTS (SELECT 1 FROM memory_anchors m WHERE m.node_key = a2.node_key)
+                   AND NOT EXISTS (SELECT 1 FROM graph_node_versions g
+                                   WHERE g.node_key = a2.node_key AND g.valid_from > a2.valid_from)
+                   AND (SELECT MIN(f.valid_from) FROM graph_node_versions f
+                        WHERE f.node_key = b.node_key) >= a2.valid_from
+                   AND (a2.valid_to IS NULL
+                        OR a2.valid_to >= (SELECT MIN(f.valid_from) FROM graph_node_versions f
+                                           WHERE f.node_key = b.node_key))) AS olds
          FROM graph_node_versions a
          JOIN graph_node_versions b
            ON a.body_hash = b.body_hash AND a.kind = b.kind AND a.node_key <> b.node_key
@@ -173,17 +190,15 @@ pub async fn reanchor_renames(pool: &SqlitePool) -> Result<usize, AxError> {
     // it is ambiguous either way and is closed now; otherwise a key with a page full of
     // candidates would fill every pass and block every key after it.
     let truncated_last = (pairs.len() == RENAME_PAGE)
-        .then(|| pairs.last().map(|(old, _)| old.clone()))
+        .then(|| pairs.last().map(|(old, _, _)| old.clone()))
         .flatten()
-        .filter(|last| pairs.iter().filter(|(old, _)| old == last).count() == 1);
-    let mut per_old: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
-    let mut per_new: std::collections::HashMap<&str, usize> = Default::default();
-    for (old_key, new_key) in &pairs {
+        .filter(|last| pairs.iter().filter(|(old, _, _)| old == last).count() == 1);
+    let mut per_old: std::collections::BTreeMap<&str, Vec<(&str, i64)>> = Default::default();
+    for (old_key, new_key, olds) in &pairs {
         if truncated_last.as_deref() == Some(old_key.as_str()) {
             continue;
         }
-        per_old.entry(old_key).or_default().push(new_key);
-        *per_new.entry(new_key).or_default() += 1;
+        per_old.entry(old_key).or_default().push((new_key, *olds));
     }
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -193,7 +208,7 @@ pub async fn reanchor_renames(pool: &SqlitePool) -> Result<usize, AxError> {
     let mut moved = 0usize;
     for (old_key, candidates) in per_old {
         let unique = match candidates.as_slice() {
-            [new_key] if per_new.get(new_key) == Some(&1) => Some(*new_key),
+            [(new_key, 1)] => Some(*new_key),
             _ => None,
         };
         if let Some(new_key) = unique {
