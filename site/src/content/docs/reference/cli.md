@@ -808,7 +808,7 @@ ax diff --base origin/main --json
 
 ### `ax test-impact`
 
-Test-function impact analysis (git diff + TIA graph).
+Test-function impact analysis (git diff + TIA graph). When git cannot diff against the base (an unknown ref, a shallow clone without it, or no git repository), the command fails with the git error instead of reporting zero changed files.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|

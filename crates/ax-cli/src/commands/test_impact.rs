@@ -6,7 +6,8 @@ pub async fn run(base: String, json: bool) -> Result<(), String> {
     let _spinner = SpinnerGuard::new("Test impact analysis...", false);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
 
-    let changed = ax_git::changed_files(&root, &base).unwrap_or_default();
+    let changed = ax_git::changed_files(&root, &base)
+        .map_err(|e| format!("cannot diff against base '{base}': {e}"))?;
     let pool = ax.db_pool();
     let opts = ax_tia::TiaOptions::default().with_depth(5);
     let result = ax_tia::affected_files_from_changes(pool, &changed, &opts)
