@@ -20,14 +20,29 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / "scripts" / "lib" / "restore-on-exit.sh"
 
-# Every script that rewrites tracked source in place to run a mutant.
-MUTATING_SCRIPTS = [
+# Scripts that run their mutants only through scripts/lib/mutate.sh (`ax_mutate`),
+# which guards each file with restore-on-exit.sh before it rewrites it.
+MUTATE_RUNNER_SCRIPTS = [
     "tools/gauntlet-agents-git-share.sh",
     "tools/gauntlet-policy-revisions.sh",
     "tools/gauntlet-policy-zip-package.sh",
     "tools/gauntlet-policy-git-share-indicator.sh",
     "tools/gauntlet-policy-table-oneline.sh",
     "tools/gauntlet-macos-theme.sh",
+    "scripts/v601-mutants.sh",
+    "scripts/picker-ide-mutants.sh",
+    "scripts/vault-folders-mutants.sh",
+    "scripts/policy-graph-mutants.sh",
+    "scripts/wysiwyg-mutants.sh",
+]
+
+# Any in-place rewrite of a file: Python, perl, sed, or a shell redirect onto a variable.
+RAW_REWRITE = re.compile(
+    r"write_text|perl -0?pi\b|perl -i\b|sed -i\b|open\([^)]*[\"']w[\"']\)|>>?\s*\"?\$"
+)
+
+# Every script that rewrites tracked source in place itself to run a mutant.
+MUTATING_SCRIPTS = [
     "scripts/dav-mount-mutants.sh",
     "scripts/ide-panel-mutants.sh",
     "scripts/mutants-per-turn-memory.sh",
@@ -186,6 +201,33 @@ class MutatingScriptsUseTheGuard(unittest.TestCase):
             first_guard = re.search(r"\bax_guard_file\b", text).start()
             first_write = min(m.start() for m in re.finditer(r"write_text|perl -0?pi\b|perl -i\b|open\(p, \"w\"\)|>>\s*\"\$", text))
             self.assertLess(first_guard, first_write, f"{rel}: guard before the first rewrite")
+
+    def test_each_runner_script_mutates_only_through_ax_mutate(self) -> None:
+        for rel in MUTATE_RUNNER_SCRIPTS:
+            text = (ROOT / rel).read_text(encoding="utf-8")
+            self.assertRegex(text, r'(?m)^\s*(source|\.) "[^"]*lib/mutate\.sh"',
+                             f"{rel}: source scripts/lib/mutate.sh")
+            self.assertRegex(text, r"(?m)^\s*ax_mutate\s", f"{rel}: run mutants with ax_mutate")
+            raw = RAW_REWRITE.search(text)
+            self.assertIsNone(raw, f"{rel}: rewrites a file outside ax_mutate ({raw and raw.group(0)!r});"
+                                   " guard it with ax_guard_file and list it in MUTATING_SCRIPTS")
+
+    def test_every_script_that_sources_mutate_sh_is_checked(self) -> None:
+        sourcing = re.compile(r'(?m)^\s*(source|\.) "[^"]*lib/mutate\.sh"')
+        found = sorted(
+            str(p.relative_to(ROOT))
+            for d in ("scripts", "tools")
+            for p in (ROOT / d).glob("*.sh")
+            if sourcing.search(p.read_text(encoding="utf-8", errors="replace"))
+        )
+        self.assertEqual(found, sorted(MUTATE_RUNNER_SCRIPTS))
+
+    def test_raw_rewrite_pattern_catches_each_form(self) -> None:
+        for line in ('p.write_text(s)', 'perl -pi -e s/a/b/ "$SRC"', 'sed -i "" s/a/b/ x',
+                     'open(p, "w").write(s)', 'echo x > "$SRC"', 'echo x >> $FILE'):
+            self.assertIsNotNone(RAW_REWRITE.search(line), line)
+        for line in ('ax_mutate t "$SRC" a b', 'cargo test >/dev/null', 'echo ok'):
+            self.assertIsNone(RAW_REWRITE.search(line), line)
 
 
 def _fake_cargo(bin_dir: Path, exit_code: int) -> None:
