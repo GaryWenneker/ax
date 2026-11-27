@@ -116,5 +116,17 @@ class IndexRepoTest(CheckoutTestBase):
         self.check_token_not_stored("ax-index-repo.sh")
 
 
+class CreateJobHelpTest(unittest.TestCase):
+    def test_help_prints_only_the_usage_comment(self):
+        run = subprocess.run(["sh", str(SLIM / "azure" / "create-job.sh"), "--help"],
+                             capture_output=True, text=True, timeout=30)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("--resource-group RG", run.stdout)
+        self.assertIn("--start", run.stdout)
+        self.assertNotIn("set -eu", run.stdout)
+        self.assertNotIn('NAME="ax-index"', run.stdout)
+        self.assertNotIn("#!/bin/sh", run.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
