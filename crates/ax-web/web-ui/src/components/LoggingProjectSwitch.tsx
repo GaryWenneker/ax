@@ -50,6 +50,8 @@ export default function LoggingProjectSwitch({
   const refresh = useCallback(async () => {
     try {
       const [cur, rec] = await Promise.all([fetchWorkspaceCurrent(), fetchWorkspaceRecent()]);
+      // Both requests failed: keep the last known list.
+      if (!cur.ok && !rec.ok) return;
       if (cur.workspace) {
         setPath(cur.workspace.path);
         setLabel(cur.workspace.label);

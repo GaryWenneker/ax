@@ -66,6 +66,7 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
   useEffect(() => {
     void (async () => {
       const data = await fetchWorkspaceCurrent();
+      if (!data.ok && data.error) setErr(data.error);
       if (data.workspace?.path) {
         const shown = displayPath(data.workspace.path);
         setCurrentPath(shown);
