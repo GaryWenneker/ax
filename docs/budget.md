@@ -42,6 +42,8 @@ A missing model price stays unknown. Ax does not fill it with the savings refere
 }
 ```
 
+Each key is read on its own: numeric strings are accepted, and a wrongly typed or out-of-range value is ignored with a warning that names it. Thresholds must be above 0 and ordered `warning <= critical <= hardLimit`, otherwise all three use the defaults. `workingDays` is 0 to 31, `hoursPerDay` is above 0 and at most 24. `ax budget set` refuses to rewrite a config file that is not valid JSON and writes atomically.
+
 EUR is compared only when `usdPerEur` is set (USD for 1 EUR). Without it, Ax prints the EUR budget and does not convert. Catalog math stays in USD.
 
 The month plan uses the first N weekdays. Projection blends the month run-rate with the last five elapsed working days. At 75% the decision is warn, at 90% warn, at 100% deny. Deny is advice. `ax_budget` returns `enforced: false`.

@@ -18,6 +18,16 @@ EUR converts only when `usdPerEur` is set (how many USD equal 1 EUR). Leave it u
 
 Warning, critical, and hard thresholds default to 75, 90, and 100 percent. Crossing the hard limit returns **deny** from `ax_budget`. That tool sets `enforced: false`. Ax does not block the provider HTTP call. An integration can refuse to start a turn when it sees deny.
 
+### How the settings are checked
+
+Each setting is read on its own. A number written as a string (`"monthly": "60"`) is accepted. A value of the wrong type or out of range is ignored and the rest of the file still applies; `ax budget plan` prints a warning that names the key. The limits are:
+
+- Percent thresholds must be above 0 and in order: `warningPercent <= criticalPercent <= hardLimitPercent`. When they are not, all three fall back to 75, 90, and 100.
+- `workingDays` is a whole number from 0 to 31. `hoursPerDay` is above 0 and at most 24.
+- `monthly` is 0 or more. `usdPerEur` is above 0.
+
+`ax budget set` and the Command Center context-budget setting change only their own keys. They refuse to write a config file that is not valid JSON and leave it as it is, so fix that file first. A leading byte order mark is accepted. The file is written to a temporary file and renamed into place, so a crash never leaves it half written.
+
 ## See spend
 
 ```bash

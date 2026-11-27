@@ -39,10 +39,11 @@ pub use activity::{
 };
 pub use budget::{
     banner, cycle_stats, daily_plan, display_amount, format_money, global_config_path, level_for,
-    load_settings, monthly_budget_usd, parse_mode, parse_settings, price_band, project_budget,
-    save_global_budget, save_project_context_budget, simulate, working_schedule, BudgetDecision,
-    BudgetLevel, BudgetMode, BudgetSectionPatch, BudgetSettings, BudgetSnapshot, Currency,
-    CycleStats, DailyPlan, DaySpend, PriceBand, Simulation,
+    load_settings, load_settings_with_diagnostics, monthly_budget_usd, parse_mode, parse_settings,
+    parse_settings_with_diagnostics, price_band, project_budget, save_global_budget,
+    save_project_context_budget, simulate, working_schedule, BudgetDecision, BudgetLevel,
+    BudgetMode, BudgetSectionPatch, BudgetSettings, BudgetSnapshot, Currency, CycleStats,
+    DailyPlan, DaySpend, PriceBand, Simulation,
 };
 pub use cache_status::{
     cache_group_key, format_cache_status_lines, format_context_store_line, load_cache_status,

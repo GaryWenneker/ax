@@ -2,7 +2,6 @@
 //! when the config supplies `usdPerEur`. No exchange rate is assumed.
 
 use chrono::{Datelike, Duration, NaiveDate, Weekday};
-use serde::Deserialize;
 use serde_json::Value;
 
 use crate::cost::CostConfidence;
@@ -136,115 +135,196 @@ pub struct Simulation {
     pub confidence: CostConfidence,
 }
 
-#[derive(Debug, Deserialize, Default)]
-struct FileSettings {
-    #[serde(default)]
-    budget: Option<BudgetSection>,
-    #[serde(default)]
-    agent: Option<AgentSection>,
-    #[serde(default)]
-    context: Option<ContextSection>,
+/// Strips a leading UTF-8 byte order mark, which `serde_json` rejects.
+fn strip_bom(text: &str) -> &str {
+    text.strip_prefix('\u{feff}').unwrap_or(text)
 }
 
-#[derive(Debug, Deserialize, Default)]
-struct BudgetSection {
-    enabled: Option<bool>,
-    monthly: Option<f64>,
-    currency: Option<String>,
-    #[serde(rename = "usdPerEur")]
-    usd_per_eur: Option<f64>,
-    #[serde(rename = "warningPercent")]
-    warning_percent: Option<f64>,
-    #[serde(rename = "criticalPercent")]
-    critical_percent: Option<f64>,
-    #[serde(rename = "hardLimitPercent")]
-    hard_limit_percent: Option<f64>,
-    #[serde(rename = "workingDays")]
-    working_days: Option<u32>,
-    #[serde(rename = "hoursPerDay")]
-    hours_per_day: Option<f64>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct AgentSection {
-    #[serde(rename = "budgetMode")]
-    budget_mode: Option<String>,
-    #[serde(rename = "cheapMaxInputPerMtok")]
-    cheap_max_input_per_mtok: Option<f64>,
-    #[serde(rename = "standardMaxInputPerMtok")]
-    standard_max_input_per_mtok: Option<f64>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct ContextSection {
-    #[serde(rename = "budgetTokens")]
-    budget_tokens: Option<u32>,
-    #[serde(rename = "memoryTokens")]
-    memory_tokens: Option<u32>,
-}
-
-pub fn parse_settings(global_json: Option<&str>, project_json: Option<&str>) -> BudgetSettings {
-    let mut settings = BudgetSettings::default();
-    if let Some(text) = global_json {
-        apply_json(&mut settings, text);
+/// Reads a number field. Numeric strings such as `"60"` are accepted.
+fn number_field(section: &Value, key: &str, path: &str, diags: &mut Vec<String>) -> Option<f64> {
+    let raw = section.get(key)?;
+    let parsed = match raw {
+        Value::Number(n) => n.as_f64(),
+        Value::String(s) => s.trim().parse::<f64>().ok(),
+        Value::Null => return None,
+        _ => None,
+    };
+    match parsed.filter(|v| v.is_finite()) {
+        Some(v) => Some(v),
+        None => {
+            diags.push(format!("{path}.{key} is not a number ({raw}); ignored"));
+            None
+        }
     }
-    if let Some(text) = project_json {
-        apply_json(&mut settings, text);
+}
+
+/// Allowed range for a number field: lower bound, whether the lower bound is
+/// excluded, upper bound (included).
+type Range = (f64, bool, f64);
+
+fn ranged_field(
+    section: &Value,
+    key: &str,
+    path: &str,
+    (min, min_open, max): Range,
+    diags: &mut Vec<String>,
+) -> Option<f64> {
+    let v = number_field(section, key, path, diags)?;
+    let low_ok = if min_open { v > min } else { v >= min };
+    if low_ok && v <= max {
+        Some(v)
+    } else {
+        let open = if min_open { "(" } else { "[" };
+        diags.push(format!(
+            "{path}.{key} = {v} is outside {open}{min}, {max}]; ignored"
+        ));
+        None
+    }
+}
+
+fn whole_field(
+    section: &Value,
+    key: &str,
+    path: &str,
+    max: u32,
+    diags: &mut Vec<String>,
+) -> Option<u32> {
+    let v = number_field(section, key, path, diags)?;
+    if v.fract() == 0.0 && v >= 0.0 && v <= f64::from(max) {
+        Some(v as u32)
+    } else {
+        diags.push(format!(
+            "{path}.{key} = {v} is not a whole number in [0, {max}]; ignored"
+        ));
+        None
+    }
+}
+
+fn string_field(section: &Value, key: &str, path: &str, diags: &mut Vec<String>) -> Option<String> {
+    match section.get(key)? {
+        Value::String(s) => Some(s.clone()),
+        Value::Null => None,
+        other => {
+            diags.push(format!("{path}.{key} is not a string ({other}); ignored"));
+            None
+        }
+    }
+}
+
+/// Parses budget settings. Each field is read on its own, so one wrong value
+/// keeps the rest of the file; every ignored value is named in the returned
+/// diagnostics. Percent thresholds that are not
+/// `0 < warning <= critical <= hardLimit` fall back to the defaults.
+pub fn parse_settings_with_diagnostics(
+    global_json: Option<&str>,
+    project_json: Option<&str>,
+) -> (BudgetSettings, Vec<String>) {
+    let mut settings = BudgetSettings::default();
+    let mut diags = Vec::new();
+    for (label, text) in [("global config", global_json), ("ax.json", project_json)] {
+        if let Some(text) = text {
+            apply_json(&mut settings, label, text, &mut diags);
+        }
+    }
+    let ordered = settings.warning_percent <= settings.critical_percent
+        && settings.critical_percent <= settings.hard_limit_percent;
+    if !ordered {
+        diags.push(format!(
+            "budget thresholds are out of order (warning {} <= critical {} <= hardLimit {} is required); defaults used",
+            settings.warning_percent, settings.critical_percent, settings.hard_limit_percent
+        ));
+        let defaults = BudgetSettings::default();
+        settings.warning_percent = defaults.warning_percent;
+        settings.critical_percent = defaults.critical_percent;
+        settings.hard_limit_percent = defaults.hard_limit_percent;
+    }
+    (settings, diags)
+}
+
+/// Same as [`parse_settings_with_diagnostics`]; each diagnostic is logged as a warning.
+pub fn parse_settings(global_json: Option<&str>, project_json: Option<&str>) -> BudgetSettings {
+    let (settings, diags) = parse_settings_with_diagnostics(global_json, project_json);
+    for diag in &diags {
+        tracing::warn!(target: "ax_usage::budget", "{diag}");
     }
     settings
 }
 
-fn apply_json(settings: &mut BudgetSettings, text: &str) {
-    let Ok(file) = serde_json::from_str::<FileSettings>(text) else {
-        return;
-    };
-    if let Some(budget) = file.budget {
-        if let Some(v) = budget.enabled {
-            settings.enabled = v;
+fn apply_json(settings: &mut BudgetSettings, label: &str, text: &str, diags: &mut Vec<String>) {
+    let file: Value = match serde_json::from_str(strip_bom(text)) {
+        Ok(v) => v,
+        Err(e) => {
+            diags.push(format!(
+                "{label} is not valid JSON ({e}); its settings are ignored"
+            ));
+            return;
         }
-        if let Some(v) = budget.monthly {
+    };
+    const PERCENT: Range = (0.0, true, 1_000.0);
+    const NON_NEGATIVE: Range = (0.0, false, f64::MAX);
+    const POSITIVE: Range = (0.0, true, f64::MAX);
+    if let Some(budget) = file.get("budget").filter(|v| v.is_object()) {
+        let p = "budget";
+        match budget.get("enabled") {
+            Some(Value::Bool(v)) => settings.enabled = *v,
+            Some(Value::Null) | None => {}
+            Some(other) => diags.push(format!(
+                "budget.enabled is not true/false ({other}); ignored"
+            )),
+        }
+        if let Some(v) = ranged_field(budget, "monthly", p, NON_NEGATIVE, diags) {
             settings.monthly = v;
         }
-        if let Some(v) = budget.currency {
-            if let Some(currency) = parse_currency(&v) {
-                settings.currency = currency;
+        if let Some(v) = string_field(budget, "currency", p, diags) {
+            match parse_currency(&v) {
+                Some(currency) => settings.currency = currency,
+                None => diags.push(format!(
+                    "budget.currency = {v:?} is not USD or EUR; ignored"
+                )),
             }
         }
-        if let Some(v) = budget.usd_per_eur {
+        if let Some(v) = ranged_field(budget, "usdPerEur", p, POSITIVE, diags) {
             settings.usd_per_eur = Some(v);
         }
-        if let Some(v) = budget.warning_percent {
+        if let Some(v) = ranged_field(budget, "warningPercent", p, PERCENT, diags) {
             settings.warning_percent = v;
         }
-        if let Some(v) = budget.critical_percent {
+        if let Some(v) = ranged_field(budget, "criticalPercent", p, PERCENT, diags) {
             settings.critical_percent = v;
         }
-        if let Some(v) = budget.hard_limit_percent {
+        if let Some(v) = ranged_field(budget, "hardLimitPercent", p, PERCENT, diags) {
             settings.hard_limit_percent = v;
         }
-        if let Some(v) = budget.working_days {
+        if let Some(v) = whole_field(budget, "workingDays", p, 31, diags) {
             settings.working_days = v;
         }
-        if let Some(v) = budget.hours_per_day {
+        if let Some(v) = ranged_field(budget, "hoursPerDay", p, (0.0, true, 24.0), diags) {
             settings.hours_per_day = v;
         }
     }
-    if let Some(agent) = file.agent {
-        if let Some(v) = agent.budget_mode.as_deref().and_then(parse_mode) {
-            settings.mode = v;
+    if let Some(agent) = file.get("agent").filter(|v| v.is_object()) {
+        let p = "agent";
+        if let Some(v) = string_field(agent, "budgetMode", p, diags) {
+            match parse_mode(&v) {
+                Some(mode) => settings.mode = mode,
+                None => diags.push(format!(
+                    "agent.budgetMode = {v:?} is not cheap, balanced or quality; ignored"
+                )),
+            }
         }
-        if let Some(v) = agent.cheap_max_input_per_mtok {
+        if let Some(v) = ranged_field(agent, "cheapMaxInputPerMtok", p, NON_NEGATIVE, diags) {
             settings.cheap_max_input_per_mtok = v;
         }
-        if let Some(v) = agent.standard_max_input_per_mtok {
+        if let Some(v) = ranged_field(agent, "standardMaxInputPerMtok", p, NON_NEGATIVE, diags) {
             settings.standard_max_input_per_mtok = v;
         }
     }
-    if let Some(context) = file.context {
-        if let Some(v) = context.budget_tokens {
+    if let Some(context) = file.get("context").filter(|v| v.is_object()) {
+        let p = "context";
+        if let Some(v) = whole_field(context, "budgetTokens", p, u32::MAX, diags) {
             settings.context_budget_tokens = Some(v);
         }
-        if let Some(v) = context.memory_tokens {
+        if let Some(v) = whole_field(context, "memoryTokens", p, u32::MAX, diags) {
             settings.context_memory_tokens = Some(v);
         }
     }
@@ -268,11 +348,23 @@ pub fn parse_mode(raw: &str) -> Option<BudgetMode> {
 }
 
 pub fn load_settings(project_root: Option<&std::path::Path>) -> BudgetSettings {
+    let (settings, diags) = load_settings_with_diagnostics(project_root);
+    for diag in &diags {
+        tracing::warn!(target: "ax_usage::budget", "{diag}");
+    }
+    settings
+}
+
+/// Loads `~/.ax/config.json` and the project's `ax.json`, and names every
+/// value that was ignored.
+pub fn load_settings_with_diagnostics(
+    project_root: Option<&std::path::Path>,
+) -> (BudgetSettings, Vec<String>) {
     let global = global_config_path().and_then(|p| std::fs::read_to_string(p).ok());
     let project = project_root
         .map(|root| root.join("ax.json"))
         .and_then(|p| std::fs::read_to_string(p).ok());
-    parse_settings(global.as_deref(), project.as_deref())
+    parse_settings_with_diagnostics(global.as_deref(), project.as_deref())
 }
 
 pub fn global_config_path() -> Option<std::path::PathBuf> {
@@ -282,16 +374,70 @@ pub fn global_config_path() -> Option<std::path::PathBuf> {
 /// Write budget fields into `~/.ax/config.json` without dropping other keys.
 pub fn save_global_budget(patch: &BudgetSectionPatch) -> Result<std::path::PathBuf, String> {
     let path = global_config_path().ok_or_else(|| "home directory is not available".to_string())?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    save_budget_to(&path, patch)
+}
+
+fn save_budget_to(
+    path: &std::path::Path,
+    patch: &BudgetSectionPatch,
+) -> Result<std::path::PathBuf, String> {
+    edit_json_file(path, |obj| apply_budget_patch(obj, patch))?;
+    Ok(path.to_path_buf())
+}
+
+/// Read-modify-write of a JSON config file under a lock, written atomically.
+/// A missing file starts as `{}`. A file that cannot be read or parsed is an
+/// error and stays untouched, so other settings in it are never lost.
+fn edit_json_file<F>(path: &std::path::Path, edit: F) -> Result<(), String>
+where
+    F: FnOnce(&mut serde_json::Map<String, Value>) -> Result<(), String>,
+{
+    let shown = path.display().to_string();
+    let mut failure: Option<String> = None;
+    let result = ax_utils::update_locked(path, |current| {
+        let mut root = match current {
+            None => Value::Object(Default::default()),
+            Some(bytes) => {
+                let parsed = std::str::from_utf8(&bytes)
+                    .map_err(|e| e.to_string())
+                    .and_then(|text| {
+                        serde_json::from_str::<Value>(strip_bom(text)).map_err(|e| e.to_string())
+                    });
+                match parsed {
+                    Ok(v) => v,
+                    Err(e) => {
+                        failure = Some(format!(
+                            "{shown} is not valid JSON ({e}); fix or remove it first, it was left unchanged"
+                        ));
+                        return Ok(None);
+                    }
+                }
+            }
+        };
+        let Some(obj) = root.as_object_mut() else {
+            failure = Some(format!(
+                "{shown}: root is not an object; it was left unchanged"
+            ));
+            return Ok(None);
+        };
+        if let Err(e) = edit(obj) {
+            failure = Some(format!("{shown}: {e}; it was left unchanged"));
+            return Ok(None);
+        }
+        let text = serde_json::to_string_pretty(&root)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        Ok(Some((text + "\n").into_bytes()))
+    });
+    if let Some(msg) = failure {
+        return Err(msg);
     }
-    let mut root: Value = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| Value::Object(Default::default()));
-    let obj = root
-        .as_object_mut()
-        .ok_or_else(|| "config root is not an object".to_string())?;
+    result.map(|_| ()).map_err(|e| format!("{shown}: {e}"))
+}
+
+fn apply_budget_patch(
+    obj: &mut serde_json::Map<String, Value>,
+    patch: &BudgetSectionPatch,
+) -> Result<(), String> {
     {
         let budget = obj
             .entry("budget")
@@ -343,12 +489,7 @@ pub fn save_global_budget(patch: &BudgetSectionPatch) -> Result<std::path::PathB
             .ok_or_else(|| "context is not an object".to_string())?;
         context.insert("budgetTokens".into(), serde_json::json!(v));
     }
-    std::fs::write(
-        &path,
-        serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n",
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(path)
+    Ok(())
 }
 
 /// Write `context.budgetTokens` into the project's `ax.json` and leave every other key alone.
@@ -357,25 +498,16 @@ pub fn save_project_context_budget(
     tokens: u32,
 ) -> Result<std::path::PathBuf, String> {
     let path = project_root.join("ax.json");
-    let mut root: Value = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_else(|| Value::Object(Default::default()));
-    let obj = root
-        .as_object_mut()
-        .ok_or_else(|| "ax.json root is not an object".to_string())?;
-    let context = obj
-        .entry("context")
-        .or_insert_with(|| Value::Object(Default::default()));
-    let context = context
-        .as_object_mut()
-        .ok_or_else(|| "context is not an object".to_string())?;
-    context.insert("budgetTokens".into(), serde_json::json!(tokens));
-    std::fs::write(
-        &path,
-        serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n",
-    )
-    .map_err(|e| e.to_string())?;
+    edit_json_file(&path, |obj| {
+        let context = obj
+            .entry("context")
+            .or_insert_with(|| Value::Object(Default::default()));
+        let context = context
+            .as_object_mut()
+            .ok_or_else(|| "context is not an object".to_string())?;
+        context.insert("budgetTokens".into(), serde_json::json!(tokens));
+        Ok(())
+    })?;
     Ok(path)
 }
 
@@ -854,6 +986,113 @@ mod tests {
         let project = r#"{"context":{"memoryTokens":80}}"#;
         let settings = parse_settings(None, Some(project));
         assert_eq!(settings.context_memory_tokens, Some(80));
+    }
+
+    #[test]
+    fn one_wrongly_typed_field_keeps_the_rest_of_the_file() {
+        let text = r#"{"budget":{"enabled":true,"monthly":"60","workingDays":"twenty"},"agent":{"budgetMode":"cheap"},"context":{"budgetTokens":9000}}"#;
+        let (settings, diagnostics) = parse_settings_with_diagnostics(None, Some(text));
+        assert!(settings.enabled);
+        assert!(
+            (settings.monthly - 60.0).abs() < 1e-9,
+            "numeric string accepted"
+        );
+        assert_eq!(settings.working_days, 22, "bad value keeps the default");
+        assert_eq!(settings.mode, BudgetMode::Cheap);
+        assert_eq!(settings.context_budget_tokens, Some(9_000));
+        assert!(
+            diagnostics.iter().any(|d| d.contains("budget.workingDays")),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn thresholds_out_of_order_or_range_fall_back_to_defaults() {
+        let zero = r#"{"budget":{"enabled":true,"monthly":100,"hardLimitPercent":0}}"#;
+        let (settings, diagnostics) = parse_settings_with_diagnostics(None, Some(zero));
+        assert_eq!(settings.hard_limit_percent, 100.0);
+        assert!(diagnostics
+            .iter()
+            .any(|d| d.contains("budget.hardLimitPercent")));
+        assert_eq!(
+            level_for(Some(0.0), &settings),
+            (BudgetLevel::Ok, BudgetDecision::Allow)
+        );
+
+        let unordered =
+            r#"{"budget":{"warningPercent":95,"criticalPercent":80,"hardLimitPercent":90}}"#;
+        let (settings, diagnostics) = parse_settings_with_diagnostics(None, Some(unordered));
+        assert_eq!(
+            (
+                settings.warning_percent,
+                settings.critical_percent,
+                settings.hard_limit_percent
+            ),
+            (75.0, 90.0, 100.0)
+        );
+        assert!(
+            diagnostics.iter().any(|d| d.contains("order")),
+            "{diagnostics:?}"
+        );
+
+        let hours = r#"{"budget":{"hoursPerDay":30,"workingDays":40}}"#;
+        let (settings, diagnostics) = parse_settings_with_diagnostics(None, Some(hours));
+        assert_eq!(settings.hours_per_day, 8.0);
+        assert_eq!(settings.working_days, 22);
+        assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+    }
+
+    #[test]
+    fn a_file_with_a_bom_is_read() {
+        let text = "\u{feff}{\"budget\":{\"enabled\":true,\"monthly\":5}}";
+        let settings = parse_settings(None, Some(text));
+        assert!(settings.enabled);
+        assert!((settings.monthly - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn saving_refuses_to_replace_an_unparseable_ax_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let broken = "{\"name\":\"keep\",\"other\":1,}";
+        std::fs::write(dir.path().join("ax.json"), broken).unwrap();
+        let err = save_project_context_budget(dir.path(), 8_000).unwrap_err();
+        assert!(err.contains("ax.json"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("ax.json")).unwrap(),
+            broken
+        );
+    }
+
+    #[test]
+    fn saving_keeps_keys_of_a_file_with_a_bom_and_writes_without_one() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("ax.json"), "\u{feff}{\"name\":\"keep\"}").unwrap();
+        save_project_context_budget(dir.path(), 8_000).unwrap();
+        let text = std::fs::read_to_string(dir.path().join("ax.json")).unwrap();
+        assert!(!text.starts_with('\u{feff}'));
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["name"], "keep");
+        assert_eq!(v["context"]["budgetTokens"], 8_000);
+    }
+
+    #[test]
+    fn saving_global_budget_refuses_an_unparseable_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, "{\"web\":{\"port\":1},").unwrap();
+        let patch = BudgetSectionPatch {
+            monthly: Some(60.0),
+            ..BudgetSectionPatch::default()
+        };
+        assert!(save_budget_to(&path, &patch).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{\"web\":{\"port\":1},"
+        );
+        let missing = dir.path().join("new.json");
+        save_budget_to(&missing, &patch).unwrap();
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&missing).unwrap()).unwrap();
+        assert_eq!(v["budget"]["monthly"], 60.0);
     }
 
     #[test]
