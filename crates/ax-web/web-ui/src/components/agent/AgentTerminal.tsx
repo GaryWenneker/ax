@@ -139,8 +139,12 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
       preferred_external: nextAgent !== 'builtin' ? nextAgent : cfg.preferred_external,
     };
     setConfig(next);
-    const res = await saveAgentConfig(next);
-    if (!res.ok) pushSystem(res.error ?? 'Could not save agent preference');
+    try {
+      const res = await saveAgentConfig(next);
+      if (!res.ok) pushSystem(res.error ?? 'Could not save agent preference');
+    } catch (e) {
+      pushSystem(`Could not save agent preference: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   async function onAgentChange(nextAgent: string) {

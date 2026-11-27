@@ -4,26 +4,68 @@ import type { Stats, NodeRow, NodeDetail, FileRow, FileRoot, SearchResult, Unres
 
 const BASE = '/api';
 
-async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, signal ? { signal } : undefined);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
+/** A failed Command Center API call: the HTTP status and the server's message when it sent one. */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly body: unknown;
+
+  constructor(message: string, status: number, body: unknown = null) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.body = body;
   }
-  return res.json() as Promise<T>;
+}
+
+function errorMessage(body: unknown): string | null {
+  if (body && typeof body === 'object' && 'error' in body) {
+    const error = (body as { error?: unknown }).error;
+    if (typeof error === 'string' && error.trim()) return error;
+  }
+  return null;
+}
+
+/**
+ * Call a JSON endpoint under `/api`. A non-2xx reply, or a reply that is not
+ * JSON (an HTML error or login page from a proxy), throws an {@link ApiError}.
+ * An empty 2xx body resolves to `undefined`.
+ */
+export async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  init?: { signal?: AbortSignal; credentials?: RequestCredentials },
+): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+    ...(init?.signal ? { signal: init.signal } : {}),
+    ...(init?.credentials ? { credentials: init.credentials } : {}),
+  });
+  const text = await res.text();
+  let data: unknown;
+  let parsed = true;
+  if (text.trim() !== '') {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      parsed = false;
+    }
+  }
+  if (!res.ok) {
+    throw new ApiError(errorMessage(data) ?? `HTTP ${res.status}`, res.status, parsed ? (data ?? null) : null);
+  }
+  if (!parsed) throw new ApiError(`The server reply was not JSON (HTTP ${res.status})`, res.status);
+  return data as T;
+}
+
+function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return request<T>('GET', path, undefined, { signal });
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({})) as T & { error?: string };
-  if (!res.ok) {
-    throw new Error(data.error ?? `HTTP ${res.status}`);
-  }
-  return data;
+  // An empty success body has always meant "no fields" for POST callers.
+  return (await request<T>('POST', path, body)) ?? ({} as T);
 }
 
 export function fetchStats(): Promise<Stats> {
@@ -155,23 +197,11 @@ export async function updateMemory(id: string, input: {
   tags?: string[];
   files?: string[];
 }): Promise<void> {
-  const res = await fetch(`${BASE}/memory/${encodeURIComponent(id)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
-  }
+  await request<unknown>('PUT', `/memory/${encodeURIComponent(id)}`, input);
 }
 
 export async function deleteMemory(id: string): Promise<void> {
-  const res = await fetch(`${BASE}/memory/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
-  }
+  await request<unknown>('DELETE', `/memory/${encodeURIComponent(id)}`);
 }
 
 export function captureGitMemories(limit = 100): Promise<GitCaptureResult> {
@@ -271,17 +301,7 @@ export function publishOkf(opts?: {
 }
 
 export function setMemoryEnabled(id: string, enabled: boolean): Promise<{ ok: boolean }> {
-  return fetch(`${BASE}/memory/${encodeURIComponent(id)}/enabled`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled }),
-  }).then(async (res) => {
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      throw new Error(body.error ?? `HTTP ${res.status}`);
-    }
-    return res.json() as Promise<{ ok: boolean }>;
-  });
+  return request<{ ok: boolean }>('PATCH', `/memory/${encodeURIComponent(id)}/enabled`, { enabled });
 }
 
 export function fetchSource(params: {

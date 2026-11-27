@@ -44,6 +44,7 @@ import {
   type RouteState,
 } from './lib/routes';
 import { navItemActive, visibleNav } from './lib/nav';
+import { reloadMcpDaemon as reloadMcpDaemonRequest } from './lib/mcpReload';
 import { fetchShipConfig } from './shipApi';
 import { WORKSPACE_SWITCHED } from './workspaceEvents';
 
@@ -271,31 +272,7 @@ function AppShell() {
     setMcpReloadBusy(true);
     setMcpToast(null);
     try {
-      const res = await fetch('/api/ops/mcp-reload', { method: 'POST' });
-      const body = (await res.json()) as {
-        ok?: boolean;
-        error?: string;
-        startedPid?: number;
-        connected?: boolean;
-        hint?: string;
-      };
-      if (!res.ok || body.ok === false) {
-        setMcpToast({
-          kind: 'err',
-          text: body.error || body.hint || 'MCP reload failed',
-        });
-      } else {
-        const pid = body.startedPid ? ` pid ${body.startedPid}` : '';
-        setMcpToast({
-          kind: 'ok',
-          text: `MCP daemon reloaded${pid}. ${body.hint || 'If the IDE is still DEGRADED, restart MCP servers there.'}`,
-        });
-      }
-    } catch (e) {
-      setMcpToast({
-        kind: 'err',
-        text: e instanceof Error ? e.message : 'MCP reload request failed',
-      });
+      setMcpToast(await reloadMcpDaemonRequest());
     } finally {
       setMcpReloadBusy(false);
       setSidebarOpen(false);

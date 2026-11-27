@@ -57,3 +57,8 @@ test('saving a profile always clears the busy flag', () => {
   const editor = readFileSync(new URL('./ProfileEditor.tsx', import.meta.url), 'utf8');
   assert.match(editor, /try \{[\s\S]*updateAgentProfile[\s\S]*\} catch \(e\) \{[\s\S]*\} finally \{\s*setSaving\(false\);/);
 });
+
+test('a failed agent preference save is reported, not left as an unhandled rejection', () => {
+  const persist = source.slice(source.indexOf('async function persistAgentChoice('), source.indexOf('async function onAgentChange('));
+  assert.match(persist, /try \{[\s\S]*saveAgentConfig[\s\S]*\} catch \(e\) \{[\s\S]*pushSystem\(/);
+});

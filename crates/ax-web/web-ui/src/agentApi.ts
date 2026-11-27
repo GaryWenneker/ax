@@ -1,3 +1,4 @@
+import { request } from './api.ts';
 import { readSseJson } from './lib/sse.ts';
 
 const BASE = '/api/agent';
@@ -67,29 +68,25 @@ export interface AgentsConfig {
   profiles: Record<string, ProfileEntry[]>;
 }
 
-export async function fetchAgentStatus(): Promise<{
+export interface AgentStatus {
   ok: boolean;
   readonly?: boolean;
   targets: AgentTargetStatus[];
   catalog?: AgentTargetStatus[];
   config: AgentsConfig;
   all_targets: string[];
-}> {
-  const res = await fetch(`${BASE}/status`);
-  const data = await res.json();
+}
+
+export async function fetchAgentStatus(): Promise<AgentStatus> {
+  const data = await request<AgentStatus>('GET', '/agent/status');
   if (data.catalog && !data.targets?.length) {
     data.targets = data.catalog;
   }
   return data;
 }
 
-export async function saveAgentConfig(config: AgentsConfig): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(`${BASE}/config`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ config }),
-  });
-  return res.json();
+export function saveAgentConfig(config: AgentsConfig): Promise<{ ok: boolean; error?: string }> {
+  return request('PUT', '/agent/config', { config });
 }
 
 export type AgentStreamEvent =
@@ -126,24 +123,14 @@ export async function streamAgentChat(
   await readSseJson<AgentStreamEvent>(res.body, onEvent);
 }
 
-export async function updateAgentProfile(
+export function updateAgentProfile(
   agent: string,
   id: string,
   body: { label?: string; provider?: string; key_env?: string; model?: string },
 ): Promise<{ ok: boolean; profile?: ProfileEntry; error?: string }> {
-  const res = await fetch(`${BASE}/profiles/${encodeURIComponent(agent)}/${encodeURIComponent(id)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  return res.json();
+  return request('PUT', `/agent/profiles/${encodeURIComponent(agent)}/${encodeURIComponent(id)}`, body);
 }
 
-export async function setActiveProfile(agent: string, profileId: string): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(`${BASE}/profiles/active`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agent, profile_id: profileId }),
-  });
-  return res.json();
+export function setActiveProfile(agent: string, profileId: string): Promise<{ ok: boolean; error?: string }> {
+  return request('PUT', '/agent/profiles/active', { agent, profile_id: profileId });
 }
