@@ -446,7 +446,7 @@ function RestoreModal({ onClose, onRestored }: { onClose: () => void; onRestored
       setItems(preview.items);
       const next: Record<string, RestoreDecisionValue> = {};
       for (const item of preview.items) {
-        const action = defaultRestoreAction(item.status, item.newer);
+        const action = defaultRestoreAction(item.status);
         if (action) next[`${item.kind}:${item.id}`] = action;
       }
       setDecisions(next);

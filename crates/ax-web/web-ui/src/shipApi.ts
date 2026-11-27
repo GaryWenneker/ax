@@ -329,13 +329,6 @@ export async function streamSonarStop(
   await readSseJson<SonarStreamEvent>(res.body, onEvent);
 }
 
-export async function streamSonarScanAll(
-  onEvent: (ev: SonarStreamEvent) => void,
-  signal?: AbortSignal,
-): Promise<void> {
-  return streamSonarScan(onEvent, signal);
-}
-
 export async function streamSonarScanProject(
   projectKey: string,
   onEvent: (ev: SonarStreamEvent) => void,
