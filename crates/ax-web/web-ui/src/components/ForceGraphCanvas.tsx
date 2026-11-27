@@ -17,6 +17,7 @@ import { buildNeighbors, highlightFor, selectionPulseDone, selectionRing } from 
 import { filterKey, forceParams, seedCluster, simulationKey } from '../lib/graphForces';
 import { LabelWidths, labelAlpha, labelPx, placeLabels, type LabelBox } from '../lib/graphLabels';
 import { exposeGraphNodes, markGraphSettled, screenNodes } from '../lib/graphProbe';
+import { pinNode, releaseNode } from '../lib/graphDrag';
 
 export interface CanvasNode {
   key: string;
@@ -87,6 +88,8 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
   const themeRef = useRef<GraphTheme | null>(null);
   /** When the current selection was made; drives the selection ring. */
   const selectedAtRef = useRef(0);
+  /** The pointer gesture in progress: a node drag (`node` set) or a pan. */
+  const drag = useRef<{ node: number | null; sx: number; sy: number; vx: number; vy: number; moved: boolean } | null>(null);
   const labelWidths = useMemo(
     () =>
       new LabelWidths((text, px) => {
@@ -268,6 +271,8 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
       const w = canvas?.clientWidth ?? 800;
       const h = canvas?.clientHeight ?? 600;
       const prev = simNodesRef.current;
+      // A drag in progress points at the old node list; the new nodes start unpinned.
+      drag.current = null;
       const seeds = seedCluster(nodes.length, 0, 0, 4 * Math.sqrt(Math.max(1, nodes.length)));
       const sim: SimNode[] = nodes.map((_, i) => ({ i, x: prev[i]?.x ?? seeds[i].x, y: prev[i]?.y ?? seeds[i].y }));
       simNodesRef.current = sim;
@@ -375,8 +380,6 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
     draw();
   };
 
-  const drag = useRef<{ node: number | null; sx: number; sy: number; vx: number; vy: number; moved: boolean } | null>(null);
-
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
     const node = hitTest(e.clientX, e.clientY);
@@ -395,9 +398,12 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
     if (!d.moved) return;
     if (d.node != null) {
       const rect = canvasRef.current!.getBoundingClientRect();
-      const n = simNodesRef.current[d.node];
-      n.fx = (e.clientX - rect.left - view.current.x) / view.current.k;
-      n.fy = (e.clientY - rect.top - view.current.y) / view.current.k;
+      const x = (e.clientX - rect.left - view.current.x) / view.current.k;
+      const y = (e.clientY - rect.top - view.current.y) / view.current.k;
+      if (!pinNode(simNodesRef.current, d.node, x, y)) {
+        drag.current = null;
+        return;
+      }
       simRef.current?.alphaTarget(0.3).restart();
     } else {
       view.current.x = d.vx + dx;
@@ -411,13 +417,21 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
     drag.current = null;
     if (!d) return;
     if (d.node != null && d.moved) {
-      const n = simNodesRef.current[d.node];
-      n.fx = null;
-      n.fy = null;
+      releaseNode(simNodesRef.current, d.node);
       simRef.current?.alphaTarget(0);
       return;
     }
-    if (!d.moved) onSelect(d.node == null ? null : nodes[d.node].key);
+    if (!d.moved) onSelect(d.node == null ? null : (nodes[d.node]?.key ?? null));
+  };
+
+  /** A cancelled gesture (browser took over, capture lost) releases the node without selecting. */
+  const endDrag = () => {
+    const d = drag.current;
+    drag.current = null;
+    if (d?.node != null && d.moved) {
+      releaseNode(simNodesRef.current, d.node);
+      simRef.current?.alphaTarget(0);
+    }
   };
 
   useEffect(() => {
@@ -463,6 +477,8 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerCancel={endDrag}
+        onLostPointerCapture={endDrag}
         onPointerLeave={() => setHover(null)}
       />
       <div className="graph-canvas-tools" onPointerDown={(e) => e.stopPropagation()}>
