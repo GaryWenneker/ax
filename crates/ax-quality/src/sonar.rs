@@ -1,7 +1,6 @@
 //! SonarScanner CLI wrapper and Quality Gate API client.
 
 use std::collections::BTreeMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -458,42 +457,32 @@ impl SonarClient {
         }
     }
 
-    fn append_scanner_auth(cmd: &mut Command, token: Option<&str>) {
-        if let Some(t) = token {
-            // SonarScanner 6.x uses sonar.token; older versions use sonar.login.
-            // Provide both for backward compatibility.
-            cmd.arg(format!("-Dsonar.token={t}"));
-            cmd.arg(format!("-Dsonar.login={t}"));
-        }
-    }
-
+    /// Runs the scanner with the token in the child environment only
+    /// (`SONAR_TOKEN`), never on the command line or in a file: process
+    /// arguments are readable by every local user.
     fn run_native_scan(
         &self,
         project_root: &Path,
         target: &ScanTarget,
         token: Option<&str>,
     ) -> Result<(), String> {
+        let mut cmd = self.native_scan_command(project_root, target, token);
+        run_command_with_timeout(&mut cmd, SCAN_TIMEOUT)
+    }
+
+    fn native_scan_command(
+        &self,
+        project_root: &Path,
+        target: &ScanTarget,
+        token: Option<&str>,
+    ) -> Command {
         let mut cmd = Command::new(&self.config.scanner_path);
         cmd.current_dir(project_root);
-        if use_properties_file(&target.inclusions) {
-            write_scan_properties(
-                project_root,
-                &target.project_key,
-                &target.sources,
-                &self.config.host,
-                &target.inclusions,
-                token,
-            )?;
-            cmd.arg("-Dproject.settings=.ax/sonar-scan.properties");
-        } else {
-            cmd.arg(format!("-Dsonar.projectKey={}", target.project_key))
-                .arg(format!("-Dsonar.sources={}", target.sources))
-                .arg(format!("-Dsonar.inclusions={}", target.inclusions))
-                .arg(format!("-Dsonar.exclusions={DEFAULT_EXCLUSIONS}"))
-                .arg(format!("-Dsonar.host.url={}", self.config.host));
-            Self::append_scanner_auth(&mut cmd, token);
+        cmd.args(scan_property_args(target, &self.config.host));
+        if let Some(t) = token {
+            cmd.env("SONAR_TOKEN", t);
         }
-        run_command_with_timeout(&mut cmd, SCAN_TIMEOUT)
+        cmd
     }
 
     fn run_container_scan(
@@ -526,42 +515,8 @@ impl SonarClient {
             SONAR_SCANNER_IMAGE
         );
 
-        let mut args = vec!["run".to_string(), "--rm".to_string()];
-        args.extend(network_args);
-        if let Some(t) = token {
-            args.push("-e".to_string());
-            args.push(format!("SONAR_TOKEN={t}"));
-        }
-        args.extend([
-            "-v".to_string(),
-            format!("{}:/usr/src", mount.display()),
-            "-w".to_string(),
-            "/usr/src".to_string(),
-            SONAR_SCANNER_IMAGE.to_string(),
-        ]);
-
-        if use_properties_file(&target.inclusions) {
-            write_scan_properties(
-                project_root,
-                &target.project_key,
-                &target.sources,
-                &host,
-                &target.inclusions,
-                None,
-            )?;
-            args.push("-Dproject.settings=.ax/sonar-scan.properties".to_string());
-        } else {
-            args.extend([
-                format!("-Dsonar.projectKey={}", target.project_key),
-                format!("-Dsonar.sources={}", target.sources),
-                format!("-Dsonar.inclusions={}", target.inclusions),
-                format!("-Dsonar.exclusions={DEFAULT_EXCLUSIONS}"),
-                format!("-Dsonar.host.url={host}"),
-            ]);
-        }
-
-        let mut cmd = Command::new(runtime.cli());
-        cmd.args(&args);
+        let mut cmd =
+            container_scan_command(runtime.cli(), network_args, &mount, &host, target, token);
         run_command_with_timeout(&mut cmd, SCAN_TIMEOUT)
             .map_err(|e| format!("container sonar-scanner ({} run): {e}", runtime.cli()))
     }
@@ -881,10 +836,6 @@ const CMDLINE_INCLUSIONS_LIMIT: usize = 4_000;
 /// Above this file count, collapse to `{repo}/**` globs instead of listing every path.
 const REPO_GLOB_THRESHOLD: usize = 200;
 
-fn use_properties_file(inclusions: &str) -> bool {
-    inclusions.len() > CMDLINE_INCLUSIONS_LIMIT
-}
-
 /// Join a repo-relative path on Windows and Unix (`repo/src/Foo.cs` → nested segments).
 fn resolve_rel_path(project_root: &Path, rel: &str) -> PathBuf {
     rel.split(['/', '\\'])
@@ -1063,28 +1014,47 @@ fn build_scan_targets_with_count(
     targets
 }
 
-fn write_scan_properties(
-    project_root: &Path,
-    project_key: &str,
-    sources: &str,
+/// The `-Dsonar.*` arguments that describe one scan (no credentials).
+fn scan_property_args(target: &ScanTarget, host: &str) -> Vec<String> {
+    vec![
+        format!("-Dsonar.projectKey={}", target.project_key),
+        format!("-Dsonar.sources={}", target.sources),
+        format!("-Dsonar.inclusions={}", target.inclusions),
+        format!("-Dsonar.exclusions={DEFAULT_EXCLUSIONS}"),
+        format!("-Dsonar.host.url={host}"),
+    ]
+}
+
+/// `<cli> run` for the scanner image. The token travels as `-e SONAR_TOKEN`
+/// (name only), with its value in the container CLI's own environment.
+fn container_scan_command(
+    cli: &str,
+    network_args: Vec<String>,
+    mount: &Path,
     host: &str,
-    inclusions: &str,
+    target: &ScanTarget,
     token: Option<&str>,
-) -> Result<PathBuf, String> {
-    let ax_dir = project_root.join(".ax");
-    std::fs::create_dir_all(&ax_dir).map_err(|e| e.to_string())?;
-    let path = ax_dir.join("sonar-scan.properties");
-    let mut file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
-    writeln!(file, "sonar.projectKey={project_key}").map_err(|e| e.to_string())?;
-    writeln!(file, "sonar.sources={sources}").map_err(|e| e.to_string())?;
-    writeln!(file, "sonar.inclusions={inclusions}").map_err(|e| e.to_string())?;
-    writeln!(file, "sonar.exclusions={DEFAULT_EXCLUSIONS}").map_err(|e| e.to_string())?;
-    writeln!(file, "sonar.host.url={host}").map_err(|e| e.to_string())?;
-    if let Some(t) = token {
-        writeln!(file, "sonar.token={t}").map_err(|e| e.to_string())?;
-        writeln!(file, "sonar.login={t}").map_err(|e| e.to_string())?;
+) -> Command {
+    let mut args = vec!["run".to_string(), "--rm".to_string()];
+    args.extend(network_args);
+    if token.is_some() {
+        args.push("-e".to_string());
+        args.push("SONAR_TOKEN".to_string());
     }
-    Ok(path)
+    args.extend([
+        "-v".to_string(),
+        format!("{}:/usr/src", mount.display()),
+        "-w".to_string(),
+        "/usr/src".to_string(),
+        SONAR_SCANNER_IMAGE.to_string(),
+    ]);
+    args.extend(scan_property_args(target, host));
+    let mut cmd = Command::new(cli);
+    cmd.args(&args);
+    if let Some(t) = token {
+        cmd.env("SONAR_TOKEN", t);
+    }
+    cmd
 }
 
 #[cfg(test)]
@@ -1486,7 +1456,6 @@ mod tests {
         let files: Vec<String> = (0..300).map(|i| format!("src/File{i}.cs")).collect();
         let inc = build_inclusions(&files);
         assert_eq!(inc, "**/*");
-        assert!(!use_properties_file(&inc));
     }
 
     #[test]
@@ -1580,5 +1549,61 @@ mod tests {
         let targets = build_scan_targets_with_count("ax", &repos, &[], true, 1);
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].project_key, "ax");
+    }
+
+    fn token_target() -> ScanTarget {
+        ScanTarget {
+            project_key: "ax".into(),
+            sources: ".".into(),
+            inclusions: "src/a.rs".into(),
+        }
+    }
+
+    fn assert_token_only_in_env(cmd: &Command, token: &str) {
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            args.iter().all(|a| !a.contains(token)),
+            "token on the command line: {args:?}"
+        );
+        let env = cmd
+            .get_envs()
+            .find(|(k, _)| *k == "SONAR_TOKEN")
+            .and_then(|(_, v)| v)
+            .map(|v| v.to_string_lossy().into_owned());
+        assert_eq!(env.as_deref(), Some(token));
+    }
+
+    #[test]
+    fn native_scan_passes_the_token_in_the_environment_only() {
+        let client = SonarClient::new(SonarConfig::default());
+        let cmd = client.native_scan_command(Path::new("."), &token_target(), Some("squ_secret"));
+        assert_token_only_in_env(&cmd, "squ_secret");
+        assert!(cmd.get_args().any(|a| a == "-Dsonar.projectKey=ax"));
+    }
+
+    #[test]
+    fn container_scan_passes_the_token_name_only() {
+        let cmd = container_scan_command(
+            "podman",
+            vec![],
+            Path::new("/p"),
+            "http://h",
+            &token_target(),
+            Some("squ_secret"),
+        );
+        assert_token_only_in_env(&cmd, "squ_secret");
+        let args: Vec<_> = cmd.get_args().collect();
+        let i = args.iter().position(|a| *a == "-e").expect("-e");
+        assert_eq!(args[i + 1], "SONAR_TOKEN");
+    }
+
+    #[test]
+    fn a_scan_without_a_token_sets_no_token_variable() {
+        let client = SonarClient::new(SonarConfig::default());
+        let cmd = client.native_scan_command(Path::new("."), &token_target(), None);
+        assert!(cmd.get_envs().all(|(k, _)| k != "SONAR_TOKEN"));
     }
 }
