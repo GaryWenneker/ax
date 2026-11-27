@@ -363,7 +363,7 @@ To switch it off for a project, set this in `ax.json`:
 
 ## Benchmark
 
-`scripts/memory-bench.sh` scores a fixed coding fixture and a plain BM25 baseline, then writes `benchmarks/memory/results/<commit>.json`. The bundled LongMemEval and LoCoMo files are shape samples, not the public datasets. A missing dataset is recorded as skipped. The harness does not open the project vault.
+`scripts/memory-bench.sh` scores a fixed coding fixture and a plain BM25 baseline, then writes `benchmarks/memory/results/<commit>.json`. The bundled LongMemEval and LoCoMo files are shape samples, not the public datasets. A missing dataset is recorded as skipped. The harness does not open the project vault. When `AX_LONGMEMEVAL_PATH` or `AX_LOCOMO_PATH` points at a real dataset, the result's `scorer` is `text_stack`: an in-memory copy of ax's text ranking (normalization, stemming, a BM25 mix and a sibling boost) whose constants were tuned on those same sets. It does not run `ax recall`, so it does not measure FTS weights, fusion, the vector leg or abstention, and it is not a held-out score. The shape samples use `scorer: bm25`.
 
 ## CLI
 

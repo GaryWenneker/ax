@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use ax_memory::bench::{
     baseline_json, load_coding_fixture, missing_families, score_coding, score_dataset_path,
-    score_dataset_with_ax, score_shape_text, QUESTION_FAMILIES,
+    score_dataset_text_stack, score_shape_text, QUESTION_FAMILIES,
 };
 
 fn fixture_path() -> PathBuf {
@@ -88,27 +88,20 @@ async fn write_coding_baseline() {
         &std::fs::read_to_string(sample_path("locomo-shape.json")).unwrap(),
     )
     .unwrap();
-    let public_dir = tempfile::tempdir().unwrap();
-    let public_db = open_db(public_dir.path()).await;
-    let longmem = score_dataset_with_ax(
+    let longmem = score_dataset_text_stack(
         "longmemeval",
         std::env::var_os("AX_LONGMEMEVAL_PATH")
             .as_ref()
             .map(std::path::Path::new),
-        public_db.pool(),
     )
-    .await
     .unwrap();
-    let locomo = score_dataset_with_ax(
+    let locomo = score_dataset_text_stack(
         "locomo",
         std::env::var_os("AX_LOCOMO_PATH")
             .as_ref()
             .map(std::path::Path::new),
-        public_db.pool(),
     )
-    .await
     .unwrap();
-    public_db.close().await;
     let out = std::env::var("AX_MEMORY_BENCH_OUT").unwrap();
     let body = baseline_json(
         &report,
