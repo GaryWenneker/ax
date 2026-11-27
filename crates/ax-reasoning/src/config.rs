@@ -371,7 +371,17 @@ fn provider_for_url(url: &str) -> Option<&'static OffloadProviderSpec> {
         .find(|spec| spec.url.eq_ignore_ascii_case(url))
 }
 
-/// Resolve the offload settings. The model is `AX_OFFLOAD_MODEL`, else the
+/// Whether two base URLs name the same endpoint (case and a trailing `/` ignored).
+fn same_endpoint(a: &str, b: &str) -> bool {
+    a.trim()
+        .trim_end_matches('/')
+        .eq_ignore_ascii_case(b.trim().trim_end_matches('/'))
+}
+
+/// Resolve the offload settings. The API key is `AX_OFFLOAD_KEY`, else the
+/// variable named by the configured `key_env`; that variable is used only for
+/// the configured endpoint, never for a different `AX_OFFLOAD_URL`, and no key
+/// is used without an endpoint. The model is `AX_OFFLOAD_MODEL`, else the
 /// configured `model`, else the default model of the known provider at the
 /// endpoint. A known provider without a default model leaves offload off with
 /// a `problem` until a model is set; an unknown endpoint falls back to
@@ -399,8 +409,15 @@ pub fn resolve_offload() -> ResolvedOffload {
     let env_url = trimmed(std::env::var("AX_OFFLOAD_URL").ok().as_deref());
     let env_key = trimmed(std::env::var("AX_OFFLOAD_KEY").ok().as_deref());
     let had_env_url = env_url.is_some();
+    let config_url = trimmed(c.url.as_deref());
+    // The configured `key_env` belongs to the configured endpoint. When
+    // AX_OFFLOAD_URL points somewhere else, that key is not sent there.
+    let config_key_fits = match (&env_url, &config_url) {
+        (Some(env), Some(conf)) => same_endpoint(env, conf),
+        _ => true,
+    };
 
-    let url = env_url.or_else(|| trimmed(c.url.as_deref()));
+    let url = env_url.or(config_url);
     let set_model = trimmed(std::env::var("AX_OFFLOAD_MODEL").ok().as_deref())
         .or_else(|| trimmed(c.model.as_deref()));
     let provider = url.as_deref().and_then(provider_for_url);
@@ -427,7 +444,7 @@ pub fn resolve_offload() -> ResolvedOffload {
     if let Some(k) = env_key {
         api_key = Some(k);
         key_source = Some("AX_OFFLOAD_KEY".into());
-    } else if let Some(key_env) = trimmed(c.key_env.as_deref()) {
+    } else if let Some(key_env) = trimmed(c.key_env.as_deref()).filter(|_| config_key_fits) {
         if let Some(k) = trimmed(std::env::var(&key_env).ok().as_deref()) {
             api_key = Some(k);
             key_source = Some(key_env);
@@ -716,5 +733,95 @@ pub(crate) mod tests {
         let problem = r.problem.expect("status says why");
         assert!(problem.contains("Together AI"), "{problem}");
         assert!(problem.contains("AX_OFFLOAD_MODEL"), "{problem}");
+    }
+
+    #[test]
+    fn a_configured_key_is_not_sent_to_an_endpoint_from_the_env() {
+        let r = with_env(
+            &[
+                ("OPENAI_API_KEY", "sk-openai"),
+                ("AX_OFFLOAD_URL", "http://localhost:11434/v1"),
+            ],
+            |_| {
+                write_offload_config(Some(OffloadConfig {
+                    url: Some("https://api.openai.com/v1".into()),
+                    key_env: Some("OPENAI_API_KEY".into()),
+                    ..OffloadConfig::default()
+                }))
+                .unwrap();
+                resolve_offload()
+            },
+        );
+        assert!(r.enabled);
+        assert_eq!(r.origin, "env");
+        assert_eq!(r.url.as_deref(), Some("http://localhost:11434/v1"));
+        assert_eq!(
+            r.api_key, None,
+            "the OpenAI key belongs to the configured url"
+        );
+        assert_eq!(r.key_source, None);
+    }
+
+    #[test]
+    fn a_configured_key_still_pairs_with_the_same_endpoint_or_a_key_only_config() {
+        // The env url equals the configured url (trailing slash ignored).
+        let same = with_env(
+            &[
+                ("GROQ_API_KEY", "gsk-test"),
+                ("AX_OFFLOAD_URL", "https://api.groq.com/openai/v1/"),
+            ],
+            |_| {
+                write_offload_config(Some(OffloadConfig {
+                    url: Some("https://api.groq.com/openai/v1".into()),
+                    key_env: Some("GROQ_API_KEY".into()),
+                    ..OffloadConfig::default()
+                }))
+                .unwrap();
+                resolve_offload()
+            },
+        );
+        assert_eq!(same.api_key.as_deref(), Some("gsk-test"));
+        assert_eq!(same.key_source.as_deref(), Some("GROQ_API_KEY"));
+
+        // Config names only the key; the endpoint comes from the env.
+        let key_only = with_env(
+            &[
+                ("GROQ_API_KEY", "gsk-test"),
+                ("AX_OFFLOAD_URL", "https://api.groq.com/openai/v1"),
+            ],
+            |_| {
+                write_offload_config(Some(OffloadConfig {
+                    key_env: Some("GROQ_API_KEY".into()),
+                    ..OffloadConfig::default()
+                }))
+                .unwrap();
+                resolve_offload()
+            },
+        );
+        assert_eq!(key_only.api_key.as_deref(), Some("gsk-test"));
+    }
+
+    #[test]
+    fn a_key_without_an_endpoint_is_never_used() {
+        for vars in [
+            vec![("AX_OFFLOAD_KEY", "sk-x"), ("OPENAI_API_KEY", "sk-openai")],
+            vec![
+                ("GROQ_API_KEY", "gsk-test"),
+                ("OPENAI_API_KEY", "sk-openai"),
+            ],
+        ] {
+            let r = with_env(&vars, |_| {
+                write_offload_config(Some(OffloadConfig {
+                    key_env: Some("GROQ_API_KEY".into()),
+                    ..OffloadConfig::default()
+                }))
+                .unwrap();
+                resolve_offload()
+            });
+            assert!(!r.enabled);
+            assert_eq!(r.url, None);
+            assert_eq!(r.api_key, None);
+            assert_eq!(r.key_source, None);
+        }
     }
 }

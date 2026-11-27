@@ -174,7 +174,7 @@ Stored in `~/.ax/config.json` under a separate `"offload"` key. Lets ax delegate
 |---|---|---|
 | `url` | — | OpenAI-compatible base URL. Offload is on only when this (or `AX_OFFLOAD_URL`) is set |
 | `model` | the provider's default | Model name. Without it, a known provider uses its default model (OpenAI `gpt-4o`, Cerebras `gpt-oss-120b`, Groq `llama-3.3-70b-versatile`, Ollama `llama3`). Together AI, Fireworks and OpenRouter have no default: offload stays off and `ax offload status` shows a `problem` until you set a model. Other endpoints fall back to `gpt-oss-120b` |
-| `key_env` | — | Name of the env var that holds the API key |
+| `key_env` | — | Name of the env var that holds the API key. It is sent only to the configured `url`: when `AX_OFFLOAD_URL` points to a different endpoint, ax sends no key there (set `AX_OFFLOAD_KEY` for it) |
 | `effort` | not sent | `low` / `medium` / `high`, sent as `reasoning_effort`. Set it only for a reasoning model: non-reasoning models such as `gpt-4o` reject the parameter |
 | `style` | `plain` | Response style hint |
 
