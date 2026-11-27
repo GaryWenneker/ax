@@ -153,10 +153,70 @@ impl OAuthStore {
         })
     }
 }
+/// Pending authorization requests kept for the whole host.
+const MAX_PENDING: i64 = 128;
+/// Pending authorization requests one dynamically registered client may hold.
+const MAX_PENDING_PER_CLIENT: i64 = 16;
+/// Registered clients kept for the whole host.
+const MAX_CLIENTS: i64 = 512;
+/// A registered client that never started a sign-in is removed after this many seconds.
+const UNUSED_CLIENT_TTL: i64 = 3600;
+/// Unauthenticated calls to `/oauth/authorize` and `/oauth/register` (each) per minute.
+const OAUTH_CALLS_PER_MINUTE: u32 = 30;
+
+/// A fixed one-minute window that counts calls to an unauthenticated endpoint.
+struct RateLimit {
+    per_minute: u32,
+    window: std::sync::Mutex<(std::time::Instant, u32)>,
+}
+impl RateLimit {
+    fn per_minute(per_minute: u32) -> Self {
+        Self {
+            per_minute,
+            window: std::sync::Mutex::new((std::time::Instant::now(), 0)),
+        }
+    }
+    /// Counts one call; `Err(seconds)` tells how long until the window reopens.
+    fn check(&self) -> Result<(), u64> {
+        let mut window = self.window.lock().unwrap_or_else(|e| e.into_inner());
+        let elapsed = window.0.elapsed();
+        if elapsed >= std::time::Duration::from_secs(60) {
+            *window = (std::time::Instant::now(), 0);
+        }
+        if window.1 >= self.per_minute {
+            return Err(60u64.saturating_sub(window.0.elapsed().as_secs()).max(1));
+        }
+        window.1 += 1;
+        Ok(())
+    }
+}
+fn too_many(retry_after: u64) -> Response {
+    let mut r = response(
+        StatusCode::TOO_MANY_REQUESTS,
+        json!({"error":"temporarily_unavailable","error_description":"Too many OAuth requests; retry later"}),
+    );
+    if let Ok(value) = HeaderValue::from_str(&retry_after.to_string()) {
+        r.headers_mut().insert("retry-after", value);
+    }
+    r
+}
+
 #[derive(Clone)]
 struct Provider {
     store: OAuthStore,
     config: Arc<RemoteConfig>,
+    authorize_limit: Arc<RateLimit>,
+    register_limit: Arc<RateLimit>,
+}
+impl Provider {
+    fn new(store: OAuthStore, config: Arc<RemoteConfig>, per_minute: u32) -> Self {
+        Self {
+            store,
+            config,
+            authorize_limit: Arc::new(RateLimit::per_minute(per_minute)),
+            register_limit: Arc::new(RateLimit::per_minute(per_minute)),
+        }
+    }
 }
 fn response(status: StatusCode, value: Value) -> Response {
     secure((status, Json(value)).into_response())
@@ -195,7 +255,7 @@ pub fn router(store: OAuthStore, config: Arc<RemoteConfig>) -> Router {
         .route("/oauth/requests/{nonce}", get(poll))
         .route("/oauth/token", post(token))
         .route("/oauth/revoke", post(revoke))
-        .with_state(Provider { store, config })
+        .with_state(Provider::new(store, config, OAUTH_CALLS_PER_MINUTE))
 }
 async fn metadata(State(p): State<Provider>) -> Response {
     let origin = &p.store.origin;
@@ -231,6 +291,9 @@ fn redirect(value: &str, native: bool) -> bool {
     }
 }
 async fn register(State(p): State<Provider>, Json(body): Json<Value>) -> Response {
+    if let Err(retry) = p.register_limit.check() {
+        return too_many(retry);
+    }
     let result=async {
         if body.get("token_endpoint_auth_method").and_then(Value::as_str).is_some_and(|s|s!="none") {return Err("Only public clients are supported".into());}
         for (key,allowed) in [("grant_types",vec!["authorization_code","refresh_token"]),("response_types",vec!["code"])] {
@@ -243,9 +306,14 @@ async fn register(State(p): State<Provider>, Json(body): Json<Value>) -> Respons
         if name.is_empty() || name.len()>160 || name.chars().any(char::is_control) {return Err("Invalid client name".into());}
         let mut tx=p.store.pool.begin().await.map_err(db)?;
         // Acquire the SQLite write lock before checking the public registration quota.
-        sqlx::query("DELETE FROM remote_oauth_clients WHERE origin=? AND native=0 AND created<? AND id NOT IN (SELECT client_id FROM remote_oauth_requests WHERE origin=?)").bind(&p.store.origin).bind(now()-86400).bind(&p.store.origin).execute(&mut *tx).await.map_err(db)?;
+        let unused="origin=? AND native=0 AND id NOT IN (SELECT client_id FROM remote_oauth_requests WHERE origin=?)";
+        sqlx::query(&format!("DELETE FROM remote_oauth_clients WHERE {unused} AND created<?")).bind(&p.store.origin).bind(&p.store.origin).bind(now()-UNUSED_CLIENT_TTL).execute(&mut *tx).await.map_err(db)?;
         let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_clients WHERE origin=?").bind(&p.store.origin).fetch_one(&mut *tx).await.map_err(db)?;
-        if count>=512 {return Err("Client registration capacity reached".into());}
+        if count>=MAX_CLIENTS {
+            // Make room by removing the oldest client that never started a sign-in.
+            let evicted=sqlx::query(&format!("DELETE FROM remote_oauth_clients WHERE rowid IN (SELECT rowid FROM remote_oauth_clients WHERE {unused} ORDER BY created, rowid LIMIT ?)")).bind(&p.store.origin).bind(&p.store.origin).bind(count-MAX_CLIENTS+1).execute(&mut *tx).await.map_err(db)?;
+            if count-(evicted.rows_affected() as i64)>=MAX_CLIENTS {return Err("Client registration capacity reached".into());}
+        }
         let id=uuid::Uuid::new_v4().to_string();
         sqlx::query("INSERT INTO remote_oauth_clients VALUES (?,?,?,?,0,?)").bind(&p.store.origin).bind(&id).bind(name).bind(serde_json::to_string(&redirects).map_err(|e|e.to_string())?).bind(now()).execute(&mut *tx).await.map_err(db)?;
         tx.commit().await.map_err(db)?;
@@ -268,6 +336,9 @@ struct Authorization {
     resource: String,
 }
 async fn authorize(State(p): State<Provider>, Query(q): Query<Authorization>) -> Response {
+    if let Err(retry) = p.authorize_limit.check() {
+        return too_many(retry);
+    }
     let result=async {
         let row=sqlx::query("SELECT redirects,native FROM remote_oauth_clients WHERE origin=? AND id=?").bind(&p.store.origin).bind(&q.client_id).fetch_optional(&p.store.pool).await.map_err(db)?.ok_or("Unknown OAuth client")?;
         let native=row.get::<i64,_>("native")!=0; let registered:Vec<String>=serde_json::from_str(&row.get::<String,_>("redirects")).map_err(|_|"Invalid registered client")?;
@@ -277,8 +348,14 @@ async fn authorize(State(p): State<Provider>, Query(q): Query<Authorization>) ->
         if q.response_type!="code" || q.state.is_empty() || q.state.len()>2048 || q.code_challenge_method!="S256" || q.code_challenge.len()!=43 || URL_SAFE_NO_PAD.decode(&q.code_challenge).map_or(true,|v|v.len()!=32) || !scope.contains(CONTEXT_SCOPE) || scope.iter().any(|s|!matches!(*s,CONTEXT_SCOPE|WRITE_SCOPE)) {return Err("Authorization requires state, S256 PKCE and supported scopes".into());}
         let mut tx=p.store.pool.begin().await.map_err(db)?;
         sqlx::query("DELETE FROM remote_oauth_requests WHERE origin=? AND expires<? AND status IN ('pending','denied')").bind(&p.store.origin).bind(now()).execute(&mut *tx).await.map_err(db)?;
-        let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_requests WHERE origin=? AND status='pending' AND expires>?").bind(&p.store.origin).bind(now()).fetch_one(&mut *tx).await.map_err(db)?;
-        if count>=128 {return Err("Pending authorization capacity reached".into());}
+        // A full table never refuses a new sign-in: the oldest pending request makes room.
+        let oldest="DELETE FROM remote_oauth_requests WHERE id IN (SELECT id FROM remote_oauth_requests WHERE origin=? AND status='pending'";
+        if !native {
+            let mine:i64=sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_requests WHERE origin=? AND status='pending' AND client_id=?").bind(&p.store.origin).bind(&q.client_id).fetch_one(&mut *tx).await.map_err(db)?;
+            if mine>=MAX_PENDING_PER_CLIENT {sqlx::query(&format!("{oldest} AND client_id=? ORDER BY expires, rowid LIMIT ?)")).bind(&p.store.origin).bind(&q.client_id).bind(mine-MAX_PENDING_PER_CLIENT+1).execute(&mut *tx).await.map_err(db)?;}
+        }
+        let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_requests WHERE origin=? AND status='pending'").bind(&p.store.origin).fetch_one(&mut *tx).await.map_err(db)?;
+        if count>=MAX_PENDING {sqlx::query(&format!("{oldest} ORDER BY expires, rowid LIMIT ?)")).bind(&p.store.origin).bind(count-MAX_PENDING+1).execute(&mut *tx).await.map_err(db)?;}
         let id=uuid::Uuid::new_v4().to_string(); let nonce=secret(); let scope=if scope.contains(WRITE_SCOPE) {"ax:context ax:write"} else {CONTEXT_SCOPE};
         sqlx::query("INSERT INTO remote_oauth_requests(origin,id,nonce_hash,client_id,redirect,state,challenge,scope,project,resource,expires) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(&p.store.origin).bind(&id).bind(hash(&nonce)).bind(&q.client_id).bind(&q.redirect_uri).bind(&q.state).bind(&q.code_challenge).bind(scope).bind(&project.id).bind(&q.resource).bind(now()+600).execute(&mut *tx).await.map_err(db)?;
         tx.commit().await.map_err(db)?; Ok::<_,String>((id,nonce))
@@ -372,9 +449,9 @@ mod tests {
         let store = OAuthStore::with_pool(pool, "https://ax.example.com")
             .await
             .unwrap();
-        Provider {
+        Provider::new(
             store,
-            config: Arc::new(RemoteConfig {
+            Arc::new(RemoteConfig {
                 public_url: "https://ax.example.com".into(),
                 oauth: super::super::config::OAuthConfig {
                     built_in: true,
@@ -391,7 +468,8 @@ mod tests {
                 api_keys: vec![],
                 allowed_origins: vec![],
             }),
-        }
+            10_000,
+        )
     }
     async fn json_body(response: Response) -> Value {
         serde_json::from_slice(
@@ -672,6 +750,153 @@ mod tests {
         assert_eq!(
             metadata["code_challenge_methods_supported"],
             json!(["S256"])
+        );
+    }
+
+    fn sign_in(client: &str, redirect: &str, state: &str) -> Authorization {
+        Authorization {
+            client_id: client.into(),
+            redirect_uri: redirect.into(),
+            response_type: "code".into(),
+            state: state.into(),
+            code_challenge: URL_SAFE_NO_PAD.encode([7; 32]),
+            code_challenge_method: "S256".into(),
+            scope: CONTEXT_SCOPE.into(),
+            resource: "https://ax.example.com".into(),
+        }
+    }
+    async fn pending(p: &Provider, client: Option<&str>) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_requests WHERE status='pending' AND (? IS NULL OR client_id=?)")
+            .bind(client)
+            .bind(client)
+            .fetch_one(&p.store.pool)
+            .await
+            .unwrap()
+    }
+    const NATIVE_REDIRECT: &str = "http://127.0.0.1:8765/callback";
+
+    #[tokio::test]
+    async fn a_full_pending_table_evicts_the_oldest_request_instead_of_refusing() {
+        let p = provider().await;
+        let native = p.store.native_client().await.unwrap();
+        for i in 0..MAX_PENDING {
+            let q = sign_in(&native, NATIVE_REDIRECT, &format!("flood-{i}"));
+            assert_eq!(
+                authorize(State(p.clone()), Query(q)).await.status(),
+                StatusCode::OK
+            );
+        }
+        let q = sign_in(&native, NATIVE_REDIRECT, "real-user");
+        assert_eq!(
+            authorize(State(p.clone()), Query(q)).await.status(),
+            StatusCode::OK,
+            "a real sign-in was refused because the pending table was full"
+        );
+        assert_eq!(pending(&p, None).await, MAX_PENDING);
+        let oldest: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_requests WHERE state='flood-0'")
+                .fetch_one(&p.store.pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            oldest, 0,
+            "the oldest pending request was not the one evicted"
+        );
+    }
+
+    #[tokio::test]
+    async fn one_registered_client_cannot_hold_more_than_its_share_of_pending_requests() {
+        let p = provider().await;
+        let client = json_body(
+            register(
+                State(p.clone()),
+                Json(json!({"redirect_uris":["https://client.example.com/cb"]})),
+            )
+            .await,
+        )
+        .await["client_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        for i in 0..MAX_PENDING_PER_CLIENT + 5 {
+            let q = sign_in(&client, "https://client.example.com/cb", &format!("s{i}"));
+            assert_eq!(
+                authorize(State(p.clone()), Query(q)).await.status(),
+                StatusCode::OK
+            );
+        }
+        assert_eq!(pending(&p, Some(&client)).await, MAX_PENDING_PER_CLIENT);
+    }
+
+    #[tokio::test]
+    async fn a_full_client_table_makes_room_by_removing_an_unused_client() {
+        let p = provider().await;
+        p.store.native_client().await.unwrap();
+        for i in 1..MAX_CLIENTS {
+            sqlx::query("INSERT INTO remote_oauth_clients VALUES (?,?,?,?,0,?)")
+                .bind(&p.store.origin)
+                .bind(format!("flood-{i}"))
+                .bind("Flood")
+                .bind("[]")
+                .bind(now() - 60 + i)
+                .execute(&p.store.pool)
+                .await
+                .unwrap();
+        }
+        let response = register(
+            State(p.clone()),
+            Json(json!({"redirect_uris":["https://client.example.com/cb"]})),
+        )
+        .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::CREATED,
+            "registration was refused while unused clients filled the table"
+        );
+        let first: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_clients WHERE id='flood-1'")
+                .fetch_one(&p.store.pool)
+                .await
+                .unwrap();
+        assert_eq!(first, 0, "the oldest unused client was not the one removed");
+        let native: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_clients WHERE native=1")
+                .fetch_one(&p.store.pool)
+                .await
+                .unwrap();
+        assert_eq!(native, 1, "the native client was removed");
+    }
+
+    #[tokio::test]
+    async fn unauthenticated_oauth_endpoints_are_rate_limited() {
+        let mut p = provider().await;
+        p.authorize_limit = Arc::new(RateLimit::per_minute(3));
+        p.register_limit = Arc::new(RateLimit::per_minute(2));
+        let native = p.store.native_client().await.unwrap();
+        for i in 0..3 {
+            let q = sign_in(&native, NATIVE_REDIRECT, &format!("s{i}"));
+            assert_eq!(
+                authorize(State(p.clone()), Query(q)).await.status(),
+                StatusCode::OK
+            );
+        }
+        let limited = authorize(
+            State(p.clone()),
+            Query(sign_in(&native, NATIVE_REDIRECT, "s4")),
+        )
+        .await;
+        assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(limited.headers().contains_key("retry-after"));
+        let body = || Json(json!({"redirect_uris":["https://client.example.com/cb"]}));
+        for _ in 0..2 {
+            assert_eq!(
+                register(State(p.clone()), body()).await.status(),
+                StatusCode::CREATED
+            );
+        }
+        assert_eq!(
+            register(State(p.clone()), body()).await.status(),
+            StatusCode::TOO_MANY_REQUESTS
         );
     }
 }
