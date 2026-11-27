@@ -746,31 +746,34 @@ pub async fn prompt_cues(
         return Ok(Vec::new());
     }
     let json = serde_json::to_string(&tokens).unwrap_or_else(|_| "[]".into());
-    let rows: Vec<(String, String, String)> = sqlx::query_as(
+    let rows: Vec<(String, String, String)> = sqlx::query_as(concat!(
         "SELECT c.memory_id, c.source, c.cue FROM memory_cues c
          JOIN memories m ON m.id = c.memory_id
          WHERE c.cue IN (SELECT value FROM json_each(?))
            AND m.enabled = 1
            AND m.tier IN ('t1', 't2')
            AND COALESCE(m.status, 'active') = 'active'
-           AND m.kind NOT IN ('turn', 'doc', 'graph_diff', 'activity', 'file_change')",
-    )
+           AND m.kind NOT IN ",
+        crate::types::recall_only_kinds_sql!()
+    ))
     .bind(&json)
     .fetch_all(pool)
     .await
     .map_err(|e| db_err_pub(pool, e))?;
     // Count only hot/active memories so a large archive cue table does not
     // dominate document-frequency work on the preflight path.
-    let counts: Vec<(String, i64)> = sqlx::query_as(
+    let counts: Vec<(String, i64)> = sqlx::query_as(concat!(
         "SELECT c.cue, COUNT(DISTINCT c.memory_id) FROM memory_cues c
          JOIN memories m ON m.id = c.memory_id
          WHERE c.cue IN (SELECT value FROM json_each(?))
            AND m.enabled = 1
            AND m.tier IN ('t1', 't2')
            AND COALESCE(m.status, 'active') = 'active'
-           AND m.kind NOT IN ('turn', 'doc', 'graph_diff', 'activity', 'file_change')
-         GROUP BY c.cue",
-    )
+           AND m.kind NOT IN ",
+        crate::types::recall_only_kinds_sql!(),
+        "
+         GROUP BY c.cue"
+    ))
     .bind(&json)
     .fetch_all(pool)
     .await
@@ -1320,6 +1323,9 @@ async fn write_graph_episode(
         updated_at: now,
         tier: tier_for_kind("graph_diff").into(),
     };
+    crate::store::write_derived_columns(&mut *conn, &row)
+        .await
+        .map_err(|e| db_err_at(db_path.as_deref(), e))?;
     register_cues_on(&mut *conn, &row).await?;
     Ok(())
 }

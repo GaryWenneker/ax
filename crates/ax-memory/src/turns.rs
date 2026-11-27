@@ -111,6 +111,9 @@ pub(crate) async fn save_file_change_versions(
         if result.rows_affected() > 0 {
             crate::brain::stamp_memory(pool, &id, FILE_CHANGE_KIND, model).await?;
             if let Some(row) = crate::store::get(pool, &id).await? {
+                crate::store::write_derived_columns(pool, &row)
+                    .await
+                    .map_err(db_err)?;
                 crate::brain::register_cues(pool, &row, &[]).await?;
             }
             written += 1;
@@ -174,6 +177,9 @@ pub async fn save_file_change_with_hunk(
     if result.rows_affected() > 0 {
         crate::brain::stamp_memory(pool, &id, FILE_CHANGE_KIND, model).await?;
         if let Some(row) = crate::store::get(pool, &id).await? {
+            crate::store::write_derived_columns(pool, &row)
+                .await
+                .map_err(db_err)?;
             crate::brain::register_cues(pool, &row, &[]).await?;
         }
         return Ok(1);
@@ -211,6 +217,9 @@ pub async fn save_turn(
         crate::store::link_follows_in_session(pool, &record.id).await?;
         crate::brain::stamp_memory(pool, &record.id, TURN_KIND, model).await?;
         if let Some(row) = crate::store::get(pool, &record.id).await? {
+            crate::store::write_derived_columns(pool, &row)
+                .await
+                .map_err(db_err)?;
             crate::brain::register_cues(pool, &row, &[]).await?;
         }
     }

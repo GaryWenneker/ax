@@ -396,6 +396,31 @@ impl DerivedColumns {
     }
 }
 
+/// Write the columns derived from `row`'s content (search_text, origin,
+/// trust_level, instruction_like). Every path that inserts a memory calls it,
+/// so turn, file-change, git and graph rows are searched and trusted like
+/// remembered ones.
+pub(crate) async fn write_derived_columns<'e, E>(
+    exec: E,
+    row: &MemoryRow,
+) -> Result<(), sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    let derived = DerivedColumns::of(row);
+    sqlx::query(
+        "UPDATE memories SET origin = ?, trust_level = ?, search_text = ?, instruction_like = ? WHERE id = ?",
+    )
+    .bind(&derived.origin)
+    .bind(derived.trust_level)
+    .bind(&derived.search_text)
+    .bind(derived.instruction_like)
+    .bind(&row.id)
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
 /// `foreign` when the memory points outside the project, else `active`.
 fn content_status(row: &MemoryRow) -> &'static str {
     if crate::brain::memory_is_foreign(&row.source, &row.tags, &row.files) {
@@ -471,18 +496,9 @@ pub(crate) async fn remember_with_id(
     })
     .await
     .map_err(|e| db_err(pool, e))?;
-    let derived = DerivedColumns::of(&row);
-    sqlx::query(
-        "UPDATE memories SET origin = ?, trust_level = ?, search_text = ?, instruction_like = ? WHERE id = ?",
-    )
-    .bind(&derived.origin)
-    .bind(derived.trust_level)
-    .bind(&derived.search_text)
-    .bind(derived.instruction_like)
-    .bind(&row.id)
-    .execute(pool)
-    .await
-    .map_err(|e| db_err(pool, e))?;
+    write_derived_columns(pool, &row)
+        .await
+        .map_err(|e| db_err(pool, e))?;
     stamp_current_turn(pool, &row.id).await?;
     crate::brain::stamp_memory(pool, &row.id, &row.kind, model).await?;
     crate::brain::register_cues(pool, &row, &[]).await?;
@@ -726,8 +742,11 @@ async fn fts_ranking(
     let kind_gate = if include_recall_only {
         "AND m.title NOT LIKE 'Candidate:%'"
     } else {
-        "AND m.kind NOT IN ('turn', 'doc', 'graph_diff', 'activity', 'file_change') \
-         AND m.title NOT LIKE 'Candidate:%'"
+        concat!(
+            "AND m.kind NOT IN ",
+            crate::types::recall_only_kinds_sql!(),
+            " AND m.title NOT LIKE 'Candidate:%'"
+        )
     };
     // Archive recall ranks only t3 rows. Hot recall constrains FTS5 to hot
     // rowids through a subquery, so MATCH skips archive postings, and the SQL
@@ -785,8 +804,11 @@ async fn vector_ranking(
     let kind_gate = if include_recall_only {
         "AND title NOT LIKE 'Candidate:%'"
     } else {
-        "AND kind NOT IN ('turn', 'doc', 'graph_diff', 'activity', 'file_change') \
-         AND title NOT LIKE 'Candidate:%'"
+        concat!(
+            "AND kind NOT IN ",
+            crate::types::recall_only_kinds_sql!(),
+            " AND title NOT LIKE 'Candidate:%'"
+        )
     };
     let sql = format!(
         "SELECT id, embedding FROM memories

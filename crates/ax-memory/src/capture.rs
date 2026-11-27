@@ -140,6 +140,9 @@ pub async fn capture_git_history(
             let (_, model) = crate::embed::embed_labeled("ax");
             crate::brain::stamp_memory(pool, &id, "git", model).await?;
             if let Some(row) = crate::store::get(pool, &id).await? {
+                crate::store::write_derived_columns(pool, &row)
+                    .await
+                    .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
                 crate::brain::register_cues(pool, &row, &[]).await?;
             }
             result.captured += 1;
