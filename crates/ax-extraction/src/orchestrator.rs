@@ -298,7 +298,9 @@ impl ExtractionOrchestrator {
                 .unwrap_or(path)
                 .to_string_lossy()
                 .replace('\\', "/");
-            let content = ax_utils::read_text_file(path)?;
+            let Some(content) = read_or_skip(path, &rel) else {
+                continue;
+            };
             if is_generated(&content) {
                 self.record_generated(queries, &rel).await?;
                 continue;
@@ -605,8 +607,9 @@ impl ExtractionOrchestrator {
             if !full_path.is_file() {
                 continue;
             }
-            let content =
-                ax_utils::read_text_file(&full_path).map_err(ax_utils::errors::AxError::File)?;
+            let Some(content) = read_or_skip(&full_path, &rel) else {
+                continue;
+            };
             if is_generated(&content) {
                 self.record_generated(queries, &rel).await?;
                 continue;
@@ -779,6 +782,23 @@ fn stays_in_project(path: &str) -> bool {
         && path
             .split(['/', '\\'])
             .all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
+/// Read a file's text for indexing, or `None` when it cannot be read or
+/// decoded (permission denied, invalid bytes after a BOM, removed meanwhile).
+///
+/// Such a failure belongs to that one file and repeats on every attempt, so
+/// it is logged and the file skipped: failing the batch instead would keep
+/// every other file in it from being indexed. The file gets no `files` row,
+/// so a later sync tries it again once it is readable.
+fn read_or_skip(full_path: &Path, rel: &str) -> Option<String> {
+    match ax_utils::read_text_file(full_path) {
+        Ok(content) => Some(content),
+        Err(e) => {
+            tracing::warn!("skipping {rel}: cannot read it as text: {e}");
+            None
+        }
+    }
 }
 
 pub struct IndexResult {

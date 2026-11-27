@@ -202,3 +202,58 @@ async fn file_that_becomes_generated_loses_its_old_nodes() {
         "nodes of the hand-written version must be cleared: {names:?}"
     );
 }
+
+/// A UTF-8 BOM followed by invalid UTF-8: `read_text_file` refuses it.
+fn write_undecodable(fx: &Fixture, rel: &str) {
+    let mut bytes = vec![0xEF, 0xBB, 0xBF];
+    bytes.extend_from_slice(b"pub fn broken() {}\n// ");
+    bytes.extend_from_slice(&[0xC3, 0x28, b'\n']);
+    let path = fx.root.join(rel);
+    std::fs::create_dir_all(path.parent().unwrap()).expect("create parent");
+    std::fs::write(path, bytes).expect("write fixture file");
+}
+
+#[tokio::test]
+async fn one_unreadable_file_does_not_fail_the_batch() {
+    let fx = Fixture::new("unreadable");
+    fx.write("src/a.rs", "pub fn alpha() {}\n");
+    write_undecodable(&fx, "src/bad.rs");
+    fx.write("src/z.rs", "pub fn zulu() {}\n");
+    assert!(ax_utils::read_text_file(&fx.root.join("src/bad.rs")).is_err());
+
+    let db = Database::open(&fx.db).await.expect("open db");
+    let queries = QueryBuilder::new(db.pool().clone());
+    let orchestrator = ExtractionOrchestrator::new(fx.root.clone());
+    let opts = IndexOptions::default();
+
+    let paths: Vec<String> = ["src/a.rs", "src/bad.rs", "src/z.rs"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let result = orchestrator
+        .index_files(&queries, &paths, &opts, None)
+        .await
+        .expect("an unreadable file is skipped, not fatal");
+    assert_eq!(result.files_indexed, 2);
+    assert_eq!(
+        file_paths(&queries).await,
+        vec!["src/a.rs".to_string(), "src/z.rs".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn one_unreadable_file_does_not_fail_a_full_index() {
+    let fx = Fixture::new("unreadable-all");
+    fx.write("src/a.rs", "pub fn alpha() {}\n");
+    write_undecodable(&fx, "src/bad.rs");
+
+    let db = Database::open(&fx.db).await.expect("open db");
+    let queries = QueryBuilder::new(db.pool().clone());
+    let orchestrator = ExtractionOrchestrator::new(fx.root.clone());
+
+    orchestrator
+        .index_all(&queries, &IndexOptions::default(), None)
+        .await
+        .expect("an unreadable file is skipped, not fatal");
+    assert_eq!(file_paths(&queries).await, vec!["src/a.rs".to_string()]);
+}
