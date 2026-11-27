@@ -256,6 +256,14 @@ async fn any_success_today(pool: &SqlitePool, date: &str) -> Result<bool, String
 
 /// Force or no-op daily sync depending on `force` and whether today already succeeded.
 pub async fn sync_pricing(force: bool) -> Result<PricingSyncReport, String> {
+    sync_pricing_with(force, fetch_all_sources).await
+}
+
+async fn sync_pricing_with<F, Fut>(force: bool, fetch: F) -> Result<PricingSyncReport, String>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<crate::pricing_fetch::FetchBundle, String>>,
+{
     let date = today_local();
     let pool = open_pool().await.map_err(|e| e.to_string())?;
 
@@ -273,49 +281,36 @@ pub async fn sync_pricing(force: bool) -> Result<PricingSyncReport, String> {
         });
     }
 
-    let bundle = fetch_all_sources().await?;
+    // A failed fetch is recorded so the status shows it, while the last
+    // successful date and time are kept.
+    let bundle = match fetch().await {
+        Ok(bundle) => bundle,
+        Err(err) => {
+            record_meta(&pool, SOURCE_OPENROUTER, "error", Some(&err), 0, None).await?;
+            return Err(err);
+        }
+    };
     upsert_prices(&pool, &date, SOURCE_OPENROUTER, &bundle.openrouter).await?;
 
-    let or_status = if bundle.openrouter.is_empty() {
-        "error"
-    } else if bundle.warnings.iter().any(|w| w.contains("OpenRouter")) {
-        "partial"
-    } else {
+    // An Ok bundle always has OpenRouter models; warnings make it partial.
+    let overall = if bundle.warnings.is_empty() {
         "ok"
-    };
-    let or_err = if or_status == "ok" {
-        None
     } else {
-        bundle
-            .warnings
-            .iter()
-            .find(|w| w.contains("OpenRouter"))
-            .map(|s| s.as_str())
+        "partial"
     };
+    let warning = bundle.warnings.first().map(String::as_str);
     record_meta(
         &pool,
         SOURCE_OPENROUTER,
-        or_status,
-        or_err,
+        overall,
+        warning,
         bundle.openrouter.len() as i64,
-        if or_status != "error" {
-            Some(&date)
-        } else {
-            None
-        },
+        Some(&date),
     )
     .await?;
 
     invalidate_price_cache();
     let _ = refresh_price_cache_from_db().await;
-
-    let overall = if bundle.openrouter.is_empty() {
-        "error"
-    } else if bundle.warnings.is_empty() {
-        "ok"
-    } else {
-        "partial"
-    };
 
     Ok(PricingSyncReport {
         date,
@@ -683,6 +678,74 @@ mod tests {
             "gpt-4o priced at {}",
             found.0.input_per_mtok
         );
+    }
+
+    #[tokio::test]
+    async fn failed_sync_is_recorded_as_error() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let db = temp_db("syncfail");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+        let pool = open_pool().await.expect("pool");
+        // A previous good run.
+        record_meta(&pool, SOURCE_OPENROUTER, "ok", None, 10, Some("2026-01-01"))
+            .await
+            .unwrap();
+
+        let result = sync_pricing_with(true, || async {
+            Err::<crate::pricing_fetch::FetchBundle, String>("OpenRouter fetch: timed out".into())
+        })
+        .await;
+        let status = pricing_status().await.unwrap();
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(&db);
+
+        assert!(result.is_err());
+        let or = status
+            .sources
+            .iter()
+            .find(|s| s.source == SOURCE_OPENROUTER)
+            .expect("openrouter meta row");
+        assert_eq!(or.status.as_deref(), Some("error"));
+        assert!(or.error.as_deref().is_some_and(|e| e.contains("timed out")));
+        assert_eq!(or.last_success_date.as_deref(), Some("2026-01-01"));
+    }
+
+    #[tokio::test]
+    async fn successful_sync_is_recorded_as_ok() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let db = temp_db("syncok");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+        let _ = open_pool().await.expect("pool");
+        let result = sync_pricing_with(true, || async {
+            Ok(crate::pricing_fetch::FetchBundle {
+                openrouter: parse_openrouter_models(&json!({
+                    "data": [{
+                        "id": "openai/gpt-4o",
+                        "name": "GPT-4o",
+                        "pricing": { "prompt": "0.0000025", "completion": "0.00001" }
+                    }]
+                })),
+                ..Default::default()
+            })
+        })
+        .await;
+        let status = pricing_status().await.unwrap();
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(&db);
+
+        let report = result.expect("sync ok");
+        assert_eq!(report.status, "ok");
+        let or = status
+            .sources
+            .iter()
+            .find(|s| s.source == SOURCE_OPENROUTER)
+            .expect("openrouter meta row");
+        assert_eq!(or.status.as_deref(), Some("ok"));
+        assert_eq!(or.error, None);
+        assert_eq!(or.models_count, Some(1));
+        assert!(status.synced_today);
     }
 
     #[tokio::test]
