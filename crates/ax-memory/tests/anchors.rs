@@ -204,3 +204,47 @@ async fn reanchor_skips_a_removed_symbol_with_several_candidates() {
     assert_eq!(anchors_of(pool, "m1").await[0].0, "a.rs::db_err");
     db.close().await;
 }
+
+async fn open_versions(pool: &SqlitePool, key: &str) -> i64 {
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM graph_node_versions WHERE node_key = ? AND valid_to IS NULL",
+    )
+    .bind(key)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn reanchor_closes_a_removed_symbol_whose_candidates_fill_a_page() {
+    let (_dir, db) = open_db().await;
+    let pool = db.pool();
+    // An old key with more same-body candidates than one page holds.
+    insert_node(pool, "a.rs::trivial", "trivial", "a.rs").await;
+    record(pool, "a.rs::trivial", "{}", "a.rs", 10).await;
+    anchor_memory(pool, "m1", "a.rs::trivial", 1).await.unwrap();
+    delete_node(pool, "a.rs::trivial").await;
+    for i in 0..520 {
+        let key = format!("b{i:04}.rs::trivial");
+        insert_node(pool, &key, "trivial", &key).await;
+        record(pool, &key, "{}", &key, 20).await;
+    }
+    // A later old key with one clear rename target.
+    insert_node(pool, "z.rs::db_err", "db_err", "z.rs").await;
+    record(pool, "z.rs::db_err", "db_err\nunique", "z.rs", 10).await;
+    anchor_memory(pool, "m2", "z.rs::db_err", 1).await.unwrap();
+    delete_node(pool, "z.rs::db_err").await;
+    insert_node(pool, "zz.rs::db_err2", "db_err2", "zz.rs").await;
+    record(pool, "zz.rs::db_err2", "db_err\nunique", "zz.rs", 20).await;
+
+    let mut moved = 0;
+    for _ in 0..2 {
+        moved += reanchor_renames(pool).await.unwrap();
+    }
+    assert_eq!(open_versions(pool, "a.rs::trivial").await, 0);
+    assert_eq!(open_versions(pool, "z.rs::db_err").await, 0);
+    assert_eq!(moved, 1);
+    assert_eq!(anchors_of(pool, "m1").await[0].0, "a.rs::trivial");
+    assert_eq!(anchors_of(pool, "m2").await[0].0, "zz.rs::db_err2");
+    db.close().await;
+}

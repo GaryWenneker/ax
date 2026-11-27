@@ -168,10 +168,14 @@ pub async fn reanchor_renames(pool: &SqlitePool) -> Result<usize, AxError> {
     .await
     .map_err(|e| db_err(pool, e))?;
 
-    // A full page may cut the last old key's candidates short; leave it for the next pass.
+    // A full page may cut the last old key's candidates short. With one candidate in
+    // the page it may still have more, so it waits for the next pass. With two or more
+    // it is ambiguous either way and is closed now; otherwise a key with a page full of
+    // candidates would fill every pass and block every key after it.
     let truncated_last = (pairs.len() == RENAME_PAGE)
         .then(|| pairs.last().map(|(old, _)| old.clone()))
-        .flatten();
+        .flatten()
+        .filter(|last| pairs.iter().filter(|(old, _)| old == last).count() == 1);
     let mut per_old: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
     let mut per_new: std::collections::HashMap<&str, usize> = Default::default();
     for (old_key, new_key) in &pairs {
