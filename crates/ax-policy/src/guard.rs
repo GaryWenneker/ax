@@ -35,6 +35,7 @@ pub async fn guard_operation_with_extra_skills(
         ))
     };
     let mut violations = Vec::new();
+    let mut warnings = Vec::new();
 
     let rel = match project_relative(project_root, path) {
         Some(rel) => rel,
@@ -49,6 +50,7 @@ pub async fn guard_operation_with_extra_skills(
                         project_root.display()
                     ),
                 }],
+                warnings: Vec::new(),
             });
         }
     };
@@ -101,7 +103,38 @@ pub async fn guard_operation_with_extra_skills(
         //                                             the rule's `globs` if it has any)
         //   guard: require-content: "requireAuth("    (scoped by the rule's `globs`)
         //   guard: require-skill: "old-coder"         (skill must exist, be approved, alwaysApply)
-        for directive in parse_guard_directives(&rule.body) {
+        //
+        // A directive or rule glob that does not parse blocks the write
+        // (outside policy files, which stay writable so the rule can be fixed):
+        // a CRITICAL rule must never be skipped without anyone noticing.
+        let (directives, mut problems) = parse_guard_directives(&rule.body);
+        if directives.iter().any(|d| {
+            matches!(
+                d,
+                GuardDirective::ForbidContent(_) | GuardDirective::RequireContent(_)
+            )
+        }) {
+            problems.extend(rule.globs.iter().filter_map(|g| {
+                build_glob(g)
+                    .err()
+                    .map(|e| format!("rule glob '{g}' is invalid: {e}"))
+            }));
+        }
+        for problem in problems {
+            let message = format!("CRITICAL rule {} has an invalid guard: {problem}", rule.id);
+            if require_skill_exempt {
+                warnings.push(message);
+            } else {
+                violations.push(GuardViolation {
+                    rule_id: rule.id.clone(),
+                    message: format!("{message}; fix the rule before writing"),
+                });
+            }
+        }
+        // Content that is not valid UTF-8 is still checked, with invalid
+        // bytes replaced, so one stray byte cannot hide a forbidden pattern.
+        let text = content.map(String::from_utf8_lossy);
+        for directive in directives {
             match directive {
                 GuardDirective::ForbidPath(glob) => {
                     if path_matches_glob(&glob, &rel) {
@@ -123,8 +156,8 @@ pub async fn guard_operation_with_extra_skills(
                     if op == GuardOp::Write
                         && (rule.globs.is_empty() || any_glob_matches(&rule.globs, &rel))
                     {
-                        if let Some(text) = content.and_then(|b| std::str::from_utf8(b).ok()) {
-                            if matcher.is_match(text) {
+                        match text.as_deref() {
+                            Some(text) if matcher.is_match(text) => {
                                 violations.push(GuardViolation {
                                     rule_id: rule.id.clone(),
                                     message: format!(
@@ -133,6 +166,8 @@ pub async fn guard_operation_with_extra_skills(
                                     ),
                                 });
                             }
+                            Some(_) => {}
+                            None => warnings.push(content_not_checked(&rule.id)),
                         }
                     }
                 }
@@ -141,8 +176,8 @@ pub async fn guard_operation_with_extra_skills(
                         && !rule.globs.is_empty()
                         && any_glob_matches(&rule.globs, &rel)
                     {
-                        if let Some(text) = content.and_then(|b| std::str::from_utf8(b).ok()) {
-                            if !matcher.is_match(text) {
+                        match text.as_deref() {
+                            Some(text) if !matcher.is_match(text) => {
                                 violations.push(GuardViolation {
                                     rule_id: rule.id.clone(),
                                     message: format!(
@@ -151,6 +186,8 @@ pub async fn guard_operation_with_extra_skills(
                                     ),
                                 });
                             }
+                            Some(_) => {}
+                            None => warnings.push(content_not_checked(&rule.id)),
                         }
                     }
                 }
@@ -175,6 +212,7 @@ pub async fn guard_operation_with_extra_skills(
     Ok(GuardResult {
         allowed: violations.is_empty(),
         violations,
+        warnings,
     })
 }
 
@@ -198,16 +236,17 @@ enum GuardMatcher {
 }
 
 impl GuardMatcher {
-    fn parse(raw: &str) -> Option<Self> {
+    /// `Ok(None)` for an empty value; `Err` for a `/regex/` that does not compile.
+    fn parse(raw: &str) -> Result<Option<Self>, String> {
         let raw = raw.trim();
         if raw.len() >= 2 && raw.starts_with('/') && raw.ends_with('/') {
             regex::Regex::new(&raw[1..raw.len() - 1])
-                .ok()
-                .map(GuardMatcher::Regex)
+                .map(|re| Some(GuardMatcher::Regex(re)))
+                .map_err(|e| format!("regex {raw} is invalid: {e}"))
         } else if !raw.is_empty() {
-            Some(GuardMatcher::Substring(raw.to_string()))
+            Ok(Some(GuardMatcher::Substring(raw.to_string())))
         } else {
-            None
+            Ok(None)
         }
     }
 
@@ -237,8 +276,11 @@ const REQUIRE_SKILL_PREFIX: &str = "require-skill:";
 /// Scan a rule body for `guard: <keyword>: "<value>"` lines. Matching is
 /// intentionally narrow (exact `guard:` prefix + a known keyword) so ordinary
 /// prose mentioning the word "guard" cannot accidentally opt a rule in.
-fn parse_guard_directives(body: &str) -> Vec<GuardDirective> {
+/// Returns the directives that parse and a message for each one that does not
+/// (an invalid regex or glob).
+fn parse_guard_directives(body: &str) -> (Vec<GuardDirective>, Vec<String>) {
     let mut out = Vec::new();
+    let mut problems = Vec::new();
     for raw_line in body.lines() {
         let line = raw_line
             .trim()
@@ -253,39 +295,43 @@ fn parse_guard_directives(body: &str) -> Vec<GuardDirective> {
         let value_offset = line.len() - after_guard.len();
         let rest = &line[value_offset..];
 
-        let (prefix_len, build): (usize, fn(String) -> Option<GuardDirective>) =
-            if after_guard.starts_with(FORBID_PATH_PREFIX) {
-                (FORBID_PATH_PREFIX.len(), |v| {
-                    Some(GuardDirective::ForbidPath(v))
-                })
-            } else if after_guard.starts_with(FORBID_CONTENT_PREFIX) {
-                (FORBID_CONTENT_PREFIX.len(), |v| {
-                    GuardMatcher::parse(&v).map(GuardDirective::ForbidContent)
-                })
-            } else if after_guard.starts_with(REQUIRE_CONTENT_PREFIX) {
-                (REQUIRE_CONTENT_PREFIX.len(), |v| {
-                    GuardMatcher::parse(&v).map(GuardDirective::RequireContent)
-                })
-            } else if after_guard.starts_with(REQUIRE_SKILL_PREFIX) {
-                (REQUIRE_SKILL_PREFIX.len(), |v| {
-                    let name = v.trim();
-                    if name.is_empty() {
-                        None
-                    } else {
-                        Some(GuardDirective::RequireSkill(name.to_string()))
-                    }
-                })
-            } else {
-                continue;
-            };
+        type Build = fn(String) -> Result<Option<GuardDirective>, String>;
+        let (prefix_len, build): (usize, Build) = if after_guard.starts_with(FORBID_PATH_PREFIX) {
+            (FORBID_PATH_PREFIX.len(), |v| {
+                build_glob(&v)
+                    .map(|_| Some(GuardDirective::ForbidPath(v.clone())))
+                    .map_err(|e| format!("forbid-path glob '{v}' is invalid: {e}"))
+            })
+        } else if after_guard.starts_with(FORBID_CONTENT_PREFIX) {
+            (FORBID_CONTENT_PREFIX.len(), |v| {
+                GuardMatcher::parse(&v).map(|m| m.map(GuardDirective::ForbidContent))
+            })
+        } else if after_guard.starts_with(REQUIRE_CONTENT_PREFIX) {
+            (REQUIRE_CONTENT_PREFIX.len(), |v| {
+                GuardMatcher::parse(&v).map(|m| m.map(GuardDirective::RequireContent))
+            })
+        } else if after_guard.starts_with(REQUIRE_SKILL_PREFIX) {
+            (REQUIRE_SKILL_PREFIX.len(), |v| {
+                let name = v.trim();
+                Ok((!name.is_empty()).then(|| GuardDirective::RequireSkill(name.to_string())))
+            })
+        } else {
+            continue;
+        };
 
         if let Some(value) = extract_quoted(&rest[prefix_len..]) {
-            if let Some(directive) = build(value) {
-                out.push(directive);
+            match build(value) {
+                Ok(Some(directive)) => out.push(directive),
+                Ok(None) => {}
+                Err(problem) => problems.push(problem),
             }
         }
     }
-    out
+    (out, problems)
+}
+
+fn content_not_checked(rule_id: &str) -> String {
+    format!("content not checked for rule {rule_id}: the write came without content")
 }
 
 /// Pull the contents out of a `"…"` or `'…'` wrapped value.
@@ -375,10 +421,16 @@ fn project_relative(project_root: &Path, path: &Path) -> Option<String> {
     Some(rel.to_string_lossy().replace('\\', "/"))
 }
 
-fn path_matches_glob(pattern: &str, rel_path: &str) -> bool {
+fn build_glob(pattern: &str) -> Result<globset::Glob, globset::Error> {
     globset::GlobBuilder::new(pattern)
         .case_insensitive(CASE_INSENSITIVE_FS)
         .build()
+}
+
+/// An invalid pattern never matches here; [`guard_operation_with_extra_skills`]
+/// reports it as a broken guard before matching.
+fn path_matches_glob(pattern: &str, rel_path: &str) -> bool {
+    build_glob(pattern)
         .map(|g| g.compile_matcher().is_match(rel_path))
         .unwrap_or(false)
 }
@@ -955,5 +1007,106 @@ mod tests {
         .await
         .unwrap();
         assert!(!result.allowed);
+    }
+
+    #[tokio::test]
+    async fn a_broken_regex_directive_blocks_instead_of_vanishing() {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        insert_rule(
+            &pool,
+            "no-secret-key",
+            "[]",
+            "guard: forbid-content: \"/sk-[A-Z{10,}/\"",
+        )
+        .await;
+        let root = dir.path();
+        let result = guard_operation(
+            &pool,
+            root,
+            &root.join("config.ts"),
+            GuardOp::Write,
+            Some(b"const key = 'sk-ABCDEFGHIJKL';"),
+        )
+        .await
+        .unwrap();
+        assert!(!result.allowed);
+        assert!(
+            result.violations[0].message.contains("invalid"),
+            "{:?}",
+            result.violations
+        );
+        // The rule file itself stays writable so the rule can be repaired.
+        let repair = guard_operation(
+            &pool,
+            root,
+            &root.join(".agents/rules/no-secret-key.mdc"),
+            GuardOp::Write,
+            Some(b"---\nid: no-secret-key\n---\n"),
+        )
+        .await
+        .unwrap();
+        assert!(repair.allowed, "{:?}", repair.violations);
+        assert!(!repair.warnings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_broken_glob_blocks_instead_of_never_matching() {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        insert_rule(&pool, "no-keys", "[]", "guard: forbid-path: \"keys/[abc\"").await;
+        insert_rule(
+            &pool,
+            "scoped",
+            "[\"src/[api\"]",
+            "guard: require-content: \"requireAuth(\"",
+        )
+        .await;
+        let root = dir.path();
+        let result = guard_operation(&pool, root, &root.join("a.rs"), GuardOp::Write, Some(b"x"))
+            .await
+            .unwrap();
+        let ids: Vec<&str> = result
+            .violations
+            .iter()
+            .map(|v| v.rule_id.as_str())
+            .collect();
+        assert!(ids.contains(&"no-keys"), "{ids:?}");
+        assert!(ids.contains(&"scoped"), "{ids:?}");
+    }
+
+    #[tokio::test]
+    async fn forbid_content_checks_content_that_is_not_utf8() {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        insert_rule(&pool, "no-eval", "[]", "guard: forbid-content: \"eval(\"").await;
+        let root = dir.path();
+        let result = guard_operation(
+            &pool,
+            root,
+            &root.join("app.js"),
+            GuardOp::Write,
+            Some(b"\xff eval(userInput)"),
+        )
+        .await
+        .unwrap();
+        assert!(!result.allowed);
+    }
+
+    #[tokio::test]
+    async fn a_write_without_content_reports_unchecked_content_rules() {
+        let (dir, pool) = pool_with_auth_rule().await;
+        let root = dir.path();
+        let result = guard_operation(
+            &pool,
+            root,
+            &root.join("src/api/users.ts"),
+            GuardOp::Write,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            result.warnings.iter().any(|w| w.contains("not checked")),
+            "{:?}",
+            result.warnings
+        );
     }
 }

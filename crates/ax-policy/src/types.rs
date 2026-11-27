@@ -392,6 +392,10 @@ pub struct GuardViolation {
 pub struct GuardResult {
     pub allowed: bool,
     pub violations: Vec<GuardViolation>,
+    /// Checks that could not run, such as content rules for a write that
+    /// came without content. They do not block, but the caller should say so.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

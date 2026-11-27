@@ -394,6 +394,8 @@ guard: require-skill: "old-coder"
 
 Before matching, `ax_guard` resolves the path: `.` and `..` segments and symbolic links are followed, and a relative path is taken from the project root. A path that ends up outside the project is refused (rule id `outside-project`). On macOS and Windows, glob matching ignores case, like the file system.
 
+A directive whose `/regex/` or glob does not compile, or a rule glob that does not compile on a rule with content directives, blocks every write and delete until the rule is fixed; the violation names the broken value. Writes to policy files (`.agents/**`, `.ax/policy/**`) stay allowed with a warning so the rule can be repaired. Content that is not valid UTF-8 is still checked, with invalid bytes replaced. When a write comes without content and a content directive applies, the result carries a `warnings` entry saying the content was not checked.
+
 ### Command Center: label filter
 
 On **Policy → Rules** and **Policy → Skills**:
