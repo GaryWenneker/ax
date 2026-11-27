@@ -206,7 +206,7 @@ ax watch --quiet
 
 ### `ax status [path]`
 
-Index statistics: node/edge/file counts, **document inventory by extension** (markdown, office, PDF, other opaque types), unresolved refs, pending sync, and last indexed time. When `.ax/integrity.json` records a database incident, the text and `--json` include it and name `ax db repair`. The project daemon runs a quick check once a day, and again after a crash. A broken full-text index, cue index, or vector map is rebuilt then. Stored rows, including a dangling edge, wait for `ax db repair`. The incident file is written when something remains. A recorded incident also skips the background file watcher until a later check passes.
+Index statistics: node/edge/file counts, **document inventory by extension** (markdown, office, PDF, other opaque types), unresolved refs, pending sync, and last indexed time. When `.ax/integrity.json` records a database incident, the text and `--json` include it and name `ax db repair`. The project daemon runs a quick check once a day, and again after a crash. A broken full-text index, cue index, or vector map is rebuilt then. When the check finds damage in the file itself, or cannot read it, it writes nothing and records an incident instead, because only `ax db repair` takes a backup before it rewrites the file. Stored rows, including a dangling edge, wait for `ax db repair`. The incident file is written when something remains. A recorded incident also skips the background file watcher until a later check passes.
 
 | Argument / flag | Type | Description |
 |---|---|---|

@@ -446,7 +446,7 @@ pub async fn run_quick_check(db_path: &Path, force: bool) -> Result<(), String> 
         && !report
             .findings
             .iter()
-            .any(|item| item.code == "not_a_database")
+            .any(|item| needs_manual_repair(&item.code))
     {
         repair_rebuildable_indexes(db_path).await?;
     } else {
@@ -456,8 +456,10 @@ pub async fn run_quick_check(db_path: &Path, force: bool) -> Result<(), String> 
     Ok(())
 }
 
+/// Derived data the unattended check may rebuild in place. `integrity` is
+/// not here: a damaged file is only rewritten by `ax db repair`, which takes
+/// a backup first.
 const REBUILDABLE: &[&str] = &[
-    "integrity",
     "missing_index",
     "fts",
     "orphan_cues",
@@ -469,13 +471,20 @@ pub fn is_rebuildable(code: &str) -> bool {
     REBUILDABLE.contains(&code)
 }
 
+/// Findings that stop the unattended check from writing anything: the file
+/// is damaged or unreadable, so the next step is `ax db repair`.
+fn needs_manual_repair(code: &str) -> bool {
+    matches!(code, "integrity" | "not_a_database" | "io")
+}
+
 /// Findings that describe a busy or not yet checkpointed database, not damage.
 pub fn is_transient(code: &str) -> bool {
     matches!(code, "wal_uncheckpointed" | "writers_active")
 }
 
 /// Rebuilds derived indexes only. Memories, edges, file contents, and unresolved
-/// refs stay for `ax db repair`. This path does not copy a backup.
+/// refs stay for `ax db repair`. This path does not copy a backup, so it does
+/// nothing when the file itself is damaged or could not be read.
 pub async fn repair_rebuildable_indexes(path: &Path) -> Result<Vec<String>, String> {
     if !path.is_file() {
         return Ok(Vec::new());
@@ -489,7 +498,7 @@ pub async fn repair_rebuildable_indexes(path: &Path) -> Result<Vec<String>, Stri
     )
     .await;
     if before.findings.iter().any(|item| {
-        item.code == "not_a_database" || item.code == "writers_active" || item.code == "missing"
+        needs_manual_repair(&item.code) || item.code == "writers_active" || item.code == "missing"
     }) {
         return Ok(Vec::new());
     }
@@ -731,7 +740,12 @@ async fn collect(pool: &SqlitePool, options: &CheckOptions, include_fts: bool) -
         Err(err) if is_locked(&err) => findings.push(finding("writers_active", "", err)),
         Ok(rows) if rows.len() == 1 && rows[0] == "ok" => {}
         Ok(rows) => findings.push(finding("integrity", "", truncate(&rows.join("; ")))),
-        Err(err) => findings.push(finding("integrity", "", err)),
+        // A malformed image is damage; any other failure (I/O, timeout) says
+        // nothing about the file's contents.
+        Err(err) if err.to_lowercase().contains("malformed") => {
+            findings.push(finding("integrity", "", err))
+        }
+        Err(err) => findings.push(finding("io", "", err)),
     }
     match count(pool, "SELECT COUNT(*) FROM pragma_foreign_key_check").await {
         Ok(0) => {}
