@@ -109,3 +109,22 @@ html, body {
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-track { background: var(--bg-side); }
 *::-webkit-scrollbar-thumb { background: #424242; border-radius: 0; }
+
+/* Reduce motion: every animation and transition ends at once, so pulses,
+   shimmers and live markers stand still. Progress spinners keep turning,
+   because they are the only sign that work is still running. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  :is(.ax-spinner, .sq-spinner, .agent-install-spinner, .ship-step-icon--live, .codicon-modifier-spin) {
+    animation-duration: 1s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
