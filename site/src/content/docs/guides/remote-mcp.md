@@ -312,7 +312,7 @@ The remote server exposes graph/context retrieval, preflight, rules/skills, scop
 
 Each transport session is bound to the authenticated principal and selected project. Project A's session cannot be used on project B or by another principal. Sessions expire after 30 minutes of inactivity. One principal (an API key, a client token or a signed-in user) holds at most 8 sessions; a new one closes that principal's least recently used session. The server holds 128 sessions in all. It serves 16 requests at once, and one principal may have at most 4 of them in flight; a call that waits for its own busy session does not hold one of the 16 while it waits. `axc_` client tokens are checked against the global database the server opened at startup.
 
-Remote chat IDs are issued by the server. Pass the `session` from preflight on subsequent calls. Omit it for a new chat. Foreign chat IDs are rejected; local Cursor hooks are never used to identify a remote conversation. Keep the returned context hash only while the model still holds its snapshot.
+Remote chat IDs are issued by the server. Pass the `session` from preflight on subsequent calls. Omit it for a new chat. Chat IDs and `ax_expand` cache IDs belong to the principal and project they were issued to, not to one transport session: after a reconnect (an expired session or a client restart) the same principal keeps using them. The server remembers the latest 4096 of each per principal and project, and forgets them when it restarts. A chat or cache ID that this principal was not issued, or that the server no longer knows, gets a tool error (`isError`) that says to omit `session` and start a new chat, or to run the query again. Local Cursor hooks are never used to identify a remote conversation. Keep the returned context hash only while the model still holds its snapshot.
 
 The HTTP endpoint supports Ax's existing **2025-03-26, 2025-06-18 and 2025-11-25** Streamable HTTP behavior with initialize and a transport session. It does not claim the revised 2026-07-28 protocol. POST returns JSON; notifications return empty 202; authenticated DELETE closes the transport session. There is no standalone GET notification stream.
 
@@ -352,7 +352,7 @@ Run native browser login on the laptop that will use the connection: its callbac
 | Result | Meaning and next step |
 |---|---|
 | 401 | Missing/invalid/expired token or wrong signature/issuer/audience. Reauthorize against the advertised issuer/resource. |
-| 403 | Account/project/scope, Origin or chat ownership denied. Inspect the explicit grant and requested scope. |
+| 403 | Account/project/scope or Origin denied. Inspect the explicit grant and requested scope. |
 | 404 for session | Unknown/expired transport session. Reconnect; do not reuse a session from another project. |
 | 400 protocol mismatch | Send the version negotiated by initialize with subsequent requests. |
 | 429 | Session or request limit reached: the server is busy, or this principal already has 4 requests in flight. Retry after active requests finish. |

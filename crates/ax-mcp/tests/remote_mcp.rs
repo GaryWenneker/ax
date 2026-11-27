@@ -416,18 +416,15 @@ async fn remote_tools_deny_execution_writes_root_overrides_and_foreign_chats() {
     )
     .await;
     assert_eq!(body["error"]["code"], -32602);
-    assert_eq!(
-        post(
-            &app,
-            "alpha",
-            Some("test-ide-key"),
-            Some(&session),
-            call("ax_preflight", json!({"session":"foreign"}))
-        )
-        .await
-        .0,
-        StatusCode::FORBIDDEN
-    );
+    let (status, _, body) = post(
+        &app,
+        "alpha",
+        Some("test-ide-key"),
+        Some(&session),
+        call("ax_preflight", json!({"session":"foreign"})),
+    )
+    .await;
+    assert_unknown_handle(status, &body, "omit `session` to start a new chat");
     let (_, _, list) = post(
         &app,
         "alpha",
@@ -444,10 +441,12 @@ async fn remote_tools_deny_execution_writes_root_overrides_and_foreign_chats() {
 }
 
 #[tokio::test]
-async fn remote_chats_and_caches_are_connection_owned() {
+async fn remote_chats_and_caches_are_principal_owned() {
     let (_dir, app, _) = fixture().await;
     let a = initialize(&app, "alpha", "test-ide-key").await;
-    let b = initialize(&app, "alpha", "test-ide-key").await;
+    // A different principal with access to the same project.
+    let other_token = token(&claims("alpha"));
+    let b = initialize(&app, "alpha", &other_token).await;
     let call = |name: &str, arguments: Value| json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":name,"arguments":arguments}});
     let (_, _, stash) = post(
         &app,
@@ -468,31 +467,117 @@ async fn remote_chats_and_caches_are_connection_owned() {
     )
     .await;
     assert!(expanded.to_string().contains("PRIVATE-REMOTE-A"));
-    assert_eq!(
-        post(
-            &app,
-            "alpha",
-            Some("test-ide-key"),
-            Some(&b),
-            call("ax_expand", json!({"id":id}))
-        )
-        .await
-        .0,
-        StatusCode::FORBIDDEN
+    let (status, _, body) = post(
+        &app,
+        "alpha",
+        Some(&other_token),
+        Some(&b),
+        call("ax_expand", json!({"id":id})),
+    )
+    .await;
+    assert_unknown_handle(status, &body, "Unknown cache id");
+    assert!(!body.to_string().contains("PRIVATE-REMOTE-A"));
+    // Even an explicit guessed chat cannot select another principal's context.
+    let (status, _, body) = post(
+        &app,
+        "alpha",
+        Some(&other_token),
+        Some(&b),
+        call("ax_session", json!({"session":"guess","action":"get"})),
+    )
+    .await;
+    assert_unknown_handle(status, &body, "omit `session` to start a new chat");
+}
+
+/// A chat or cache id that this principal does not own is answered with a
+/// tool error that tells the agent to start over, not with an HTTP error that
+/// clients take for a failed sign-in.
+fn assert_unknown_handle(status: StatusCode, body: &Value, hint: &str) {
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["result"]["isError"], true, "{body}");
+    let text = body["result"]["content"][0]["text"].as_str().unwrap_or("");
+    assert!(text.contains(hint), "{body}");
+}
+
+#[tokio::test]
+async fn remote_chat_and_cache_ids_survive_a_reconnect_by_the_same_principal() {
+    let (_dir, app, _) = fixture().await;
+    let call = |name: &str, arguments: Value| json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":name,"arguments":arguments}});
+    let first = initialize(&app, "alpha", "test-ide-key").await;
+    let (_, _, stash) = post(
+        &app,
+        "alpha",
+        Some("test-ide-key"),
+        Some(&first),
+        call("ax_stash", json!({"text":"REMOTE-RECONNECT-STASH"})),
+    )
+    .await;
+    let cache = stash["result"]["structuredContent"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("missing stash id: {stash}"))
+        .to_owned();
+    let (_, _, preflight) = post(
+        &app,
+        "alpha",
+        Some("test-ide-key"),
+        Some(&first),
+        call("ax_preflight", json!({})),
+    )
+    .await;
+    let chat = preflight["result"]["structuredContent"]["session"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("missing preflight session: {preflight}"))
+        .to_owned();
+
+    // The client re-initializes (session expired, client or server restart)
+    // and keeps passing the ids it was given, as the tool text tells it to.
+    let again = initialize(&app, "alpha", "test-ide-key").await;
+    let (status, _, expanded) = post(
+        &app,
+        "alpha",
+        Some("test-ide-key"),
+        Some(&again),
+        call("ax_expand", json!({"id":cache})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{expanded}");
+    assert!(
+        expanded.to_string().contains("REMOTE-RECONNECT-STASH"),
+        "{expanded}"
     );
-    // Even an explicit guessed chat cannot select another connection's context.
-    assert_eq!(
-        post(
-            &app,
-            "alpha",
-            Some("test-ide-key"),
-            Some(&b),
-            call("ax_session", json!({"session":"guess","action":"get"}))
-        )
-        .await
-        .0,
-        StatusCode::FORBIDDEN
-    );
+    let (status, _, resumed) = post(
+        &app,
+        "alpha",
+        Some("test-ide-key"),
+        Some(&again),
+        call("ax_preflight", json!({"session":chat})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resumed}");
+    assert_ne!(resumed["result"]["isError"], true, "{resumed}");
+
+    // Another principal on the same project never gets them.
+    let other_token = token(&claims("alpha"));
+    let other = initialize(&app, "alpha", &other_token).await;
+    let (status, _, body) = post(
+        &app,
+        "alpha",
+        Some(&other_token),
+        Some(&other),
+        call("ax_expand", json!({"id":cache})),
+    )
+    .await;
+    assert_unknown_handle(status, &body, "Unknown cache id");
+    assert!(!body.to_string().contains("REMOTE-RECONNECT-STASH"));
+    let (status, _, body) = post(
+        &app,
+        "alpha",
+        Some(&other_token),
+        Some(&other),
+        call("ax_preflight", json!({"session":chat})),
+    )
+    .await;
+    assert_unknown_handle(status, &body, "omit `session` to start a new chat");
 }
 
 #[tokio::test]
@@ -598,7 +683,7 @@ async fn remote_discovery_advertises_oauth_and_rejects_invalid_identity_without_
 }
 
 #[tokio::test]
-async fn remote_context_reset_rehydrates_policy_and_fork_keeps_connection_ownership() {
+async fn remote_context_reset_rehydrates_policy_and_fork_keeps_principal_ownership() {
     let (_dir, app, config) = fixture().await;
     let rules = config.projects[0].root.join(".agents/rules");
     std::fs::create_dir_all(&rules).unwrap();
@@ -674,19 +759,17 @@ async fn remote_context_reset_rehydrates_policy_and_fork_keeps_connection_owners
         .0,
         StatusCode::OK
     );
-    let other = initialize(&app, "alpha", "test-ide-key").await;
-    assert_eq!(
-        post(
-            &app,
-            "alpha",
-            Some("test-ide-key"),
-            Some(&other),
-            call("ax_preflight", json!({"session":child}))
-        )
-        .await
-        .0,
-        StatusCode::FORBIDDEN
-    );
+    let other_token = token(&claims("alpha"));
+    let other = initialize(&app, "alpha", &other_token).await;
+    let (status, _, body) = post(
+        &app,
+        "alpha",
+        Some(&other_token),
+        Some(&other),
+        call("ax_preflight", json!({"session":child})),
+    )
+    .await;
+    assert_unknown_handle(status, &body, "omit `session` to start a new chat");
 }
 
 #[tokio::test]
@@ -724,19 +807,17 @@ async fn remote_durable_branches_register_only_server_issued_child_ids() {
         )
         .await;
         assert_ne!(read["result"]["isError"], true, "{read}");
-        let other = initialize(&app, "alpha", "test-ide-key").await;
-        assert_eq!(
-            post(
-                &app,
-                "alpha",
-                Some("test-ide-key"),
-                Some(&other),
-                call(json!({"action":"read","session":child}))
-            )
-            .await
-            .0,
-            StatusCode::FORBIDDEN
-        );
+        let other_token = token(&claims("alpha"));
+        let other = initialize(&app, "alpha", &other_token).await;
+        let (status, _, body) = post(
+            &app,
+            "alpha",
+            Some(&other_token),
+            Some(&other),
+            call(json!({"action":"read","session":child})),
+        )
+        .await;
+        assert_unknown_handle(status, &body, "omit `session` to start a new chat");
     }
 }
 

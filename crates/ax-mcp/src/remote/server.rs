@@ -28,6 +28,8 @@ const MAX_SESSIONS_PER_PRINCIPAL: usize = 8;
 const MAX_REQUESTS: usize = 16;
 /// Requests one principal may have in flight, so it cannot use up the shared slots.
 const MAX_REQUESTS_PER_PRINCIPAL: usize = 4;
+/// Chat ids and cache ids one principal keeps per project; the oldest are
+/// forgotten first.
 const MAX_HANDLES: usize = 4096;
 const VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26"];
 const CONTEXT_TOOLS: &[&str] = &[
@@ -94,15 +96,50 @@ struct Session {
 }
 struct SessionEngine {
     engine: McpEngine,
-    chats: HashSet<String>,
-    caches: HashSet<String>,
     current_chat: Option<String>,
 }
+
+/// Chat and cache ids issued to one principal on one project. They outlive a
+/// transport session, so a client that reconnects keeps its chat.
+#[derive(Default)]
+struct OwnedHandles {
+    chats: RecentIds,
+    caches: RecentIds,
+}
+
+/// A bounded set of ids that forgets the oldest one when it is full.
+#[derive(Default)]
+struct RecentIds {
+    order: std::collections::VecDeque<String>,
+    ids: HashSet<String>,
+}
+
+impl RecentIds {
+    fn contains(&self, id: &str) -> bool {
+        self.ids.contains(id)
+    }
+
+    fn insert(&mut self, id: &str) {
+        if !self.ids.insert(id.to_owned()) {
+            return;
+        }
+        self.order.push_back(id.to_owned());
+        while self.order.len() > MAX_HANDLES {
+            if let Some(old) = self.order.pop_front() {
+                self.ids.remove(&old);
+            }
+        }
+    }
+}
+
+type HandleOwner = (String, String);
 #[derive(Clone)]
 pub struct RemoteState {
     config: Arc<RemoteConfig>,
     verifier: TokenVerifier,
     sessions: Arc<Mutex<HashMap<String, Session>>>,
+    /// Per (principal id, project id): the chat and cache ids it was issued.
+    handles: Arc<std::sync::Mutex<HashMap<HandleOwner, OwnedHandles>>>,
     concurrency: Arc<Semaphore>,
     /// Per principal id: its share of the request slots.
     principal_slots: Arc<std::sync::Mutex<HashMap<String, Arc<Semaphore>>>>,
@@ -129,6 +166,7 @@ impl RemoteState {
             config,
             verifier,
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            handles: Arc::default(),
             concurrency: Arc::new(Semaphore::new(MAX_REQUESTS)),
             principal_slots: Arc::default(),
             mutations: Arc::new(Mutex::new(HashMap::new())),
@@ -597,8 +635,6 @@ async fn post(
                 last_seen: Instant::now(),
                 engine: Arc::new(Mutex::new(SessionEngine {
                     engine,
-                    chats: HashSet::new(),
-                    caches: HashSet::new(),
                     current_chat: None,
                 })),
             },
@@ -676,13 +712,8 @@ async fn post(
             (guard, permit)
         }
     };
+    let owner: HandleOwner = (principal.id.clone(), project.id.clone());
     if request.method == "tools/call" {
-        if engine.chats.len() >= MAX_HANDLES || engine.caches.len() >= MAX_HANDLES {
-            return error(
-                StatusCode::TOO_MANY_REQUESTS,
-                "Reconnect to reset the connection handle limit",
-            );
-        }
         let params = request.params.get_or_insert_with(|| json!({}));
         let name = params
             .get("name")
@@ -803,19 +834,25 @@ async fn post(
             .remove("window_id");
         if name == "ax_expand" {
             let id = args.get("id").and_then(Value::as_str).unwrap_or("");
-            if !engine.caches.contains(id) {
-                return error(StatusCode::FORBIDDEN, "Cache belongs to another connection");
+            if !with_handles(&state, &owner, |h| h.caches.contains(id)) {
+                return unknown_handle(
+                    request.id,
+                    "Unknown cache id for this account and project. Run the query again to get a new one.",
+                );
             }
         }
         let supplied = crate::remote::server::chat_argument(&args);
         let chat = if let Some(id) = supplied {
-            if !engine.chats.contains(&id) {
-                return error(StatusCode::FORBIDDEN, "Chat belongs to another connection");
+            if !with_handles(&state, &owner, |h| h.chats.contains(&id)) {
+                return unknown_handle(
+                    request.id,
+                    "Unknown chat id for this account and project. Call ax_preflight and omit `session` to start a new chat.",
+                );
             }
             id
         } else if name == "ax_preflight" || engine.current_chat.is_none() {
             let id = crate::chat_session::mint_session();
-            engine.chats.insert(id.clone());
+            with_handles(&state, &owner, |h| h.chats.insert(&id));
             id
         } else {
             engine.current_chat.clone().expect("chat checked")
@@ -862,10 +899,7 @@ async fn post(
             (outcome, engine)
         });
         match tokio::time::timeout(timeout, &mut task).await {
-            Ok(Ok((outcome, guard))) => {
-                engine = guard;
-                outcome
-            }
+            Ok(Ok((outcome, _session))) => outcome,
             Ok(Err(_)) => return error(StatusCode::INTERNAL_SERVER_ERROR, "Ax tool failed"),
             Err(_) => {
                 // Nobody waits for the answer any more; keep its trace.
@@ -1026,8 +1060,8 @@ async fn post(
         .pointer("/structuredContent/session")
         .and_then(Value::as_str)
     {
-        // Only server-produced fork/handoff IDs become owned by this connection.
-        engine.chats.insert(chat.to_owned());
+        // Only server-produced fork/handoff IDs become owned by this principal.
+        with_handles(&state, &owner, |h| h.chats.insert(chat));
     }
     if value.get("isError").and_then(Value::as_bool) != Some(true) {
         for pointer in [
@@ -1037,12 +1071,32 @@ async fn post(
         ] {
             if let Some(id) = value.pointer(pointer).and_then(Value::as_str) {
                 if id.starts_with("cc_") {
-                    engine.caches.insert(id.to_owned());
+                    with_handles(&state, &owner, |h| h.caches.insert(id));
                 }
             }
         }
     }
     rpc(request.id, Ok(value))
+}
+
+/// Run `f` on the ids that `owner` was issued.
+fn with_handles<T>(
+    state: &RemoteState,
+    owner: &HandleOwner,
+    f: impl FnOnce(&mut OwnedHandles) -> T,
+) -> T {
+    let mut handles = state.handles.lock().unwrap_or_else(|e| e.into_inner());
+    f(handles.entry(owner.clone()).or_default())
+}
+
+/// A tool error for a chat or cache id this principal was not issued (or
+/// that the server no longer knows after a restart). It is a normal tool
+/// result, so clients do not mistake it for a failed sign-in.
+fn unknown_handle(id: Option<Value>, message: &str) -> Response {
+    rpc(
+        id,
+        Ok(json!({"content":[{"type":"text","text":message}],"isError":true})),
+    )
 }
 
 fn chat_argument(args: &Value) -> Option<String> {
