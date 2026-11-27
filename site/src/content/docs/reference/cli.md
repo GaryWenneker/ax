@@ -144,14 +144,16 @@ ax bootstrap --json
 
 ### `ax uninit [path]`
 
-Delete the `.ax/` directory and remove git sync hooks. Permanently removes the local index.
+Remove the git sync hooks, then delete the `.ax/` directory. This permanently removes everything in `.ax/`: the index and stored memories (`ax.db`), project rules and skills (`policy/`), shared memories (`memory/`) and backups. The command lists what `.ax/` holds and asks before deleting. Without a terminal (a script or CI) it deletes nothing unless `--yes` is given. When a git hook cannot be cleaned, the command stops before `.ax/` is touched.
 
 | Argument | Type | Description |
 |---|---|---|
 | `path` | optional | Project root (default: current directory) |
+| `--yes`, `-y` | flag | Delete without asking |
 
 ```bash
 ax uninit
+ax uninit --yes
 ax uninit ./old-project
 ```
 

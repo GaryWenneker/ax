@@ -98,7 +98,12 @@ enum Commands {
     },
     /// Remove .ax directory
     #[command(long_about = help_text::UNINIT_LONG)]
-    Uninit { path: Option<String> },
+    Uninit {
+        path: Option<String>,
+        /// Delete without asking (required when there is no terminal)
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
     /// Full re-index
     #[command(long_about = help_text::INDEX_LONG)]
     Index {
@@ -2475,7 +2480,7 @@ async fn async_main() {
             workspace,
             all,
         }) => commands::init::run(path, workspace, all).await,
-        Some(Commands::Uninit { path }) => commands::uninit::run(path).await,
+        Some(Commands::Uninit { path, yes }) => commands::uninit::run(path, yes).await,
         Some(Commands::Index {
             path,
             force,

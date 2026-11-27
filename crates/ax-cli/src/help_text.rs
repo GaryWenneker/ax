@@ -78,12 +78,16 @@ Examples:
   ax init --all            Refresh existing ax projects under the home directory
   ax index --force         Rebuild the index from scratch";
 
-pub const UNINIT_LONG: &str = "Remove ax from a project by deleting the .ax/ directory.
+pub const UNINIT_LONG: &str = "Remove ax from a project: the git sync hooks, then the .ax/ directory.
 
-Permanently deletes the local index (ax.db). Does not touch agent MCP configs.
+Permanently deletes everything in .ax/: the index and stored memories (ax.db),
+project rules and skills (policy/), shared memories (memory/) and backups.
+Lists what .ax/ holds and asks first; without a terminal it needs --yes.
+Does not touch agent MCP configs.
 
 Examples:
-  ax uninit                Remove .ax/ from current project
+  ax uninit                Remove .ax/ from current project (asks first)
+  ax uninit --yes          Remove without asking (scripts, CI)
   ax uninit ./legacy-app   Remove from a specific path";
 
 pub const INDEX_LONG: &str = "Rebuild the index from scratch (full scan + extract + resolve).
