@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useLive } from '../lib/useLive';
+import { folderToSave, shownFolder } from '../lib/policyFolderDraft';
 import {
   exportPolicyPack,
   fetchPolicyPackStatus,
@@ -33,6 +34,7 @@ export default function PolicySyncPage({ onOpenReview }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [folderDraft, setFolderDraft] = useState<string | null>(null);
 
   usePageContext('Policy sync', status ? `${status.localSharedRules} exportable rules` : undefined);
 
@@ -61,7 +63,18 @@ export default function PolicySyncPage({ onOpenReview }: Props) {
     void reload();
   }, [reload]);
 
-  async function patch(next: Partial<PolicySyncSettings>) {
+  /** Save the folder field when it holds a real change; otherwise just stop editing. */
+  async function commitFolder() {
+    if (busy) return;
+    const name = folderToSave(folderDraft, settings?.agentsDir);
+    if (!name) {
+      setFolderDraft(null);
+      return;
+    }
+    if (await patch({ agentsDir: name })) setFolderDraft(null);
+  }
+
+  async function patch(next: Partial<PolicySyncSettings>): Promise<boolean> {
     setBusy('save');
     setMsg(null);
     setError('');
@@ -71,8 +84,10 @@ export default function PolicySyncPage({ onOpenReview }: Props) {
       setMsg('Saved to ax.json — run ax sync once so git hooks pick up policySync.');
       const st = await fetchPolicyPackStatus();
       setStatus(st);
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      return false;
     } finally {
       setBusy(null);
     }
@@ -217,20 +232,12 @@ export default function PolicySyncPage({ onOpenReview }: Props) {
                 <input
                   className="settings-input"
                   aria-label="Rules and skills folder"
-                  value={settings?.agentsDir ?? '.agents'}
+                  value={shownFolder(folderDraft, settings?.agentsDir)}
                   disabled={!settings || !!busy}
-                  onChange={(e) =>
-                    setSettings((s) => (s ? { ...s, agentsDir: e.target.value } : s))
-                  }
-                  onBlur={(e) => {
-                    const name = e.target.value.trim();
-                    if (name) void patch({ agentsDir: name });
-                  }}
+                  onChange={(e) => setFolderDraft(e.target.value)}
+                  onBlur={() => void commitFolder()}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      const name = (e.target as HTMLInputElement).value.trim();
-                      if (name) void patch({ agentsDir: name });
-                    }
+                    if (e.key === 'Enter') void commitFolder();
                   }}
                 />
               </div>
