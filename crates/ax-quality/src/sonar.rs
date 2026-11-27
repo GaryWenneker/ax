@@ -1,10 +1,10 @@
 //! SonarScanner CLI wrapper and Quality Gate API client.
 
 use std::collections::BTreeMap;
-use std::io::{Read as _, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
 use serde::Deserialize;
 use tracing::{info, warn};
@@ -184,30 +184,33 @@ impl SonarClient {
         let container_name = self
             .config
             .podman_container
-            .as_deref()
-            .unwrap_or("sonarqube");
-        let Some(container) = find_container_any(container_name) else {
-            return Err(format!(
-                "SonarQube offline at {host} — install and start from the SonarQube page"
-            ));
-        };
-
+            .clone()
+            .unwrap_or_else(|| "sonarqube".into());
         let pref = if self.config.container_runtime == "auto" {
             None
         } else {
-            Some(self.config.container_runtime.as_str())
+            Some(self.config.container_runtime.clone())
         };
-        let runtime = resolve_runtime(pref)?;
-        let log = InstallLog::new();
-        // Always try to start when a container exists (idempotent if already running).
-        // `start_container` retries up to 3 times.
-        info!(
-            "SonarQube offline — starting existing container '{}' ({}) via {}",
-            container.name,
-            container.status,
-            runtime.cli()
-        );
-        start_sonar_stack(runtime, container_name, &log)?;
+        let offline =
+            format!("SonarQube offline at {host} — install and start from the SonarQube page");
+        let container = crate::container::blocking(move || {
+            let Some(container) = find_container_any(&container_name) else {
+                return Err(offline);
+            };
+            let runtime = resolve_runtime(pref.as_deref())?;
+            let log = InstallLog::new();
+            // Always try to start when a container exists (idempotent if already running).
+            // `start_container` retries up to 3 times.
+            info!(
+                "SonarQube offline — starting existing container '{}' ({}) via {}",
+                container.name,
+                container.status,
+                runtime.cli()
+            );
+            start_sonar_stack(runtime, &container_name, &log)?;
+            Ok(container)
+        })
+        .await?;
         crate::container::wait_for_sonar(host, 120)
             .await
             .map_err(|e| {
@@ -702,40 +705,17 @@ impl SonarClient {
 }
 
 fn run_command_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<(), String> {
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("failed to start scanner: {e}"))?;
-    let start = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                if !status.success() {
-                    let mut stderr_buf = String::new();
-                    if let Some(mut se) = child.stderr.take() {
-                        let _ = se.read_to_string(&mut stderr_buf);
-                    }
-                    let detail = stderr_buf.trim();
-                    let msg = if detail.is_empty() {
-                        "exited with error".to_string()
-                    } else {
-                        detail.lines().last().unwrap_or(detail).to_string()
-                    };
-                    return Err(msg);
-                }
-                return Ok(());
-            }
-            Ok(None) => {
-                if start.elapsed() > timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(format!("timed out after {}s — killed", timeout.as_secs()));
-                }
-                std::thread::sleep(Duration::from_millis(250));
-            }
-            Err(e) => return Err(format!("error waiting for scanner process: {e}")),
-        }
+    let out = crate::process::run_with_timeout(cmd, timeout).map_err(|e| match e {
+        crate::process::RunError::Spawn(e) => format!("failed to start scanner: {e}"),
+        other => other.to_string(),
+    })?;
+    if out.success() {
+        return Ok(());
     }
+    Err(out
+        .stderr_tail_line()
+        .unwrap_or("exited with error")
+        .to_string())
 }
 
 fn token_basic_auth(token: &str) -> String {
@@ -933,6 +913,34 @@ fn write_scan_properties(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_scanner_that_writes_a_lot_of_output_still_finishes() {
+        // 1 MiB on stdout and on stderr is far more than an OS pipe buffer.
+        let mut cmd = Command::new("sh");
+        cmd.args([
+            "-c",
+            "head -c 1048576 /dev/zero; head -c 1048576 /dev/zero >&2; exit 0",
+        ]);
+        let started = Instant::now();
+        let result = run_command_with_timeout(&mut cmd, Duration::from_secs(5));
+        assert_eq!(result, Ok(()));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_scanner_reports_the_last_stderr_line() {
+        let mut cmd = Command::new("sh");
+        cmd.args([
+            "-c",
+            "head -c 1048576 /dev/zero >&2; echo >&2; echo 'ERROR: bad token' >&2; exit 3",
+        ]);
+        let result = run_command_with_timeout(&mut cmd, Duration::from_secs(5));
+        assert_eq!(result, Err("ERROR: bad token".to_string()));
+    }
 
     #[test]
     fn small_diff_lists_explicit_paths() {

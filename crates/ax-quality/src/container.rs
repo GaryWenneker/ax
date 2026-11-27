@@ -10,6 +10,8 @@ use tokio::process::Command as AsyncCommand;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::info;
 
+use crate::process::{run_with_timeout, CmdOutput};
+
 /// SonarQube Community Build (monthly CalVer). Replaces legacy `sonarqube:lts-community` (9.9 LTS).
 const SONAR_IMAGE: &str = "sonarqube:community";
 const POSTGRES_IMAGE: &str = "postgres:16-alpine";
@@ -102,6 +104,111 @@ impl ContainerRuntime {
     }
 }
 
+/// Program to run for `runtime`. Tests point this at a fake CLI.
+fn program(runtime: ContainerRuntime) -> std::ffi::OsString {
+    #[cfg(test)]
+    if let Some(dir) = test_hooks::cli_dir() {
+        return dir.join(runtime.cli()).into_os_string();
+    }
+    runtime.cli().into()
+}
+
+/// Longest a read-only CLI call (`ps`, `inspect`, `--version`, `exec`) may take.
+const CLI_QUERY_TIMEOUT: Duration = Duration::from_secs(30);
+/// Longest `start`, `stop`, `rm` or `network create` may take.
+const CLI_ACTION_TIMEOUT: Duration = Duration::from_secs(120);
+/// Longest `run -d` may take (the image is pulled before).
+const CLI_RUN_TIMEOUT: Duration = Duration::from_secs(300);
+/// Longest an image pull may take.
+const PULL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
+fn capped(timeout: Duration) -> Duration {
+    #[cfg(test)]
+    if let Some(cap) = test_hooks::timeout_cap() {
+        return timeout.min(cap);
+    }
+    timeout
+}
+
+/// Runs the container CLI with `args`, output captured, within `timeout`.
+fn run_cli(
+    runtime: ContainerRuntime,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<CmdOutput, String> {
+    let mut cmd = Command::new(program(runtime));
+    cmd.args(args);
+    run_with_timeout(&mut cmd, capped(timeout)).map_err(|e| {
+        format!(
+            "{} {}: {e}",
+            runtime.cli(),
+            args.first().copied().unwrap_or_default()
+        )
+    })
+}
+
+/// Like [`run_cli`], but a non-zero exit is an error naming the command.
+fn run_cli_ok(runtime: ContainerRuntime, args: &[&str], timeout: Duration) -> Result<(), String> {
+    let out = run_cli(runtime, args, timeout)?;
+    if out.success() {
+        return Ok(());
+    }
+    let mut msg = format!(
+        "{} {} exited with {}",
+        runtime.cli(),
+        args.join(" "),
+        out.status
+    );
+    if let Some(line) = out.stderr_tail_line() {
+        msg.push_str(": ");
+        msg.push_str(line);
+    }
+    Err(msg)
+}
+
+/// Stdout of a successful read-only CLI call.
+fn cli_query(runtime: ContainerRuntime, args: &[&str]) -> Option<String> {
+    run_cli(runtime, args, CLI_QUERY_TIMEOUT)
+        .ok()
+        .filter(CmdOutput::success)
+        .map(|o| o.stdout)
+}
+
+/// Runs synchronous container work on the blocking pool, so an async caller
+/// does not stall its runtime worker.
+pub(crate) async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("container task failed: {e}"))?
+}
+
+#[cfg(test)]
+pub(crate) mod test_hooks {
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    static CLI_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+    static TIMEOUT_CAP: Mutex<Option<Duration>> = Mutex::new(None);
+    /// Serializes tests that install a fake CLI.
+    pub static LOCK: Mutex<()> = Mutex::new(());
+
+    pub fn cli_dir() -> Option<PathBuf> {
+        CLI_DIR.lock().ok()?.clone()
+    }
+    pub fn set_cli_dir(dir: Option<PathBuf>) {
+        *CLI_DIR.lock().unwrap() = dir;
+    }
+    pub fn timeout_cap() -> Option<Duration> {
+        *TIMEOUT_CAP.lock().ok()?
+    }
+    pub fn set_timeout_cap(cap: Option<Duration>) {
+        *TIMEOUT_CAP.lock().unwrap() = cap;
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeInfo {
     pub runtime: ContainerRuntime,
@@ -134,11 +241,7 @@ pub struct SonarDiscovery {
 }
 
 fn runtime_version(runtime: ContainerRuntime) -> Option<String> {
-    let out = Command::new(runtime.cli()).arg("--version").output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
+    let text = cli_query(runtime, &["--version"])?;
     Some(text.lines().next().unwrap_or("unknown").trim().to_string())
 }
 
@@ -173,21 +276,17 @@ pub fn resolve_runtime(preferred: Option<&str>) -> Result<ContainerRuntime, Stri
 }
 
 pub fn find_container(runtime: ContainerRuntime, name: &str) -> Option<ContainerInfo> {
-    let out = Command::new(runtime.cli())
-        .args([
+    let stdout = cli_query(
+        runtime,
+        &[
             "ps",
             "-a",
             "--filter",
             &format!("name=^{name}$"),
             "--format",
             "{{.Names}}\t{{.Status}}\t{{.Ports}}",
-        ])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&out.stdout);
+        ],
+    )?;
     let line = stdout.lines().next()?.trim();
     if line.is_empty() {
         return None;
@@ -316,8 +415,14 @@ pub async fn ensure_sonar_stack_online(
     } else {
         Some(config.container_runtime.as_str())
     };
-    if sonar_reachable_sync(host) {
-        return Ok(discover_sonar(host, name, pref));
+    let (h, n, p) = (host.to_string(), name.to_string(), pref.map(str::to_string));
+    let online =
+        blocking(
+            move || Ok(sonar_reachable_sync(&h).then(|| discover_sonar(&h, &n, p.as_deref()))),
+        )
+        .await?;
+    if let Some(discovery) = online {
+        return Ok(discovery);
     }
     log.push(format!(
         "SonarQube is offline — provisioning PostgreSQL stack ({POSTGRES_IMAGE} + {SONAR_IMAGE})."
@@ -408,17 +513,16 @@ pub fn scanner_container_target(
 
 /// Whether container `name` is attached to [`SONAR_NETWORK`].
 pub fn container_on_sonar_network(runtime: ContainerRuntime, name: &str) -> bool {
-    Command::new(runtime.cli())
-        .args([
+    cli_query(
+        runtime,
+        &[
             "inspect",
             "--format",
             "{{json .NetworkSettings.Networks}}",
             name,
-        ])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .is_some_and(|o| String::from_utf8_lossy(&o.stdout).contains(SONAR_NETWORK))
+        ],
+    )
+    .is_some_and(|out| out.contains(SONAR_NETWORK))
 }
 
 /// `-p` value for the SonarQube container: loopback only when the
@@ -517,7 +621,7 @@ pub fn start_container(runtime: ContainerRuntime, name: &str) -> Result<(), Stri
             Err(e) => {
                 last_err = e;
                 if attempt < START_CONTAINER_ATTEMPTS {
-                    std::thread::sleep(Duration::from_secs(START_CONTAINER_RETRY_SECS));
+                    std::thread::sleep(capped(Duration::from_secs(START_CONTAINER_RETRY_SECS)));
                 }
             }
         }
@@ -528,34 +632,12 @@ pub fn start_container(runtime: ContainerRuntime, name: &str) -> Result<(), Stri
 }
 
 fn start_container_once(runtime: ContainerRuntime, name: &str) -> Result<(), String> {
-    let status = Command::new(runtime.cli())
-        .args(["start", name])
-        .status()
-        .map_err(|e| format!("{} start failed: {e}", runtime.cli()))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "{} start {name} exited with {status}",
-            runtime.cli()
-        ))
-    }
+    run_cli_ok(runtime, &["start", name], CLI_ACTION_TIMEOUT)
 }
 
 pub fn stop_container(runtime: ContainerRuntime, name: &str) -> Result<(), String> {
     info!("Stopping container {name} via {}", runtime.cli());
-    let status = Command::new(runtime.cli())
-        .args(["stop", name])
-        .status()
-        .map_err(|e| format!("{} stop failed: {e}", runtime.cli()))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "{} stop {name} exited with {status}",
-            runtime.cli()
-        ))
-    }
+    run_cli_ok(runtime, &["stop", name], CLI_ACTION_TIMEOUT)
 }
 
 pub fn find_container_any(name: &str) -> Option<ContainerInfo> {
@@ -568,14 +650,7 @@ pub fn find_container_any(name: &str) -> Option<ContainerInfo> {
 }
 
 fn container_image(runtime: ContainerRuntime, name: &str) -> Option<String> {
-    let output = Command::new(runtime.cli())
-        .args(["inspect", name, "--format", "{{.Config.Image}}"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let img = String::from_utf8(output.stdout).ok()?;
+    let img = cli_query(runtime, &["inspect", name, "--format", "{{.Config.Image}}"])?;
     let trimmed = img.trim();
     if trimmed.is_empty() {
         None
@@ -590,23 +665,18 @@ fn is_legacy_sonar_image(image: &str) -> bool {
 }
 
 fn container_env(runtime: ContainerRuntime, name: &str) -> Vec<String> {
-    let output = Command::new(runtime.cli())
-        .args([
+    let Some(out) = cli_query(
+        runtime,
+        &[
             "inspect",
             name,
             "--format",
             "{{range .Config.Env}}{{println .}}{{end}}",
-        ])
-        .output()
-        .ok();
-    let Some(output) = output else {
+        ],
+    ) else {
         return Vec::new();
     };
-    if !output.status.success() {
-        return Vec::new();
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
+    out.lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .map(str::to_string)
@@ -627,30 +697,18 @@ fn sonar_stack_needs_postgres_upgrade(runtime: ContainerRuntime, sonar_name: &st
 }
 
 fn ensure_network(runtime: ContainerRuntime, log: &InstallLog) -> Result<(), String> {
-    if Command::new(runtime.cli())
-        .args(["network", "inspect", SONAR_NETWORK])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-    {
+    if cli_query(runtime, &["network", "inspect", SONAR_NETWORK]).is_some() {
         return Ok(());
     }
     log.push(format!(
         "$ {} network create {SONAR_NETWORK}",
         runtime.cli()
     ));
-    let status = Command::new(runtime.cli())
-        .args(["network", "create", SONAR_NETWORK])
-        .status()
-        .map_err(|e| format!("{} network create failed: {e}", runtime.cli()))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "{} network create {SONAR_NETWORK} failed",
-            runtime.cli()
-        ))
-    }
+    run_cli_ok(
+        runtime,
+        &["network", "create", SONAR_NETWORK],
+        CLI_ACTION_TIMEOUT,
+    )
 }
 
 fn remove_container(runtime: ContainerRuntime, name: &str) -> Result<(), String> {
@@ -659,15 +717,7 @@ fn remove_container(runtime: ContainerRuntime, name: &str) -> Result<(), String>
             let _ = stop_container(runtime, name);
         }
     }
-    let status = Command::new(runtime.cli())
-        .args(["rm", "-f", name])
-        .status()
-        .map_err(|e| format!("{} rm failed: {e}", runtime.cli()))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("{} rm -f {name} failed", runtime.cli()))
-    }
+    run_cli_ok(runtime, &["rm", "-f", name], CLI_ACTION_TIMEOUT)
 }
 
 fn remove_container_logged(
@@ -700,8 +750,9 @@ fn wait_for_postgres_sync(
             log.push(format!("ERROR: {msg}"));
             return Err(msg);
         }
-        let ready = Command::new(runtime.cli())
-            .args([
+        let ready = cli_query(
+            runtime,
+            &[
                 "exec",
                 db_name,
                 "pg_isready",
@@ -709,10 +760,9 @@ fn wait_for_postgres_sync(
                 POSTGRES_USER,
                 "-d",
                 POSTGRES_DB,
-            ])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+            ],
+        )
+        .is_some();
         if ready {
             return Ok(());
         }
@@ -720,7 +770,7 @@ fn wait_for_postgres_sync(
             log.push(format!("Waiting for PostgreSQL ({db_name})… ({waited}s)"));
         }
         waited += 3;
-        std::thread::sleep(Duration::from_secs(3));
+        std::thread::sleep(capped(Duration::from_secs(3)));
     }
 }
 
@@ -737,8 +787,9 @@ fn create_postgres_container(
         "$ {} run -d --name {db_name} --network {SONAR_NETWORK} {POSTGRES_IMAGE}",
         runtime.cli()
     ));
-    let status = Command::new(runtime.cli())
-        .args([
+    run_cli_ok(
+        runtime,
+        &[
             "run",
             "-d",
             "--name",
@@ -756,14 +807,10 @@ fn create_postgres_container(
             "-v",
             &format!("{PG_VOLUME}:/var/lib/postgresql/data"),
             POSTGRES_IMAGE,
-        ])
-        .status()
-        .map_err(|e| format!("{} run postgres failed: {e}", runtime.cli()))?;
-    if !status.success() {
-        let msg = format!("{} run {db_name} failed with {status}", runtime.cli());
-        log.push(format!("ERROR: {msg}"));
-        return Err(msg);
-    }
+        ],
+        CLI_RUN_TIMEOUT,
+    )
+    .inspect_err(|msg| log.push(format!("ERROR: {msg}")))?;
     log.push(format!("PostgreSQL container '{db_name}' created."));
     wait_for_postgres_sync(runtime, db_name, 60, log)
 }
@@ -823,21 +870,14 @@ fn create_sonar_app_container(
         sonar_publish_arg(host, host_port)
     ));
     let args = sonar_run_args(host, host_port, sonar_name, db_name);
-    let status = Command::new(runtime.cli())
-        .args(&args)
-        .status()
-        .map_err(|e| format!("{} run failed: {e}", runtime.cli()))?;
-    if status.success() {
-        log.push(format!(
-            "SonarQube container '{sonar_name}' created (PostgreSQL backend, {} RAM, CE heap 2g).",
-            SONAR_CONTAINER_MEMORY
-        ));
-        Ok(())
-    } else {
-        let msg = format!("{} run {sonar_name} failed with {status}", runtime.cli());
-        log.push(format!("ERROR: {msg}"));
-        Err(msg)
-    }
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_cli_ok(runtime, &args, CLI_RUN_TIMEOUT)
+        .inspect_err(|msg| log.push(format!("ERROR: {msg}")))?;
+    log.push(format!(
+        "SonarQube container '{sonar_name}' created (PostgreSQL backend, {} RAM, CE heap 2g).",
+        SONAR_CONTAINER_MEMORY
+    ));
+    Ok(())
 }
 
 /// Start PostgreSQL sidecar (when present) then SonarQube.
@@ -905,6 +945,14 @@ pub async fn ensure_sonar_live(
     .await
 }
 
+/// What install does after looking at the existing container.
+enum InstallStep {
+    /// The stack was started; nothing to create.
+    Started,
+    /// Pull the images and create the stack.
+    Create,
+}
+
 pub async fn ensure_sonar_live_with_log(
     host: &str,
     container_name: &str,
@@ -912,60 +960,81 @@ pub async fn ensure_sonar_live_with_log(
     host_port: u16,
     log: &InstallLog,
 ) -> Result<SonarDiscovery, String> {
-    log.push(format!(
-        "Resolving container runtime (preference: {})…",
-        preferred.unwrap_or("auto")
-    ));
-    let runtime = match resolve_runtime(preferred) {
-        Ok(rt) => {
-            log.push(format!("Using {}", rt.cli()));
-            rt
-        }
-        Err(e) => {
-            log.push(format!("ERROR: {e}"));
-            return Err(e);
-        }
-    };
-
-    if let Some(existing) = find_container(runtime, container_name) {
+    let (name, pref, lg) = (
+        container_name.to_string(),
+        preferred.map(str::to_string),
+        log.clone(),
+    );
+    let (runtime, step) = blocking(move || {
+        let log = &lg;
+        let runtime = resolve_runtime_logged(pref.as_deref(), log)?;
+        let Some(existing) = find_container(runtime, &name) else {
+            log.push(format!(
+                "No container '{name}' — creating PostgreSQL-backed stack with {SONAR_IMAGE}."
+            ));
+            return Ok((runtime, InstallStep::Create));
+        };
         log.push(format!(
             "Container '{}' found — {}",
             existing.name, existing.status
         ));
-        if let Some(img) = container_image(runtime, container_name) {
+        if let Some(img) = container_image(runtime, &name) {
             log.push(format!("Container image: {img}"));
             if is_legacy_sonar_image(&img) {
                 log.push(format!("NOTE: {SONAR_UPGRADE_HINT}"));
             }
         }
-        if sonar_stack_needs_postgres_upgrade(runtime, container_name) {
+        if sonar_stack_needs_postgres_upgrade(runtime, &name) {
             log.push(SONAR_POSTGRES_UPGRADE_HINT.to_string());
-            remove_container_logged(runtime, container_name, log)?;
-            create_sonar_container_logged(runtime, host, container_name, host_port, log).await?;
-        } else {
-            // Always attempt start when the container exists (idempotent if already up; 3 retries).
-            if existing.running {
-                log.push("Container reported running — ensuring stack is started…");
-            }
-            start_sonar_stack(runtime, container_name, log)?;
+            remove_container_logged(runtime, &name, log)?;
+            return Ok((runtime, InstallStep::Create));
         }
-    } else {
-        log.push(format!(
-            "No container '{container_name}' — creating PostgreSQL-backed stack with {SONAR_IMAGE}."
-        ));
+        // Always attempt start when the container exists (idempotent if already up; 3 retries).
+        if existing.running {
+            log.push("Container reported running — ensuring stack is started…");
+        }
+        start_sonar_stack(runtime, &name, log)?;
+        Ok((runtime, InstallStep::Started))
+    })
+    .await?;
+    if matches!(step, InstallStep::Create) {
         create_sonar_container_logged(runtime, host, container_name, host_port, log).await?;
     }
+    finish_with_api(host, container_name, runtime, " (up to 180s)", log).await
+}
 
-    if !sonar_reachable_sync(host) {
-        log.push(format!("Waiting for SonarQube API at {host} (up to 180s)…"));
+/// Waits for the API when it is not up yet, then reports the stack.
+async fn finish_with_api(
+    host: &str,
+    container_name: &str,
+    runtime: ContainerRuntime,
+    wait_note: &str,
+    log: &InstallLog,
+) -> Result<SonarDiscovery, String> {
+    let h = host.to_string();
+    if !blocking(move || Ok(sonar_reachable_sync(&h))).await? {
+        log.push(format!("Waiting for SonarQube API at {host}{wait_note}…"));
         wait_for_sonar_logged(host, 180, log).await?;
         log.push("SonarQube API is reachable.");
     } else {
         log.push("SonarQube API already reachable.");
     }
-
     log.push("Done.");
-    Ok(discover_sonar(host, container_name, Some(runtime.cli())))
+    let (h, n) = (host.to_string(), container_name.to_string());
+    blocking(move || Ok(discover_sonar(&h, &n, Some(runtime.cli())))).await
+}
+
+fn resolve_runtime_logged(
+    preferred: Option<&str>,
+    log: &InstallLog,
+) -> Result<ContainerRuntime, String> {
+    log.push(format!(
+        "Resolving container runtime (preference: {})…",
+        preferred.unwrap_or("auto")
+    ));
+    resolve_runtime(preferred)
+        .inspect(|rt| log.push(format!("Using {}", rt.cli())))
+        .inspect_err(|e| log.push(format!("ERROR: {e}")))
 }
 
 pub async fn start_sonar_container_with_log(
@@ -975,48 +1044,39 @@ pub async fn start_sonar_container_with_log(
     log: &InstallLog,
 ) -> Result<SonarDiscovery, String> {
     log.push("Starting SonarQube container…");
-    let runtime = match resolve_runtime(preferred) {
-        Ok(rt) => {
-            log.push(format!("Using {}", rt.cli()));
-            rt
+    let (name, pref, lg) = (
+        container_name.to_string(),
+        preferred.map(str::to_string),
+        log.clone(),
+    );
+    let runtime = blocking(move || {
+        let log = &lg;
+        let runtime = resolve_runtime_logged(pref.as_deref(), log)?;
+        let Some(existing) = find_container(runtime, &name) else {
+            let msg = format!("Container '{name}' not found — run Install first");
+            log.push(format!("ERROR: {msg}"));
+            return Err(msg);
+        };
+        log.push(format!(
+            "Container '{}' — {}",
+            existing.name, existing.status
+        ));
+        if sonar_stack_needs_postgres_upgrade(runtime, &name) {
+            let msg = format!(
+                "Container '{name}' uses embedded H2 — run Install to upgrade to PostgreSQL"
+            );
+            log.push(format!("ERROR: {msg}"));
+            return Err(msg);
         }
-        Err(e) => {
-            log.push(format!("ERROR: {e}"));
-            return Err(e);
+        // Always attempt start when the container exists (idempotent if already up; 3 retries).
+        if existing.running {
+            log.push("Container reported running — ensuring stack is started…");
         }
-    };
-
-    let Some(existing) = find_container(runtime, container_name) else {
-        let msg = format!("Container '{container_name}' not found — run Install first");
-        log.push(format!("ERROR: {msg}"));
-        return Err(msg);
-    };
-    log.push(format!(
-        "Container '{}' — {}",
-        existing.name, existing.status
-    ));
-    if sonar_stack_needs_postgres_upgrade(runtime, container_name) {
-        let msg = format!(
-            "Container '{container_name}' uses embedded H2 — run Install to upgrade to PostgreSQL"
-        );
-        log.push(format!("ERROR: {msg}"));
-        return Err(msg);
-    }
-    // Always attempt start when the container exists (idempotent if already up; 3 retries).
-    if existing.running {
-        log.push("Container reported running — ensuring stack is started…");
-    }
-    start_sonar_stack(runtime, container_name, log)?;
-
-    if !sonar_reachable_sync(host) {
-        log.push(format!("Waiting for SonarQube API at {host}…"));
-        wait_for_sonar_logged(host, 180, log).await?;
-    } else {
-        log.push("SonarQube API already reachable.");
-    }
-
-    log.push("Done.");
-    Ok(discover_sonar(host, container_name, Some(runtime.cli())))
+        start_sonar_stack(runtime, &name, log)?;
+        Ok(runtime)
+    })
+    .await?;
+    finish_with_api(host, container_name, runtime, "", log).await
 }
 
 pub async fn stop_sonar_container_with_log(
@@ -1024,29 +1084,29 @@ pub async fn stop_sonar_container_with_log(
     container_name: &str,
     log: &InstallLog,
 ) -> Result<SonarDiscovery, String> {
-    log.push("Stopping SonarQube container…");
-    let Some(existing) = find_container_any(container_name) else {
-        let msg = format!("Container '{container_name}' not found");
-        log.push(format!("ERROR: {msg}"));
-        return Err(msg);
-    };
-    log.push(format!(
-        "Container '{}' on {} — {}",
-        existing.name,
-        existing.runtime.cli(),
-        existing.status
-    ));
-    if existing.running {
-        stop_sonar_stack(existing.runtime, container_name, log)?;
-    } else {
-        log.push("Container is not running.");
-    }
-    log.push("Done.");
-    Ok(discover_sonar(
-        host,
-        container_name,
-        Some(existing.runtime.cli()),
-    ))
+    let (host, name, log) = (host.to_string(), container_name.to_string(), log.clone());
+    blocking(move || {
+        log.push("Stopping SonarQube container…");
+        let Some(existing) = find_container_any(&name) else {
+            let msg = format!("Container '{name}' not found");
+            log.push(format!("ERROR: {msg}"));
+            return Err(msg);
+        };
+        log.push(format!(
+            "Container '{}' on {} — {}",
+            existing.name,
+            existing.runtime.cli(),
+            existing.status
+        ));
+        if existing.running {
+            stop_sonar_stack(existing.runtime, &name, &log)?;
+        } else {
+            log.push("Container is not running.");
+        }
+        log.push("Done.");
+        Ok(discover_sonar(&host, &name, Some(existing.runtime.cli())))
+    })
+    .await
 }
 
 fn start_container_logged(
@@ -1067,8 +1127,10 @@ async fn pull_image_logged(
     log: &InstallLog,
 ) -> Result<(), String> {
     log.push(format!("$ {} pull {image}", runtime.cli()));
-    let mut child = AsyncCommand::new(runtime.cli())
+    let mut child = AsyncCommand::new(program(runtime))
         .args(["pull", image])
+        .kill_on_drop(true)
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -1100,10 +1162,19 @@ async fn pull_image_logged(
         });
     }
 
-    let status = child
-        .wait()
-        .await
-        .map_err(|e| format!("{} pull failed: {e}", runtime.cli()))?;
+    let status = match tokio::time::timeout(capped(PULL_TIMEOUT), child.wait()).await {
+        Ok(status) => status.map_err(|e| format!("{} pull failed: {e}", runtime.cli()))?,
+        Err(_) => {
+            let _ = child.kill().await;
+            let msg = format!(
+                "{} pull {image} timed out after {}s — killed",
+                runtime.cli(),
+                PULL_TIMEOUT.as_secs()
+            );
+            log.push(format!("ERROR: {msg}"));
+            return Err(msg);
+        }
+    };
     if status.success() {
         log.push(format!("Image pull finished ({image})."));
         Ok(())
@@ -1121,13 +1192,26 @@ async fn create_sonar_container_logged(
     host_port: u16,
     log: &InstallLog,
 ) -> Result<(), String> {
-    if find_container(runtime, name).is_some() {
-        return start_sonar_stack(runtime, name, log);
+    let (n, lg) = (name.to_string(), log.clone());
+    let exists = blocking(move || {
+        if find_container(runtime, &n).is_some() {
+            start_sonar_stack(runtime, &n, &lg)?;
+            return Ok(true);
+        }
+        Ok(false)
+    })
+    .await?;
+    if exists {
+        return Ok(());
     }
     pull_image_logged(runtime, POSTGRES_IMAGE, log).await?;
     pull_image_logged(runtime, SONAR_IMAGE, log).await?;
-    let db_name = db_container_name(name);
-    create_sonar_app_container(runtime, host, name, &db_name, host_port, log)
+    let (h, n, lg) = (host.to_string(), name.to_string(), log.clone());
+    blocking(move || {
+        let db_name = db_container_name(&n);
+        create_sonar_app_container(runtime, &h, &n, &db_name, host_port, &lg)
+    })
+    .await
 }
 
 async fn wait_for_sonar_logged(
@@ -1226,5 +1310,106 @@ mod tests {
         assert_eq!(sonar_host_port("http://localhost:9000"), 9000);
         assert_eq!(sonar_host_port("http://127.0.0.1:9100/"), 9100);
         assert_eq!(sonar_host_port("http://localhost"), 9000);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod fake_cli_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+    use std::sync::MutexGuard;
+
+    const FAKE_PODMAN: &str = r#"#!/bin/sh
+d="$(dirname "$0")"
+printf '%s\n' "$*" >> "$d/calls.log"
+if [ -f "$d/hang-$1" ]; then exec sleep 30; fi
+case "$1" in
+  --version) echo "podman version 5.0.0" ;;
+  ps) n="${4#name=^}"; n="${n%\$}"; if [ -f "$d/ps-$n" ]; then cat "$d/ps-$n"; fi ;;
+  inspect) for a in "$@"; do if [ -f "$d/inspect-$a" ]; then cat "$d/inspect-$a"; fi; done ;;
+  start|stop) echo "$2" ;;
+  *) exit 1 ;;
+esac
+"#;
+
+    /// A fake `podman` on a private path; dropped, it restores the real CLI.
+    pub(super) struct FakeCli {
+        pub dir: tempfile::TempDir,
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    impl FakeCli {
+        pub fn new() -> Self {
+            let lock = test_hooks::LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let dir = tempfile::tempdir().unwrap();
+            let script = dir.path().join("podman");
+            std::fs::write(&script, FAKE_PODMAN).unwrap();
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+            test_hooks::set_cli_dir(Some(dir.path().to_path_buf()));
+            Self { dir, _lock: lock }
+        }
+        pub fn file(&self, name: &str, body: &str) {
+            std::fs::write(self.dir.path().join(name), body).unwrap();
+        }
+        pub fn calls(&self) -> String {
+            std::fs::read_to_string(self.dir.path().join("calls.log")).unwrap_or_default()
+        }
+        #[allow(dead_code)]
+        pub fn path(&self) -> PathBuf {
+            Path::new(self.dir.path()).to_path_buf()
+        }
+    }
+
+    impl Drop for FakeCli {
+        fn drop(&mut self) {
+            test_hooks::set_cli_dir(None);
+            test_hooks::set_timeout_cap(None);
+        }
+    }
+
+    /// Runs `fut` on a one-thread runtime next to a ticker; returns the
+    /// result and how often the ticker ran, or `None` after `limit`.
+    fn run_with_ticker<T: Send + 'static>(
+        limit: Duration,
+        fut: impl std::future::Future<Output = T> + Send + 'static,
+    ) -> Option<(T, u64)> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async move {
+                let ticks = Arc::new(std::sync::atomic::AtomicU64::new(0));
+                let t = ticks.clone();
+                tokio::spawn(async move {
+                    loop {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        t.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                });
+                let out = fut.await;
+                let _ = tx.send((out, ticks.load(std::sync::atomic::Ordering::Relaxed)));
+            });
+        });
+        rx.recv_timeout(limit).ok()
+    }
+
+    #[test]
+    fn a_stuck_cli_neither_hangs_install_nor_blocks_the_runtime() {
+        let fake = FakeCli::new();
+        fake.file("hang-ps", "");
+        test_hooks::set_timeout_cap(Some(Duration::from_millis(500)));
+        let log = InstallLog::new();
+        let outcome = run_with_ticker(Duration::from_secs(20), async move {
+            ensure_sonar_live_with_log("http://127.0.0.1:1", "sonarqube", Some("podman"), 1, &log)
+                .await
+        });
+        let (result, ticks) = outcome.expect("install returned within 20s");
+        assert!(result.is_err(), "fake pull fails, so install fails");
+        // At least ~1s of CLI time passed; a blocked runtime would show ~0 ticks.
+        assert!(ticks >= 30, "runtime was blocked: only {ticks} ticks");
+        assert!(fake.calls().contains("ps -a"));
     }
 }
