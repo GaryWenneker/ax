@@ -72,12 +72,14 @@ fn filter(table: &str) -> String {
         return "?1 = ?1".into();
     }
     let owned = conversations();
-    let sessions="SELECT session FROM native.ax_durable_scope WHERE project=?1 AND session NOT GLOB 'replica_*' UNION SELECT substr(scope,1,length(scope)-length(?1)-1) FROM native.mcp_working_context WHERE substr(scope,-length(?1))=?1 AND scope NOT GLOB 'replica_*'";
+    // Scoped keys are `session || char(31) || project`; the separator is part
+    // of the match so a project whose path ends with this one never matches.
+    let sessions="SELECT session FROM native.ax_durable_scope WHERE project=?1 AND session NOT GLOB 'replica_*' UNION SELECT substr(scope,1,length(scope)-length(?1)-1) FROM native.mcp_working_context WHERE substr(scope,-length(?1)-1)=char(31)||?1 AND scope NOT GLOB 'replica_*'";
     let core=match table {
         "mcp_call_log"|"agent_usage_event"=>"project=?1".into(),
         "mcp_context_cache"=>"project=?1 AND id NOT GLOB 'cc_replica_*'".into(),
-        "mcp_working_context"=>"substr(scope,-length(?1))=?1 AND scope NOT GLOB 'replica_*'".into(),
-        "mcp_reuse_cache"=>"substr(conversation,-length(?1))=?1 AND conversation NOT GLOB 'replica_*'".into(),
+        "mcp_working_context"=>"substr(scope,-length(?1)-1)=char(31)||?1 AND scope NOT GLOB 'replica_*'".into(),
+        "mcp_reuse_cache"=>"substr(conversation,-length(?1)-1)=char(31)||?1 AND conversation NOT GLOB 'replica_*'".into(),
         "ax_durable_scope"=>"project=?1 AND session NOT GLOB 'replica_*'".into(),
         "ax_durable_conversation"=>format!("id IN ({owned})"),
         "ax_durable_entry"|"ax_durable_document"|"ax_durable_task"|"ax_durable_hook"=>format!("conversation_id IN ({owned})"),
@@ -530,6 +532,46 @@ pub async fn retain(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn export_leaves_out_projects_whose_path_ends_with_this_one() {
+        let source = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(source.path().join(".ax/server/datasets")).unwrap();
+        let path = source.path().join("usage.db");
+        let native = crate::store::open_pool_at(&path).await.unwrap();
+        let scope = crate::project_scope(source.path());
+        // Another project whose canonical path ends with this project's path.
+        let other = format!("/backup{scope}");
+        for (session, project) in [("mine", &scope), ("theirs", &other)] {
+            sqlx::query("INSERT INTO mcp_working_context(scope,objective,content_hash,updated_at) VALUES (?,?,'hash',1)")
+                .bind(format!("{session}\u{1f}{project}"))
+                .bind(format!("objective of {session}"))
+                .execute(&native)
+                .await
+                .unwrap();
+            sqlx::query("INSERT INTO mcp_reuse_cache(reuse_key,conversation,tool,args_summary,cache_id,body_bytes,original_tokens,files_json,turn,created_at) VALUES (?,?,'ax_node','',?,1,1,'[]',1,1)")
+                .bind(format!("key-{session}"))
+                .bind(format!("{session}\u{1f}{project}"))
+                .bind(format!("cc-{session}"))
+                .execute(&native)
+                .await
+                .unwrap();
+        }
+        let exported = export_with(source.path(), &native, &path).await.unwrap();
+        let output = crate::store::open_pool_at(&exported.path).await.unwrap();
+        let scopes: Vec<String> =
+            sqlx::query_scalar("SELECT scope FROM mcp_working_context ORDER BY scope")
+                .fetch_all(&output)
+                .await
+                .unwrap();
+        let conversations: Vec<String> =
+            sqlx::query_scalar("SELECT conversation FROM mcp_reuse_cache ORDER BY conversation")
+                .fetch_all(&output)
+                .await
+                .unwrap();
+        assert_eq!(scopes, ["mine"]);
+        assert_eq!(conversations, ["mine"]);
+    }
+
     #[tokio::test]
     async fn complete_project_history_is_scoped_persistent_queryable_and_never_echoed() {
         let source = tempfile::tempdir().unwrap();
