@@ -391,9 +391,16 @@ def write_reports(rows, features, control, failures, live, cross, previous) -> N
     (OUT / "report.md").write_text("\n".join(lines), encoding="utf-8")
 
 
+# The live arm runs unattended in the real checkout, so it gets read tools only.
+LIVE_DENIED_TOOLS = "Bash,Edit,Write,NotebookEdit"
+
+
 def claude_once(prompt: str, mcp_config: Path, repo: Path) -> dict:
     proc = subprocess.run(
-        ["claude", "-p", "--strict-mcp-config", "--mcp-config", str(mcp_config), "--output-format", "json", "--dangerously-skip-permissions", "--max-budget-usd", "0.50", prompt],
+        [
+            "claude", "-p", "--strict-mcp-config", "--mcp-config", str(mcp_config), "--output-format", "json",
+            "--dangerously-skip-permissions", "--disallowedTools", LIVE_DENIED_TOOLS, "--max-budget-usd", "0.50", prompt,
+        ],
         cwd=repo,
         text=True,
         stdout=subprocess.PIPE,
