@@ -430,11 +430,10 @@ fn parse_line_timestamp(line: &str) -> Option<DateTime<Utc>> {
         .ok()
         .map(|dt| dt.with_timezone(&Utc))
         .or_else(|| {
-            let z = if trimmed.starts_with("20") && trimmed.len() >= 20 {
-                format!("{}Z", &trimmed[..19])
-            } else {
+            if !trimmed.starts_with("20") {
                 return None;
-            };
+            }
+            let z = format!("{}Z", trimmed.get(..19)?);
             DateTime::parse_from_rfc3339(&z)
                 .ok()
                 .map(|dt| dt.with_timezone(&Utc))
@@ -502,6 +501,17 @@ fn civil_from_days(z: i64) -> (i32, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_line_timestamp_handles_multibyte_char_at_byte_18() {
+        // `é` spans bytes 18-19; byte 24 is a boundary, byte 19 is not.
+        let line = "2026-07-20T10:00:0\u{e9}xxxx [ax] something";
+        assert!(!line.is_char_boundary(19));
+        assert!(line.is_char_boundary(24));
+        assert_eq!(parse_line_timestamp(line), None);
+        // Still parses a plain timestamp without a zone suffix.
+        assert!(parse_line_timestamp("2026-07-20T10:00:00 [ax] ok and more").is_some());
+    }
 
     #[test]
     fn received_segments_preserve_repeated_events_without_duplicating_overlaps() {
