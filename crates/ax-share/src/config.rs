@@ -237,20 +237,56 @@ pub fn write_project_share_config(
 }
 
 fn write_share_at(path: &Path, config: &ShareConfig) -> Result<(), String> {
-    let mut root: serde_json::Value = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    let obj = root
-        .as_object_mut()
-        .ok_or_else(|| "config root must be a JSON object".to_string())?;
-    obj.insert(
-        "share".into(),
-        serde_json::to_value(config).map_err(|e| e.to_string())?,
-    );
-    let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n";
-    std::fs::write(path, text.as_bytes()).map_err(|e| e.to_string())?;
-    Ok(())
+    let share = serde_json::to_value(config).map_err(|e| e.to_string())?;
+    update_json_object(path, |obj| {
+        obj.insert("share".into(), share);
+        Ok(())
+    })
+}
+
+/// Read-modify-write of a JSON config object under the shared file lock.
+/// A missing (or empty) file starts from `{}`. A file that does not parse,
+/// or whose root is not an object, is left untouched and reported, so a typo
+/// in a hand-edited config never costs the user their other settings.
+pub(crate) fn update_json_object(
+    path: &Path,
+    edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> Result<(), String>,
+) -> Result<(), String> {
+    use std::io;
+    ax_utils::update_locked(path, |current| {
+        let mut root = match current {
+            Some(bytes) if !bytes.iter().all(u8::is_ascii_whitespace) => {
+                match serde_json::from_slice::<serde_json::Value>(&bytes) {
+                    Ok(value) if value.is_object() => value,
+                    Ok(_) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "{} is not a JSON object; fix it and try again (it was not changed)",
+                                path.display()
+                            ),
+                        ))
+                    }
+                    Err(error) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "{} is not valid JSON ({error}); fix it and try again (it was not changed)",
+                                path.display()
+                            ),
+                        ))
+                    }
+                }
+            }
+            _ => serde_json::json!({}),
+        };
+        let obj = root.as_object_mut().expect("root is an object");
+        edit(obj).map_err(io::Error::other)?;
+        let text = serde_json::to_string_pretty(&root).map_err(io::Error::other)? + "\n";
+        Ok(Some(text.into_bytes()))
+    })
+    .map(|_| ())
+    .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -266,6 +302,29 @@ mod tests {
     fn write_share_json(path: &Path, share: serde_json::Value) {
         let root = serde_json::json!({ "share": share });
         fs::write(path, serde_json::to_string_pretty(&root).unwrap() + "\n").unwrap();
+    }
+
+    #[test]
+    fn share_settings_never_replace_an_unparsable_project_config() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(CONFIG_FILENAME);
+        let broken = "{\"index\": {\"exclude\": [\"target\"],},}\n";
+        fs::write(&path, broken).unwrap();
+        let error = write_project_share_config(tmp.path(), &ShareConfig::default()).unwrap_err();
+        assert!(error.contains(CONFIG_FILENAME), "{error}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), broken);
+    }
+
+    #[test]
+    fn share_settings_keep_the_other_project_keys() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(CONFIG_FILENAME);
+        fs::write(&path, r#"{"index":{"exclude":["target"]}}"#).unwrap();
+        write_project_share_config(tmp.path(), &ShareConfig::default()).unwrap();
+        let root: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(root["index"]["exclude"][0], "target");
+        assert!(root["share"].is_object());
     }
 
     #[test]
