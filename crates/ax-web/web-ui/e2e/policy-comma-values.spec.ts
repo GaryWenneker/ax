@@ -135,8 +135,9 @@ test.describe('Policy values that contain a comma', () => {
     await serve(page, saved);
     await page.goto('/policy/skills/edit?name=deploy&mode=edit');
     const editorPage = page.locator('.policy-editor-page');
-    const edit = editorPage.getByRole('button', { name: 'Edit', exact: true });
-    if (await edit.isVisible().catch(() => false)) await edit.click();
+    // The skill editor opens on the saved skill in view mode; Edit shows once it has loaded.
+    await expect(editorPage.getByRole('heading', { name: 'deploy', exact: true })).toBeVisible();
+    await editorPage.getByRole('button', { name: 'Edit', exact: true }).click();
     await editorPage.getByRole('button', { name: 'Save', exact: true }).click();
     await expect.poll(() => saved.length).toBe(1);
     const fm = saved[0].frontmatter as Record<string, unknown>;
