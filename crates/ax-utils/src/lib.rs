@@ -1,5 +1,6 @@
 //! Concurrency, security, and utility primitives for ax.
 
+pub mod child;
 pub mod debounce;
 pub mod errors;
 pub mod file_lock;
