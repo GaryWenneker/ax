@@ -1146,6 +1146,24 @@ pub async fn serve(config: RemoteConfig, port: u16, socket: Option<PathBuf>) -> 
     serve_on(config, std::net::Ipv4Addr::LOCALHOST.into(), port, socket).await
 }
 
+/// Reads `AX_REMOTE_HOST_CONTROL`: unset is `None`; a set value must be 32 to
+/// 4096 printable ASCII characters without whitespace.
+fn host_control_from_env() -> Result<Option<String>, String> {
+    let Ok(control) = std::env::var("AX_REMOTE_HOST_CONTROL") else {
+        return Ok(None);
+    };
+    if control.len() < 32
+        || control.len() > 4096
+        || !control.is_ascii()
+        || control
+            .bytes()
+            .any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
+    {
+        return Err("Invalid host control credential".into());
+    }
+    Ok(Some(control))
+}
+
 pub async fn serve_on(
     mut config: RemoteConfig,
     host: std::net::IpAddr,
@@ -1153,6 +1171,9 @@ pub async fn serve_on(
     socket: Option<PathBuf>,
 ) -> Result<(), String> {
     config.validate()?;
+    // Check the host control credential before anything is registered, bound or
+    // spawned, so a bad value leaves no lease, socket or watcher behind.
+    let control = host_control_from_env()?;
     if !host.is_loopback() {
         // Plain HTTP on a non-loopback address is only safe behind TLS termination.
         tracing::warn!(
@@ -1216,16 +1237,7 @@ pub async fn serve_on(
     let (shutdown, mut receiver) = tokio::sync::watch::channel(false);
     let mut state = RemoteState::new(config, verifier).with_client_db(catalogue.clone());
     let admin_running = state.admin_running.clone();
-    if let Ok(control) = std::env::var("AX_REMOTE_HOST_CONTROL") {
-        if control.len() < 32
-            || control.len() > 4096
-            || !control.is_ascii()
-            || control
-                .bytes()
-                .any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
-        {
-            return Err("Invalid host control credential".into());
-        }
+    if let Some(control) = control {
         state.control = Some(control);
         state.shutdown = Some(shutdown);
     }
