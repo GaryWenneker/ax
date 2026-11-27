@@ -1,0 +1,1 @@
+import{r as t,aD as n,T as s,H as o}from"./index-BOczttG-.js";function u(){const[r,a]=t.useState(n);return t.useEffect(()=>{const e=d=>a(d.detail.id);return window.addEventListener(s,e),()=>window.removeEventListener(s,e)},[]),o(r)}export{u};

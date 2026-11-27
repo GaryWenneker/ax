@@ -1,0 +1,1 @@
+function c(r,t={}){const n={tabIndex:0,onClick:r,onKeyDown:e=>{e.target===e.currentTarget&&(e.key!=="Enter"&&e.key!==" "||(e.preventDefault(),r()))}};return t.selected!==void 0&&(n["aria-selected"]=t.selected),n}export{c};
