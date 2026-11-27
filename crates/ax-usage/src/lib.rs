@@ -76,11 +76,11 @@ pub use cost_report::{
     quote_recorded, today_iso, CostReport, RecordedUsage,
 };
 pub use cursor_state::{
-    active_cursor_session_path, cursor_state_vscdb_path, import_cursor_composer_state,
-    normalize_cursor_model, parse_composer_data, parse_composer_input_tokens,
-    parse_composer_model_config, read_active_cursor_session, read_bound_cursor_session,
-    read_recent_cursor_session, write_active_cursor_session, write_bound_cursor_session,
-    ComposerStateRow,
+    active_cursor_session_path, bound_cursor_session_path, cursor_state_vscdb_path,
+    import_cursor_composer_state, normalize_cursor_model, parse_composer_data,
+    parse_composer_input_tokens, parse_composer_model_config, read_active_cursor_session,
+    read_bound_cursor_session, read_recent_cursor_session, write_active_cursor_session,
+    write_bound_cursor_session, ComposerStateRow,
 };
 pub use domain_log::{
     log_action, log_cli, log_domain_event, log_embed, log_lsp, log_memory, log_plugin, log_policy,

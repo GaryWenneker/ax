@@ -167,7 +167,8 @@ ax savings hook install
 
 This installs hooks under `~/.cursor/hooks/` and merges `sessionStart` into `~/.cursor/hooks.json`. Each new Composer chat runs `ax session-hook` (hidden) so:
 
-- `~/.ax/active-cursor-session` is written **even when Cursor omits the model** (required for `session=` on verbose lines)
+- `~/.ax/active-cursor-session` (one line, the chat id) is written **even when Cursor omits the model** (required for `session=` on verbose lines)
+- When the hook knows the window and project, `~/.ax/cursor-sessions/<hash>.json` binds that window to the chat; each window has its own file
 - Verbose lines can carry `session=<uuid>`
 - `ax savings import --all` keeps the tagged model for by-model rollups (when model is present)
 - `ax mcp audit` prefers the ax-heaviest transcript and aligns windows more accurately

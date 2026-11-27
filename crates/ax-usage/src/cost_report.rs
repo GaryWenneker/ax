@@ -313,8 +313,6 @@ fn regroup(rows: &[GroupSpend]) -> BTreeMap<String, (f64, i64)> {
         .collect()
 }
 
-
-
 fn plural_sessions(n: usize) -> String {
     if n == 1 {
         "1 imported session".to_string()
@@ -1141,7 +1139,13 @@ mod tests {
             &BudgetSettings::default(),
             "October 2026",
         );
-        assert!(text.contains("2 imported sessions without usage events"), "{text}");
-        assert!(text.contains("1 imported session with usage events"), "{text}");
+        assert!(
+            text.contains("2 imported sessions without usage events"),
+            "{text}"
+        );
+        assert!(
+            text.contains("1 imported session with usage events"),
+            "{text}"
+        );
     }
 }

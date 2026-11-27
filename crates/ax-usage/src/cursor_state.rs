@@ -104,9 +104,24 @@ pub fn cursor_state_vscdb_path() -> Option<PathBuf> {
     }
 }
 
-/// Path to the active Cursor session marker written by `ax session-hook`.
+/// Path to the plain-text marker that holds the latest Cursor chat id (`<id>\n`).
+/// It feeds the `session=` tag on MCP verbose lines. Window bindings live in
+/// [`bound_cursor_session_path`] instead, so writing this marker never erases one.
 pub fn active_cursor_session_path() -> Option<PathBuf> {
     ax_utils::paths::home_dir().map(|h| h.join(".ax").join("active-cursor-session"))
+}
+
+/// Path to the binding record of one Cursor window: `~/.ax/cursor-sessions/<hash>.json`.
+/// The file name is a hash of the window id, so any id makes a safe name.
+pub fn bound_cursor_session_path(window: &str) -> Option<PathBuf> {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(window.trim().as_bytes());
+    let name: String = digest[..16].iter().map(|b| format!("{b:02x}")).collect();
+    ax_utils::paths::home_dir().map(|h| {
+        h.join(".ax")
+            .join("cursor-sessions")
+            .join(format!("{name}.json"))
+    })
 }
 
 /// Persist the latest Cursor `session_id` so MCP verbose lines can tag `session=`.
@@ -116,25 +131,23 @@ pub fn write_active_cursor_session(session_id: &str) -> Result<(), String> {
         return Err("session_id required".into());
     }
     let path = active_cursor_session_path().ok_or("home directory not found")?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&path, format!("{session_id}\n")).map_err(|e| e.to_string())
+    ax_utils::atomic_write(&path, format!("{session_id}\n").as_bytes()).map_err(|e| e.to_string())
 }
 
 /// Read the active Cursor session id from `~/.ax/active-cursor-session`, if present.
 pub fn read_active_cursor_session() -> Option<String> {
     let path = active_cursor_session_path()?;
     let text = std::fs::read_to_string(path).ok()?;
-    if let Ok(record) = serde_json::from_str::<CursorSessionRecord>(&text) {
+    marker_session(&text)
+}
+
+/// The chat id in a marker: the plain `<id>` line, or the `session_id` of a JSON
+/// record that an older hook wrote to the same file.
+fn marker_session(text: &str) -> Option<String> {
+    if let Ok(record) = serde_json::from_str::<CursorSessionRecord>(text) {
         return crate::reuse_cache::usable_session(&record.session_id);
     }
-    let id = text.lines().next()?.trim();
-    if id.is_empty() {
-        None
-    } else {
-        Some(id.to_string())
-    }
+    crate::reuse_cache::usable_session(text.lines().next()?)
 }
 
 /// The active session id, only when the hook wrote it within `max_age`.
@@ -157,7 +170,7 @@ pub fn session_if_recent(
     if age? > max_age {
         return None;
     }
-    crate::reuse_cache::usable_session(text.lines().next()?)
+    marker_session(text)
 }
 
 /// A versioned hook record binds a conversation to its project and IDE window.
@@ -170,9 +183,13 @@ pub struct CursorSessionRecord {
     pub timestamp_ms: u64,
 }
 
+/// Bind `session` to the Cursor window `window` in `root`, and update the plain marker.
+/// Each window has its own record file, written atomically, so windows never overwrite
+/// one another and the turn hook's marker write leaves the binding in place.
 pub fn write_bound_cursor_session(root: &Path, window: &str, session: &str) -> Result<(), String> {
     let session_id = crate::reuse_cache::usable_session(session).ok_or("invalid session_id")?;
     let window_id = crate::reuse_cache::usable_session(window).ok_or("invalid window_id")?;
+    let path = bound_cursor_session_path(&window_id).ok_or("home directory not found")?;
     let record = CursorSessionRecord {
         version: 1,
         project: crate::project_scope(root),
@@ -183,15 +200,12 @@ pub fn write_bound_cursor_session(root: &Path, window: &str, session: &str) -> R
             .map_err(|e| e.to_string())?
             .as_millis() as u64,
     };
-    let path = active_cursor_session_path().ok_or("home directory not found")?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(
-        path,
-        serde_json::to_vec(&record).map_err(|e| e.to_string())?,
+    ax_utils::atomic_write(
+        &path,
+        &serde_json::to_vec(&record).map_err(|e| e.to_string())?,
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    write_active_cursor_session(&record.session_id)
 }
 
 pub fn read_bound_cursor_session(
@@ -199,7 +213,7 @@ pub fn read_bound_cursor_session(
     window: &str,
     max_age: std::time::Duration,
 ) -> Option<String> {
-    let text = std::fs::read_to_string(active_cursor_session_path()?).ok()?;
+    let text = std::fs::read_to_string(bound_cursor_session_path(window)?).ok()?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()?
@@ -229,6 +243,64 @@ pub fn bound_session(
 #[cfg(test)]
 mod binding_tests {
     use super::*;
+
+    const HOUR: std::time::Duration = std::time::Duration::from_secs(3600);
+
+    #[test]
+    fn turn_start_marker_does_not_erase_the_window_binding() {
+        let _lock = crate::spec_registry::tests::HOME_LOCK.blocking_lock();
+        let _home = crate::spec_registry::tests::IsolatedHome::new();
+        let root = tempfile::tempdir().unwrap();
+        write_bound_cursor_session(root.path(), "win-1", "chat-a").unwrap();
+        write_active_cursor_session("chat-a").unwrap();
+        assert_eq!(
+            read_bound_cursor_session(root.path(), "win-1", HOUR),
+            Some("chat-a".into())
+        );
+    }
+
+    #[test]
+    fn two_windows_keep_their_own_binding() {
+        let _lock = crate::spec_registry::tests::HOME_LOCK.blocking_lock();
+        let _home = crate::spec_registry::tests::IsolatedHome::new();
+        let root = tempfile::tempdir().unwrap();
+        write_bound_cursor_session(root.path(), "win-1", "chat-a").unwrap();
+        write_bound_cursor_session(root.path(), "win:2", "chat-b").unwrap();
+        assert_eq!(
+            read_bound_cursor_session(root.path(), "win-1", HOUR),
+            Some("chat-a".into())
+        );
+        assert_eq!(
+            read_bound_cursor_session(root.path(), "win:2", HOUR),
+            Some("chat-b".into())
+        );
+    }
+
+    #[test]
+    fn bound_write_keeps_the_plain_marker_readable() {
+        let _lock = crate::spec_registry::tests::HOME_LOCK.blocking_lock();
+        let _home = crate::spec_registry::tests::IsolatedHome::new();
+        let root = tempfile::tempdir().unwrap();
+        write_bound_cursor_session(root.path(), "win-1", "chat-a").unwrap();
+        assert_eq!(read_recent_cursor_session(HOUR), Some("chat-a".into()));
+        assert_eq!(read_active_cursor_session(), Some("chat-a".into()));
+    }
+
+    #[test]
+    fn recent_marker_accepts_a_json_record_left_by_an_older_hook() {
+        let text = serde_json::to_string(&CursorSessionRecord {
+            version: 1,
+            project: "a".into(),
+            window_id: "one".into(),
+            session_id: "chat".into(),
+            timestamp_ms: 100,
+        })
+        .unwrap();
+        assert_eq!(
+            session_if_recent(&text, Some(std::time::Duration::ZERO), HOUR),
+            Some("chat".into())
+        );
+    }
     #[test]
     fn hook_requires_matching_project_window_age_and_version() {
         let text = serde_json::to_string(&CursorSessionRecord {

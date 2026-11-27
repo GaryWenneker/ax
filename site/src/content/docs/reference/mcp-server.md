@@ -171,7 +171,7 @@ Same call already answered in this conversation; cited files unchanged. Use the 
 - **Not cached**: replies of 200 tokens or less (a reference would not save anything), and replies citing more than 64 files.
 - **Conversation id:** every `ax_preflight` reply names the chat in `<ax_chat session=axs_… graph=…>`. The agent passes that `session` back to `ax_preflight` and to the graph tools for the rest of the chat. The id is resolved in this order:
   1. the `session` argument;
-  2. the Cursor hook file `~/.ax/active-cursor-session`, if `ax turn-hook start` or `ax session-hook` wrote it in the last 10 minutes;
+  2. the Cursor window binding in `~/.ax/cursor-sessions/` that `ax session-hook` wrote for this project and the call's `window_id` in the last 10 minutes (one file per window, so two windows never share a binding);
   3. the session last used on the same MCP connection (one Cursor window).
   
   A preflight with none of these starts a new chat with a new id. A forgotten id therefore costs a cold start, never another chat's answers. A usable id is 1 to 128 ASCII letters, digits, or `-_.:`; any other value is ignored, as if no id was given. `graph=` is the first 16 hex characters of the index fingerprint; it changes with every re-index.
