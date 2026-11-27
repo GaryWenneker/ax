@@ -26,11 +26,28 @@ async fn score_fixture() -> ax_memory::bench::CodingReport {
     let fixture = load_coding_fixture(&text).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let db = open_db(dir.path()).await;
-    assert!(
-        dir.path().join("ax.db").starts_with(dir.path()),
-        "the bench database stays inside the temporary directory"
-    );
-    score_coding(db.pool(), &fixture).await.unwrap()
+    let report = score_coding(db.pool(), &fixture).await.unwrap();
+    assert_databases_inside(db.pool(), dir.path()).await;
+    report
+}
+
+/// Every database file the pool has open, attached ones included, lies under `root`.
+async fn assert_databases_inside(pool: &sqlx::SqlitePool, root: &std::path::Path) {
+    let root = root.canonicalize().unwrap();
+    let files: Vec<String> =
+        sqlx::query_scalar("SELECT file FROM pragma_database_list WHERE file <> ''")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    assert!(!files.is_empty(), "the bench pool has no database file");
+    for file in files {
+        let path = std::path::Path::new(&file).canonicalize().unwrap();
+        assert!(
+            path.starts_with(&root),
+            "the bench database {file} is outside {}",
+            root.display()
+        );
+    }
 }
 
 #[tokio::test]
@@ -77,6 +94,8 @@ fn shape_samples_are_not_reported_as_the_public_sets() {
 #[tokio::test]
 #[ignore]
 async fn write_coding_baseline() {
+    let out = std::env::var("AX_MEMORY_BENCH_OUT")
+        .expect("set AX_MEMORY_BENCH_OUT to the baseline file to write");
     let report = score_fixture().await;
     let longmem_sample = score_shape_text(
         "longmemeval",
@@ -102,7 +121,6 @@ async fn write_coding_baseline() {
             .map(std::path::Path::new),
     )
     .unwrap();
-    let out = std::env::var("AX_MEMORY_BENCH_OUT").unwrap();
     let body = baseline_json(
         &report,
         &std::env::var("AX_MEMORY_BENCH_COMMIT").unwrap_or_else(|_| "unknown".into()),
