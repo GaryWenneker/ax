@@ -305,11 +305,7 @@ fn validate_rule(fm: &RuleFrontmatter) -> Result<(), ValidationError> {
     let mut fields = HashMap::new();
     if fm.id.is_empty() {
         fields.insert("id".into(), "required".into());
-    } else if !fm
-        .id
-        .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-    {
+    } else if !is_kebab_case(&fm.id) {
         fields.insert("id".into(), "must be kebab-case".into());
     }
     if crate::types::PolicyLevel::parse(&fm.level).is_none() {
@@ -341,10 +337,19 @@ fn validate_rule(fm: &RuleFrontmatter) -> Result<(), ValidationError> {
     Ok(())
 }
 
+/// Lowercase ASCII letters, digits and `-`. Rule ids and skill names are also file and folder
+/// names, so this keeps them to one safe path component.
+pub fn is_kebab_case(name: &str) -> bool {
+    name.chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
 fn validate_skill(fm: &SkillFrontmatter) -> Result<(), ValidationError> {
     let mut fields = HashMap::new();
     if fm.name.is_empty() {
         fields.insert("name".into(), "required".into());
+    } else if !is_kebab_case(&fm.name) {
+        fields.insert("name".into(), "must be kebab-case".into());
     }
     if fm.description.is_empty() {
         fields.insert("description".into(), "required".into());
@@ -531,6 +536,27 @@ mod tests {
         let raw = "\u{feff}---\nid: utf8\nlevel: INFO\nalwaysApply: true\n---\n\nBody.";
         let doc = parse_rule_file(Path::new("utf8.mdc"), raw).unwrap();
         assert_eq!(doc.frontmatter.id, "utf8");
+    }
+
+    #[test]
+    fn a_skill_name_must_be_kebab_case() {
+        for bad in [
+            "../../../.claude/skills/evil",
+            "a/b",
+            "a\\b",
+            "..",
+            "Has Space",
+        ] {
+            let raw = format!("---\nname: \"{bad}\"\ndescription: d\n---\n\nBody.\n");
+            let err = parse_skill_file(Path::new("SKILL.md"), &raw)
+                .expect_err(&format!("{bad} must be rejected"));
+            assert_eq!(
+                err.fields.get("name").map(String::as_str),
+                Some("must be kebab-case")
+            );
+        }
+        let ok = "---\nname: review-loop2\ndescription: d\n---\n\nBody.\n";
+        assert!(parse_skill_file(Path::new("SKILL.md"), ok).is_ok());
     }
 
     #[test]

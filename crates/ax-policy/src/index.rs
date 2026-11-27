@@ -434,6 +434,13 @@ pub async fn export_policy_to_files_filtered(
             continue;
         }
         let doc = rule_row_to_doc(row, project_root);
+        if !is_single_component(&doc.frontmatter.id) {
+            eprintln!(
+                "[ax policy] export skips rule {:?}: the id is not a plain file name",
+                doc.frontmatter.id
+            );
+            continue;
+        }
         let path = rule_file(&rules_out, &doc.frontmatter.id);
         write_utf8(&path, &doc.raw)?;
         rules_n += 1;
@@ -447,6 +454,13 @@ pub async fn export_policy_to_files_filtered(
             continue;
         }
         let doc = skill_row_to_doc(row, project_root);
+        if !is_single_component(&doc.frontmatter.name) {
+            eprintln!(
+                "[ax policy] export skips skill {:?}: the name is not a plain folder name",
+                doc.frontmatter.name
+            );
+            continue;
+        }
         let dir = skills_out.join(&doc.frontmatter.name);
         std::fs::create_dir_all(&dir).map_err(|e| AxError::Other(e.to_string()))?;
         let path = skill_file(&skills_out, &doc.frontmatter.name);
@@ -459,6 +473,14 @@ pub async fn export_policy_to_files_filtered(
         skills_exported: skills_n,
         output_dir: out_dir.to_string_lossy().to_string(),
     })
+}
+
+/// `true` when `name` is exactly one normal path component (no separator, `.`, `..` or root).
+fn is_single_component(name: &str) -> bool {
+    let mut parts = Path::new(name).components();
+    matches!(parts.next(), Some(std::path::Component::Normal(_)))
+        && parts.next().is_none()
+        && !name.contains(['/', '\\'])
 }
 
 pub async fn upsert_rule_doc(pool: &SqlitePool, doc: &PolicyRuleDoc) -> Result<(), AxError> {
@@ -1622,6 +1644,32 @@ mod tests {
             .unwrap()
             .iter()
             .any(|s| s.name == "kept-skill" && s.body.contains("skill body")));
+    }
+
+    #[tokio::test]
+    async fn export_refuses_a_skill_name_that_leaves_the_output_folder() {
+        let (dir, pool) = test_pool().await;
+        let root = dir.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let raw = "---\nname: placeholder\ndescription: d\n---\n\nEvil.\n";
+        let mut doc = parse_skill_file(Path::new("SKILL.md"), raw).unwrap();
+        doc.frontmatter.name = "../../escaped".into();
+        upsert_skill_doc(&pool, &doc).await.unwrap();
+        let mut good = parse_skill_file(Path::new("SKILL.md"), raw).unwrap();
+        good.frontmatter.name = "fine".into();
+        upsert_skill_doc(&pool, &good).await.unwrap();
+
+        let out = root.join("out");
+        let result = export_policy_to_files_filtered(&pool, &root, &out, false)
+            .await
+            .unwrap();
+        assert!(
+            !dir.path().join("escaped").exists(),
+            "wrote outside out_dir"
+        );
+        assert!(!root.join("escaped").exists(), "wrote outside out_dir");
+        assert!(out.join("skills/fine/SKILL.md").is_file());
+        assert_eq!(result.skills_exported, 1);
     }
 
     #[tokio::test]

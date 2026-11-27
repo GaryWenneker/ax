@@ -360,6 +360,8 @@ group: deploy-ops
 # Workflow steps (markdown)
 ```
 
+The `name` is also the folder name, so it must be kebab-case (lowercase letters, digits and `-`), like a rule `id`. A `SKILL.md` with another name is skipped on index, a save with one is refused, and `ax policy export` never writes a skill or rule whose name is not a plain folder or file name.
+
 When `alwaysApply` is `true`, `ax_preflight` injects the skill body on **every** turn (including empty prompts) under **Skills (always apply)** — the same contract as always-apply rules. Otherwise the skill matches on triggers/description and appears under **Suggested skills**. Load a specific workflow anytime with `ax_skill({ name: "deploy" })`.
 
 Give every skill at least one `tags` value (same as rules) so Command Center can filter it.

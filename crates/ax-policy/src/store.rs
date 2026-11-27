@@ -353,6 +353,15 @@ impl PolicyStore {
         mut frontmatter: SkillFrontmatter,
         body: String,
     ) -> Result<PolicySkillDoc, ValidationError> {
+        // The name becomes a folder name: validate it before anything is written.
+        if !frontmatter.name.is_empty() && !crate::parse::is_kebab_case(&frontmatter.name) {
+            return Err(ValidationError {
+                error: "validation_failed".into(),
+                fields: [("name".into(), "must be kebab-case".into())]
+                    .into_iter()
+                    .collect(),
+            });
+        }
         let scope = PolicyScope::parse(&frontmatter.scope).unwrap_or(PolicyScope::Project);
         frontmatter.scope = scope.as_str().into();
         if let Some(ref s) = frontmatter.storage {
@@ -779,4 +788,35 @@ pub async fn open_rw_pool(db_path: &Path) -> Result<sqlx::SqlitePool, AxError> {
     })
     .await
     .map_err(|e| AxError::Database(ax_utils::errors::DatabaseError::new(e.to_string())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn save_skill_refuses_a_name_that_is_not_kebab_case_before_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap();
+        let store = PolicyStore::new(pool, root.clone());
+        let doc = parse_skill_file(
+            Path::new("SKILL.md"),
+            "---\nname: placeholder\ndescription: d\n---\n\nBody.\n",
+        )
+        .unwrap();
+        let mut fm = doc.frontmatter;
+        fm.name = "../../escaped".into();
+        let err = store
+            .save_skill(fm, "Body.".into())
+            .await
+            .expect_err("a path-like skill name must be refused");
+        assert_eq!(
+            err.fields.get("name").map(String::as_str),
+            Some("must be kebab-case")
+        );
+        assert!(!dir.path().join("escaped").exists());
+        assert!(!root.join("escaped").exists());
+    }
 }
