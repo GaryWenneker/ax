@@ -32,10 +32,7 @@ pub async fn handle_pty_ws(
     Query(query): Query<PtyQuery>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    let origin = headers
-        .get(axum::http::header::ORIGIN)
-        .and_then(|value| value.to_str().ok());
-    if !crate::browser_origin::browser_origin_allowed(origin, hub.port, hub.local_only) {
+    if !crate::browser_origin::terminal_request_allowed(&headers, hub.port) {
         return axum::response::Response::builder()
             .status(403)
             .body(axum::body::Body::from("Untrusted origin"))
@@ -57,11 +54,7 @@ pub(crate) async fn reject_untrusted_origin(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    let origin = req
-        .headers()
-        .get(axum::http::header::ORIGIN)
-        .and_then(|value| value.to_str().ok());
-    if !crate::browser_origin::browser_origin_allowed(origin, hub.port, hub.local_only) {
+    if !crate::browser_origin::terminal_request_allowed(req.headers(), hub.port) {
         return axum::response::Response::builder()
             .status(403)
             .body(axum::body::Body::from("Untrusted origin"))

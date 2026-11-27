@@ -134,9 +134,10 @@ fn is_loopback_host(host: &str) -> bool {
     matches!(bare, "127.0.0.1" | "localhost" | "::1")
 }
 
-/// Only the local user's own browser may mount: no share sessions, LAN clients, or foreign pages.
+/// Only the local user's own browser may mount: a loopback socket peer with no
+/// proxy in between, and no share sessions, LAN clients, or foreign pages.
 pub fn allowed(headers: &HeaderMap, readonly: bool) -> bool {
-    if readonly {
+    if readonly || !crate::local_owner::local_peer(headers) {
         return false;
     }
     let header = |k: &str| headers.get(k).and_then(|v| v.to_str().ok());

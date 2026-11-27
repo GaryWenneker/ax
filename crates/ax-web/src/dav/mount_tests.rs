@@ -13,6 +13,16 @@ fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
     h
 }
 
+/// Headers as `request_guard::guard` leaves them for a loopback socket peer.
+fn local(pairs: &[(&'static str, &str)]) -> HeaderMap {
+    let mut h = headers(pairs);
+    h.insert(
+        crate::request_guard::LOCAL_PEER,
+        HeaderValue::from_static("1"),
+    );
+    h
+}
+
 #[test]
 fn b6_name_rules() {
     assert!(valid_name("ax"));
@@ -127,26 +137,28 @@ fn b7_linux_commands() {
 
 #[test]
 fn n1_loopback_only() {
-    assert!(allowed(&headers(&[("host", "127.0.0.1:7070")]), false));
-    assert!(allowed(&headers(&[("host", "localhost")]), false));
-    assert!(allowed(&headers(&[("host", "[::1]:7070")]), false));
+    // Loopback headers alone are not enough: the socket peer must be local.
+    assert!(!allowed(&headers(&[("host", "127.0.0.1:7070")]), false));
+    assert!(allowed(&local(&[("host", "127.0.0.1:7070")]), false));
+    assert!(allowed(&local(&[("host", "localhost")]), false));
+    assert!(allowed(&local(&[("host", "[::1]:7070")]), false));
     assert!(allowed(
-        &headers(&[
+        &local(&[
             ("host", "127.0.0.1:7070"),
             ("origin", "http://localhost:5173")
         ]),
         false
     ));
-    assert!(!allowed(&headers(&[("host", "127.0.0.1:7070")]), true));
-    assert!(!allowed(&headers(&[]), false));
-    assert!(!allowed(&headers(&[("host", "192.168.1.5:7070")]), false));
-    assert!(!allowed(&headers(&[("host", "127.0.0.1.evil.com")]), false));
+    assert!(!allowed(&local(&[("host", "127.0.0.1:7070")]), true));
+    assert!(!allowed(&local(&[]), false));
+    assert!(!allowed(&local(&[("host", "192.168.1.5:7070")]), false));
+    assert!(!allowed(&local(&[("host", "127.0.0.1.evil.com")]), false));
     assert!(!allowed(
-        &headers(&[("host", "127.0.0.1:7070"), ("origin", "https://evil.com")]),
+        &local(&[("host", "127.0.0.1:7070"), ("origin", "https://evil.com")]),
         false
     ));
     assert!(!allowed(
-        &headers(&[
+        &local(&[
             ("host", "127.0.0.1:7070"),
             ("origin", "http://localhost.evil.com")
         ]),

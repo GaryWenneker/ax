@@ -143,6 +143,9 @@ mod tests {
     fn local_login_controls_reject_foreign_origin_and_csrf() {
         let mut headers = HeaderMap::new();
         headers.insert("host", "127.0.0.1:7070".parse().unwrap());
+        // Loopback headers without a loopback socket peer are not local.
+        assert!(check_local(&headers, 7070, false, false).is_err());
+        headers.insert(crate::request_guard::LOCAL_PEER, "1".parse().unwrap());
         assert!(check_local(&headers, 7070, false, false).is_ok());
         assert!(check_local(&headers, 7070, false, true).is_err());
         headers.insert("x-ax-csrf", csrf().parse().unwrap());

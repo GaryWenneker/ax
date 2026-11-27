@@ -431,6 +431,8 @@ mod tests {
             .method(method)
             .uri(path)
             .header("Host", "localhost:7070")
+            // What request_guard::guard sets for a loopback socket peer.
+            .header(crate::request_guard::LOCAL_PEER, "1")
             .header("Content-Type", "application/json");
         if csrf {
             builder = builder.header("X-Ax-Csrf", remote_mcp::csrf());
@@ -537,6 +539,7 @@ mod tests {
                     .method("POST")
                     .uri("/import")
                     .header("Host", "localhost:7070")
+                    .header(crate::request_guard::LOCAL_PEER, "1")
                     .header("Content-Type", "application/json")
                     .header("X-Ax-Csrf", remote_mcp::csrf())
                     .body(Body::from("x".repeat(256 * 1024 + 1)))

@@ -3,11 +3,15 @@
 //! The `Host` header must name this server. A page on another domain whose
 //! DNS name points at this computer (DNS rebinding) is same-origin with the
 //! server, so CORS does not stop it; refusing unexpected `Host` names does.
+//!
+//! Whether a request comes from this computer is decided here from the socket
+//! peer address alone. Request headers can only take that trust away (a proxy
+//! header means someone else is being forwarded), never grant it.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 
-use axum::extract::{Request, State};
-use axum::http::{header, StatusCode};
+use axum::extract::{ConnectInfo, Request, State};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
@@ -115,12 +119,35 @@ fn valid_port(port: &str) -> bool {
     !port.is_empty() && port.parse::<u16>().is_ok()
 }
 
-/// Refuses requests whose `Host` (or HTTP/2 authority) is not allowed.
-/// A request without either is not a browser request, so it cannot be
-/// DNS rebinding and is passed on.
+/// Set by [`guard`] on requests whose socket peer is this computer and that
+/// carry no proxy header. Any copy a client sends is removed first.
+pub(crate) const LOCAL_PEER: &str = "x-ax-local-peer";
+
+/// Headers a reverse proxy or tunnel adds for the client it forwards.
+const FORWARDING: [&str; 7] = [
+    "forwarded",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-real-ip",
+    "cf-connecting-ip",
+    "true-client-ip",
+];
+
+/// True when the TCP peer is a loopback address and no proxy forwarded the
+/// request. A request with no known peer is not local.
+pub(crate) fn peer_is_local(peer: Option<SocketAddr>, headers: &HeaderMap) -> bool {
+    peer.is_some_and(|addr| addr.ip().is_loopback())
+        && !FORWARDING.iter().any(|name| headers.contains_key(*name))
+}
+
+/// Refuses requests whose `Host` (or HTTP/2 authority) is not allowed, and
+/// marks requests from this computer with [`LOCAL_PEER`]. A request without
+/// `Host` or authority is not a browser request, so it cannot be DNS
+/// rebinding and is passed on.
 pub(crate) async fn guard(
     State(allowed): State<AllowedHosts>,
-    req: Request,
+    mut req: Request,
     next: Next,
 ) -> Response {
     let host = req
@@ -136,6 +163,16 @@ pub(crate) async fn guard(
             )
                 .into_response();
         }
+    }
+    let peer = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|info| info.0);
+    let local = peer_is_local(peer, req.headers());
+    let headers = req.headers_mut();
+    headers.remove(LOCAL_PEER);
+    if local {
+        headers.insert(LOCAL_PEER, HeaderValue::from_static("1"));
     }
     next.run(req).await
 }
@@ -182,6 +219,23 @@ mod tests {
             "admin.example.com.evil.example",
         ] {
             assert!(!allowed.allows(host), "{host}");
+        }
+    }
+
+    #[test]
+    fn only_an_unproxied_loopback_peer_is_local() {
+        let loopback: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        let v6: SocketAddr = "[::1]:5000".parse().unwrap();
+        let remote: SocketAddr = "203.0.113.7:5000".parse().unwrap();
+        let empty = HeaderMap::new();
+        assert!(peer_is_local(Some(loopback), &empty));
+        assert!(peer_is_local(Some(v6), &empty));
+        assert!(!peer_is_local(Some(remote), &empty));
+        assert!(!peer_is_local(None, &empty));
+        for name in FORWARDING {
+            let mut proxied = HeaderMap::new();
+            proxied.insert(name, HeaderValue::from_static("127.0.0.1"));
+            assert!(!peer_is_local(Some(loopback), &proxied), "{name}");
         }
     }
 

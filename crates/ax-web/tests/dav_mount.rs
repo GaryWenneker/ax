@@ -55,6 +55,15 @@ async fn fixture(readonly: bool) -> (TempDir, Router) {
     (dir, hub.nest_routers(cors))
 }
 
+/// The server's connection layer records the socket peer; requests in these
+/// tests come from this computer.
+fn from_loopback(mut req: Request<Body>) -> Request<Body> {
+    let peer: std::net::SocketAddr = "127.0.0.1:50000".parse().unwrap();
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo(peer));
+    req
+}
+
 async fn send(
     app: &Router,
     method: &str,
@@ -68,7 +77,9 @@ async fn send(
     }
     let res = app
         .clone()
-        .oneshot(req.body(Body::from(body.to_string())).unwrap())
+        .oneshot(from_loopback(
+            req.body(Body::from(body.to_string())).unwrap(),
+        ))
         .await
         .unwrap();
     let status = res.status();
