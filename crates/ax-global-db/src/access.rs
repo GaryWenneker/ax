@@ -209,7 +209,13 @@ type ClientAuthRow = (
     String,
     String,
     Option<String>,
+    String,
+    bool,
 );
+
+/// A token's last-used time is written again only when it is older than this,
+/// so steady traffic does not take the global.db write lock on every request.
+const TOUCH_INTERVAL_SQL: &str = "-60 seconds";
 type NodeRow = (
     String,
     String,
@@ -679,7 +685,8 @@ pub async fn authenticate_client_token(
     let prefix = token.chars().take(12).collect::<String>();
     let verifier = token_verifier(token);
     let row: Option<ClientAuthRow> = sqlx::query_as(
-        "SELECT c.member_id, c.id, tm.role, tm.status, c.status, c.scopes, cc.expires_at
+        "SELECT c.member_id, c.id, tm.role, tm.status, c.status, c.scopes, cc.expires_at, cc.id,
+                (cc.last_used_at IS NULL OR cc.last_used_at < datetime('now', ?)) AS touch_due
              FROM client_credentials cc
              JOIN clients c ON c.id = cc.client_id
              JOIN team_members tm ON tm.id = c.member_id
@@ -687,12 +694,23 @@ pub async fn authenticate_client_token(
                AND cc.verifier = ?
                AND cc.revoked_at IS NULL",
     )
+    .bind(TOUCH_INTERVAL_SQL)
     .bind(&prefix)
     .bind(&verifier)
     .fetch_optional(pool)
     .await?;
 
-    let Some((member_id, client_id, role, member_status, client_status, scopes, expires_at)) = row
+    let Some((
+        member_id,
+        client_id,
+        role,
+        member_status,
+        client_status,
+        scopes,
+        expires_at,
+        credential_id,
+        touch_due,
+    )) = row
     else {
         return Ok(None);
     };
@@ -717,20 +735,11 @@ pub async fn authenticate_client_token(
         .filter(|scope| role.permits(scope))
         .collect::<Vec<_>>();
 
-    sqlx::query(
-        "UPDATE client_credentials SET last_used_at = CURRENT_TIMESTAMP WHERE token_prefix = ?",
-    )
-    .bind(&prefix)
-    .execute(pool)
-    .await?;
-    sqlx::query("UPDATE clients SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?")
-        .bind(&client_id)
-        .execute(pool)
-        .await?;
-    sqlx::query("UPDATE team_members SET last_active_at = CURRENT_TIMESTAMP WHERE id = ?")
-        .bind(&member_id)
-        .execute(pool)
-        .await?;
+    if touch_due {
+        // Last-seen times are informational: a busy or locked database must
+        // not turn a valid token into a failed request.
+        let _ = touch_client(pool, &credential_id, &client_id, &member_id).await;
+    }
 
     Ok(Some(ClientPrincipal {
         member_id,
@@ -738,6 +747,30 @@ pub async fn authenticate_client_token(
         role,
         scopes: effective,
     }))
+}
+
+/// Records use of a client credential in one write transaction, by id.
+async fn touch_client(
+    pool: &SqlitePool,
+    credential_id: &str,
+    client_id: &str,
+    member_id: &str,
+) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE client_credentials SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(credential_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE clients SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(client_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE team_members SET last_active_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(member_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 pub async fn revoke_client_credential(pool: &SqlitePool, credential_id: &str) -> Result<bool> {
@@ -993,20 +1026,22 @@ pub async fn authenticate_node_token(
     }
     let prefix = token.chars().take(12).collect::<String>();
     let verifier = token_verifier(token);
-    let row: Option<(String, String, Option<String>)> = sqlx::query_as(
-        "SELECT nc.node_id, rn.trust_state, nc.expires_at
+    let row: Option<(String, String, Option<String>, String, bool)> = sqlx::query_as(
+        "SELECT nc.node_id, rn.trust_state, nc.expires_at, nc.id,
+                (nc.last_used_at IS NULL OR nc.last_used_at < datetime('now', ?)) AS touch_due
          FROM node_credentials nc
          JOIN replication_nodes rn ON rn.id = nc.node_id
          WHERE nc.token_prefix = ?
            AND nc.verifier = ?
            AND nc.revoked_at IS NULL",
     )
+    .bind(TOUCH_INTERVAL_SQL)
     .bind(&prefix)
     .bind(&verifier)
     .fetch_optional(pool)
     .await?;
 
-    let Some((node_id, trust_state, expires_at)) = row else {
+    let Some((node_id, trust_state, expires_at, credential_id, touch_due)) = row else {
         return Ok(None);
     };
     if trust_state != "trusted" {
@@ -1023,18 +1058,27 @@ pub async fn authenticate_node_token(
         }
     }
 
-    sqlx::query(
-        "UPDATE node_credentials SET last_used_at = CURRENT_TIMESTAMP WHERE token_prefix = ?",
-    )
-    .bind(&prefix)
-    .execute(pool)
-    .await?;
-    sqlx::query("UPDATE replication_nodes SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?")
-        .bind(&node_id)
-        .execute(pool)
-        .await?;
+    if touch_due {
+        // Informational, like client last-seen times: never fail auth on it.
+        let _ = touch_node(pool, &credential_id, &node_id).await;
+    }
 
     Ok(Some(NodePrincipal { node_id }))
+}
+
+/// Records use of a node credential in one write transaction, by id.
+async fn touch_node(pool: &SqlitePool, credential_id: &str, node_id: &str) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE node_credentials SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(credential_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE replication_nodes SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(node_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 pub async fn authenticate_node_token_for_project(
@@ -1471,6 +1515,94 @@ mod tests {
         assert!(issue_client_credential(&pool, "client", None)
             .await
             .is_err());
+    }
+
+    async fn scalar(pool: &SqlitePool, sql: &str) -> Option<String> {
+        sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    }
+
+    async fn client_fixture() -> (tempfile::TempDir, SqlitePool, IssuedClientCredential) {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_and_init(&dir.path().join("global.db")).await.unwrap();
+        bootstrap_owner(&pool, "owner", "Owner", None)
+            .await
+            .unwrap();
+        create_client(&pool, "c1", "owner", "c1", "cli", &["memory:read".into()])
+            .await
+            .unwrap();
+        let issued = issue_client_credential(&pool, "c1", None).await.unwrap();
+        (dir, pool, issued)
+    }
+
+    #[tokio::test]
+    async fn client_auth_skips_recent_touches() {
+        let (_dir, pool, issued) = client_fixture().await;
+        authenticate_client_token(&pool, &issued.token)
+            .await
+            .unwrap()
+            .unwrap();
+        for sql in [
+            "UPDATE client_credentials SET last_used_at = datetime('now', '-30 seconds')",
+            "UPDATE clients SET last_seen_at = datetime('now', '-30 seconds')",
+            "UPDATE team_members SET last_active_at = datetime('now', '-30 seconds')",
+        ] {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        }
+        let before = scalar(&pool, "SELECT last_used_at FROM client_credentials").await;
+        authenticate_client_token(&pool, &issued.token)
+            .await
+            .unwrap()
+            .unwrap();
+        let after = scalar(&pool, "SELECT last_used_at FROM client_credentials").await;
+        assert_eq!(before, after, "a touch within a minute wrote again");
+
+        sqlx::query("UPDATE client_credentials SET last_used_at = datetime('now', '-5 minutes')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let stale = scalar(&pool, "SELECT last_used_at FROM client_credentials").await;
+        authenticate_client_token(&pool, &issued.token)
+            .await
+            .unwrap()
+            .unwrap();
+        let fresh = scalar(&pool, "SELECT last_used_at FROM client_credentials").await;
+        assert_ne!(stale, fresh, "an old touch must be refreshed");
+    }
+
+    #[tokio::test]
+    async fn client_auth_survives_a_failed_touch() {
+        let (_dir, pool, issued) = client_fixture().await;
+        sqlx::query(
+            "CREATE TRIGGER no_touch BEFORE UPDATE ON clients
+             BEGIN SELECT RAISE(ABORT, 'database is locked'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let principal = authenticate_client_token(&pool, &issued.token).await;
+        assert!(
+            matches!(principal, Ok(Some(_))),
+            "a failed last-seen write rejected a valid token: {principal:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn node_auth_survives_a_failed_touch() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_and_init(&dir.path().join("global.db")).await.unwrap();
+        discover_replica(&pool, "n1", "Replica", None)
+            .await
+            .unwrap();
+        let issued = issue_node_credential(&pool, "n1", None).await.unwrap();
+        sqlx::query(
+            "CREATE TRIGGER no_touch BEFORE UPDATE ON replication_nodes
+             BEGIN SELECT RAISE(ABORT, 'database is locked'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let principal = authenticate_node_token(&pool, &issued.token).await;
+        assert!(matches!(principal, Ok(Some(_))), "{principal:?}");
     }
 
     #[tokio::test]
