@@ -49,6 +49,30 @@ pub fn compress_hunk(text: &str) -> String {
 
 pub const FILE_CHANGE_KIND: &str = "file_change";
 
+/// Whether `path` already has a file_change memory (any content version) for
+/// this session and turn. Sync capture and the turn-end hook report the same
+/// edit; the hook skips a path sync already recorded.
+async fn file_change_recorded(
+    pool: &SqlitePool,
+    path: &str,
+    session_id: &str,
+    turn_id: &str,
+) -> Result<bool, AxError> {
+    let files = serde_json::to_string(&vec![path]).map_err(|e| AxError::Other(e.to_string()))?;
+    let found: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM memories
+         WHERE kind = ? AND session_id = ? AND turn_id = ? AND files = ? LIMIT 1",
+    )
+    .bind(FILE_CHANGE_KIND)
+    .bind(session_id)
+    .bind(turn_id)
+    .bind(&files)
+    .fetch_optional(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(found.is_some())
+}
+
 pub async fn save_file_changes(
     pool: &SqlitePool,
     paths: &[String],
@@ -61,7 +85,9 @@ pub async fn save_file_changes(
 
 /// One file_change memory per path, per turn and per `content_version`
 /// (usually the file's content hash). The same content in the same turn is
-/// stored once; a new version of the file is a new memory.
+/// stored once; a new version of the file is a new memory. With an empty
+/// `content_version` (the turn-end hook) a path that already has a
+/// file_change memory in this turn is skipped.
 pub(crate) async fn save_file_change_versions(
     pool: &SqlitePool,
     paths: &[String],
@@ -74,6 +100,11 @@ pub(crate) async fn save_file_change_versions(
     for path in paths {
         let path = path.trim();
         if path.is_empty() {
+            continue;
+        }
+        if content_version.is_empty()
+            && file_change_recorded(pool, path, session_id, turn_id).await?
+        {
             continue;
         }
         let id_source = if content_version.is_empty() {
@@ -123,6 +154,7 @@ pub(crate) async fn save_file_change_versions(
 }
 
 /// Like `save_file_changes`, and stores a redacted capped zstd hunk in the body when provided.
+/// A path that already has a file_change memory in this turn is skipped.
 #[allow(clippy::too_many_arguments)]
 pub async fn save_file_change_with_hunk(
     pool: &SqlitePool,
@@ -135,7 +167,7 @@ pub async fn save_file_change_with_hunk(
     now_ms: i64,
 ) -> Result<usize, AxError> {
     let path = path.trim();
-    if path.is_empty() {
+    if path.is_empty() || file_change_recorded(pool, path, session_id, turn_id).await? {
         return Ok(0);
     }
     let id_source = format!("{session_id}\n{turn_id}\n{path}");
