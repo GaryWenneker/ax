@@ -16,6 +16,50 @@ const DEFAULT_REPO: &str = "GaryWenneker/ax";
 const DEFAULT_CACHE_HOURS: u64 = 24;
 const REQUEST_TIMEOUT_SECS: u64 = 8;
 
+/// Base URLs the release resolver talks to (overridable so tests can use a local server).
+#[derive(Debug, Clone)]
+struct Endpoints {
+    /// `https://github.com` — `/{repo}/releases/latest` redirects to the newest tag.
+    web: String,
+    /// `https://api.github.com`.
+    api: String,
+    /// Full URL of the legacy `latest.txt` pointer.
+    cdn_latest: String,
+}
+
+impl Endpoints {
+    fn public() -> Self {
+        Self {
+            web: "https://github.com".to_string(),
+            api: "https://api.github.com".to_string(),
+            cdn_latest: CDN_LATEST_URL.to_string(),
+        }
+    }
+}
+
+/// Why the newest release could not be resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolveError {
+    /// The GitHub API answered 404 with a token: the repository has no published release.
+    NoReleases,
+    /// The GitHub API answered 404 without a token: the releases may be private.
+    NotVisible,
+    /// Network, HTTP or parse failure.
+    Failed(String),
+}
+
+impl std::fmt::Display for ResolveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoReleases => f.write_str("no published GitHub releases yet"),
+            Self::NotVisible => f.write_str(
+                "releases not visible (private repo?) — set GITHUB_TOKEN or run `gh auth login`",
+            ),
+            Self::Failed(e) => f.write_str(e),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UpdateCheckCache {
     checked_at: i64,
@@ -195,35 +239,40 @@ fn http_client() -> Result<reqwest::Client, String> {
 
 async fn fetch_latest_via_api(
     client: &reqwest::Client,
+    ep: &Endpoints,
     repo: &str,
     token: Option<&str>,
-) -> Result<String, String> {
-    let api = format!("https://api.github.com/repos/{repo}/releases/latest");
+) -> Result<String, ResolveError> {
+    let api = format!("{}/repos/{repo}/releases/latest", ep.api);
     let resp = github_get(client, &api, token)
         .header("Accept", "application/vnd.github+json")
         .send()
         .await
-        .map_err(|e| format!("could not reach GitHub API: {e}"))?;
+        .map_err(|e| ResolveError::Failed(format!("could not reach GitHub API: {e}")))?;
 
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        if token.is_none() {
-            return Err(
-                "releases not visible (private repo?) — set GITHUB_TOKEN or run `gh auth login`"
-                    .to_string(),
-            );
-        }
-        return Err("no published GitHub releases yet".to_string());
+        return Err(if token.is_none() {
+            ResolveError::NotVisible
+        } else {
+            ResolveError::NoReleases
+        });
     }
     if !resp.status().is_success() {
-        return Err(format!("GitHub API returned HTTP {}", resp.status()));
+        return Err(ResolveError::Failed(format!(
+            "GitHub API returned HTTP {}",
+            resp.status()
+        )));
     }
 
-    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| ResolveError::Failed(e.to_string()))?;
     body.get("tag_name")
         .and_then(|v| v.as_str())
         .map(normalize_version)
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| "GitHub did not return a release tag".to_string())
+        .ok_or_else(|| ResolveError::Failed("GitHub did not return a release tag".to_string()))
 }
 
 /// Parse release tag from `https://github.com/owner/repo/releases/tag/v1.2.3`.
@@ -327,12 +376,19 @@ fn now_secs() -> i64 {
 }
 
 fn load_cache() -> Option<UpdateCheckCache> {
-    let raw = std::fs::read_to_string(cache_path()).ok()?;
+    load_cache_from(&cache_path())
+}
+
+fn load_cache_from(path: &std::path::Path) -> Option<UpdateCheckCache> {
+    let raw = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&raw).ok()
 }
 
 fn save_cache(latest: &str) {
-    let path = cache_path();
+    save_cache_to(&cache_path(), latest);
+}
+
+fn save_cache_to(path: &std::path::Path, latest: &str) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -346,8 +402,14 @@ fn save_cache(latest: &str) {
 }
 
 fn cache_is_fresh(cache: &UpdateCheckCache) -> bool {
-    let age = now_secs().saturating_sub(cache.checked_at);
-    age >= 0 && Duration::from_secs(age as u64) < cache_interval()
+    cache_is_fresh_at(cache, now_secs(), cache_interval())
+}
+
+/// Fresh when checked within `interval` before `now`; a `checked_at` in the
+/// future (clock moved back) is stale.
+fn cache_is_fresh_at(cache: &UpdateCheckCache, now: i64, interval: Duration) -> bool {
+    let age = now.saturating_sub(cache.checked_at);
+    age >= 0 && Duration::from_secs(age as u64) < interval
 }
 
 pub fn update_check_disabled() -> bool {
@@ -360,9 +422,9 @@ pub fn update_check_disabled() -> bool {
 }
 
 /// Fetch latest version from getax latest.txt (legacy fallback when GitHub is unreachable).
-async fn fetch_latest_from_cdn(client: &reqwest::Client) -> Result<String, String> {
+async fn fetch_latest_from_cdn(client: &reqwest::Client, ep: &Endpoints) -> Result<String, String> {
     let resp = client
-        .get(CDN_LATEST_URL)
+        .get(&ep.cdn_latest)
         .send()
         .await
         .map_err(|e| format!("could not reach CDN: {e}"))?;
@@ -391,16 +453,29 @@ fn parse_cdn_latest(text: &str) -> Result<String, String> {
 
 /// Highest release version. `use_gh_cli` allows the `gh auth token` lookup
 /// (explicit checks); the passive notice after commands passes `false`.
-pub async fn resolve_latest_version(repo: &str, use_gh_cli: bool) -> Result<String, String> {
-    let client = http_client()?;
+pub async fn resolve_latest_version(repo: &str, use_gh_cli: bool) -> Result<String, ResolveError> {
+    let client = http_client().map_err(ResolveError::Failed)?;
     let token = github_token_async(use_gh_cli).await;
-    collect_latest_candidates(&client, repo, token.as_deref(), None)
-        .await
-        .into_iter()
-        .next()
-        .ok_or_else(|| {
-            "could not resolve latest release (no GitHub releases or CDN latest.txt)".to_string()
+    resolve_latest_at(&client, &Endpoints::public(), repo, token.as_deref()).await
+}
+
+/// The newest candidate; when there is none, the GitHub API's own error
+/// (so a private repository is reported as such).
+async fn resolve_latest_at(
+    client: &reqwest::Client,
+    ep: &Endpoints,
+    repo: &str,
+    token: Option<&str>,
+) -> Result<String, ResolveError> {
+    let (candidates, api_error) = collect_latest_candidates(client, ep, repo, token, None).await;
+    candidates.into_iter().next().ok_or_else(|| {
+        api_error.unwrap_or_else(|| {
+            ResolveError::Failed(
+                "could not resolve latest release (no GitHub releases or CDN latest.txt)"
+                    .to_string(),
+            )
         })
+    })
 }
 
 /// Highest semver release tag that has a downloadable bundle for this platform (matches install.ps1).
@@ -413,8 +488,9 @@ pub async fn resolve_latest_installable_version(
     let token = github_token_async(true).await;
     let token_ref = token.as_deref();
     let asset_name = format!("ax-{bundle}.{ext}");
+    let ep = Endpoints::public();
 
-    let releases = fetch_releases_with_assets(&client, repo, token_ref).await;
+    let releases = fetch_releases_with_assets(&client, &ep, repo, token_ref).await;
     if let Ok(list) = &releases {
         if let Some(tag) = newest_release_with_asset(list, &asset_name) {
             return Ok(tag);
@@ -423,7 +499,8 @@ pub async fn resolve_latest_installable_version(
 
     // The release list was already fetched (or failed): do not request it again.
     let listed = releases.map(release_tags).unwrap_or_default();
-    let candidates = collect_latest_candidates(&client, repo, token_ref, Some(listed)).await;
+    let (candidates, _) =
+        collect_latest_candidates(&client, &ep, repo, token_ref, Some(listed)).await;
 
     for tag in &candidates {
         if release_asset_exists(&client, repo, tag, bundle, ext, token_ref).await {
@@ -468,10 +545,11 @@ fn github_get(client: &reqwest::Client, url: &str, token: Option<&str>) -> reqwe
 /// The single fetch of the repository's release list (newest 30).
 async fn fetch_releases_with_assets(
     client: &reqwest::Client,
+    ep: &Endpoints,
     repo: &str,
     token: Option<&str>,
 ) -> Result<Vec<ReleaseAssets>, String> {
-    let api = format!("https://api.github.com/repos/{repo}/releases?per_page=30");
+    let api = format!("{}/repos/{repo}/releases?per_page=30", ep.api);
     let resp = github_get(client, &api, token)
         .header("Accept", "application/vnd.github+json")
         .send()
@@ -511,15 +589,18 @@ fn parse_releases(body: &[serde_json::Value]) -> Vec<ReleaseAssets> {
         .collect()
 }
 
+/// Release tags from every source, highest first, plus the error from the
+/// GitHub `releases/latest` API call when that call failed.
 async fn collect_latest_candidates(
     client: &reqwest::Client,
+    ep: &Endpoints,
     repo: &str,
     token_ref: Option<&str>,
     listed: Option<Vec<String>>,
-) -> Vec<String> {
+) -> (Vec<String>, Option<ResolveError>) {
     let mut candidates = Vec::new();
 
-    let url = format!("https://github.com/{repo}/releases/latest");
+    let url = format!("{}/{repo}/releases/latest", ep.web);
     if let Ok(resp) = client.get(&url).send().await {
         if resp.status().is_success() {
             if let Some(tag) = parse_latest_tag_from_url(resp.url().as_str()) {
@@ -528,14 +609,18 @@ async fn collect_latest_candidates(
         }
     }
 
-    if let Ok(v) = fetch_latest_via_api(client, repo, token_ref).await {
-        candidates.push(v);
-    }
+    let api_error = match fetch_latest_via_api(client, ep, repo, token_ref).await {
+        Ok(v) => {
+            candidates.push(v);
+            None
+        }
+        Err(e) => Some(e),
+    };
 
     match listed {
         Some(list) => candidates.extend(list),
         None => {
-            if let Ok(list) = fetch_releases_with_assets(client, repo, token_ref).await {
+            if let Ok(list) = fetch_releases_with_assets(client, ep, repo, token_ref).await {
                 candidates.extend(release_tags(list));
             }
         }
@@ -543,12 +628,12 @@ async fn collect_latest_candidates(
 
     // Legacy CDN pointer — only when GitHub did not return anything.
     if candidates.is_empty() {
-        if let Ok(v) = fetch_latest_from_cdn(client).await {
+        if let Ok(v) = fetch_latest_from_cdn(client, ep).await {
             candidates.push(v);
         }
     }
 
-    unique_tags_desc(candidates)
+    (unique_tags_desc(candidates), api_error)
 }
 
 /// Distinct release tags, highest version first. Tags that are not release
@@ -658,7 +743,9 @@ pub async fn maybe_notify_update_with(force_refresh: bool) {
     }
 }
 
-/// Explicit `ax upgrade --check` (always hits network unless cache is fresh and shows result).
+/// Explicit `ax upgrade --check`. With `force_refresh` the latest release is
+/// resolved over the network and the cache is refreshed; without it a fresh
+/// cache answers.
 pub async fn run_check(force_refresh: bool) -> Result<(), String> {
     let current = current_version();
     let repo = github_repo();
@@ -668,7 +755,7 @@ pub async fn run_check(force_refresh: bool) -> Result<(), String> {
                 save_cache(&latest);
                 latest
             }
-            Err(e) if e.contains("no published GitHub releases") => {
+            Err(ResolveError::NoReleases) => {
                 eprintln!(
                     "{}",
                     ok_line(format!(
@@ -678,8 +765,8 @@ pub async fn run_check(force_refresh: bool) -> Result<(), String> {
                 );
                 return Ok(());
             }
-            Err(e) if e.contains("private repo") => {
-                eprintln!("{}", warn_line(e));
+            Err(e @ ResolveError::NotVisible) => {
+                eprintln!("{}", warn_line(e.to_string()));
                 eprintln!(
                     "  Set GITHUB_TOKEN or run `gh auth login`, then retry `ax upgrade --check`."
                 );
@@ -745,11 +832,188 @@ mod tests {
         assert_eq!(sorted, vec!["v2.0.7", "v2.0.6", "v2.0.5"]);
     }
 
-    #[test]
-    fn collect_latest_candidates_prefers_github_over_stale_cdn() {
-        // When GitHub tags are present, stale CDN latest.txt must not appear alone.
-        let sorted = unique_tags_desc(vec!["v2.0.12".into(), "v2.0.5".into()]);
-        assert_eq!(sorted.first().map(String::as_str), Some("v2.0.12"));
+    /// A local stand-in for github.com, api.github.com and the CDN.
+    mod mock {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        use axum::http::StatusCode;
+        use axum::response::{IntoResponse, Redirect, Response};
+        use axum::routing::get;
+        use axum::Router;
+
+        use super::super::Endpoints;
+
+        pub const REPO: &str = "o/r";
+
+        /// What each endpoint answers: `(status, body)`; `web_tag` is the
+        /// tag `/releases/latest` redirects to (`None` answers 404).
+        #[derive(Clone)]
+        pub struct Script {
+            pub web_tag: Option<&'static str>,
+            pub api_latest: (u16, &'static str),
+            pub api_list: (u16, &'static str),
+            pub cdn: (u16, &'static str),
+        }
+
+        impl Default for Script {
+            fn default() -> Self {
+                Self {
+                    web_tag: None,
+                    api_latest: (404, "{}"),
+                    api_list: (404, "[]"),
+                    cdn: (404, ""),
+                }
+            }
+        }
+
+        pub struct Server {
+            pub ep: Endpoints,
+            pub cdn_hits: Arc<AtomicUsize>,
+        }
+
+        impl Server {
+            pub fn cdn_hits(&self) -> usize {
+                self.cdn_hits.load(Ordering::SeqCst)
+            }
+        }
+
+        fn reply((status, body): (u16, &'static str)) -> Response {
+            (StatusCode::from_u16(status).unwrap(), body).into_response()
+        }
+
+        pub async fn start(script: Script) -> Server {
+            let cdn_hits = Arc::new(AtomicUsize::new(0));
+            let hits = cdn_hits.clone();
+            let s = script.clone();
+            let router = Router::new()
+                .route(
+                    "/web/o/r/releases/latest",
+                    get(move || async move {
+                        match s.web_tag {
+                            Some(tag) => Redirect::to(&format!("/web/o/r/releases/tag/{tag}"))
+                                .into_response(),
+                            None => StatusCode::NOT_FOUND.into_response(),
+                        }
+                    }),
+                )
+                .route(
+                    "/web/o/r/releases/tag/{tag}",
+                    get(|| async { "release page" }),
+                )
+                .route(
+                    "/api/repos/o/r/releases/latest",
+                    get(move || async move { reply(script.api_latest) }),
+                )
+                .route(
+                    "/api/repos/o/r/releases",
+                    get(move || async move { reply(script.api_list) }),
+                )
+                .route(
+                    "/cdn/latest.txt",
+                    get(move || async move {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                        reply(script.cdn)
+                    }),
+                );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            tokio::spawn(async move {
+                axum::serve(listener, router).await.unwrap();
+            });
+            Server {
+                ep: Endpoints {
+                    web: format!("{base}/web"),
+                    api: format!("{base}/api"),
+                    cdn_latest: format!("{base}/cdn/latest.txt"),
+                },
+                cdn_hits,
+            }
+        }
+
+        pub fn client() -> reqwest::Client {
+            reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::limited(5))
+                .build()
+                .unwrap()
+        }
+    }
+
+    #[tokio::test]
+    async fn resolver_takes_the_highest_github_version_and_skips_the_cdn() {
+        let server = mock::start(mock::Script {
+            web_tag: Some("v2.0.5"),
+            api_latest: (200, r#"{"tag_name": "v2.1.0"}"#),
+            api_list: (
+                200,
+                r#"[{"tag_name": "v2.2.0-rc.1", "prerelease": true},
+                    {"tag_name": "nightly"},
+                    {"tag_name": "v2.0.9"}]"#,
+            ),
+            cdn: (200, "v9.9.9"),
+        })
+        .await;
+        let got = resolve_latest_at(&mock::client(), &server.ep, mock::REPO, None).await;
+        assert_eq!(got.as_deref(), Ok("v2.1.0"));
+        assert_eq!(server.cdn_hits(), 0, "the CDN is only a fallback");
+    }
+
+    #[tokio::test]
+    async fn resolver_ignores_a_non_version_api_tag() {
+        let server = mock::start(mock::Script {
+            api_latest: (200, r#"{"tag_name": "nightly"}"#),
+            api_list: (200, r#"[{"tag_name": "nightly"}, {"tag_name": "v1.4.0"}]"#),
+            ..Default::default()
+        })
+        .await;
+        let got = resolve_latest_at(&mock::client(), &server.ep, mock::REPO, None).await;
+        assert_eq!(got.as_deref(), Ok("v1.4.0"));
+    }
+
+    #[tokio::test]
+    async fn resolver_falls_back_to_the_cdn_when_github_has_nothing() {
+        let server = mock::start(mock::Script {
+            api_latest: (500, "oops"),
+            api_list: (500, "oops"),
+            cdn: (200, "2.3.4\n"),
+            ..Default::default()
+        })
+        .await;
+        let got = resolve_latest_at(&mock::client(), &server.ep, mock::REPO, None).await;
+        assert_eq!(got.as_deref(), Ok("v2.3.4"));
+        assert_eq!(server.cdn_hits(), 1);
+    }
+
+    #[tokio::test]
+    async fn resolver_rejects_an_html_cdn_body() {
+        let server = mock::start(mock::Script {
+            cdn: (200, "<!doctype html><html>Sign in</html>"),
+            api_latest: (500, "oops"),
+            ..Default::default()
+        })
+        .await;
+        let got = resolve_latest_at(&mock::client(), &server.ep, mock::REPO, None).await;
+        assert!(got.is_err(), "{got:?}");
+    }
+
+    #[tokio::test]
+    async fn resolver_reports_hidden_releases_without_a_token() {
+        let server = mock::start(mock::Script::default()).await;
+        let err = resolve_latest_at(&mock::client(), &server.ep, mock::REPO, None)
+            .await
+            .unwrap_err();
+        assert_eq!(err, ResolveError::NotVisible);
+        assert!(err.to_string().contains("private repo"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn resolver_reports_no_releases_with_a_token() {
+        let server = mock::start(mock::Script::default()).await;
+        let err = resolve_latest_at(&mock::client(), &server.ep, mock::REPO, Some("t"))
+            .await
+            .unwrap_err();
+        assert_eq!(err, ResolveError::NoReleases);
     }
 
     #[test]
@@ -882,6 +1146,42 @@ mod tests {
             None
         );
         assert_eq!(release_tags(releases), vec!["v2.8.0", "v2.8.1"]);
+    }
+
+    #[test]
+    fn cache_freshness_handles_stale_and_future_timestamps() {
+        let day = Duration::from_secs(24 * 3600);
+        let at = |checked_at| UpdateCheckCache {
+            checked_at,
+            latest: "v1.0.0".into(),
+        };
+        let now = 1_000_000;
+        assert!(cache_is_fresh_at(&at(now), now, day));
+        assert!(cache_is_fresh_at(&at(now - 3600), now, day));
+        assert!(
+            !cache_is_fresh_at(&at(now - 24 * 3600), now, day),
+            "exactly one interval old"
+        );
+        assert!(!cache_is_fresh_at(&at(now - 48 * 3600), now, day));
+        assert!(
+            !cache_is_fresh_at(&at(now + 60), now, day),
+            "future checked_at"
+        );
+        assert!(!cache_is_fresh_at(&at(i64::MIN), i64::MAX, day));
+        assert!(!cache_is_fresh_at(&at(now), now, Duration::ZERO));
+    }
+
+    #[test]
+    fn cache_round_trips_and_ignores_a_corrupt_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("update-check.json");
+        assert!(load_cache_from(&path).is_none());
+        save_cache_to(&path, "2.4.0");
+        let cache = load_cache_from(&path).expect("saved cache");
+        assert_eq!(cache.latest, "v2.4.0");
+        assert!((now_secs() - cache.checked_at).abs() < 60);
+        std::fs::write(&path, "{not json").unwrap();
+        assert!(load_cache_from(&path).is_none());
     }
 
     #[test]
