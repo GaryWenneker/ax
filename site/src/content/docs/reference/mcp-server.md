@@ -64,7 +64,7 @@ Opt-in per the section above (e.g. `AX_MCP_TOOLS=all` or `lsp,ship`). Mirror hig
 
 | Tool | Purpose |
 |---|---|
-| `ax_index` | Re-index; optional `force: true` clears and full-indexes (default behaves like `ax_sync`) |
+| `ax_index` | Re-index; optional `force: true` re-extracts every file and then drops files that are gone, without emptying the graph first, so a failed run keeps the previous graph (default behaves like `ax_sync`) |
 | `ax_lsp` | `action: "status"` lists language servers; `action: "enrich"` resolves Exact edges (`limit` optional) — same as `ax lsp status\|enrich` |
 | `ax_ship` | Quality-gate pipeline: `mode: "evaluate"` (default) or `"ci"`. Returns the ship report JSON. For `ci`, MCP `isError` is set when the gate fails — **never** exits the MCP process |
 | `ax_policy_index` | Re-index / import rules and skills from `.agents/` (`force` optional) |

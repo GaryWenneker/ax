@@ -549,10 +549,8 @@ async fn index_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
         return sync_tool(ax).await;
     }
     ax_usage::log_workspace(Some(&root), "index start force=1 via=mcp");
-    if let Err(e) = ax.clear().await {
-        ax_usage::log_workspace(Some(&root), "index fail stage=clear via=mcp");
-        return Err(e.to_string());
-    }
+    // No clear first: index_all replaces each file's rows and then drops files
+    // that are gone, so a failed run leaves the previous graph usable.
     let opts = IndexOptions {
         force: true,
         quiet: true,

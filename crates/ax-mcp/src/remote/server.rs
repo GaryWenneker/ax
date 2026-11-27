@@ -888,8 +888,8 @@ async fn post(
     let params = request.params.take().unwrap_or(Value::Null);
     let outcome = if let Some((lock, slot)) = mutation {
         // An index run must finish even when this request times out or the
-        // client goes away: a run dropped halfway leaves the index cleared and
-        // its file lock held. The task keeps the session and its request slot
+        // client goes away: a run dropped halfway leaves a mix of old and new
+        // rows and its file lock held. The task keeps the session and its request slot
         // until it is done.
         let running = state.admin_running.clone().read_owned().await;
         let mut task = tokio::spawn(async move {
