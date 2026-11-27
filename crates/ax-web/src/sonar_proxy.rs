@@ -387,6 +387,9 @@ pub async fn handle_sonar_ui_proxy(
     State(hub): State<WebHub>,
     req: Request<Body>,
 ) -> impl IntoResponse {
+    if let Err(reason) = proxy_write_allowed(req.method(), req.headers(), hub.readonly) {
+        return (StatusCode::FORBIDDEN, reason).into_response();
+    }
     let (mut sonar_host, auth_header) = proxy_credentials(&hub).await;
 
     let method = req.method().clone();
@@ -567,6 +570,49 @@ async fn proxy_credentials(hub: &WebHub) -> (String, String) {
     let mut cache = hub.sonar_proxy.lock().await;
     cache.ensure(&config);
     (cache.host.clone(), cache.auth_header.clone())
+}
+
+/// The proxy sends every request with the configured SonarQube admin
+/// credentials, so a request that can change SonarQube must come from a page
+/// this Command Center served: never in read-only mode, never cross-site, and
+/// with an `Origin` that names the same host as the request. Reads pass.
+fn proxy_write_allowed(
+    method: &Method,
+    headers: &HeaderMap,
+    readonly: bool,
+) -> Result<(), &'static str> {
+    if method == Method::GET || method == Method::HEAD {
+        return Ok(());
+    }
+    if readonly {
+        return Err("read-only mode (AX_WEB_READONLY=1)");
+    }
+    if headers
+        .get("sec-fetch-site")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|site| site != "same-origin")
+    {
+        return Err("Cross-site SonarQube changes are refused");
+    }
+    let origin = headers
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<axum::http::Uri>().ok());
+    let host = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let same = origin.as_ref().is_some_and(|uri| {
+        uri.scheme().is_some()
+            && uri
+                .authority()
+                .is_some_and(|a| !host.is_empty() && a.as_str().eq_ignore_ascii_case(host))
+    });
+    if same {
+        Ok(())
+    } else {
+        Err("SonarQube changes must come from the Command Center page")
+    }
 }
 
 async fn send_upstream(

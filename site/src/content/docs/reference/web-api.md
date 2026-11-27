@@ -292,6 +292,8 @@ These are host operations, not passive documentation examples. Streaming variant
 | GET | `/api/ship/sonar/ui/info` | Proxy connection information |
 | ANY | `/api/ship/sonar/ui/{*path}` | Proxy a SonarQube UI subpath |
 
+The UI proxy sends each request with the configured SonarQube admin login. Only `GET` and `HEAD` pass in every case. Any other method returns 403 in read-only mode, on a cross-site request (`Sec-Fetch-Site` other than `same-origin`), and when the `Origin` header is missing or names a different host than the request. The SonarQube page opened in the Command Center meets these rules on its own.
+
 ## Live data refresh
 
 | Method | Path | Purpose |
