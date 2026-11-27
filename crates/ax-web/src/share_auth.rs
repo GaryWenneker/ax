@@ -2,8 +2,8 @@
 //!
 //! Tokens are compared in constant time. A socket peer that presents wrong
 //! credentials [`MAX_FAILURES`] times within [`FAILURE_WINDOW`] gets 429 for
-//! every further wrong credential until the window ends; a correct one is
-//! still let through. A reverse proxy or tunnel on this computer is not
+//! every credential it presents until the window ends, the correct one
+//! included, and none of them is checked. A reverse proxy or tunnel on this computer is not
 //! limited this way, because all its clients share its address. Failed client
 //! and node credentials are written to the security audit log.
 
@@ -133,6 +133,11 @@ pub(crate) async fn enforce_share_token(
     if let Some(token) =
         client_token.filter(|token| token.starts_with("axc_") || token.starts_with("axn_"))
     {
+        // A locked peer gets 429 before its credential is checked, so the
+        // answer never tells a guesser whether this guess was right.
+        if peer_locked(peer) {
+            return too_many_failures();
+        }
         let db = match crate::global_pool::global_pool().await {
             Ok(db) => db,
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -140,9 +145,6 @@ pub(crate) async fn enforce_share_token(
         if token.starts_with("axn_") {
             // Node credentials authenticate replication traffic only; the
             // Command Center HTTP API has no node scopes.
-            if peer_locked(peer) {
-                return too_many_failures();
-            }
             record_failure(peer);
             audit_failed_credential(&db, "node", req.uri().path(), peer).await;
             return (
@@ -156,9 +158,6 @@ pub(crate) async fn enforce_share_token(
         let principal = match ax_global_db::access::authenticate_client_token(&db, token).await {
             Ok(Some(p)) => p,
             _ => {
-                if peer_locked(peer) {
-                    return too_many_failures();
-                }
                 record_failure(peer);
                 audit_failed_credential(&db, "client", req.uri().path(), peer).await;
                 return (
@@ -226,6 +225,9 @@ pub(crate) async fn enforce_share_token(
     let provided = header_token.or(cookie_token);
     let presented = provided.is_some() || share_query_token(req.uri().query()).is_some();
     let secure = share_secure(req.headers());
+    if presented && peer_locked(peer) {
+        return too_many_failures();
+    }
     if let Some(location) = share_redirect_location(path, req.uri().query(), &expected) {
         return share_cookie_redirect(&location, &expected, secure);
     }
@@ -241,9 +243,6 @@ pub(crate) async fn enforce_share_token(
     }
 
     if presented {
-        if peer_locked(peer) {
-            return too_many_failures();
-        }
         record_failure(peer);
     }
     ax_usage::log_share(None, "auth fail");
@@ -554,16 +553,17 @@ mod tests {
         app.clone().oneshot(req).await.unwrap().status()
     }
 
-    /// A stale cookie fails on every call; the correct token must still work
-    /// after the peer has used up its failures.
+    /// Once a peer has used up its failures, every credential it presents
+    /// gets 429 without being checked, the correct one included, so the
+    /// answer no longer tells a guesser which guess was right.
     #[tokio::test]
-    async fn a_correct_token_passes_after_the_peer_is_locked() {
+    async fn a_locked_peer_cannot_tell_a_right_guess_from_a_wrong_one() {
         let app = share_app();
         let peer = "198.51.100.21:40000";
         for _ in 0..MAX_FAILURES {
             let status =
                 share_status(&app, share_request("/notes", peer, Some("stale"), false)).await;
-            assert_ne!(status, StatusCode::OK);
+            assert_eq!(status, StatusCode::UNAUTHORIZED);
         }
         assert_eq!(
             share_status(&app, share_request("/notes", peer, Some("stale"), false)).await,
@@ -571,15 +571,28 @@ mod tests {
         );
         assert_eq!(
             share_status(&app, share_request("/notes", peer, Some("sekret"), false)).await,
-            StatusCode::OK
+            StatusCode::TOO_MANY_REQUESTS
         );
         assert_eq!(
-            share_status(
-                &app,
-                share_request("/notes?token=sekret", peer, Some("stale"), false)
-            )
-            .await,
-            StatusCode::SEE_OTHER
+            share_status(&app, share_request("/notes?token=sekret", peer, None, false)).await,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        let mut bearer = share_request("/notes", peer, None, false);
+        bearer
+            .headers_mut()
+            .insert(header::AUTHORIZATION, "Bearer sekret".parse().unwrap());
+        assert_eq!(share_status(&app, bearer).await, StatusCode::TOO_MANY_REQUESTS);
+        let mut client = share_request("/notes", peer, None, false);
+        client
+            .headers_mut()
+            .insert(header::AUTHORIZATION, "Bearer axc_guess".parse().unwrap());
+        assert_eq!(share_status(&app, client).await, StatusCode::TOO_MANY_REQUESTS);
+
+        // Another peer is not affected.
+        let other = "198.51.100.22:40000";
+        assert_eq!(
+            share_status(&app, share_request("/notes", other, Some("sekret"), false)).await,
+            StatusCode::OK
         );
     }
 
