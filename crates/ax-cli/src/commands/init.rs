@@ -338,7 +338,7 @@ async fn run_inner(
                 let key_env = s.key_env.as_deref().unwrap_or("");
                 println!(
                     "  {}",
-                    dim(&format!(
+                    dim(format!(
                         "Found {key_env}. Offload stays off; to send explore context to {} run: ax offload set-endpoint {} --key-env {key_env}",
                         s.name, s.url
                     ))
