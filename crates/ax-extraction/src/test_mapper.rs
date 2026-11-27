@@ -243,7 +243,11 @@ mod tests {
             src.push('\n');
         }
         src.push_str("fn helper() {}\n");
-        let line = src.lines().position(|l| l.starts_with("fn helper")).unwrap() as i32 + 1;
+        let line = src
+            .lines()
+            .position(|l| l.starts_with("fn helper"))
+            .unwrap() as i32
+            + 1;
         assert!(!check(&src, "helper", line));
     }
 
@@ -261,7 +265,11 @@ mod tests {
         }
         src.push('\n');
         src.push_str("#[test]\n#[ignore]\nfn checks_login() {}\n");
-        let line = src.lines().position(|l| l.starts_with("fn checks_login")).unwrap() as i32 + 1;
+        let line = src
+            .lines()
+            .position(|l| l.starts_with("fn checks_login"))
+            .unwrap() as i32
+            + 1;
         assert!(check(&src, "checks_login", line));
     }
 
