@@ -133,6 +133,43 @@ test.describe('Policy values that contain a comma', () => {
     expect(fm.tags).toEqual(['misc', 'a,b', 'react', 'frontend']);
   });
 
+  test('a pasted list replaces the selected draft and goes in at the caret', async ({ page }) => {
+    const saved: Array<Record<string, unknown>> = [];
+    await serve(page, saved);
+    await page.goto('/policy/rules?id=alpha');
+    const blade = page.getByRole('complementary', { name: 'alpha' });
+    await blade.getByRole('button', { name: 'Properties' }).click();
+    const dialog = page.getByRole('dialog', { name: /Properties/ });
+    const paste = (input: HTMLInputElement, text: string) => {
+      const data = new DataTransfer();
+      data.setData('text/plain', text);
+      input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    };
+    // The whole draft is selected, so the paste replaces it.
+    const tags = dialog.getByRole('textbox', { name: 'Tags' });
+    await tags.click();
+    await page.keyboard.type('foo');
+    await tags.evaluate((input: HTMLInputElement) => input.setSelectionRange(0, input.value.length));
+    await tags.evaluate(paste, 'one, two');
+    await expect(dialog.getByRole('button', { name: 'Remove one', exact: true })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Remove two', exact: true })).toBeVisible();
+    await expect(tags).toHaveValue('');
+    // The caret sits inside the draft, so the paste goes in there.
+    const triggers = dialog.getByRole('textbox', { name: 'Triggers' });
+    await triggers.click();
+    await page.keyboard.type('preend');
+    await triggers.evaluate((input: HTMLInputElement) => input.setSelectionRange(3, 3));
+    await triggers.evaluate(paste, 'X, Y');
+    await expect(dialog.getByRole('button', { name: 'Remove preX', exact: true })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Remove Yend', exact: true })).toBeVisible();
+    await dialog.getByRole('button', { name: 'Done' }).click();
+    await blade.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect.poll(() => saved.length).toBe(1);
+    const fm = saved[0].frontmatter as Record<string, unknown>;
+    expect(fm.tags).toEqual(['misc', 'a,b', 'one', 'two']);
+    expect(fm.triggers).toEqual(['review', 'preX', 'Yend']);
+  });
+
   test('a skill saved without touching its triggers and tags keeps them whole', async ({ page }) => {
     const saved: Array<Record<string, unknown>> = [];
     await serve(page, saved);

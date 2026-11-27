@@ -52,3 +52,21 @@ export function addPolicyEntries(values: readonly string[], text: string): strin
   }
   return next;
 }
+
+/**
+ * The draft after pasting `text` over the selection `start..end`, as the browser would put it.
+ * A missing caret means the end of the draft; a missing `end` means no selection. Positions
+ * are clamped to the draft and a reversed range is put in order.
+ */
+export function pasteIntoDraft(
+  draft: string,
+  text: string,
+  start: number | null,
+  end: number | null,
+): string {
+  const clamp = (n: number) => Math.min(Math.max(n, 0), draft.length);
+  const a = clamp(start ?? draft.length);
+  const b = clamp(end ?? a);
+  const [from, to] = a <= b ? [a, b] : [b, a];
+  return draft.slice(0, from) + text + draft.slice(to);
+}

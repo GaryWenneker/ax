@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { addPolicyEntries, insideBraces, splitPolicyList } from '../lib/policyList';
+import { addPolicyEntries, insideBraces, pasteIntoDraft, splitPolicyList } from '../lib/policyList';
 
 /**
  * Small removable tokens with prefix suggestions. Enter adds the typed value; a comma adds it
@@ -70,7 +70,9 @@ export default function PolicyChipField({
           const text = e.clipboardData.getData('text');
           if (splitPolicyList(text).length < 2) return;
           e.preventDefault();
-          addDraft(`${draft}${text}`);
+          // Put the paste where the browser would: at the caret, over any selection.
+          const el = e.currentTarget;
+          addDraft(pasteIntoDraft(draft, text, el.selectionStart, el.selectionEnd));
         }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || (e.key === ',' && !insideBraces(draft))) {
