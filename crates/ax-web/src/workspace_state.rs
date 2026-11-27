@@ -60,11 +60,25 @@ impl WebHub {
         self.inner.read().await
     }
 
+    /// Switches the served project. The switch runs in its own task, so a
+    /// caller that goes away (a browser that disconnects) cannot stop it
+    /// half-way, and the in-progress flag is cleared however the task ends.
     pub async fn switch(&self, new_root: PathBuf) -> Result<SwitchInfo, String> {
         if self.switching.swap(true, Ordering::SeqCst) {
             return Err("Workspace switch already in progress".into());
         }
-        let result = async {
+        let flag = SwitchFlag(self.switching.clone());
+        let hub = self.clone();
+        tokio::spawn(async move {
+            let _flag = flag;
+            hub.switch_now(new_root).await
+        })
+        .await
+        .unwrap_or_else(|_| Err("Workspace switch failed".into()))
+    }
+
+    async fn switch_now(&self, new_root: PathBuf) -> Result<SwitchInfo, String> {
+        async {
             if self.readonly {
                 return Err("Read-only mode".into());
             }
@@ -104,9 +118,7 @@ impl WebHub {
             ax_usage::log_workspace(Some(&new_root), format!("switch path={}", info.path));
             Ok(info)
         }
-        .await;
-        self.switching.store(false, Ordering::SeqCst);
-        result
+        .await
     }
 
     /// Close the open graph database when `root` is the project currently served.
@@ -207,6 +219,15 @@ impl WebHub {
                 crate::request_guard::AllowedHosts::from_environment(hub.local_only),
                 crate::request_guard::guard,
             ))
+    }
+}
+
+/// Clears [`WebHub`]'s switch-in-progress flag when dropped.
+struct SwitchFlag(Arc<AtomicBool>);
+
+impl Drop for SwitchFlag {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
     }
 }
 
