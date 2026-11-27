@@ -305,8 +305,59 @@ fn schema_fingerprint() -> i32 {
     ((hash & 0x7fff_ffff) | 1) as i32
 }
 
+/// Identity of the database file a cached pool was opened on, so a file that
+/// was deleted or replaced at the same path gets a new pool.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FileId {
+    #[cfg(unix)]
+    dev: u64,
+    #[cfg(unix)]
+    ino: u64,
+}
+
+fn file_id(path: &std::path::Path) -> Option<FileId> {
+    let meta = std::fs::metadata(path).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some(FileId {
+            dev: meta.dev(),
+            ino: meta.ino(),
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        Some(FileId {})
+    }
+}
+
+type PoolCache = std::collections::HashMap<PathBuf, (SqlitePool, FileId)>;
+
+fn pool_cache() -> &'static tokio::sync::Mutex<PoolCache> {
+    static CACHE: std::sync::OnceLock<tokio::sync::Mutex<PoolCache>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+/// The shared pool for the usage database at [`usage_db_path`]. One pool is
+/// kept per path for the life of the process, so callers get a clone instead of
+/// opening new connections each time. A closed pool, or a file that was removed
+/// or replaced, is opened again.
 pub async fn open_pool() -> Result<SqlitePool, AxError> {
-    open_pool_at(&usage_db_path()).await
+    let path = usage_db_path();
+    let mut cache = pool_cache().lock().await;
+    if let Some((pool, id)) = cache.get(&path) {
+        if !pool.is_closed() && file_id(&path) == Some(*id) {
+            return Ok(pool.clone());
+        }
+        let (stale, _) = cache.remove(&path).expect("cached pool");
+        stale.close().await;
+    }
+    let pool = open_pool_at(&path).await?;
+    if let Some(id) = file_id(&path) {
+        cache.insert(path, (pool.clone(), id));
+    }
+    Ok(pool)
 }
 
 pub(crate) async fn open_pool_at(path: &std::path::Path) -> Result<SqlitePool, AxError> {
@@ -420,6 +471,79 @@ mod tests {
         let pool = open_pool_at(&path).await.unwrap();
         assert!(!index_exists(&pool, "idx_mcp_call_log_tool").await);
         pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn open_pool_hands_out_one_shared_pool_per_path() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("usage.db");
+        std::env::set_var("AX_USAGE_DB", &path);
+        let first = open_pool().await.unwrap();
+        let second = open_pool().await.unwrap();
+        // Closing one handle closes the other only when they are the same pool.
+        first.close().await;
+        let shared = second.is_closed();
+        // A closed pool is replaced by a working one.
+        let third = open_pool().await.unwrap();
+        let works = sqlx::query("SELECT 1").execute(&third).await.is_ok();
+        std::env::remove_var("AX_USAGE_DB");
+        assert!(shared, "each open_pool call built its own pool");
+        assert!(works);
+    }
+
+    #[tokio::test]
+    async fn open_pool_reopens_a_removed_database_file() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("usage.db");
+        std::env::set_var("AX_USAGE_DB", &path);
+        let first = open_pool().await.unwrap();
+        sqlx::query("INSERT INTO mcp_call_log(tool,response_chars,response_tokens_est,ok,created_at) VALUES ('old',1,1,1,1)")
+            .execute(&first)
+            .await
+            .unwrap();
+        drop(first);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        let second = open_pool().await.unwrap();
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mcp_call_log")
+            .fetch_one(&second)
+            .await
+            .unwrap();
+        std::env::remove_var("AX_USAGE_DB");
+        assert_eq!(rows, 0);
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn a_shared_pool_keeps_working_in_a_later_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("usage.db");
+        let run = |path: PathBuf| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async move {
+                    let _guard = USAGE_ENV_LOCK.lock().await;
+                    std::env::set_var("AX_USAGE_DB", &path);
+                    let pool = open_pool().await.unwrap();
+                    sqlx::query("INSERT INTO mcp_call_log(tool,response_chars,response_tokens_est,ok,created_at) VALUES ('t',1,1,1,1)")
+                        .execute(&pool)
+                        .await
+                        .unwrap();
+                    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mcp_call_log")
+                        .fetch_one(&pool)
+                        .await
+                        .unwrap();
+                    std::env::remove_var("AX_USAGE_DB");
+                    n
+                })
+        };
+        assert_eq!(run(path.clone()), 1);
+        assert_eq!(run(path), 2);
     }
 
     #[tokio::test]
