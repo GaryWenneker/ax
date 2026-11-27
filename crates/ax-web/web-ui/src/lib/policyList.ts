@@ -35,3 +35,20 @@ export function splitPolicyList(text: string): string[] {
 export function cleanPolicyList(values: readonly string[]): string[] {
   return values.map((x) => x.trim()).filter(Boolean);
 }
+
+/**
+ * Add the entries of `text` (split like `splitPolicyList`, so a pasted `react, frontend`
+ * gives two entries and a brace glob stays whole) to `values`, skipping any entry that is
+ * already there, compared without regard to case.
+ */
+export function addPolicyEntries(values: readonly string[], text: string): string[] {
+  const next = [...values];
+  const seen = new Set(values.map((item) => item.toLowerCase()));
+  for (const entry of splitPolicyList(text)) {
+    const key = entry.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    next.push(entry);
+  }
+  return next;
+}

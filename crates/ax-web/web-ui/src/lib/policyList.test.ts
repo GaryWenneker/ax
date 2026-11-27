@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { cleanPolicyList, insideBraces, splitPolicyList } from './policyList.ts';
+import { addPolicyEntries, cleanPolicyList, insideBraces, splitPolicyList } from './policyList.ts';
 
 test('a brace glob stays one entry', () => {
   assert.deepEqual(splitPolicyList('src/**/*.{ts,tsx}, **/*.rs'), ['src/**/*.{ts,tsx}', '**/*.rs']);
@@ -32,4 +32,16 @@ test('insideBraces is true only while a brace is open', () => {
 
 test('cleanPolicyList keeps commas inside entries', () => {
   assert.deepEqual(cleanPolicyList([' a,b ', '', 'c']), ['a,b', 'c']);
+});
+
+test('pasted comma-separated text adds one chip per entry', () => {
+  assert.deepEqual(addPolicyEntries(['deploy'], 'react, frontend'), ['deploy', 'react', 'frontend']);
+});
+
+test('pasted brace globs stay whole and duplicates are skipped without regard to case', () => {
+  assert.deepEqual(
+    addPolicyEntries(['**/*.rs'], 'src/**/*.{ts,tsx}, **/*.RS, src/**/*.{ts,tsx}'),
+    ['**/*.rs', 'src/**/*.{ts,tsx}'],
+  );
+  assert.deepEqual(addPolicyEntries(['a'], ' , '), ['a']);
 });

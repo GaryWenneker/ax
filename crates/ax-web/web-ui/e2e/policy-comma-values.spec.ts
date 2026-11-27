@@ -101,6 +101,38 @@ test.describe('Policy values that contain a comma', () => {
     expect(fm.globs).toEqual(['src/**/*.{ts,tsx}', '**/*.rs', 'lib/*.{js,mjs}']);
   });
 
+  test('a pasted comma-separated list becomes one chip per entry', async ({ page }) => {
+    const saved: Array<Record<string, unknown>> = [];
+    await serve(page, saved);
+    await page.goto('/policy/rules?id=alpha');
+    const blade = page.getByRole('complementary', { name: 'alpha' });
+    await blade.getByRole('button', { name: 'Properties' }).click();
+    const dialog = page.getByRole('dialog', { name: /Properties/ });
+    // A paste adds its entries at once; a brace glob in it stays whole.
+    const globs = dialog.getByRole('textbox', { name: 'Globs' });
+    await globs.focus();
+    await globs.evaluate((input) => {
+      const data = new DataTransfer();
+      data.setData('text/plain', 'lib/*.{js,mjs}, docs/**');
+      input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    });
+    await expect(dialog.getByRole('button', { name: 'Remove lib/*.{js,mjs}' })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Remove docs/**' })).toBeVisible();
+    await expect(globs).toHaveValue('');
+    // Text that reached the field without a typed comma is split when Enter adds it.
+    const tags = dialog.getByRole('textbox', { name: 'Tags' });
+    await tags.fill('react, frontend, MISC');
+    await tags.press('Enter');
+    await expect(dialog.getByRole('button', { name: 'Remove react' })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Remove frontend' })).toBeVisible();
+    await dialog.getByRole('button', { name: 'Done' }).click();
+    await blade.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect.poll(() => saved.length).toBe(1);
+    const fm = saved[0].frontmatter as Record<string, unknown>;
+    expect(fm.globs).toEqual(['src/**/*.{ts,tsx}', '**/*.rs', 'lib/*.{js,mjs}', 'docs/**']);
+    expect(fm.tags).toEqual(['misc', 'a,b', 'react', 'frontend']);
+  });
+
   test('a skill saved without touching its triggers and tags keeps them whole', async ({ page }) => {
     const saved: Array<Record<string, unknown>> = [];
     await serve(page, saved);
