@@ -891,18 +891,33 @@ impl QueryBuilder {
             })
             .collect();
 
-        results.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // One predicate for every row, so the exact-name supplement below
+        // honours the same kind, language and path filters as FTS/LIKE.
+        let passes_filters = |node: &Node| -> bool {
+            if let Some(kinds) = &opts.kinds {
+                if !kinds.contains(&node.kind) {
+                    return false;
+                }
+            }
+            if let Some(langs) = &opts.languages {
+                if !langs.contains(&node.language) {
+                    return false;
+                }
+            }
+            if let Some(patterns) = &opts.include_patterns {
+                if !patterns.iter().any(|p| node.file_path.contains(p)) {
+                    return false;
+                }
+            }
+            if let Some(patterns) = &opts.exclude_patterns {
+                if patterns.iter().any(|p| node.file_path.contains(p)) {
+                    return false;
+                }
+            }
+            true
+        };
 
-        if let Some(patterns) = &opts.include_patterns {
-            results.retain(|r| patterns.iter().any(|p| r.node.file_path.contains(p)));
-        }
-        if let Some(patterns) = &opts.exclude_patterns {
-            results.retain(|r| !patterns.iter().any(|p| r.node.file_path.contains(p)));
-        }
+        results.retain(|r| passes_filters(&r.node));
 
         // CG: exact name supplement when FTS/LIKE returned candidates.
         if !query.trim().is_empty() && !results.is_empty() {
@@ -911,7 +926,7 @@ impl QueryBuilder {
             for term in query.split_whitespace().filter(|t| t.len() >= 2) {
                 let exact = self.get_nodes_by_lower_name(term).await?;
                 for node in exact {
-                    if existing.insert(node.id.clone()) {
+                    if passes_filters(&node) && existing.insert(node.id.clone()) {
                         results.push(SearchResult {
                             node,
                             score: 1.0,
@@ -921,6 +936,13 @@ impl QueryBuilder {
                 }
             }
         }
+
+        // Stable sort: supplement rows keep their place among equal scores.
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         if results.len() > limit as usize {
             results.truncate(limit as usize);
