@@ -836,21 +836,38 @@ const VERSION_TIMEOUT: Duration = Duration::from_secs(60);
 const MIN_SCANNER_MAJOR: u32 = 5;
 
 /// Major version from a `sonar-scanner --version` banner such as
-/// `INFO: SonarScanner 4.8.0.2856` or `SonarScanner CLI 6.2.1.4610`.
+/// `INFO: SonarScanner 4.8.0.2856` or `SonarScanner CLI 6.2.1.4610`. The
+/// older banners `SonarQube Scanner 3.3.0.1492` and `SonarQube Runner 2.4`
+/// are read too; a `SonarQube Runner` banner without a number counts as 2.
 fn scanner_major_version(output: &str) -> Option<u32> {
-    let rest = &output[output.find("SonarScanner")? + "SonarScanner".len()..];
-    let rest = rest.trim_start();
-    let rest = rest.strip_prefix("CLI").unwrap_or(rest).trim_start();
-    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-    digits.parse().ok()
+    fn leading_number(rest: &str) -> Option<u32> {
+        let digits: String = rest
+            .trim_start()
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        digits.parse().ok()
+    }
+    if let Some(at) = output.find("SonarScanner") {
+        let rest = output[at + "SonarScanner".len()..].trim_start();
+        return leading_number(rest.strip_prefix("CLI").unwrap_or(rest));
+    }
+    if let Some(at) = output.find("SonarQube Scanner") {
+        return leading_number(&output[at + "SonarQube Scanner".len()..]);
+    }
+    if let Some(at) = output.find("SonarQube Runner") {
+        return Some(leading_number(&output[at + "SonarQube Runner".len()..]).unwrap_or(2));
+    }
+    None
 }
 
-/// Refuses a scanner older than 5.0, which ignores `SONAR_TOKEN`. A banner
-/// without a version is not refused.
+/// Refuses a scanner older than 5.0 (including the older SonarQube Scanner
+/// and SonarQube Runner), which ignores `SONAR_TOKEN`. A banner without a
+/// version is not refused.
 fn check_scanner_supports_env_token(version_output: &str) -> Result<(), String> {
     match scanner_major_version(version_output) {
         Some(major) if major < MIN_SCANNER_MAJOR => Err(format!(
-            "SonarScanner CLI {major}.x does not read the SONAR_TOKEN environment variable; \
+            "sonar-scanner {major}.x does not read the SONAR_TOKEN environment variable; \
              install SonarScanner CLI {MIN_SCANNER_MAJOR}.0 or newer, or remove it from PATH so ax uses the container scanner"
         )),
         _ => Ok(()),
@@ -1652,6 +1669,10 @@ mod tests {
             ("INFO: SonarScanner 5.0.1.3006\n", Some(5)),
             ("17:02:11.120 INFO  SonarScanner CLI 6.2.1.4610\n", Some(6)),
             ("SonarScanner CLI 7.0.2.4839", Some(7)),
+            ("INFO: SonarQube Scanner 3.3.0.1492\nINFO: Java 1.8", Some(3)),
+            ("INFO: SonarQube Scanner 2.8", Some(2)),
+            ("INFO: SonarQube Runner 2.4", Some(2)),
+            ("SonarQube Runner", Some(2)),
             ("no banner here", None),
         ] {
             assert_eq!(scanner_major_version(out), major, "{out}");
@@ -1661,6 +1682,15 @@ mod tests {
                 .unwrap_err()
                 .contains("5.0")
         );
+        for old in [
+            "INFO: SonarQube Scanner 3.3.0.1492",
+            "INFO: SonarQube Runner 2.4",
+        ] {
+            assert!(
+                check_scanner_supports_env_token(old).is_err(),
+                "{old} must be refused"
+            );
+        }
         assert!(check_scanner_supports_env_token("INFO: SonarScanner 5.0.1.3006").is_ok());
         // An unknown banner is not refused.
         assert!(check_scanner_supports_env_token("something else").is_ok());
