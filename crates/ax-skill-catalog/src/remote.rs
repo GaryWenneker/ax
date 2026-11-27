@@ -1,5 +1,5 @@
 use crate::source::{GitHost, SkillSource};
-use std::net::ToSocketAddrs;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -223,29 +223,87 @@ pub fn http_text(url: &str) -> Result<String, String> {
     String::from_utf8(http_bytes(url)?).map_err(|e| e.to_string())
 }
 
-pub fn http_bytes(url: &str) -> Result<Vec<u8>, String> {
-    let target = vetted_download(url)?;
-    let client = reqwest::blocking::Client::builder()
-        .redirect(reqwest::redirect::Policy::custom(
-            |attempt| match vetted_download(attempt.url().as_str()) {
-                Ok(_) => attempt.follow(),
-                Err(error) => attempt.error(std::io::Error::other(error)),
-            },
-        ))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let response = client.get(target).send().map_err(|e| e.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!("GET {url} returned {}", response.status()));
-    }
-    let bytes = response.bytes().map_err(|e| e.to_string())?;
-    if bytes.len() > 25 * 1024 * 1024 {
-        return Err("download is larger than 25 MiB".into());
-    }
-    Ok(bytes.to_vec())
+/// Largest body a skill download may have.
+const DOWNLOAD_MAX_BYTES: u64 = 25 * 1024 * 1024;
+/// Redirects followed per download; each hop is vetted again.
+const MAX_REDIRECTS: usize = 5;
+/// Deadline for one HTTP request, from connect to the last body byte.
+const HTTP_TIMEOUT: Duration = Duration::from_secs(120);
+
+type Resolve<'a> = &'a dyn Fn(&str, u16) -> Result<Vec<SocketAddr>, String>;
+type Blocked<'a> = &'a dyn Fn(IpAddr) -> bool;
+
+/// A URL that passed the address checks, with the addresses the connection
+/// must use when the host is a name.
+struct Vetted {
+    url: reqwest::Url,
+    pin: Option<(String, Vec<SocketAddr>)>,
 }
 
+fn system_resolve(host: &str, port: u16) -> Result<Vec<SocketAddr>, String> {
+    (host, port)
+        .to_socket_addrs()
+        .map(Iterator::collect)
+        .map_err(|e| format!("could not resolve {host}: {e}"))
+}
+
+pub fn http_bytes(url: &str) -> Result<Vec<u8>, String> {
+    fetch_vetted(url, &system_resolve, &private_ip)
+}
+
+/// GET `url`, refusing private targets. The host is resolved once, the
+/// addresses are checked, and the connection is pinned to exactly those
+/// addresses, so a second DNS answer cannot point it somewhere else.
+/// Redirects are followed by hand so every hop goes through the same check.
+fn fetch_vetted(url: &str, resolve: Resolve, blocked: Blocked) -> Result<Vec<u8>, String> {
+    let mut current = url.to_string();
+    for _ in 0..=MAX_REDIRECTS {
+        let vetted = vet(&current, resolve, blocked)?;
+        let mut builder = reqwest::blocking::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(HTTP_TIMEOUT);
+        if let Some((host, addrs)) = &vetted.pin {
+            builder = builder.resolve_to_addrs(host, addrs);
+        }
+        let client = builder.build().map_err(|e| e.to_string())?;
+        let response = client
+            .get(vetted.url.clone())
+            .send()
+            .map_err(|e| e.to_string())?;
+        if response.status().is_redirection() {
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(|| format!("GET {current} redirected without a location"))?;
+            current = vetted
+                .url
+                .join(location)
+                .map_err(|e| format!("GET {current} redirected to a bad url: {e}"))?
+                .to_string();
+            continue;
+        }
+        if !response.status().is_success() {
+            return Err(format!("GET {current} returned {}", response.status()));
+        }
+        let bytes = response.bytes().map_err(|e| e.to_string())?;
+        if bytes.len() as u64 > DOWNLOAD_MAX_BYTES {
+            return Err("download is larger than 25 MiB".into());
+        }
+        return Ok(bytes.to_vec());
+    }
+    Err(format!(
+        "GET {url} redirected more than {MAX_REDIRECTS} times"
+    ))
+}
+
+#[cfg(test)]
 fn vetted_download(url: &str) -> Result<reqwest::Url, String> {
+    vet(url, &system_resolve, &private_ip).map(|vetted| vetted.url)
+}
+
+fn vet(url: &str, resolve: Resolve, blocked: Blocked) -> Result<Vetted, String> {
+    const PRIVATE: &str = "skill downloads cannot target a private address";
     let parsed = reqwest::Url::parse(url).map_err(|e| e.to_string())?;
     if parsed.scheme() != "https" && parsed.scheme() != "http" {
         return Err("skill downloads use http or https".into());
@@ -257,47 +315,83 @@ fn vetted_download(url: &str) -> Result<reqwest::Url, String> {
         .host_str()
         .filter(|host| !host.is_empty())
         .ok_or("skill download url has no host")?;
-    let name = host.trim_end_matches('.').to_ascii_lowercase();
+    // IPv6 literals come back in brackets; strip them before parsing.
+    let bare = host
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .unwrap_or(host);
+    if let Ok(ip) = bare.parse::<IpAddr>() {
+        if blocked(ip) {
+            return Err(PRIVATE.into());
+        }
+        return Ok(Vetted {
+            url: parsed,
+            pin: None,
+        });
+    }
+    let domain = host.to_string();
+    let name = domain.trim_end_matches('.').to_ascii_lowercase();
     if name == "localhost" || name.ends_with(".localhost") || name.ends_with(".local") {
         return Err("skill downloads cannot target a local host".into());
     }
-    if let Ok(ip) = name.parse::<std::net::IpAddr>() {
-        if private_ip(ip) {
-            return Err("skill downloads cannot target a private address".into());
-        }
-        return Ok(parsed);
-    }
     let port = parsed.port_or_known_default().unwrap_or(443);
-    let mut resolved = false;
-    for addr in (host, port).to_socket_addrs().map_err(|e| e.to_string())? {
-        resolved = true;
-        if private_ip(addr.ip()) {
-            return Err("skill downloads cannot target a private address".into());
-        }
-    }
-    if !resolved {
+    let addrs = resolve(&domain, port)?;
+    if addrs.is_empty() {
         return Err("skill download host did not resolve".into());
     }
-    Ok(parsed)
+    if addrs.iter().any(|addr| blocked(addr.ip())) {
+        return Err(PRIVATE.into());
+    }
+    Ok(Vetted {
+        url: parsed,
+        pin: Some((domain, addrs)),
+    })
 }
 
-fn private_ip(ip: std::net::IpAddr) -> bool {
+fn private_v4(ip: Ipv4Addr) -> bool {
+    let [a, b, c, _] = ip.octets();
+    ip.is_private()
+        || ip.is_loopback()
+        || ip.is_link_local()
+        || ip.is_broadcast()
+        || ip.is_unspecified()
+        || ip.is_documentation()
+        || ip.is_multicast()
+        // 0.0.0.0/8 "this network"
+        || a == 0
+        // 100.64.0.0/10 shared address space (carrier-grade NAT)
+        || (a == 100 && (b & 0xc0) == 64)
+        // 192.0.0.0/24 protocol assignments
+        || (a == 192 && b == 0 && c == 0)
+        // 198.18.0.0/15 benchmarking
+        || (a == 198 && (b & 0xfe) == 18)
+        // 240.0.0.0/4 reserved
+        || a >= 240
+}
+
+fn private_ip(ip: IpAddr) -> bool {
     match ip {
-        std::net::IpAddr::V4(ip) => {
-            ip.is_private()
-                || ip.is_loopback()
-                || ip.is_link_local()
-                || ip.is_broadcast()
-                || ip.is_unspecified()
-                || ip.is_documentation()
-                || ip.is_multicast()
-        }
-        std::net::IpAddr::V6(ip) => {
+        IpAddr::V4(ip) => private_v4(ip),
+        IpAddr::V6(ip) => {
+            if let Some(v4) = ip.to_ipv4_mapped() {
+                return private_v4(v4);
+            }
+            let s = ip.segments();
+            // 64:ff9b::/96 NAT64 carries an IPv4 address in the last 32 bits.
+            if s[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+                let [_, _, _, _, _, _, hi, lo] = s;
+                return private_v4(Ipv4Addr::from((u32::from(hi) << 16) | u32::from(lo)));
+            }
             ip.is_loopback()
                 || ip.is_unspecified()
                 || ip.is_multicast()
                 || ip.is_unicast_link_local()
-                || (ip.segments()[0] & 0xfe00) == 0xfc00
+                // fc00::/7 unique local
+                || (s[0] & 0xfe00) == 0xfc00
+                // fec0::/10 site local
+                || (s[0] & 0xffc0) == 0xfec0
+                // 2001:db8::/32 documentation
+                || (s[0] == 0x2001 && s[1] == 0x0db8)
         }
     }
 }
@@ -361,6 +455,138 @@ mod tests {
             std::ffi::OsStr::new("GCM_INTERACTIVE"),
             Some(std::ffi::OsStr::new("never"))
         )));
+    }
+
+    /// Serves `count` requests: `/redirect` answers 302 to the location given,
+    /// every other path answers 200 with the path as the body.
+    fn tiny_http(count: usize, location: String) -> u16 {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(count) {
+                let mut stream = stream.unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap() == 0 || header == "\r\n" {
+                        break;
+                    }
+                }
+                let reply = if path == "/redirect" {
+                    format!("HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                } else {
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{path}",
+                        path.len()
+                    )
+                };
+                stream.write_all(reply.as_bytes()).unwrap();
+            }
+        });
+        port
+    }
+
+    fn v4_private_only(ip: std::net::IpAddr) -> bool {
+        matches!(ip, std::net::IpAddr::V4(v4) if v4.is_private())
+    }
+
+    #[test]
+    fn the_connection_uses_the_vetted_addresses() {
+        let port = tiny_http(1, String::new());
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let resolve = |host: &str, _port: u16| {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(host, "skills.invalid");
+            Ok(vec![std::net::SocketAddr::from(([127, 0, 0, 1], port))])
+        };
+        // `.invalid` never resolves in real DNS: the request only lands when the
+        // client connects to the address the check approved.
+        let body = super::fetch_vetted(
+            &format!("http://skills.invalid:{port}/index.json"),
+            &resolve,
+            &v4_private_only,
+        )
+        .unwrap();
+        assert_eq!(body, b"/index.json");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_redirect_is_vetted_and_pinned_again() {
+        let port = tiny_http(2, "/next".into());
+        let resolve =
+            move |_: &str, _: u16| Ok(vec![std::net::SocketAddr::from(([127, 0, 0, 1], port))]);
+        let body = super::fetch_vetted(
+            &format!("http://a.invalid:{port}/redirect"),
+            &resolve,
+            &v4_private_only,
+        )
+        .unwrap();
+        assert_eq!(body, b"/next");
+
+        let port = tiny_http(1, "http://evil.invalid/x".into());
+        let resolve = move |host: &str, _: u16| {
+            Ok(vec![if host == "evil.invalid" {
+                std::net::SocketAddr::from(([10, 0, 0, 1], 80))
+            } else {
+                std::net::SocketAddr::from(([127, 0, 0, 1], port))
+            }])
+        };
+        let err = super::fetch_vetted(
+            &format!("http://a.invalid:{port}/redirect"),
+            &resolve,
+            &v4_private_only,
+        )
+        .unwrap_err();
+        assert!(err.contains("private address"), "{err}");
+    }
+
+    #[test]
+    fn mapped_shared_and_this_network_addresses_are_private() {
+        for ip in [
+            "::ffff:127.0.0.1",
+            "::ffff:169.254.169.254",
+            "::ffff:10.0.0.1",
+            "100.64.0.1",
+            "100.127.255.254",
+            "0.1.2.3",
+            "198.18.0.1",
+            "192.0.0.1",
+            "240.0.0.1",
+            "64:ff9b::7f00:1",
+            "fec0::1",
+            "2001:db8::1",
+        ] {
+            let ip: std::net::IpAddr = ip.parse().unwrap();
+            assert!(super::private_ip(ip), "{ip}");
+        }
+        for ip in [
+            "8.8.8.8",
+            "100.128.0.1",
+            "2606:4700:4700::1111",
+            "::ffff:8.8.8.8",
+        ] {
+            let ip: std::net::IpAddr = ip.parse().unwrap();
+            assert!(!super::private_ip(ip), "{ip}");
+        }
+    }
+
+    #[test]
+    fn ipv6_literals_are_checked_as_addresses_not_resolved() {
+        for url in [
+            "https://[::1]/index.json",
+            "https://[::ffff:127.0.0.1]/index.json",
+            "https://[fd00::1]/index.json",
+        ] {
+            let err = vetted_download(url).unwrap_err();
+            assert!(err.contains("private address"), "{url}: {err}");
+        }
+        assert!(vetted_download("https://[2606:4700:4700::1111]/index.json").is_ok());
+        assert!(vetted_download("https://1.1.1.1/index.json").is_ok());
     }
 
     #[test]
