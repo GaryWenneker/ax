@@ -1152,15 +1152,26 @@ async fn provision_sonar_project(
     Ok(())
 }
 
+/// Percent-encodes a query value per UTF-8 byte, leaving only RFC 3986
+/// unreserved characters as they are.
 fn encode_query(value: &str) -> String {
-    value
-        .chars()
-        .map(|c| match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
-            ' ' => "%20".into(),
-            _ => format!("%{:02X}", c as u32),
-        })
-        .collect()
+    let mut out = String::with_capacity(value.len());
+    for b in value.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+fn token_url(host: &str, action: &str, name: &str) -> String {
+    format!(
+        "{host}/api/user_tokens/{action}?name={}",
+        encode_query(name)
+    )
 }
 
 async fn generate_token(
@@ -1189,7 +1200,7 @@ async fn try_generate_token(
     user: &str,
     password: &str,
 ) -> Result<String, String> {
-    let url = format!("{host}/api/user_tokens/generate?name={name}");
+    let url = token_url(host, "generate", name);
     let resp = authed_post(&url, user, password).await?;
     if !resp.status().is_success() {
         let status = resp.status();
@@ -1203,7 +1214,7 @@ async fn try_generate_token(
 }
 
 async fn revoke_token(host: &str, name: &str, user: &str, password: &str) -> Result<(), String> {
-    let url = format!("{host}/api/user_tokens/revoke?name={name}");
+    let url = token_url(host, "revoke", name);
     let resp = authed_post(&url, user, password).await?;
     if resp.status().is_success() {
         return Ok(());
@@ -1816,5 +1827,23 @@ mod tests {
         assert!(token_already_exists(
             "Failed to generate SonarQube token: HTTP 400 {\"errors\":[{\"msg\":\"already exists\"}]}"
         ));
+    }
+
+    #[test]
+    fn encode_query_percent_encodes_utf8_bytes() {
+        assert_eq!(encode_query("Caf\u{e9}-Portal"), "Caf%C3%A9-Portal");
+        assert_eq!(encode_query("\u{20ac} a&b"), "%E2%82%AC%20a%26b");
+    }
+
+    #[test]
+    fn token_urls_encode_the_token_name() {
+        assert_eq!(
+            token_url("http://h", "generate", "ax scan&x"),
+            "http://h/api/user_tokens/generate?name=ax%20scan%26x"
+        );
+        assert_eq!(
+            token_url("http://h", "revoke", "\u{e9}"),
+            "http://h/api/user_tokens/revoke?name=%C3%A9"
+        );
     }
 }
