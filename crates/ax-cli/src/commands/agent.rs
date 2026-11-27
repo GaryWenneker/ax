@@ -1,4 +1,4 @@
-//! `ax agent economics` and `ax agent optimize --report`.
+//! `ax agent economics` and `ax agent optimize`.
 
 use std::path::PathBuf;
 

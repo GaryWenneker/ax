@@ -71,9 +71,11 @@ enum Commands {
         #[arg(
             long,
             value_name = "MODE",
+            value_enum,
+            ignore_case = true,
             help = "Install mode: full (default) or cli-only (no MCP/plugin/hooks)"
         )]
-        mode: Option<String>,
+        mode: Option<commands::install::InstallMode>,
         #[arg(
             long,
             value_name = "DIR",
@@ -208,7 +210,8 @@ enum Commands {
         #[arg(
             long,
             default_value = "hot",
-            help = "hot or archive. Same as ax_recall depth."
+            value_parser = ["hot", "archive", "backup"],
+            help = "hot, archive or backup. Same as ax_recall depth."
         )]
         depth: String,
         #[arg(long)]
@@ -251,6 +254,7 @@ enum Commands {
         #[arg(
             long,
             default_value = "hot",
+            value_parser = ["hot", "archive"],
             help = "hot or archive. Same as ax_history depth."
         )]
         depth: String,
@@ -393,8 +397,8 @@ enum Commands {
     },
     /// Diagnostics for CLI-only and full installs
     Doctor {
-        #[arg(long, value_name = "MODE", default_value = "cli", help = "cli | all")]
-        mode: String,
+        #[arg(long, value_name = "MODE", value_enum, default_value_t = commands::doctor::DoctorMode::Cli)]
+        mode: commands::doctor::DoctorMode,
         #[arg(long)]
         path: Option<String>,
         #[arg(long)]
@@ -575,7 +579,7 @@ enum Commands {
     /// Print version
     #[command(long_about = help_text::VERSION_LONG)]
     Version,
-    /// Self-update from getax CDN (GitHub fallback)
+    /// Self-update from GitHub Releases (getax fallback)
     #[command(long_about = help_text::UPGRADE_LONG)]
     Upgrade {
         #[arg(help = "Optional release tag (e.g. v0.1.0)")]
@@ -1350,7 +1354,8 @@ enum AgentAction {
     /// Estimated avoidable context from recorded tool calls
     Optimize {
         path: Option<String>,
-        #[arg(long, help = "Print the optimization report")]
+        /// Accepted for older scripts; the report always prints.
+        #[arg(long, hide = true)]
         report: bool,
         #[arg(long, help = "JSON output")]
         json: bool,
@@ -2475,7 +2480,7 @@ async fn async_main() {
                     target,
                     mode,
                     path,
-                }) => (*yes, *all, target.clone(), mode.clone(), path.clone()),
+                }) => (*yes, *all, target.clone(), *mode, path.clone()),
                 _ => (false, false, Vec::new(), None, None),
             };
             commands::install::run(yes, all, targets, mode, path)
@@ -3057,10 +3062,6 @@ async fn async_main() {
             commands::cache_cmd::run(mapped).await
         }
         Some(Commands::Doctor { mode, path, json }) => {
-            let mode = match mode.as_str() {
-                "all" => commands::doctor::DoctorMode::All,
-                _ => commands::doctor::DoctorMode::Cli,
-            };
             commands::doctor::run(mode, path, json).await
         },
         Some(Commands::Db { action }) => match action {
@@ -3974,6 +3975,47 @@ mod refresh_ide_files_tests {
     fn regular_commands_refresh() {
         assert!(refreshes(&["ax", "status"]));
         assert!(refreshes(&["ax", "sync"]));
+    }
+}
+
+#[cfg(test)]
+mod option_value_tests {
+    use super::Cli;
+    use clap::Parser;
+
+    fn parses(argv: &'static [&'static str]) -> bool {
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || Cli::try_parse_from(argv).is_ok())
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    #[test]
+    fn doctor_rejects_unknown_modes() {
+        assert!(parses(&["ax", "doctor", "--mode", "cli"]));
+        assert!(parses(&["ax", "doctor", "--mode", "all"]));
+        assert!(!parses(&["ax", "doctor", "--mode", "full"]));
+        assert!(!parses(&["ax", "doctor", "--mode", "al"]));
+    }
+
+    #[test]
+    fn install_rejects_unknown_modes() {
+        assert!(parses(&["ax", "install", "--mode", "full"]));
+        assert!(parses(&["ax", "install", "--mode", "cli-only"]));
+        assert!(parses(&["ax", "install", "--mode", "cli_only"]));
+        assert!(parses(&["ax", "install", "--mode", "CLI-ONLY"]));
+        assert!(!parses(&["ax", "install", "--mode", "clionly"]));
+    }
+
+    #[test]
+    fn recall_and_history_reject_unknown_depths() {
+        assert!(parses(&["ax", "recall", "x", "--depth", "archive"]));
+        assert!(parses(&["ax", "history", "--depth", "hot"]));
+        assert!(!parses(&["ax", "recall", "x", "--depth", "deep"]));
+        assert!(!parses(&["ax", "history", "--depth", "deep"]));
+        assert!(!parses(&["ax", "history", "--depth", "backup"]));
     }
 }
 

@@ -4,9 +4,11 @@ use serde_json::json;
 
 use crate::commands::resolve_project_root;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum DoctorMode {
+    /// Host and policy checks for a CLI-only setup
     Cli,
+    /// Every check, including the MCP wiring
     All,
 }
 

@@ -244,11 +244,13 @@ pub const VERSION_LONG: &str = "Print the installed ax version.
 
 Also available as `ax -V` / `ax --version`.";
 
-pub const UPGRADE_LONG: &str = "Self-update from getax.wenneker.io (non-interactive — no confirmation prompt).
+pub const UPGRADE_LONG: &str = "Self-update from GitHub Releases, with getax.wenneker.io as the fallback
+(non-interactive — no confirmation prompt).
 
 Downloads the platform bundle for your OS/arch. On Windows, extracts to %LOCALAPPDATA%\\ax\\current
 (matching install.ps1), updates ~/.cargo/bin/ax.exe when present, and exits immediately — a detached
-PowerShell helper finishes the swap after this process exits. Open a new terminal and run `ax version`.
+`ax upgrade-apply` helper (no PowerShell needed) finishes the swap after this process exits.
+Open a new terminal and run `ax version`.
 
 The archive is checked against the release's SHA256SUMS before it is installed; a missing
 or different checksum stops the upgrade. A --local archive is checked against a SHA256SUMS

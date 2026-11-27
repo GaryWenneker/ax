@@ -65,7 +65,7 @@ Interactive installer — writes MCP config for detected AI agents (Cursor, Clau
 | `--all` | flag | Configure every supported agent, not only detected ones |
 | `--target <id>` | string | Wire a single agent (e.g. `vscode`, `cursor`); ids are case-insensitive |
 | `--path <dir>` | string | Project root for workspace MCP files (default: current directory). |
-| `--mode <mode>` | string | `full` (default) wires MCP/hooks; `cli-only` seeds IDE instruction files without MCP, plugins, IDE hooks, or daemons (all supported IDEs — see [CLI-only mode](/guides/cli-only/)) |
+| `--mode <mode>` | `full` \| `cli-only` | `full` (default) wires MCP/hooks; `cli-only` (also `cli_only`, any case) seeds IDE instruction files without MCP, plugins, IDE hooks, or daemons (all supported IDEs — see [CLI-only mode](/guides/cli-only/)). Any other value is rejected |
 
 Agent configs and hooks get the first `ax` on your `PATH`, exactly as found there: a shim such as `~/.local/bin/ax` stays the shim, so a later upgrade of the binary behind it needs no reinstall. With no `ax` on `PATH`, the binary running the install is written, and the report says so. When the two differ, the report names both. A Claude Code hook whose `ax` path is stale is repaired in place; your own hooks stay as they are.
 
@@ -743,6 +743,8 @@ ax doctor --mode cli
 ax doctor --mode all --json
 ```
 
+`--mode` takes `cli` (the default) or `all`; any other value is rejected.
+
 `ax doctor` also runs a quick integrity check of `.ax/ax.db` and names `ax db repair` when that check finds a problem. When an older MCP build is registered, it names that process and says to restart the MCP server in Cursor. It does not stop the server.
 
 ### `ax db`
@@ -990,7 +992,7 @@ ax --version
 
 ### `ax upgrade [version]`
 
-Self-update from [getax.wenneker.io/releases/latest.txt](https://getax.wenneker.io/releases/latest.txt) (GitHub fallback). Non-interactive — no confirmation prompt.
+Self-update from GitHub Releases, with [getax.wenneker.io/releases](https://getax.wenneker.io/releases/latest.txt) as the fallback. Non-interactive — no confirmation prompt.
 
 Every downloaded archive is checked against the release's `SHA256SUMS` (fetched from GitHub when possible, otherwise from getax) before it is extracted. A missing checksum list, a missing entry or a different digest stops the upgrade and leaves the installed binary alone. A `--local` archive is checked against a `SHA256SUMS` in the same folder when one is there.
 
@@ -1123,8 +1125,8 @@ ax agent economics --json
 Estimated avoidable context from recorded tool calls. The report is advisory. `optimization.mode` defaults to `observe`. `optimize` approves only high-confidence deterministic rules and does not rewrite Pi's transcript.
 
 ```bash
-ax agent optimize --report
-ax agent optimize --report --json
+ax agent optimize
+ax agent optimize --json
 ```
 
 ### `ax budget`
