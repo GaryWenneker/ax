@@ -378,6 +378,15 @@ fn extract_generic_callee(node: TsNode, source: &[u8]) -> Option<String> {
     if let Some(name) = node.child_by_field_name("name") {
         return Some(normalize_callee_name(&node_text(name, source)));
     }
+    // Kotlin's call_expression has no fields: the callee is its first child.
+    if node.kind() == "call_expression" {
+        if let Some(name) = node
+            .named_child(0)
+            .and_then(|f| callee_from_expression(f, source))
+        {
+            return Some(normalize_callee_name(&name));
+        }
+    }
     None
 }
 
@@ -397,6 +406,11 @@ fn callee_from_expression(node: TsNode, source: &[u8]) -> Option<String> {
             None
         }
         "member_access_expression" => field_text(node, source, "name"),
+        // Kotlin `a.b`: the last identifier is the member.
+        "navigation_expression" => node
+            .named_child(node.named_child_count().saturating_sub(1))
+            .filter(|n| n.kind() == "identifier")
+            .map(|n| node_text(n, source)),
         "field_expression" | "selector_expression" => node
             .child_by_field_name("field")
             .map(|f| node_text(f, source)),
