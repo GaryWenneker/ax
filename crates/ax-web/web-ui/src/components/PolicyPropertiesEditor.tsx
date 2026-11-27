@@ -96,6 +96,8 @@ export default function PolicyPropertiesEditor({ properties, reserved, descripti
                   placeholder="name"
                   ref={index === drafts.length - 1 && !row.key.trim() ? newNameRef : undefined}
                   onChange={(e) => update(index, { key: e.target.value })}
+                  // Keep the input while it has focus; a typed name must not swap it for the label.
+                  onFocus={() => setRenaming(index)}
                   onBlur={() => setRenaming((current) => (current === index ? null : current))}
                   autoFocus={renaming === index}
                 />
@@ -173,6 +175,7 @@ export default function PolicyPropertiesEditor({ properties, reserved, descripti
             className="policy-property-add"
             onClick={() => {
               pendingNameFocus.current = true;
+              setRenaming(drafts.length);
               commit([...drafts, { key: '', kind: 'text', text: '', checked: false }]);
             }}
           >
