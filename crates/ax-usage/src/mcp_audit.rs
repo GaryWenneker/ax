@@ -669,15 +669,7 @@ fn pick_best_transcript(paths: Vec<PathBuf>) -> Option<PathBuf> {
     }
     let mut best: Option<(i64, PathBuf)> = None;
     for (idx, path) in paths.into_iter().take(10).enumerate() {
-        let events = load_transcript_events(&path, 0).unwrap_or_default();
-        let ax = events
-            .iter()
-            .filter(|e| e.kind == TranscriptKind::AxTool)
-            .count() as i64;
-        let read_grep = events
-            .iter()
-            .filter(|e| matches!(e.kind, TranscriptKind::Read | TranscriptKind::Grep))
-            .count() as i64;
+        let (ax, read_grep) = transcript_activity(&path);
         // Newest-first list: small idx is fresher. Prefer ax activity heavily.
         let score = ax.saturating_mul(100) + read_grep.min(40) + (20 - idx as i64).max(0);
         if best.as_ref().map(|(s, _)| score > *s).unwrap_or(true) {
@@ -685,6 +677,43 @@ fn pick_best_transcript(paths: Vec<PathBuf>) -> Option<PathBuf> {
         }
     }
     best.map(|(_, p)| p)
+}
+
+/// ax tool calls and Read/Grep calls in one transcript. Counts are cached by
+/// path, size and modification time, so repeated audits (the live quality
+/// poll) parse a transcript again only after it changed.
+fn transcript_activity(path: &Path) -> (i64, i64) {
+    type Key = (PathBuf, Option<SystemTime>, u64);
+    static CACHE: std::sync::Mutex<Option<std::collections::HashMap<Key, (i64, i64)>>> =
+        std::sync::Mutex::new(None);
+    let meta = fs::metadata(path).ok();
+    let key: Key = (
+        path.to_path_buf(),
+        meta.as_ref().and_then(|m| m.modified().ok()),
+        meta.as_ref().map(|m| m.len()).unwrap_or(0),
+    );
+    if let Ok(cache) = CACHE.lock() {
+        if let Some(hit) = cache.as_ref().and_then(|m| m.get(&key)) {
+            return *hit;
+        }
+    }
+    let events = load_transcript_events(path, 0).unwrap_or_default();
+    let ax = events
+        .iter()
+        .filter(|e| e.kind == TranscriptKind::AxTool)
+        .count() as i64;
+    let read_grep = events
+        .iter()
+        .filter(|e| matches!(e.kind, TranscriptKind::Read | TranscriptKind::Grep))
+        .count() as i64;
+    if let Ok(mut cache) = CACHE.lock() {
+        let map = cache.get_or_insert_with(Default::default);
+        if map.len() >= 256 {
+            map.clear();
+        }
+        map.insert(key, (ax, read_grep));
+    }
+    (ax, read_grep)
 }
 
 fn percentile(sorted: &[i64], p: f64) -> i64 {
@@ -1082,16 +1111,12 @@ fn score_and_findings(
     }
 
     // LspAvailableUnused — only when MCP is active (not domain-only noise)
-    let lsp_on_path = [
-        "rust-analyzer",
-        "typescript-language-server",
-        "pyright-langserver",
-        "gopls",
-    ]
-    .iter()
-    .any(|bin| command_on_path(bin));
     let lsp_enrich_ran = domain_line_matches(joined, "lsp", |rest| rest.starts_with("enrich"));
-    if lsp_on_path && enrichment.inbound_count > 0 && !lsp_enrich_ran {
+    if lsp_available_unused(
+        enrichment.inbound_count,
+        lsp_enrich_ran,
+        language_server_on_path,
+    ) {
         score -= 5;
         findings.push(Finding {
             id: "lsp-available-unused".into(),
@@ -1336,6 +1361,47 @@ fn truncate_hint(s: &str, max_chars: usize) -> String {
     format!("{trimmed}…")
 }
 
+/// The LspAvailableUnused check. The PATH probe starts processes, so it
+/// runs only when the cheap conditions already hold.
+fn lsp_available_unused(
+    inbound_count: usize,
+    lsp_enrich_ran: bool,
+    probe: impl FnOnce() -> bool,
+) -> bool {
+    inbound_count > 0 && !lsp_enrich_ran && probe()
+}
+
+/// How long a PATH probe result stays valid. The live quality poll audits
+/// repeatedly; probing once per interval keeps it from starting language
+/// servers on every poll while still noticing a server installed later.
+const LSP_PROBE_TTL: std::time::Duration = std::time::Duration::from_secs(600);
+
+fn language_server_on_path() -> bool {
+    static CACHE: std::sync::Mutex<Option<(std::time::Instant, bool)>> =
+        std::sync::Mutex::new(None);
+    if let Ok(cache) = CACHE.lock() {
+        if let Some((at, found)) = *cache {
+            if at.elapsed() < LSP_PROBE_TTL {
+                return found;
+            }
+        }
+    }
+    let found = [
+        "rust-analyzer",
+        "typescript-language-server",
+        "pyright-langserver",
+        "gopls",
+    ]
+    .iter()
+    .any(|bin| command_on_path(bin));
+    if let Ok(mut cache) = CACHE.lock() {
+        *cache = Some((std::time::Instant::now(), found));
+    }
+    found
+}
+
+const VERSION_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 fn command_on_path(bin: &str) -> bool {
     #[cfg(windows)]
     let lookup = format!("{bin}.exe");
@@ -1348,14 +1414,35 @@ fn command_on_path(bin: &str) -> bool {
     }) else {
         return false;
     };
-    // rustup shims exist on PATH but exit non-zero until `rustup component add …`.
-    std::process::Command::new(&path)
+    version_check_ok(&path, VERSION_CHECK_TIMEOUT)
+}
+
+/// Run `<binary> --version`. rustup shims exist on PATH but exit non-zero
+/// until `rustup component add …`.
+fn version_check_ok(path: &Path, timeout: std::time::Duration) -> bool {
+    let Ok(mut child) = std::process::Command::new(path)
         .arg("--version")
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .spawn()
+    else {
+        return false;
+    };
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
 }
 
 fn grade_for(score: u8) -> String {
@@ -1695,6 +1782,50 @@ mod tests {
         let main = write_transcript(&transcripts, "chat");
         write_transcript(&transcripts.join("chat").join("subagents"), "child");
         assert_eq!(collect_transcripts(&transcripts), vec![main]);
+    }
+
+    #[test]
+    fn lsp_probe_runs_only_when_the_cheap_conditions_hold() {
+        let never = || -> bool { panic!("PATH probe ran although it could not change the result") };
+        assert!(!lsp_available_unused(0, false, never));
+        assert!(!lsp_available_unused(3, true, never));
+        assert!(lsp_available_unused(3, false, || true));
+        assert!(!lsp_available_unused(3, false, || false));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn version_check_gives_up_on_a_hanging_binary() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("hangs");
+        fs::write(&bin, "#!/bin/sh\nsleep 6\nexit 0\n").unwrap();
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        let started = std::time::Instant::now();
+        let ok = version_check_ok(&bin, std::time::Duration::from_millis(300));
+        assert!(
+            !ok,
+            "a binary that does not answer in time is not a working server"
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(4));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn version_check_accepts_a_quick_success() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let ok_bin = dir.path().join("ok");
+        fs::write(&ok_bin, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&ok_bin, fs::Permissions::from_mode(0o755)).unwrap();
+        let bad_bin = dir.path().join("bad");
+        fs::write(&bad_bin, "#!/bin/sh\nexit 1\n").unwrap();
+        fs::set_permissions(&bad_bin, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(version_check_ok(&ok_bin, std::time::Duration::from_secs(5)));
+        assert!(!version_check_ok(
+            &bad_bin,
+            std::time::Duration::from_secs(5)
+        ));
     }
 
     #[test]

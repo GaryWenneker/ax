@@ -87,7 +87,7 @@ Filter these on the Logging page kind chips (also via `/logging?kind=lsp`). Qual
 |-------|------|
 | `ShipCiFailed` | `ship-ci status=failed` in window |
 | `PluginExtractErrors` | `plugin … fail` lines |
-| `LspAvailableUnused` | Runnable language server on PATH (`--version` ok), no `lsp enrich` while MCP is active |
+| `LspAvailableUnused` | Runnable language server on PATH (`--version` succeeds within 2 seconds), no `lsp enrich` while MCP is active. The PATH check runs only when the window has MCP calls and no `lsp enrich`, and its result is reused for 10 minutes |
 | `ShareReadonlyWrite` | Mutating API blocked in share/read-only |
 | `EmbedBackend` | Informational: `embed backend=…` line |
 
@@ -161,7 +161,7 @@ ax mcp audit --session path/to/transcript.jsonl --json
 
 Exit code **2** when critical findings are present (CI-friendly). Snapshots land in `.ax/audit/latest.json`.
 
-Without `--session`, the audit reads transcripts from `~/.cursor/projects/<slug>/agent-transcripts/`, where `<slug>` is the project path in lower case with every other character replaced by `-`. A folder whose name differs only in case or punctuation also counts; a parent or sibling workspace's folder never does. Subagent chats (in `subagents/` folders) are skipped.
+Without `--session`, the audit reads transcripts from `~/.cursor/projects/<slug>/agent-transcripts/`, where `<slug>` is the project path in lower case with each run of other characters replaced by one `-`. A folder whose name differs only in case or punctuation also counts; a parent or sibling workspace's folder never does. Subagent chats (in `subagents/` folders) are skipped.
 
 ## 4. Cursor sessionStart hook (correlation + model tags)
 
