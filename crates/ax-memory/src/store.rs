@@ -275,15 +275,14 @@ pub async fn link_memories(
     if !MEMORY_LINK_KINDS.contains(&kind) {
         return Err(AxError::Other(format!("unknown memory link kind: {kind}")));
     }
-    let result = sqlx::query(
-        "INSERT OR IGNORE INTO memory_links (from_id, to_id, kind) VALUES (?, ?, ?)",
-    )
-    .bind(from_id)
-    .bind(to_id)
-    .bind(kind)
-    .execute(pool)
-    .await
-    .map_err(|e| db_err(pool, e))?;
+    let result =
+        sqlx::query("INSERT OR IGNORE INTO memory_links (from_id, to_id, kind) VALUES (?, ?, ?)")
+            .bind(from_id)
+            .bind(to_id)
+            .bind(kind)
+            .execute(pool)
+            .await
+            .map_err(|e| db_err(pool, e))?;
     Ok(result.rows_affected() > 0)
 }
 
@@ -365,6 +364,45 @@ pub(crate) async fn stamp_current_turn(pool: &SqlitePool, id: &str) -> Result<()
     Ok(())
 }
 
+/// Columns derived from a memory's content. `remember_with_id` and `update`
+/// both write them, so an edited memory is searched, flagged and trusted by
+/// what it says now.
+struct DerivedColumns {
+    origin: String,
+    trust_level: &'static str,
+    search_text: String,
+    instruction_like: i64,
+}
+
+impl DerivedColumns {
+    fn of(row: &MemoryRow) -> Self {
+        let search_text = crate::search_text::normalize_search_text(&format!(
+            "{} {} {} {}",
+            row.title,
+            row.body,
+            row.tags.join(" "),
+            row.files.join(" ")
+        ));
+        let instruction =
+            crate::instruction_like::is_instruction_like(&format!("{} {}", row.title, row.body));
+        Self {
+            origin: crate::provenance::origin_for(&row.source),
+            trust_level: crate::provenance::trust_level_for(&row.source, &row.kind),
+            search_text,
+            instruction_like: i64::from(instruction),
+        }
+    }
+}
+
+/// `foreign` when the memory points outside the project, else `active`.
+fn content_status(row: &MemoryRow) -> &'static str {
+    if crate::brain::memory_is_foreign(&row.source, &row.tags, &row.files) {
+        "foreign"
+    } else {
+        "active"
+    }
+}
+
 pub(crate) async fn remember_with_id(
     pool: &SqlitePool,
     id: String,
@@ -409,11 +447,7 @@ pub(crate) async fn remember_with_id(
     let embedding = crate::embed::embedding_to_blob(&vector);
     let tags = serde_json::to_string(&row.tags).unwrap_or_else(|_| "[]".into());
     let files = serde_json::to_string(&row.files).unwrap_or_else(|_| "[]".into());
-    let status = if crate::brain::memory_is_foreign(&row.source, &row.tags, &row.files) {
-        "foreign"
-    } else {
-        "active"
-    };
+    let status = content_status(&row);
     retry_locked(|| {
         sqlx::query(
             r#"INSERT INTO memories (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, embedding, enabled, status)
@@ -435,24 +469,14 @@ pub(crate) async fn remember_with_id(
     })
     .await
     .map_err(|e| db_err(pool, e))?;
-    let origin = crate::provenance::origin_for(&row.source);
-    let trust = crate::provenance::trust_level_for(&row.source, &row.kind);
-    let search = crate::search_text::normalize_search_text(&format!(
-        "{} {} {} {}",
-        row.title,
-        row.body,
-        row.tags.join(" "),
-        row.files.join(" ")
-    ));
-    let instruction =
-        crate::instruction_like::is_instruction_like(&format!("{} {}", row.title, row.body));
+    let derived = DerivedColumns::of(&row);
     sqlx::query(
         "UPDATE memories SET origin = ?, trust_level = ?, search_text = ?, instruction_like = ? WHERE id = ?",
     )
-    .bind(&origin)
-    .bind(trust)
-    .bind(&search)
-    .bind(if instruction { 1 } else { 0 })
+    .bind(&derived.origin)
+    .bind(derived.trust_level)
+    .bind(&derived.search_text)
+    .bind(derived.instruction_like)
     .bind(&row.id)
     .execute(pool)
     .await
@@ -1448,6 +1472,9 @@ pub async fn set_enabled(pool: &SqlitePool, id: &str, enabled: bool) -> Result<b
 }
 
 pub async fn update(pool: &SqlitePool, id: &str, input: RememberInput) -> Result<bool, AxError> {
+    let Some(existing) = get(pool, id).await? else {
+        return Ok(false);
+    };
     let (vector, model) = crate::embed::embed_labeled(&format!(
         "{} {} {}",
         input.title,
@@ -1455,41 +1482,84 @@ pub async fn update(pool: &SqlitePool, id: &str, input: RememberInput) -> Result
         input.tags.join(" ")
     ));
     let embedding = crate::embed::embedding_to_blob(&vector);
-    let title = input.title.trim().to_string();
-    let kind = input.kind.unwrap_or_default();
-    let tags = serde_json::to_string(&input.tags).unwrap_or_else(|_| "[]".into());
-    let files = serde_json::to_string(&input.files).unwrap_or_else(|_| "[]".into());
-    let updated_at = now_ms();
+    let kind = input
+        .kind
+        .filter(|kind| !kind.is_empty())
+        .unwrap_or_else(|| existing.kind.clone());
+    let row = MemoryRow {
+        title: input.title.trim().to_string(),
+        body: input.body,
+        kind,
+        tags: input.tags,
+        files: input.files,
+        confidence: 1.0,
+        updated_at: now_ms(),
+        ..existing.clone()
+    };
+    let derived = DerivedColumns::of(&row);
+    let status = content_status(&row);
+    let tags = serde_json::to_string(&row.tags).unwrap_or_else(|_| "[]".into());
+    let files = serde_json::to_string(&row.files).unwrap_or_else(|_| "[]".into());
     let result = retry_locked(|| {
         sqlx::query(
             r#"UPDATE memories
-               SET title = ?, body = ?, kind = COALESCE(NULLIF(?, ''), kind),
-                   tags = ?, files = ?, confidence = 1.0, updated_at = ?,
-                   embedding = ?, embedding_model = ?
+               SET title = ?, body = ?, kind = ?, tags = ?, files = ?,
+                   confidence = 1.0, updated_at = ?,
+                   embedding = ?, embedding_model = ?,
+                   origin = ?, trust_level = ?, search_text = ?, instruction_like = ?,
+                   status = CASE WHEN status IN ('active', 'foreign') THEN ? ELSE status END
                WHERE id = ?"#,
         )
-        .bind(&title)
-        .bind(&input.body)
-        .bind(&kind)
+        .bind(&row.title)
+        .bind(&row.body)
+        .bind(&row.kind)
         .bind(&tags)
         .bind(&files)
-        .bind(updated_at)
+        .bind(row.updated_at)
         .bind(embedding.clone())
         .bind(model)
+        .bind(&derived.origin)
+        .bind(derived.trust_level)
+        .bind(&derived.search_text)
+        .bind(derived.instruction_like)
+        .bind(status)
         .bind(id)
         .execute(pool)
     })
     .await
     .map_err(|e| db_err(pool, e))?;
-    if result.rows_affected() > 0 {
-        if let Some(row) = get(pool, id).await? {
-            crate::brain::register_cues(pool, &row, &[]).await?;
-            if row.tier == crate::brain::TIER_ARCHIVE {
-                crate::brain::index_archive_vector(pool, id).await?;
-            }
-        }
+    if result.rows_affected() == 0 {
+        return Ok(false);
     }
-    Ok(result.rows_affected() > 0)
+    drop_anchors_for_removed_files(pool, id, &existing.files, &row.files).await?;
+    crate::brain::register_cues(pool, &row, &[]).await?;
+    let _ = crate::anchors::auto_attach_memory(pool, id).await;
+    if row.tier == crate::brain::TIER_ARCHIVE {
+        crate::brain::index_archive_vector(pool, id).await?;
+    }
+    Ok(true)
+}
+
+/// Remove the anchors a memory holds on nodes of files it no longer lists.
+async fn drop_anchors_for_removed_files(
+    pool: &SqlitePool,
+    id: &str,
+    before: &[String],
+    after: &[String],
+) -> Result<(), AxError> {
+    for file in before.iter().filter(|file| !after.contains(file)) {
+        sqlx::query(
+            "DELETE FROM memory_anchors WHERE memory_id = ?1 AND node_key IN (
+                 SELECT id FROM nodes WHERE file_path = ?2
+                 UNION SELECT node_key FROM graph_node_versions WHERE file_path = ?2)",
+        )
+        .bind(id)
+        .bind(file)
+        .execute(pool)
+        .await
+        .map_err(|e| db_err(pool, e))?;
+    }
+    Ok(())
 }
 
 /// Memories whose embedding is very close to `text` — used to flag possible
@@ -1526,14 +1596,49 @@ pub async fn find_similar(
     Ok(out)
 }
 
+/// Remove a memory and every row that points at it: cues, links, anchors,
+/// access log and its archive vector. All in one transaction.
 pub async fn delete(pool: &SqlitePool, id: &str) -> Result<bool, AxError> {
-    let result = retry_locked(|| {
-        sqlx::query("DELETE FROM memories WHERE id = ?")
+    retry_locked(|| delete_with_dependents(pool, id))
+        .await
+        .map_err(|e| db_err(pool, e))
+}
+
+async fn delete_with_dependents(pool: &SqlitePool, id: &str) -> Result<bool, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let vec_rowid: Option<i64> =
+        match sqlx::query_scalar("SELECT rowid FROM memory_vec_map WHERE memory_id = ?")
             .bind(id)
-            .execute(pool)
-    })
-    .await
-    .map_err(|e| db_err(pool, e))?;
+            .fetch_optional(&mut *tx)
+            .await
+        {
+            Ok(row) => row,
+            Err(error) if error.to_string().contains("no such table") => None,
+            Err(error) => return Err(error),
+        };
+    if let Some(rowid) = vec_rowid {
+        sqlx::query("DELETE FROM memory_vec WHERE rowid = ?")
+            .bind(rowid)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM memory_vec_map WHERE memory_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    for sql in [
+        "DELETE FROM memory_cues WHERE memory_id = ?1",
+        "DELETE FROM memory_links WHERE from_id = ?1 OR to_id = ?1",
+        "DELETE FROM memory_anchors WHERE memory_id = ?1",
+        "DELETE FROM memory_access WHERE memory_id = ?1",
+    ] {
+        sqlx::query(sql).bind(id).execute(&mut *tx).await?;
+    }
+    let result = sqlx::query("DELETE FROM memories WHERE id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(result.rows_affected() > 0)
 }
 
@@ -1544,53 +1649,9 @@ pub async fn purge_memory(pool: &SqlitePool, id: &str) -> Result<bool, AxError> 
     if id.is_empty() {
         return Ok(false);
     }
-    let existing: Option<String> = sqlx::query_scalar("SELECT id FROM memories WHERE id = ?")
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| db_err(pool, e))?;
-    if existing.is_none() {
+    if !delete(pool, id).await? {
         return Ok(false);
     }
-
-    let vec_rowid: Option<i64> =
-        match sqlx::query_scalar("SELECT rowid FROM memory_vec_map WHERE memory_id = ?")
-            .bind(id)
-            .fetch_optional(pool)
-            .await
-        {
-            Ok(row) => row,
-            Err(error) if error.to_string().contains("no such table") => None,
-            Err(error) => return Err(db_err(pool, error)),
-        };
-    if let Some(rowid) = vec_rowid {
-        let _ = sqlx::query("DELETE FROM memory_vec WHERE rowid = ?")
-            .bind(rowid)
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("DELETE FROM memory_vec_map WHERE memory_id = ?")
-            .bind(id)
-            .execute(pool)
-            .await;
-    }
-
-    sqlx::query("DELETE FROM memory_cues WHERE memory_id = ?")
-        .bind(id)
-        .execute(pool)
-        .await
-        .map_err(|e| db_err(pool, e))?;
-    sqlx::query("DELETE FROM memory_links WHERE from_id = ? OR to_id = ?")
-        .bind(id)
-        .bind(id)
-        .execute(pool)
-        .await
-        .map_err(|e| db_err(pool, e))?;
-
-    let deleted = delete(pool, id).await?;
-    if !deleted {
-        return Ok(false);
-    }
-
     let now = now_ms();
     sqlx::query("INSERT OR IGNORE INTO memory_tombstones (memory_id, purged_at) VALUES (?, ?)")
         .bind(id)

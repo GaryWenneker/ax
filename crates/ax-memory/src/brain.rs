@@ -360,12 +360,17 @@ fn cue_tokens(text: &str) -> Vec<String> {
     cues
 }
 
+/// Rebuild the automatic cues of `memory` and add `triggers`.
+///
+/// Explicit triggers (`source = 'trigger'`) already stored for the memory are
+/// kept: only automatic cues are derived from content, so rewriting a memory
+/// never drops the names a user gave it. Triggers go away with the memory.
 pub async fn register_cues(
     pool: &SqlitePool,
     memory: &MemoryRow,
     triggers: &[String],
 ) -> Result<(), AxError> {
-    sqlx::query("DELETE FROM memory_cues WHERE memory_id = ?")
+    sqlx::query("DELETE FROM memory_cues WHERE memory_id = ? AND source != 'trigger'")
         .bind(&memory.id)
         .execute(pool)
         .await
@@ -1365,7 +1370,7 @@ async fn register_cues_on(
     memory: &MemoryRow,
 ) -> Result<(), AxError> {
     let db_path = connection_db_path(conn).await;
-    sqlx::query("DELETE FROM memory_cues WHERE memory_id = ?")
+    sqlx::query("DELETE FROM memory_cues WHERE memory_id = ? AND source != 'trigger'")
         .bind(&memory.id)
         .execute(&mut *conn)
         .await

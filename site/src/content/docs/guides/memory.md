@@ -15,7 +15,7 @@ There are five tiers. Forgetting moves a memory down. It does not erase it.
 
 **Recent turns** are the last 90 days of agent work. Preflight can show related turn history. A turn is not a durable decision.
 
-**Long-term memory** is a decision, a bug fix, an architecture note, a convention, or a note. Store it with a trigger name. Preflight injects at most three titles, and that block stops at 6000 characters. If the prompt contains a registered name, that memory comes first. An unknown name returns nothing. Free text is only the fallback, for a paraphrase. Automatic cues come from the title, tags, file name, and symbols. They skip change verbs, node kinds, and primitive type names, and a word already used by 32 memories is not added again. A graph change cues only the symbol that changed. An explicit trigger is kept either way, and it still ranks ahead of a title cue. Among title cues, a rarer word ranks ahead of a common one. Schema 30 drops the old automatic cues that match those rules. The indexer and the pending file list both skip paths named by `.gitignore`. A code change under `target`, `target-dev`, `node_modules`, or `dist` is kept and marked noise: search skips it, and a fetch by id still returns it. A path such as `target-design` stays a normal memory.
+**Long-term memory** is a decision, a bug fix, an architecture note, a convention, or a note. Store it with a trigger name. Preflight injects at most three titles, and that block stops at 6000 characters. If the prompt contains a registered name, that memory comes first. An unknown name returns nothing. Free text is only the fallback, for a paraphrase. Automatic cues come from the title, tags, file name, and symbols. They skip change verbs, node kinds, and primitive type names, and a word already used by 32 memories is not added again. A graph change cues only the symbol that changed. An explicit trigger is kept either way, and it still ranks ahead of a title cue. Editing a memory keeps its triggers and rebuilds its search text, instruction flag, and file anchors from the new text. Among title cues, a rarer word ranks ahead of a common one. Schema 30 drops the old automatic cues that match those rules. The indexer and the pending file list both skip paths named by `.gitignore`. A code change under `target`, `target-dev`, `node_modules`, or `dist` is kept and marked noise: search skips it, and a fetch by id still returns it. A path such as `target-design` stays a normal memory.
 
 **The archive** is permanent. These rows are never injected:
 
@@ -282,7 +282,7 @@ Everything is stored locally in `.ax/ax.db` (SQLite):
 | `memory_links` | `source` and `supersedes` links between a candidate and the episode it came from |
 | `memory_vec` | sqlite-vec index used only for archive search |
 
-Triggers keep the FTS5 index in sync automatically on INSERT, UPDATE, and DELETE — no manual reindexing needed.
+Triggers keep the FTS5 index in sync automatically on INSERT, UPDATE, and DELETE — no manual reindexing needed. Deleting a memory also removes its cues, links, anchors, access log, and archive vector in one transaction.
 
 ### Source field values
 
