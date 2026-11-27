@@ -18,11 +18,14 @@ pub struct Fetched {
 }
 
 impl Fetched {
-    /// `tree`, narrowed to the folder the source URL points at.
-    pub fn skill_tree(&self) -> PathBuf {
+    /// `tree`, narrowed to the folder the source URL points at. A path that
+    /// is absolute, contains `..` or runs through a link out of `tree` is
+    /// refused.
+    pub fn skill_tree(&self) -> Result<PathBuf, String> {
         match &self.skill_path {
-            Some(path) => self.tree.join(path),
-            None => self.tree.clone(),
+            Some(path) => ax_utils::contained_join(&self.tree, path)
+                .map_err(|e| format!("skill path {path:?} is not inside the source: {e}")),
+            None => Ok(self.tree.clone()),
         }
     }
 }
@@ -57,6 +60,9 @@ pub fn fetch_source_allowing(
             host,
             path,
         } => {
+            if let Some(path) = path {
+                crate::source::clean_skill_path(path)?;
+            }
             let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
             let (tree, skill_path) = clone_first_ref(
                 reference.as_deref(),
@@ -577,6 +583,53 @@ pub fn encode(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::vetted_download;
+
+    fn fetched(tree: &std::path::Path, skill_path: &str) -> super::Fetched {
+        super::Fetched {
+            tree: tree.to_path_buf(),
+            sha: String::new(),
+            source_id: String::new(),
+            source_type: "github".into(),
+            well_known_index: None,
+            file_base: String::new(),
+            skill_path: Some(skill_path.into()),
+            _temp: None,
+        }
+    }
+
+    #[test]
+    fn skill_tree_stays_inside_the_clone() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("skills/pdf")).unwrap();
+        assert_eq!(
+            fetched(root.path(), "skills/pdf").skill_tree().unwrap(),
+            root.path().join("skills/pdf")
+        );
+        assert!(fetched(root.path(), "../../etc").skill_tree().is_err());
+        assert!(fetched(root.path(), "/etc").skill_tree().is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skill_tree_refuses_a_link_out_of_the_clone() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("skills")).unwrap();
+        assert!(fetched(root.path(), "skills").skill_tree().is_err());
+    }
+
+    #[test]
+    fn a_git_source_with_an_escaping_path_is_refused_before_cloning() {
+        let source = crate::source::SkillSource::Git {
+            host: crate::source::GitHost::GitHub,
+            clone_url: "https://github.com/o/r.git".into(),
+            source_id: "o/r".into(),
+            reference: None,
+            path: Some("../../x".into()),
+        };
+        let err = super::fetch_source(&source).err().unwrap();
+        assert!(err.contains("skill path"), "{err}");
+    }
 
     #[test]
     fn a_slashed_branch_in_a_tree_url_is_found_by_retrying() {

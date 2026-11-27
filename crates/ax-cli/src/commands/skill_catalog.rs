@@ -245,7 +245,7 @@ async fn install_one(
             },
         )?]
     } else {
-        install_tree(&fetched.skill_tree(), dest, only, replace)?
+        install_tree(&fetched.skill_tree()?, dest, only, replace)?
     };
     let mut lock = LockFile::load(&lock_path(root, global)?)?;
     for receipt in &receipts {
@@ -503,7 +503,7 @@ fn audit_candidate(
         report.sha = fetched.sha;
         return Ok(report);
     } else {
-        find_skill_dir(&fetched.skill_tree(), name)?
+        find_skill_dir(&fetched.skill_tree()?, name)?
     };
     let mut report = audit_directory(&dir)?;
     report.candidate = true;

@@ -250,7 +250,7 @@ pub fn parse_source(input: &str) -> Result<SkillSource, String> {
         return Err("source is empty".into());
     }
     if let Some(source) = parse_url_full(raw) {
-        return Ok(source);
+        return checked_skill_path(source);
     }
     if looks_local(raw) {
         return Ok(SkillSource::Local {
@@ -264,6 +264,40 @@ pub fn parse_source(input: &str) -> Result<SkillSource, String> {
         ));
     }
     parse_github_shorthand(raw)
+}
+
+/// Refuses a git source whose skill folder is absolute or contains `..`, so
+/// it can never point outside the clone. The kept path is the cleaned one
+/// (`.` and empty segments dropped, `/` separators).
+fn checked_skill_path(source: SkillSource) -> Result<SkillSource, String> {
+    match source {
+        SkillSource::Git {
+            host,
+            clone_url,
+            source_id,
+            reference,
+            path: Some(path),
+        } => Ok(SkillSource::Git {
+            host,
+            clone_url,
+            source_id,
+            reference,
+            path: Some(clean_skill_path(&path)?),
+        }),
+        other => Ok(other),
+    }
+}
+
+/// `path` as a plain relative folder with `/` separators, or an error when it
+/// is absolute or contains `..`.
+pub(crate) fn clean_skill_path(path: &str) -> Result<String, String> {
+    let rel = ax_utils::safe_relative(path)
+        .map_err(|e| format!("skill path {path:?} is not inside the repository: {e}"))?;
+    Ok(rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/"))
 }
 
 /// The most branch-path segments a tree URL is retried with.
@@ -457,6 +491,23 @@ mod tests {
             ref_candidates(Some("main"), None),
             vec![(Some("main".to_string()), None)]
         );
+    }
+
+    #[test]
+    fn a_skill_path_that_leaves_the_repository_is_refused() {
+        for bad in [
+            "https://dev.azure.com/o/p/_git/r?path=%2F..%2F..%2Fx",
+            "https://dev.azure.com/o/p/_git/r?path=skills/../../x",
+            "https://o.visualstudio.com/p/_git/r?path=..%5C..%5Cx",
+        ] {
+            let err = parse_source(bad).unwrap_err();
+            assert!(err.contains("skill path"), "{bad}: {err}");
+        }
+        // `.` segments and a leading slash are still fine.
+        match parse_source("https://dev.azure.com/o/p/_git/r?path=%2F.%2Fskills%2Fpdf").unwrap() {
+            SkillSource::Git { path, .. } => assert_eq!(path.as_deref(), Some("skills/pdf")),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
