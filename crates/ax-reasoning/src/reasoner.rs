@@ -354,6 +354,13 @@ mod tests {
         status: &'static str,
         body: &'static str,
     ) -> (String, std::thread::JoinHandle<serde_json::Value>) {
+        one_shot_server_owned(status, body.to_string())
+    }
+
+    fn one_shot_server_owned(
+        status: &'static str,
+        body: String,
+    ) -> (String, std::thread::JoinHandle<serde_json::Value>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/v1", listener.local_addr().unwrap());
         let handle = std::thread::spawn(move || {
@@ -563,6 +570,48 @@ mod tests {
         assert_eq!(status["max_tokens"], 900, "{status}");
         assert_eq!(status["strip"], true, "{status}");
         assert_eq!(status["debug"], true, "{status}");
+    }
+
+    #[test]
+    fn a_reply_without_an_answer_falls_back_to_the_explore_output() {
+        for body in [
+            r#"{"choices":[]}"#,
+            r#"{"choices":[{"message":{"content":"  "}}]}"#,
+            "not json",
+        ] {
+            let (url, server) = one_shot_server_owned("200 OK", body.to_string());
+            let (answer, status) = run_offload(&url, &[]);
+            server.join().unwrap();
+            assert!(answer.is_none(), "{body}");
+            assert!(
+                status["last_error"].is_null(),
+                "the request itself worked: {status}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_server_error_is_reported_and_does_not_pause_offload() {
+        let (url, server) = one_shot_server("503 Service Unavailable", r#"{"error":"busy"}"#);
+        let (answer, status) = run_offload(&url, &[]);
+        server.join().unwrap();
+        assert!(answer.is_none());
+        let err = status["last_error"].as_str().unwrap_or_default();
+        assert!(err.contains("503"), "{status}");
+        assert!(!err.contains("backing off"), "{status}");
+        assert!(!backing_off(&format!("{url}/chat/completions")));
+    }
+
+    #[test]
+    fn report_style_returns_the_answer_without_the_footer() {
+        let (url, server) = one_shot_server("200 OK", OK);
+        let (answer, _) = run_offload(&url, &[("AX_OFFLOAD_STYLE", "report")]);
+        server.join().unwrap();
+        assert_eq!(answer.as_deref(), Some("Coverage: full."));
+        let (url, server) = one_shot_server("200 OK", OK);
+        let (answer, _) = run_offload(&url, &[]);
+        server.join().unwrap();
+        assert!(answer.unwrap().ends_with(PLAIN_FOOTER));
     }
 
     #[test]

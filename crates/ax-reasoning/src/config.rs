@@ -755,6 +755,97 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn env_settings_win_over_the_config_file() {
+        let full_config = || {
+            write_offload_config(Some(OffloadConfig {
+                url: Some("https://api.groq.com/openai/v1".into()),
+                model: Some("mixtral".into()),
+                key_env: Some("GROQ_API_KEY".into()),
+                effort: Some("low".into()),
+                style: Some("report".into()),
+            }))
+            .unwrap();
+        };
+        let from_file = with_env(&[("GROQ_API_KEY", "gsk-test")], |_| {
+            full_config();
+            resolve_offload()
+        });
+        assert!(from_file.enabled);
+        assert_eq!(from_file.origin, "config");
+        assert_eq!(from_file.model, "mixtral");
+        assert_eq!(from_file.key_source.as_deref(), Some("GROQ_API_KEY"));
+        assert_eq!(from_file.effort.as_deref(), Some("low"));
+        assert_eq!(from_file.style, "report");
+
+        let from_env = with_env(
+            &[
+                ("GROQ_API_KEY", "gsk-test"),
+                ("AX_OFFLOAD_URL", "https://api.groq.com/openai/v1"),
+                ("AX_OFFLOAD_KEY", "sk-env"),
+                ("AX_OFFLOAD_MODEL", "llama"),
+                ("AX_OFFLOAD_EFFORT", "high"),
+                ("AX_OFFLOAD_STYLE", "plain"),
+            ],
+            |_| {
+                full_config();
+                resolve_offload()
+            },
+        );
+        assert_eq!(from_env.origin, "env");
+        assert_eq!(from_env.model, "llama");
+        assert_eq!(from_env.api_key.as_deref(), Some("sk-env"));
+        assert_eq!(from_env.key_source.as_deref(), Some("AX_OFFLOAD_KEY"));
+        assert_eq!(from_env.effort.as_deref(), Some("high"));
+        assert_eq!(from_env.style, "plain");
+    }
+
+    #[test]
+    fn disable_wins_over_every_endpoint() {
+        let r = with_env(
+            &[
+                ("AX_OFFLOAD_DISABLE", "1"),
+                ("AX_OFFLOAD_URL", "http://localhost:11434/v1"),
+                ("AX_OFFLOAD_KEY", "sk-env"),
+            ],
+            |_| {
+                write_offload_config(Some(OffloadConfig {
+                    url: Some("https://api.openai.com/v1".into()),
+                    ..OffloadConfig::default()
+                }))
+                .unwrap();
+                resolve_offload()
+            },
+        );
+        assert!(!r.enabled);
+        assert_eq!(r.url, None);
+        assert_eq!(r.api_key, None);
+        assert_eq!(r.origin, "none");
+    }
+
+    #[test]
+    fn init_reports_an_existing_endpoint_without_changing_it() {
+        let (report, cfg) = with_env(&[("OPENAI_API_KEY", "sk-test")], |_| {
+            write_offload_config(Some(OffloadConfig {
+                url: Some("https://api.groq.com/openai/v1".into()),
+                ..OffloadConfig::default()
+            }))
+            .unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let report = rt.block_on(seed_offload_on_init()).unwrap();
+            (report, read_offload_config())
+        });
+        assert!(report.skipped_existing);
+        assert!(report.suggested.is_none());
+        let active = report.active.expect("the saved endpoint is reported");
+        assert_eq!(active.id, "groq");
+        assert_eq!(active.key_env.as_deref(), Some("GROQ_API_KEY"));
+        assert_eq!(cfg.url.as_deref(), Some("https://api.groq.com/openai/v1"));
+    }
+
+    #[test]
     fn a_zero_or_invalid_timeout_uses_the_default() {
         for raw in ["0", "-5", "soon"] {
             let r = with_env(
