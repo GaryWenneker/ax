@@ -318,6 +318,8 @@ Enforcement lives in `crates/ax-context/tests/no_query_time_disk_reads.rs`, a fa
 
 `ax serve --mcp` prefers a **per-project daemon**: the IDE process is a thin stdio proxy; one daemon owns `.ax/ax.db`. That lets several IDEs share one writer.
 
+The daemon listens on a Unix socket (`.ax/daemon.sock`, or one in the temp directory when that path is too long) or, on Windows, a named pipe. Only when no socket can be bound does it listen on TCP `127.0.0.1` instead. A failed accept, for example when the process runs out of file descriptors, is logged and retried; it never starts a second daemon in the same process.
+
 When the daemon stops (an upgrade replaced its binary, it was restarted, it crashed), each proxy reconnects to the next daemon, or starts one, on the same stdio connection. Requests that were in flight get the JSON-RPC error `-32000` `ax daemon restarted; retry the call`; requests sent during the reconnect are delivered in order. A proxy on a newer `ax` build restarts an older daemon on its own binary; an older proxy attaches to a newer daemon. See [`ax daemon`](/reference/cli/#ax-daemon-path-statusstoprestart).
 
 If the daemon cannot start when the client first connects, each client falls back to an **embedded** engine — concurrent writers then produce `database is locked` and agents enter **DEGRADED**. Recover with Command Center **Reload MCP** (hamburger / sidebar Ops) or `ax daemon restart`, then restart MCP servers in the IDE. See [Troubleshooting](/troubleshooting/#mcp-hits-database-is-locked--agents-go-degraded).

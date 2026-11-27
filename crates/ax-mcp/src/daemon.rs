@@ -314,44 +314,84 @@ fn acquire_daemon_lock_or_exit(project_root: &Path) -> PathBuf {
 
 pub async fn run_daemon(project_root: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let pid_path = acquire_daemon_lock_or_exit(&project_root);
-    if run_socket_daemon(project_root.clone(), pid_path.clone())
-        .await
-        .is_err()
-    {
-        tracing::warn!("socket daemon unavailable; falling back to TCP");
-        run_tcp_daemon(project_root, pid_path).await?;
+    // Only a socket that cannot be bound falls back to TCP. Once the socket
+    // daemon serves clients it never hands over to a second daemon.
+    match bind_socket(&project_root) {
+        Ok(socket) => run_socket_daemon(socket, project_root, pid_path).await,
+        Err(e) => {
+            tracing::warn!("socket daemon unavailable ({e}); falling back to TCP");
+            run_tcp_daemon(project_root, pid_path).await
+        }
     }
-    Ok(())
 }
 
-async fn run_socket_daemon(
-    project_root: PathBuf,
-    pid_path: PathBuf,
-) -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(windows)]
-    {
-        return run_windows_pipe_daemon(project_root, pid_path).await;
-    }
-    #[cfg(unix)]
-    {
-        run_unix_socket_daemon(project_root, pid_path).await
-    }
-    #[cfg(not(any(windows, unix)))]
-    {
-        Err("no socket transport on this platform".into())
-    }
+#[cfg(unix)]
+struct BoundSocket {
+    listener: tokio::net::UnixListener,
+    path: String,
 }
 
 #[cfg(windows)]
-async fn run_windows_pipe_daemon(
+struct BoundSocket {
+    server: tokio::net::windows::named_pipe::NamedPipeServer,
+    path: String,
+}
+
+#[cfg(not(any(windows, unix)))]
+struct BoundSocket;
+
+#[cfg(unix)]
+fn bind_socket(project_root: &Path) -> Result<BoundSocket, Box<dyn std::error::Error>> {
+    use tokio::net::UnixListener;
+    for path in daemon_socket_candidates(project_root) {
+        let _ = std::fs::remove_file(&path);
+        match UnixListener::bind(&path) {
+            Ok(listener) => return Ok(BoundSocket { listener, path }),
+            Err(e) => tracing::warn!("socket bind failed for {path}: {e}"),
+        }
+    }
+    Err("no socket path could be bound".into())
+}
+
+#[cfg(windows)]
+fn bind_socket(project_root: &Path) -> Result<BoundSocket, Box<dyn std::error::Error>> {
+    use tokio::net::windows::named_pipe::ServerOptions;
+    let path = daemon_socket_candidates(project_root)
+        .first()
+        .cloned()
+        .ok_or("no pipe candidates")?;
+    let server = ServerOptions::new()
+        .first_pipe_instance(true)
+        .create(&path)?;
+    Ok(BoundSocket { server, path })
+}
+
+#[cfg(not(any(windows, unix)))]
+fn bind_socket(_project_root: &Path) -> Result<BoundSocket, Box<dyn std::error::Error>> {
+    Err("no socket transport on this platform".into())
+}
+
+#[cfg(not(any(windows, unix)))]
+async fn run_socket_daemon(
+    _socket: BoundSocket,
+    _project_root: PathBuf,
+    _pid_path: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    Err("no socket transport on this platform".into())
+}
+
+#[cfg(windows)]
+async fn run_socket_daemon(
+    socket: BoundSocket,
     project_root: PathBuf,
     pid_path: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use tokio::net::windows::named_pipe::ServerOptions;
 
-    let candidates = daemon_socket_candidates(&project_root);
-    let pipe_name = candidates.first().cloned().ok_or("no pipe candidates")?;
-
+    let BoundSocket {
+        mut server,
+        path: pipe_name,
+    } = socket;
     write_daemon_info(&project_root, 0, Some(pipe_name.clone()))?;
     let _ = rewrite_lock_socket_path(&pid_path, &pipe_name);
     let _liveness = install_main_thread_watchdog();
@@ -367,17 +407,28 @@ async fn run_windows_pipe_daemon(
         project_root.clone(),
     )));
 
-    let mut server = ServerOptions::new()
-        .first_pipe_instance(true)
-        .create(&pipe_name)?;
-
-    loop {
-        if lifecycle.is_stopping() {
-            break;
+    while !lifecycle.is_stopping() {
+        // A failed connect or a pipe instance that cannot be created is
+        // retried after a pause; it never ends the daemon.
+        if let Err(e) = server.connect().await {
+            tracing::warn!("daemon pipe connect failed: {e}; retrying");
+            tokio::time::sleep(ACCEPT_RETRY).await;
+            match ServerOptions::new().create(&pipe_name) {
+                Ok(fresh) => server = fresh,
+                Err(e) => tracing::warn!("daemon pipe create failed: {e}"),
+            }
+            continue;
         }
-        server.connect().await?;
-        let connected = server;
-        server = ServerOptions::new().create(&pipe_name)?;
+        let next = loop {
+            match ServerOptions::new().create(&pipe_name) {
+                Ok(next) => break next,
+                Err(e) => {
+                    tracing::warn!("daemon pipe create failed: {e}; retrying");
+                    tokio::time::sleep(ACCEPT_RETRY).await;
+                }
+            }
+        };
+        let connected = std::mem::replace(&mut server, next);
         let engine = engine.clone();
         let root = project_root.clone();
         let lc = Arc::clone(&lifecycle);
@@ -396,33 +447,15 @@ async fn run_windows_pipe_daemon(
 }
 
 #[cfg(unix)]
-async fn run_unix_socket_daemon(
+async fn run_socket_daemon(
+    socket: BoundSocket,
     project_root: PathBuf,
     pid_path: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use tokio::net::UnixListener;
-
-    let candidates = daemon_socket_candidates(&project_root);
-    let mut bound_path: Option<String> = None;
-    let mut listener: Option<UnixListener> = None;
-
-    for path in candidates {
-        let _ = std::fs::remove_file(&path);
-        match UnixListener::bind(&path) {
-            Ok(l) => {
-                bound_path = Some(path);
-                listener = Some(l);
-                break;
-            }
-            Err(e) => {
-                tracing::warn!("socket bind failed for {path}: {e}");
-            }
-        }
-    }
-
-    let listener = listener.ok_or("no socket path could be bound")?;
-    let socket_path = bound_path.unwrap_or_default();
-
+    let BoundSocket {
+        listener,
+        path: socket_path,
+    } = socket;
     write_daemon_info(&project_root, 0, Some(socket_path.clone()))?;
     let _ = rewrite_lock_socket_path(&pid_path, &socket_path);
     let _liveness = install_main_thread_watchdog();
@@ -438,25 +471,26 @@ async fn run_unix_socket_daemon(
         project_root.clone(),
     )));
 
-    loop {
-        if lifecycle.is_stopping() {
-            break;
-        }
-        let (stream, _) = listener.accept().await?;
-        let engine = engine.clone();
-        let root = project_root.clone();
-        let lc = Arc::clone(&lifecycle);
-        let sp = socket_path.clone();
-        tokio::spawn(async move {
-            lc.on_client_connected().await;
-            let session = DaemonSession::from_unix(stream);
-            let result = serve_session(session, engine, &root, 0, Some(sp), lc.clone()).await;
-            lc.on_client_disconnected().await;
-            if let Err(e) = result {
-                tracing::warn!("daemon client: {}", e);
-            }
-        });
-    }
+    accept_clients(
+        || lifecycle.is_stopping(),
+        || listener.accept(),
+        |(stream, _)| {
+            let engine = engine.clone();
+            let root = project_root.clone();
+            let lc = Arc::clone(&lifecycle);
+            let sp = socket_path.clone();
+            tokio::spawn(async move {
+                lc.on_client_connected().await;
+                let session = DaemonSession::from_unix(stream);
+                let result = serve_session(session, engine, &root, 0, Some(sp), lc.clone()).await;
+                lc.on_client_disconnected().await;
+                if let Err(e) = result {
+                    tracing::warn!("daemon client: {}", e);
+                }
+            });
+        },
+    )
+    .await;
     Ok(())
 }
 
@@ -480,25 +514,51 @@ async fn run_tcp_daemon(
         project_root.clone(),
     )));
 
-    loop {
-        if lifecycle.is_stopping() {
-            break;
-        }
-        let (stream, _) = listener.accept().await?;
-        let engine = engine.clone();
-        let root = project_root.clone();
-        let lc = Arc::clone(&lifecycle);
-        tokio::spawn(async move {
-            lc.on_client_connected().await;
-            let session = DaemonSession::from_tcp(stream);
-            let result = serve_session(session, engine, &root, port, None, lc.clone()).await;
-            lc.on_client_disconnected().await;
-            if let Err(e) = result {
-                tracing::warn!("daemon client: {}", e);
-            }
-        });
-    }
+    accept_clients(
+        || lifecycle.is_stopping(),
+        || listener.accept(),
+        |(stream, _)| {
+            let engine = engine.clone();
+            let root = project_root.clone();
+            let lc = Arc::clone(&lifecycle);
+            tokio::spawn(async move {
+                lc.on_client_connected().await;
+                let session = DaemonSession::from_tcp(stream);
+                let result = serve_session(session, engine, &root, port, None, lc.clone()).await;
+                lc.on_client_disconnected().await;
+                if let Err(e) = result {
+                    tracing::warn!("daemon client: {}", e);
+                }
+            });
+        },
+    )
+    .await;
     Ok(())
+}
+
+/// Pause before accepting again after a failed accept.
+const ACCEPT_RETRY: Duration = Duration::from_millis(250);
+
+/// Accepts clients until the daemon stops and hands each one to `serve`. A
+/// failed accept (for example when the process is out of file descriptors)
+/// is logged and retried after a short pause: it never ends the daemon, so a
+/// daemon that serves clients is never replaced by a second one.
+async fn accept_clients<C, Fut>(
+    is_stopping: impl Fn() -> bool,
+    mut accept: impl FnMut() -> Fut,
+    mut serve: impl FnMut(C),
+) where
+    Fut: std::future::Future<Output = std::io::Result<C>>,
+{
+    while !is_stopping() {
+        match accept().await {
+            Ok(client) => serve(client),
+            Err(e) => {
+                tracing::warn!("daemon accept failed: {e}; retrying");
+                tokio::time::sleep(ACCEPT_RETRY).await;
+            }
+        }
+    }
 }
 
 async fn start_daemon_core(
@@ -700,5 +760,27 @@ mod tests {
     fn parse_idle_timeout_env() {
         assert_eq!(parse_env_ms(Some("0".to_string()), 100), 0);
         assert_eq!(parse_env_ms(Some("invalid".to_string()), 100), 100);
+    }
+    #[tokio::test]
+    async fn a_failed_accept_does_not_end_the_accept_loop() {
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let served = std::sync::Mutex::new(Vec::new());
+        accept_clients(
+            || served.lock().unwrap().len() >= 2,
+            || {
+                let n = calls.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if n == 0 {
+                        // What accept reports when the process is out of file descriptors.
+                        Err(std::io::Error::from_raw_os_error(24))
+                    } else {
+                        Ok(n)
+                    }
+                }
+            },
+            |client| served.lock().unwrap().push(client),
+        )
+        .await;
+        assert_eq!(*served.lock().unwrap(), vec![1, 2]);
     }
 }
