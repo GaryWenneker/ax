@@ -311,24 +311,28 @@ pub fn find_container(runtime: ContainerRuntime, name: &str) -> Option<Container
 }
 
 pub fn discover_sonar(host: &str, container_name: &str, preferred: Option<&str>) -> SonarDiscovery {
+    // Probe each runtime once and answer every later question from that.
     let runtimes = discover_runtimes();
-    let preferred_rt = resolve_runtime(preferred).ok();
+    let installed = |rt: ContainerRuntime| runtimes.iter().any(|r| r.runtime == rt);
+    let preferred_rt = match ContainerRuntime::from_pref(preferred) {
+        Some(rt) => installed(rt).then_some(rt),
+        None => runtimes.first().map(|r| r.runtime),
+    };
     let container = preferred_rt
         .and_then(|rt| find_container(rt, container_name))
         .or_else(|| {
-            for rt in [ContainerRuntime::Podman, ContainerRuntime::Docker] {
-                if let Some(c) = find_container(rt, container_name) {
-                    return Some(c);
-                }
-            }
-            None
+            runtimes
+                .iter()
+                .map(|r| r.runtime)
+                .filter(|rt| Some(*rt) != preferred_rt)
+                .find_map(|rt| find_container(rt, container_name))
         });
     let database = container
         .as_ref()
         .and_then(|c| find_container(c.runtime, &db_container_name(container_name)));
-    let embedded_database = container
-        .as_ref()
-        .is_some_and(|c| !container_uses_postgres(c.runtime, container_name));
+    let embedded_database = container.as_ref().is_some_and(|c| {
+        database.is_none() && !container_env_uses_postgres(c.runtime, container_name)
+    });
     let reachable = sonar_reachable_sync(host);
     let mut effective_host = host.to_string();
     if !reachable {
@@ -686,9 +690,12 @@ fn container_env(runtime: ContainerRuntime, name: &str) -> Vec<String> {
 }
 
 fn container_uses_postgres(runtime: ContainerRuntime, sonar_name: &str) -> bool {
-    if find_container(runtime, &db_container_name(sonar_name)).is_some() {
-        return true;
-    }
+    find_container(runtime, &db_container_name(sonar_name)).is_some()
+        || container_env_uses_postgres(runtime, sonar_name)
+}
+
+/// Whether the SonarQube container's environment points at PostgreSQL.
+fn container_env_uses_postgres(runtime: ContainerRuntime, sonar_name: &str) -> bool {
     container_env(runtime, sonar_name)
         .iter()
         .any(|e| e.starts_with("SONAR_JDBC_URL=") && e.contains("postgresql"))
@@ -1441,6 +1448,21 @@ esac
         });
         let (result, _) = outcome.expect("install returned");
         (result, fake.calls())
+    }
+
+    #[test]
+    fn discover_probes_each_runtime_and_container_once() {
+        let fake = FakeCli::new();
+        fake.file("ps-sonarqube", "sonarqube\tExited (0) 2 days ago\t\n");
+        fake.file("ps-sonarqube-db", "sonarqube-db\tExited (0) 2 days ago\t\n");
+        let d = discover_sonar("http://127.0.0.1:1", "sonarqube", None);
+        assert_eq!(d.preferred, Some(ContainerRuntime::Podman));
+        assert!(d.container.is_some() && d.database.is_some());
+        assert!(!d.embedded_database);
+        let calls = fake.calls();
+        let count = |prefix: &str| calls.lines().filter(|l| l.starts_with(prefix)).count();
+        assert_eq!(count("--version"), 1, "{calls}");
+        assert_eq!(count("ps "), 2, "{calls}");
     }
 
     #[test]

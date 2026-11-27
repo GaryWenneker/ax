@@ -288,7 +288,7 @@ pub async fn inspect_setup(
     } else {
         repo_projects.iter().map(|p| p.key.clone()).collect()
     };
-    let (lookup_summary, exists_by_key) = lookup_projects(
+    let (lookup_summary, exists_by_key) = lookup_projects_reachable(
         &config.host,
         &keys,
         token.as_deref(),
@@ -357,7 +357,7 @@ pub async fn bootstrap_sonar(
         crate::container::ensure_sonar_stack_online(sonar, &log).await?;
     }
 
-    if !validate_sonar_login(&config.host, &config.admin_user, &config.admin_password).await? {
+    if !check_login(&config.host, &config.admin_user, &config.admin_password).await? {
         return Err(format!(
             "SonarQube login failed for user '{}'. Ensure the local container is running and reset the stack if credentials were changed outside ax.",
             config.admin_user
@@ -367,7 +367,7 @@ pub async fn bootstrap_sonar(
     ensure_sonar_dark_theme(&config.host, &config.admin_user, &config.admin_password).await;
 
     let (projects_created, repo_projects, _) =
-        ensure_sonar_projects(config, project_root, repo_names).await?;
+        ensure_projects_reachable(config, project_root, repo_names).await?;
 
     let token = generate_token(
         &config.host,
@@ -414,14 +414,21 @@ pub async fn ensure_sonar_projects(
             config.host
         ));
     }
+    ensure_projects_reachable(config, project_root, repo_names).await
+}
 
+/// [`ensure_sonar_projects`] for a caller that has just seen SonarQube up.
+async fn ensure_projects_reachable(
+    config: &SonarBootstrapConfig,
+    project_root: &Path,
+    repo_names: &[String],
+) -> Result<(usize, Vec<RepoProjectStatus>, Vec<String>), String> {
     let token = read_sonar_token(project_root, &config.token_env);
     let token_ok = match token.as_deref() {
         Some(t) => validate_sonar_token(&config.host, t).await,
         None => false,
     };
-    let admin_ok =
-        validate_sonar_login(&config.host, &config.admin_user, &config.admin_password).await?;
+    let admin_ok = check_login(&config.host, &config.admin_user, &config.admin_password).await?;
 
     if !admin_ok && !token_ok {
         return Err(format!(
@@ -451,15 +458,15 @@ pub async fn ensure_sonar_projects(
     }
 
     if repo_projects.is_empty() {
-        if lookup_project(
+        if lookup_projects_reachable(
             &config.host,
-            &workspace_key,
+            std::slice::from_ref(&workspace_key),
             token.as_deref(),
             &config.admin_user,
             &config.admin_password,
         )
         .await
-            != ProjectLookup::Found
+        .0 != ProjectLookup::Found
         {
             if !admin_ok {
                 return Err(
@@ -483,7 +490,7 @@ pub async fn ensure_sonar_projects(
     }
 
     let keys: Vec<String> = repo_projects.iter().map(|p| p.key.clone()).collect();
-    let (lookup_summary, exists_by_key) = lookup_projects(
+    let (lookup_summary, exists_by_key) = lookup_projects_reachable(
         &config.host,
         &keys,
         token.as_deref(),
@@ -532,13 +539,24 @@ pub async fn ensure_sonar_token(
     config: &SonarBootstrapConfig,
     project_root: &Path,
 ) -> Result<(), String> {
+    if !sonar_reachable(&config.host).await {
+        return Err("SonarQube is not reachable".into());
+    }
+    ensure_token_reachable(config, project_root).await
+}
+
+/// [`ensure_sonar_token`] for a caller that has just seen SonarQube up.
+async fn ensure_token_reachable(
+    config: &SonarBootstrapConfig,
+    project_root: &Path,
+) -> Result<(), String> {
     if let Some(token) = read_sonar_token(project_root, &config.token_env) {
         if validate_sonar_token(&config.host, &token).await {
             return Ok(());
         }
     }
 
-    if !validate_sonar_login(&config.host, &config.admin_user, &config.admin_password).await? {
+    if !check_login(&config.host, &config.admin_user, &config.admin_password).await? {
         return Err(format!(
             "SonarQube login failed for user '{}'. Reset the local stack if credentials were changed outside ax.",
             config.admin_user
@@ -566,14 +584,15 @@ pub async fn auto_provision_sonar_from_discovery(
     if !sonar.enabled || repo_names.is_empty() {
         return Ok(());
     }
-    if !sonar_reachable(&sonar.host).await {
+    let config = SonarBootstrapConfig::resolve_for_project(sonar, project_root);
+    if !sonar_reachable(&config.host).await {
         return Ok(());
     }
     tracing::info!(
         repos = repo_names.len(),
         "Auto-provisioning SonarQube projects from discovered git repos"
     );
-    ensure_sonar_ready_for_scan(sonar, project_root, repo_names).await
+    ready_for_scan_reachable(&config, project_root, repo_names).await
 }
 
 /// Prepare SonarQube before a quality-gate scan: projects per git repo + scanner token.
@@ -592,9 +611,18 @@ pub async fn ensure_sonar_ready_for_scan(
             config.host
         ));
     }
+    ready_for_scan_reachable(&config, project_root, repo_names).await
+}
+
+/// One reachability check per entry point: the steps below assume SonarQube is up.
+async fn ready_for_scan_reachable(
+    config: &SonarBootstrapConfig,
+    project_root: &Path,
+    repo_names: &[String],
+) -> Result<(), String> {
     ensure_sonar_dark_theme(&config.host, &config.admin_user, &config.admin_password).await;
-    ensure_sonar_projects(&config, project_root, repo_names).await?;
-    ensure_sonar_token(&config, project_root).await?;
+    ensure_projects_reachable(config, project_root, repo_names).await?;
+    ensure_token_reachable(config, project_root).await?;
     Ok(())
 }
 
@@ -610,7 +638,7 @@ pub async fn regenerate_sonar_token(
         ));
     }
 
-    if !validate_sonar_login(&config.host, &config.admin_user, &config.admin_password).await? {
+    if !check_login(&config.host, &config.admin_user, &config.admin_password).await? {
         return Err(format!(
             "SonarQube login failed for user '{}'. Ensure the local container is running.",
             config.admin_user
@@ -674,14 +702,18 @@ pub async fn ensure_sonar_dark_theme(host: &str, user: &str, password: &str) {
 /// Whether SonarQube at `host` is `UP` and can serve API calls (a server
 /// that is still `STARTING` does not count).
 pub async fn sonar_reachable(host: &str) -> bool {
-    crate::container::sonar_status_up(&http_client(), host).await
+    crate::container::sonar_status_up(http_client(), host).await
 }
 
-fn http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
+/// One client for every SonarQube call, so requests share its connection pool.
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    })
 }
 
 /// Check SonarQube web UI credentials against `/api/authentication/validate`.
@@ -690,6 +722,12 @@ pub async fn validate_sonar_login(host: &str, user: &str, password: &str) -> Res
     if !sonar_reachable(host).await {
         return Err("SonarQube is not reachable".into());
     }
+    check_login(host, user, password).await
+}
+
+/// [`validate_sonar_login`] for a caller that has just seen SonarQube up.
+async fn check_login(host: &str, user: &str, password: &str) -> Result<bool, String> {
+    let host = host.trim_end_matches('/');
     let url = format!("{host}/api/authentication/validate");
     let resp = authed_get(&url, user, password).await?;
     if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
@@ -713,14 +751,27 @@ pub async fn lookup_projects(
     user: &str,
     password: &str,
 ) -> (ProjectLookup, HashMap<String, bool>) {
+    if project_keys.is_empty() {
+        return (ProjectLookup::Missing, HashMap::new());
+    }
+    if !sonar_reachable(host).await {
+        return (ProjectLookup::Unreachable, HashMap::new());
+    }
+    lookup_projects_reachable(host, project_keys, token, user, password).await
+}
+
+/// [`lookup_projects`] for a caller that has just seen SonarQube up.
+async fn lookup_projects_reachable(
+    host: &str,
+    project_keys: &[String],
+    token: Option<&str>,
+    user: &str,
+    password: &str,
+) -> (ProjectLookup, HashMap<String, bool>) {
     let mut exists = HashMap::new();
     if project_keys.is_empty() {
         return (ProjectLookup::Missing, exists);
     }
-    if !sonar_reachable(host).await {
-        return (ProjectLookup::Unreachable, exists);
-    }
-
     if let Some(t) = token.filter(|s| !s.trim().is_empty()) {
         match search_projects_batch(host, project_keys, Auth::Bearer(t)).await {
             Ok(found) => {
@@ -1518,6 +1569,67 @@ mod tests {
             "{:?}",
             started.elapsed()
         );
+    }
+
+    /// A SonarQube that is UP, accepts the admin login and any token, and has
+    /// the canonical `ax-Web` / `ax-Api` projects.
+    async fn ready_sonar() -> mock_sonar::MockSonar {
+        mock_sonar::start(|_method, path| {
+            if path.starts_with("/api/system/status") {
+                return (200, r#"{"status":"UP"}"#.into());
+            }
+            if path.starts_with("/api/authentication/validate") {
+                return (200, r#"{"valid":true}"#.into());
+            }
+            if path.starts_with("/api/projects/search") {
+                return (
+                    200,
+                    r#"{"components":[{"key":"ax-Web"},{"key":"ax-Api"}]}"#.into(),
+                );
+            }
+            (200, "{}".into())
+        })
+        .await
+    }
+
+    fn status_pings(requests: &[String]) -> usize {
+        requests
+            .iter()
+            .filter(|r| r.contains("/api/system/status"))
+            .count()
+    }
+
+    #[tokio::test]
+    async fn ensure_sonar_projects_checks_reachability_once() {
+        let (_dir, root, repos) = contoso_workspace();
+        let sonar = ready_sonar().await;
+        let config = SonarBootstrapConfig::from_sonar(&sonar.host, "ax", "SONAR_TOKEN");
+        ensure_sonar_projects(&config, &root, &repos).await.unwrap();
+        assert_eq!(status_pings(&sonar.requests()), 1, "{:?}", sonar.requests());
+    }
+
+    #[tokio::test]
+    async fn ensure_sonar_ready_for_scan_checks_reachability_once() {
+        let (_dir, root, repos) = contoso_workspace();
+        std::fs::create_dir_all(root.join(".ax")).unwrap();
+        std::fs::write(root.join(".ax/sonar.token"), "squ_valid\n").unwrap();
+        let sonar = ready_sonar().await;
+        let cfg = crate::sonar::SonarConfig {
+            enabled: true,
+            host: sonar.host.clone(),
+            project_key: "ax".into(),
+            token_env: "AX_QUALITY_TEST_UNSET_TOKEN_ENV".into(),
+            ..Default::default()
+        };
+        ensure_sonar_ready_for_scan(&cfg, &root, &repos)
+            .await
+            .unwrap();
+        assert_eq!(status_pings(&sonar.requests()), 1, "{:?}", sonar.requests());
+    }
+
+    #[test]
+    fn the_http_client_is_shared() {
+        assert!(std::ptr::eq(http_client(), http_client()));
     }
 
     #[tokio::test]
