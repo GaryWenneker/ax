@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -168,6 +168,98 @@ struct Registration {
 
 type Registry = Arc<Mutex<HashMap<(String, String), Registration>>>;
 
+/// Size and modification time of every file a primary snapshot is built from:
+/// the project database and its WAL, the MCP logs directly inside the
+/// project's `.ax` folder, and the shared usage database with its WAL. Shared
+/// memory files, locks and daemon state are left out: they change without a
+/// data change.
+type Fingerprint = Vec<(PathBuf, Option<(u64, SystemTime)>)>;
+
+fn change_fingerprint(project_root: &Path, usage_db: &Path) -> Fingerprint {
+    let stat = |path: &Path| {
+        std::fs::symlink_metadata(path)
+            .ok()
+            .filter(|meta| meta.is_file())
+            .map(|meta| (meta.len(), meta.modified().unwrap_or(UNIX_EPOCH)))
+    };
+    let mut files: Fingerprint = std::fs::read_dir(project_root.join(".ax"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name == "ax.db"
+                        || name == "ax.db-wal"
+                        || (name.starts_with("mcp-verbose") && name.ends_with(".log"))
+                })
+        })
+        .filter_map(|path| stat(&path).map(|meta| (path, Some(meta))))
+        .collect();
+    files.sort();
+    let mut wal = usage_db.as_os_str().to_owned();
+    wal.push("-wal");
+    for path in [usage_db.to_path_buf(), PathBuf::from(wal)] {
+        let meta = stat(&path);
+        files.push((path, meta));
+    }
+    files
+}
+
+/// Decides when the primary builds a snapshot to compare revisions. Building
+/// one exports the native data and merges all retained history, so it runs
+/// only for projects with a live replica registration and only after one of
+/// the snapshot's source files changed.
+#[derive(Default)]
+struct ChangeDetector {
+    seen: HashMap<String, (Fingerprint, String)>,
+}
+
+impl ChangeDetector {
+    /// Returns the new revision when registered replicas should get a hint.
+    async fn poll<F, Fut>(
+        &mut self,
+        project_id: &str,
+        has_peers: bool,
+        fingerprint: impl Fn() -> Fingerprint,
+        export: F,
+    ) -> Option<String>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<String, String>>,
+    {
+        if !has_peers {
+            return None;
+        }
+        if self
+            .seen
+            .get(project_id)
+            .is_some_and(|(known, _)| *known == fingerprint())
+        {
+            return None;
+        }
+        let revision = match export().await {
+            Ok(revision) => revision,
+            Err(error) => {
+                tracing::warn!(project = %project_id, "UDP change detection could not read snapshot: {}", error);
+                return None;
+            }
+        };
+        // Take the fingerprint after the export so the export's own writes do
+        // not count as a change. A write that lands during the export is
+        // picked up by the replicas' periodic sync.
+        let previous = self
+            .seen
+            .insert(project_id.to_owned(), (fingerprint(), revision.clone()));
+        match previous {
+            Some((_, old)) if old != revision => Some(revision),
+            _ => None,
+        }
+    }
+}
+
 /// Primary: register only authenticated replicas. Never trust a discovered
 /// primary or a claimed IP in packet JSON: use the UDP socket source address.
 pub async fn primary(config: ServerConfig, udp_port: u16) -> Result<(), String> {
@@ -238,37 +330,10 @@ pub async fn primary(config: ServerConfig, udp_port: u16) -> Result<(), String> 
             }
         }
     });
-    let mut last_revisions: HashMap<String, String> = HashMap::new();
+    let mut detector = ChangeDetector::default();
+    let usage_db = ax_usage::usage_db_path();
     loop {
         for project in &config.projects {
-            let snapshot = match server_snapshot::export(&config, &project.id).await {
-                Ok(snapshot) => snapshot,
-                Err(error) => {
-                    tracing::warn!(
-                        project = %project.id,
-                        "UDP change detection could not read snapshot: {}",
-                        error
-                    );
-                    continue;
-                }
-            };
-            let previous = last_revisions.insert(project.id.clone(), snapshot.revision.clone());
-            if previous.as_deref() == Some(snapshot.revision.as_str()) || previous.is_none() {
-                continue;
-            }
-            let Some(token) = token_for(&config, &project.id) else {
-                continue;
-            };
-            let message = packet(
-                "changed",
-                &config,
-                &project.id,
-                Some(snapshot.revision),
-                &token,
-            );
-            let Ok(payload) = serde_json::to_vec(&message) else {
-                continue;
-            };
             let peers: Vec<SocketAddr> = {
                 let mut registry = registry.lock().await;
                 registry.retain(|_, peer| {
@@ -279,6 +344,28 @@ pub async fn primary(config: ServerConfig, udp_port: u16) -> Result<(), String> 
                     .filter(|((id, _), _)| id == &project.id)
                     .map(|(_, registration)| registration.address)
                     .collect()
+            };
+            let Some(revision) = detector
+                .poll(
+                    &project.id,
+                    !peers.is_empty(),
+                    || change_fingerprint(&project.path, &usage_db),
+                    || async {
+                        server_snapshot::export(&config, &project.id)
+                            .await
+                            .map(|snapshot| snapshot.revision)
+                    },
+                )
+                .await
+            else {
+                continue;
+            };
+            let Some(token) = token_for(&config, &project.id) else {
+                continue;
+            };
+            let message = packet("changed", &config, &project.id, Some(revision), &token);
+            let Ok(payload) = serde_json::to_vec(&message) else {
+                continue;
             };
             for peer in peers {
                 if let Err(error) = socket.send_to(&payload, peer).await {
@@ -458,6 +545,80 @@ mod tests {
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         )
         .is_none());
+    }
+
+    #[tokio::test]
+    async fn primary_builds_a_snapshot_only_for_live_replicas_after_a_source_change() {
+        use std::{cell::Cell, rc::Rc};
+        let mut detector = ChangeDetector::default();
+        let fingerprint = Rc::new(Cell::new(1u64));
+        let exports = Rc::new(Cell::new(0u32));
+        let revision = Rc::new(Cell::new("a"));
+        let fp = || {
+            let fingerprint = fingerprint.clone();
+            move || {
+                vec![(
+                    PathBuf::from("ax.db"),
+                    Some((fingerprint.get(), UNIX_EPOCH)),
+                )]
+            }
+        };
+        let export = || {
+            let exports = exports.clone();
+            let revision = revision.clone();
+            move || {
+                exports.set(exports.get() + 1);
+                let value = revision.get().to_owned();
+                async move { Ok::<_, String>(value) }
+            }
+        };
+        // No registered replica: nothing is exported.
+        for _ in 0..3 {
+            assert_eq!(detector.poll("p", false, fp(), export()).await, None);
+        }
+        assert_eq!(exports.get(), 0);
+        // First look records the baseline without a hint.
+        assert_eq!(detector.poll("p", true, fp(), export()).await, None);
+        assert_eq!(exports.get(), 1);
+        // Unchanged source files: no export, however often the loop runs.
+        for _ in 0..5 {
+            assert_eq!(detector.poll("p", true, fp(), export()).await, None);
+        }
+        assert_eq!(exports.get(), 1);
+        // A changed file with a new revision sends one hint.
+        fingerprint.set(2);
+        revision.set("b");
+        assert_eq!(
+            detector.poll("p", true, fp(), export()).await,
+            Some("b".into())
+        );
+        assert_eq!(exports.get(), 2);
+        // A changed file with the same revision exports but sends nothing.
+        fingerprint.set(3);
+        assert_eq!(detector.poll("p", true, fp(), export()).await, None);
+        assert_eq!(exports.get(), 3);
+    }
+
+    #[test]
+    fn fingerprint_follows_project_files_and_the_usage_database() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".ax/server")).unwrap();
+        let usage = dir.path().join("usage.db");
+        std::fs::write(dir.path().join(".ax/ax.db"), "one").unwrap();
+        let first = change_fingerprint(dir.path(), &usage);
+        assert_eq!(first, change_fingerprint(dir.path(), &usage));
+        // Staging under subfolders, shared memory and daemon state are not source changes.
+        std::fs::write(dir.path().join(".ax/server/staged.json"), "x").unwrap();
+        std::fs::write(dir.path().join(".ax/ax.db-shm"), "x").unwrap();
+        std::fs::write(dir.path().join(".ax/daemon.json"), "x").unwrap();
+        assert_eq!(first, change_fingerprint(dir.path(), &usage));
+        std::fs::write(dir.path().join(".ax/ax.db-wal"), "frame").unwrap();
+        assert_ne!(first, change_fingerprint(dir.path(), &usage));
+        std::fs::write(dir.path().join(".ax/mcp-verbose-2026-10-12.log"), "line").unwrap();
+        let second = change_fingerprint(dir.path(), &usage);
+        assert_ne!(first, second);
+        std::fs::write(&usage, "rows").unwrap();
+        assert_ne!(second, change_fingerprint(dir.path(), &usage));
     }
 
     #[test]
