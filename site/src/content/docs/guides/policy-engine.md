@@ -323,7 +323,7 @@ group: design
 | `triggers` | Match when user intent contains these phrases |
 | `priority` | Higher wins when multiple rules match |
 | `enabled` | When `false`, matcher/preflight skip the rule (default `true`) |
-| `status` | `approved` (active, the default), `pending` (review queue), or `rejected`. Any other value, and any unknown `scope`, fails validation, so the file is skipped on index instead of being treated as approved |
+| `status` | `approved` (active, the default), `pending` (review queue), or `rejected`. Any other value, and any unknown `scope`, fails validation, so the file is skipped on index and any row it produced before is removed, instead of being treated as approved |
 | `tags` | Required for Command Center filtering; free-form labels. Use `local` or `noshare` to opt out of pack export |
 | `group` | Optional catalog folder id for Command Center **Rules** grouping (same catalog as skills). Matching ignores this field |
 | `share` | Optional alias — normalized to tag `shared` on parse (legacy; default export no longer requires it) |
@@ -721,7 +721,7 @@ Run `ax policy sync` to verify managed policy files and warn about duplicate `.c
 
 ### A rule or skill file has a typo
 
-When a policy file exists but cannot be read or parsed (a YAML typo in the frontmatter, for example), the index skips it and keeps the version it indexed before, so a broken edit never removes a CRITICAL rule. `ax policy index` prints each skipped file with the reason, and `ax_policy_index` returns them in `skipped`. In database mode, a rule or skill with `storage: files` whose file is missing, unparseable or now holds another id keeps its stored row the same way. Fix the file and index again; delete the file to remove the rule.
+When a policy file exists but cannot be read or its frontmatter is not valid YAML (a typo mid-edit, for example), the index skips it and keeps the version it indexed before, so a broken edit never removes a CRITICAL rule. A file whose YAML parses but fails validation (an unknown `status` or `scope`, a skill name that is not kebab-case, a missing `id` or `level`) is skipped too, and the row it produced before is removed, so an invalid rule never stays active as approved. `ax policy index` prints each skipped file with the reason, and `ax_policy_index` returns them in `skipped`. In database mode, a rule or skill with `storage: files` whose file is missing, unparseable or now holds another id keeps its stored row the same way. Fix the file and index again; delete the file to remove the rule.
 
 ### `ax policy guard` CLI errors
 

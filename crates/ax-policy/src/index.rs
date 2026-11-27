@@ -71,6 +71,7 @@ pub async fn import_policy_from_files(
         rules,
         skills,
         skipped,
+        kept_paths,
         notes,
         rules_indexed,
         skills_indexed,
@@ -121,8 +122,10 @@ pub async fn import_policy_from_files(
 
     if mode == ImportMode::Replace {
         // Hybrid-aware prune: keep per-item database overrides not present on disk.
-        // A file that exists but no longer reads or parses keeps the row it produced before.
-        let kept_paths: Vec<String> = skipped.iter().map(|s| s.path.clone()).collect();
+        // A file that exists but cannot be read, or whose frontmatter is not YAML,
+        // keeps the row it produced before. A file that parses but fails validation
+        // (unknown status or scope, a bad name, a missing field) loses its row, so
+        // an invalid rule never stays active as approved.
         prune_hybrid(&mut tx, PruneTable::Rules, &seen_rules, &kept_paths).await?;
         prune_hybrid(&mut tx, PruneTable::Skills, &seen_skills, &kept_paths).await?;
     }
@@ -143,6 +146,8 @@ struct MergedLayers {
     rules: Vec<(PolicyRuleDoc, String)>,
     skills: Vec<(PolicySkillDoc, String)>,
     skipped: Vec<crate::types::PolicySkip>,
+    /// Skipped files whose stored row is kept (see [`LayerImport::kept`]).
+    kept_paths: Vec<String>,
     notes: Vec<String>,
     rules_indexed: u32,
     skills_indexed: u32,
@@ -167,6 +172,7 @@ fn merge_policy_layers(project_root: &Path) -> MergedLayers {
         rules: Vec::new(),
         skills: Vec::new(),
         skipped: Vec::new(),
+        kept_paths: Vec::new(),
         notes: Vec::new(),
         rules_indexed: 0,
         skills_indexed: 0,
@@ -187,6 +193,7 @@ fn merge_policy_layers(project_root: &Path) -> MergedLayers {
             last_wins(&mut out.skills, item, |(d, _)| d.frontmatter.name.as_str());
         }
         out.skipped.extend(layer_import.skipped);
+        out.kept_paths.extend(layer_import.kept);
         out.notes.extend(layer_import.notes);
     }
     out
@@ -286,7 +293,7 @@ fn import_one_policy_dir(
             let mut doc = match parse_rule_file(path, &raw) {
                 Ok(d) => d,
                 Err(e) => {
-                    out.skip("rule", path, crate::parse::format_validation(&e));
+                    out.skip_unparsed("rule", path, &raw, &e);
                     continue;
                 }
             };
@@ -329,7 +336,7 @@ fn import_one_policy_dir(
             let mut doc = match parse_skill_file(&skill_path, &raw) {
                 Ok(d) => d,
                 Err(e) => {
-                    out.skip("skill", &skill_path, crate::parse::format_validation(&e));
+                    out.skip_unparsed("skill", &skill_path, &raw, &e);
                     continue;
                 }
             };
@@ -370,6 +377,10 @@ struct LayerImport {
     rules: Vec<(PolicyRuleDoc, String)>,
     skills: Vec<(PolicySkillDoc, String)>,
     skipped: Vec<crate::types::PolicySkip>,
+    /// Skipped files whose stored row an import keeps: the file could not be
+    /// read, its frontmatter is not YAML, or its stub source is unusable. A
+    /// file that parses but fails validation is skipped without being kept.
+    kept: Vec<String>,
     /// One log line per skipped file.
     notes: Vec<String>,
 }
@@ -378,6 +389,29 @@ impl LayerImport {
     /// Record a file the layer could not use. The caller decides whether to
     /// report it, so a read-only staleness check stays quiet.
     fn skip(&mut self, what: &str, path: &Path, reason: String) {
+        self.kept.push(path.to_string_lossy().into_owned());
+        self.skip_dropping_row(what, path, reason);
+    }
+
+    /// Record a file that did not parse. The stored row is kept only when the
+    /// frontmatter is not YAML at all (likely a typo mid-edit); a validation
+    /// failure drops the row, so the strict parser's default applies.
+    fn skip_unparsed(
+        &mut self,
+        what: &str,
+        path: &Path,
+        raw: &str,
+        err: &crate::types::ValidationError,
+    ) {
+        let reason = crate::parse::format_validation(err);
+        if frontmatter_is_yaml(raw) {
+            self.skip_dropping_row(what, path, reason);
+        } else {
+            self.skip(what, path, reason);
+        }
+    }
+
+    fn skip_dropping_row(&mut self, what: &str, path: &Path, reason: String) {
         self.notes.push(format!(
             "[ax policy] skip {what} {}: {reason}",
             path.display()
@@ -387,6 +421,13 @@ impl LayerImport {
             reason,
         });
     }
+}
+
+/// Whether `raw` has a `---` frontmatter block that parses as YAML.
+fn frontmatter_is_yaml(raw: &str) -> bool {
+    crate::parse::split_frontmatter(raw)
+        .ok()
+        .is_some_and(|(yaml, _)| serde_yaml::from_str::<serde_yaml::Value>(&yaml).is_ok())
 }
 
 /// If the doc is a stub (`source:` set), load body from the external file.
@@ -724,7 +765,7 @@ pub async fn policy_disk_stale(pool: &SqlitePool, project_root: &Path) -> Result
     let merged = merge_policy_layers(project_root);
     let storage = load_policy_config(project_root).storage;
     let kept_paths: std::collections::HashSet<&str> =
-        merged.skipped.iter().map(|s| s.path.as_str()).collect();
+        merged.kept_paths.iter().map(String::as_str).collect();
 
     let mut conn = pool
         .acquire()
@@ -1888,6 +1929,69 @@ mod tests {
             .unwrap()
             .iter()
             .any(|s| s.name == "review"));
+    }
+
+    #[tokio::test]
+    async fn a_file_that_parses_but_fails_validation_loses_its_row() {
+        let (dir, pool) = test_pool().await;
+        let root = dir.path();
+        write_rule(root, "typo-status", "Keep this pending.");
+        write_skill(root, "review", "Review steps.");
+        import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .unwrap();
+        // The rows an older parser stored: approved and matched.
+        let rules = list_rules(&pool).await.unwrap();
+        assert!(rules
+            .iter()
+            .any(|r| r.id == "typo-status" && r.status == "approved"));
+
+        // Valid YAML that fails validation: an unknown status, a non-kebab name.
+        std::fs::write(
+            root.join(".agents/rules/typo-status.mdc"),
+            "---\nid: typo-status\nlevel: INFO\nalwaysApply: true\nstatus: pendng\n---\n\nKeep this pending.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(".agents/skills/review/SKILL.md"),
+            "---\nname: My_Skill\ndescription: d\n---\n\nReview steps.\n",
+        )
+        .unwrap();
+        assert!(policy_disk_stale(&pool, root).await.unwrap());
+        let result = import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .unwrap();
+        assert!(result
+            .skipped
+            .iter()
+            .any(|s| s.path.ends_with("typo-status.mdc") && s.reason.contains("status")));
+
+        let rules = list_rules(&pool).await.unwrap();
+        assert!(
+            !rules.iter().any(|r| r.id == "typo-status"),
+            "an invalid rule must not stay approved: {rules:?}"
+        );
+        let skills = list_skills(&pool).await.unwrap();
+        assert!(
+            !skills.iter().any(|s| s.name == "review" || s.name == "My_Skill"),
+            "{skills:?}"
+        );
+        let matched = crate::matcher::match_policy(
+            &pool,
+            &crate::types::MatchInput {
+                prompt: "keep this pending typo-status".into(),
+                cwd: root.to_path_buf(),
+                open_files: Vec::new(),
+                changed_files: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            !matched.rules.iter().any(|r| r.id == "typo-status"),
+            "the matcher must not return it"
+        );
+        assert!(!policy_disk_stale(&pool, root).await.unwrap());
     }
 
     async fn row_stamps(pool: &SqlitePool) -> Vec<(String, i64)> {
