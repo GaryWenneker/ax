@@ -362,6 +362,8 @@ ax savings import --cursor          # Cursor only
 ax savings import --claude          # Claude Code only
 ```
 
+Each transcript's usage is stored under its project. The agent's project folder name (for example `-Users-me-app` or `users-me-app`) is mapped back to the one project path ax has logged calls for with that folder name; without a single match the folder name is kept. Only rows stored under a project path are included in that project's history export. One API response counts once, even when the transcript repeats its usage on every content-block line.
+
 ---
 
 ## Environment variables

@@ -2146,7 +2146,7 @@ fn process_cursor_line(line: &str, acc: &mut SessionAccum) {
     }
 }
 
-async fn import_claude_file(path: &Path) -> Result<bool, String> {
+async fn import_claude_file(path: &Path, roots: &[String]) -> Result<bool, String> {
     let session_id = path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -2173,16 +2173,13 @@ async fn import_claude_file(path: &Path) -> Result<bool, String> {
     }
     let wrote = upsert_agent_session("claude", &session_id, &acc, mtime).await?;
     if wrote {
-        let project = path
-            .parent()
-            .and_then(|p| p.file_name())
-            .and_then(|s| s.to_str());
-        persist_usage_events("claude", &session_id, project, &acc.events).await?;
+        let project = transcript_project("claude", path, roots);
+        persist_usage_events("claude", &session_id, project.as_deref(), &acc.events).await?;
     }
     Ok(wrote)
 }
 
-async fn import_cursor_file(path: &Path) -> Result<bool, String> {
+async fn import_cursor_file(path: &Path, roots: &[String]) -> Result<bool, String> {
     let session_id = path
         .parent()
         .and_then(|p| p.file_name())
@@ -2211,11 +2208,8 @@ async fn import_cursor_file(path: &Path) -> Result<bool, String> {
     }
     let wrote = upsert_agent_session("cursor", &session_id, &acc, mtime).await?;
     if wrote {
-        let project = path
-            .parent()
-            .and_then(|p| p.file_name())
-            .and_then(|s| s.to_str());
-        persist_usage_events("cursor", &session_id, project, &acc.events).await?;
+        let project = transcript_project("cursor", path, roots);
+        persist_usage_events("cursor", &session_id, project.as_deref(), &acc.events).await?;
     }
     Ok(wrote)
 }
@@ -2272,6 +2266,55 @@ async fn persist_usage_events(
     Ok(())
 }
 
+/// Project paths this machine has logged ax calls or sessions for.
+async fn known_project_roots() -> Vec<String> {
+    let Ok(pool) = open_pool().await else {
+        return Vec::new();
+    };
+    sqlx::query_scalar::<_, String>(
+        "SELECT project FROM mcp_call_log WHERE project IS NOT NULL AND project != ''
+         UNION SELECT project FROM ax_durable_scope WHERE project != ''",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default()
+}
+
+/// Claude Code folder name for a project path: every character other than an
+/// ASCII letter or digit becomes `-` (`/Users/me/ax` → `-Users-me-ax`).
+fn claude_project_slug(root: &str) -> String {
+    root.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
+}
+
+/// The project a transcript belongs to. The agent's folder slug is mapped back
+/// to the one known project path with that slug; without a single match the
+/// slug itself is kept. Cursor keeps transcripts under
+/// `projects/{slug}/agent-transcripts/{id}/{id}.jsonl`, Claude Code under
+/// `projects/{slug}/{id}.jsonl`.
+fn transcript_project(agent: &str, path: &Path, roots: &[String]) -> Option<String> {
+    let slug_dir = if agent == "cursor" {
+        path.ancestors()
+            .find(|a| a.file_name().and_then(|n| n.to_str()) == Some("agent-transcripts"))?
+            .parent()?
+    } else {
+        path.parent()?
+    };
+    let slug = slug_dir.file_name()?.to_str()?;
+    let mut matches = roots.iter().filter(|root| {
+        if agent == "cursor" {
+            crate::mcp_audit::cursor_project_slug(Path::new(root.as_str())) == slug
+        } else {
+            claude_project_slug(root) == slug
+        }
+    });
+    match (matches.next(), matches.next()) {
+        (Some(root), None) => Some(root.clone()),
+        _ => Some(slug.to_string()),
+    }
+}
+
 fn claude_projects_dir() -> Option<PathBuf> {
     ax_utils::paths::home_dir().map(|h| h.join(".claude").join("projects"))
 }
@@ -2301,6 +2344,7 @@ pub async fn import_agent_logs(claude: bool, cursor: bool) -> Result<ImportResul
     let mut claude_sessions = 0usize;
     let mut cursor_sessions = 0usize;
     let mut skipped = 0usize;
+    let roots = known_project_roots().await;
 
     if claude {
         if let Some(root) = claude_projects_dir() {
@@ -2317,7 +2361,7 @@ pub async fn import_agent_logs(claude: bool, cursor: bool) -> Result<ImportResul
                     if path.to_string_lossy().contains("subagents") {
                         continue;
                     }
-                    match import_claude_file(path).await {
+                    match import_claude_file(path, &roots).await {
                         Ok(true) => claude_sessions += 1,
                         Ok(false) => skipped += 1,
                         Err(e) => eprintln!("ax savings import: {}: {e}", path.display()),
@@ -2339,7 +2383,7 @@ pub async fn import_agent_logs(claude: bool, cursor: bool) -> Result<ImportResul
                     if !cursor_transcript_matches(path) {
                         continue;
                     }
-                    match import_cursor_file(path).await {
+                    match import_cursor_file(path, &roots).await {
                         Ok(true) => cursor_sessions += 1,
                         Ok(false) => skipped += 1,
                         Err(e) => eprintln!("ax savings import: {}: {e}", path.display()),
@@ -3110,5 +3154,53 @@ mod tests {
         std::fs::remove_file(&parent).ok();
         let err = result.expect_err("a file is not a directory for the usage database");
         assert!(!err.is_empty(), "{err}");
+    }
+
+    #[tokio::test]
+    async fn imported_transcripts_store_the_project_path() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let db = temp_usage_db_path("transcript-project");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+        let pool = open_pool().await.expect("pool");
+        let project = "/Users/me/work/my_app";
+        sqlx::query("INSERT INTO mcp_call_log(tool,project,response_chars,response_tokens_est,ok,created_at) VALUES ('ax_node',?,1,1,1,1)")
+            .bind(project)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let line = r#"{"timestamp":"2026-10-03T12:00:00Z","role":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"tool_use","name":"Read","input":{}}],"usage":{"input_tokens":10,"output_tokens":1}}}"#;
+        let cursor = tmp
+            .path()
+            .join("cursor/users-me-work-my-app/agent-transcripts/chat-1/chat-1.jsonl");
+        let unknown = tmp
+            .path()
+            .join("cursor/other-place/agent-transcripts/chat-2/chat-2.jsonl");
+        let claude = tmp.path().join("claude/-Users-me-work-my-app/sess-1.jsonl");
+        for f in [&cursor, &unknown, &claude] {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(f, format!("{line}\n")).unwrap();
+        }
+        let roots = known_project_roots().await;
+        assert!(import_cursor_file(&cursor, &roots).await.unwrap());
+        assert!(import_cursor_file(&unknown, &roots).await.unwrap());
+        assert!(import_claude_file(&claude, &roots).await.unwrap());
+        let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT agent, session_id, project FROM agent_usage_event ORDER BY agent, session_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(&db);
+        assert_eq!(
+            rows,
+            vec![
+                ("claude".into(), "sess-1".into(), Some(project.into())),
+                ("cursor".into(), "chat-1".into(), Some(project.into())),
+                ("cursor".into(), "chat-2".into(), Some("other-place".into())),
+            ]
+        );
     }
 }
