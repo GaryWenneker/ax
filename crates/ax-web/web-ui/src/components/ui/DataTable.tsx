@@ -13,13 +13,24 @@ export function DataTable({ children, dense, className = '' }: { children: React
   const rows = Children.toArray(body?.props.children).filter(isValidElement) as ReactElement<{children?: ReactNode}>[];
   const records = rows.map(row => ({element: row, values: Children.toArray(row.props.children).map(columnText)}));
   const display = controls.order(records);
+  const ariaSort = (index: number): AriaAttributes['aria-sort'] =>
+    controls.sort?.column === index ? controls.sort.direction === 'asc' ? 'ascending' : 'descending' : 'none';
+  // The header cells get sort state and the column heading controls.
+  const renderHead = (part: ReactElement<{children?: ReactNode}>, row: ReactElement<{children?: ReactNode}>) =>
+    cloneElement(part, {}, cloneElement(row, {}, cells.map((cell, index) =>
+      cloneElement(cell, {key: index, 'aria-sort': ariaSort(index), style: controls.widths ? undefined : cell.props.style},
+        <ColumnHeading controls={controls} index={index} />))));
+  // Body rows follow the sorted and filtered order; each cell carries its column label for narrow layouts.
+  const renderBody = (part: ReactElement<{children?: ReactNode}>) =>
+    cloneElement(part, {}, display.map(row => cloneElement(row.element, {}, Children.toArray(row.element.props.children).map((cell, index) =>
+      isValidElement<Record<string, unknown>>(cell) ? cloneElement(cell, {'data-label': columns[index]?.label}) : cell))));
   return (
     <div className="column-table-container">
       {columns.length > 0 && <ColumnTools controls={controls} />}
       <div className="page-table-wrap">
       <table className={`page-table column-table${dense ? ' page-table--dense policy-table' : ''} ${className}`} style={controls.widths ? {tableLayout: 'fixed', width: `${controls.widths.reduce((sum, width) => sum + width, 0)}px`} : undefined}>
         {controls.widths && <colgroup>{controls.widths.map((width, i) => <col key={i} style={{width}} />)}</colgroup>}
-        {parts.map(part => part === head && headRow ? cloneElement(part, {}, cloneElement(headRow, {}, cells.map((cell, index) => cloneElement(cell, {key: index, 'aria-sort':controls.sort?.column === index ? controls.sort.direction === 'asc' ? 'ascending' : 'descending' : 'none', style: controls.widths ? undefined : cell.props.style}, <ColumnHeading controls={controls} index={index} />)))) : part === body ? cloneElement(part, {}, display.map(row => cloneElement(row.element, {}, Children.toArray(row.element.props.children).map((cell, index) => isValidElement<Record<string, unknown>>(cell) ? cloneElement(cell, {'data-label': columns[index]?.label}) : cell)))) : part)}
+        {parts.map(part => part === head && headRow ? renderHead(part, headRow) : part === body ? renderBody(part) : part)}
       </table>
       </div>
       {records.length > 0 && display.length === 0 && <p className="column-empty" role="status">No loaded rows match the column filters.</p>}
