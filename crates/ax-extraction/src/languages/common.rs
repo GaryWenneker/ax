@@ -49,6 +49,23 @@ pub fn extract_symbols(
     language: Language,
     kinds: &[(NodeKind, &str)],
 ) -> ExtractionResult {
+    extract_symbols_with(tree, source, file_path, language, kinds, |_, kind| kind)
+}
+
+/// Like [`extract_symbols`], with `classify` choosing the final kind of each
+/// match from its syntax node (a function inside an `impl` is a method).
+///
+/// A syntax node yields at most one symbol: when two entries in `kinds` name
+/// the same node type, the first one wins.
+pub fn extract_symbols_with(
+    tree: &Tree,
+    source: &[u8],
+    file_path: &str,
+    language: Language,
+    kinds: &[(NodeKind, &str)],
+    classify: impl Fn(TsNode, NodeKind) -> NodeKind,
+) -> ExtractionResult {
+    let mut seen_nodes: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let mut result = ExtractionResult::default();
     let root = tree.root_node();
     let file_id = file_node_id(file_path);
@@ -85,6 +102,10 @@ pub fn extract_symbols(
 
     for (kind, node_type) in kinds {
         walk_nodes(root, node_type, &mut |n| {
+            if !seen_nodes.insert(n.id()) {
+                return;
+            }
+            let kind = &classify(n, *kind);
             let name = declaration_name(n, source, node_type);
             if name.is_empty() {
                 return;
