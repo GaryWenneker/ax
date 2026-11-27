@@ -26,6 +26,10 @@ fn key(id: &str) -> ApiKey {
 }
 
 fn setup() -> (tempfile::TempDir, RemoteState, Router) {
+    setup_with_jwks("https://issuer.example.com/jwks")
+}
+
+fn setup_with_jwks(jwks_uri: &str) -> (tempfile::TempDir, RemoteState, Router) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("alpha");
     std::fs::create_dir_all(&root).unwrap();
@@ -34,7 +38,7 @@ fn setup() -> (tempfile::TempDir, RemoteState, Router) {
         oauth: OAuthConfig {
             built_in: false,
             issuer: "https://issuer.example.com/".into(),
-            jwks_uri: "https://issuer.example.com/jwks".into(),
+            jwks_uri: jwks_uri.into(),
             clock_skew_seconds: ax_mcp::remote::config::DEFAULT_CLOCK_SKEW_SECONDS,
         },
         projects: vec![Project {
@@ -199,4 +203,59 @@ async fn callers_without_a_valid_token_never_find_the_server_busy() {
     for call in calls {
         call.await.unwrap();
     }
+}
+
+/// A JWKS endpoint on loopback that answers only after `delay`.
+async fn slow_jwks(delay: std::time::Duration) -> String {
+    let app = Router::new().route(
+        "/jwks",
+        axum::routing::get(move || async move {
+            tokio::time::sleep(delay).await;
+            axum::Json(json!({"keys": []}))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/jwks", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    url
+}
+
+/// A JWT whose header names a signing key the server does not know. Its
+/// signature is never checked: the key lookup fails first.
+fn unknown_key_token(kid: &str) -> String {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    let header = URL_SAFE_NO_PAD.encode(json!({"alg":"RS256","typ":"JWT","kid":kid}).to_string());
+    let claims = URL_SAFE_NO_PAD.encode(json!({"sub":"eve"}).to_string());
+    format!("{header}.{claims}.c2lnbmF0dXJl")
+}
+
+#[tokio::test]
+async fn tokens_with_unknown_signing_keys_do_not_make_the_server_busy() {
+    let jwks = slow_jwks(std::time::Duration::from_secs(5)).await;
+    let (_dir, _state, app) = setup_with_jwks(&jwks);
+    let mut calls = Vec::new();
+    for i in 0..48 {
+        let app = app.clone();
+        let token = unknown_key_token(&format!("stranger-{i}"));
+        calls.push(tokio::spawn(
+            async move { initialize(&app, &token).await.0 },
+        ));
+    }
+    // The first one starts a slow key fetch; the rest arrive while it runs.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let (status, _) = initialize(&app, "key-a").await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a valid caller was refused while unknown-key tokens waited for a key fetch"
+    );
+    let started = std::time::Instant::now();
+    for call in calls {
+        assert_eq!(call.await.unwrap(), StatusCode::UNAUTHORIZED);
+    }
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(3),
+        "unknown-key requests waited {:?} for the key fetch",
+        started.elapsed()
+    );
 }

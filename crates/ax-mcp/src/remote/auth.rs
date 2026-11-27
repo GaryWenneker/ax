@@ -68,6 +68,9 @@ const KEY_MAX_AGE: Duration = Duration::from_secs(300);
 /// Least time between two JWKS fetches, so a failing or unknown-`kid` storm does
 /// not hammer the identity provider.
 const KEY_REFRESH_BACKOFF: Duration = Duration::from_secs(30);
+/// Longest a token with an unknown signing key ID waits for the key fetch it
+/// started. The fetch itself goes on in the background.
+const UNKNOWN_KEY_WAIT: Duration = Duration::from_secs(1);
 
 /// The identity provider's signing keys and when they were last fetched.
 struct KeyCache {
@@ -171,12 +174,13 @@ impl TokenVerifier {
             )
         };
         if !known {
-            // The provider may have rotated its key: fetch now, at most once per back-off.
-            self.refresh_keys(false).await;
+            // The provider may have rotated its key: fetch now, at most once per
+            // back-off, and wait for it only briefly.
+            self.refresh_for_unknown_key().await;
         } else if stale {
             // The cached keys still verify; refresh without making this request wait.
             let this = self.clone();
-            tokio::spawn(async move { this.refresh_keys(true).await });
+            tokio::spawn(async move { this.refresh_stale().await });
         }
         let key = {
             let keys = self.keys.read().await;
@@ -207,21 +211,36 @@ impl TokenVerifier {
 }
 
 impl TokenVerifier {
-    /// Fetches the JWKS unless another fetch runs (`only_if_idle`) or one started
-    /// within [`KEY_REFRESH_BACKOFF`]. The key cache lock is never held across the
-    /// network call, and a failed fetch keeps the cached keys.
-    async fn refresh_keys(&self, only_if_idle: bool) {
-        let mut state = if only_if_idle {
-            match self.refresh.try_lock() {
-                Ok(state) => state,
-                Err(_) => return,
-            }
-        } else {
-            self.refresh.lock().await
+    /// Starts a key fetch for a token whose key ID is not cached and waits for
+    /// it at most [`UNKNOWN_KEY_WAIT`]. A token that arrives while a fetch is
+    /// already running does not wait at all, so tokens with made-up key IDs never
+    /// hold the server's authentication slots for the length of a slow fetch.
+    async fn refresh_for_unknown_key(&self) {
+        let Ok(state) = self.refresh.clone().try_lock_owned() else {
+            return;
         };
-        if only_if_idle && self.keys.read().await.fetched.elapsed() <= KEY_MAX_AGE {
+        let this = self.clone();
+        let fetch = tokio::spawn(async move { this.refresh_locked(state).await });
+        // On timeout the fetch goes on; its keys serve the next request.
+        let _ = tokio::time::timeout(UNKNOWN_KEY_WAIT, fetch).await;
+    }
+
+    /// Refreshes cached keys that are older than [`KEY_MAX_AGE`], unless a fetch
+    /// already runs. The request that noticed keeps using the cached keys.
+    async fn refresh_stale(&self) {
+        let Ok(state) = self.refresh.clone().try_lock_owned() else {
+            return;
+        };
+        if self.keys.read().await.fetched.elapsed() <= KEY_MAX_AGE {
             return;
         }
+        self.refresh_locked(state).await;
+    }
+
+    /// Fetches the JWKS unless a fetch started within [`KEY_REFRESH_BACKOFF`].
+    /// The key cache lock is never held across the network call, and a failed
+    /// fetch keeps the cached keys.
+    async fn refresh_locked(&self, mut state: tokio::sync::OwnedMutexGuard<RefreshState>) {
         if state
             .last_attempt
             .is_some_and(|at| at.elapsed() < KEY_REFRESH_BACKOFF)
@@ -551,6 +570,53 @@ mod key_refresh {
             1,
             "unknown key ids fetched the key set again within the back-off"
         );
+    }
+
+    #[tokio::test]
+    async fn unknown_key_ids_do_not_wait_long_for_a_slow_key_fetch() {
+        let key = signing_key("k1");
+        let (url, hits) = jwks_server(Jwks::Slow(Duration::from_secs(4), key.jwks.clone())).await;
+        let verifier = verifier(url, &key, Duration::ZERO);
+        let started = Instant::now();
+        let mut calls = Vec::new();
+        for i in 0..40 {
+            let verifier = verifier.clone();
+            let token = token_with(
+                &SigningKey {
+                    kid: if i % 2 == 0 {
+                        "stranger-a"
+                    } else {
+                        "stranger-b"
+                    },
+                    ..signing_key_clone(&key)
+                },
+                serde_json::json!({}),
+            );
+            calls.push(tokio::spawn(async move { verifier.verify(&token).await }));
+        }
+        for call in calls {
+            assert_eq!(call.await.unwrap().unwrap_err(), "Unknown signing key");
+        }
+        assert!(
+            started.elapsed() < UNKNOWN_KEY_WAIT + Duration::from_millis(800),
+            "unknown key ids waited {:?} for the key fetch",
+            started.elapsed()
+        );
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "one fetch for the whole burst"
+        );
+        // Known keys keep verifying while the fetch still runs.
+        assert!(verifier.verify(&token(&key)).await.is_ok());
+    }
+
+    fn signing_key_clone(key: &SigningKey) -> SigningKey {
+        SigningKey {
+            kid: key.kid,
+            pem: key.pem.clone(),
+            jwks: key.jwks.clone(),
+        }
     }
 
     #[tokio::test]
