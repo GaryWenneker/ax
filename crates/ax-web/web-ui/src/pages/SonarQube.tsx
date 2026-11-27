@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   BusyLabel,
@@ -10,8 +10,10 @@ import {
   PageToasts,
 } from '../components/ui/PageLayout';
 import { Spinner } from '../components/ui/Spinner';
+import { SettingRow, Toggle } from '../components/ui/SettingsControls';
+import { DEFAULT_SHIP_CONFIG as DEFAULT_CONFIG } from '../lib/shipDefaults';
 import { usePageContext } from '../context/UiContext';
-import { DEFAULT_SONAR_CONFIG, SONAR_GUIDE_SECTIONS } from '../lib/sonarGuide';
+import { SONAR_GUIDE_SECTIONS } from '../lib/sonarGuide';
 import type { SonarTab } from '../lib/routes';
 import SettingsSelect from '../components/ui/SettingsSelect';
 import {
@@ -33,24 +35,6 @@ import {
   type SonarStreamEvent,
 } from '../shipApi';
 
-const DEFAULT_CONFIG: ShipConfig = {
-  ship: { target_branch: 'main', web_port: 7070, git_root: '', git_roots: [] },
-  quality_gate: {
-    steps: ['index', 'tia', 'tests', 'sonar', 'policy'],
-    tests: { runner: 'cargo test' },
-    index_mode: 'incremental',
-  },
-  remote: { provider: 'azure_devops' },
-  sonar: { ...DEFAULT_SONAR_CONFIG },
-  ui: {
-    show_savings: true,
-    show_agent_terminal: true,
-    verbose_mcp: true,
-    timezone: '',
-  },
-  reviewers: {},
-};
-
 
 function StatusSkeleton() {
   return (
@@ -59,56 +43,6 @@ function StatusSkeleton() {
         <div key={i} className="skeleton-line skeleton-line--status" />
       ))}
     </div>
-  );
-}
-
-function SettingRow({
-  title,
-  description,
-  locked,
-  children,
-}: {
-  title: ReactNode;
-  description?: string;
-  locked?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="settings-row">
-      <div className="settings-row-label">
-        <span className="settings-row-title">{title}</span>
-        {description && <span className="settings-row-desc">{description}</span>}
-        {locked && <span className="settings-row-locked">{locked}</span>}
-      </div>
-      <div className="settings-row-control">{children}</div>
-    </div>
-  );
-}
-
-function Toggle({
-  checked,
-  onChange,
-  label,
-  disabled = false,
-}: {
-  checked: boolean;
-  onChange: (value: boolean) => void;
-  label: string;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      aria-disabled={disabled}
-      disabled={disabled}
-      className={`settings-toggle${checked ? ' on' : ''}${disabled ? ' disabled' : ''}`}
-      onClick={() => !disabled && onChange(!checked)}
-    >
-      <span className="settings-toggle-thumb" />
-    </button>
   );
 }
 

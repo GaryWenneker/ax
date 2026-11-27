@@ -1,4 +1,3 @@
-import { resolveOpenTarget } from '../lib/policySelection';
 import { dropPolicyRow, indexPolicyRows, patchPolicyRow, policyRowKey } from '../lib/policyRowKeys';
 import { useLive, useNewKeys } from '../lib/useLive';
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
@@ -46,10 +45,11 @@ import {
   type SortDir,
 } from '../components/ui/policyListUtils';
 import { runThenReload } from '../lib/policyActions';
+import { usePolicyGroups, usePolicySelection } from '../lib/usePolicyList';
 import { usePageContext } from '../context/UiContext';
 import Codicon from '../components/Codicon';
 import { POLICY_SCOPES, type PolicySkillRow } from '../policyTypes';
-import { visibleSkillGroups, toggleCollapsed, skillResolvedGroup } from '../skillGroups';
+import { visibleSkillGroups, skillResolvedGroup } from '../skillGroups';
 import {
   allListedCollapsed,
   allListedExpanded,
@@ -58,13 +58,11 @@ import {
   matchesGroupFilter,
 } from '../skillGroupFilter';
 import { PolicyGroupListControls } from '../components/ui/PolicyGroupListControls';
-import { loadJson, saveJson } from '../lib/uiStorage';
 import AutoGroupModal from '../components/AutoGroupModal';
 import PolicyGraphOverlay from '../components/PolicyGraphOverlay';
 import { menuTargets, nextRowSelection, toggleVisibleSelection } from '../lib/policySelection';
 import SettingsSelect from '../components/ui/SettingsSelect';
 import {
-  POLICY_BLADE_DISMISS_MS,
   pointerKeepsPolicyBlade,
   policyDetailOpen,
   policyWorkspaceHostClass,
@@ -92,6 +90,30 @@ const skillNameOf = (s: { name: string }) => s.name;
 
 export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, origin: routeOrigin, projectId: routeProjectId, onSelect, onEditFull, onMatch }: Props) {
   const [skills, setSkills] = useState<PolicySkillRow[]>([]);
+  const {
+    selectedKey: selectedName,
+    setSelectedKey: setSelectedName,
+    openOrigin,
+    setOpenOrigin,
+    openProjectId,
+    setOpenProjectId,
+    selectedIds,
+    setSelectedIds,
+    anchorId,
+    setAnchorId,
+    bladeClosing,
+    setBladeClosing,
+    onSelectRef,
+    select: selectSkill,
+    requestCloseBlade,
+  } = usePolicySelection({
+    routeKey: selectedNameFromRoute,
+    routeOrigin,
+    routeProjectId,
+    rows: skills,
+    keyOf: skillNameOf,
+    onSelect,
+  });
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [auditBrief, setAuditBrief] = useState('');
@@ -100,17 +122,9 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; row: PolicySkillRow } | null>(null);
   const [propertiesFor, setPropertiesFor] = useState<string | null>(null);
   const [propertiesTick, setPropertiesTick] = useState(0);
-  const [selectedName, setSelectedName] = useState<string | null>(selectedNameFromRoute);
   const [graphOpen, setGraphOpen] = useState(false);
   const [autoGroupOpen, setAutoGroupOpen] = useState(false);
-  const [openOrigin, setOpenOrigin] = useState<string | undefined>();
-  const [openProjectId, setOpenProjectId] = useState<number | undefined>();
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(selectedNameFromRoute ? [selectedNameFromRoute] : []));
-  const [anchorId, setAnchorId] = useState<string | null>(selectedNameFromRoute);
-  const [bladeClosing, setBladeClosing] = useState(false);
   const editorRef = useRef<HTMLDivElement | null>(null);
-  const onSelectRef = useRef(onSelect);
-  onSelectRef.current = onSelect;
 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [q, setQ] = useState('');
@@ -120,79 +134,8 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
   const [sortKey, setSortKey] = useState<SkillSortKey>('name');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [projectStorage, setProjectStorage] = useState<'files' | 'database'>('files');
-  const [collapsed, setCollapsed] = useState<Set<string>>(
-    () => new Set(loadJson<string[]>('skills-groups-collapsed', [])),
-  );
-  const [groupIds, setGroupIds] = useState<string[]>(
-    () => loadJson<string[]>('skills-groups-filter', []),
-  );
+  const { collapsed, groupIds, persistCollapsed, persistGroupIds, toggleGroup } = usePolicyGroups('skills');
 
-  function persistCollapsed(next: Set<string>) {
-    saveJson('skills-groups-collapsed', [...next]);
-    setCollapsed(next);
-  }
-
-  function persistGroupIds(next: string[]) {
-    saveJson('skills-groups-filter', next);
-    setGroupIds(next);
-  }
-
-  function toggleGroup(id: string) {
-    persistCollapsed(toggleCollapsed(collapsed, id));
-  }
-
-  useEffect(() => {
-    setSelectedName(selectedNameFromRoute);
-    if (selectedNameFromRoute) {
-      setSelectedIds(new Set([selectedNameFromRoute]));
-      setAnchorId(selectedNameFromRoute);
-    }
-  }, [selectedNameFromRoute]);
-
-  useEffect(() => {
-    if (!selectedNameFromRoute) return;
-    const t = resolveOpenTarget(
-      skills.map((r) => ({ key: r.name, origin: r.origin, projectId: r.projectId })),
-      selectedNameFromRoute,
-      routeOrigin,
-      routeProjectId,
-    );
-    setOpenOrigin(t.origin);
-    setOpenProjectId(t.projectId);
-  }, [selectedNameFromRoute, routeOrigin, routeProjectId, skills]);
-
-  function selectSkill(name: string | null, row?: { origin?: string; projectId?: number }) {
-    setBladeClosing(false);
-    setSelectedName(name);
-    const global = row && isGlobalPolicy(row);
-    onSelectRef.current(name, global ? 'global' : undefined, global ? row.projectId : undefined);
-    if (row) {
-      setOpenOrigin(row.origin);
-      setOpenProjectId(row.projectId);
-    }
-    if (name) {
-      setSelectedIds(new Set([name]));
-      setAnchorId(name);
-    } else if (selectedIds.size <= 1) {
-      setSelectedIds(new Set());
-    }
-  }
-
-  function requestCloseBlade() {
-    if (!selectedName || bladeClosing) return;
-    setBladeClosing(true);
-  }
-
-  useEffect(() => {
-    if (!bladeClosing) return;
-    const t = window.setTimeout(() => {
-      setBladeClosing(false);
-      setSelectedName(null);
-      onSelectRef.current(null);
-      setSelectedIds((prev) => (prev.size <= 1 ? new Set() : prev));
-    }, POLICY_BLADE_DISMISS_MS);
-    return () => window.clearTimeout(t);
-  }, [bladeClosing]);
 
   useEffect(() => {
     Promise.all([fetchPolicySkills(), fetchPolicySyncSettings()])

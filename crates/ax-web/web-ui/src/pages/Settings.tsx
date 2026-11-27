@@ -2,7 +2,7 @@ import useMobile from '../hooks/useMobile';
 import ModalShell from '../components/ModalShell';
 import AccessSettingsSection from '../components/AccessSettingsSection';
 import SecuritySettingsSection from '../components/SecuritySettingsSection';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 
 import EmbedSettingsSection from '../components/EmbedSettingsSection';
 import NeuralSettingsSection from '../components/NeuralSettingsSection';
@@ -17,8 +17,9 @@ import PolicyShareSettingsSection from '../components/PolicyShareSettingsSection
 import PolicySyncSettingsSection from '../components/PolicySyncSettingsSection';
 import { BusyLabel, PageHero } from '../components/ui/PageLayout';
 import ThemeChooser from '../components/ThemeChooser';
+import { SettingRow, Toggle } from '../components/ui/SettingsControls';
+import { DEFAULT_SHIP_CONFIG as DEFAULT_CONFIG } from '../lib/shipDefaults';
 import { usePageContext } from '../context/UiContext';
-import { DEFAULT_SONAR_CONFIG } from '../lib/sonarGuide';
 import { loadThemeId, THEME_CHANGED } from '../lib/themes';
 import { SETTINGS_GROUPS, readSettingsSection, type SettingsSectionId } from '../lib/settingsNavigation';
 import { TIMEZONE_OPTIONS, browserTimeZone } from '../lib/timeZone';
@@ -46,74 +47,6 @@ const REVIEW_LANGUAGES: ReviewLanguageChoice[] = [
   { code: 'da', name: 'Dansk' },
   { code: 'tr', name: 'Türkçe' },
 ];
-
-const DEFAULT_CONFIG: ShipConfig = {
-  ship: { target_branch: 'main', web_port: 7070, git_root: '', git_roots: [] },
-  quality_gate: {
-    steps: ['index', 'tia', 'tests', 'sonar', 'policy'],
-    tests: { runner: 'cargo test' },
-    index_mode: 'incremental',
-  },
-  remote: { provider: 'azure_devops' },
-  sonar: { ...DEFAULT_SONAR_CONFIG },
-  ui: {
-    show_savings: true,
-    show_agent_terminal: true,
-    verbose_mcp: true,
-    timezone: '',
-  },
-  reviewers: {},
-};
-
-function SettingRow({
-  title,
-  description,
-  locked,
-  children,
-}: {
-  title: ReactNode;
-  description?: string;
-  locked?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="settings-row">
-      <div className="settings-row-label">
-        <span className="settings-row-title">{title}</span>
-        {description && <span className="settings-row-desc">{description}</span>}
-        {locked && <span className="settings-row-locked">{locked}</span>}
-      </div>
-      <div className="settings-row-control">{children}</div>
-    </div>
-  );
-}
-
-function Toggle({
-  checked,
-  onChange,
-  label,
-  disabled = false,
-}: {
-  checked: boolean;
-  onChange: (value: boolean) => void;
-  label: string;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      aria-disabled={disabled}
-      disabled={disabled}
-      className={`settings-toggle${checked ? ' on' : ''}${disabled ? ' disabled' : ''}`}
-      onClick={() => !disabled && onChange(!checked)}
-    >
-      <span className="settings-toggle-thumb" />
-    </button>
-  );
-}
 
 export default function SettingsPage() {
   const mobile = useMobile();

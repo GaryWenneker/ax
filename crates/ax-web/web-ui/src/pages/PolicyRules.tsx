@@ -1,4 +1,3 @@
-import { resolveOpenTarget } from '../lib/policySelection';
 import { dropPolicyRow, indexPolicyRows, patchPolicyRow, policyRowKey } from '../lib/policyRowKeys';
 import { useLive, useNewKeys } from '../lib/useLive';
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
@@ -47,10 +46,11 @@ import {
   type SortDir,
 } from '../components/ui/policyListUtils';
 import { runThenReload } from '../lib/policyActions';
+import { usePolicyGroups, usePolicySelection } from '../lib/usePolicyList';
 import { usePageContext } from '../context/UiContext';
 import Codicon from '../components/Codicon';
 import { POLICY_SCOPES, type CaptureProposal, type PolicyRuleRow } from '../policyTypes';
-import { visibleRuleGroups, toggleCollapsed, ruleResolvedGroup } from '../skillGroups';
+import { visibleRuleGroups, ruleResolvedGroup } from '../skillGroups';
 import {
   allListedCollapsed,
   allListedExpanded,
@@ -59,13 +59,11 @@ import {
   matchesGroupFilter,
 } from '../skillGroupFilter';
 import { PolicyGroupListControls } from '../components/ui/PolicyGroupListControls';
-import { loadJson, saveJson } from '../lib/uiStorage';
 import AutoGroupModal from '../components/AutoGroupModal';
 import PolicyGraphOverlay from '../components/PolicyGraphOverlay';
 import { menuTargets, nextRowSelection, toggleVisibleSelection } from '../lib/policySelection';
 import SettingsSelect from '../components/ui/SettingsSelect';
 import {
-  POLICY_BLADE_DISMISS_MS,
   pointerKeepsPolicyBlade,
   policyDetailOpen,
   policyWorkspaceHostClass,
@@ -94,72 +92,35 @@ interface Props {
 const ruleIdOf = (r: { id: string }) => r.id;
 
 export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origin: routeOrigin, projectId: routeProjectId, onSelect, onEditFull, onMatch }: Props) {
-  const [selectedId, setSelectedId] = useState<string | null>(selectedIdFromRoute);
   const [graphOpen, setGraphOpen] = useState(false);
   const [autoGroupOpen, setAutoGroupOpen] = useState(false);
-  const [openOrigin, setOpenOrigin] = useState<string | undefined>();
-  const [openProjectId, setOpenProjectId] = useState<number | undefined>();
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(selectedIdFromRoute ? [selectedIdFromRoute] : []));
-  const [anchorId, setAnchorId] = useState<string | null>(selectedIdFromRoute);
-  const [bladeClosing, setBladeClosing] = useState(false);
   const editorRef = useRef<HTMLDivElement | null>(null);
-  const onSelectRef = useRef(onSelect);
-  onSelectRef.current = onSelect;
 
-  useEffect(() => {
-    setSelectedId(selectedIdFromRoute);
-    if (selectedIdFromRoute) {
-      setSelectedIds(new Set([selectedIdFromRoute]));
-      setAnchorId(selectedIdFromRoute);
-    }
-  }, [selectedIdFromRoute]);
-
-
-  function selectRule(id: string | null, row?: { origin?: string; projectId?: number }) {
-    setBladeClosing(false);
-    setSelectedId(id);
-    const global = row && isGlobalPolicy(row);
-    onSelectRef.current(id, global ? 'global' : undefined, global ? row.projectId : undefined);
-    if (row) {
-      setOpenOrigin(row.origin);
-      setOpenProjectId(row.projectId);
-    }
-    if (id) {
-      setSelectedIds(new Set([id]));
-      setAnchorId(id);
-    } else if (selectedIds.size <= 1) {
-      setSelectedIds(new Set());
-    }
-  }
-
-  function requestCloseBlade() {
-    if (!selectedId || bladeClosing) return;
-    setBladeClosing(true);
-  }
-
-  useEffect(() => {
-    if (!bladeClosing) return;
-    const t = window.setTimeout(() => {
-      setBladeClosing(false);
-      setSelectedId(null);
-      onSelectRef.current(null);
-      setSelectedIds((prev) => (prev.size <= 1 ? new Set() : prev));
-    }, POLICY_BLADE_DISMISS_MS);
-    return () => window.clearTimeout(t);
-  }, [bladeClosing]);
   const [rules, setRules] = useState<PolicyRuleRow[]>([]);
-
-  useEffect(() => {
-    if (!selectedIdFromRoute) return;
-    const t = resolveOpenTarget(
-      rules.map((r) => ({ key: r.id, origin: r.origin, projectId: r.projectId })),
-      selectedIdFromRoute,
-      routeOrigin,
-      routeProjectId,
-    );
-    setOpenOrigin(t.origin);
-    setOpenProjectId(t.projectId);
-  }, [selectedIdFromRoute, routeOrigin, routeProjectId, rules]);
+  const {
+    selectedKey: selectedId,
+    setSelectedKey: setSelectedId,
+    openOrigin,
+    setOpenOrigin,
+    openProjectId,
+    setOpenProjectId,
+    selectedIds,
+    setSelectedIds,
+    anchorId,
+    setAnchorId,
+    bladeClosing,
+    setBladeClosing,
+    onSelectRef,
+    select: selectRule,
+    requestCloseBlade,
+  } = usePolicySelection({
+    routeKey: selectedIdFromRoute,
+    routeOrigin,
+    routeProjectId,
+    rows: rules,
+    keyOf: ruleIdOf,
+    onSelect,
+  });
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [auditBrief, setAuditBrief] = useState('');
@@ -184,26 +145,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
   const [sortKey, setSortKey] = useState<RuleSortKey>('id');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [projectStorage, setProjectStorage] = useState<'files' | 'database'>('files');
-  const [collapsed, setCollapsed] = useState<Set<string>>(
-    () => new Set(loadJson<string[]>('rules-groups-collapsed', [])),
-  );
-  const [groupIds, setGroupIds] = useState<string[]>(
-    () => loadJson<string[]>('rules-groups-filter', []),
-  );
-
-  function persistCollapsed(next: Set<string>) {
-    saveJson('rules-groups-collapsed', [...next]);
-    setCollapsed(next);
-  }
-
-  function persistGroupIds(next: string[]) {
-    saveJson('rules-groups-filter', next);
-    setGroupIds(next);
-  }
-
-  function toggleGroup(id: string) {
-    persistCollapsed(toggleCollapsed(collapsed, id));
-  }
+  const { collapsed, groupIds, persistCollapsed, persistGroupIds, toggleGroup } = usePolicyGroups('rules');
 
   useEffect(() => {
     Promise.all([fetchPolicyRules(), fetchPolicySyncSettings()])
