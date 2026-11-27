@@ -11,7 +11,6 @@ import {
 } from '../workspaceApi';
 import { notifyWorkspaceSwitched } from '../workspaceEvents';
 import ProjectPurgeModal from './ProjectPurgeModal';
-import { chromeAfterTrashClick } from './projectSwitchChrome';
 
 type Props = {
   /** Highlight the active project path when known. */
@@ -140,9 +139,8 @@ export default function LoggingProjectSwitch({
                     disabled={busy}
                     onClick={(e) => {
                       e.stopPropagation();
-                      const next = chromeAfterTrashClick(p);
-                      setOpen(next.menuOpen);
-                      setPurge(next.project);
+                      setOpen(false);
+                      setPurge(p);
                     }}
                   >
                     <Codicon name="trash" />
