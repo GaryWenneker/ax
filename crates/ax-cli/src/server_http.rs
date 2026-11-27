@@ -96,6 +96,41 @@ async fn managed_stop(
     Ok(Json(serde_json::json!({"stopped":true})))
 }
 
+/// Register a replica that authenticated with the project bootstrap token.
+///
+/// A replica sends that token with every request (snapshot, exchange, each
+/// chunk, each UDP heartbeat). The registration write and its
+/// `node.registered` audit row happen only when the node is not yet trusted
+/// for the project, its grant was revoked, or its endpoint changed. A trusted
+/// grant is a read and nothing more.
+pub(crate) async fn ensure_trusted_replica(
+    pool: &SqlitePool,
+    node_id: &str,
+    endpoint: Option<&str>,
+    project_id: &str,
+) -> Result<(), String> {
+    let granted: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM replication_nodes n
+            JOIN node_project_access a ON a.node_id = n.id
+         WHERE n.id = ? AND n.trust_state = 'trusted'
+           AND a.project_id = ? AND a.revoked_at IS NULL
+           AND (? IS NULL OR n.endpoint IS ?))",
+    )
+    .bind(node_id)
+    .bind(project_id)
+    .bind(endpoint)
+    .bind(endpoint)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    if granted {
+        return Ok(());
+    }
+    ax_global_db::access::register_trusted_replica(pool, node_id, node_id, endpoint, project_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 async fn authorize_project(
     state: &StateData,
     id: &str,
@@ -142,17 +177,11 @@ async fn authorize_project(
         if !exact_secret(token, &expected) {
             return Err(StatusCode::UNAUTHORIZED);
         }
-        ax_global_db::access::register_trusted_replica(
-            &state.access_db,
-            node_id,
-            node_id,
-            None,
-            id,
-        )
+        ensure_trusted_replica(&state.access_db, node_id, None, id)
         .await
         .map_err(|error| {
             tracing::warn!(project = %id, node = %node_id, "replica registration failed: {}", error);
-            if error.to_string() == "replica is blocked" { StatusCode::FORBIDDEN } else { StatusCode::INTERNAL_SERVER_ERROR }
+            if error == "replica is blocked" { StatusCode::FORBIDDEN } else { StatusCode::INTERNAL_SERVER_ERROR }
         })?;
     }
     principal
@@ -630,6 +659,91 @@ mod tests {
             authorize_control(&state, &headers),
             Err(StatusCode::NOT_FOUND)
         );
+    }
+
+    #[tokio::test]
+    async fn bootstrap_requests_register_a_replica_grant_only_once() {
+        use crate::server_config::ProjectRegistration;
+        let dir = tempfile::tempdir().unwrap();
+        let token = "b".repeat(48);
+        std::env::set_var("AX_TEST_BOOTSTRAP_REGISTER_ONCE", &token);
+        let db = ax_global_db::open_and_init(&dir.path().join("access.db"))
+            .await
+            .unwrap();
+        let state = StateData {
+            config: ServerConfig {
+                schema_version: 1,
+                cluster_id: "team".into(),
+                node_id: "primary".into(),
+                role: NodeRole::Primary,
+                primary_url: None,
+                projects: vec![ProjectRegistration {
+                    id: "project".into(),
+                    path: dir.path().into(),
+                    token_env: "AX_TEST_BOOTSTRAP_REGISTER_ONCE".into(),
+                }],
+            },
+            access_db: db.clone(),
+            exports: Semaphore::new(4),
+            control: None,
+            shutdown: None,
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+        headers.insert("x-ax-node-id", "replica_1".parse().unwrap());
+        let audit_rows = || async {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM security_audit_log WHERE event_type='node.registered' AND subject_id='replica_1'",
+            )
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        };
+        // A sync makes many requests (snapshot, exchange, every chunk) with the same token.
+        for _ in 0..5 {
+            assert_eq!(
+                authorize_project(&state, "project", &headers).await,
+                Ok("replica_1".to_string())
+            );
+        }
+        assert_eq!(audit_rows().await, 1);
+        // A revoked grant is registered again, which writes a new audit row.
+        sqlx::query(
+            "UPDATE node_project_access SET revoked_at=CURRENT_TIMESTAMP WHERE node_id='replica_1'",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        authorize_project(&state, "project", &headers)
+            .await
+            .unwrap();
+        authorize_project(&state, "project", &headers)
+            .await
+            .unwrap();
+        assert_eq!(audit_rows().await, 2);
+        // UDP heartbeats carry the sender socket: same socket is a read, a new one re-registers.
+        for _ in 0..3 {
+            ensure_trusted_replica(&db, "replica_1", Some("192.168.1.9:4000"), "project")
+                .await
+                .unwrap();
+        }
+        assert_eq!(audit_rows().await, 3);
+        ensure_trusted_replica(&db, "replica_1", Some("192.168.1.9:4001"), "project")
+            .await
+            .unwrap();
+        assert_eq!(audit_rows().await, 4);
+        // A revoked node stays blocked.
+        ax_global_db::access::revoke_node(&db, "replica_1")
+            .await
+            .unwrap();
+        assert_eq!(
+            authorize_project(&state, "project", &headers).await,
+            Err(StatusCode::FORBIDDEN)
+        );
+        std::env::remove_var("AX_TEST_BOOTSTRAP_REGISTER_ONCE");
     }
 
     #[tokio::test]

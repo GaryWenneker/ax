@@ -206,9 +206,8 @@ pub async fn primary(config: ServerConfig, udp_port: u16) -> Result<(), String> 
             let Some(message) = decode(&buf[..length], &receive_config, "register", &token) else {
                 continue;
             };
-            if let Err(error) = ax_global_db::access::register_trusted_replica(
+            if let Err(error) = crate::server_http::ensure_trusted_replica(
                 &receive_access_db,
-                &message.node_id,
                 &message.node_id,
                 Some(&sender.to_string()),
                 &message.project_id,
