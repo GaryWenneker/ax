@@ -33,19 +33,24 @@ export default function ProfileEditor({ agent, profile, readonly, onSaved, onErr
       return;
     }
     setSaving(true);
-    const res = await updateAgentProfile(agent, profile.id, {
-      label: label.trim(),
-      provider: provider.trim() || undefined,
-      key_env: keyEnv.trim() || undefined,
-      model: model.trim() || undefined,
-    });
-    setSaving(false);
-    if (!res.ok) {
-      onError(res.error ?? 'Failed to save profile');
-      return;
+    try {
+      const res = await updateAgentProfile(agent, profile.id, {
+        label: label.trim(),
+        provider: provider.trim() || undefined,
+        key_env: keyEnv.trim() || undefined,
+        model: model.trim() || undefined,
+      });
+      if (!res.ok) {
+        onError(res.error ?? 'Failed to save profile');
+        return;
+      }
+      setOpen(false);
+      onSaved();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
     }
-    setOpen(false);
-    onSaved();
   }
 
   const authLabel =
