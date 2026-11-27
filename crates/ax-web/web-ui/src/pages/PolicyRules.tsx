@@ -1,4 +1,5 @@
 import { resolveOpenTarget } from '../lib/policySelection';
+import { dropPolicyRow, indexPolicyRows, patchPolicyRow, policyRowKey } from '../lib/policyRowKeys';
 import { useLive, useNewKeys } from '../lib/useLive';
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
@@ -88,6 +89,8 @@ interface Props {
   onEditFull: (id: string | null, origin?: string, projectId?: number) => void;
   onMatch: () => void;
 }
+
+const ruleIdOf = (r: { id: string }) => r.id;
 
 export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origin: routeOrigin, projectId: routeProjectId, onSelect, onEditFull, onMatch }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(selectedIdFromRoute);
@@ -271,7 +274,8 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
   const grouped = useMemo(() => visibleRuleGroups(visible), [visible]);
   const listedIds = useMemo(() => grouped.map((g) => g.id), [grouped]);
   const visibleRowIds = useMemo(() => visible.map((r) => r.id), [visible]);
-  const ruleById = useMemo(() => new Map(visible.map((r) => [r.id, r])), [visible]);
+  // Keyed by row: a project rule and a global.db copy can share an id.
+  const ruleByKey = useMemo(() => indexPolicyRows(visible, ruleIdOf), [visible]);
 
   useEffect(() => {
     function onPtr(e: PointerEvent) {
@@ -346,21 +350,21 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
 
   usePageContext('Rules', !loading && !error ? `${visible.length}/${listed.length} rules` : undefined);
 
-  async function remove(id: string) {
+  async function remove(id: string, key: string) {
     if (!confirm(`Delete rule "${id}"?`)) return;
     try {
       await deletePolicyRule(id);
-      setRules((prev) => prev.filter((r) => r.id !== id));
+      setRules((prev) => dropPolicyRow(prev, key, ruleIdOf));
       if (selectedId === id) selectRule(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : `Failed to delete rule "${id}"`);
     }
   }
 
-  async function toggleEnabled(id: string, enabled: boolean) {
+  async function toggleEnabled(id: string, enabled: boolean, key: string) {
     try {
       await setPolicyRuleEnabled(id, enabled);
-      setRules((prev) => prev.map((r) => (r.id === id ? { ...r, enabled } : r)));
+      setRules((prev) => patchPolicyRow(prev, key, ruleIdOf, (r) => ({ ...r, enabled })));
     } catch (e) {
       setError(e instanceof Error ? e.message : `Failed to update rule "${id}"`);
     }
@@ -387,8 +391,8 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
           setPropertiesFor(row.id);
           setPropertiesTick((n) => n + 1);
         }
-        if (action === 'enable' && !isGlobalPolicy(row)) await toggleEnabled(row.id, true);
-        if (action === 'disable' && !isGlobalPolicy(row)) await toggleEnabled(row.id, false);
+        if (action === 'enable' && !isGlobalPolicy(row)) await toggleEnabled(row.id, true, policyRowKey(row, ruleIdOf));
+        if (action === 'disable' && !isGlobalPolicy(row)) await toggleEnabled(row.id, false, policyRowKey(row, ruleIdOf));
         if (action === 'move-global' && !isGlobalPolicy(row)) {
           await relocatePolicyItem('rule', row.id, 'global', row.projectId);
         }
@@ -399,7 +403,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
           if (isGlobalPolicy(row)) await deletePolicyCopy('rule', row.id, row.projectId);
           else {
             await deletePolicyRule(row.id);
-            setRules((prev) => prev.filter((x) => x.id !== row.id));
+            setRules((prev) => dropPolicyRow(prev, policyRowKey(row, ruleIdOf), ruleIdOf));
           }
         }
       }
@@ -424,21 +428,17 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
     }
   }
 
-  async function toggleItemStorage(id: string, currentEffective?: string) {
+  async function toggleItemStorage(id: string, key: string, currentEffective?: string) {
     const next = currentEffective === 'database' ? 'files' : 'database';
     try {
       const res = await setPolicyRuleStorage(id, next);
       setRules((prev) =>
-        prev.map((r) =>
-          r.id === id
-            ? {
-                ...r,
-                storage: next,
-                effectiveStorage: res.effectiveStorage ?? next,
-                storageIsOverride: res.storageIsOverride ?? true,
-              }
-            : r,
-        ),
+        patchPolicyRow(prev, key, ruleIdOf, (r) => ({
+          ...r,
+          storage: next,
+          effectiveStorage: res.effectiveStorage ?? next,
+          storageIsOverride: res.storageIsOverride ?? true,
+        })),
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : `Failed to update storage for "${id}"`);
@@ -743,12 +743,12 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
                     selectedIds={selectedIds}
                     compact={Boolean(selectedId)}
                     filters={{ level, scope, tags, onLevel: toggleFilterLevel, onScope: toggleFilterScope, onTag: toggleFilterTag }}
-                    onRowClick={(e, id) => {
-                      const r = ruleById.get(id);
+                    onRowClick={(e, _id, key) => {
+                      const r = ruleByKey.get(key);
                       if (r) onRuleRowClick(e, r);
                     }}
-                    onRowContext={(e, id) => {
-                      const r = ruleById.get(id);
+                    onRowContext={(e, _id, key) => {
+                      const r = ruleByKey.get(key);
                       if (r) onRuleContext(e, r);
                     }}
                     visibleSelected={visibleRowIds.length > 0 && visibleRowIds.every((id) => selectedIds.has(id))}
@@ -773,8 +773,8 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
                       setSelectedIds(next);
                       setAnchorId(id);
                     }}
-                    onToggleEnabled={(id, enabled) => void toggleEnabled(id, enabled)}
-                    onToggleStorage={(id, current) => void toggleItemStorage(id, current)}
+                    onToggleEnabled={(id, enabled, key) => void toggleEnabled(id, enabled, key)}
+                    onToggleStorage={(id, current, key) => void toggleItemStorage(id, key, current)}
                     onAudit={(id) => {
                       setError('');
                       void auditOneRule(id).then(
@@ -786,19 +786,19 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
                         (err: unknown) => setError(err instanceof Error ? err.message : 'Audit failed'),
                       );
                     }}
-                    onEdit={(id) => {
-                      const r = ruleById.get(id);
+                    onEdit={(id, key) => {
+                      const r = ruleByKey.get(key);
                       onEditFull(id, r?.origin, r?.projectId);
                     }}
-                    onDelete={(id) => {
-                      const r = ruleById.get(id);
+                    onDelete={(id, key) => {
+                      const r = ruleByKey.get(key);
                       if (r && isGlobalPolicy(r)) {
                         if (confirm(`Delete rule "${id}" from global.db?`)) {
                           void deletePolicyCopy('rule', id, r.projectId).then(reloadRules);
                         }
                         return;
                       }
-                      void remove(id);
+                      void remove(id, key);
                     }}
                   />
                 </div>

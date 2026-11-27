@@ -1,4 +1,5 @@
 import { resolveOpenTarget } from '../lib/policySelection';
+import { dropPolicyRow, indexPolicyRows, patchPolicyRow, policyRowKey } from '../lib/policyRowKeys';
 import { useLive, useNewKeys } from '../lib/useLive';
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
@@ -84,6 +85,8 @@ interface Props {
   onEditFull: (name: string | null, origin?: string, projectId?: number) => void;
   onMatch: () => void;
 }
+
+const skillNameOf = (s: { name: string }) => s.name;
 
 export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, origin: routeOrigin, projectId: routeProjectId, onSelect, onEditFull, onMatch }: Props) {
   const [skills, setSkills] = useState<PolicySkillRow[]>([]);
@@ -260,7 +263,8 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
   const grouped = useMemo(() => visibleSkillGroups(visible), [visible]);
   const listedIds = useMemo(() => grouped.map((g) => g.id), [grouped]);
   const visibleRowIds = useMemo(() => visible.map((s) => s.name), [visible]);
-  const skillByName = useMemo(() => new Map(visible.map((s) => [s.name, s])), [visible]);
+  // Keyed by row: a project skill and a global.db copy can share a name.
+  const skillByKey = useMemo(() => indexPolicyRows(visible, skillNameOf), [visible]);
 
   useEffect(() => {
     function onPtr(e: PointerEvent) {
@@ -331,21 +335,21 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
 
   usePageContext('Skills', !loading && !error ? `${visible.length}/${listed.length} skills` : undefined);
 
-  async function remove(name: string) {
+  async function remove(name: string, key: string) {
     if (!confirm(`Delete skill "${name}"?`)) return;
     try {
       await deletePolicySkill(name);
-      setSkills((prev) => prev.filter((s) => s.name !== name));
+      setSkills((prev) => dropPolicyRow(prev, key, skillNameOf));
       if (selectedName === name) selectSkill(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : `Failed to delete skill "${name}"`);
     }
   }
 
-  async function toggleEnabled(name: string, enabled: boolean) {
+  async function toggleEnabled(name: string, enabled: boolean, key: string) {
     try {
       await setPolicySkillEnabled(name, enabled);
-      setSkills((prev) => prev.map((s) => (s.name === name ? { ...s, enabled } : s)));
+      setSkills((prev) => patchPolicyRow(prev, key, skillNameOf, (s) => ({ ...s, enabled })));
     } catch (e) {
       setError(e instanceof Error ? e.message : `Failed to update skill "${name}"`);
     }
@@ -372,8 +376,8 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
           setPropertiesFor(row.name);
           setPropertiesTick((n) => n + 1);
         }
-        if (action === 'enable' && !isGlobalPolicy(row)) await toggleEnabled(row.name, true);
-        if (action === 'disable' && !isGlobalPolicy(row)) await toggleEnabled(row.name, false);
+        if (action === 'enable' && !isGlobalPolicy(row)) await toggleEnabled(row.name, true, policyRowKey(row, skillNameOf));
+        if (action === 'disable' && !isGlobalPolicy(row)) await toggleEnabled(row.name, false, policyRowKey(row, skillNameOf));
         if (action === 'move-global' && !isGlobalPolicy(row)) {
           await relocatePolicyItem('skill', row.name, 'global', row.projectId);
         }
@@ -384,7 +388,7 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
           if (isGlobalPolicy(row)) await deletePolicyCopy('skill', row.name, row.projectId);
           else {
             await deletePolicySkill(row.name);
-            setSkills((prev) => prev.filter((x) => x.name !== row.name));
+            setSkills((prev) => dropPolicyRow(prev, policyRowKey(row, skillNameOf), skillNameOf));
           }
         }
       }
@@ -409,21 +413,17 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
     }
   }
 
-  async function toggleItemStorage(name: string, currentEffective?: string) {
+  async function toggleItemStorage(name: string, key: string, currentEffective?: string) {
     const next = currentEffective === 'database' ? 'files' : 'database';
     try {
       const res = await setPolicySkillStorage(name, next);
       setSkills((prev) =>
-        prev.map((s) =>
-          s.name === name
-            ? {
-                ...s,
-                storage: next,
-                effectiveStorage: res.effectiveStorage ?? next,
-                storageIsOverride: res.storageIsOverride ?? true,
-              }
-            : s,
-        ),
+        patchPolicyRow(prev, key, skillNameOf, (s) => ({
+          ...s,
+          storage: next,
+          effectiveStorage: res.effectiveStorage ?? next,
+          storageIsOverride: res.storageIsOverride ?? true,
+        })),
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : `Failed to update storage for "${name}"`);
@@ -599,12 +599,12 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
                     selectedIds={selectedIds}
                     compact={Boolean(selectedName)}
                     filters={{ level: '', scope, tags, onScope: toggleFilterScope, onTag: toggleFilterTag }}
-                    onRowClick={(e, id) => {
-                      const s = skillByName.get(id);
+                    onRowClick={(e, _id, key) => {
+                      const s = skillByKey.get(key);
                       if (s) onSkillRowClick(e, s);
                     }}
-                    onRowContext={(e, id) => {
-                      const s = skillByName.get(id);
+                    onRowContext={(e, _id, key) => {
+                      const s = skillByKey.get(key);
                       if (s) onSkillContext(e, s);
                     }}
                     visibleSelected={visibleRowIds.length > 0 && visibleRowIds.every((id) => selectedIds.has(id))}
@@ -629,10 +629,10 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
                       setSelectedIds(next);
                       setAnchorId(id);
                     }}
-                    onToggleEnabled={(id, enabled) => void toggleEnabled(id, enabled)}
-                    onToggleStorage={(id, current) => void toggleItemStorage(id, current)}
-                    onEdit={(id) => {
-                      const s = skillByName.get(id);
+                    onToggleEnabled={(id, enabled, key) => void toggleEnabled(id, enabled, key)}
+                    onToggleStorage={(id, current, key) => void toggleItemStorage(id, key, current)}
+                    onEdit={(id, key) => {
+                      const s = skillByKey.get(key);
                       onEditFull(id, s?.origin, s?.projectId);
                     }}
                     onAudit={(id) => {
@@ -646,15 +646,15 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
                         (err: unknown) => setError(err instanceof Error ? err.message : 'Audit failed'),
                       );
                     }}
-                    onDelete={(id) => {
-                      const s = skillByName.get(id);
+                    onDelete={(id, key) => {
+                      const s = skillByKey.get(key);
                       if (s && isGlobalPolicy(s)) {
                         if (confirm(`Delete skill "${id}" from global.db?`)) {
                           void deletePolicyCopy('skill', id, s.projectId).then(reloadSkills);
                         }
                         return;
                       }
-                      void remove(id);
+                      void remove(id, key);
                     }}
                   />
                 </div>
