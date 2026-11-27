@@ -34,6 +34,8 @@ For in-place migration see SonarSource: 9.9 → 24.12 → current.";
 const SONAR_POSTGRES_UPGRADE_HINT: &str = "Upgrading from embedded H2 to PostgreSQL. \
 The old SonarQube container is recreated; project data is not migrated automatically — \
 run Setup project & token in Command Center afterward.";
+/// Label on every container ax creates; only those may be replaced.
+const AX_MANAGED_LABEL: &str = "ax.managed=true";
 pub const SONAR_SCANNER_IMAGE: &str = "sonarsource/sonar-scanner-cli";
 
 /// Collects install/start log lines; optionally streams each line over SSE.
@@ -692,6 +694,30 @@ fn container_uses_postgres(runtime: ContainerRuntime, sonar_name: &str) -> bool 
         .any(|e| e.starts_with("SONAR_JDBC_URL=") && e.contains("postgresql"))
 }
 
+/// Whether container `name` carries [`AX_MANAGED_LABEL`], i.e. ax created it.
+fn container_is_ax_managed(runtime: ContainerRuntime, name: &str) -> bool {
+    let (key, value) = AX_MANAGED_LABEL
+        .split_once('=')
+        .unwrap_or((AX_MANAGED_LABEL, ""));
+    cli_query(
+        runtime,
+        &["inspect", name, "--format", "{{json .Config.Labels}}"],
+    )
+    .and_then(|out| serde_json::from_str::<serde_json::Value>(out.trim()).ok())
+    .is_some_and(|labels| labels.get(key).and_then(|v| v.as_str()) == Some(value))
+}
+
+/// Error for an embedded-H2 SonarQube container that ax did not create.
+fn unmanaged_container_error(runtime: ContainerRuntime, name: &str) -> String {
+    format!(
+        "Container '{name}' uses embedded H2 and was not created by ax, so ax will not replace it \
+         (its data would be lost). Back up what you need, then remove it with \
+         `{cli} rm -f {name}` and run Install again, or set `podman_container` in \
+         .ax/ship.toml to another name.",
+        cli = runtime.cli()
+    )
+}
+
 fn sonar_stack_needs_postgres_upgrade(runtime: ContainerRuntime, sonar_name: &str) -> bool {
     find_container(runtime, sonar_name).is_some() && !container_uses_postgres(runtime, sonar_name)
 }
@@ -798,6 +824,8 @@ fn create_postgres_container(
             SONAR_NETWORK,
             "--restart",
             "unless-stopped",
+            "--label",
+            AX_MANAGED_LABEL,
             "-e",
             &format!("POSTGRES_USER={POSTGRES_USER}"),
             "-e",
@@ -831,6 +859,8 @@ fn sonar_run_args(host: &str, host_port: u16, sonar_name: &str, db_name: &str) -
         SONAR_CONTAINER_MEMORY.into(),
         "--restart".into(),
         "unless-stopped".into(),
+        "--label".into(),
+        AX_MANAGED_LABEL.into(),
         "-e".into(),
         format!("SONAR_JDBC_URL={}", jdbc_url(db_name)),
         "-e".into(),
@@ -985,6 +1015,11 @@ pub async fn ensure_sonar_live_with_log(
             }
         }
         if sonar_stack_needs_postgres_upgrade(runtime, &name) {
+            if !container_is_ax_managed(runtime, &name) {
+                let msg = unmanaged_container_error(runtime, &name);
+                log.push(format!("ERROR: {msg}"));
+                return Err(msg);
+            }
             log.push(SONAR_POSTGRES_UPGRADE_HINT.to_string());
             remove_container_logged(runtime, &name, log)?;
             return Ok((runtime, InstallStep::Create));
@@ -1317,7 +1352,6 @@ mod tests {
 mod fake_cli_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
-    use std::path::{Path, PathBuf};
     use std::sync::MutexGuard;
 
     const FAKE_PODMAN: &str = r#"#!/bin/sh
@@ -1327,7 +1361,8 @@ if [ -f "$d/hang-$1" ]; then exec sleep 30; fi
 case "$1" in
   --version) echo "podman version 5.0.0" ;;
   ps) n="${4#name=^}"; n="${n%\$}"; if [ -f "$d/ps-$n" ]; then cat "$d/ps-$n"; fi ;;
-  inspect) for a in "$@"; do if [ -f "$d/inspect-$a" ]; then cat "$d/inspect-$a"; fi; done ;;
+  inspect) case "$*" in *Labels*) f=labels ;; *) f=inspect ;; esac
+    for a in "$@"; do if [ -f "$d/$f-$a" ]; then cat "$d/$f-$a"; fi; done ;;
   start|stop) echo "$2" ;;
   *) exit 1 ;;
 esac
@@ -1354,10 +1389,6 @@ esac
         }
         pub fn calls(&self) -> String {
             std::fs::read_to_string(self.dir.path().join("calls.log")).unwrap_or_default()
-        }
-        #[allow(dead_code)]
-        pub fn path(&self) -> PathBuf {
-            Path::new(self.dir.path()).to_path_buf()
         }
     }
 
@@ -1394,6 +1425,48 @@ esac
             });
         });
         rx.recv_timeout(limit).ok()
+    }
+
+    fn install_over_existing(labels: &str) -> (Result<SonarDiscovery, String>, String) {
+        let fake = FakeCli::new();
+        test_hooks::set_timeout_cap(Some(Duration::from_secs(2)));
+        fake.file("ps-sonarqube", "sonarqube\tExited (0) 2 days ago\t\n");
+        // No SONAR_JDBC_URL and no `-db` sidecar: looks like an embedded-H2 stack.
+        fake.file("inspect-sonarqube", "sonarqube:9.9-community\n");
+        fake.file("labels-sonarqube", labels);
+        let log = InstallLog::new();
+        let outcome = run_with_ticker(Duration::from_secs(20), async move {
+            ensure_sonar_live_with_log("http://127.0.0.1:1", "sonarqube", Some("podman"), 1, &log)
+                .await
+        });
+        let (result, _) = outcome.expect("install returned");
+        (result, fake.calls())
+    }
+
+    #[test]
+    fn install_leaves_a_sonarqube_container_ax_did_not_create_alone() {
+        let (result, calls) = install_over_existing("{\"maintainer\":\"someone\"}");
+        let err = result.expect_err("install refuses");
+        assert!(err.contains("not created by ax"), "{err}");
+        assert!(err.contains("podman rm -f sonarqube"), "{err}");
+        assert!(!calls.contains("rm -f"), "container was removed:\n{calls}");
+        assert!(
+            !calls.contains("\nrun "),
+            "container was recreated:\n{calls}"
+        );
+    }
+
+    #[test]
+    fn install_replaces_an_h2_container_ax_created() {
+        let (_, calls) = install_over_existing("{\"ax.managed\":\"true\"}");
+        assert!(calls.contains("rm -f sonarqube"), "{calls}");
+    }
+
+    #[test]
+    fn ax_labels_the_containers_it_creates() {
+        let args = sonar_run_args("http://localhost:9000", 9000, "sonarqube", "sonarqube-db");
+        let i = args.iter().position(|a| a == "--label").expect("--label");
+        assert_eq!(args[i + 1], AX_MANAGED_LABEL);
     }
 
     #[test]
