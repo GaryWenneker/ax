@@ -42,19 +42,33 @@ pub fn is_notification(id: &Option<Value>) -> bool {
     id.is_none()
 }
 
+/// Read one JSON-RPC request line from `reader`, skipping blank lines.
+///
+/// Returns an `UnexpectedEof` error once the input is closed, so the caller
+/// can stop instead of reading a closed stream forever. A line that is not
+/// valid JSON-RPC is an `InvalidData` error.
+pub fn read_request_from<R: BufRead>(reader: &mut R) -> Result<JsonRpcRequest, io::Error> {
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "stdin closed"));
+        }
+        if !line.trim().is_empty() {
+            break;
+        }
+    }
+    serde_json::from_str(&line)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
+}
+
 pub struct StdioTransport;
 
 impl StdioTransport {
     pub fn read_request() -> Result<JsonRpcRequest, io::Error> {
         let stdin = io::stdin();
         let mut handle = stdin.lock();
-        let mut line = String::new();
-        handle.read_line(&mut line)?;
-        if line.trim().is_empty() {
-            return Err(io::Error::new(io::ErrorKind::WouldBlock, "empty line"));
-        }
-        serde_json::from_str(&line)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
+        read_request_from(&mut handle)
     }
 
     pub fn send_response(response: &JsonRpcResponse) -> Result<(), io::Error> {
@@ -94,5 +108,28 @@ impl StdioTransport {
         stdout.write_all(line.as_bytes())?;
         stdout.flush()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn read_request_reports_end_of_input() {
+        let mut empty = Cursor::new(Vec::<u8>::new());
+        let err = read_request_from(&mut empty).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn read_request_skips_blank_lines_and_then_reports_end_of_input() {
+        let mut input =
+            Cursor::new(b"\n  \n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n\n".to_vec());
+        let req = read_request_from(&mut input).unwrap();
+        assert_eq!(req.method, "ping");
+        let err = read_request_from(&mut input).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
     }
 }

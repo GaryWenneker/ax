@@ -106,10 +106,12 @@ pub async fn run_stdio_server(
                         StdioTransport::send_notification_line(&format_mcp_log_notification(text));
                 }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
-            Err(e) => {
+            // The client closed stdin: stop instead of reading a closed pipe.
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
                 StdioTransport::send_error(None, PARSE_ERROR, &e.to_string())?;
             }
+            Err(e) => return Err(e.into()),
         }
     }
 }
