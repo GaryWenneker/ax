@@ -876,6 +876,11 @@ async fn a_foreign_embedding_is_not_inserted_into_the_vector_index() {
     ax_memory::brain::index_archive_vector(db.pool(), &other.id)
         .await
         .unwrap();
+    assert_eq!(
+        vec_map_rows(db.pool(), &other.id).await,
+        1,
+        "an active-model vector must be in the index before the removal is checked"
+    );
     sqlx::query("UPDATE memories SET embedding_model = 'other-model' WHERE id = ?")
         .bind(&other.id)
         .execute(db.pool())
@@ -884,13 +889,17 @@ async fn a_foreign_embedding_is_not_inserted_into_the_vector_index() {
     ax_memory::brain::index_archive_vector(db.pool(), &other.id)
         .await
         .unwrap();
-    let indexed: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM memory_vec_map WHERE memory_id = ?")
-            .bind(&other.id)
-            .fetch_one(db.pool())
-            .await
-            .unwrap_or(0);
-    assert_eq!(indexed, 0);
+    assert_eq!(vec_map_rows(db.pool(), &other.id).await, 0);
+}
+
+/// Counts the vector-map rows for one memory. The table must exist: a query error fails the
+/// test instead of passing for zero rows.
+async fn vec_map_rows(pool: &sqlx::SqlitePool, id: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM memory_vec_map WHERE memory_id = ?")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .expect("memory_vec_map must exist once an archive vector was indexed")
 }
 
 fn archive(query: &str) -> SearchRequest {
