@@ -664,6 +664,8 @@ Configure it in `ax.json` under `docsCatalog`. Every key is optional, and there 
 | `jsonl_path` | `.ax/memory/documentation-catalog.jsonl` | Output file |
 | `docs_root` / `skills_root` / `scripts_root` | `.docs` / `.agents/skills` / `.scripts` | Workspace sources |
 
+Every path key must stay inside the project: absolute paths, `..` and symbolic links that lead out of the project are refused, and the sync stops with an error naming the key. `wiki_apps_subdir`, `wiki_integrations_dir` and `wiki_products_page` must be relative paths inside the wiki. A `wiki_remote` that starts with `-` is refused, because git would read it as an option.
+
 ```json
 {
   "docsCatalog": {
