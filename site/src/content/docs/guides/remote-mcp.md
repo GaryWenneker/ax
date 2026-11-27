@@ -103,7 +103,7 @@ Point the existing tunnel's service at:
 service: unix:/absolute/path/ax-remote.sock
 ```
 
-Ax forwards the socket's HTTP traffic to the actual assigned TCP listener. The socket is owner-only; run `cloudflared` under the same user or arrange an appropriate local permission setup. Ax refuses to overwrite an existing socket. After an unclean shutdown, verify that its owner is stopped before removing a stale socket.
+Ax forwards the socket's HTTP traffic to the actual assigned TCP listener. A socket connection stays open as long as bytes move in either direction; it is closed after ten and a half minutes without traffic, which is longer than the slowest admin tool call. Up to 32 socket connections are forwarded at once; further connections wait for a free slot. The socket is owner-only; run `cloudflared` under the same user or arrange an appropriate local permission setup. Ax refuses to overwrite an existing socket. After an unclean shutdown, verify that its owner is stopped before removing a stale socket.
 
 Windows uses the TCP upstream path; Unix sockets in this feature are macOS/Linux only. Dynamic port allocation addresses listener collisions. It does not guarantee that every VPN, firewall, DNS or routing configuration will allow the tunnel's network connection.
 

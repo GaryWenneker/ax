@@ -1244,23 +1244,111 @@ async fn start_socket_bridge(
         .map_err(|e| e.to_string())?;
     Ok(Some(tokio::spawn(async move {
         let limit = Arc::new(Semaphore::new(32));
-        while let Ok((mut stream, _)) = listener.accept().await {
-            let Ok(permit) = limit.clone().try_acquire_owned() else {
-                continue;
+        while let Ok((stream, _)) = listener.accept().await {
+            // At the connection limit, wait for a free slot instead of
+            // dropping a connection that was already accepted.
+            let Ok(permit) = limit.clone().acquire_owned().await else {
+                break;
             };
             tokio::spawn(async move {
                 let _permit = permit;
-                if let Ok(mut tcp) = tokio::net::TcpStream::connect(addr).await {
-                    let _ = tokio::time::timeout(
-                        Duration::from_secs(300),
-                        tokio::io::copy_bidirectional(&mut stream, &mut tcp),
-                    )
-                    .await;
+                if let Ok(tcp) = tokio::net::TcpStream::connect(addr).await {
+                    bridge_streams(stream, tcp, SOCKET_IDLE_TIMEOUT).await;
                 }
             });
         }
     })))
 }
+
+/// How long a socket bridge connection may stay silent before it is closed.
+/// Longer than the admin tool timeout, so a slow admin call that sends
+/// nothing until it answers still gets its answer through the bridge.
+const SOCKET_IDLE_TIMEOUT: Duration = Duration::from_secs(ADMIN_TOOL_TIMEOUT.as_secs() + 60);
+
+/// Copy bytes both ways between `client` and `upstream` until either side
+/// closes or no byte has moved in either direction for `idle`.
+#[cfg_attr(not(unix), allow(dead_code))]
+async fn bridge_streams<A, B>(client: A, mut upstream: B, idle: Duration)
+where
+    A: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    B: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let activity = Arc::new(std::sync::Mutex::new(tokio::time::Instant::now()));
+    let mut client = ActivityStream {
+        inner: client,
+        last: activity.clone(),
+    };
+    let watchdog = async {
+        loop {
+            let deadline = *activity.lock().unwrap_or_else(|e| e.into_inner()) + idle;
+            if tokio::time::Instant::now() >= deadline {
+                return;
+            }
+            tokio::time::sleep_until(deadline).await;
+        }
+    };
+    tokio::select! {
+        _ = tokio::io::copy_bidirectional(&mut client, &mut upstream) => {}
+        _ = watchdog => {}
+    }
+}
+
+/// Stream wrapper that records the time of the last byte read or written.
+#[cfg_attr(not(unix), allow(dead_code))]
+struct ActivityStream<S> {
+    inner: S,
+    last: Arc<std::sync::Mutex<tokio::time::Instant>>,
+}
+
+impl<S> ActivityStream<S> {
+    fn touch(&self) {
+        *self.last.lock().unwrap_or_else(|e| e.into_inner()) = tokio::time::Instant::now();
+    }
+}
+
+impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for ActivityStream<S> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        let poll = std::pin::Pin::new(&mut self.inner).poll_read(cx, buf);
+        if matches!(poll, std::task::Poll::Ready(Ok(()))) && buf.filled().len() > before {
+            self.touch();
+        }
+        poll
+    }
+}
+
+impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for ActivityStream<S> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        data: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let poll = std::pin::Pin::new(&mut self.inner).poll_write(cx, data);
+        if matches!(poll, std::task::Poll::Ready(Ok(n)) if n > 0) {
+            self.touch();
+        }
+        poll
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
 #[cfg(not(unix))]
 async fn start_socket_bridge(
     path: Option<&std::path::Path>,
@@ -1337,6 +1425,55 @@ mod socket_tests {
         assert!(response.ends_with("ready"), "{response}");
         bridge.abort();
         upstream.abort();
+    }
+}
+
+#[cfg(test)]
+mod bridge_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// A slow admin call answers after a long quiet stretch; the bridge must
+    /// still deliver the answer as long as the stretch is under the idle limit.
+    #[tokio::test(start_paused = true)]
+    async fn bridge_keeps_a_quiet_connection_open_until_the_idle_limit() {
+        assert!(SOCKET_IDLE_TIMEOUT > ADMIN_TOOL_TIMEOUT);
+        let (client, mut client_peer) = tokio::io::duplex(1024);
+        let (upstream, mut upstream_peer) = tokio::io::duplex(1024);
+        let bridge = tokio::spawn(bridge_streams(client, upstream, SOCKET_IDLE_TIMEOUT));
+
+        client_peer.write_all(b"request").await.unwrap();
+        let mut buf = [0u8; 7];
+        upstream_peer.read_exact(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"request");
+
+        // The server works for the full admin timeout before it answers.
+        tokio::time::sleep(ADMIN_TOOL_TIMEOUT).await;
+        upstream_peer.write_all(b"answer").await.unwrap();
+        let mut buf = [0u8; 6];
+        client_peer.read_exact(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"answer");
+
+        // Traffic resets the idle clock: a connection that keeps talking
+        // lives well past any single idle window.
+        for _ in 0..4 {
+            tokio::time::sleep(SOCKET_IDLE_TIMEOUT / 2).await;
+            client_peer.write_all(b"x").await.unwrap();
+            let mut one = [0u8; 1];
+            upstream_peer.read_exact(&mut one).await.unwrap();
+        }
+        assert!(!bridge.is_finished());
+        bridge.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn bridge_closes_a_connection_that_stays_idle() {
+        let (client, _client_peer) = tokio::io::duplex(1024);
+        let (upstream, _upstream_peer) = tokio::io::duplex(1024);
+        let idle = Duration::from_secs(10);
+        tokio::time::timeout(idle * 2, bridge_streams(client, upstream, idle))
+            .await
+            .expect("an idle bridge connection closes after the idle limit");
     }
 }
 
