@@ -605,21 +605,12 @@ pub async fn lookup_price_as_of(
     .await
     .map_err(|e| e.to_string())?;
 
-    let mut best: Option<(usize, i32, Row)> = None;
+    let mut best: Option<((u8, usize), i32, Row)> = None;
     for row in rows {
-        let key = row.5.to_ascii_lowercase();
-        let short = key.rsplit('/').next().unwrap_or(&key).to_string();
         let or_rank = if row.4 == "openrouter" { 0 } else { 1 };
-        let matched = if lowered == key
-            || lowered == short
-            || lowered.contains(&short) && short.len() >= 4
-            || short.contains(&lowered) && lowered.len() >= 4
-        {
-            Some(short.len())
-        } else {
-            None
+        let Some(score) = crate::pricing::catalog_match_score(&lowered, &row.5) else {
+            continue;
         };
-        let Some(score) = matched else { continue };
         match &best {
             Some((s, r, _)) if *s > score || (*s == score && *r <= or_rank) => {}
             _ => best = Some((score, or_rank, row)),
@@ -654,6 +645,44 @@ mod tests {
         let mut p = std::env::temp_dir();
         p.push(format!("ax-pricing-test-{name}-{}.db", std::process::id()));
         p
+    }
+
+    #[tokio::test]
+    async fn lookup_price_as_of_prefers_exact_id_over_superstring() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let db = temp_db("exact");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+
+        let pool = open_pool().await.expect("pool");
+        let rows = parse_openrouter_models(&json!({
+            "data": [
+                {
+                    "id": "openai/gpt-4o-mini-search-preview",
+                    "name": "GPT-4o mini search",
+                    "pricing": { "prompt": "0.00000015", "completion": "0.0000006" }
+                },
+                {
+                    "id": "openai/gpt-4o",
+                    "name": "GPT-4o",
+                    "pricing": { "prompt": "0.0000025", "completion": "0.00001" }
+                }
+            ]
+        }));
+        upsert_prices(&pool, "2026-07-26", SOURCE_OPENROUTER, &rows)
+            .await
+            .unwrap();
+        let found = lookup_price_as_of("gpt-4o", "2026-07-26")
+            .await
+            .unwrap()
+            .expect("price");
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(&db);
+        assert!(
+            (found.0.input_per_mtok - 2.5).abs() < 1e-9,
+            "gpt-4o priced at {}",
+            found.0.input_per_mtok
+        );
     }
 
     #[tokio::test]

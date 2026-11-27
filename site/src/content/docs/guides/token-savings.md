@@ -154,6 +154,8 @@ Resolution order for USD estimates:
 2. Latest OpenRouter snapshot in `~/.ax/usage.db`
 3. Built-in defaults
 
+In the snapshot an exact model id wins (with or without the `provider/` prefix). Otherwise the longest catalog id contained in the requested id wins, and only then the shortest catalog id that contains the requested id. So `gpt-4o` is priced as `openai/gpt-4o`, not `openai/gpt-4o-mini`.
+
 ### Cursor state.vscdb (automatic on import)
 
 When you run `ax savings import --cursor` or `--all`, ax also reads:
