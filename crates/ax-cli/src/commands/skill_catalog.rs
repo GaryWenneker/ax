@@ -1,13 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use ax_skill_catalog::{
     agent_brief, audit_directory, audit_directory_present, audit_rule_present, audit_skill_text,
     find_rule_file, find_skill_dir, install_report_url, install_tree, load_latest, load_settings,
     materialize_well_known, parse_search_body, parse_source, parse_verdict, project_briefs,
-    require_one_skill, save_settings, stage_one_skill, store_report, LockEntry, LockFile,
-    SkillAuditReport, SkillPresence, SkillSource, SEARCH_URL,
+    require_one_skill, save_settings, search_body, stage_one_skill, store_report, Fetched,
+    LockEntry, LockFile, SkillAuditReport, SkillPresence, SkillSource,
 };
 use clap::{Args, Subcommand};
 
@@ -149,15 +148,9 @@ fn search(query: &str, owner: Option<&str>, limit: u32, json: bool) -> Result<()
     if query.trim().chars().count() < 2 {
         return Err("search needs at least 2 characters".into());
     }
-    let limit = limit.clamp(1, 50);
-    let mut url = format!("{SEARCH_URL}?q={}&limit={limit}", encode(query));
-    if let Some(owner) = owner.filter(|o| !o.is_empty()) {
-        url.push_str("&owner=");
-        url.push_str(&encode(owner));
-    }
-    let body = http_text(&url)?;
+    let body = blocking(|| search_body(query, owner, limit))?;
     let mut hits = parse_search_body(&body)?;
-    ax_skill_catalog::attach_catalog_cards(&mut hits);
+    blocking(|| ax_skill_catalog::attach_catalog_cards(&mut hits));
     if json {
         println!(
             "{}",
@@ -287,68 +280,6 @@ async fn install_one(
     Ok(())
 }
 
-struct Fetched {
-    tree: PathBuf,
-    sha: String,
-    source_id: String,
-    source_type: String,
-    well_known_index: Option<String>,
-    file_base: String,
-    _temp: Option<tempfile::TempDir>,
-}
-
-fn fetch_source(source: &SkillSource) -> Result<Fetched, String> {
-    match source {
-        SkillSource::Local { path } => Ok(Fetched {
-            tree: PathBuf::from(path),
-            sha: "local".into(),
-            source_id: path.clone(),
-            source_type: "local".into(),
-            well_known_index: None,
-            file_base: String::new(),
-            _temp: None,
-        }),
-        SkillSource::Git {
-            clone_url,
-            source_id,
-            reference,
-            host,
-            ..
-        } => {
-            let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
-            git_clone(clone_url, reference.as_deref(), temp.path())?;
-            let sha = git_rev(temp.path()).unwrap_or_else(|_| "unknown".into());
-            let source_type = match host {
-                ax_skill_catalog::GitHost::GitHub => "github",
-                ax_skill_catalog::GitHost::GitLab => "gitlab",
-                ax_skill_catalog::GitHost::Azure => "azure",
-            };
-            Ok(Fetched {
-                tree: temp.path().to_path_buf(),
-                sha,
-                source_id: source_id.clone(),
-                source_type: source_type.into(),
-                well_known_index: None,
-                file_base: String::new(),
-                _temp: Some(temp),
-            })
-        }
-        SkillSource::WellKnown { base_url, .. } => {
-            let (index_url, body) = fetch_index(base_url)?;
-            let file_base = index_url.trim_end_matches("/index.json").to_string();
-            Ok(Fetched {
-                tree: PathBuf::new(),
-                sha: "well-known".into(),
-                source_id: base_url.clone(),
-                source_type: "well-known".into(),
-                well_known_index: Some(body),
-                file_base,
-                _temp: None,
-            })
-        }
-    }
-}
-
 fn only_path(source: &SkillSource, tree: &Path) -> PathBuf {
     match source {
         SkillSource::Git {
@@ -356,26 +287,6 @@ fn only_path(source: &SkillSource, tree: &Path) -> PathBuf {
         } => tree.join(path),
         _ => tree.to_path_buf(),
     }
-}
-
-fn fetch_index(base: &str) -> Result<(String, String), String> {
-    let base = base.trim_end_matches('/');
-    let mut urls = Vec::new();
-    if base.contains("/.well-known/") {
-        urls.push(format!("{base}/index.json"));
-    } else {
-        urls.push(format!("{base}/.well-known/agent-skills/index.json"));
-        urls.push(format!("{base}/.well-known/skills/index.json"));
-    }
-    let mut errors = Vec::new();
-    for url in urls {
-        match http_text(&url) {
-            Ok(body) if body.contains("skills") => return Ok((url, body)),
-            Ok(_) => errors.push(format!("{url} was not a skill index")),
-            Err(err) => errors.push(err),
-        }
-    }
-    Err(errors.join("; "))
 }
 
 fn list(path: Option<String>, global: bool, json: bool) -> Result<(), String> {
@@ -470,9 +381,9 @@ fn publish(name: &str, remote: Option<String>, path: Option<String>) -> Result<(
         return Ok(());
     }
     let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
-    git_clone(&remote, None, temp.path())?;
+    blocking(|| ax_skill_catalog::git_clone(&remote, None, temp.path()))?;
     stage_one_skill(&skills, name, temp.path())?;
-    git_publish(temp.path(), name)?;
+    blocking(|| ax_skill_catalog::git_publish(temp.path(), name))?;
     println!("published {name} to {remote}");
     Ok(())
 }
@@ -747,105 +658,43 @@ async fn reindex(root: &Path) {
     }
 }
 
-fn git_clone(url: &str, reference: Option<&str>, dest: &Path) -> Result<(), String> {
-    let mut cmd = Command::new("git");
-    cmd.arg("clone").arg("--depth").arg("1");
-    if let Some(reference) = reference {
-        cmd.arg("--branch").arg(reference);
+/// Run a blocking catalog call (reqwest::blocking, git) from the async CLI.
+fn blocking<T>(work: impl FnOnce() -> T) -> T {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::task::block_in_place(work)
+    } else {
+        work()
     }
-    cmd.arg(url).arg(dest);
-    let output = cmd.output().map_err(|e| format!("git clone: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git clone failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    Ok(())
 }
 
-fn git_rev(dest: &Path) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(dest)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        return Err("git rev-parse failed".into());
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-fn git_publish(repo: &Path, name: &str) -> Result<(), String> {
-    let add = Command::new("git")
-        .args(["add", "--", &format!("skills/{name}")])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !add.status.success() {
-        return Err(String::from_utf8_lossy(&add.stderr).trim().to_string());
-    }
-    let commit = Command::new("git")
-        .args(["commit", "-m", &format!("Publish skill {name}")])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !commit.status.success() {
-        let stderr = String::from_utf8_lossy(&commit.stderr);
-        if !stderr.contains("nothing to commit")
-            && !String::from_utf8_lossy(&commit.stdout).contains("nothing to commit")
-        {
-            return Err(stderr.trim().to_string());
-        }
-    }
-    let push = Command::new("git")
-        .args(["push"])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !push.status.success() {
-        return Err(format!(
-            "git push failed: {}",
-            String::from_utf8_lossy(&push.stderr).trim()
-        ));
-    }
-    Ok(())
+fn fetch_source(source: &SkillSource) -> Result<Fetched, String> {
+    blocking(|| ax_skill_catalog::fetch_source(source))
 }
 
 fn http_text(url: &str) -> Result<String, String> {
-    let bytes = http_bytes(url)?;
-    String::from_utf8(bytes).map_err(|e| e.to_string())
+    blocking(|| ax_skill_catalog::http_text(url))
 }
 
 fn http_bytes(url: &str) -> Result<Vec<u8>, String> {
-    let fetch = |url: &str| {
-        let response = reqwest::blocking::get(url).map_err(|e| e.to_string())?;
-        if !response.status().is_success() {
-            return Err(format!("GET {url} returned {}", response.status()));
-        }
-        let bytes = response.bytes().map_err(|e| e.to_string())?;
-        if bytes.len() > 25 * 1024 * 1024 {
-            return Err("download is larger than 25 MiB".into());
-        }
-        Ok(bytes.to_vec())
-    };
-    if tokio::runtime::Handle::try_current().is_ok() {
-        tokio::task::block_in_place(|| fetch(url))
-    } else {
-        fetch(url)
-    }
+    blocking(|| ax_skill_catalog::http_bytes(url))
 }
 
-fn encode(value: &str) -> String {
-    let mut out = String::new();
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(byte as char);
-            }
-            b' ' => out.push_str("%20"),
-            _ => out.push_str(&format!("%{byte:02X}")),
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn downloads_refuse_private_addresses() {
+        for url in [
+            "http://127.0.0.1:9/index.json",
+            "http://169.254.169.254/latest/meta-data",
+            "http://localhost:9/index.json",
+        ] {
+            let err = http_bytes(url).unwrap_err();
+            assert!(
+                err.contains("private address") || err.contains("local host"),
+                "{url}: {err}"
+            );
         }
     }
-    out
 }
