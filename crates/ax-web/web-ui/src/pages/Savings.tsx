@@ -3,7 +3,7 @@ import { clickableRowProps } from '../lib/clickableRow';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { useLive, useNewKeys } from '../lib/useLive';
-import { createLatestGate, dataAfterFailedLoad } from '../lib/latestLoad';
+import { applyLatest, createLatestGate, dataAfterFailedLoad } from '../lib/latestLoad';
 import {
   fetchCallTokenDetail,
   fetchSavings,
@@ -790,31 +790,32 @@ export default function SavingsPage() {
   const [callError, setCallError] = useState<string | null>(null);
   const [quality, setQuality] = useState<QualitySnapshot>(emptyQualitySnapshot);
 
-  const openCallDetail = useCallback(async (row: RecentCallRow) => {
-    if (selectedCallId === row.id) {
-      setSelectedCallId(null);
-      setCallDetail(null);
-      setCallError(null);
-      return;
-    }
-    setSelectedCallId(row.id);
-    setCallLoading(true);
-    setCallError(null);
-    try {
-      setCallDetail(await fetchCallTokenDetail(row.id));
-    } catch (e) {
-      setCallDetail(null);
-      setCallError(String(e));
-    } finally {
-      setCallLoading(false);
-    }
-  }, [selectedCallId]);
+  /** Only the detail for the row selected last may land; closing drops any answer in flight. */
+  const callGate = useRef(createLatestGate());
 
   const closeCallDetail = useCallback(() => {
+    callGate.current.cancel();
     setSelectedCallId(null);
     setCallDetail(null);
     setCallError(null);
+    setCallLoading(false);
   }, []);
+
+  const openCallDetail = useCallback(async (row: RecentCallRow) => {
+    if (selectedCallId === row.id) {
+      closeCallDetail();
+      return;
+    }
+    setSelectedCallId(row.id);
+    setCallDetail(null);
+    setCallLoading(true);
+    setCallError(null);
+    await applyLatest(callGate.current, () => fetchCallTokenDetail(row.id), {
+      value: setCallDetail,
+      error: (e) => setCallError(String(e)),
+      settled: () => setCallLoading(false),
+    });
+  }, [selectedCallId, closeCallDetail]);
 
   const [dataScope, setDataScope] = useState('');
 
