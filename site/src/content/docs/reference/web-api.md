@@ -54,7 +54,7 @@ List routes take `limit` and `offset`. `limit` is kept between 1 and the route's
 | POST | `/api/policy/match` | Which rules and skills match a prompt (Match page) |
 | POST | `/api/policy/capture` | Save a durable directive as a rule |
 | POST | `/api/policy/reindex` | Re-index policy from disk |
-| POST | `/api/policy/export` | Export policy files |
+| POST | `/api/policy/export` | Export policy files to `out_dir`, a folder inside the project (default `.ax/policy/export`); absolute paths, `..` and links out of the project get 400 |
 | GET | `/api/policy/pack/status` | Git pack sync status |
 | POST | `/api/policy/pack/export` | Export a pack |
 | POST | `/api/policy/pack/import` | Import a pack |

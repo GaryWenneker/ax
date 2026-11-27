@@ -1558,7 +1558,12 @@ async fn export_policy(
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
     let ws = hub.read().await;
-    let out = ws.policy.store.project_root().join(&payload.out_dir);
+    // The export folder is relative to the project and must stay inside it:
+    // no absolute path, no `..`, no link that points out of the project.
+    let out = match ax_utils::contained_join(ws.policy.store.project_root(), &payload.out_dir) {
+        Ok(p) => p,
+        Err(e) => return err(StatusCode::BAD_REQUEST, &format!("out_dir: {e}")),
+    };
     match ws.policy.store.export_to_files(&out).await {
         Ok(r) => (StatusCode::OK, Json(r)).into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),

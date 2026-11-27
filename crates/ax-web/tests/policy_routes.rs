@@ -1,4 +1,6 @@
-//! Policy routes: skill routes act on the skill when a rule shares its name. `HOME` and `AX_GLOBAL_DB` are process-global, so every
+//! Policy routes: skill routes act on the skill when a rule shares its name,
+//! relocation never leaves a copy in both places, and export stays inside
+//! the project. `HOME` and `AX_GLOBAL_DB` are process-global, so every
 //! scenario runs under one lock.
 
 use std::net::SocketAddr;
@@ -130,4 +132,54 @@ async fn skill_routes_act_on_the_skill_when_a_rule_shares_the_name() {
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     let (_, rule) = send(&app, "GET", "/api/policy/rules/solo", "").await;
     assert!(enabled(&rule), "rule must stay enabled: {rule}");
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // process-global env; the guard must cover the awaits
+async fn export_refuses_folders_outside_the_project() {
+    let _lock = env_lock();
+    let home = tempfile::tempdir().unwrap();
+    let (app, root) = app(home.path()).await;
+
+    let outside = home.path().join("outside");
+    let abs = serde_json::json!({ "out_dir": outside.to_string_lossy() }).to_string();
+    let (status, body) = send(&app, "POST", "/api/policy/export", &abs).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        !outside.exists(),
+        "absolute export wrote outside the project"
+    );
+
+    let (status, body) = send(
+        &app,
+        "POST",
+        "/api/policy/export",
+        r#"{"out_dir":"../escaped"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(!home.path().join("escaped").exists(), "`..` export escaped");
+
+    #[cfg(unix)]
+    {
+        let link_target = home.path().join("linked");
+        std::fs::create_dir_all(&link_target).unwrap();
+        std::os::unix::fs::symlink(&link_target, root.join("link")).unwrap();
+        let (status, body) = send(
+            &app,
+            "POST",
+            "/api/policy/export",
+            r#"{"out_dir":"link/out"}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(
+            !link_target.join("out").exists(),
+            "export followed a link out"
+        );
+    }
+
+    let (status, body) = send(&app, "POST", "/api/policy/export", "{}").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(root.join(".ax/policy/export").is_dir());
 }
