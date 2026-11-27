@@ -13,7 +13,10 @@ Arms (Neural ranking stays required / lock_required in production):
 Usage:
   AX_BIN=/path/to/ax ./scripts/neural-agent-live.py [--out path] [--model <id>]
 
-Writes measured JSON or records not_measured with an explicit reason.
+Writes measured JSON to --out (default target-dev/neural/agent-eval-live-results.json;
+pass --out docs/specs/ax-neural/agent-eval-live-results.json to refresh the evidence).
+A missing ax binary or agent prints not_measured with the reason and exits 2 without
+writing. Exits 1 when no arm succeeded, and stops every daemon it started.
 """
 
 from __future__ import annotations
@@ -193,7 +196,7 @@ def arm_spec(name: str, neural: dict, seed: bool) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out", default=str(ROOT / "docs/specs/ax-neural/agent-eval-live-results.json"))
+    parser.add_argument("--out", default=str(ROOT / "target-dev/neural/agent-eval-live-results.json"))
     parser.add_argument("--model", default=DEFAULT_MODEL)
     opts = parser.parse_args()
     model = str(opts.model)
@@ -205,7 +208,6 @@ def main() -> int:
             "reason": "AX_BIN / ax binary missing",
             "liveLlmTaskSuccess": {"kind": "not_measured"},
         }
-        Path(opts.out).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(report, indent=2))
         return 2
 
@@ -216,7 +218,6 @@ def main() -> int:
             "reason": "cursor-agent not on PATH (claude CLI was unauthenticated)",
             "liveLlmTaskSuccess": {"kind": "not_measured"},
         }
-        Path(opts.out).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(report, indent=2))
         return 2
 
@@ -240,11 +241,14 @@ def main() -> int:
 
     base = Path(tempfile.mkdtemp(prefix="ax-neural-live-"))
     rows = []
+    started: list[tuple[Path, Path]] = []
     try:
         for arm in arms:
             home = base / f"home-{arm['name']}"
             home.mkdir()
-            project = make_project(binary, base, arm["name"], arm["neural"], home)
+            project = base / arm["name"]
+            started.append((project, home))
+            make_project(binary, base, arm["name"], arm["neural"], home)
             if arm["seedFeedback"]:
                 seed_feedback(binary, project, home)
             result = agent_turn(TASK["prompt"], project, model, agent_bin)
@@ -268,8 +272,11 @@ def main() -> int:
                 ),
                 flush=True,
             )
-            run([str(binary), "daemon", str(project), "stop"], cwd=project, env={"HOME": str(home)})
     finally:
+        # Stop every daemon before its project directory is deleted, also when an arm raised.
+        for project, home in started:
+            if project.is_dir():
+                run([str(binary), "daemon", str(project), "stop"], cwd=project, env={"HOME": str(home)})
         shutil.rmtree(base, ignore_errors=True)
 
     successes = [r for r in rows if r.get("taskSuccess")]
@@ -316,9 +323,12 @@ def main() -> int:
     if not rows:
         report["kind"] = "not_measured"
         report["liveLlmTaskSuccess"] = {"kind": "not_measured", "reason": "no arm rows"}
-    Path(opts.out).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    out_path = Path(opts.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))
-    return 0 if report.get("kind") in ("measured", "partial") else 1
+    # Evidence is produced only when at least one arm met the task.
+    return 0 if successes else 1
 
 
 if __name__ == "__main__":

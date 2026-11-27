@@ -35,6 +35,8 @@ jobs:
         run: python -m unittest discover -s scripts -p 'test_restore_on_exit.py'
       - name: Verify the CLI docs check uses the binary it is given
         run: python -m unittest discover -s scripts -p 'test_check_cli_docs.py'
+      - name: Verify the live Neural agent runners
+        run: python -m unittest discover -s scripts -p 'test_neural_agent_scripts.py'
       - name: Verify the standalone Docker build context and base images
         run: python -m unittest discover -s scripts -p 'test_docker_build.py'
       - name: Verify the headless installer
