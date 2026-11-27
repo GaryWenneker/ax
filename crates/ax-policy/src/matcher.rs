@@ -215,7 +215,14 @@ fn select_matched_skills(matched: Vec<(i32, MatchedSkill)>) -> Vec<MatchedSkill>
     let (mut always, mut rest): (Vec<_>, Vec<_>) =
         matched.into_iter().partition(|(_, s)| s.always_apply);
     always.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.name.cmp(&b.1.name)));
-    rest.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.name.cmp(&b.1.name)));
+    // Contextual skills compete on how well they match the prompt; priority only
+    // breaks a tie in score.
+    rest.sort_by(|a, b| {
+        b.1.score
+            .cmp(&a.1.score)
+            .then(b.0.cmp(&a.0))
+            .then(a.1.name.cmp(&b.1.name))
+    });
     let mut out: Vec<MatchedSkill> = always.into_iter().map(|(_, s)| s).collect();
     out.extend(rest.into_iter().take(2).map(|(_, s)| s));
     out
@@ -611,6 +618,28 @@ mod tests {
         let names: Vec<&str> = out.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, vec!["b", "a", "c", "d"]);
         assert!(out.iter().filter(|s| s.always_apply).count() == 2);
+    }
+
+    #[test]
+    fn contextual_skills_rank_by_match_score_before_priority() {
+        let skill = |name: &str, score: i32| MatchedSkill {
+            name: name.into(),
+            score,
+            reason: String::new(),
+            description: String::new(),
+            body: String::new(),
+            always_apply: false,
+            properties: Default::default(),
+        };
+        // a and b match on two description words; c matches two triggers.
+        let matched = vec![
+            (80, skill("a", 10)),
+            (80, skill("b", 10)),
+            (50, skill("c", 50)),
+        ];
+        let out = select_matched_skills(matched);
+        let names: Vec<&str> = out.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["c", "a"]);
     }
 
     #[test]
