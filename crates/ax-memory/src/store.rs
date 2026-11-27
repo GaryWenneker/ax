@@ -703,52 +703,12 @@ async fn fts_ranking(
         "AND m.kind NOT IN ('turn', 'doc', 'graph_diff', 'activity', 'file_change') \
          AND m.title NOT LIKE 'Candidate:%'"
     };
-    // Hot path: constrain FTS5 to hot rowids first. Without that, MATCH walks
-    // archive postings for common terms and only then drops every t3 hit.
-    if !archive {
-        // Include `foreign` and `active` for explicit recall. Preflight still
-        // filters via `is_injectable` (active only). Candidates stay out.
-        let rowids: Vec<i64> = sqlx::query_scalar(
-            "SELECT rowid FROM memories
-             WHERE enabled = 1
-               AND tier IN ('t1', 't2')
-               AND COALESCE(status, 'active') IN ('active', 'foreign')
-             ORDER BY rowid
-             LIMIT 20000",
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(|e| db_err(pool, e))?;
-        if rowids.is_empty() {
-            return Ok(Vec::new());
-        }
-        if rowids.len() < 20_000 {
-            let list = rowids
-                .iter()
-                .map(i64::to_string)
-                .collect::<Vec<_>>()
-                .join(",");
-            // Hot inject must not spend its LIMIT on turns/graph_diff/docs — those
-            // kinds are recall-only and would crowd durable memories out of overfetch.
-            let sql = format!(
-                r#"SELECT m.id
-                   FROM memories_fts
-                   JOIN memories m ON m.rowid = memories_fts.rowid
-                   WHERE memories_fts MATCH ?
-                     AND memories_fts.rowid IN ({list})
-                     AND m.enabled = 1
-                     {kind_gate}
-                   ORDER BY bm25(memories_fts, 0.0, 3.0, 1.0, 1.5, 2.0), m.id
-                   LIMIT ?"#
-            );
-            return sqlx::query_scalar::<_, String>(&sql)
-                .bind(&fts_query)
-                .bind(overfetch as i64)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| db_err(pool, e));
-        }
-    }
+    // Archive recall ranks only t3 rows. Hot recall constrains FTS5 to hot
+    // rowids through a subquery, so MATCH skips archive postings, and the SQL
+    // text stays the same whatever the hot set holds (one cached statement).
+    // Hot recall includes `foreign` rows for explicit recall; preflight still
+    // filters via `is_injectable` (active only). Candidates stay out. The kind
+    // gate keeps turns, graph diffs and docs from spending preflight's LIMIT.
     let sql = if archive {
         r#"SELECT m.id
            FROM memories_fts
@@ -763,9 +723,13 @@ async fn fts_ranking(
            FROM memories_fts
            JOIN memories m ON m.rowid = memories_fts.rowid
            WHERE memories_fts MATCH ?
+             AND memories_fts.rowid IN (
+                 SELECT rowid FROM memories
+                 WHERE enabled = 1
+                   AND tier IN ('t1', 't2')
+                   AND COALESCE(status, 'active') IN ('active', 'foreign')
+             )
              AND m.enabled = 1
-             AND m.tier IN ('t1', 't2')
-             AND COALESCE(m.status, 'active') IN ('active', 'foreign')
              {kind_gate}
            ORDER BY bm25(memories_fts, 0.0, 3.0, 1.0, 1.5, 2.0), m.id
            LIMIT ?"#
@@ -798,27 +762,55 @@ async fn vector_ranking(
         "AND kind NOT IN ('turn', 'doc', 'graph_diff', 'activity', 'file_change') \
          AND title NOT LIKE 'Candidate:%'"
     };
-    let embedding_rows = sqlx::query_as::<_, (String, Vec<u8>)>(&format!(
+    let sql = format!(
         "SELECT id, embedding FROM memories
          WHERE embedding IS NOT NULL AND enabled = 1
            AND tier IN ('t1', 't2')
            AND COALESCE(status, 'active') IN ('active', 'foreign')
            {kind_gate}"
-    ))
-    .fetch_all(pool)
-    .await
-    .map_err(|e| db_err(pool, e))?;
-    let mut vector_scored: Vec<(String, f32)> = embedding_rows
-        .into_iter()
-        .filter_map(|(id, blob)| {
-            let e = crate::embed::blob_to_embedding(&blob)?;
-            Some((id, crate::embed::cosine(&query_embedding, &e)))
-        })
-        .filter(|(_, sim)| *sim > crate::embed::MIN_VECTOR_SIMILARITY)
-        .collect();
-    vector_scored.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    vector_scored.truncate(overfetch);
-    Ok(vector_scored.into_iter().map(|(id, _)| id).collect())
+    );
+    let best = top_by_cosine(pool, &sql, &query_embedding, overfetch, |_, sim| {
+        sim > crate::embed::MIN_VECTOR_SIMILARITY
+    })
+    .await?;
+    Ok(best.into_iter().map(|(id, _)| id).collect())
+}
+
+/// Stream `(id, embedding)` rows from `sql` and keep the `keep` most similar to
+/// `query_embedding` that `accept` lets through, best first (ties by id).
+/// Rows are scored as they arrive, so memory stays bounded by `keep` rather
+/// than by the number of rows.
+async fn top_by_cosine(
+    pool: &SqlitePool,
+    sql: &str,
+    query_embedding: &[f32],
+    keep: usize,
+    accept: impl Fn(&str, f32) -> bool,
+) -> Result<Vec<(String, f32)>, AxError> {
+    use futures_util::TryStreamExt;
+
+    fn best_first(best: &mut Vec<(String, f32)>, keep: usize) {
+        best.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        best.truncate(keep);
+    }
+
+    let flush_at = keep.saturating_mul(2).max(64);
+    let mut best: Vec<(String, f32)> = Vec::new();
+    let mut rows = sqlx::query_as::<_, (String, Vec<u8>)>(sql).fetch(pool);
+    while let Some((id, blob)) = rows.try_next().await.map_err(|e| db_err(pool, e))? {
+        let Some(embedding) = crate::embed::blob_to_embedding(&blob) else {
+            continue;
+        };
+        let sim = crate::embed::cosine(query_embedding, &embedding);
+        if accept(&id, sim) {
+            best.push((id, sim));
+            if best.len() >= flush_at {
+                best_first(&mut best, keep);
+            }
+        }
+    }
+    best_first(&mut best, keep);
+    Ok(best)
 }
 
 /// Hot recall skips the archive and inactive rows. Archive recall uses FTS
@@ -1510,26 +1502,16 @@ pub async fn find_similar(
     limit: usize,
 ) -> Result<Vec<MemoryMatch>, AxError> {
     let (query_embedding, _) = crate::embed::embed_labeled(text);
-    let rows = sqlx::query_as::<_, (String, Vec<u8>)>(
+    let scored = top_by_cosine(
+        pool,
         "SELECT id, embedding FROM memories
          WHERE embedding IS NOT NULL AND enabled = 1
            AND COALESCE(tier, 't2') != 't3'",
+        &query_embedding,
+        limit,
+        |id, sim| exclude_id != Some(id) && sim >= threshold,
     )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| db_err(pool, e))?;
-
-    let mut scored: Vec<(String, f32)> = rows
-        .into_iter()
-        .filter(|(id, _)| exclude_id != Some(id.as_str()))
-        .filter_map(|(id, blob)| {
-            let e = crate::embed::blob_to_embedding(&blob)?;
-            Some((id, crate::embed::cosine(&query_embedding, &e)))
-        })
-        .filter(|(_, sim)| *sim >= threshold)
-        .collect();
-    scored.sort_by(|a, b| b.1.total_cmp(&a.1));
-    scored.truncate(limit);
+    .await?;
 
     let mut out = Vec::with_capacity(scored.len());
     for (id, sim) in scored {
