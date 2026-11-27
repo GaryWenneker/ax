@@ -66,7 +66,7 @@ Initialize each project normally with `ax init`. Create a private JSON configura
 - `subjects` grants the named OAuth identities access to this project. No implicit access is granted to other signed-in users.
 - `write_subjects` must be a subset of `subjects`. Memory/policy writes additionally require the `ax:write` token scope.
 - `admin_subjects` (optional) must be a subset of `write_subjects`. See [Admin access](#admin-access).
-- `allowed_origins` accepts explicit HTTPS browser origins. Requests without an Origin header can still come from authenticated native clients; present foreign Origin headers are rejected.
+- `allowed_origins` accepts explicit HTTPS browser origins (scheme, host and optional port; no path, query or fragment). Each entry is compared in its canonical form, so `https://App.Example.com:443` matches the `https://app.example.com` a browser sends. Requests without an Origin header can still come from authenticated native clients; present foreign Origin headers are rejected.
 - Each root must already contain `.ax/ax.db`. Project IDs must be unique and URL-safe. Remote calls cannot override a root or switch the Command Center's current workspace.
 
 Start the dedicated remote listener:

@@ -151,11 +151,14 @@ impl RemoteConfig {
                 return Err("Admin API keys must also have write access".into());
             }
         }
-        for origin in &self.allowed_origins {
+        // Store each origin the way a browser sends it in the Origin header
+        // (lowercase host, default port dropped, no trailing slash).
+        for origin in &mut self.allowed_origins {
             let u = https_url(origin)?;
             if u.path() != "/" {
                 return Err("Allowed origins must be HTTPS origins".into());
             }
+            *origin = u.origin().ascii_serialization();
         }
         Ok(())
     }
@@ -178,6 +181,38 @@ mod tests {
         assert_eq!(config.public_url, "https://ax.example.com");
         assert_eq!(config.oauth.issuer, "https://Identity.Example/tenant/");
         assert_eq!(config.projects[0].subjects, ["subject"]);
+    }
+
+    #[test]
+    fn allowed_origins_are_stored_as_the_origin_a_browser_sends() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join(".ax")).unwrap();
+        std::fs::write(temp.path().join(".ax/ax.db"), "").unwrap();
+        let config = |origins: serde_json::Value| -> RemoteConfig {
+            serde_json::from_value(serde_json::json!({"public_url":"https://ax.example.com","allowed_origins":origins,"oauth":{"issuer":"https://id.example/","jwks_uri":"https://id.example/jwks"},"projects":[{"id":"demo","root":temp.path(),"subjects":["subject"]}]})).unwrap()
+        };
+        let mut mixed = config(serde_json::json!([
+            "https://App.Example.com",
+            "https://app.example.com:443/",
+            "https://tools.example.com:8443"
+        ]));
+        mixed.validate().unwrap();
+        assert_eq!(
+            mixed.allowed_origins,
+            [
+                "https://app.example.com",
+                "https://app.example.com",
+                "https://tools.example.com:8443"
+            ]
+        );
+        for bad in [
+            "https://app.example.com/path",
+            "https://app.example.com/?q=1",
+            "https://app.example.com/#frag",
+            "http://app.example.com",
+        ] {
+            assert!(config(serde_json::json!([bad])).validate().is_err(), "{bad}");
+        }
     }
 
     #[test]
