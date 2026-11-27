@@ -11,8 +11,10 @@ import './controls.css';
 import './mobile.css';
 import './auth.css';
 import { installContextMenuGuard } from './lib/contextMenuGuard';
+import { installBrowserChunkReload } from './lib/chunkReload';
 
 installContextMenuGuard();
+installBrowserChunkReload();
 
 const root = document.getElementById('root');
 if (root) {

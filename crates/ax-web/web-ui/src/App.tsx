@@ -1,24 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-
-import StatsPage from './pages/Stats';
-import NodesPage from './pages/Nodes';
-import GraphPage from './pages/Graph';
-import FilesPage from './pages/Files';
-import SearchPage from './pages/Search';
-import PolicyRulesPage from './pages/PolicyRules';
-import PolicyRuleEditor from './pages/PolicyRuleEditor';
-import PolicySkillsPage from './pages/PolicySkills';
-import PolicySkillEditor from './pages/PolicySkillEditor';
-import PolicyMatchPage from './pages/PolicyMatch';
-import PolicyReviewPage from './pages/PolicyReview';
-import PolicySyncPage from './pages/PolicySync';
-import UnresolvedPage from './pages/Unresolved';
-import SettingsPage from './pages/Settings';
-import LoggingPage from './pages/Logging';
-import SpecsPage from './pages/Specs';
-import SavingsPage from './pages/Savings';
-import PricesPage from './pages/Prices';
-import MemoryPage from './pages/Memory';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import StatusBar from './components/StatusBar';
 import { McpQualityHost } from './components/McpQualitySlideout';
 import LoggingProjectSwitch from './components/LoggingProjectSwitch';
@@ -29,6 +9,7 @@ import SidebarResizeHandle, { initSidebarWidth } from './components/SidebarResiz
 import { initBladeWidth } from './components/BladeResize';
 import { NavIcon, adjustUiScale, initUiScale, loadUiScale } from './components/NavIcons';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { PageLoading } from './components/ui/PageLayout';
 import { UiProvider } from './context/UiContext';
 import AuthGate from './components/AuthGate';
 import ProfileMenu from './components/ProfileMenu';
@@ -47,6 +28,27 @@ import { navItemActive, visibleNav } from './lib/nav';
 import { reloadMcpDaemon as reloadMcpDaemonRequest } from './lib/mcpReload';
 import { fetchShipConfig } from './shipApi';
 import { WORKSPACE_SWITCHED } from './workspaceEvents';
+
+// Each page is its own chunk, fetched when the page is first opened.
+const StatsPage = lazy(() => import('./pages/Stats'));
+const NodesPage = lazy(() => import('./pages/Nodes'));
+const GraphPage = lazy(() => import('./pages/Graph'));
+const FilesPage = lazy(() => import('./pages/Files'));
+const SearchPage = lazy(() => import('./pages/Search'));
+const PolicyRulesPage = lazy(() => import('./pages/PolicyRules'));
+const PolicyRuleEditor = lazy(() => import('./pages/PolicyRuleEditor'));
+const PolicySkillsPage = lazy(() => import('./pages/PolicySkills'));
+const PolicySkillEditor = lazy(() => import('./pages/PolicySkillEditor'));
+const PolicyMatchPage = lazy(() => import('./pages/PolicyMatch'));
+const PolicyReviewPage = lazy(() => import('./pages/PolicyReview'));
+const PolicySyncPage = lazy(() => import('./pages/PolicySync'));
+const UnresolvedPage = lazy(() => import('./pages/Unresolved'));
+const SettingsPage = lazy(() => import('./pages/Settings'));
+const LoggingPage = lazy(() => import('./pages/Logging'));
+const SpecsPage = lazy(() => import('./pages/Specs'));
+const SavingsPage = lazy(() => import('./pages/Savings'));
+const PricesPage = lazy(() => import('./pages/Prices'));
+const MemoryPage = lazy(() => import('./pages/Memory'));
 
 const SCALE_STEP = 0.05;
 
@@ -418,6 +420,7 @@ function AppShell() {
           )}
           <main className={containerClass} id="main-content">
             <ErrorBoundary key={page} fallbackTitle="This view failed to render">
+            <Suspense fallback={<PageLoading />}>
             {page === 'stats' && <StatsPage key={workspaceKey} />}
             {page === 'nodes' && <NodesPage key={workspaceKey} />}
             {page === 'graph' && <GraphPage key={workspaceKey} />}
@@ -479,6 +482,7 @@ function AppShell() {
               <PolicySyncPage key={workspaceKey} onOpenReview={() => navigate('policy-review')} />
             )}
             {page === 'policy-review' && <PolicyReviewPage key={workspaceKey} />}
+            </Suspense>
             </ErrorBoundary>
           </main>
         </div>
