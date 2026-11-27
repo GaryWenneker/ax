@@ -435,9 +435,14 @@ fn replace_toml_section(content: &str, section: &str, block: &str) -> String {
 }
 
 fn codex_ax_block(bin: &str) -> String {
-    let path = mcp_path_token("codex");
+    // Values go through the TOML encoder: a Windows path such as
+    // `C:\Users\...` inside a hand-quoted basic string reads `\U` as an
+    // escape and makes the whole config.toml unparsable.
+    let quote = |value: &str| toml::Value::String(value.to_string()).to_string();
+    let bin = quote(bin);
+    let path = quote(mcp_path_token("codex"));
     format!(
-        "[mcp_servers.ax]\ncommand = \"{bin}\"\nargs = [\"serve\", \"--mcp\", \"--path\", \"{path}\"]\ncwd = \"{path}\"\n",
+        "[mcp_servers.ax]\ncommand = {bin}\nargs = [\"serve\", \"--mcp\", \"--path\", {path}]\ncwd = {path}\n",
     )
 }
 
@@ -1481,6 +1486,23 @@ mod mcp_path_tests {
         );
         assert!(merged.contains("command = \"ax\""));
         assert!(!merged.contains("command = \"old\""));
+    }
+
+    #[test]
+    fn codex_block_is_valid_toml_for_a_windows_path() {
+        for bin in [
+            r"C:\Users\gary\AppData\Local\ax\bin\ax.exe",
+            r#"/opt/odd "dir"/ax"#,
+        ] {
+            let block = codex_ax_block(bin);
+            let parsed: toml::Table =
+                toml::from_str(&block).unwrap_or_else(|e| panic!("{e}\n{block}"));
+            assert_eq!(parsed["mcp_servers"]["ax"]["command"].as_str(), Some(bin));
+            assert_eq!(
+                parsed["mcp_servers"]["ax"]["cwd"].as_str(),
+                Some(PROCESS_CWD)
+            );
+        }
     }
 
     #[test]
