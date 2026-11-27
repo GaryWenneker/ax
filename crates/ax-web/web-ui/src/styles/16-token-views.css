@@ -158,7 +158,7 @@
 }
 
 .sv-playground-err {
-  color: var(--err, #e06c75);
+  color: var(--danger);
 }
 
 /* ---- Token path graph (TokenViz-style) ---- */

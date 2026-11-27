@@ -364,7 +364,7 @@
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface, #1c1c1c);
+  background: var(--bg-panel);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
@@ -476,7 +476,7 @@
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--bg-elevated, var(--bg));
+  background: var(--bg);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
 }
 
@@ -579,7 +579,7 @@
 }
 
 .policy-skill-group-row td {
-  background: color-mix(in srgb, var(--surface) 88%, var(--text) 6%);
+  background: color-mix(in srgb, var(--bg-panel) 88%, var(--text) 6%);
   padding: 0;
 }
 
@@ -614,7 +614,7 @@
 .policy-table-row--disabled td {
   opacity: 0.62;
   color: var(--text-dim);
-  background: color-mix(in srgb, var(--surface) 94%, var(--text-dim));
+  background: color-mix(in srgb, var(--bg-panel) 94%, var(--text-dim));
 }
 
 .policy-table-row--disabled .policy-link {
@@ -1874,7 +1874,7 @@ body.policy-meta-resizing .policy-meta-resize-handle {
 
 .sq-project-card-key {
   font-size: 11px;
-  font-family: var(--ff-mono);
+  font-family: var(--font-mono);
   color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
@@ -1941,7 +1941,7 @@ body.policy-meta-resizing .policy-meta-resize-handle {
   margin: 0;
   padding: 8px 10px;
   font-size: 11px;
-  font-family: var(--ff-mono);
+  font-family: var(--font-mono);
   color: var(--text-dim);
   line-height: 1.5;
   max-height: 120px;

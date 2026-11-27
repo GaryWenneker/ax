@@ -72,7 +72,7 @@ a:not(.nav-item):not(.btn):not(.btn-secondary):not(.status-panel-link):not(.ax-a
   flex-wrap: wrap;
   gap: 12px 20px;
   font-size: 13px;
-  color: var(--muted);
+  color: var(--text-dim);
 }
 .prices-status strong {
   color: var(--text-hi);
@@ -87,7 +87,7 @@ a:not(.nav-item):not(.btn):not(.btn-secondary):not(.status-panel-link):not(.ax-a
   gap: 12px 18px;
   margin-bottom: 8px;
   font-size: 12px;
-  color: var(--muted);
+  color: var(--text-dim);
 }
 .prices-chart-legend-item {
   display: inline-flex;
@@ -116,6 +116,6 @@ a:not(.nav-item):not(.btn):not(.btn-secondary):not(.status-panel-link):not(.ax-a
 .prices-chart-title {
   margin: 0 0 4px;
   font-size: 13px;
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   color: var(--text-hi);
 }

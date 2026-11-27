@@ -640,7 +640,8 @@
   align-items: center;
   gap: 12px;
   width: min(92vw, 1400px);
-  color: var(--vscode-foreground, #ccc);
+  /* The backdrop is dark in every theme, so the bar keeps light text. */
+  color: #d4d4d4;
   font-size: 12px;
 }
 .image-lightbox-caption {

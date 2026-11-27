@@ -811,7 +811,7 @@ body.blade-resizing .blade-resize-handle {
 .graph-settings-icon {
   background: none;
   border: none;
-  color: var(--text-muted, var(--text));
+  color: var(--text-dim);
   cursor: pointer;
   font-size: 14px;
   padding: 2px 4px;

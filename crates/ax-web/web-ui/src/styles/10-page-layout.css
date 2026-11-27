@@ -24,11 +24,11 @@
   margin: 0 0 8px;
   font-size: 1rem;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--text);
 }
 
 .sonar-guide-section-body {
-  color: var(--text-muted);
+  color: var(--text-dim);
   font-size: 0.92rem;
   line-height: 1.55;
 }
@@ -58,7 +58,7 @@
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface);
+  background: var(--bg-panel);
 }
 
 .sonar-dashboard-frame-wrap {
@@ -76,7 +76,7 @@
   align-items: center;
   justify-content: center;
   gap: 12px;
-  color: var(--text-muted);
+  color: var(--text-dim);
   font-size: var(--fs-sm);
   z-index: 1;
   pointer-events: none;
@@ -111,7 +111,7 @@
 .sonar-dashboard-offline {
   padding: 32px clamp(16px, 2vw, 28px);
   text-align: center;
-  color: var(--text-muted);
+  color: var(--text-dim);
 }
 
 .sonar-dashboard-offline p {

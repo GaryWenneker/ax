@@ -1263,7 +1263,7 @@
   flex-shrink: 0;
   width: 1rem;
   height: 1rem;
-  color: var(--text-muted);
+  color: var(--text-dim);
   opacity: 0.92;
 }
 
@@ -1288,7 +1288,7 @@
 }
 
 .sv-model-icon--unknown {
-  color: var(--text-muted);
+  color: var(--text-dim);
   opacity: 0.65;
 }
 

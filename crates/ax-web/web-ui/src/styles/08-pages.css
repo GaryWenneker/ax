@@ -640,7 +640,7 @@
 }
 
 .settings-log-live--err {
-  color: var(--err);
+  color: var(--danger);
   animation: none;
 }
 

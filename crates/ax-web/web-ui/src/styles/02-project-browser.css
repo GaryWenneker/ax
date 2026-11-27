@@ -405,7 +405,7 @@ html[data-ax-layout="portal"] .ax-modal--full:has(.policy-inline-pane--props) :i
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px 12px;
-  background: var(--bg-elevated, var(--bg));
+  background: var(--bg);
 }
 
 .policy-pack-inspect-title {

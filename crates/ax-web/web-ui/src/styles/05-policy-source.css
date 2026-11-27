@@ -474,7 +474,7 @@ body.md-split-resizing .md-preview-resize-handle {
   transform: translateY(-50%);
   opacity: 0;
   border: 0;
-  background: var(--panel, #161616);
+  background: var(--bg-panel);
   color: var(--text-dim);
   font-size: var(--fs-xs);
   cursor: pointer;
