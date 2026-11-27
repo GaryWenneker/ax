@@ -428,26 +428,8 @@ async fn call_tool_and_wrap(
             .unwrap_or_else(|e| e.into_inner())
             .push((root.to_path_buf(), name.to_string()));
     }
-    let result = if let Some(pool) = engine.query_pool() {
-        if pool.healthy() && crate::query_pool::is_read_tool(name) {
-            pool.run(|| async {
-                let mut guard = engine.lock_ax().await;
-                if let Some(ax) = guard.as_mut() {
-                    ToolHandler::call_tool(ax, name, args).await
-                } else {
-                    Err("ax not initialized".to_string())
-                }
-            })
-            .await
-        } else {
-            let mut guard = engine.lock_ax().await;
-            if let Some(ax) = guard.as_mut() {
-                ToolHandler::call_tool(ax, name, args).await
-            } else {
-                Err("ax not initialized".to_string())
-            }
-        }
-    } else {
+    // Calls on one engine run one at a time: they share its single Ax handle.
+    let result = {
         let mut guard = engine.lock_ax().await;
         if let Some(ax) = guard.as_mut() {
             ToolHandler::call_tool(ax, name, args).await

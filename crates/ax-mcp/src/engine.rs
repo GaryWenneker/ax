@@ -12,7 +12,6 @@ use tokio::sync::Mutex;
 
 use crate::chat_session::TurnCounter;
 use crate::policy_session::PolicySessions;
-use crate::query_pool::{resolve_pool_size, QueryPool};
 
 async fn seed_memories_if_empty(pool: &SqlitePool, project_root: &Path) {
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memories")
@@ -101,7 +100,6 @@ pub struct McpEngine {
     remote: bool,
     ax: Arc<Mutex<Option<Ax>>>,
     project_root: Option<PathBuf>,
-    query_pool: Option<QueryPool>,
     catch_up_started: Arc<AtomicBool>,
     catch_up_running: Arc<AtomicBool>,
     catch_up_runner: CatchUpRunner,
@@ -123,7 +121,6 @@ impl McpEngine {
             remote: false,
             ax: Arc::new(Mutex::new(None)),
             project_root: None,
-            query_pool: None,
             catch_up_started: Arc::new(AtomicBool::new(false)),
             catch_up_running: Arc::new(AtomicBool::new(false)),
             catch_up_runner: default_catch_up_runner(),
@@ -134,17 +131,10 @@ impl McpEngine {
     }
 
     pub fn with_project_root(project_root: PathBuf) -> Self {
-        let pool_size = resolve_pool_size();
-        let query_pool = if pool_size > 0 {
-            Some(QueryPool::new(pool_size))
-        } else {
-            None
-        };
         Self {
             remote: false,
             ax: Arc::new(Mutex::new(None)),
             project_root: Some(project_root),
-            query_pool,
             catch_up_started: Arc::new(AtomicBool::new(false)),
             catch_up_running: Arc::new(AtomicBool::new(false)),
             catch_up_runner: default_catch_up_runner(),
@@ -181,10 +171,6 @@ impl McpEngine {
     /// Preflight turns per chat since its last `ax_session` write.
     pub fn turns(&mut self) -> &mut TurnCounter {
         &mut self.turns
-    }
-
-    pub fn query_pool(&self) -> Option<&QueryPool> {
-        self.query_pool.as_ref()
     }
 
     pub async fn ensure_initialized(&mut self) -> Result<(), String> {

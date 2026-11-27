@@ -17,7 +17,6 @@ pub mod policy_session;
 pub mod ppid_watchdog;
 pub mod proxy;
 pub mod proxy_pump;
-pub mod query_pool;
 pub mod remote;
 pub mod replication_credentials;
 pub mod request_context;
