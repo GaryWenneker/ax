@@ -5,7 +5,7 @@ use super::{
 };
 use axum::{
     extract::{Path, Query, State},
-    http::{HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
     Form, Json, Router,
@@ -104,6 +104,21 @@ impl OAuthStore {
             "CREATE TABLE IF NOT EXISTS remote_oauth_tokens(origin TEXT NOT NULL,access_hash TEXT PRIMARY KEY,refresh_hash TEXT NOT NULL UNIQUE,request_id TEXT NOT NULL,client_id TEXT NOT NULL,expires INTEGER NOT NULL,refresh_expires INTEGER NOT NULL)",
             "CREATE TABLE IF NOT EXISTS remote_oauth_used_refresh(origin TEXT NOT NULL,hash TEXT NOT NULL,client_id TEXT NOT NULL,request_id TEXT NOT NULL,expires INTEGER NOT NULL,PRIMARY KEY(origin,hash))",
         ] {sqlx::query(query).execute(&pool).await.map_err(db)?;}
+        // The caller a sign-in came from, so one source cannot push out everyone's.
+        let has_source: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('remote_oauth_requests') WHERE name='source'",
+        )
+        .fetch_one(&pool)
+        .await
+        .map_err(db)?;
+        if has_source == 0 {
+            sqlx::query(
+                "ALTER TABLE remote_oauth_requests ADD COLUMN source TEXT NOT NULL DEFAULT ''",
+            )
+            .execute(&pool)
+            .await
+            .map_err(db)?;
+        }
         Ok(Self {
             pool,
             origin: origin.into(),
@@ -204,30 +219,74 @@ impl OAuthStore {
 const MAX_PENDING: i64 = 128;
 /// Pending authorization requests one dynamically registered client may hold.
 const MAX_PENDING_PER_CLIENT: i64 = 16;
+/// Pending authorization requests one source address may hold, for every
+/// client including the native one.
+const MAX_PENDING_PER_SOURCE: i64 = 8;
 /// Registered clients kept for the whole host.
 const MAX_CLIENTS: i64 = 512;
 /// A registered client that never started a sign-in is removed after this many seconds.
 const UNUSED_CLIENT_TTL: i64 = 3600;
-/// Unauthenticated calls to `/oauth/authorize` and `/oauth/register` (each) per minute.
+/// Unauthenticated calls to `/oauth/authorize` and `/oauth/register` (each) per
+/// minute from one source address.
 const OAUTH_CALLS_PER_MINUTE: u32 = 30;
+/// Source addresses whose call counts are kept at once.
+const MAX_RATE_SOURCES: usize = 4096;
+/// The source of a request whose proxy named no client address.
+const UNKNOWN_SOURCE: &str = "direct";
 
-/// A fixed one-minute window that counts calls to an unauthenticated endpoint.
+/// The client address a request came from, as named by the proxy in front of
+/// Ax. The listener binds to loopback (or a socket bridge, or a platform
+/// ingress), so the peer address is always that proxy. Cloudflare's
+/// `CF-Connecting-IP` comes first; otherwise the last `X-Forwarded-For` entry,
+/// which the nearest proxy appends. Only used to share out limits, never to
+/// trust a caller.
+fn source(headers: &HeaderMap) -> String {
+    let ip = |value: &str| value.trim().parse::<std::net::IpAddr>().ok();
+    headers
+        .get("cf-connecting-ip")
+        .and_then(|v| v.to_str().ok())
+        .and_then(ip)
+        .or_else(|| {
+            headers
+                .get_all("x-forwarded-for")
+                .iter()
+                .filter_map(|v| v.to_str().ok())
+                .flat_map(|v| v.split(','))
+                .last()
+                .and_then(ip)
+        })
+        .map_or_else(|| UNKNOWN_SOURCE.to_string(), |ip| ip.to_string())
+}
+
+/// A fixed one-minute window per source address that counts calls to an
+/// unauthenticated endpoint, so one caller cannot use up everyone's calls.
 struct RateLimit {
     per_minute: u32,
-    window: std::sync::Mutex<(std::time::Instant, u32)>,
+    windows: std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, u32)>>,
 }
 impl RateLimit {
     fn per_minute(per_minute: u32) -> Self {
         Self {
             per_minute,
-            window: std::sync::Mutex::new((std::time::Instant::now(), 0)),
+            windows: std::sync::Mutex::default(),
         }
     }
-    /// Counts one call; `Err(seconds)` tells how long until the window reopens.
-    fn check(&self) -> Result<(), u64> {
-        let mut window = self.window.lock().unwrap_or_else(|e| e.into_inner());
-        let elapsed = window.0.elapsed();
-        if elapsed >= std::time::Duration::from_secs(60) {
+    /// Counts one call from `source`; `Err(seconds)` tells how long until its
+    /// window reopens.
+    fn check(&self, source: &str) -> Result<(), u64> {
+        let minute = std::time::Duration::from_secs(60);
+        let mut windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
+        if !windows.contains_key(source) && windows.len() >= MAX_RATE_SOURCES {
+            windows.retain(|_, window| window.0.elapsed() < minute);
+            if windows.len() >= MAX_RATE_SOURCES {
+                // Too many sources to track: the pending-request caps still apply.
+                return Ok(());
+            }
+        }
+        let window = windows
+            .entry(source.to_owned())
+            .or_insert_with(|| (std::time::Instant::now(), 0));
+        if window.0.elapsed() >= minute {
             *window = (std::time::Instant::now(), 0);
         }
         if window.1 >= self.per_minute {
@@ -331,8 +390,12 @@ fn redirect(value: &str, native: bool) -> bool {
             && (url.scheme() == "https" || (url.scheme() == "http" && loopback))
     }
 }
-async fn register(State(p): State<Provider>, Json(body): Json<Value>) -> Response {
-    if let Err(retry) = p.register_limit.check() {
+async fn register(
+    State(p): State<Provider>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    if let Err(retry) = p.register_limit.check(&source(&headers)) {
         return too_many(retry);
     }
     let result=async {
@@ -376,8 +439,13 @@ struct Authorization {
     scope: String,
     resource: String,
 }
-async fn authorize(State(p): State<Provider>, Query(q): Query<Authorization>) -> Response {
-    if let Err(retry) = p.authorize_limit.check() {
+async fn authorize(
+    State(p): State<Provider>,
+    headers: HeaderMap,
+    Query(q): Query<Authorization>,
+) -> Response {
+    let source = source(&headers);
+    if let Err(retry) = p.authorize_limit.check(&source) {
         return too_many(retry);
     }
     let result=async {
@@ -391,6 +459,11 @@ async fn authorize(State(p): State<Provider>, Query(q): Query<Authorization>) ->
         sqlx::query("DELETE FROM remote_oauth_requests WHERE origin=? AND expires<? AND status IN ('pending','denied')").bind(&p.store.origin).bind(now()).execute(&mut *tx).await.map_err(server)?;
         // A full table never refuses a new sign-in: the oldest pending request makes room.
         let oldest="DELETE FROM remote_oauth_requests WHERE id IN (SELECT id FROM remote_oauth_requests WHERE origin=? AND status='pending'";
+        // One source makes room among its own requests first, whatever the client.
+        if source!=UNKNOWN_SOURCE {
+            let theirs:i64=sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_requests WHERE origin=? AND status='pending' AND source=?").bind(&p.store.origin).bind(&source).fetch_one(&mut *tx).await.map_err(server)?;
+            if theirs>=MAX_PENDING_PER_SOURCE {sqlx::query(&format!("{oldest} AND source=? ORDER BY expires, rowid LIMIT ?)")).bind(&p.store.origin).bind(&source).bind(theirs-MAX_PENDING_PER_SOURCE+1).execute(&mut *tx).await.map_err(server)?;}
+        }
         if !native {
             let mine:i64=sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_requests WHERE origin=? AND status='pending' AND client_id=?").bind(&p.store.origin).bind(&q.client_id).fetch_one(&mut *tx).await.map_err(server)?;
             if mine>=MAX_PENDING_PER_CLIENT {sqlx::query(&format!("{oldest} AND client_id=? ORDER BY expires, rowid LIMIT ?)")).bind(&p.store.origin).bind(&q.client_id).bind(mine-MAX_PENDING_PER_CLIENT+1).execute(&mut *tx).await.map_err(server)?;}
@@ -398,7 +471,7 @@ async fn authorize(State(p): State<Provider>, Query(q): Query<Authorization>) ->
         let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_requests WHERE origin=? AND status='pending'").bind(&p.store.origin).fetch_one(&mut *tx).await.map_err(server)?;
         if count>=MAX_PENDING {sqlx::query(&format!("{oldest} ORDER BY expires, rowid LIMIT ?)")).bind(&p.store.origin).bind(count-MAX_PENDING+1).execute(&mut *tx).await.map_err(server)?;}
         let id=uuid::Uuid::new_v4().to_string(); let nonce=secret(); let scope=if scope.contains(WRITE_SCOPE) {"ax:context ax:write"} else {CONTEXT_SCOPE};
-        sqlx::query("INSERT INTO remote_oauth_requests(origin,id,nonce_hash,client_id,redirect,state,challenge,scope,project,resource,expires) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(&p.store.origin).bind(&id).bind(hash(&nonce)).bind(&q.client_id).bind(&q.redirect_uri).bind(&q.state).bind(&q.code_challenge).bind(scope).bind(&project.id).bind(&q.resource).bind(now()+600).execute(&mut *tx).await.map_err(server)?;
+        sqlx::query("INSERT INTO remote_oauth_requests(origin,id,nonce_hash,client_id,redirect,state,challenge,scope,project,resource,expires,source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").bind(&p.store.origin).bind(&id).bind(hash(&nonce)).bind(&q.client_id).bind(&q.redirect_uri).bind(&q.state).bind(&q.code_challenge).bind(scope).bind(&project.id).bind(&q.resource).bind(now()+600).bind(&source).execute(&mut *tx).await.map_err(server)?;
         tx.commit().await.map_err(server)?; Ok::<_,Fail>((id,nonce))
     }.await;
     match result {
@@ -521,6 +594,7 @@ mod tests {
     async fn grant(p: &Provider, client: &str, verifier: &str) -> (String, String) {
         let response = authorize(
             State(p.clone()),
+            HeaderMap::new(),
             Query(Authorization {
                 client_id: client.into(),
                 redirect_uri: "http://127.0.0.1:8765/callback".into(),
@@ -745,7 +819,9 @@ mod tests {
             }),
         ] {
             assert_eq!(
-                authorize(State(p.clone()), Query(q)).await.status(),
+                authorize(State(p.clone()), HeaderMap::new(), Query(q))
+                    .await
+                    .status(),
                 StatusCode::BAD_REQUEST,
                 "{label}"
             );
@@ -761,13 +837,17 @@ mod tests {
             "https://example.com/callback#fragment",
         ] {
             assert_eq!(
-                register(State(p.clone()), Json(json!({"redirect_uris":[uri]})))
-                    .await
-                    .status(),
+                register(
+                    State(p.clone()),
+                    HeaderMap::new(),
+                    Json(json!({"redirect_uris":[uri]}))
+                )
+                .await
+                .status(),
                 StatusCode::BAD_REQUEST
             );
         }
-        let response=register(State(p.clone()),Json(json!({"redirect_uris":["http://[::1]:8123/callback","https://client.example.com/callback"],"client_name":"Client","token_endpoint_auth_method":"none"}))).await;
+        let response=register(State(p.clone()), HeaderMap::new(),Json(json!({"redirect_uris":["http://[::1]:8123/callback","https://client.example.com/callback"],"client_name":"Client","token_endpoint_auth_method":"none"}))).await;
         assert_eq!(response.status(), StatusCode::CREATED);
         let client = json_body(response).await;
         assert!(client.get("client_secret").is_none());
@@ -782,7 +862,9 @@ mod tests {
             resource: "https://unrelated.example.com".into(),
         };
         assert_eq!(
-            authorize(State(p.clone()), Query(q)).await.status(),
+            authorize(State(p.clone()), HeaderMap::new(), Query(q))
+                .await
+                .status(),
             StatusCode::BAD_REQUEST
         );
         let metadata = json_body(metadata(State(p.clone())).await).await;
@@ -821,13 +903,17 @@ mod tests {
         for i in 0..MAX_PENDING {
             let q = sign_in(&native, NATIVE_REDIRECT, &format!("flood-{i}"));
             assert_eq!(
-                authorize(State(p.clone()), Query(q)).await.status(),
+                authorize(State(p.clone()), HeaderMap::new(), Query(q))
+                    .await
+                    .status(),
                 StatusCode::OK
             );
         }
         let q = sign_in(&native, NATIVE_REDIRECT, "real-user");
         assert_eq!(
-            authorize(State(p.clone()), Query(q)).await.status(),
+            authorize(State(p.clone()), HeaderMap::new(), Query(q))
+                .await
+                .status(),
             StatusCode::OK,
             "a real sign-in was refused because the pending table was full"
         );
@@ -849,6 +935,7 @@ mod tests {
         let client = json_body(
             register(
                 State(p.clone()),
+                HeaderMap::new(),
                 Json(json!({"redirect_uris":["https://client.example.com/cb"]})),
             )
             .await,
@@ -860,7 +947,9 @@ mod tests {
         for i in 0..MAX_PENDING_PER_CLIENT + 5 {
             let q = sign_in(&client, "https://client.example.com/cb", &format!("s{i}"));
             assert_eq!(
-                authorize(State(p.clone()), Query(q)).await.status(),
+                authorize(State(p.clone()), HeaderMap::new(), Query(q))
+                    .await
+                    .status(),
                 StatusCode::OK
             );
         }
@@ -884,6 +973,7 @@ mod tests {
         }
         let response = register(
             State(p.clone()),
+            HeaderMap::new(),
             Json(json!({"redirect_uris":["https://client.example.com/cb"]})),
         )
         .await;
@@ -915,12 +1005,15 @@ mod tests {
         for i in 0..3 {
             let q = sign_in(&native, NATIVE_REDIRECT, &format!("s{i}"));
             assert_eq!(
-                authorize(State(p.clone()), Query(q)).await.status(),
+                authorize(State(p.clone()), HeaderMap::new(), Query(q))
+                    .await
+                    .status(),
                 StatusCode::OK
             );
         }
         let limited = authorize(
             State(p.clone()),
+            HeaderMap::new(),
             Query(sign_in(&native, NATIVE_REDIRECT, "s4")),
         )
         .await;
@@ -929,14 +1022,153 @@ mod tests {
         let body = || Json(json!({"redirect_uris":["https://client.example.com/cb"]}));
         for _ in 0..2 {
             assert_eq!(
-                register(State(p.clone()), body()).await.status(),
+                register(State(p.clone()), HeaderMap::new(), body())
+                    .await
+                    .status(),
                 StatusCode::CREATED
             );
         }
         assert_eq!(
-            register(State(p.clone()), body()).await.status(),
+            register(State(p.clone()), HeaderMap::new(), body())
+                .await
+                .status(),
             StatusCode::TOO_MANY_REQUESTS
         );
+    }
+
+    /// Headers a proxy in front of Ax sends for a caller at `ip`; the first
+    /// entry is what the caller itself claimed.
+    fn from(ip: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_str(&format!("203.0.113.9, {ip}")).unwrap(),
+        );
+        headers
+    }
+
+    #[test]
+    fn the_source_is_the_address_the_nearest_proxy_names() {
+        assert_eq!(source(&from("198.51.100.1")), "198.51.100.1");
+        let mut cloudflare = from("198.51.100.1");
+        cloudflare.insert("cf-connecting-ip", HeaderValue::from_static("2001:db8::7"));
+        assert_eq!(source(&cloudflare), "2001:db8::7");
+        let mut garbage = HeaderMap::new();
+        garbage.insert("x-forwarded-for", HeaderValue::from_static("not-an-ip"));
+        assert_eq!(source(&garbage), UNKNOWN_SOURCE);
+        assert_eq!(source(&HeaderMap::new()), UNKNOWN_SOURCE);
+    }
+
+    #[tokio::test]
+    async fn a_flood_from_one_source_does_not_refuse_another_source() {
+        let mut p = provider().await;
+        p.authorize_limit = Arc::new(RateLimit::per_minute(3));
+        p.register_limit = Arc::new(RateLimit::per_minute(2));
+        let native = p.store.native_client().await.unwrap();
+        let (flood, user) = ("198.51.100.1", "198.51.100.2");
+        for i in 0..4 {
+            let q = sign_in(&native, NATIVE_REDIRECT, &format!("flood-{i}"));
+            authorize(State(p.clone()), from(flood), Query(q)).await;
+        }
+        let q = sign_in(&native, NATIVE_REDIRECT, "flood-more");
+        assert_eq!(
+            authorize(State(p.clone()), from(flood), Query(q))
+                .await
+                .status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        let q = sign_in(&native, NATIVE_REDIRECT, "real-user");
+        assert_eq!(
+            authorize(State(p.clone()), from(user), Query(q))
+                .await
+                .status(),
+            StatusCode::OK,
+            "another source's sign-in was refused by one source's flood"
+        );
+        let body = || Json(json!({"redirect_uris":["https://client.example.com/cb"]}));
+        for _ in 0..3 {
+            register(State(p.clone()), from(flood), body()).await;
+        }
+        assert_eq!(
+            register(State(p.clone()), from(flood), body())
+                .await
+                .status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(
+            register(State(p.clone()), from(user), body())
+                .await
+                .status(),
+            StatusCode::CREATED,
+            "another source's registration was refused by one source's flood"
+        );
+    }
+
+    #[tokio::test]
+    async fn one_source_cannot_push_out_another_sources_pending_sign_in() {
+        let p = provider().await;
+        let native = p.store.native_client().await.unwrap();
+        let q = sign_in(&native, NATIVE_REDIRECT, "real-user");
+        assert_eq!(
+            authorize(State(p.clone()), from("198.51.100.2"), Query(q))
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        for i in 0..MAX_PENDING {
+            let q = sign_in(&native, NATIVE_REDIRECT, &format!("flood-{i}"));
+            assert_eq!(
+                authorize(State(p.clone()), from("198.51.100.1"), Query(q))
+                    .await
+                    .status(),
+                StatusCode::OK,
+                "a sign-in was refused instead of replacing the source's oldest"
+            );
+        }
+        let kept: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM remote_oauth_requests WHERE state='real-user' AND status='pending'",
+        )
+        .fetch_one(&p.store.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            kept, 1,
+            "one source's flood evicted another source's sign-in"
+        );
+        let flood: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM remote_oauth_requests WHERE source='198.51.100.1' AND status='pending'",
+        )
+        .fetch_one(&p.store.pool)
+        .await
+        .unwrap();
+        assert_eq!(flood, MAX_PENDING_PER_SOURCE);
+    }
+
+    #[tokio::test]
+    async fn an_older_request_table_gets_the_source_column() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE remote_oauth_requests(origin TEXT NOT NULL,id TEXT PRIMARY KEY,nonce_hash TEXT NOT NULL UNIQUE,client_id TEXT NOT NULL,redirect TEXT NOT NULL,state TEXT NOT NULL,challenge TEXT NOT NULL,scope TEXT NOT NULL,project TEXT NOT NULL,resource TEXT NOT NULL,expires INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'pending',code_hash TEXT UNIQUE,revoked INTEGER NOT NULL DEFAULT 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        OAuthStore::with_pool(pool.clone(), "https://ax.example.com")
+            .await
+            .unwrap();
+        // Opening again must not try to add the column twice.
+        OAuthStore::with_pool(pool.clone(), "https://ax.example.com")
+            .await
+            .unwrap();
+        let columns: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('remote_oauth_requests') WHERE name='source'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(columns, 1);
     }
 
     #[tokio::test]
@@ -957,7 +1189,10 @@ mod tests {
         )
         .await;
         assert_eq!(unsupported.status(), StatusCode::BAD_REQUEST);
-        assert_eq!(json_body(unsupported).await["error"], "unsupported_grant_type");
+        assert_eq!(
+            json_body(unsupported).await["error"],
+            "unsupported_grant_type"
+        );
         let unknown_code = token(
             State(p.clone()),
             form(&[
@@ -988,6 +1223,7 @@ mod tests {
         assert!(!body.to_string().contains("pool"), "{body}");
         let registered = register(
             State(p.clone()),
+            HeaderMap::new(),
             Json(json!({"redirect_uris":["https://client.example.com/cb"]})),
         )
         .await;
