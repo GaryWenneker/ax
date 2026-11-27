@@ -77,25 +77,59 @@ pub fn read_offload_config() -> OffloadConfig {
 }
 
 pub fn write_offload_config(offload: Option<OffloadConfig>) -> Result<(), String> {
-    let path = config_path();
-    let mut root: serde_json::Value = fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    if offload.is_none() {
-        if let Some(obj) = root.as_object_mut() {
-            obj.remove("offload");
+    let value = offload
+        .map(|cfg| serde_json::to_value(cfg).map_err(|e| e.to_string()))
+        .transpose()?;
+    update_config(|root| {
+        match value {
+            Some(value) => {
+                root.insert("offload".into(), value);
+            }
+            None => {
+                root.remove("offload");
+            }
         }
-    } else if let Some(cfg) = offload {
-        root["offload"] = serde_json::to_value(cfg).map_err(|e| e.to_string())?;
-    }
-    fs::create_dir_all(config_dir()).map_err(|e| e.to_string())?;
-    fs::write(
-        path,
-        serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n",
-    )
-    .map_err(|e| e.to_string())?;
+        Ok(true)
+    })?;
     Ok(())
+}
+
+/// Read-modify-write of `~/.ax/config.json` under an advisory lock, replaced
+/// atomically. A missing or empty file starts as `{}`. A file that does not
+/// parse, or whose root is not a JSON object, is an error naming the file and
+/// is left untouched, so the user's other sections are never lost. `edit`
+/// returns whether anything changed; nothing is written when it did not.
+fn update_config(
+    edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> Result<bool, String>,
+) -> Result<bool, String> {
+    let path = config_path();
+    let shown = path.display().to_string();
+    ax_utils::update_locked(&path, |current| {
+        let mut root = match current {
+            None => serde_json::Map::new(),
+            Some(bytes) if bytes.iter().all(u8::is_ascii_whitespace) => serde_json::Map::new(),
+            Some(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
+                Ok(serde_json::Value::Object(map)) => map,
+                Ok(_) => {
+                    return Err(std::io::Error::other(
+                        "the top level is not a JSON object; fix or remove the file",
+                    ))
+                }
+                Err(e) => {
+                    return Err(std::io::Error::other(format!(
+                        "not valid JSON ({e}); fix or remove the file"
+                    )))
+                }
+            },
+        };
+        if !edit(&mut root).map_err(std::io::Error::other)? {
+            return Ok(None);
+        }
+        let text = serde_json::to_string_pretty(&serde_json::Value::Object(root))
+            .map_err(std::io::Error::other)?;
+        Ok(Some((text + "\n").into_bytes()))
+    })
+    .map_err(|e| format!("{shown}: {e}"))
 }
 
 fn trimmed(s: Option<&str>) -> Option<String> {
@@ -247,25 +281,14 @@ fn detect_provider() -> (Option<String>, Option<String>, Option<String>) {
 }
 
 fn write_provider_catalog() -> Result<bool, String> {
-    let path = config_path();
-    let mut root: serde_json::Value = fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-
-    if root.get("offload_catalog").is_some() {
-        return Ok(false);
-    }
-
-    root["offload_catalog"] =
-        serde_json::to_value(provider_catalog_entries()).map_err(|e| e.to_string())?;
-    fs::create_dir_all(config_dir()).map_err(|e| e.to_string())?;
-    fs::write(
-        path,
-        serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n",
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(true)
+    let catalog = serde_json::to_value(provider_catalog_entries()).map_err(|e| e.to_string())?;
+    update_config(|root| {
+        if root.contains_key("offload_catalog") {
+            return Ok(false);
+        }
+        root.insert("offload_catalog".into(), catalog);
+        Ok(true)
+    })
 }
 
 /// Seed the provider catalog during `ax init` and report which providers have a key.
@@ -539,5 +562,64 @@ mod tests {
             !text.contains("\"offload\""),
             "no active offload section: {text}"
         );
+    }
+
+    #[test]
+    fn a_config_that_does_not_parse_is_never_overwritten() {
+        let bad = "{\n  \"index\": { \"exclude\": [\"**/coverage/**\"] },\n}\n";
+        let (offload, catalog, after) = with_env(&[], |home| {
+            let path = home.join(".ax/config.json");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, bad).unwrap();
+            let offload = write_offload_config(Some(OffloadConfig {
+                url: Some("https://api.openai.com/v1".into()),
+                ..OffloadConfig::default()
+            }));
+            let catalog = write_provider_catalog();
+            (offload, catalog, std::fs::read_to_string(&path).unwrap())
+        });
+        let err = offload.expect_err("a broken config must not be replaced");
+        assert!(err.contains("config.json"), "{err}");
+        assert!(catalog.is_err());
+        assert_eq!(after, bad, "the file is left as the user wrote it");
+    }
+
+    #[test]
+    fn a_config_whose_root_is_not_an_object_is_an_error_not_a_panic() {
+        for root in ["[]", "\"text\"", "42"] {
+            let (offload, catalog, after) = with_env(&[], |home| {
+                let path = home.join(".ax/config.json");
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, root).unwrap();
+                let offload = std::panic::catch_unwind(|| {
+                    write_offload_config(Some(OffloadConfig::default()))
+                });
+                let catalog = std::panic::catch_unwind(write_provider_catalog);
+                (offload, catalog, std::fs::read_to_string(&path).unwrap())
+            });
+            assert!(matches!(offload, Ok(Err(_))), "root {root}: offload write");
+            assert!(matches!(catalog, Ok(Err(_))), "root {root}: catalog write");
+            assert_eq!(after, root);
+        }
+    }
+
+    #[test]
+    fn writing_offload_keeps_the_index_section() {
+        let after = with_env(&[], |home| {
+            let path = home.join(".ax/config.json");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, r#"{"index":{"exclude":["**/coverage/**"]}}"#).unwrap();
+            write_offload_config(Some(OffloadConfig {
+                url: Some("http://localhost:11434/v1".into()),
+                ..OffloadConfig::default()
+            }))
+            .unwrap();
+            assert!(write_provider_catalog().unwrap());
+            std::fs::read_to_string(&path).unwrap()
+        });
+        let value: serde_json::Value = serde_json::from_str(&after).unwrap();
+        assert_eq!(value["index"]["exclude"][0], "**/coverage/**");
+        assert_eq!(value["offload"]["url"], "http://localhost:11434/v1");
+        assert!(value["offload_catalog"].is_array());
     }
 }

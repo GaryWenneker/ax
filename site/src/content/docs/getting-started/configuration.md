@@ -179,6 +179,8 @@ Stored in `~/.ax/config.json` under a separate `"offload"` key. Lets ax delegate
 | `effort` | `low` | `low` / `medium` / `high` |
 | `style` | `plain` | Response style hint |
 
+`ax offload set-endpoint`, `ax offload clear` and `ax init` change only their own section of `~/.ax/config.json` and replace the file atomically. When the file is not valid JSON, or its top level is not an object, they stop with an error naming the file and leave it as it is.
+
 All keys can also be set via environment variables (`AX_OFFLOAD_URL`, `AX_OFFLOAD_MODEL`, `AX_OFFLOAD_KEY`, `AX_OFFLOAD_EFFORT`, `AX_OFFLOAD_STYLE`). Env vars take precedence over the file.
 
 Offload is off by default. An API key in your environment (`OPENAI_API_KEY`, `CEREBRAS_API_KEY`, and so on) does not turn it on: ax sends explore context to an outside model only after you save an endpoint with `ax offload set-endpoint <url> --key-env <VAR>` or set `AX_OFFLOAD_URL`. `ax init` and `ax offload status` name a provider whose key they find, as a suggestion. `AX_OFFLOAD_DISABLE=1` turns offload off even when an endpoint is configured.
