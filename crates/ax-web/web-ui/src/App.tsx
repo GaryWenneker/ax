@@ -32,7 +32,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { UiProvider } from './context/UiContext';
 import AuthGate from './components/AuthGate';
 import ProfileMenu from './components/ProfileMenu';
-import { initTheme, loadThemeId, themeById, THEME_CHANGED } from './lib/themes';
+import { initTheme } from './lib/themes';
 import { saveString } from './lib/uiStorage';
 import { AX_FULL_NAME } from './lib/brand';
 import {
@@ -74,11 +74,9 @@ function AppShell() {
   const [showSavings, setShowSavings] = useState(true);
   const [workspaceKey, setWorkspaceKey] = useState(0);
   const [embedMode] = useState(detectEmbedMode);
-  const [themeId, setThemeId] = useState(loadThemeId);
   const [searchRequest, setSearchRequest] = useState(0);
   const [portalQuery, setPortalQuery] = useState('');
   const [accountSignedIn, setAccountSignedIn] = useState(false);
-  const portalLayout = themeById(themeId).layout === 'portal';
   const [mcpReloadBusy, setMcpReloadBusy] = useState(false);
   const [mcpToast, setMcpToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
@@ -126,12 +124,6 @@ function AppShell() {
 
     refreshNavConfig();
   }, [embedMode]);
-
-  useEffect(() => {
-    const onTheme = () => setThemeId(loadThemeId());
-    window.addEventListener(THEME_CHANGED, onTheme);
-    return () => window.removeEventListener(THEME_CHANGED, onTheme);
-  }, []);
 
   useEffect(() => {
     function onWorkspaceSwitched() {
@@ -313,32 +305,30 @@ function AppShell() {
               </button>
               <span className="titlebar-brand" title={AX_FULL_NAME}>
                 <a href="/" className="ax-app-wordmark" aria-label="Ax home">Ax<span aria-hidden="true">_</span></a>
-                <span>{portalLayout ? '| Command Center' : '/ graph + policy'}</span>
+                <span>| Command Center</span>
               </span>
             </div>
-            {portalLayout && (
-              <form className={`portal-search${portalQuery ? ' portal-search--open' : ''}`} role="search" onSubmit={(event) => {
-                event.preventDefault();
-                const query = portalQuery.trim();
-                const item = navSections.flatMap((section) => section.items)
-                  .find((item) => item.label.toLowerCase() === query.toLowerCase());
-                if (item) navigate(item.id as Page);
-                else { saveString('search-q', query); setSearchRequest((n) => n + 1); navigate('search'); }
-                setPortalQuery('');
-              }}>
-                <i className="codicon codicon-search" aria-hidden="true" />
-                <input aria-label="Search code or open a page" placeholder="Search code or open a page" list="portal-pages"
-                  value={portalQuery} onChange={(event) => setPortalQuery(event.target.value)} />
-                <datalist id="portal-pages">{navSections.flatMap((section) => section.items).map((item) =>
-                  <option key={item.id} value={item.label} />)}</datalist>
-                <button type="submit" aria-label="Search"><i className="codicon codicon-arrow-right" aria-hidden="true" /></button>
-              </form>
-            )}
+            <form className={`portal-search${portalQuery ? ' portal-search--open' : ''}`} role="search" onSubmit={(event) => {
+              event.preventDefault();
+              const query = portalQuery.trim();
+              const item = navSections.flatMap((section) => section.items)
+                .find((item) => item.label.toLowerCase() === query.toLowerCase());
+              if (item) navigate(item.id as Page);
+              else { saveString('search-q', query); setSearchRequest((n) => n + 1); navigate('search'); }
+              setPortalQuery('');
+            }}>
+              <i className="codicon codicon-search" aria-hidden="true" />
+              <input aria-label="Search code or open a page" placeholder="Search code or open a page" list="portal-pages"
+                value={portalQuery} onChange={(event) => setPortalQuery(event.target.value)} />
+              <datalist id="portal-pages">{navSections.flatMap((section) => section.items).map((item) =>
+                <option key={item.id} value={item.label} />)}</datalist>
+              <button type="submit" aria-label="Search"><i className="codicon codicon-arrow-right" aria-hidden="true" /></button>
+            </form>
             <div className="titlebar-tools">
-              {portalLayout && <button type="button" className="portal-settings-button portal-mobile-search" aria-label="Search code" onClick={() => navigate('search')}><i className="codicon codicon-search" aria-hidden="true" /></button>}
+              <button type="button" className="portal-settings-button portal-mobile-search" aria-label="Search code" onClick={() => navigate('search')}><i className="codicon codicon-search" aria-hidden="true" /></button>
               <LoggingProjectSwitch variant="header" />
               <ProfileMenu onSettings={() => navigate('settings')} onSignedIn={setAccountSignedIn} />
-              {portalLayout && !accountSignedIn && <button type="button" className="portal-settings-button" aria-label="Open settings"
+              {!accountSignedIn && <button type="button" className="portal-settings-button" aria-label="Open settings"
                 onClick={() => navigate('settings')}><i className="codicon codicon-settings-gear" aria-hidden="true" /></button>}
               <div className="font-ctrl">
                 <button type="button" className="font-btn" onClick={() => adjFont(-SCALE_STEP)} title="Smaller text" aria-label="Smaller text">
@@ -404,12 +394,12 @@ function AppShell() {
         <SidebarResizeHandle />
 
         <div className="workspace">
-          {portalLayout && <nav className="portal-breadcrumbs" aria-label="Breadcrumb">
+          <nav className="portal-breadcrumbs" aria-label="Breadcrumb">
             <button type="button" onClick={() => navigate('stats')}>Home</button>
             <span aria-hidden="true">›</span>
             {activeSection && <><span>{activeSection.label}</span><span aria-hidden="true">›</span></>}
             <span aria-current="page">{activeLabel}</span>
-          </nav>}
+          </nav>
           {mcpToast && (
             <div
               className={`settings-toast settings-toast--${mcpToast.kind} mcp-reload-toast`}

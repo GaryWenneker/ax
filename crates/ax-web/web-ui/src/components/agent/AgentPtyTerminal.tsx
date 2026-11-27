@@ -27,7 +27,6 @@ export default function AgentPtyTerminal({ agent, profileId }: Props) {
 
     const terminalTheme = () => {
       const root = document.documentElement;
-      if (root.dataset.axLayout !== 'portal') return { background: '#0d1117', foreground: '#e6edf3', cursor: '#58a6ff' };
       const css = getComputedStyle(root);
       return { background: css.getPropertyValue('--bg-panel').trim(), foreground: css.getPropertyValue('--text').trim(),
         cursor: css.getPropertyValue('--accent').trim(), blue: css.getPropertyValue('--accent-text').trim(),

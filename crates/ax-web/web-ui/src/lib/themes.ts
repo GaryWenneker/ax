@@ -17,7 +17,8 @@ export interface ThemePreset {
   textDim: string;
   textHi: string;
   statusbarBg: string;
-  layout?: 'portal';
+  /** Every preset uses the portal shell; `html[data-ax-layout="portal"]` styles rely on it. */
+  layout: 'portal';
   colorScheme?: 'light' | 'dark';
 }
 
@@ -193,7 +194,7 @@ export function statusbarInk(accentHex: string): {
 export function applyTheme(theme: ThemePreset, accentId = loadAccentId()): void {
   theme = {...theme,accent:accentForTheme(theme, accentId)};
   const root = document.documentElement;
-  root.dataset.axLayout = theme.layout ?? 'workbench';
+  root.dataset.axLayout = theme.layout;
   root.style.colorScheme = theme.colorScheme ?? 'dark';
   const accentText = [theme.bg, theme.bgPanel, theme.bgInput, theme.bgHover].reduce((color, bg) => ensureTextContrast(color, bg), theme.accent);
   const fill = themeAccentFill(theme);

@@ -168,7 +168,6 @@ const LIVE_SINCE_SLACK_MS = 2000;
 
 export default function GraphPage() {
   const theme = useTheme();
-  const portal = theme.layout === 'portal';
   useEffect(() => { requestDraw(); }, [theme.id]);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -1416,7 +1415,7 @@ export default function GraphPage() {
 
   return (
     <div className="graph-page">
-      {portal && <PageHero title="Graph" subtitle="Explore relationships across code and knowledge." />}
+      <PageHero title="Graph" subtitle="Explore relationships across code and knowledge." />
       <div className="graph-toolbar">
         <div className="graph-toolbar-left">
           <strong>Graph</strong>

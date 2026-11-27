@@ -1,5 +1,4 @@
 import { useEffect, useState, type CSSProperties, type MouseEvent } from 'react';
-import { useTheme } from '../../hooks/useTheme';
 import Codicon from '../Codicon';
 import { OriginDbBadge, TagList } from '../PolicyMetaView';
 import { ItemGroupHeader, ItemList, ItemRow, LevelBadge, ScopeBadge } from './PageLayout';
@@ -70,7 +69,6 @@ function isControl(e: MouseEvent) {
 }
 
 export function PolicyCalmList(props: Props) {
-  const portal = useTheme().layout === 'portal';
   const [pressedKey, setPressedKey] = useState<string | null>(null);
   useEffect(() => {
     if (!pressedKey) return;
@@ -89,8 +87,8 @@ export function PolicyCalmList(props: Props) {
           <section key={g.id} className="calm-group">
             <ItemGroupHeader label={g.label} count={g.items.length} open={open} onToggle={() => props.onToggleGroup(g.id)} />
             {open && (
-              <ItemList className={`calm-list${portal ? ' portal-data-list portal-policy-list' : ''}`}>
-                {portal && <div className="portal-data-header"><span data-column-label="Select" data-column-min={28}><input type="checkbox" aria-label="Select visible rows" checked={Boolean(props.visibleSelected)} onChange={() => props.onToggleVisible?.()} /></span><span>Name</span><span>Level</span><span>Scope</span><span>Priority</span><span>Enabled / actions</span></div>}
+              <ItemList className="calm-list portal-data-list portal-policy-list">
+                <div className="portal-data-header"><span data-column-label="Select" data-column-min={28}><input type="checkbox" aria-label="Select visible rows" checked={Boolean(props.visibleSelected)} onChange={() => props.onToggleVisible?.()} /></span><span>Name</span><span>Level</span><span>Scope</span><span>Priority</span><span>Enabled / actions</span></div>
                 {g.items.map((item) => (
                   <PolicyCalmRow key={item.key} item={item} pressedKey={pressedKey} onPress={setPressedKey} {...props} listValues={['', item.id, item.level ?? '', normalizePolicyScope(item.scope), Number(item.meta.replace(/^p/, '')), item.enabled ? 'enabled' : 'disabled']} />
                 ))}
@@ -104,7 +102,6 @@ export function PolicyCalmList(props: Props) {
 }
 
 function PolicyCalmRow({ item, listValues: _listValues, pressedKey, onPress, ...p }: Props & { item: PolicyCalmItem; listValues: readonly ColumnValue[]; pressedKey: string | null; onPress: (key: string) => void }) {
-  const portal = useTheme().layout === 'portal';
   const selected = p.selectedIds.has(item.id);
   const shownTags = item.tags.slice(0, SHOWN_TAGS);
   const hiddenTags = item.tags.slice(SHOWN_TAGS);
@@ -127,11 +124,11 @@ function PolicyCalmRow({ item, listValues: _listValues, pressedKey, onPress, ...
         />
       }
       meta={item.meta}
-      portalColumns={portal ? [
+      portalColumns={[
         item.level ? <LevelBadge level={item.level} onClick={p.filters.onLevel ? () => p.filters.onLevel?.(item.level ?? '') : undefined} active={p.filters.level === item.level} /> : '—',
         <ScopeBadge scope={item.scope} onClick={() => p.filters.onScope(item.scope)} active={p.filters.scope === normalizePolicyScope(item.scope)} />,
         item.meta,
-      ] : undefined}
+      ]}
       portalLabels={['Level', 'Scope', 'Priority']}
       metaTitle="Priority"
       selected={selected}
