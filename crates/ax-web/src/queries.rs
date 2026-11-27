@@ -1277,6 +1277,45 @@ mod graph_edge_tests {
     }
 
     #[tokio::test]
+    async fn replicated_nodes_stay_in_their_own_graph() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = small_graph(dir.path()).await;
+        insert_node(db.pool(), "ax-replica/node1/r").await;
+        let local = get_graph(db.pool(), 100, "").await.unwrap();
+        assert!(local.nodes.iter().all(|n| !n.id.starts_with("ax-replica/")));
+        let remote = get_graph(db.pool(), 100, "node1").await.unwrap();
+        let ids: Vec<_> = remote.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(ids, vec!["ax-replica/node1/r"]);
+        assert!(get_graph(db.pool(), 100, "../x").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn node_filters_and_limits_apply() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = small_graph(dir.path()).await;
+        let filter = NodeFilter {
+            kind: Some("function"),
+            lang: Some("rust"),
+            file: Some("a.rs"),
+            q: None,
+            limit: 2,
+            offset: 0,
+        };
+        let page = get_nodes(db.pool(), filter).await.unwrap();
+        assert_eq!(page.total, 5);
+        assert_eq!(page.nodes.len(), 2);
+        let none = NodeFilter {
+            kind: Some("class"),
+            lang: None,
+            file: None,
+            q: None,
+            limit: 10,
+            offset: 0,
+        };
+        assert_eq!(get_nodes(db.pool(), none).await.unwrap().total, 0);
+    }
+
+    #[tokio::test]
     async fn any_number_of_ids_can_be_asked_for() {
         let dir = tempfile::tempdir().unwrap();
         let db = small_graph(dir.path()).await;

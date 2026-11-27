@@ -52,7 +52,19 @@ async fn handle_savings(Query(q): Query<SavingsQueryParams>) -> impl IntoRespons
 }
 
 /// Import Cursor + Claude Code session logs into `~/.ax/usage.db`.
-async fn handle_import() -> impl IntoResponse {
+/// Answer for a write refused because the server is read-only.
+pub(crate) fn readonly_refusal() -> axum::response::Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(serde_json::json!({ "error": "AX_WEB_READONLY=1" })),
+    )
+        .into_response()
+}
+
+async fn handle_import(readonly: bool) -> axum::response::Response {
+    if readonly {
+        return readonly_refusal();
+    }
     match import_agent_logs(true, true).await {
         Ok(result) => (StatusCode::OK, Json(serde_json::json!(result))).into_response(),
         Err(e) => (
@@ -90,12 +102,13 @@ async fn handle_call_detail(Path(id): Path<i64>) -> impl IntoResponse {
 }
 
 pub fn router(hub: crate::workspace_state::WebHub) -> Router {
+    let readonly = hub.readonly;
     Router::new()
         .route("/savings", get(handle_savings))
-        .route("/savings/import", post(handle_import))
+        .route("/savings/import", post(move || handle_import(readonly)))
         .route("/savings/call/{id}", get(handle_call_detail))
         .route("/tokenize", post(handle_tokenize))
-        .merge(crate::pricing_api::router())
+        .merge(crate::pricing_api::router(readonly))
         .merge(crate::mcp_trace::router(hub.clone()))
         .merge(crate::mcp_quality::router(hub))
 }
