@@ -72,6 +72,15 @@
         "description": "vCPUs for the container. Memory is twice this in GiB (1, 2 or 4 Gi)."
       }
     },
+    "startupMinutes": {
+      "type": "int",
+      "defaultValue": 40,
+      "minValue": 5,
+      "maxValue": 40,
+      "metadata": {
+        "description": "Minutes the app may take to clone and index the repository before it must answer /health (5-40, the most Container Apps allows). A start that takes longer is restarted and clones and indexes again, so pick a larger CPU for a large repository."
+      }
+    },
     "location": {
       "type": "string",
       "defaultValue": "[resourceGroup().location]",
@@ -190,7 +199,7 @@
                     "path": "/health",
                     "port": 8080
                   },
-                  "periodSeconds": 60,
+                  "periodSeconds": "[mul(parameters('startupMinutes'), 6)]",
                   "failureThreshold": 10
                 },
                 {

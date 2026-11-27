@@ -284,7 +284,9 @@ The public URL comes from `AX_PUBLIC_URL` or is detected on Render, Koyeb,
 Railway and Azure Container Apps. The website's guide (Deploy to the cloud) has
 the buttons:
 
-- Azure: `slim/azure/azuredeploy-server.json` (always-on Container App).
+- Azure: `slim/azure/azuredeploy-server.json` (always-on Container App). Nothing
+  answers `/health` until the clone and `ax init` finish; the `startupMinutes`
+  parameter (5-40, default 40) is how long the startup probe waits for that.
 - Render: `render.yaml` at the repository root.
 - Build the image locally with `docker build -f slim/Dockerfile --target server .`
 - Koyeb: a deploy URL with the image, command and variables

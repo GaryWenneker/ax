@@ -258,11 +258,15 @@ Authorization: Bearer <AX_API_KEY>
 
 Log Analytics workspace, Container Apps environment and an always-on Container App with HTTPS ingress. The MCP URL is in the deployment's **Outputs**.
 
+The app answers `/health` only after the clone and `ax init` finish. The `startupMinutes` parameter (default and maximum 40, the longest startup probe Container Apps allows) sets how long that may take; a start that runs longer is restarted and starts the clone and index again. For a large repository, choose more CPU.
+
 ### Render
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/GaryWenneker/ax)
 
 A web service from `render.yaml` in the repository (plan `starter`). Render generates `AX_API_KEY`; copy it from the service's **Environment** tab.
+
+Render waits for `/health` before it marks a deploy live, and fails a deploy whose health check does not pass within its deploy timeout (about 15 minutes). A repository that takes longer to clone and index on the chosen plan needs a larger plan or the Azure template.
 
 ### Koyeb
 

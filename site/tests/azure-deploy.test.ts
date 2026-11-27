@@ -96,3 +96,21 @@ test('homepage shows the server deploy buttons', () => {
 	assert.match(component, /cloudDeploys\.filter\(\(d\) => d\.kind === 'MCP server'\)/);
 	assert.match(component, /#deploy-to-the-cloud/);
 });
+
+test('server startup probe waits long enough for clone and index, within Azure limits', () => {
+	// ax-serve-repo clones and indexes before the server binds, so the startup
+	// probe has to outlast both. Container Apps allows periodSeconds 1-240,
+	// failureThreshold 1-10 and initialDelaySeconds 0-60.
+	const app = server.resources.find((r: any) => r.type === 'Microsoft.App/containerApps');
+	const startup = app.properties.template.containers[0].probes.find((p: any) => p.type === 'Startup');
+	const minutes = server.parameters.startupMinutes;
+	assert.ok(minutes, 'startupMinutes parameter');
+	assert.equal(minutes.type, 'int');
+	assert.equal(startup.periodSeconds, "[mul(parameters('startupMinutes'), 6)]");
+	assert.equal(startup.failureThreshold, 10);
+	const budget = (m: number) => m * 6 * startup.failureThreshold + (startup.initialDelaySeconds ?? 0);
+	assert.ok(minutes.minValue * 6 >= 1 && minutes.maxValue * 6 <= 240, 'periodSeconds stays within 1-240');
+	assert.ok(budget(minutes.defaultValue) >= 30 * 60, 'default allows at least 30 minutes');
+	assert.equal(budget(minutes.maxValue), minutes.maxValue * 60);
+	assert.match(guide, /startupMinutes/);
+});
