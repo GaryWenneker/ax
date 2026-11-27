@@ -564,8 +564,12 @@ pub(crate) async fn status(
         Ok(pool) => pool,
         Err(error) => return fail(StatusCode::INTERNAL_SERVER_ERROR, &error),
     };
-    let active_replicas: i64 = if let Some(saved) = &saved {
-        sqlx::query_scalar("SELECT COUNT(DISTINCT n.id) FROM replication_nodes n JOIN node_project_access a ON a.node_id=n.id WHERE a.project_id=? AND n.role='replica' AND n.trust_state='trusted' AND n.last_seen_at>=datetime('now','-120 seconds')").bind(&saved.config.projects[0].id).fetch_one(&access_db).await.unwrap_or(0)
+    // A hand-edited settings file can list no project; it then has no replicas.
+    let project = saved
+        .as_ref()
+        .and_then(|saved| saved.config.projects.first());
+    let active_replicas: i64 = if let Some(project) = project {
+        sqlx::query_scalar("SELECT COUNT(DISTINCT n.id) FROM replication_nodes n JOIN node_project_access a ON a.node_id=n.id WHERE a.project_id=? AND n.role='replica' AND n.trust_state='trusted' AND n.last_seen_at>=datetime('now','-120 seconds')").bind(&project.id).fetch_one(&access_db).await.unwrap_or(0)
     } else {
         0
     };

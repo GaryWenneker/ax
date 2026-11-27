@@ -1023,7 +1023,10 @@ mod tests {
         // Request B gave up and invalidated; request A then found a working host.
         cache.invalidate();
         cache.set_host("http://localhost:9000".into());
-        assert!(!cache.ready, "a cache without credentials must not be ready");
+        assert!(
+            !cache.ready,
+            "a cache without credentials must not be ready"
+        );
 
         // The next request rebuilds host and credentials together.
         cache.ensure(&config);

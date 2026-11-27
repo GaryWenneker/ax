@@ -454,6 +454,8 @@ async fn host_action(State(hub): State<WebHub>, Json(body): Json<HostActionReque
         Err(e) => failure(StatusCode::CONFLICT, &e),
     }
 }
+/// Answer for a remote host settings file that registers no project.
+const NO_HOST_PROJECT: &str = "Invalid remote host settings: no project is registered";
 async fn host_authorizations(State(hub): State<WebHub>) -> Response {
     let ws = hub.read().await;
     let id = match catalog::workspace_id(&ws.project_root) {
@@ -469,7 +471,10 @@ async fn host_authorizations(State(hub): State<WebHub>) -> Response {
             Ok(store) => store,
             Err(e) => return failure(StatusCode::INTERNAL_SERVER_ERROR, &e),
         };
-        match store.requests(&host.config.projects[0].id).await {
+        let Some(project) = host.config.projects.first() else {
+            return failure(StatusCode::CONFLICT, NO_HOST_PROJECT);
+        };
+        match store.requests(&project.id).await {
             Ok(requests) => requests,
             Err(e) => return failure(StatusCode::INTERNAL_SERVER_ERROR, &e),
         }
@@ -494,14 +499,14 @@ async fn host_decide(
         Ok(Some(host)) if host.config.oauth.built_in => host,
         _ => return failure(StatusCode::CONFLICT, "No built-in OAuth host configured"),
     };
+    let Some(project) = host.config.projects.first() else {
+        return failure(StatusCode::CONFLICT, NO_HOST_PROJECT);
+    };
     let store = match ax_mcp::remote::oauth::OAuthStore::open(&host.config.public_url).await {
         Ok(store) => store,
         Err(e) => return failure(StatusCode::INTERNAL_SERVER_ERROR, &e),
     };
-    match store
-        .decide(&host.config.projects[0].id, &request_id, &body.decision)
-        .await
-    {
+    match store.decide(&project.id, &request_id, &body.decision).await {
         Ok(()) => response(
             StatusCode::OK,
             json!({"workspaceId":body.workspace_id,"updated":true}),
