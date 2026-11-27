@@ -52,16 +52,11 @@ pub fn run_installer(project_root: &Path, opts: InstallOptions) -> Result<(), St
         Err(e) => eprintln!("Note: seeded skills not stored in ~/.ax/global.db: {e}"),
     }
     match crate::commands::policy::dedup_global_blocking() {
-        Ok(ax_core::policy_dedup::DedupReport { error: Some(e), .. }) => {
-            eprintln!("Note: policy dedup stopped: {e}")
+        Ok(report) => {
+            if let Some(note) = crate::commands::policy::dedup_note(&report) {
+                eprintln!("{note}");
+            }
         }
-        Ok(report) if !report.actions.is_empty() => {
-            eprintln!(
-                "Cleaned {} duplicate policy row(s) in ~/.ax/global.db",
-                report.actions.len()
-            )
-        }
-        Ok(_) => {}
         Err(e) => eprintln!("Note: policy dedup skipped: {e}"),
     }
 

@@ -1,7 +1,7 @@
 //! `ax global` — init / sync / status for ~/.ax/global.db
 
 use crate::commands::resolve_project_root;
-use crate::ui::{kv_line, ok_line};
+use crate::ui::{dim, kv_line, ok_line};
 
 pub async fn run_init() -> Result<(), String> {
     let path = ax_global_db::init_default()
@@ -24,7 +24,14 @@ pub async fn run_sync(path: Option<String>) -> Result<(), String> {
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let dedup = ax.dedup_policy(true).await;
     println!("{}", ok_line(format!("synced {}", result.project_name)));
-    println!("  {}", kv_line("dedup", dedup.actions.len().to_string()));
+    // A dry run: report duplicates; `ax policy dedup` removes them.
+    println!(
+        "  {}",
+        kv_line("dedup candidates", dedup.actions.len().to_string())
+    );
+    if !dedup.actions.is_empty() {
+        println!("  {}", dim("run `ax policy dedup` to remove them"));
+    }
     if let Some(error) = &dedup.error {
         println!("  {}", kv_line("dedup error", error));
     }

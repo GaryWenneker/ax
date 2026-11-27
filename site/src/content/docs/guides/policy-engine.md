@@ -159,6 +159,8 @@ Merge order on index: company → workspace → project → inactive overlay →
 
 A rule or skill stored at the global level is not kept again in a project `ax.db`. Rows in `global.db` have a `level`: `global` rows are the machine-wide copies agents load, and `mirror` rows are the per-project copies written by `ax global sync`. Sync never writes a mirror for a name that already has a global row, and only global rows are loaded or counted.
 
+`ax policy dedup` applies the cleanup (`--dry-run` only lists it). The checks that run on their own during `ax install`, `ax global sync`, indexing and the Command Center are dry runs: they report how many duplicates they found and change nothing. Run `ax policy dedup` to remove them.
+
 The cleanup compares each duplicate with the global copy:
 
 | Case | Result |

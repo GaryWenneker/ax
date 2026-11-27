@@ -232,7 +232,27 @@ pub async fn run_dedup(path: Option<String>, dry_run: bool, json: bool) -> Resul
     }
 }
 
-/// Global-level cleanup (duplicate global rows, shadowed mirrors) from sync code.
+/// One line for the installer about a background dedup run, or `None` when
+/// there is nothing to say. A dry run only reports; `ax policy dedup` applies.
+pub(crate) fn dedup_note(report: &ax_core::policy_dedup::DedupReport) -> Option<String> {
+    if let Some(e) = &report.error {
+        return Some(format!(
+            "Note: policy dedup check stopped: {e} (run `ax policy dedup` to clean up)"
+        ));
+    }
+    let n = report.actions.len();
+    if n == 0 {
+        return None;
+    }
+    Some(if report.dry_run {
+        format!("Found {n} duplicate policy row(s) in ~/.ax/global.db; run `ax policy dedup` to remove them")
+    } else {
+        format!("Cleaned {n} duplicate policy row(s) in ~/.ax/global.db")
+    })
+}
+
+/// Report (dry run) duplicate global rows and shadowed mirrors from sync code.
+/// Background runs never change policy; `ax policy dedup` applies the cleanup.
 pub(crate) fn dedup_global_blocking() -> Result<ax_core::policy_dedup::DedupReport, String> {
     std::thread::spawn(|| {
         tokio::runtime::Builder::new_current_thread()
@@ -1667,8 +1687,51 @@ pub async fn run_stack_upgrade(path: Option<String>, json: bool) -> Result<(), S
 
 #[cfg(test)]
 mod tests {
-    use super::strip_match_bodies;
+    use super::{dedup_note, strip_match_bodies};
+    use ax_core::policy_dedup::{Action, DedupAction, DedupReport};
     use serde_json::json;
+
+    fn report(dry_run: bool, n: usize) -> DedupReport {
+        DedupReport {
+            dry_run,
+            actions: (0..n)
+                .map(|i| DedupAction {
+                    kind: "rule",
+                    name: format!("r{i}"),
+                    action: Action::RemovedGlobalDuplicate { project_id: 1 },
+                    reason: "duplicate".into(),
+                })
+                .collect(),
+            ..DedupReport::default()
+        }
+    }
+
+    #[test]
+    fn dedup_note_does_not_claim_a_dry_run_cleaned_anything() {
+        let note = dedup_note(&report(true, 3)).unwrap();
+        assert!(!note.contains("Cleaned"), "{note}");
+        assert!(note.contains("Found 3 duplicate"), "{note}");
+        assert!(note.contains("ax policy dedup"), "{note}");
+    }
+
+    #[test]
+    fn dedup_note_reports_a_real_run_as_cleaned() {
+        let note = dedup_note(&report(false, 2)).unwrap();
+        assert!(note.starts_with("Cleaned 2 duplicate"), "{note}");
+    }
+
+    #[test]
+    fn dedup_note_is_silent_when_nothing_was_found() {
+        assert_eq!(dedup_note(&report(true, 0)), None);
+    }
+
+    #[test]
+    fn dedup_note_points_a_stopped_check_at_the_real_command() {
+        let mut r = report(true, 0);
+        r.error = Some("global.db has an older schema; a real run upgrades it first".into());
+        let note = dedup_note(&r).unwrap();
+        assert!(note.contains("ax policy dedup"), "{note}");
+    }
 
     #[test]
     fn match_json_keeps_bodies_only_in_inject() {
