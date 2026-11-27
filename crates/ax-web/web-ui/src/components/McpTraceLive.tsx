@@ -48,6 +48,9 @@ import {
   rankMotionActive,
   rankStarActive,
   traceEntriesFromLines,
+  appendTraceEntries,
+  prependTraceEntries,
+  MCP_TRACE_MAX_ENTRIES,
   type RankMotion,
   type TextPayload,
   type TraceEntry,
@@ -364,6 +367,8 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
   const [loadingHistory, setLoadingHistory] = useState(false);
   /** Set when an older-day chunk failed; automatic loading stops until the user retries. */
   const [historyError, setHistoryError] = useState<string | null>(null);
+  /** True once the buffer cap dropped older rows; older days are then not loaded. */
+  const [historyTrimmed, setHistoryTrimmed] = useState(false);
   const [projectLabel, setProjectLabel] = useState('…');
   const [projectRoot, setProjectRoot] = useState('');
   const [fallbackLabel, setFallbackLabel] = useState('');
@@ -697,14 +702,31 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
   useEffect(() => {
     let disposed = false;
 
-    function ingestLines(lines: string[], live = false) {
-      const batch = traceEntriesFromLines(lines);
-      if (batch.length === 0) return;
-      setEntries((prev) => [...prev, ...batch]);
-      if (live) markFresh(batch.map((e) => e.id));
-      if (live) {
+    // Lines are queued and applied together: live lines at most once per
+    // frame, a snapshot batch at once (caughtUp follows it directly).
+    type Queued = { batch: TraceEntry[]; live: boolean; last: string | undefined };
+    let queue: Queued[] = [];
+    let flushTimer: number | null = null;
+
+    function flush() {
+      if (flushTimer != null) {
+        window.clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      if (disposed || queue.length === 0) return;
+      const chunks = queue;
+      queue = [];
+      const all = chunks.flatMap((c) => c.batch);
+      const liveBatch = chunks.filter((c) => c.live).flatMap((c) => c.batch);
+      setEntries((prev) => {
+        const next = appendTraceEntries(prev, all);
+        if (next.trimmed) setHistoryTrimmed(true);
+        return next.entries;
+      });
+      if (liveBatch.length > 0) {
+        markFresh(liveBatch.map((e) => e.id));
         const now = Date.now();
-        const next = nextRankMotion(rankMotionRef.current, batch, true, now);
+        const next = nextRankMotion(rankMotionRef.current, liveBatch, true, now);
         rankMotionRef.current = next;
         setRankMotion(next);
         setRankNow(now);
@@ -718,11 +740,21 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
               }, delay)
             : null;
       }
-      setPendingNew((pending) => nextPending(followRef.current, live, batch.length, pending));
-      const last = lines[lines.length - 1];
+      setPendingNew((pending) =>
+        chunks.reduce((p, c) => nextPending(followRef.current, c.live, c.batch.length, p), pending),
+      );
+      const last = chunks[chunks.length - 1].last;
       if (last) {
         publishMcpTraceActivity({ summary: summarizeTraceLine(last) });
       }
+    }
+
+    function ingestLines(lines: string[], live = false) {
+      const batch = traceEntriesFromLines(lines);
+      if (batch.length === 0) return;
+      queue.push({ batch, live, last: lines[lines.length - 1] });
+      if (!live) flush();
+      else if (flushTimer == null) flushTimer = window.setTimeout(flush, 16);
     }
 
     setLive(true);
@@ -758,7 +790,9 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
           }
         },
         reset: () => {
+          queue = [];
           setEntries([]);
+          setHistoryTrimmed(false);
           setSelectedId(null);
           setCursorId(null);
           setHistoryExhausted(false);
@@ -790,6 +824,7 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
 
     return () => {
       disposed = true;
+      if (flushTimer != null) window.clearTimeout(flushTimer);
       unsub();
       setLive(false);
       if (rankTimer.current != null) {
@@ -841,7 +876,7 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
   /** `retry` is true only for an explicit user action after a failed chunk. */
   const loadOlderDayRef = useRef<(retry?: boolean) => void>(() => {});
   loadOlderDayRef.current = (retry = false) => {
-    if (loadingHistory || historyExhausted || !oldestLoadedDay) return;
+    if (loadingHistory || historyExhausted || historyTrimmed || !oldestLoadedDay) return;
     if (historyError && !retry) return;
     setLoadingHistory(true);
     setHistoryError(null);
@@ -862,7 +897,11 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
         if (older.length > 0) {
           // Older rows append at the visual bottom (newest-first). Viewport
           // stays put; keep follow so first paint / live top remain pinned.
-          setEntries((e) => [...older, ...e]);
+          setEntries((e) => {
+            const next = prependTraceEntries(older, e);
+            if (next.trimmed) setHistoryTrimmed(true);
+            return next.entries;
+          });
         }
         setOldestLoadedDay(res.day);
         if (!res.hasOlder) setHistoryExhausted(true);
@@ -902,155 +941,156 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
     el.scrollTop = 0;
   }, [entries, maximized]);
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName;
+  // Handlers read the latest render through this ref, so the window listeners
+  // are added once instead of again for every incoming log line.
+  function onKey(e: KeyboardEvent) {
+    const target = e.target as HTMLElement | null;
+    const tag = target?.tagName;
+    if (
+      tag === 'INPUT' ||
+      tag === 'TEXTAREA' ||
+      tag === 'SELECT' ||
+      target?.isContentEditable
+    ) {
+      return;
+    }
+
+    // Inspector open: navigate events / close
+    if (selectedId) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSelectedId(null);
+        return;
+      }
       if (
-        tag === 'INPUT' ||
-        tag === 'TEXTAREA' ||
-        tag === 'SELECT' ||
-        target?.isContentEditable
+        e.key === 'ArrowLeft' ||
+        e.key === 'ArrowUp' ||
+        e.key === 'k' ||
+        e.key === 'K'
       ) {
-        return;
-      }
-
-      // Inspector open: navigate events / close
-      if (selectedId) {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          setSelectedId(null);
-          return;
-        }
-        if (
-          e.key === 'ArrowLeft' ||
-          e.key === 'ArrowUp' ||
-          e.key === 'k' ||
-          e.key === 'K'
-        ) {
-          e.preventDefault();
-          selectNeighbor(-1);
-          return;
-        }
-        if (
-          e.key === 'ArrowRight' ||
-          e.key === 'ArrowDown' ||
-          e.key === 'j' ||
-          e.key === 'J'
-        ) {
-          e.preventDefault();
-          selectNeighbor(1);
-          return;
-        }
-        if (e.key === 'Home') {
-          e.preventDefault();
-          const first = visibleRowIds()[0];
-          if (first) {
-            const id = first;
-            setSelectedId(id);
-            setCursorId(id);
-          }
-          return;
-        }
-        if (e.key === 'End') {
-          e.preventDefault();
-          const ids = visibleRowIds();
-          if (ids.length) {
-            const id = ids[ids.length - 1];
-            setSelectedId(id);
-            setCursorId(id);
-          }
-          return;
-        }
-        return;
-      }
-
-      // Table browsing (display order: newest at top)
-      if (e.key === 'ArrowDown' || e.key === 'j' || e.key === 'J') {
         e.preventDefault();
-        moveCursor(1);
+        selectNeighbor(-1);
         return;
       }
-      if (e.key === 'ArrowUp' || e.key === 'k' || e.key === 'K') {
+      if (
+        e.key === 'ArrowRight' ||
+        e.key === 'ArrowDown' ||
+        e.key === 'j' ||
+        e.key === 'J'
+      ) {
         e.preventDefault();
-        moveCursor(-1);
-        return;
-      }
-      if (e.key === 'PageDown') {
-        e.preventDefault();
-        moveCursor(10);
-        return;
-      }
-      if (e.key === 'PageUp') {
-        e.preventDefault();
-        moveCursor(-10);
+        selectNeighbor(1);
         return;
       }
       if (e.key === 'Home') {
         e.preventDefault();
         const first = visibleRowIds()[0];
-        if (first) setCursorId(first);
+        if (first) {
+          const id = first;
+          setSelectedId(id);
+          setCursorId(id);
+        }
         return;
       }
       if (e.key === 'End') {
         e.preventDefault();
         const ids = visibleRowIds();
-        if (ids.length) setCursorId(ids[ids.length - 1]);
-        return;
-      }
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        const ids = visibleRowIds();
-        const id = cursorId && ids.includes(cursorId) ? cursorId : ids[0];
-        if (id) openEntry(id);
-        return;
-      }
-      if (e.key === 'Escape') {
-        if (document.fullscreenElement) {
-          e.preventDefault();
-          void exitBrowserFullscreen();
-          return;
-        }
-        if (maximized && !isPage) {
-          e.preventDefault();
-          setMaximized(false);
+        if (ids.length) {
+          const id = ids[ids.length - 1];
+          setSelectedId(id);
+          setCursorId(id);
         }
         return;
       }
-      if (isPage && (e.key === 'b' || e.key === 'B') && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        e.preventDefault();
-        void backToApp();
-      }
+      return;
     }
 
-    window.addEventListener('keydown', onKey);
-    function onOutsideBlade(event: MouseEvent) {
-      if (!selectedId) return;
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      if (target.closest('.mcp-blade, .mcp-trace-row')) return;
-      setSelectedId(null);
+    // Table browsing (display order: newest at top)
+    if (e.key === 'ArrowDown' || e.key === 'j' || e.key === 'J') {
+      e.preventDefault();
+      moveCursor(1);
+      return;
     }
-    document.addEventListener('mousedown', onOutsideBlade);
+    if (e.key === 'ArrowUp' || e.key === 'k' || e.key === 'K') {
+      e.preventDefault();
+      moveCursor(-1);
+      return;
+    }
+    if (e.key === 'PageDown') {
+      e.preventDefault();
+      moveCursor(10);
+      return;
+    }
+    if (e.key === 'PageUp') {
+      e.preventDefault();
+      moveCursor(-10);
+      return;
+    }
+    if (e.key === 'Home') {
+      e.preventDefault();
+      const first = visibleRowIds()[0];
+      if (first) setCursorId(first);
+      return;
+    }
+    if (e.key === 'End') {
+      e.preventDefault();
+      const ids = visibleRowIds();
+      if (ids.length) setCursorId(ids[ids.length - 1]);
+      return;
+    }
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      const ids = visibleRowIds();
+      const id = cursorId && ids.includes(cursorId) ? cursorId : ids[0];
+      if (id) openEntry(id);
+      return;
+    }
+    if (e.key === 'Escape') {
+      if (document.fullscreenElement) {
+        e.preventDefault();
+        void exitBrowserFullscreen();
+        return;
+      }
+      if (maximized && !isPage) {
+        e.preventDefault();
+        setMaximized(false);
+      }
+      return;
+    }
+    if (isPage && (e.key === 'b' || e.key === 'B') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      void backToApp();
+    }
+  }
+
+  function onOutsideBlade(event: MouseEvent) {
+    if (!selectedId) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest('.mcp-blade, .mcp-trace-row')) return;
+    setSelectedId(null);
+  }
+  const windowHandlersRef = useRef({ onKey, onOutsideBlade });
+  windowHandlersRef.current = { onKey, onOutsideBlade };
+
+  useEffect(() => {
+    const keyListener = (e: KeyboardEvent) => windowHandlersRef.current.onKey(e);
+    const mouseListener = (e: MouseEvent) => windowHandlersRef.current.onOutsideBlade(e);
+    window.addEventListener('keydown', keyListener);
+    document.addEventListener('mousedown', mouseListener);
+    return () => {
+      window.removeEventListener('keydown', keyListener);
+      document.removeEventListener('mousedown', mouseListener);
+    };
+  }, []);
+
+  useEffect(() => {
     const lockScroll = maximized || Boolean(selectedId);
     if (lockScroll) document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = '';
-      window.removeEventListener('keydown', onKey);
-      document.removeEventListener('mousedown', onOutsideBlade);
     };
-  }, [
-    maximized,
-    selectedId,
-    cursorId,
-    rowOpensBlade,
-    onContinuityRow,
-    projectRoot,
-    isPage,
-    entries,
-    visibleEntries,
-    displayEntries,
-  ]);
+  }, [maximized, selectedId]);
 
   function onScroll() {
     const el = scrollerRef.current;
@@ -1618,7 +1658,11 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
             </button>
           </div>
         ) : null}
-        {historyExhausted && entries.length > 0 ? (
+        {historyTrimmed && entries.length > 0 ? (
+          <div className="mcp-trace-history-status mcp-trace-history-status--end">
+            Older rows were dropped to keep this view fast; the newest {MCP_TRACE_MAX_ENTRIES.toLocaleString()} are kept.
+          </div>
+        ) : historyExhausted && entries.length > 0 ? (
           <div className="mcp-trace-history-status mcp-trace-history-status--end">
             End of available history
           </div>

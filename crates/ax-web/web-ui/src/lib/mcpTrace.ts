@@ -749,6 +749,35 @@ export function isTraceLogLine(data: string): boolean {
   );
 }
 
+/**
+ * Most trace rows the Logging view keeps in memory. Past this the oldest rows
+ * are dropped, so a tab left open through a long session stays fast.
+ */
+export const MCP_TRACE_MAX_ENTRIES = 5000;
+
+/** Append newer rows; past `cap` the oldest rows are dropped (`trimmed`). */
+export function appendTraceEntries(
+  prev: TraceEntry[],
+  batch: TraceEntry[],
+  cap = MCP_TRACE_MAX_ENTRIES,
+): { entries: TraceEntry[]; trimmed: boolean } {
+  const total = prev.length + batch.length;
+  if (total <= cap) return { entries: [...prev, ...batch], trimmed: false };
+  if (batch.length >= cap) return { entries: batch.slice(batch.length - cap), trimmed: true };
+  return { entries: [...prev.slice(total - cap), ...batch], trimmed: true };
+}
+
+/** Prepend an older day; past `cap` the oldest of those older rows are dropped. */
+export function prependTraceEntries(
+  older: TraceEntry[],
+  prev: TraceEntry[],
+  cap = MCP_TRACE_MAX_ENTRIES,
+): { entries: TraceEntry[]; trimmed: boolean } {
+  const room = Math.max(0, cap - prev.length);
+  if (older.length <= room) return { entries: [...older, ...prev], trimmed: false };
+  return { entries: [...older.slice(older.length - room), ...prev], trimmed: true };
+}
+
 export function traceEntriesFromLines(lines: string[]): TraceEntry[] {
   const out: TraceEntry[] = [];
   for (const data of lines) {
