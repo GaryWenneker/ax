@@ -169,7 +169,7 @@ Sonar setup saves the generated scanner token in `.ax/sonar.token`. On Unix the 
 
 ### SonarQube network exposure
 
-When `host` is a loopback address (`localhost`, `127.0.0.1` or `[::1]`), ax publishes the SonarQube container on `127.0.0.1` only, so other machines on the network cannot reach it or try the default `admin` login. A container scanner joins the `ax-sonar-net` network and talks to the SonarQube container directly. To reach SonarQube from other machines, set `host` to a name or address other than loopback (for example `http://sonarqube.vsc:9000`); the port is then published on all interfaces. A container created before this change keeps its old port binding until you reset the stack.
+When `host` is a loopback address (`localhost`, `127.0.0.1` or `[::1]`), ax publishes the SonarQube container on `127.0.0.1` only, so other machines on the network cannot reach it or try the default `admin` login. A container scanner joins the `ax-sonar-net` network and talks to the SonarQube container directly: the container named by `podman_container` (`sonarqube` when it is unset), found on whichever installed runtime holds it when `container_runtime` is `auto`. To reach SonarQube from other machines, set `host` to a name or address other than loopback (for example `http://sonarqube.vsc:9000`); the port is then published on all interfaces. A container created before this change keeps its old port binding until you reset the stack.
 
 ### SonarQube containers ax manages
 

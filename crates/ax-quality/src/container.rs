@@ -411,11 +411,7 @@ pub async fn ensure_sonar_stack_online(
     log: &InstallLog,
 ) -> Result<SonarDiscovery, String> {
     let host = config.host.trim_end_matches('/');
-    let name = config
-        .podman_container
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .unwrap_or("sonarqube");
+    let name = config.sonar_container_name();
     let pref = if config.container_runtime == "auto" {
         None
     } else {
@@ -515,6 +511,46 @@ pub fn scanner_container_target(
         ),
         _ => (Vec::new(), crate::bootstrap::scanner_host_url(host)),
     }
+}
+
+/// The runtime, extra `run` arguments and SonarQube URL for a scanner
+/// container under `config`.
+///
+/// The SonarQube container is `podman_container`, or `sonarqube` when that is
+/// unset or empty, the same default the stack setup uses. With
+/// `container_runtime = auto`, every installed runtime (podman first) is
+/// checked, and the one that holds that container on [`SONAR_NETWORK`] runs
+/// the scanner; without such a runtime the first installed one runs it
+/// against the configured host. An explicit runtime is always used.
+pub fn scanner_target(
+    config: &crate::sonar::SonarConfig,
+) -> Result<(ContainerRuntime, Vec<String>, String), String> {
+    let sonar_name = config.sonar_container_name();
+    let (runtime, on_network) = match ContainerRuntime::from_pref(Some(&config.container_runtime)) {
+        Some(_) => {
+            let runtime = resolve_runtime(Some(&config.container_runtime))?;
+            (runtime, container_on_sonar_network(runtime, sonar_name))
+        }
+        None => {
+            let installed: Vec<ContainerRuntime> =
+                [ContainerRuntime::Podman, ContainerRuntime::Docker]
+                    .into_iter()
+                    .filter(|rt| runtime_version(*rt).is_some())
+                    .collect();
+            let first = *installed
+                .first()
+                .ok_or("Neither podman nor docker found on PATH")?;
+            match installed
+                .iter()
+                .find(|rt| container_on_sonar_network(**rt, sonar_name))
+            {
+                Some(rt) => (*rt, true),
+                None => (first, false),
+            }
+        }
+    };
+    let (args, host) = scanner_container_target(&config.host, on_network.then_some(sonar_name));
+    Ok((runtime, args, host))
 }
 
 /// Whether container `name` is attached to [`SONAR_NETWORK`].
@@ -1527,5 +1563,96 @@ esac
         // The stuck `ps` lasts ~0.5s per runtime probe; a blocked runtime shows ~0 ticks.
         assert!(ticks >= 20, "runtime was blocked: only {ticks} ticks");
         assert!(fake.calls().contains("ps -a"));
+    }
+
+    /// A fake `docker` that answers `inspect` from `docker-inspect-<name>`.
+    const FAKE_DOCKER: &str = r#"#!/bin/sh
+d="$(dirname "$0")"
+printf 'docker %s\n' "$*" >> "$d/calls.log"
+case "$1" in
+  --version) echo "Docker version 27.0.0" ;;
+  inspect) for a in "$@"; do if [ -f "$d/docker-inspect-$a" ]; then cat "$d/docker-inspect-$a"; fi; done ;;
+  *) exit 1 ;;
+esac
+"#;
+
+    fn add_fake_docker(fake: &FakeCli) {
+        let script = fake.dir.path().join("docker");
+        std::fs::write(&script, FAKE_DOCKER).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    const ON_SONAR_NET: &str = "{\"ax-sonar-net\":{}}\n";
+
+    fn loopback_config(container: Option<&str>) -> crate::sonar::SonarConfig {
+        crate::sonar::SonarConfig {
+            host: "http://localhost:9000".into(),
+            podman_container: container.map(String::from),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn scanner_joins_the_sonar_network_when_no_container_name_is_set() {
+        let fake = FakeCli::new();
+        fake.file("inspect-sonarqube", ON_SONAR_NET);
+        for container in [None, Some("")] {
+            let (runtime, args, host) = scanner_target(&loopback_config(container)).unwrap();
+            assert_eq!(runtime, ContainerRuntime::Podman);
+            assert_eq!(
+                args,
+                vec!["--network".to_string(), SONAR_NETWORK.to_string()]
+            );
+            assert_eq!(host, "http://sonarqube:9000", "{container:?}");
+        }
+    }
+
+    #[test]
+    fn scanner_uses_the_runtime_that_holds_the_sonar_container() {
+        let fake = FakeCli::new();
+        add_fake_docker(&fake);
+        fake.file("docker-inspect-sonarqube", ON_SONAR_NET);
+        let (runtime, args, host) = scanner_target(&loopback_config(None)).unwrap();
+        assert_eq!(runtime, ContainerRuntime::Docker);
+        assert_eq!(
+            args,
+            vec!["--network".to_string(), SONAR_NETWORK.to_string()]
+        );
+        assert_eq!(host, "http://sonarqube:9000");
+
+        // An explicit runtime is respected even when the other one holds it.
+        let config = crate::sonar::SonarConfig {
+            container_runtime: "podman".into(),
+            ..loopback_config(None)
+        };
+        let (runtime, args, _) = scanner_target(&config).unwrap();
+        assert_eq!(runtime, ContainerRuntime::Podman);
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn scanner_falls_back_to_the_host_url_off_the_sonar_network() {
+        let fake = FakeCli::new();
+        add_fake_docker(&fake);
+        let (runtime, args, host) = scanner_target(&loopback_config(None)).unwrap();
+        assert_eq!(
+            runtime,
+            ContainerRuntime::Podman,
+            "podman is preferred under auto"
+        );
+        assert!(args.is_empty());
+        assert_eq!(
+            host,
+            crate::bootstrap::scanner_host_url("http://localhost:9000")
+        );
+        // A remote host never joins the network, even when the container is on it.
+        fake.file("inspect-sonarqube", ON_SONAR_NET);
+        let config = crate::sonar::SonarConfig {
+            host: "http://sonar.example.com:9000".into(),
+            ..loopback_config(None)
+        };
+        let (_, args, _) = scanner_target(&config).unwrap();
+        assert!(args.is_empty());
+        drop(fake);
     }
 }

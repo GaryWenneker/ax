@@ -85,6 +85,17 @@ struct ScanScope<'a> {
     workspace_repo_count: usize,
 }
 
+impl SonarConfig {
+    /// The SonarQube container: `podman_container`, or `sonarqube` when it is
+    /// unset or empty.
+    pub fn sonar_container_name(&self) -> &str {
+        self.podman_container
+            .as_deref()
+            .filter(|name| !name.is_empty())
+            .unwrap_or("sonarqube")
+    }
+}
+
 impl Default for SonarConfig {
     fn default() -> Self {
         Self {
@@ -186,11 +197,7 @@ impl SonarClient {
             return Ok(());
         }
 
-        let container_name = self
-            .config
-            .podman_container
-            .clone()
-            .unwrap_or_else(|| "sonarqube".into());
+        let container_name = self.config.sonar_container_name().to_string();
         let pref = if self.config.container_runtime == "auto" {
             None
         } else {
@@ -507,23 +514,10 @@ impl SonarClient {
         target: &ScanTarget,
         token: Option<&str>,
     ) -> Result<(), String> {
-        let pref = if self.config.container_runtime == "auto" {
-            None
-        } else {
-            Some(self.config.container_runtime.as_str())
-        };
-        let runtime = resolve_runtime(pref)?;
+        let (runtime, network_args, host) = crate::container::scanner_target(&self.config)?;
         let mount = project_root
             .canonicalize()
             .map_err(|e| format!("project path: {e}"))?;
-        let sonar_name = self
-            .config
-            .podman_container
-            .as_deref()
-            .filter(|n| !n.is_empty())
-            .filter(|n| crate::container::container_on_sonar_network(runtime, n));
-        let (network_args, host) =
-            crate::container::scanner_container_target(&self.config.host, sonar_name);
 
         info!(
             "Running SonarScanner via {} ({}) — native scanner not found on PATH",
@@ -1669,7 +1663,10 @@ mod tests {
             ("INFO: SonarScanner 5.0.1.3006\n", Some(5)),
             ("17:02:11.120 INFO  SonarScanner CLI 6.2.1.4610\n", Some(6)),
             ("SonarScanner CLI 7.0.2.4839", Some(7)),
-            ("INFO: SonarQube Scanner 3.3.0.1492\nINFO: Java 1.8", Some(3)),
+            (
+                "INFO: SonarQube Scanner 3.3.0.1492\nINFO: Java 1.8",
+                Some(3),
+            ),
             ("INFO: SonarQube Scanner 2.8", Some(2)),
             ("INFO: SonarQube Runner 2.4", Some(2)),
             ("SonarQube Runner", Some(2)),
