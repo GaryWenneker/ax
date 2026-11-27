@@ -3,7 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-source "$ROOT/scripts/lib/restore-on-exit.sh"
+source "$ROOT/scripts/lib/mutate.sh"
 source "$ROOT/scripts/lib/negative-control.sh"
 
 echo "== isGitShared unit tests =="
@@ -29,38 +29,19 @@ negative_control meta-status crates/ax-web/web-ui/src/components/PolicyMetaView.
   grep -q 'GitShareStatus'
 
 echo "== manual mutation of isGitShared =="
-UTIL="$ROOT/crates/ax-web/web-ui/src/components/ui/policyListUtils.ts"
-ORIG="$(mktemp)"
-cp "$UTIL" "$ORIG"
-ax_guard_file "$UTIL"
-kill_mutant() {
-  local name="$1"
-  if (cd crates/ax-web/web-ui && node --experimental-strip-types --test src/gitShare.test.ts) >/tmp/gitshare-mutant.out 2>&1; then
-    echo "FAIL: mutant $name survived" >&2
-    cat /tmp/gitshare-mutant.out >&2
-    cp "$ORIG" "$UTIL"
-    exit 1
-  fi
-  echo "killed $name"
-}
-
-perl -i -pe 's/if \(enabled === false\) return false;/if (enabled === false) return true;/' "$UTIL"
-kill_mutant "disabled-returns-true"
-cp "$ORIG" "$UTIL"
-
-perl -i -pe "s/const GIT_SHARED_SCOPES = new Set\(\['project', 'workspace'\]\);/const GIT_SHARED_SCOPES = new Set(['project']);/" "$UTIL"
-kill_mutant "drop-workspace"
-cp "$ORIG" "$UTIL"
-
-perl -i -pe "s/const GIT_SHARED_SCOPES = new Set\(\['project', 'workspace'\]\);/const GIT_SHARED_SCOPES = new Set(['project', 'workspace', 'private']);/" "$UTIL"
-kill_mutant "private-is-shared"
-cp "$ORIG" "$UTIL"
-
-perl -i -pe 's/return GIT_SHARED_SCOPES.has\(normalizePolicyScope\(scope\)\);/return true;/' "$UTIL"
-kill_mutant "always-true"
-cp "$ORIG" "$UTIL"
-
-diff -q "$ORIG" "$UTIL" >/dev/null
-rm -f "$ORIG"
+# Only a failing test kills a mutant; a syntax error is a run error (scripts/lib/mutate.sh).
+UTIL="crates/ax-web/web-ui/src/components/ui/policyListUtils.ts"
+git_share_tests() { (cd crates/ax-web/web-ui && node --experimental-strip-types --test src/gitShare.test.ts); }
+ax_mutate git_share_tests "$UTIL" \
+  'if (enabled === false) return false;' 'if (enabled === false) return true;'
+ax_mutate git_share_tests "$UTIL" \
+  "const GIT_SHARED_SCOPES = new Set(['project', 'workspace']);" \
+  "const GIT_SHARED_SCOPES = new Set(['project']);"
+ax_mutate git_share_tests "$UTIL" \
+  "const GIT_SHARED_SCOPES = new Set(['project', 'workspace']);" \
+  "const GIT_SHARED_SCOPES = new Set(['project', 'workspace', 'private']);"
+ax_mutate git_share_tests "$UTIL" \
+  'return GIT_SHARED_SCOPES.has(normalizePolicyScope(scope));' 'return true;'
+ax_mutants_summary
 
 echo "gauntlet-policy-git-share-indicator: ok"

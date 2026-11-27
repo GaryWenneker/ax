@@ -3,7 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-source "$ROOT/scripts/lib/restore-on-exit.sh"
+source "$ROOT/scripts/lib/mutate.sh"
 source "$ROOT/scripts/lib/negative-control.sh"
 
 export CARGO_TARGET_DIR="/tmp/ax-policy-zip-gauntlet"
@@ -133,38 +133,17 @@ echo "== tsc =="
 (cd crates/ax-web/web-ui && npx tsc --noEmit)
 
 echo "== manual mutation =="
-SRC="$ROOT/crates/ax-policy/src/zip_package.rs"
-ORIG="$(mktemp)"
-cp "$SRC" "$ORIG"
-ax_guard_file "$SRC"
-kill_mutant() {
-  local name="$1"
-  if cargo test -p ax-policy zip_package >/tmp/zip-pkg-mutant.out 2>&1; then
-    echo "FAIL: mutant $name survived" >&2
-    cat /tmp/zip-pkg-mutant.out >&2
-    cp "$ORIG" "$SRC"
-    exit 1
-  fi
-  echo "killed $name"
-}
-
-perl -i -pe 's/const KIND: &str = "ax-policy-package"/const KIND: &str = "wrong-kind"/' "$SRC"
-kill_mutant "wrong-kind"
-cp "$ORIG" "$SRC"
-
-perl -i -pe 's/RestoreAction::Skip/RestoreAction::Overwrite/' "$SRC"
-kill_mutant "default-overwrite"
-cp "$ORIG" "$SRC"
-
-perl -i -pe 's/h != content_hash_bytes/h == content_hash_bytes/' "$SRC"
-kill_mutant "hash-mismatch-inverted"
-cp "$ORIG" "$SRC"
-
-perl -i -pe 's/HunkTake::Package => out.extend\(package\),/HunkTake::Package => {},/' "$SRC"
-kill_mutant "never-accept-hunk"
-cp "$ORIG" "$SRC"
-
-diff -q "$ORIG" "$SRC" >/dev/null
-rm -f "$ORIG"
+# Only a failing test kills a mutant; a build error is a run error (scripts/lib/mutate.sh).
+SRC="crates/ax-policy/src/zip_package.rs"
+zip_package_tests() { cargo test -p ax-policy zip_package; }
+ax_mutate zip_package_tests "$SRC" \
+  'const KIND: &str = "ax-policy-package"' 'const KIND: &str = "wrong-kind"'
+ax_mutate zip_package_tests "$SRC" \
+  $'        return Some(RestoreAction::Skip);\n    }\n    Some(RestoreAction::Skip)\n}' \
+  $'        return Some(RestoreAction::Skip);\n    }\n    Some(RestoreAction::Overwrite)\n}'
+ax_mutate zip_package_tests "$SRC" 'h != content_hash_bytes' 'h == content_hash_bytes'
+ax_mutate zip_package_tests "$SRC" \
+  'HunkTake::Package => out.extend(package),' 'HunkTake::Package => {},'
+ax_mutants_summary
 
 echo "gauntlet-policy-zip-package: ok"

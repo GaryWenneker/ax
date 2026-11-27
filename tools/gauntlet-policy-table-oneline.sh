@@ -3,7 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-source "$ROOT/scripts/lib/restore-on-exit.sh"
+source "$ROOT/scripts/lib/mutate.sh"
 source "$ROOT/scripts/lib/negative-control.sh"
 CSS="$ROOT/crates/ax-web/web-ui/src/index.css"
 
@@ -34,20 +34,13 @@ negative_control row-nowrap "$CSS" 'flex-flow: row nowrap' 'flex-flow: row wrap'
 echo "== tsc =="
 (cd crates/ax-web/web-ui && npx tsc --noEmit)
 
-echo "== mutant: restore compact helper must fail T1 =="
-UTIL="$ROOT/crates/ax-web/web-ui/src/components/ui/policyListUtils.ts"
-ORIG="$(mktemp)"
-cp "$UTIL" "$ORIG"
-ax_guard_file "$UTIL"
-printf '\nexport function compactTagItems() { return { shown: [], extra: 0 }; }\n' >>"$UTIL"
-if (cd crates/ax-web/web-ui && node --experimental-strip-types --test src/tagOneline.test.ts) >/tmp/tag-oneline-mutant.out 2>&1; then
-  echo "FAIL: mutant survived" >&2
-  cat /tmp/tag-oneline-mutant.out >&2
-  cp "$ORIG" "$UTIL"
-  exit 1
-fi
-echo "killed compactTagItems-export"
-cp "$ORIG" "$UTIL"
-rm -f "$ORIG"
+echo "== manual mutation: restoring the compact helper must fail T1 =="
+# Only a failing test kills a mutant; a syntax error is a run error (scripts/lib/mutate.sh).
+UTIL="crates/ax-web/web-ui/src/components/ui/policyListUtils.ts"
+oneline_tests() { (cd crates/ax-web/web-ui && node --experimental-strip-types --test src/tagOneline.test.ts); }
+ax_mutate oneline_tests "$UTIL" \
+  'const GIT_SHARED_SCOPES = ' \
+  $'export function compactTagItems() { return { shown: [], extra: 0 }; }\nconst GIT_SHARED_SCOPES = '
+ax_mutants_summary
 
 echo "gauntlet-policy-table-oneline: ok"

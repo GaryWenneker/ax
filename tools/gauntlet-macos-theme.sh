@@ -3,7 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-source "$ROOT/scripts/lib/restore-on-exit.sh"
+source "$ROOT/scripts/lib/mutate.sh"
 source "$ROOT/scripts/lib/negative-control.sh"
 
 echo "== theme unit tests =="
@@ -39,34 +39,12 @@ echo "== tsc =="
 (cd crates/ax-web/web-ui && npx tsc --noEmit)
 
 echo "== manual mutation =="
-THEMES="$ROOT/crates/ax-web/web-ui/src/lib/themes.ts"
-ORIG="$(mktemp)"
-cp "$THEMES" "$ORIG"
-ax_guard_file "$THEMES"
-kill_mutant() {
-  local name="$1"
-  if (cd crates/ax-web/web-ui && node --experimental-strip-types --test src/lib/themes.test.ts) >/tmp/macos-theme-mutant.out 2>&1; then
-    echo "FAIL: mutant $name survived" >&2
-    cat /tmp/macos-theme-mutant.out >&2
-    cp "$ORIG" "$THEMES"
-    exit 1
-  fi
-  echo "killed $name"
-}
-
-perl -i -pe "s/id: 'macos'/id: 'mac-os'/" "$THEMES"
-kill_mutant "rename-id"
-cp "$ORIG" "$THEMES"
-
-perl -i -pe "s/accent: '#64d2ff'/accent: '#0a84ff'/" "$THEMES"
-kill_mutant "wrong-accent"
-cp "$ORIG" "$THEMES"
-
-perl -i -pe "s/statusbarInk\(fill\)/statusbarInk(theme.statusbarBg || theme.accent)/" "$THEMES"
-kill_mutant "ink-from-statusbarBg"
-cp "$ORIG" "$THEMES"
-
-diff -q "$ORIG" "$THEMES" >/dev/null
-rm -f "$ORIG"
+# Only a failing test kills a mutant; a syntax error is a run error (scripts/lib/mutate.sh).
+THEMES="crates/ax-web/web-ui/src/lib/themes.ts"
+theme_tests() { (cd crates/ax-web/web-ui && node --experimental-strip-types --test src/lib/themes.test.ts); }
+ax_mutate theme_tests "$THEMES" "id: 'macos'" "id: 'mac-os'"
+ax_mutate theme_tests "$THEMES" "accent: '#64d2ff'" "accent: '#0a84ff'"
+ax_mutate theme_tests "$THEMES" 'statusbarInk(fill)' 'statusbarInk(theme.statusbarBg || theme.accent)'
+ax_mutants_summary
 
 echo "gauntlet-macos-theme: ok"

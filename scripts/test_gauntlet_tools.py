@@ -233,6 +233,121 @@ class NegativeControlTest(unittest.TestCase):
         self.assertTrue(re.search(r'is_macho "\$shim"', text), "the shim is not checked with is_macho")
 
 
+MUTATED_GAUNTLETS = {
+    "gauntlet-agents-git-share.sh": [
+        "crates/ax-policy/src/agents_share.rs",
+        "crates/ax-policy/src/hierarchy.rs",
+    ],
+    "gauntlet-policy-git-share-indicator.sh": ["crates/ax-web/web-ui/src/components/ui/policyListUtils.ts"],
+    "gauntlet-policy-revisions.sh": ["crates/ax-policy/src/revisions.rs"],
+    "gauntlet-policy-table-oneline.sh": ["crates/ax-web/web-ui/src/components/ui/policyListUtils.ts"],
+    "gauntlet-policy-zip-package.sh": ["crates/ax-policy/src/zip_package.rs"],
+}
+# Its mutants target a theme preset that is no longer in themes.ts, so it is only checked statically.
+STATIC_MUTATED_GAUNTLETS = ["gauntlet-macos-theme.sh"]
+MUTATION_HEADING = 'echo "== manual mutation'
+FAKE_SUITE = r"""#!/bin/sh
+tool=$(basename "$0")
+case "$FAKE_MODE" in
+  pass) exit 0 ;;
+  testfail)
+    if [ "$tool" = cargo ]; then
+      echo "test it_works ... FAILED"
+      echo "test result: FAILED. 0 passed; 1 failed; 0 ignored"
+      exit 101
+    fi
+    echo "# fail 1"; exit 1 ;;
+  builderror)
+    if [ "$tool" = cargo ]; then
+      echo "error[E0425]: cannot find value \`x\` in this scope" >&2
+      echo "error: could not compile \`ax-policy\` (lib test) due to 1 previous error" >&2
+      exit 101
+    fi
+    echo "SyntaxError: Unexpected token ')'"; exit 1 ;;
+  nomarker) echo "something went wrong" >&2; exit 2 ;;
+esac
+exit 99
+"""
+
+
+class GauntletMutantsTest(unittest.TestCase):
+    """The manual-mutation step of each gauntlet counts only a failing test as a kill.
+
+    The step runs on its own, from its `== manual mutation` heading to the end of
+    the script, in a throwaway copy of the files it mutates with fake `cargo` and
+    `node` commands on PATH.
+    """
+
+    def run_mutants(self, name, mode):
+        text = (TOOLS / name).read_text()
+        self.assertIn(MUTATION_HEADING, text, "no manual mutation step")
+        section = text[text.index(MUTATION_HEADING):]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            files = MUTATED_GAUNTLETS[name]
+            for rel in ["scripts/lib/restore-on-exit.sh", "scripts/lib/mutate.sh", *files]:
+                dest = root / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes((ROOT / rel).read_bytes())
+            before = {rel: (root / rel).read_bytes() for rel in files}
+            bin_dir = Path(tmp) / "bin"
+            bin_dir.mkdir()
+            for tool in ("cargo", "node"):
+                (bin_dir / tool).write_text(FAKE_SUITE)
+                (bin_dir / tool).chmod(0o755)
+            prelude = f'set -euo pipefail\nROOT="{root}"\ncd "$ROOT"\nsource "$ROOT/scripts/lib/mutate.sh"\n'
+            env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", TMPDIR=tmp, FAKE_MODE=mode)
+            run = subprocess.run(["bash", "-c", prelude + section], capture_output=True, text=True,
+                                 timeout=120, env=env)
+            for rel, data in before.items():
+                self.assertEqual((root / rel).read_bytes(), data, f"{rel} was not restored")
+            return run
+
+    def for_each(self, check):
+        for name in MUTATED_GAUNTLETS:
+            with self.subTest(name):
+                check(name)
+
+    def test_failing_tests_kill_every_mutant(self):
+        def check(name):
+            run = self.run_mutants(name, "testfail")
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+            self.assertRegex(run.stdout, r"(?m)^killed: ")
+            self.assertNotIn("SURVIVED", run.stdout)
+        self.for_each(check)
+
+    def test_a_passing_suite_is_a_survivor(self):
+        def check(name):
+            run = self.run_mutants(name, "pass")
+            self.assertNotEqual(run.returncode, 0, run.stdout)
+        self.for_each(check)
+
+    def test_a_build_error_is_not_a_kill(self):
+        def check(name):
+            run = self.run_mutants(name, "builderror")
+            self.assertNotEqual(run.returncode, 0, run.stdout + run.stderr)
+            self.assertNotRegex(run.stdout, r"(?m)^killed")
+            self.assertIn("RUN ERROR", run.stdout)
+        self.for_each(check)
+
+    def test_a_failure_without_a_failing_test_is_not_a_kill(self):
+        def check(name):
+            run = self.run_mutants(name, "nomarker")
+            self.assertNotEqual(run.returncode, 0, run.stdout + run.stderr)
+            self.assertNotRegex(run.stdout, r"(?m)^killed")
+        self.for_each(check)
+
+    def test_every_mutating_gauntlet_uses_the_shared_runner(self):
+        for name in [*MUTATED_GAUNTLETS, *STATIC_MUTATED_GAUNTLETS]:
+            with self.subTest(name):
+                text = (TOOLS / name).read_text()
+                self.assertRegex(text, r'(?m)^source "\$ROOT/scripts/lib/mutate\.sh"$')
+                # mutate.sh sources restore-on-exit.sh; sourcing it again would drop the guarded files.
+                self.assertNotIn("lib/restore-on-exit.sh", text)
+                self.assertRegex(text, r"(?m)^ax_mutants_summary\b")
+                self.assertNotRegex(text, r"(?m)^\s*kill_\w*\(\)")
+
+
 FAKE_AX = """#!{python}
 import http.server, os, sys, threading
 port = int(sys.argv[sys.argv.index("--port") + 1])
