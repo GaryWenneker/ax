@@ -277,23 +277,86 @@ fn build_glob_set(globs: &[String]) -> Result<GlobSet, globset::Error> {
     builder.build()
 }
 
+/// Turns open and changed file paths into cwd-relative, `/`-separated paths
+/// for glob matching. A relative path is taken relative to `cwd`, not to the
+/// process working directory, and a file that does not exist yet still
+/// matches: the nearest existing ancestor is resolved and the rest appended.
 fn collect_relative_files(cwd: &Path, open: &[PathBuf], changed: &[PathBuf]) -> Vec<String> {
+    let lexical_cwd = lexical_normalize(&absolute_from(cwd, cwd));
+    let canon_cwd = resolve_existing_prefix(&lexical_cwd);
     let mut out = Vec::new();
     for p in open.iter().chain(changed.iter()) {
-        if let Ok(rel) = normalize_rel(cwd, p) {
-            out.push(rel.replace('\\', "/"));
+        let abs = lexical_normalize(&absolute_from(cwd, p));
+        let canon = resolve_existing_prefix(&abs);
+        let rel = canon
+            .strip_prefix(&canon_cwd)
+            .or_else(|_| abs.strip_prefix(&lexical_cwd));
+        if let Ok(rel) = rel {
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            if !rel.is_empty() {
+                out.push(rel);
+            }
         }
     }
     out
 }
 
-fn normalize_rel(cwd: &Path, path: &Path) -> Result<String, ()> {
-    let canon_cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
-    let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    canon
-        .strip_prefix(&canon_cwd)
-        .map(|p| p.to_string_lossy().to_string())
-        .map_err(|_| ())
+/// `path` when absolute, otherwise `cwd` joined with it (and `cwd` itself
+/// made absolute against the process directory as a last resort).
+fn absolute_from(cwd: &Path, path: &Path) -> PathBuf {
+    let joined = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    };
+    if joined.is_absolute() {
+        joined
+    } else {
+        std::env::current_dir()
+            .map(|d| d.join(&joined))
+            .unwrap_or(joined)
+    }
+}
+
+/// Removes `.` and folds `..` without touching the file system.
+fn lexical_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Canonicalizes the deepest existing ancestor of `path` and appends the
+/// components below it that do not exist yet.
+fn resolve_existing_prefix(path: &Path) -> PathBuf {
+    let mut probe = path.to_path_buf();
+    let mut rest: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        if let Ok(real) = probe.canonicalize() {
+            let mut out = real;
+            for part in rest.iter().rev() {
+                out.push(part);
+            }
+            return out;
+        }
+        match probe.file_name() {
+            Some(name) => {
+                rest.push(name.to_os_string());
+                if !probe.pop() {
+                    return path.to_path_buf();
+                }
+            }
+            None => return path.to_path_buf(),
+        }
+    }
 }
 
 fn level_ord(level: &str) -> i32 {
@@ -365,6 +428,41 @@ mod tests {
             group: String::new(),
             properties: Default::default(),
         }
+    }
+
+    #[test]
+    fn a_relative_file_resolves_against_the_input_cwd() {
+        let dir = tempfile::tempdir().unwrap();
+        // The file does not exist and the process runs in another directory.
+        let rel = collect_relative_files(dir.path(), &[PathBuf::from("src/App.tsx")], &[]);
+        assert_eq!(rel, vec!["src/App.tsx".to_string()]);
+        let dotted =
+            collect_relative_files(dir.path(), &[PathBuf::from("./src/../lib/a.rs")], &[]);
+        assert_eq!(dotted, vec!["lib/a.rs".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_new_file_under_a_linked_cwd_keeps_its_relative_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir_all(real.join("src")).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        // cwd given through the link, file not yet created.
+        let new_file = link.join("src/new.rs");
+        assert_eq!(
+            collect_relative_files(&link, &[new_file], &[]),
+            vec!["src/new.rs".to_string()]
+        );
+        // cwd given canonically, file path through the link.
+        let via_link = link.join("src/other.rs");
+        assert_eq!(
+            collect_relative_files(&real, &[via_link], &[]),
+            vec!["src/other.rs".to_string()]
+        );
+        // A file outside the cwd is still dropped.
+        assert!(collect_relative_files(&real, &[dir.path().join("x.rs")], &[]).is_empty());
     }
 
     #[test]
