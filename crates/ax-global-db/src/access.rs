@@ -122,6 +122,19 @@ impl MemberRole {
     pub fn permits(self, scope: &str) -> bool {
         self.default_scopes().contains(&scope)
     }
+
+    /// Rank by scope breadth, broadest first. Each role holds every scope of
+    /// the roles ranked below it, so the first role of a member's set grants
+    /// the union of the set's scopes and is what team_members.role stores.
+    pub fn breadth_rank(self) -> u8 {
+        match self {
+            Self::Owner => 0,
+            Self::Admin => 1,
+            Self::Approver => 2,
+            Self::Member => 3,
+            Self::Readonly => 4,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -273,13 +286,7 @@ pub async fn update_member_roles(
         bail!("invalid member status or empty role set");
     }
     let mut unique = roles.to_vec();
-    unique.sort_by_key(|role| match role {
-        MemberRole::Owner => 0,
-        MemberRole::Approver => 1,
-        MemberRole::Admin => 2,
-        MemberRole::Member => 3,
-        MemberRole::Readonly => 4,
-    });
+    unique.sort_by_key(|role| role.breadth_rank());
     unique.dedup();
     let strongest = unique[0];
     let mut tx = pool.begin().await?;
@@ -1319,6 +1326,82 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn each_role_holds_every_scope_of_the_roles_below_it() {
+        // The single team_members.role column stands for the whole role set, so
+        // the broadest role must cover every scope of the others.
+        let mut order = [
+            MemberRole::Readonly,
+            MemberRole::Approver,
+            MemberRole::Owner,
+            MemberRole::Member,
+            MemberRole::Admin,
+        ];
+        order.sort_by_key(|role| role.breadth_rank());
+        for (i, high) in order.iter().enumerate() {
+            for low in &order[i..] {
+                for scope in low.default_scopes() {
+                    assert!(high.permits(scope), "{high:?} lacks {scope} of {low:?}");
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn admin_plus_approver_keeps_admin_scopes() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_and_init(&dir.path().join("global.db")).await.unwrap();
+        bootstrap_owner(&pool, "owner", "Owner", None)
+            .await
+            .unwrap();
+        create_member(&pool, "ada", "Ada", None, MemberRole::Member)
+            .await
+            .unwrap();
+        update_member_roles(
+            &pool,
+            "ada",
+            &[MemberRole::Approver, MemberRole::Admin],
+            "active",
+        )
+        .await
+        .unwrap();
+        let members = list_members(&pool).await.unwrap();
+        let ada = members.iter().find(|m| m.id == "ada").unwrap();
+        assert_eq!(ada.role, MemberRole::Admin);
+        assert!(ada.roles.contains(&MemberRole::Approver));
+        create_client(
+            &pool,
+            "ada-cli",
+            "ada",
+            "Ada CLI",
+            "cli",
+            &["admin:clients".to_string()],
+        )
+        .await
+        .expect("an admin who also approves may create admin clients");
+    }
+
+    #[tokio::test]
+    async fn opening_repairs_an_approver_projection_that_hid_admin() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("global.db");
+        let pool = open_and_init(&path).await.unwrap();
+        bootstrap_owner(&pool, "owner", "Owner", None)
+            .await
+            .unwrap();
+        create_member(&pool, "ada", "Ada", None, MemberRole::Approver)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO member_roles(member_id, role) VALUES ('ada', 'admin')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        crate::database::initialize_schema(&pool).await.unwrap();
+        let members = list_members(&pool).await.unwrap();
+        let ada = members.iter().find(|m| m.id == "ada").unwrap();
+        assert_eq!(ada.role, MemberRole::Admin);
     }
 
     #[tokio::test]
