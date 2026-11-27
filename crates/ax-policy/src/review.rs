@@ -9,8 +9,8 @@ use ax_utils::errors::AxError;
 use crate::index::index_policy;
 use crate::parse::{format_validation, parse_rule_file, parse_skill_file, validation_error_at};
 use crate::paths::{
-    ax_dir_from_project, pending_dir, pending_rules_dir, pending_skills_dir, rule_file, rules_dir,
-    skill_file, skills_dir, SKILL_FILENAME,
+    ax_dir_from_project, pending_dir, pending_rules_dir, pending_skills_dir, rule_file,
+    SKILL_FILENAME,
 };
 use crate::store::PolicyStore;
 use crate::types::PolicyItemStatus;
@@ -153,11 +153,31 @@ pub fn list_pending_report(project_root: &Path) -> Result<PendingQueue, AxError>
 }
 
 pub fn show_pending(project_root: &Path, id: &str) -> Result<PendingItem, AxError> {
+    show_pending_kind(project_root, id, None)
+}
+
+/// The pending item with this id. `kind` (`rule` or `skill`) picks one when a
+/// rule and a skill share the id; without it the rule comes first.
+pub fn show_pending_kind(
+    project_root: &Path,
+    id: &str,
+    kind: Option<&str>,
+) -> Result<PendingItem, AxError> {
+    validate_review_identity(id, kind)?;
+    let wanted = |k: &str| kind.is_none_or(|want| want == k);
     let queue = list_pending_report(project_root)?;
-    if let Some(item) = queue.items.into_iter().find(|i| i.id == id) {
+    if let Some(item) = queue
+        .items
+        .into_iter()
+        .find(|i| i.id == id && wanted(&i.kind))
+    {
         return Ok(item);
     }
-    if let Some(bad) = queue.invalid.into_iter().find(|i| i.id == id) {
+    if let Some(bad) = queue
+        .invalid
+        .into_iter()
+        .find(|i| i.id == id && wanted(&i.kind))
+    {
         return Err(AxError::Other(format!(
             "pending {} {id} cannot be read: {}: {}",
             bad.kind, bad.path, bad.error
@@ -309,53 +329,51 @@ pub struct PendingDiff {
     pub local_raw: Option<String>,
 }
 
-pub fn pending_diff(project_root: &Path, id: &str) -> Result<PendingDiff, AxError> {
-    let item = show_pending(project_root, id)?;
+/// The pending item next to the active item it would replace. The active
+/// side is looked up the same way the store reads it (index row first, then
+/// every policy layer), so items in `.agents/`, other scope folders or only in
+/// the database are found.
+pub async fn pending_diff(
+    store: &PolicyStore,
+    id: &str,
+    kind: Option<&str>,
+) -> Result<PendingDiff, AxError> {
+    let item = show_pending_kind(store.project_root(), id, kind)?;
     let pending_raw =
         std::fs::read_to_string(&item.path).map_err(|e| AxError::Other(e.to_string()))?;
-    let ax_dir = ax_dir_from_project(project_root);
+    let pending_path = Path::new(&item.path);
 
     if item.kind == "rule" {
-        let local_path = rule_file(&rules_dir(&ax_dir), id);
-        let local_raw = if local_path.is_file() {
-            Some(std::fs::read_to_string(&local_path).map_err(|e| AxError::Other(e.to_string()))?)
-        } else {
-            None
-        };
-        let pending_doc = parse_rule_file(Path::new(&item.path), &pending_raw)
-            .map_err(|e| validation_error_at(Path::new(&item.path), &e))?;
-        let local_body = local_raw
-            .as_ref()
-            .and_then(|r| parse_rule_file(&local_path, r).ok().map(|d| d.body));
+        let pending_doc = parse_rule_file(pending_path, &pending_raw)
+            .map_err(|e| validation_error_at(pending_path, &e))?;
+        let local = store.get_rule_doc(id).await?;
         return Ok(PendingDiff {
             kind: "rule".into(),
             id: id.into(),
             pending_body: pending_doc.body,
-            local_body,
+            local_body: local.as_ref().map(|d| d.body.clone()),
             pending_raw,
-            local_raw,
+            local_raw: local.map(|d| local_text(&d.source_path, d.raw)),
         });
     }
 
-    let local_path = skill_file(&skills_dir(&ax_dir), id);
-    let local_raw = if local_path.is_file() {
-        Some(std::fs::read_to_string(&local_path).map_err(|e| AxError::Other(e.to_string()))?)
-    } else {
-        None
-    };
-    let pending_doc = parse_skill_file(Path::new(&item.path), &pending_raw)
-        .map_err(|e| validation_error_at(Path::new(&item.path), &e))?;
-    let local_body = local_raw
-        .as_ref()
-        .and_then(|r| parse_skill_file(&local_path, r).ok().map(|d| d.body));
+    let pending_doc = parse_skill_file(pending_path, &pending_raw)
+        .map_err(|e| validation_error_at(pending_path, &e))?;
+    let local = store.get_skill_doc(id).await?;
     Ok(PendingDiff {
         kind: "skill".into(),
         id: id.into(),
         pending_body: pending_doc.body,
-        local_body,
+        local_body: local.as_ref().map(|d| d.body.clone()),
         pending_raw,
-        local_raw,
+        local_raw: local.map(|d| local_text(&d.source_path, d.raw)),
     })
+}
+
+/// The active item's text as it is on disk, or the stored text for an item
+/// that lives only in the database.
+fn local_text(source_path: &str, stored: String) -> String {
+    std::fs::read_to_string(source_path).unwrap_or(stored)
 }
 
 /// Ensure pending dirs exist (for UI / import).
@@ -371,6 +389,17 @@ pub fn ensure_pending_dirs(project_root: &Path) -> Result<PathBuf, AxError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn test_store(root: &Path) -> PolicyStore {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        ax_db::schema::apply_initial_schema(&pool).await.unwrap();
+        ax_db::migrations::run_migrations(&pool, 0).await.unwrap();
+        PolicyStore::new(pool, root.to_path_buf())
+    }
 
     fn queue_with_one_bad_file_each() -> tempfile::TempDir {
         let root = tempfile::tempdir().unwrap();
@@ -411,22 +440,61 @@ mod tests {
         assert_eq!(ids, vec!["good", "good-skill"]);
     }
 
-    #[test]
-    fn a_good_item_can_be_diffed_next_to_a_bad_one() {
+    #[tokio::test]
+    async fn a_good_item_can_be_diffed_next_to_a_bad_one() {
         let root = queue_with_one_bad_file_each();
-        let diff = pending_diff(root.path(), "good").unwrap();
+        let store = test_store(root.path()).await;
+        let diff = pending_diff(&store, "good", None).await.unwrap();
         assert_eq!(diff.pending_body.trim(), "Good rule");
-        let diff = pending_diff(root.path(), "good-skill").unwrap();
+        let diff = pending_diff(&store, "good-skill", None).await.unwrap();
         assert_eq!(diff.pending_body.trim(), "Good skill");
     }
 
-    #[test]
-    fn showing_a_bad_item_names_its_file_and_field() {
+    #[tokio::test]
+    async fn the_diff_shows_an_active_rule_that_lives_in_agents() {
         let root = queue_with_one_bad_file_each();
+        let store = test_store(root.path()).await;
+        let active = crate::agents_share::agents_dir(root.path()).join("rules");
+        std::fs::create_dir_all(&active).unwrap();
+        std::fs::write(
+            active.join("good.mdc"),
+            "---\nid: good\nlevel: INFO\nalwaysApply: true\n---\nOld rule\n",
+        )
+        .unwrap();
+        let diff = pending_diff(&store, "good", None).await.unwrap();
+        assert_eq!(diff.local_body.as_deref().map(str::trim), Some("Old rule"));
+        assert!(diff.local_raw.unwrap().contains("Old rule"));
+    }
+
+    #[tokio::test]
+    async fn the_kind_picks_the_skill_when_a_rule_shares_its_id() {
+        let root = queue_with_one_bad_file_each();
+        let ax_dir = ax_dir_from_project(root.path());
+        let skills = pending_skills_dir(&ax_dir);
+        std::fs::create_dir_all(skills.join("good")).unwrap();
+        std::fs::write(
+            skills.join("good").join(SKILL_FILENAME),
+            "---\nname: good\ndescription: same id\nstatus: pending\n---\nSkill body\n",
+        )
+        .unwrap();
+        assert_eq!(show_pending(root.path(), "good").unwrap().kind, "rule");
+        let item = show_pending_kind(root.path(), "good", Some("skill")).unwrap();
+        assert_eq!(item.kind, "skill");
+        let store = test_store(root.path()).await;
+        let diff = pending_diff(&store, "good", Some("skill")).await.unwrap();
+        assert_eq!(diff.kind, "skill");
+        assert_eq!(diff.pending_body.trim(), "Skill body");
+    }
+
+    #[tokio::test]
+    async fn showing_a_bad_item_names_its_file_and_field() {
+        let root = queue_with_one_bad_file_each();
+        let store = test_store(root.path()).await;
         let err = show_pending(root.path(), "bad").unwrap_err().to_string();
         assert!(err.contains("bad.mdc"), "{err}");
         assert!(err.contains("level: required"), "{err}");
-        let err = pending_diff(root.path(), "bad-skill")
+        let err = pending_diff(&store, "bad-skill", None)
+            .await
             .unwrap_err()
             .to_string();
         assert!(err.contains("bad-skill"), "{err}");

@@ -93,8 +93,8 @@ pub use paths::{
 };
 pub use review::{
     approve_pending, approve_pending_kind, ensure_pending_dirs, list_pending, list_pending_report,
-    pending_diff, reject_pending, reject_pending_kind, show_pending, InvalidPending, PendingDiff,
-    PendingItem, PendingQueue, ReviewActionResult,
+    pending_diff, reject_pending, reject_pending_kind, show_pending, show_pending_kind,
+    InvalidPending, PendingDiff, PendingItem, PendingQueue, ReviewActionResult,
 };
 pub use revisions::{
     get_revision, list_revisions, record_if_changed, record_restore_writes, PolicyRevision,

@@ -290,9 +290,13 @@ async fn review_list(State(hub): State<WebHub>) -> impl IntoResponse {
     }
 }
 
-async fn review_show(State(hub): State<WebHub>, Path(id): Path<String>) -> impl IntoResponse {
+async fn review_show(
+    State(hub): State<WebHub>,
+    Path(id): Path<String>,
+    Query(query): Query<ReviewQuery>,
+) -> impl IntoResponse {
     let ws = hub.read().await;
-    match ax_policy::pending_diff(ws.policy.store.project_root(), &id) {
+    match ax_policy::pending_diff(&ws.policy.store, &id, query.kind.as_deref()).await {
         Ok(diff) => (StatusCode::OK, Json(diff)).into_response(),
         Err(e) => err(StatusCode::NOT_FOUND, &e.to_string()),
     }

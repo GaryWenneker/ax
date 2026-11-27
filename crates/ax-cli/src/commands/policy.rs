@@ -1478,7 +1478,11 @@ pub async fn run_review_list(path: Option<String>, json: bool) -> Result<(), Str
 
 pub async fn run_review_show(path: Option<String>, id: String, json: bool) -> Result<(), String> {
     let root = resolve_path(path);
-    let diff = ax_policy::pending_diff(&root, &id).map_err(|e| e.to_string())?;
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let store = ax_policy::PolicyStore::new(ax.db_pool().clone(), root.clone());
+    let diff = ax_policy::pending_diff(&store, &id, None)
+        .await
+        .map_err(|e| e.to_string())?;
     if json {
         println!(
             "{}",
