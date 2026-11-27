@@ -13,9 +13,9 @@ import {
 import GraphSettingsPanel from './GraphSettingsPanel';
 import { loadGraphSettings, saveGraphSettings, type GraphSettings } from '../lib/graphSettings';
 import { filterGraph, groupColor, type FilterEdge } from '../lib/graphFilter';
-import { buildNeighbors, highlightFor, selectionPulse } from '../lib/graphHover';
-import { forceParams, seedCluster } from '../lib/graphForces';
-import { labelAlpha, labelPx, placeLabels, type LabelBox } from '../lib/graphLabels';
+import { buildNeighbors, highlightFor, selectionPulseDone, selectionRing } from '../lib/graphHover';
+import { filterKey, forceParams, seedCluster, simulationKey } from '../lib/graphForces';
+import { LabelWidths, labelAlpha, labelPx, placeLabels, type LabelBox } from '../lib/graphLabels';
 import { exposeGraphNodes, markGraphSettled, screenNodes } from '../lib/graphProbe';
 
 export interface CanvasNode {
@@ -49,9 +49,21 @@ interface SimNode extends SimulationNodeDatum {
 const WORLD_UNIT = 0.3;
 const CLICK_SLOP = 4;
 
-function themeAccent(): string {
-  const v = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
-  return v || '#7c4dff';
+const LABEL_FONT = 'system-ui, sans-serif';
+
+interface GraphTheme {
+  accent: string;
+  line: string;
+  text: string;
+}
+
+function readGraphTheme(): GraphTheme {
+  const style = getComputedStyle(document.documentElement);
+  return {
+    accent: style.getPropertyValue('--accent').trim() || '#7c4dff',
+    line: style.getPropertyValue('--text-dim').trim() || '#888',
+    text: style.getPropertyValue('--text').trim() || '#ddd',
+  };
 }
 
 function radius(degree: number, size: number): number {
@@ -69,6 +81,25 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
   const hoverRef = useRef<number | null>(null);
   const selectedRef = useRef<number | null>(null);
   const drawRef = useRef<() => void>(() => {});
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  /** Theme colours, read once and refreshed when the theme changes. */
+  const themeRef = useRef<GraphTheme | null>(null);
+  /** When the current selection was made; drives the selection ring. */
+  const selectedAtRef = useRef(0);
+  const labelWidths = useMemo(
+    () =>
+      new LabelWidths((text, px) => {
+        const ctx = canvasRef.current?.getContext('2d');
+        if (!ctx) return 0;
+        const font = ctx.font;
+        ctx.font = `${px}px ${LABEL_FONT}`;
+        const width = ctx.measureText(text).width;
+        ctx.font = font;
+        return width;
+      }),
+    [],
+  );
 
   const index = useMemo(() => new Map(nodes.map((n, i) => [n.key, i])), [nodes]);
   const allEdges = useMemo<FilterEdge[]>(
@@ -80,15 +111,17 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
       }),
     [edges, index],
   );
+  const fKey = filterKey(settings);
   const visible = useMemo(
     () =>
       filterGraph(
         nodes.map((n) => ({ name: n.label, kind: n.kind, file_path: '' })),
         allEdges,
-        settings,
+        settingsRef.current,
       ),
-    [nodes, allEdges, settings],
+    [nodes, allEdges, fKey],
   );
+  const simKey = simulationKey(settings);
   const shownEdges = useMemo(() => visible.edges.map((i) => allEdges[i]), [visible, allEdges]);
   const neighbors = useMemo(() => buildNeighbors(nodes.length, shownEdges), [nodes.length, shownEdges]);
 
@@ -111,7 +144,8 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
       canvas.height = h * dpr;
     }
     const { x: vx, y: vy, k } = view.current;
-    const accent = themeAccent();
+    const theme = themeRef.current ?? (themeRef.current = readGraphTheme());
+    const accent = theme.accent;
     const sim = simNodesRef.current;
     const hl = highlightFor(hoverRef.current, neighbors);
     const dim = hoverRef.current != null;
@@ -119,8 +153,7 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.setTransform(dpr * k, 0, 0, dpr * k, dpr * vx, dpr * vy);
 
-    const style = getComputedStyle(document.documentElement);
-    const lineColor = style.getPropertyValue('--text-dim').trim() || '#888';
+    const lineColor = theme.line;
     shownEdges.forEach((e, ei) => {
       const a = sim[e.source];
       const b = sim[e.target];
@@ -152,7 +185,6 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
     const labelIdx: number[] = [];
     const px = labelPx(k);
     const fade = labelAlpha(k, settings.textFadeThreshold);
-    ctx.font = `${px}px system-ui, sans-serif`;
     nodes.forEach((n, i) => {
       if (!visible.nodes.has(i)) return;
       const p = sim[i];
@@ -175,7 +207,7 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
       if (fade > 0 || force) {
         const sx = p.x! * k + vx;
         const sy = (p.y! + r) * k + vy + 4;
-        const tw = ctx.measureText(n.label).width / k;
+        const tw = labelWidths.width(n.label, px) / k;
         labels.push({ x: sx - (tw * k) / 2, y: sy, w: tw * k, h: px, priority: force ? 1e6 : n.degree });
         labelIdx.push(i);
       }
@@ -185,7 +217,7 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
     if (sel != null && sim[sel]) {
       const p = sim[sel];
       const r = radius(nodes[sel].degree, settings.nodeSize);
-      const { grow, alpha } = selectionPulse(performance.now());
+      const { grow, alpha } = selectionRing(performance.now() - selectedAtRef.current);
       ctx.globalAlpha = alpha;
       ctx.strokeStyle = accent;
       ctx.lineWidth = 2 / k;
@@ -195,10 +227,10 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
     }
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.font = `${px}px system-ui, sans-serif`;
+    ctx.font = `${px}px ${LABEL_FONT}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillStyle = style.getPropertyValue('--text').trim() || '#ddd';
+    ctx.fillStyle = theme.text;
     for (const li of placeLabels(labels)) {
       const i = labelIdx[li];
       const forced = hl.nodes.has(i) || i === sel;
@@ -207,8 +239,28 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
       ctx.fillText(nodes[i].label, b.x + b.w / 2, b.y);
     }
     ctx.globalAlpha = 1;
-  }, [nodes, shownEdges, neighbors, visible, settings]);
+  }, [nodes, shownEdges, neighbors, visible, settings, labelWidths]);
   drawRef.current = draw;
+
+  // Display-only settings change the picture, not the layout: redraw without restarting.
+  useEffect(() => {
+    drawRef.current();
+  }, [draw]);
+
+  useEffect(() => {
+    const refresh = () => {
+      themeRef.current = readGraphTheme();
+      drawRef.current();
+    };
+    const observer = new MutationObserver(refresh);
+    observer.observe(document.documentElement, { attributes: true });
+    const scheme = window.matchMedia?.('(prefers-color-scheme: dark)');
+    scheme?.addEventListener?.('change', refresh);
+    return () => {
+      observer.disconnect();
+      scheme?.removeEventListener?.('change', refresh);
+    };
+  }, []);
 
   const restart = useCallback(
     (alpha: number) => {
@@ -220,7 +272,8 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
       const sim: SimNode[] = nodes.map((_, i) => ({ i, x: prev[i]?.x ?? seeds[i].x, y: prev[i]?.y ?? seeds[i].y }));
       simNodesRef.current = sim;
       if (prev.length === 0) view.current = { x: w / 2, y: h / 2, k: 1 };
-      const f = forceParams(settings);
+      const f = forceParams(settingsRef.current);
+      const nodeSize = settingsRef.current.nodeSize;
       const degree = new Array(nodes.length).fill(0);
       for (const e of shownEdges) {
         degree[e.source]++;
@@ -240,12 +293,12 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
         )
         .force('x', forceX(0).strength(f.center))
         .force('y', forceY(0).strength(f.center))
-        .force('collide', forceCollide<SimNode>((n) => radius(nodes[n.i].degree, settings.nodeSize) + 14).strength(0.9))
+        .force('collide', forceCollide<SimNode>((n) => radius(nodes[n.i].degree, nodeSize) + 14).strength(0.9))
         .alpha(alpha)
         .on('tick', () => drawRef.current())
         .on('end', () => markGraphSettled(wrapRef.current, true));
     },
-    [nodes, shownEdges, visible, settings],
+    [nodes, shownEdges, visible, simKey],
   );
 
   useEffect(() => {
@@ -270,10 +323,16 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
 
   useEffect(() => {
     if (selectedKey == null) return;
+    const start = performance.now();
+    selectedAtRef.current = start;
     let raf = 0;
     const loop = () => {
-      drawRef.current();
-      raf = requestAnimationFrame(loop);
+      // While the simulation runs, its ticks already redraw.
+      const sim = simRef.current;
+      const settling = sim != null && sim.alpha() >= sim.alphaMin();
+      const done = selectionPulseDone(performance.now() - start);
+      if (!settling || done) drawRef.current();
+      if (!done) raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
