@@ -204,8 +204,18 @@ fn run_bounded(mut cmd: Command) -> Probe {
         });
         rx
     };
-    let out_rx = collect(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
-    let err_rx = collect(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let out_rx = collect(
+        child
+            .stdout
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    let err_rx = collect(
+        child
+            .stderr
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
     let deadline = Instant::now() + PROBE_TIMEOUT;
     loop {
         match child.try_wait() {

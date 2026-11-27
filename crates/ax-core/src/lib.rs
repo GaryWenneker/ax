@@ -1362,7 +1362,11 @@ mod read_path_tests {
         let root = dir.path();
         std::fs::write(root.join("openapi.yaml"), OPENAPI_V1).unwrap();
         std::fs::write(root.join("deploy.yaml"), "name: web\nreplicas: 1\n").unwrap();
-        std::fs::write(root.join("compose.yml"), "services:\n  web:\n    image: a\n").unwrap();
+        std::fs::write(
+            root.join("compose.yml"),
+            "services:\n  web:\n    image: a\n",
+        )
+        .unwrap();
         let mut ax = Ax::init(root).await.unwrap();
         ax.index_all(
             IndexOptions {
@@ -1375,7 +1379,13 @@ mod read_path_tests {
         .unwrap();
 
         write_drift(&ax, root, "deploy.yaml", "name: web\nreplicas: 3\n").await;
-        write_drift(&ax, root, "compose.yml", "services:\n  web:\n    image: b\n").await;
+        write_drift(
+            &ax,
+            root,
+            "compose.yml",
+            "services:\n  web:\n    image: b\n",
+        )
+        .await;
         let stale = vec!["compose.yml".to_string(), "deploy.yaml".to_string()];
         assert_eq!(
             sorted(ax.queries.stale_source_paths(&stale).await.unwrap()),
@@ -1384,7 +1394,11 @@ mod read_path_tests {
 
         assert!(ax.try_resync_source(&stale).await);
         assert!(
-            ax.queries.stale_source_paths(&stale).await.unwrap().is_empty(),
+            ax.queries
+                .stale_source_paths(&stale)
+                .await
+                .unwrap()
+                .is_empty(),
             "plain YAML files are re-extracted on the read path"
         );
     }

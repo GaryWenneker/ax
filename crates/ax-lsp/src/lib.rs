@@ -180,8 +180,17 @@ mod tests {
             node("Store.load", NodeKind::Method, 105, 115),
             node("Store.save", NodeKind::Method, 118, 130),
         ];
-        assert_eq!(target_node_at(&nodes, 120).map(|n| n.id.as_str()), Some("Store.save"));
-        assert_eq!(target_node_at(&nodes, 150).map(|n| n.id.as_str()), Some("Store"));
-        assert_eq!(target_node_at(&nodes, 250).map(|n| n.id.as_str()), Some("file"));
+        assert_eq!(
+            target_node_at(&nodes, 120).map(|n| n.id.as_str()),
+            Some("Store.save")
+        );
+        assert_eq!(
+            target_node_at(&nodes, 150).map(|n| n.id.as_str()),
+            Some("Store")
+        );
+        assert_eq!(
+            target_node_at(&nodes, 250).map(|n| n.id.as_str()),
+            Some("file")
+        );
     }
 }

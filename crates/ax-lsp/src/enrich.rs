@@ -83,8 +83,7 @@ pub(crate) fn enrich_files_blocking(
         }
         let client = sessions.get_mut(spec.id).unwrap();
 
-        match enrich_file_with_client(client, project_root, &full, &language_id, &refs, deadline)
-        {
+        match enrich_file_with_client(client, project_root, &full, &language_id, &refs, deadline) {
             Ok(p) => {
                 report.resolved += p.resolved;
                 report.skipped_no_definition += p.skipped_no_definition;
