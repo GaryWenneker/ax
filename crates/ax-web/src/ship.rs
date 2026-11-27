@@ -584,7 +584,15 @@ async fn handle_sonar_install(State(hub): State<WebHub>) -> impl IntoResponse {
     let result = install_sonar_with_log(&mut config, &log).await;
     match result {
         Ok(discovery) => {
-            let _ = ctx.daemon.set_config(config).await;
+            if let Err(e) = save_sonar_operation(&ctx.daemon, &config).await {
+                return Json(serde_json::json!({
+                    "ok": false,
+                    "error": e,
+                    "discovery": discovery,
+                    "logs": log.lines(),
+                }))
+                .into_response();
+            }
             Json(serde_json::json!({
                 "ok": true,
                 "discovery": discovery,
@@ -710,7 +718,15 @@ async fn handle_sonar_scan(
     .await
     {
         Ok(gate) => {
-            let _ = ctx.daemon.set_config(config).await;
+            if let Err(e) = save_sonar_operation(&ctx.daemon, &config).await {
+                return Json(serde_json::json!({
+                    "ok": false,
+                    "error": e,
+                    "quality_gate": gate,
+                    "logs": log.lines(),
+                }))
+                .into_response();
+            }
             Json(serde_json::json!({
                 "ok": true,
                 "quality_gate": gate,
@@ -761,11 +777,12 @@ async fn sonar_scan_stream(
         .await
         {
             Ok(gate) => {
-                let _ = daemon.set_config(config).await;
+                let saved = save_sonar_operation(&daemon, &config).await;
                 let _ = tx.send(
                     serde_json::json!({
                         "type": "done",
-                        "ok": true,
+                        "ok": saved.is_ok(),
+                        "error": saved.err(),
                         "quality_gate": gate,
                         "logs": log.lines(),
                     })
@@ -840,16 +857,19 @@ async fn sonar_operation_stream(
 
         match result {
             Ok(discovery) => {
-                if matches!(op, SonarOp::Install) {
-                    let _ = daemon.set_config(config).await;
-                }
+                let saved = if matches!(op, SonarOp::Install) {
+                    save_sonar_operation(&daemon, &config).await
+                } else {
+                    Ok(())
+                };
                 if matches!(op, SonarOp::Install | SonarOp::Start) {
                     daemon.spawn_sonar_auto_provision();
                 }
                 let _ = tx.send(
                     serde_json::json!({
                         "type": "done",
-                        "ok": true,
+                        "ok": saved.is_ok(),
+                        "error": saved.err(),
                         "discovery": discovery,
                         "logs": log.lines(),
                     })
@@ -1116,8 +1136,66 @@ async fn validate_config_change(current: &ShipConfig, next: &ShipConfig) -> Resu
     Ok(())
 }
 
+/// Save what a long SonarQube install or scan changed. The operation ran on a
+/// snapshot taken minutes earlier, so only the fields it sets are copied onto
+/// the settings as they are now; changes the user saved meanwhile are kept.
+async fn save_sonar_operation(daemon: &ShipDaemon, after: &ShipConfig) -> Result<(), String> {
+    daemon.reload_config().await;
+    let mut current = daemon.config().await;
+    current.sonar.enabled = after.sonar.enabled;
+    if current.sonar.podman_container.is_none() {
+        current.sonar.podman_container = after.sonar.podman_container.clone();
+    }
+    daemon
+        .set_config(current)
+        .await
+        .map_err(|e| format!("Could not save the Ship settings: {e}"))
+}
+
 fn parse_host_port(host: &str) -> Option<u16> {
     let trimmed = host.trim_end_matches('/');
     let after_scheme = trimmed.split("//").nth(1).unwrap_or(trimmed);
     after_scheme.split(':').nth(1).and_then(|p| p.parse().ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_long_sonar_operation_keeps_settings_changed_while_it_ran() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".ax")).unwrap();
+        let daemon = ShipDaemon::new(dir.path().to_path_buf());
+        // The operation starts from a snapshot and turns SonarQube on.
+        let mut after = daemon.config().await;
+        after.sonar.enabled = true;
+        after.sonar.podman_container = Some("sonar-x".into());
+        // Meanwhile the user changes other settings.
+        let mut edited = daemon.config().await;
+        edited.sonar.exclude_repos = vec!["vendor".into()];
+        edited.ship.target_branch = "develop".into();
+        edited.sonar.podman_container = None;
+        daemon.set_config(edited).await.unwrap();
+
+        save_sonar_operation(&daemon, &after).await.unwrap();
+
+        daemon.reload_config().await;
+        let saved = daemon.config().await;
+        assert!(saved.sonar.enabled);
+        assert_eq!(saved.sonar.podman_container.as_deref(), Some("sonar-x"));
+        assert_eq!(saved.sonar.exclude_repos, vec!["vendor".to_string()]);
+        assert_eq!(saved.ship.target_branch, "develop");
+    }
+
+    #[tokio::test]
+    async fn a_failed_save_after_a_sonar_operation_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        // `.ax` is a file, so ship.toml cannot be written.
+        std::fs::write(dir.path().join(".ax"), "").unwrap();
+        let daemon = ShipDaemon::new(dir.path().to_path_buf());
+        let mut after = daemon.config().await;
+        after.sonar.enabled = true;
+        assert!(save_sonar_operation(&daemon, &after).await.is_err());
+    }
 }
