@@ -183,20 +183,39 @@ fn clear_backoff(url: &str) {
     }
 }
 
-/// One HTTP client for every offload request in this process, so connections
-/// and TLS sessions are reused between explores. The per-request timeout comes
-/// from the resolved settings. ax drives it from a single tokio runtime per
-/// process.
-fn shared_client() -> Option<&'static reqwest::Client> {
-    static CLIENT: std::sync::OnceLock<Option<reqwest::Client>> = std::sync::OnceLock::new();
-    CLIENT
-        .get_or_init(|| {
-            reqwest::Client::builder()
-                .connect_timeout(CONNECT_TIMEOUT)
-                .build()
-                .ok()
-        })
-        .as_ref()
+/// Connect budget for a request with `timeout_ms` overall: `CONNECT_TIMEOUT`,
+/// or three quarters of a shorter request timeout. The connect must give up
+/// before the request timeout does, so an endpoint that never answers the
+/// connect is reported as a connect failure (and backs off) rather than as a
+/// slow reply.
+fn connect_timeout_for(timeout_ms: u64) -> std::time::Duration {
+    CONNECT_TIMEOUT.min(std::time::Duration::from_millis(
+        (timeout_ms * 3 / 4).max(1),
+    ))
+}
+
+/// One HTTP client per connect budget for every offload request in this
+/// process, so connections and TLS sessions are reused between explores. The
+/// per-request timeout comes from the resolved settings. ax drives it from a
+/// single tokio runtime per process.
+fn shared_client(timeout_ms: u64) -> Option<reqwest::Client> {
+    static CLIENTS: std::sync::Mutex<Vec<(std::time::Duration, reqwest::Client)>> =
+        std::sync::Mutex::new(Vec::new());
+    let connect = connect_timeout_for(timeout_ms);
+    let mut clients = CLIENTS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, client)) = clients.iter().find(|(d, _)| *d == connect) {
+        return Some(client.clone());
+    }
+    let client = reqwest::Client::builder()
+        .connect_timeout(connect)
+        .build()
+        .ok()?;
+    // Settings rarely change in one process; keep the list small regardless.
+    if clients.len() >= 4 {
+        clients.remove(0);
+    }
+    clients.push((connect, client.clone()));
+    Some(client)
 }
 
 /// One offload request; returns the answer and a short outcome for the log.
@@ -225,7 +244,7 @@ async fn request_offload(
         context.to_string()
     };
 
-    let Some(client) = shared_client() else {
+    let Some(client) = shared_client(cfg.timeout_ms) else {
         return (None, "client_error");
     };
 
@@ -295,7 +314,8 @@ async fn request_offload(
         Err(e) if e.is_timeout() && !e.is_connect() => {
             // The endpoint accepted the connection but was slower than the
             // timeout; the next explore tries again instead of backing off.
-            // A connect timeout is a connect error and backs off below.
+            // A connect timeout is a connect error and backs off below: the
+            // connect budget is always shorter than the request timeout.
             set_last_error(Some(format!("{url}: {e}")), cfg.debug);
             (None, "timeout")
         }
@@ -471,6 +491,9 @@ mod tests {
         assert_eq!(server.join().unwrap(), 2);
     }
 
+    /// Longest wait for a test server's first connection.
+    const IDLE_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
     /// The first connection is closed without a reply (a transport failure);
     /// every later connection gets a valid answer. Returns the base URL and a
     /// handle that yields how many connections arrived within `window`.
@@ -479,7 +502,9 @@ mod tests {
         listener.set_nonblocking(true).unwrap();
         let url = format!("http://{}/v1", listener.local_addr().unwrap());
         let handle = std::thread::spawn(move || {
-            let deadline = std::time::Instant::now() + window;
+            // The window starts at the first connection: the requests may wait
+            // for the env lock while another test holds it.
+            let mut deadline = std::time::Instant::now() + IDLE_WAIT;
             let mut connections = 0;
             while std::time::Instant::now() < deadline {
                 let Ok((stream, _)) = listener.accept() else {
@@ -487,6 +512,9 @@ mod tests {
                     continue;
                 };
                 stream.set_nonblocking(false).unwrap();
+                if connections == 0 {
+                    deadline = std::time::Instant::now() + window;
+                }
                 connections += 1;
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
                 if !read_request(&mut reader) || connections == 1 {
@@ -555,6 +583,25 @@ mod tests {
         clear_backoff(&format!("{url}/chat/completions"));
     }
 
+    #[test]
+    fn a_connect_timeout_shorter_than_the_default_starts_the_back_off() {
+        // The request timeout is shorter than the default connect timeout, so the
+        // connect must give up first and count as a connect failure.
+        let url = "http://10.255.255.1:10/v1";
+        let started = std::time::Instant::now();
+        let (first, second, err) = two_requests(url, &[("AX_OFFLOAD_TIMEOUT_MS", "500")]);
+        assert!(first.is_none());
+        assert!(second.is_none());
+        let err = err.unwrap_or_default();
+        assert!(err.contains("backing off"), "{err}");
+        assert!(backing_off(&format!("{url}/chat/completions")));
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(900),
+            "the second request waited for the timeout again"
+        );
+        clear_backoff(&format!("{url}/chat/completions"));
+    }
+
     /// The first request gets no reply until well after the client timeout;
     /// every later request gets a valid answer at once.
     fn slow_then_serve(window: std::time::Duration) -> (String, std::thread::JoinHandle<usize>) {
@@ -562,7 +609,9 @@ mod tests {
         listener.set_nonblocking(true).unwrap();
         let url = format!("http://{}/v1", listener.local_addr().unwrap());
         let handle = std::thread::spawn(move || {
-            let deadline = std::time::Instant::now() + window;
+            // The window starts at the first connection: the requests may wait
+            // for the env lock while another test holds it.
+            let mut deadline = std::time::Instant::now() + IDLE_WAIT;
             let mut connections = 0;
             let mut held = Vec::new();
             while std::time::Instant::now() < deadline {
@@ -571,6 +620,9 @@ mod tests {
                     continue;
                 };
                 stream.set_nonblocking(false).unwrap();
+                if connections == 0 {
+                    deadline = std::time::Instant::now() + window;
+                }
                 connections += 1;
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
                 if !read_request(&mut reader) {
