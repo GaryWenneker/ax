@@ -259,6 +259,8 @@ commit client secrets (public client apps do not use one).
 
 Commit `ax.json` with the project so teammates get the same defaults when they clone the repo.
 
+Pull and push both work in the drive that holds the shared folder, so a teammate with write access can push to a folder that lives in someone else's OneDrive or in a SharePoint library. Folders with more than 200 entries are read page by page.
+
 ### 3. Initial pack seed
 
 On a maintainer machine with policy ready to publish:
