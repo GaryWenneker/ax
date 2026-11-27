@@ -1887,6 +1887,8 @@ When a turn finishes, each changed `docs/specs/*.md` or `docs/plans/*.md` file i
 
 Preflight also scans the IDE plan folders. A session named in a plan file, and the live session for the newest plan in `~/.cursor/plans`, are bound to that plan only when the session has no spec yet or was bound by an earlier scan. A spec bound by a capture or an edit in the session stays bound.
 
+A plan file's spec id is the slug of its file name. When another plan file already has that id, such as `plan.md` in a second project, the new file's id gets the first 8 hex digits of its path's SHA-256 (`plan-1a2b3c4d`). A file keeps its id when it changes later. Spec ids from a plan request or another file path are a slug of at most 48 characters; a longer one is cut and gets the 8-digit hash of the full text, so two requests that start the same stay two specs. A scan reads at most 400 plan files.
+
 ```bash
 ax spec billing-spec
 ax spec-flag

@@ -168,7 +168,7 @@ pub async fn on_turn_finished(
     outcome: &str,
     files: &[String],
 ) -> Result<(), String> {
-    let spec_id = slug(prompt);
+    let spec_id = prompt_spec_id(prompt);
     let _ = capture_finished_plan(
         pool, project_id, &spec_id, prompt, prompt, outcome, session_id, turn_id, "turn", true,
     )
@@ -753,7 +753,7 @@ async fn spec_for_markdown(pool: &SqlitePool, file: &str) -> Result<Option<Strin
 }
 
 /// Spec id for a changed spec file: the folder name for `docs/specs/<id>/SPEC.md`,
-/// else a slug of the whole path.
+/// else a [`distinct_slug`] of the whole path.
 fn markdown_spec_id(file: &str) -> String {
     let path = file.replace('\\', "/");
     let parts: Vec<&str> = path.split('/').collect();
@@ -761,12 +761,12 @@ fn markdown_spec_id(file: &str) -> String {
         ["docs", "specs", dir, name] if name.eq_ignore_ascii_case("SPEC.md") => {
             let id = slug(dir);
             if id.is_empty() {
-                slug(file)
+                distinct_slug(file)
             } else {
                 id
             }
         }
-        _ => slug(file),
+        _ => distinct_slug(file),
     }
 }
 
@@ -1077,7 +1077,9 @@ fn plan_file_is_finished(body: &str) -> bool {
 }
 
 /// Store finished Markdown plans under one project root. A one-line fragment
-/// is ignored. Nothing is approved and no Markdown copy is written.
+/// is ignored. Nothing is approved and no Markdown copy is written. Returns how
+/// many plan files found have a stored revision, including ones stored by an
+/// earlier import.
 pub async fn import_plan_mode_files(
     pool: &SqlitePool,
     root: &Path,
@@ -1243,7 +1245,9 @@ async fn import_plan_dirs(
                 (entry.spec_id.clone(), entry.stored)
             }
             Some(body) => {
-                let Some(outcome) = import_plan_file(pool, project_id, &file.path, body).await
+                let earlier = known.get(&key).and_then(|entry| entry.spec_id.as_deref());
+                let Some(outcome) =
+                    import_plan_file(pool, project_id, &file.path, body, earlier).await
                 else {
                     continue;
                 };
@@ -1288,26 +1292,78 @@ async fn import_plan_dirs(
     Ok(stored)
 }
 
-/// Store one changed plan file and bind the sessions it names. Returns the
-/// spec id (none for a fragment) and whether a revision was stored, or `None`
-/// when the import failed and should be tried again on the next scan.
-async fn import_plan_file(
+/// Spec id for a plan file. A file keeps the id an earlier import gave it.
+/// Otherwise it is the slug of the file name, unless another file already
+/// holds that id: then the first 8 hex digits of the path's SHA-256 are added,
+/// so `plan.md` in two projects stays two specs.
+async fn plan_file_spec_id(
     pool: &SqlitePool,
-    project_id: &str,
     path: &Path,
-    body: &str,
-) -> Option<(Option<String>, bool)> {
-    if !plan_file_is_finished(body) {
-        return Some((None, false));
+    earlier: Option<&str>,
+) -> Result<Option<String>, String> {
+    if let Some(id) = earlier.filter(|id| !id.is_empty()) {
+        return Ok(Some(id.to_string()));
     }
     let stem = path
         .file_stem()
         .and_then(|name| name.to_str())
         .unwrap_or("plan");
-    let spec_id = slug(stem);
-    if spec_id.is_empty() {
-        return Some((None, false));
+    let base = slug(stem);
+    if base.is_empty() {
+        return Ok(None);
     }
+    let key = path.to_string_lossy();
+    let taken: Option<String> = sqlx::query_scalar(
+        "SELECT path FROM spec_plan_files WHERE spec_id = ?1 AND path != ?2 LIMIT 1",
+    )
+    .bind(&base)
+    .bind(key.as_ref())
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    if taken.is_none() {
+        return Ok(Some(base));
+    }
+    Ok(Some(format!("{base}-{}", &hash_text(&key)[..8])))
+}
+
+/// Store one changed plan file and bind the sessions it names. Returns the
+/// spec id (none for a fragment) and whether a revision was stored, or `None`
+/// when the import failed and should be tried again on the next scan; the
+/// failure is logged.
+async fn import_plan_file(
+    pool: &SqlitePool,
+    project_id: &str,
+    path: &Path,
+    body: &str,
+    earlier: Option<&str>,
+) -> Option<(Option<String>, bool)> {
+    match import_plan_file_inner(pool, project_id, path, body, earlier).await {
+        Ok(outcome) => Some(outcome),
+        Err(error) => {
+            tracing::warn!("plan file {} not imported: {error}", path.display());
+            None
+        }
+    }
+}
+
+async fn import_plan_file_inner(
+    pool: &SqlitePool,
+    project_id: &str,
+    path: &Path,
+    body: &str,
+    earlier: Option<&str>,
+) -> Result<(Option<String>, bool), String> {
+    if !plan_file_is_finished(body) {
+        return Ok((None, false));
+    }
+    let stem = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("plan");
+    let Some(spec_id) = plan_file_spec_id(pool, path, earlier).await? else {
+        return Ok((None, false));
+    };
     let title = plan_title(body, stem);
     let hash = hash_bytes(body.trim().as_bytes());
     let session = format!("plan-{spec_id}");
@@ -1323,13 +1379,12 @@ async fn import_plan_file(
         "plan_mode",
         true,
     )
-    .await
-    .ok()?
+    .await?
     .is_some();
     for extra in sessions_named_in(body) {
-        bind_session_implicit(pool, &extra, &spec_id).await.ok()?;
+        bind_session_implicit(pool, &extra, &spec_id).await?;
     }
-    Some((Some(spec_id), stored))
+    Ok((Some(spec_id), stored))
 }
 
 fn collect_plan_markdown(dir: &Path, out: &mut Vec<PathBuf>, depth: u8) {
@@ -1340,6 +1395,9 @@ fn collect_plan_markdown(dir: &Path, out: &mut Vec<PathBuf>, depth: u8) {
         return;
     };
     for entry in entries.flatten() {
+        if out.len() >= MAX_PLAN_FILES {
+            return;
+        }
         let path = entry.path();
         if path.is_dir() {
             let name = path
@@ -1596,7 +1654,30 @@ fn paths_named_in(body: &str) -> Vec<String> {
     found
 }
 
+/// Longest plain spec id made from text.
+const SLUG_CHARS: usize = 48;
+
+/// Spec id for a plan request: [`distinct_slug`] of the prompt.
+fn prompt_spec_id(prompt: &str) -> String {
+    distinct_slug(prompt.trim())
+}
+
+/// [`slug`] of `text`, plus the first 8 hex digits of its SHA-256 when the slug
+/// was cut, so two long texts that share their first 48 characters get
+/// different ids. Short texts keep their plain slug.
+fn distinct_slug(text: &str) -> String {
+    let short = slug(text);
+    if short.is_empty() || slug_limited(text, usize::MAX) == short {
+        return short;
+    }
+    format!("{short}-{}", &hash_text(text)[..8])
+}
+
 fn slug(text: &str) -> String {
+    slug_limited(text, SLUG_CHARS)
+}
+
+fn slug_limited(text: &str, limit: usize) -> String {
     let mut slug = String::new();
     let mut dash = false;
     for character in text.chars().flat_map(|character| character.to_lowercase()) {
@@ -1607,7 +1688,7 @@ fn slug(text: &str) -> String {
             slug.push('-');
             dash = true;
         }
-        if slug.len() >= 48 {
+        if slug.len() >= limit {
             break;
         }
     }
@@ -2257,6 +2338,103 @@ pub(crate) mod tests {
             "{context}"
         );
         assert!(!context.contains("Keep the first job"), "{context}");
+    }
+
+    #[tokio::test]
+    async fn plan_files_with_one_name_in_two_folders_stay_two_specs() {
+        let open = open().await;
+        let pool = &open.pool;
+        let first = open.dir.path().join("one").join(".claude").join("plans");
+        let second = open.dir.path().join("two").join(".claude").join("plans");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::write(
+            first.join("plan.md"),
+            "# One\n\nThe first project's plan.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            second.join("plan.md"),
+            "# Two\n\nThe second project's plan.\n",
+        )
+        .unwrap();
+        import_plan_dirs(pool, "ax", &[first.clone(), second.clone()], None, &[])
+            .await
+            .unwrap();
+        let specs = list_specs(pool).await.unwrap();
+        assert_eq!(
+            specs.len(),
+            2,
+            "{:?}",
+            specs.iter().map(|s| &s.id).collect::<Vec<_>>()
+        );
+        for spec in &specs {
+            assert_eq!(spec.revision_count, 1, "{} merged two plans", spec.id);
+        }
+        // The id each file got is kept when it changes later.
+        let ids: Vec<String> = specs.iter().map(|s| s.id.clone()).collect();
+        std::fs::write(
+            second.join("plan.md"),
+            "# Two\n\nThe second project's plan, edited.\n",
+        )
+        .unwrap();
+        import_plan_dirs(pool, "ax", &[first, second], None, &[])
+            .await
+            .unwrap();
+        let mut again: Vec<String> = list_specs(pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        again.sort();
+        let mut ids = ids;
+        ids.sort();
+        assert_eq!(again, ids);
+    }
+
+    #[tokio::test]
+    async fn long_plan_prompts_with_one_beginning_stay_two_specs() {
+        let _lock = HOME_LOCK.lock().await;
+        let _home = IsolatedHome::new();
+        let open = open().await;
+        let pool = &open.pool;
+        let prefix = "Please make a plan for the new billing service that charges";
+        for (turn, tail) in [("t1", " customers monthly"), ("t2", " partners yearly")] {
+            on_turn_finished(
+                pool,
+                open.dir.path(),
+                "ax",
+                turn,
+                turn,
+                &format!("{prefix}{tail}"),
+                &format!("# Plan\n\nCharge{tail}.\n"),
+                &[],
+            )
+            .await
+            .unwrap();
+        }
+        let specs = list_specs(pool).await.unwrap();
+        assert_eq!(
+            specs.len(),
+            2,
+            "{:?}",
+            specs.iter().map(|s| &s.id).collect::<Vec<_>>()
+        );
+        // A short prompt keeps its plain id.
+        assert_eq!(prompt_spec_id("Plan the queue"), "plan-the-queue");
+        assert_eq!(prompt_spec_id(prefix), prompt_spec_id(prefix));
+    }
+
+    #[test]
+    fn a_flat_plan_folder_is_cut_at_the_file_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        for n in 0..MAX_PLAN_FILES + 50 {
+            std::fs::write(dir.path().join(format!("p{n}.md")), "x").unwrap();
+        }
+        let mut out = Vec::new();
+        collect_plan_markdown(dir.path(), &mut out, 0);
+        assert_eq!(out.len(), MAX_PLAN_FILES);
     }
 
     #[tokio::test]
