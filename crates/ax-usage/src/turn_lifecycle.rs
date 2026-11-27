@@ -231,18 +231,42 @@ fn parse_names_z(raw: &[u8]) -> Vec<String> {
         .collect()
 }
 
-/// Every path git reports as different from `head` or the index, untracked included.
+/// Where `root` sits inside its repository, as git prints it (`app/`, or empty
+/// when `root` is the repository top level).
+async fn git_prefix(root: &Path) -> Option<String> {
+    let out = git(root, &["rev-parse", "--show-prefix"]).await?;
+    Some(
+        String::from_utf8_lossy(&out)
+            .trim_end_matches(['\n', '\r'])
+            .to_string(),
+    )
+}
+
+/// Every path under `root` that git reports as different from `head` or the
+/// index, untracked included. Paths are relative to `root`, also when `root` is
+/// a subfolder of the repository; changes outside `root` are left out.
 async fn git_dirty_paths(root: &Path, head: Option<&str>) -> Vec<String> {
     let mut files = Vec::new();
-    let mut diff = vec!["diff", "--name-only", "-z"];
+    let Some(prefix) = git_prefix(root).await else {
+        return files;
+    };
+    let mut diff = vec!["diff", "--name-only", "-z", "--relative"];
     if let Some(h) = head {
         diff.push(h);
     }
+    diff.extend(["--", "."]);
     if let Some(out) = git(root, &diff).await {
         files.extend(parse_names_z(&out));
     }
-    if let Some(out) = git(root, &["status", "--porcelain=v1", "-z", "-uall"]).await {
-        files.extend(parse_status_z(&out));
+    // `git status` prints paths from the top level even with a pathspec.
+    let status = ["status", "--porcelain=v1", "-z", "-uall", "--", "."];
+    if let Some(out) = git(root, &status).await {
+        files.extend(
+            parse_status_z(&out)
+                .into_iter()
+                .filter_map(|path| path.strip_prefix(prefix.as_str()).map(str::to_owned))
+                .filter(|path| !path.is_empty()),
+        );
     }
     files.sort();
     files.dedup();
@@ -1205,6 +1229,42 @@ mod tests {
         assert!(files.contains(&"dirty.rs".to_string()), "{files:?}");
         assert!(!files.contains(&"kept.rs".to_string()), "{files:?}");
         assert!(!files.iter().any(|f| f.starts_with("scratch")), "{files:?}");
+    }
+
+    #[tokio::test]
+    async fn a_project_in_a_subfolder_of_the_repo_records_root_relative_paths() {
+        let (root, pool, _guard) = fixture().await;
+        // The repository top level is `root`; the ax project is `root/app`.
+        git_repo(&root);
+        let project = root.join("app");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(project.join("dirty.rs"), "d\n").unwrap();
+        fs::write(project.join("kept.rs"), "k\n").unwrap();
+        fs::write(project.join("a.rs"), "a\n").unwrap();
+        run_git(&root, &["add", "."]);
+        run_git(&root, &["commit", "-q", "-m", "app"]);
+        fs::write(project.join("dirty.rs"), "dirty before\n").unwrap();
+        fs::write(project.join("kept.rs"), "dirty before\n").unwrap();
+        let begin = turn_begin(&project, "sess-sub", "edit", None)
+            .await
+            .unwrap();
+        fs::write(
+            project.join("dirty.rs"),
+            "dirty before, then edited in the turn\n",
+        )
+        .unwrap();
+        fs::write(project.join("my file é.txt"), "x").unwrap();
+        run_git(&project, &["mv", "a.rs", "b.rs"]);
+        // A change outside the project folder is not part of this project.
+        fs::write(root.join("new-outside.rs"), "o\n").unwrap();
+        let files = finish_files(&project, &pool, &begin).await;
+        assert!(files.contains(&"dirty.rs".to_string()), "{files:?}");
+        assert!(files.contains(&"b.rs".to_string()), "{files:?}");
+        assert!(files.contains(&"my file é.txt".to_string()), "{files:?}");
+        assert!(!files.contains(&"kept.rs".to_string()), "{files:?}");
+        for file in &files {
+            assert!(project.join(file).exists(), "not a real path: {file:?}");
+        }
     }
 
     #[tokio::test]
