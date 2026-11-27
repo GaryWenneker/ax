@@ -616,31 +616,62 @@ pub async fn list_coding_agents(days: i64) -> Result<Vec<CodingAgentRow>, String
         .collect())
 }
 
-/// Look up input/output rates for a model as of a calendar date (or latest ≤ date).
-pub async fn lookup_price_as_of(
+/// One catalog price row: `(date, input, output, cache_read, cache_write, source, model_id)`.
+pub(crate) type CatalogPriceRow = (String, f64, f64, Option<f64>, Option<f64>, String, String);
+
+/// Catalog rows on or before `until` whose model id matches `model`, newest
+/// first and Artificial Analysis first within a day. Model ids are matched
+/// once; only the matching models' rows are read.
+pub(crate) async fn matching_price_rows(
+    pool: &SqlitePool,
     model: &str,
-    date: &str,
-) -> Result<Option<(crate::pricing::ModelPricing, String)>, String> {
-    let pool = open_pool().await.map_err(|e| e.to_string())?;
+    until: &str,
+) -> Result<Vec<CatalogPriceRow>, String> {
+    #[cfg(test)]
+    CATALOG_SCANS.with(|n| n.set(n.get() + 1));
     let lowered = model.to_ascii_lowercase();
-    type Row = (f64, f64, Option<f64>, Option<f64>, String, String);
-    // Prefer AA over OpenRouter when both match.
-    let rows: Vec<Row> = sqlx::query_as(
-        "SELECT input_per_mtok, output_per_mtok, cache_read_per_mtok, cache_write_per_mtok, source, model_id
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT DISTINCT model_id FROM model_price_daily WHERE date <= ?")
+            .bind(until)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    let matching: Vec<String> = ids
+        .into_iter()
+        .filter(|id| crate::pricing::catalog_match_score(&lowered, id).is_some())
+        .collect();
+    if matching.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids_json = serde_json::to_string(&matching).map_err(|e| e.to_string())?;
+    sqlx::query_as(
+        "SELECT date, input_per_mtok, output_per_mtok, cache_read_per_mtok, cache_write_per_mtok,
+                source, model_id
          FROM model_price_daily
-         WHERE date <= ?
+         WHERE date <= ? AND model_id IN (SELECT value FROM json_each(?))
          ORDER BY date DESC,
                   CASE source WHEN 'artificial_analysis' THEN 0 ELSE 1 END",
     )
-    .bind(date)
-    .fetch_all(&pool)
+    .bind(until)
+    .bind(ids_json)
+    .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())
+}
 
-    let mut best: Option<((u8, usize), i32, Row)> = None;
-    for row in rows {
-        let or_rank = if row.4 == "openrouter" { 0 } else { 1 };
-        let Some(score) = crate::pricing::catalog_match_score(&lowered, &row.5) else {
+/// Pick the price for `model` as of `date` from rows ordered as
+/// [`matching_price_rows`] returns them: the best id match wins, then
+/// OpenRouter, then the newest row.
+pub(crate) fn pick_price_as_of(
+    model: &str,
+    date: &str,
+    rows: &[CatalogPriceRow],
+) -> Option<(crate::pricing::ModelPricing, String)> {
+    let lowered = model.to_ascii_lowercase();
+    let mut best: Option<((u8, usize), i32, &CatalogPriceRow)> = None;
+    for row in rows.iter().filter(|row| row.0.as_str() <= date) {
+        let or_rank = if row.5 == "openrouter" { 0 } else { 1 };
+        let Some(score) = crate::pricing::catalog_match_score(&lowered, &row.6) else {
             continue;
         };
         match &best {
@@ -648,19 +679,35 @@ pub async fn lookup_price_as_of(
             _ => best = Some((score, or_rank, row)),
         }
     }
-    Ok(best.map(
-        |(_, _, (input, output, cache_read, cache_write, source, _))| {
+    best.map(
+        |(_, _, (_, input, output, cache_read, cache_write, source, _))| {
             (
                 crate::pricing::ModelPricing {
-                    input_per_mtok: input,
-                    output_per_mtok: output,
-                    cache_read_per_mtok: cache_read,
-                    cache_write_per_mtok: cache_write,
+                    input_per_mtok: *input,
+                    output_per_mtok: *output,
+                    cache_read_per_mtok: *cache_read,
+                    cache_write_per_mtok: *cache_write,
                 },
-                source,
+                source.clone(),
             )
         },
-    ))
+    )
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Catalog reads made on this thread, so tests can count them.
+    pub(crate) static CATALOG_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Look up input/output rates for a model as of a calendar date (or latest ≤ date).
+pub async fn lookup_price_as_of(
+    model: &str,
+    date: &str,
+) -> Result<Option<(crate::pricing::ModelPricing, String)>, String> {
+    let pool = open_pool().await.map_err(|e| e.to_string())?;
+    let rows = matching_price_rows(&pool, model, date).await?;
+    Ok(pick_price_as_of(model, date, &rows))
 }
 
 #[cfg(test)]

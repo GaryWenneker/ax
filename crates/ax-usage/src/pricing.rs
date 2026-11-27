@@ -359,6 +359,31 @@ pub async fn price_as_of(model: Option<&str>, date: &str) -> (ModelPricing, Stri
     reference_pricing_with_source()
 }
 
+/// Reference-model pricing as of each date in `dates`, the same answer as
+/// [`price_as_of`]`(None, date)` for every date, from one catalog read.
+pub async fn reference_prices_as_of(
+    pool: &sqlx::SqlitePool,
+    dates: &[String],
+) -> Vec<(ModelPricing, String)> {
+    let ref_model = pricing_config().reference_model.clone();
+    if let Some(p) = user_override_for(&ref_model) {
+        return vec![(p, "user".into()); dates.len()];
+    }
+    let Some(last) = dates.iter().max() else {
+        return Vec::new();
+    };
+    let rows = crate::pricing_sync::matching_price_rows(pool, &ref_model, last)
+        .await
+        .unwrap_or_default();
+    dates
+        .iter()
+        .map(|date| {
+            crate::pricing_sync::pick_price_as_of(&ref_model, date, &rows)
+                .unwrap_or_else(reference_pricing_with_source)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -12,8 +12,8 @@ use walkdir::WalkDir;
 use crate::cursor_state::{import_cursor_composer_state, normalize_cursor_model};
 use crate::period::{resolve_period, UsagePeriod};
 use crate::pricing::{
-    input_cost_usd, price_as_of, price_for_model, price_for_model_with_source, pricing_info,
-    reference_pricing, reference_pricing_with_source, refresh_price_cache_from_db, PricingInfo,
+    input_cost_usd, price_for_model, price_for_model_with_source, pricing_info, reference_pricing,
+    reference_pricing_with_source, refresh_price_cache_from_db, PricingInfo,
 };
 use crate::store::{open_pool, usage_db_path};
 use crate::tokenizer::{
@@ -1317,19 +1317,24 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
     .await
     .map_err(|e| e.to_string())?;
 
+    // One catalog read for the whole period instead of one per day.
+    let dates: Vec<String> = daily_raw.iter().map(|row| row.0.clone()).collect();
+    let day_prices = crate::pricing::reference_prices_as_of(&pool, &dates).await;
     let mut daily: Vec<DailySavings> = Vec::with_capacity(daily_raw.len());
     for (
-        date,
-        tokens_saved_est,
-        calls,
-        graph_calls,
-        failed_calls,
-        counterfactual_files,
-        counterfactual_tokens_est,
-        graph_response_tokens_est,
-    ) in daily_raw
+        (
+            date,
+            tokens_saved_est,
+            calls,
+            graph_calls,
+            failed_calls,
+            counterfactual_files,
+            counterfactual_tokens_est,
+            graph_response_tokens_est,
+        ),
+        (pricing, _),
+    ) in daily_raw.into_iter().zip(day_prices)
     {
-        let (pricing, _) = price_as_of(None, &date).await;
         daily.push(DailySavings {
             date,
             tokens_saved_est,
@@ -2610,6 +2615,61 @@ mod tests {
             parse_cursor_hook_session_id(&input).as_deref(),
             Some("cursor-prompt-session")
         );
+    }
+
+    #[tokio::test]
+    async fn savings_summary_reads_the_price_catalog_once_for_all_days() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let db = temp_usage_db_path("daily-prices");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+        let pool = open_pool().await.expect("pool");
+        let day = |n: i64| {
+            (chrono::Local::now().date_naive() - chrono::Duration::days(n))
+                .format("%Y-%m-%d")
+                .to_string()
+        };
+        let reference = crate::pricing::pricing_config().reference_model.clone();
+        for (n, input) in [(5, 1.0), (2, 4.0)] {
+            sqlx::query("INSERT INTO model_price_daily(date,source,model_id,input_per_mtok,output_per_mtok) VALUES (?, 'openrouter', ?, ?, 1.0)")
+                .bind(day(n))
+                .bind(format!("anthropic/{reference}"))
+                .bind(input)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let now = chrono::Utc::now().timestamp_millis();
+        for n in 0..5 {
+            sqlx::query("INSERT INTO mcp_call_log(tool,response_chars,response_tokens_est,ok,created_at,savings_eligible,tokens_saved_est) VALUES ('ax_node',1,1,1,?,1,1000000)")
+                .bind(now - n * 86_400_000)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        crate::pricing_sync::CATALOG_SCANS.with(|n| n.set(0));
+        let summary = query_savings_summary(&SavingsQuery {
+            period: UsagePeriod::Week,
+            from: None,
+            to: None,
+        })
+        .await
+        .expect("summary");
+        let scans = crate::pricing_sync::CATALOG_SCANS.with(|n| n.get());
+        let mut expected = Vec::new();
+        for d in &summary.daily {
+            expected.push(input_cost_usd(
+                1_000_000,
+                crate::pricing::price_as_of(None, &d.date).await.0,
+            ));
+        }
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(&db);
+
+        assert!(summary.daily.len() >= 4, "{:?}", summary.daily);
+        let got: Vec<f64> = summary.daily.iter().map(|d| d.cost_saved_usd_est).collect();
+        assert_eq!(got, expected);
+        assert!(scans <= 1, "{scans} catalog reads for {} days", got.len());
     }
 
     fn temp_usage_db_path(label: &str) -> PathBuf {
