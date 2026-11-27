@@ -8,11 +8,19 @@ import {
   releaseAssets, getReleaseAsset, getDefaultArch, mountMinimalDownload,
   installProducts, installerCommand, platformFor, type Product,
 } from '../src/scripts/minimal-download.ts';
+import { allDecls, decl, normalizeValue, parseCss, reformat, rulesFor, type Sheet } from './css-model.ts';
 
 const site = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p: string) => readFileSync(path.join(site, p), 'utf8');
 const home = read('src/components/MinimalHome.astro');
-const css = read('src/styles/minimal-home.css');
+const cssSource = read('src/styles/minimal-home.css');
+const css = parseCss(cssSource);
+// Every CSS check runs on the file as written and on a formatter's version of
+// it, so the tests follow what the CSS means rather than its exact text.
+const sheets: [string, Sheet][] = [['as written', css], ['reformatted', parseCss(reformat(cssSource))]];
+const L = '.ax-landing ';
+const same = (actual: string | undefined, expected: string, what: string) =>
+  assert.equal(actual, normalizeValue(expected), what);
 const page = read('src/pages/index.astro');
 const download = read('src/components/MinimalDownload.astro');
 const pkg = JSON.parse(read('package.json'));
@@ -21,7 +29,7 @@ const pkg = JSON.parse(read('package.json'));
 // the visible homepage, metadata, locally bundled font, and responsive rules.
 test('approved three-line slogan, only control receives lime accent', () => {
   assert.match(home, /<h1 class="ax-headline">\s*<span>Your context\.<\/span><span>Your rules\.<\/span><span class="ax-headline-accent">Your control\.<\/span><\/h1>/);
-  assert.match(css, /\.ax-headline \.ax-headline-accent\s*\{color:var\(--ax-lime\)\}/);
+  for (const [label, sheet] of sheets) same(decl(sheet, `${L}.ax-headline .ax-headline-accent`, 'color'), 'var(--ax-lime)', label);
   assert.doesNotMatch(home, /Your codebase|understood\.|Code context kept/);
   assert.match(page, /Your context\. Your rules\. Your control\./);
 });
@@ -29,38 +37,58 @@ test('approved three-line slogan, only control receives lime accent', () => {
 test('Oxanium is bundled and used for the heading, not loaded from Google Fonts', () => {
   assert.equal(pkg.dependencies['@fontsource-variable/oxanium'], '^5.3.0');
   assert.match(page, /@fontsource-variable\/oxanium\/wght\.css/);
-  assert.match(css, /\.ax-headline\{[^}]*font-family:'Oxanium Variable'/);
+  for (const [label, sheet] of sheets) assert.match(decl(sheet, `${L}.ax-headline`, 'font-family') ?? '', /^'Oxanium Variable'/, label);
   assert.doesNotMatch(page, /fonts\.googleapis\.com|fonts\.gstatic\.com/);
 });
 
 test('CMY interference fades horizontally from the edge and uses continuous tile loops', () => {
   assert.match(home, /ax-halftone-screen-three/);
-  for (const pitch of ['26px 26px', '26.8px 26.8px', '25.4px 25.4px']) assert.ok(css.includes(pitch));
-  for (const ink of ['#00ffff', '#ff00ff', '#ffff00']) assert.ok(css.includes(ink));
-  assert.match(css, /mix-blend-mode:multiply/);
-  assert.match(css, /\.ax-halftone-grid::after\{[^}]*color-mix\(in srgb,var\(--ax-lime\) 82%,transparent\)[^}]*mix-blend-mode:color/);
-  assert.match(css, /mask-image:linear-gradient\(90deg,transparent 0%,transparent 18%,rgba\(0,0,0,\.22\) 36%,#000 58%,#000 100%\)/);
-  assert.match(css, /\.ax-halftone-sharp\{[^}]*filter:blur\(\.4px\)/);
-  assert.doesNotMatch(css, /infinite alternate/);
-  assert.match(css, /animation:ax-moire-breath 24s ease-in-out infinite/);
-  assert.match(css, /@keyframes ax-moire-breath\{0%,100%\{filter:blur\(4px\)\}50%\{filter:blur\(1\.2px\)\}\}/);
-  assert.match(css, /animation:ax-moire-spin 240s linear infinite reverse/);
-  assert.match(css, /animation:ax-moire-spin 320s linear infinite/);
-  assert.match(css, /@keyframes ax-moire-spin\{to\{transform:rotate\(1turn\)\}\}/);
-  assert.doesNotMatch(css, /translate3d/);
-  assert.match(css, /prefers-reduced-motion:reduce\)\{html:not\(\[data-ax-motion='running'\]\)/);
-  assert.match(css, /data-ax-motion='paused'\] \.ax-landing \.ax-halftone-grid\{animation-play-state:paused/);
   assert.match(home, /<MotionControl\s*\/>/);
-  assert.match(css, /animation-delay:-11s/);
-  assert.match(css, /animation-delay:-15\.5s/);
-  assert.doesNotMatch(css, /border-radius:50%|ax-halftone-rosette/);
-  assert.doesNotMatch(css, /@keyframes ax-moire-magenta\{0%,100%\{/);
-  assert.doesNotMatch(css, /@keyframes ax-moire-yellow\{0%,100%\{/);
-  assert.match(css, /\.ax-install-command\{[^}]*position:absolute[^}]*backdrop-filter:blur\(18px\)/);
-  assert.doesNotMatch(css, /data-ax-install-panel\]:not\(\[hidden\]\).*overflow-y:auto/);
-  assert.match(css, /@media\(max-width:600px\)\{[^\n]*\.ax-halftone\{inset:-18%;opacity:\.32\}/);
-  assert.match(css, /prefers-reduced-motion:reduce/);
-  assert.doesNotMatch(css, /background-image:\s*url\(/);
+  for (const [label, sheet] of sheets) {
+    const at = (selector: string, prop: string, media = '') => decl(sheet, `${L}${selector}`, prop, media);
+    const screens = [
+      ['one', '#00ffff', '26px 26px', 'ax-moire-spin 180s linear infinite', undefined],
+      ['two', '#ff00ff', '26.8px 26.8px', 'ax-moire-spin 240s linear infinite reverse', '-11s'],
+      ['three', '#ffff00', '25.4px 25.4px', 'ax-moire-spin 320s linear infinite', '-15.5s'],
+    ] as const;
+    for (const [screen, ink, pitch, animation, delay] of screens) {
+      const sel = `.ax-halftone-screen-${screen}`;
+      assert.ok(at(sel, 'background-image')?.includes(normalizeValue(ink)), `${label}: ${screen} ink`);
+      same(at(sel, 'background-size'), pitch, `${label}: ${screen} pitch`);
+      same(at(sel, 'animation'), animation, `${label}: ${screen} animation`);
+      assert.equal(at(sel, 'animation-delay'), delay && normalizeValue(delay), `${label}: ${screen} delay`);
+    }
+    same(at('.ax-halftone-dots', 'mix-blend-mode'), 'multiply', label);
+    const tint = at('.ax-halftone-grid::after', 'background') ?? '';
+    assert.ok(tint.includes(normalizeValue('color-mix(in srgb,var(--ax-lime) 82%,transparent)')), `${label}: lime tint`);
+    same(at('.ax-halftone-grid::after', 'mix-blend-mode'), 'color', label);
+    assert.ok((at('.ax-halftone', 'mask-image') ?? '').startsWith(
+      normalizeValue('linear-gradient(90deg,transparent 0%,transparent 18%,rgba(0,0,0,.22) 36%,#000 58%,#000 100%)')), `${label}: edge fade`);
+    same(at('.ax-halftone-sharp', 'filter'), 'blur(.4px)', label);
+    same(at('.ax-halftone-soft', 'animation'), 'ax-moire-breath 24s ease-in-out infinite', label);
+    assert.deepEqual(sheet.keyframes['ax-moire-breath'], {
+      '0%': { filter: 'blur(4px)' }, '100%': { filter: 'blur(4px)' }, '50%': { filter: normalizeValue('blur(1.2px)') },
+    }, label);
+    assert.deepEqual(sheet.keyframes['ax-moire-spin'], { '100%': { transform: 'rotate(1turn)' } }, label);
+    assert.equal(sheet.keyframes['ax-moire-magenta'], undefined, label);
+    assert.equal(sheet.keyframes['ax-moire-yellow'], undefined, label);
+    // Reduced motion and the pause control stop the backdrop.
+    for (const part of ['.ax-halftone-dots', '.ax-halftone-grid']) {
+      same(decl(sheet, `html:not([data-ax-motion='running']) ${L}${part}`, 'animation-play-state', '(prefers-reduced-motion:reduce)'), 'paused', `${label}: reduced motion ${part}`);
+      same(decl(sheet, `html[data-ax-motion='paused'] ${L}${part}`, 'animation-play-state'), 'paused', `${label}: paused ${part}`);
+    }
+    assert.match(at('.ax-install-command', 'position') ?? '', /^absolute$/, label);
+    same(at('.ax-install-command', 'backdrop-filter'), 'blur(18px)', label);
+    same(at('.ax-halftone', 'inset', '(max-width:600px)'), '-18%', label);
+    same(at('.ax-halftone', 'opacity', '(max-width:600px)'), '.32', label);
+    for (const d of allDecls(sheet)) {
+      assert.doesNotMatch(d.value, /infinite alternate|translate3d/, `${label}: ${d.selector}`);
+      assert.ok(!(d.prop === 'border-radius' && d.value === '50%'), `${label}: no round dots in ${d.selector}`);
+      assert.ok(!(d.prop.startsWith('background') && /url\(/.test(d.value)), `${label}: no images in ${d.selector}`);
+      assert.doesNotMatch(d.selector, /ax-halftone-rosette/, label);
+      if (/data-ax-install-panel\]:not\(\[hidden\]\)/.test(d.selector)) assert.notEqual(d.prop, 'overflow-y', label);
+    }
+  }
 });
 
 test('installer offers commands with manual OS selection and keeps optional release assets', () => {
@@ -118,7 +146,7 @@ test('homepage installer offers Ax, headless Linux and the admin app with their 
   assert.match(download, /data-ax-guide/);
   // Without the extension Vite bundles the stale compiled minimal-download.js next to the source.
   assert.match(download, /import \{ mountMinimalDownload \} from '\.\.\/scripts\/minimal-download\.ts';/);
-  assert.match(css, /\.ax-platform-options button\[hidden\]\{display:none/);
+  for (const [label, sheet] of sheets) same(decl(sheet, '.ax-platform-options button[hidden]', 'display'), 'none !important', label);
 });
 
 test('choosing a product limits the platforms, keeps the menu open and copies its own command', async () => {
@@ -361,22 +389,33 @@ test('copied install popup closes for another choice and fades out after 1.5 sec
 });
 
 test('phone landing fits the viewport and the platform menu overlays with a blur', () => {
-  const phone = css.split('\n').find((line) => line.includes('@media(max-width:600px)') && line.includes('.ax-main'));
-  assert.ok(phone, 'missing phone layout');
-  assert.match(phone, /\.ax-main\{[^}]*padding:8px 20px 4px/);
-  assert.match(phone, /\.ax-display-word\{[^}]*font-size:48px/);
-  assert.match(phone, /\.ax-platform-panel\{[^}]*position:absolute[^}]*bottom:calc\(100% \+ 8px\)/);
-  assert.doesNotMatch(phone, /position:relative;bottom:auto/);
-  assert.match(css, /\.ax-platform-panel\{[^}]*backdrop-filter:blur\(18px\)/);
-  assert.match(css, /\.ax-platform-panel\{[^}]*background:rgba\(18,23,19,\.62\)/);
+  const phone = '(max-width:600px)';
+  for (const [label, sheet] of sheets) {
+    same(decl(sheet, `${L}.ax-main`, 'padding', phone), '8px 20px 4px', label);
+    same(decl(sheet, `${L}.ax-display-word`, 'font-size', phone), '48px', label);
+    same(decl(sheet, `${L}.ax-platform-panel`, 'position', phone), 'absolute', label);
+    same(decl(sheet, `${L}.ax-platform-panel`, 'bottom', phone), 'calc(100% + 8px)', label);
+    same(decl(sheet, `${L}.ax-platform-panel`, 'backdrop-filter'), 'blur(18px)', label);
+    same(decl(sheet, `${L}.ax-platform-panel`, 'background'), 'rgba(18,23,19,.62)', label);
+  }
 });
 
 test('copied install button throws sparks so the copy stays visible', () => {
-  assert.match(css, /@keyframes ax-copied-spark\{0%\{opacity:1\}100%\{opacity:0/);
-  assert.match(css, /\.ax-download-primary\[data-copied="true"\]::after\{[^}]*animation:ax-copied-spark/);
-  assert.match(css, /\.ax-install-command button\[data-copied="true"\]::after\{[^}]*animation:ax-copied-spark/);
-  assert.match(css, /data-ax-motion='paused'\] \.ax-landing \.ax-download-primary\[data-copied="true"\]::after\{animation:none/);
-  assert.doesNotMatch(css, /border-radius:50%/);
+  for (const [label, sheet] of sheets) {
+    const spark = sheet.keyframes['ax-copied-spark'];
+    assert.equal(spark?.['0%']?.opacity, '1', label);
+    assert.equal(spark?.['100%']?.opacity, '0', label);
+    for (const button of [`${L}.ax-download-primary[data-copied="true"]::after`, `${L}.ax-install-command button[data-copied="true"]::after`]) {
+      assert.match(decl(sheet, button, 'animation') ?? '', /^ax-copied-spark /, `${label}: ${button}`);
+    }
+    same(decl(sheet, `html[data-ax-motion='paused'] ${L}.ax-download-primary[data-copied="true"]::after`, 'animation'), 'none', label);
+    assert.ok(!allDecls(sheet).some((d) => d.prop === 'border-radius' && d.value === '50%'), label);
+  }
+});
+
+test('the CSS model reads a reformatted stylesheet the same way', () => {
+  assert.deepEqual(parseCss(reformat(cssSource)), css);
+  assert.ok(rulesFor(css, `${L}.ax-halftone`).length > 0);
 });
 
 test('install links keep the site base path (GitHub Pages mirror at /ax)', () => {
