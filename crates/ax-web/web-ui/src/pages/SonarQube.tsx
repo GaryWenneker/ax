@@ -15,6 +15,7 @@ import { DEFAULT_SHIP_CONFIG as DEFAULT_CONFIG } from '../lib/shipDefaults';
 import { usePageContext } from '../context/UiContext';
 import { SONAR_GUIDE_SECTIONS } from '../lib/sonarGuide';
 import type { SonarTab } from '../lib/routes';
+import { frameStateAfter, type SonarFrameState } from '../lib/sonarFrame';
 import SettingsSelect from '../components/ui/SettingsSelect';
 import {
   bootstrapSonar,
@@ -124,7 +125,7 @@ export default function SonarQubePage({
   onTabChange: (tab: SonarTab) => void;
 }) {
   const [iframeKey, setIframeKey] = useState(0);
-  const [iframeState, setIframeState] = useState<'loading' | 'loaded' | 'error'>('loading');
+  const [iframeState, setIframeState] = useState<SonarFrameState>('loading');
   const [config, setConfig] = useState<ShipConfig>(DEFAULT_CONFIG);
   const [configLoaded, setConfigLoaded] = useState(false);
   /** The ship config was read from the server. Until then `config` holds built-in
@@ -604,8 +605,8 @@ export default function SonarQubePage({
               title="SonarQube dashboard"
               src={dashboardEntry}
               referrerPolicy="no-referrer"
-              onLoad={() => setIframeState('loaded')}
-              onError={() => setIframeState('error')}
+              onLoad={() => setIframeState((state) => frameStateAfter(state, 'load'))}
+              onError={() => setIframeState((state) => frameStateAfter(state, 'error'))}
             />
           </div>
         </section>
