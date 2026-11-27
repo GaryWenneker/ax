@@ -260,6 +260,8 @@ These endpoints enforce the local-owner session or a client credential with the 
 | POST | `/api/access/nodes/{id}/remove` | Remove a revoked peer record |
 | POST | `/api/access/nodes/{id}/reenroll` | Allow a blocked peer to enroll again |
 
+Starting the local service as a replica enrolls with the Primary and applies its snapshot, which can take minutes. During that time `GET /api/access/nodes/local` keeps answering and reports `"setting_up": true`; a second start, stop or remove is refused with 409 until setup finishes.
+
 ## Local remote-MCP connection login
 
 Use these on the hosting computer through local Command Center. They manage the local OAuth client connection, not public server access grants. Mutations require `X-Ax-Csrf` from the status response.

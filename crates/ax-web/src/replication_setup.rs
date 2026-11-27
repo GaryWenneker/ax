@@ -18,6 +18,10 @@ use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     process::Stdio,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 use tokio::process::{Child, Command};
@@ -34,7 +38,28 @@ pub(crate) struct ManagedNode {
     root: Option<PathBuf>,
     credential: Option<String>,
     control: Option<String>,
+    /// Set while a start request enrolls, applies and launches a node. The
+    /// long steps run without holding the node state, so status stays responsive.
+    setup: Arc<AtomicBool>,
 }
+impl ManagedNode {
+    fn setting_up(&self) -> bool {
+        self.setup.load(Ordering::SeqCst)
+    }
+    /// Mark setup as running; `None` when another setup already runs.
+    fn begin_setup(&self) -> Option<SetupGuard> {
+        (!self.setup.swap(true, Ordering::SeqCst)).then(|| SetupGuard(self.setup.clone()))
+    }
+}
+/// Clears the setup flag when the start request finishes or is dropped.
+struct SetupGuard(Arc<AtomicBool>);
+impl Drop for SetupGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+const SETUP_RUNNING: &str =
+    "Replication setup is already running; wait for it to finish and try again";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -483,8 +508,11 @@ pub(crate) async fn status(
     let counts: (i64,i64,i64) = match sqlx::query_as("SELECT (SELECT COUNT(*) FROM memories),(SELECT COUNT(*) FROM policy_rules),(SELECT COUNT(*) FROM policy_skills)").fetch_one(&pool).await {
         Ok(counts)=>counts, Err(_)=>return fail(StatusCode::INTERNAL_SERVER_ERROR,"Cannot verify existing project data"),
     };
-    let mut managed = hub.replication.lock().await;
-    let owned_active = running(&mut managed).await;
+    let (owned_active, managed_root, setting_up) = {
+        let mut managed = hub.replication.lock().await;
+        let owned_active = running(&mut managed).await;
+        (owned_active, managed.root.clone(), managed.setting_up())
+    };
     let saved = match read_saved(&root) {
         Ok(saved) => saved,
         Err(error) => return fail(StatusCode::BAD_REQUEST, &error),
@@ -501,8 +529,8 @@ pub(crate) async fn status(
     } else {
         false
     };
-    let active = external_active || (owned_active && managed.root.as_ref() == Some(&root));
-    let active_project = external_active || (owned_active && managed.root.as_ref() == Some(&root));
+    let active = external_active || (owned_active && managed_root.as_ref() == Some(&root));
+    let active_project = active;
     let sync = saved.as_ref().and_then(|node| {
         if node.config.validate().is_err() {
             return None;
@@ -541,7 +569,7 @@ pub(crate) async fn status(
     } else {
         0
     };
-    Json(serde_json::json!({"settings":saved,"running":active,"active_project":active_project,"active_replicas":active_replicas,"sync":sync,"runtime_error":runtime_error,"datasets":dataset_counts,"safety":{"mode":"preserve_and_exchange","memories":counts.0,"rules":counts.1,"skills":counts.2,"review_required":review,"sync_failed":failed}})).into_response()
+    Json(serde_json::json!({"settings":saved,"running":active,"active_project":active_project,"active_replicas":active_replicas,"sync":sync,"runtime_error":runtime_error,"setting_up":setting_up,"datasets":dataset_counts,"safety":{"mode":"preserve_and_exchange","memories":counts.0,"rules":counts.1,"skills":counts.2,"review_required":review,"sync_failed":failed}})).into_response()
 }
 
 pub(crate) async fn start(
@@ -556,17 +584,26 @@ pub(crate) async fn start(
         );
     }
     let root = hub.read().await.project_root.clone();
+    // Only a short check runs under the node state lock. Enrollment, the
+    // Primary snapshot apply and the launch run without it, guarded by the
+    // setup flag and the cross-process operation lock.
+    let _setup = {
+        let mut managed = hub.replication.lock().await;
+        let Some(setup) = managed.begin_setup() else {
+            return fail(StatusCode::CONFLICT, SETUP_RUNNING);
+        };
+        if running(&mut managed).await && managed.root.as_ref() == Some(&root) {
+            return fail(
+                StatusCode::CONFLICT,
+                "Stop the running managed node before changing its role or Primary",
+            );
+        }
+        setup
+    };
     let _lock = match operation_lock(&root) {
         Ok(lock) => lock,
         Err(error) => return fail(StatusCode::CONFLICT, &error),
     };
-    let mut managed = hub.replication.lock().await;
-    if running(&mut managed).await && managed.root.as_ref() == Some(&root) {
-        return fail(
-            StatusCode::CONFLICT,
-            "Stop the running managed node before changing its role or Primary",
-        );
-    }
     let previous = match read_saved(&root) {
         Ok(v) => v,
         Err(e) => return fail(StatusCode::BAD_REQUEST, &e),
@@ -738,6 +775,7 @@ pub(crate) async fn start(
         return fail(StatusCode::INTERNAL_SERVER_ERROR, &e);
     }
     // Keep a handle for immediate shutdown; the service survives web/MCP exit.
+    let mut managed = hub.replication.lock().await;
     managed.child = Some(child);
     managed.root = Some(root);
     managed.credential = Some(token.clone());
@@ -762,6 +800,9 @@ pub(crate) async fn stop(
         );
     }
     let root = hub.read().await.project_root.clone();
+    if hub.replication.lock().await.setting_up() {
+        return fail(StatusCode::CONFLICT, SETUP_RUNNING);
+    }
     let _lock = match operation_lock(&root) {
         Ok(lock) => lock,
         Err(error) => return fail(StatusCode::CONFLICT, &error),
@@ -876,6 +917,9 @@ pub(crate) async fn remove(
         );
     }
     let root = hub.read().await.project_root.clone();
+    if hub.replication.lock().await.setting_up() {
+        return fail(StatusCode::CONFLICT, SETUP_RUNNING);
+    }
     let _lock = match operation_lock(&root) {
         Ok(lock) => lock,
         Err(error) => return fail(StatusCode::CONFLICT, &error),
@@ -1079,5 +1123,68 @@ mod tests {
         assert!(operation_lock(dir.path()).is_err());
         drop(first);
         assert!(operation_lock(dir.path()).is_ok());
+    }
+    /// A Primary that answers enrollment only after a delay, to keep setup busy.
+    async fn slow_primary() -> u16 {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let app = axum::Router::new().route(
+            "/v1/enrollment",
+            axum::routing::post(|| async {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                StatusCode::SERVICE_UNAVAILABLE
+            }),
+        );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        port
+    }
+    #[tokio::test]
+    async fn a_running_setup_does_not_hold_the_node_state_and_rejects_a_second_start() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".ax")).unwrap();
+        ax_db::Database::open(&dir.path().join(".ax/ax.db"))
+            .await
+            .unwrap();
+        let hub = WebHub::open(dir.path().to_path_buf(), false, 0)
+            .await
+            .unwrap();
+        let primary = slow_primary().await;
+        let owner = || {
+            Extension(Actor {
+                member_id: "owner".into(),
+                client_id: None,
+                role: ax_global_db::access::MemberRole::Owner,
+            })
+        };
+        let replica = move || SetupRequest {
+            role: NodeRole::Replica,
+            cluster_id: String::new(),
+            project_id: String::new(),
+            primary_url: Some(format!("http://127.0.0.1:{primary}/")),
+            token: Some("r".repeat(40)),
+            port: 0,
+            advertise: None,
+        };
+        let first = tokio::spawn(start(State(hub.clone()), owner(), Json(replica())));
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        {
+            let managed = hub
+                .replication
+                .try_lock()
+                .expect("setup must not hold the node state while it waits on the Primary");
+            assert!(managed.setting_up());
+        }
+        let second = start(State(hub.clone()), owner(), Json(replica())).await;
+        assert_eq!(second.status(), StatusCode::CONFLICT);
+        let body = axum::body::to_bytes(second.into_body(), 4096)
+            .await
+            .unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("setup is already running"));
+        let stopped = stop(State(hub.clone()), owner()).await;
+        assert_eq!(stopped.status(), StatusCode::CONFLICT);
+        assert_eq!(first.await.unwrap().status(), StatusCode::BAD_REQUEST);
+        assert!(!hub.replication.try_lock().unwrap().setting_up());
     }
 }
