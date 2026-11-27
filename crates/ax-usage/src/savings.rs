@@ -1550,7 +1550,9 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
     );
     // Every MCP call belongs to at most one session: among the sessions whose
     // window contains it, the one in the call's project, then the one started
-    // last. Overlapping sessions never count the same call twice.
+    // last. Overlapping sessions never count the same call twice. Only
+    // sessions that overlap the calls in range can own one, so `windows`
+    // leaves out the rest of the imported history.
     const SESSIONS_SQL: &str = "WITH in_range AS (
            SELECT * FROM agent_session_log s
            WHERE COALESCE(s.started_at, s.source_mtime) >= ?1
@@ -1564,6 +1566,8 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
                     LIMIT 1) AS project
            FROM agent_session_log s
            WHERE s.started_at IS NOT NULL AND s.ended_at IS NOT NULL
+             AND s.ended_at >= (SELECT MIN(started_at) FROM in_range)
+             AND s.started_at <= (SELECT MAX(ended_at) FROM in_range)
          ),
          owned AS MATERIALIZED (
            SELECT m.savings_eligible, m.tokens_saved_est,
@@ -3283,5 +3287,56 @@ mod tests {
         assert_eq!(by_id("b"), (2, 1001));
         let by_model: i64 = summary.by_model.iter().map(|r| r.tokens_saved_est).sum();
         assert_eq!(by_model, summary.tokens_saved_est);
+    }
+
+    #[tokio::test]
+    async fn a_session_that_started_before_the_period_still_owns_its_calls() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let db = temp_usage_db_path("overlap-early");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+        let pool = open_pool().await.expect("pool");
+        let now = chrono::Utc::now().timestamp_millis();
+        let hour = 3_600_000;
+        let day = 24 * hour;
+        // "early" started before the week and overlaps "late"; "ancient" is
+        // long over and overlaps nothing in the period.
+        for (agent, id, start, end, project) in [
+            ("cursor", "early", now - 8 * day, now - hour, "/p/early"),
+            ("claude", "late", now - 2 * hour, now, "/p/late"),
+            ("claude", "ancient", now - 30 * day, now - 29 * day, "/p/early"),
+        ] {
+            sqlx::query("INSERT INTO agent_session_log(agent,session_id,source_mtime,started_at,ended_at,model) VALUES (?,?,?,?,?,'m')")
+                .bind(agent).bind(id).bind(end).bind(start).bind(end)
+                .execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO agent_usage_event(agent,session_id,turn_id,project,confidence,created_at) VALUES (?,?,'0',?,'estimated',?)")
+                .bind(agent).bind(id).bind(project).bind(start)
+                .execute(&pool).await.unwrap();
+        }
+        for (at, project, saved) in [
+            (now - 90 * 60_000, "/p/early", 100), // both open, early's project
+            (now - 30 * 60_000, "/p/late", 7),    // only late is open
+        ] {
+            sqlx::query("INSERT INTO mcp_call_log(tool,project,response_chars,response_tokens_est,ok,created_at,savings_eligible,tokens_saved_est) VALUES ('ax_node',?,1,1,1,?,1,?)")
+                .bind(project).bind(at).bind(saved)
+                .execute(&pool).await.unwrap();
+        }
+        let summary = query_savings_summary(&SavingsQuery {
+            period: UsagePeriod::Week,
+            from: None,
+            to: None,
+        })
+        .await
+        .expect("summary");
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(&db);
+        let late = summary
+            .agent_sessions
+            .iter()
+            .find(|s| s.session_id == "late")
+            .map(|s| (s.mcp_calls_in_window, s.tokens_saved_in_window))
+            .unwrap();
+        assert_eq!(late, (1, 7));
+        assert!(summary.agent_sessions.iter().all(|s| s.session_id == "late"));
     }
 }
