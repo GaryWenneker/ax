@@ -208,9 +208,11 @@ Examples:
   ax affected src/auth/login.ts
   ax affected packages/api/src/handler.rs src/db/user.rs";
 
-pub const UNLOCK_LONG: &str = "Force-remove a stale .ax/ax.lock left by a crashed process.
+pub const UNLOCK_LONG: &str = "Clear a stale .ax/ax.lock left by a crashed process.
 
-Safe when no other ax process is indexing the same project.
+When a live process still holds the lock, only that process is stopped, and
+only when it is an ax process (SIGTERM first, SIGKILL after 5 seconds).
+Other ax processes keep running.
 
 Examples:
   ax unlock
@@ -219,7 +221,7 @@ Examples:
 pub const DAEMON_LONG: &str = "MCP background daemon control (TCP / named pipe per project).
 
 The daemon shares one index connection for multiple MCP clients (Cursor, VS Code, …).
-`restart` clears a stuck daemon and stale locks without killing every ax.exe.
+`restart` clears a stuck daemon and stale locks.
 
 Subcommands:
   status    Show pid, port, socket path from .ax/daemon.json

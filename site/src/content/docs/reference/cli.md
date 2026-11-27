@@ -226,7 +226,7 @@ ax status --json
 
 ### `ax unlock [path]`
 
-Force-remove a stale `.ax/ax.lock` and stop orphaned `ax.exe` processes. Prefer `ax daemon restart` first — writers normally wait up to 180s for the lock and clear dead PIDs automatically.
+Clear a stale `.ax/ax.lock`. When nobody holds the lock it is cleared right away and no process is touched. When a live process holds it, `ax unlock` stops that process only, and only when it is an ax process: SIGTERM first, SIGKILL after 5 seconds. Other ax processes, such as MCP daemons of other projects, keep running. A lock held by something that is not ax is reported and left alone. Prefer `ax daemon restart` first — writers normally wait up to 180s for the lock and clear dead PIDs automatically.
 
 | Argument | Type | Description |
 |---|---|---|
@@ -955,7 +955,7 @@ Zed, Continue, Kiro, opencode, Antigravity, and Hermes have no blocking tool hoo
 
 ### `ax daemon [path] [status|stop|restart]`
 
-MCP background daemon control (shared index connection per project). IDEs attach as stdio proxies; `restart` clears a stuck daemon and stale locks without killing every `ax.exe` (unlike `ax unlock`).
+MCP background daemon control (shared index connection per project). IDEs attach as stdio proxies; `restart` clears a stuck daemon and stale locks.
 
 The daemon follows its binary. It checks every 30 seconds (`AX_DAEMON_EXE_CHECK_MS`) whether its `ax` file was replaced, for example by `ax upgrade`, and then stops cleanly. A proxy on a newer `ax` build restarts an older daemon on its own binary; a proxy on an older build attaches to a newer daemon and leaves it running. When the daemon goes away, the proxies reconnect or start a new one without the IDE noticing. A call that was in flight gets the error `ax daemon restarted; retry the call`. If no daemon is back within 15 seconds, the proxy exits with the reason on stderr.
 

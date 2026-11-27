@@ -3,6 +3,7 @@
 pub mod affected;
 pub mod agent;
 pub mod api;
+pub(crate) mod ax_process;
 pub mod bootstrap;
 pub mod budget_cmd;
 pub mod cache_cmd;

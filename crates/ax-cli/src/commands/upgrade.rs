@@ -376,37 +376,13 @@ fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) {
 }
 
 #[cfg(windows)]
+/// Ends every other ax process so the binary can be replaced. The list comes from
+/// `sysinfo`, so it does not depend on `wmic`, which current Windows no longer ships.
 fn stop_other_ax_processes(self_pid: u32) -> Result<usize, String> {
-    use std::os::windows::process::CommandExt;
-    let mut killed = 0usize;
-    let procs = std::process::Command::new("wmic")
-        .args([
-            "process",
-            "where",
-            "name='ax.exe'",
-            "get",
-            "ProcessId",
-            "/format:csv",
-        ])
-        .creation_flags(windows_no_window())
-        .output()
-        .map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&procs.stdout);
-    for line in text.lines() {
-        let pid: u32 = match line.split(',').nth(1).and_then(|s| s.trim().parse().ok()) {
-            Some(p) if p != self_pid => p,
-            _ => continue,
-        };
-        if std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/F"])
-            .creation_flags(windows_no_window())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-        {
-            killed += 1;
-        }
-    }
+    let killed = crate::commands::ax_process::other_ax_pids(self_pid)
+        .into_iter()
+        .filter(|&pid| crate::commands::ax_process::force_kill(pid))
+        .count();
     Ok(killed)
 }
 

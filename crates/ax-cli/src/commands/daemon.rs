@@ -4,9 +4,12 @@ use ax_context::directory::{get_ax_dir, is_initialized};
 use ax_mcp::daemon::{read_daemon_info, try_connect, DaemonInfo, DAEMON_INFO_FILE};
 use ax_mcp::daemon_lock::is_pid_alive;
 use ax_mcp::restart_daemon;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
+use crate::commands::ax_process::{
+    is_ax_name, process_running, send_terminate, strip_deleted_suffix, wait_for_exit,
+};
 use crate::commands::resolve_project_root;
 use crate::ui::{info_line, ok_line};
 
@@ -140,15 +143,6 @@ fn clear_daemon_record(root: &Path) {
     release_daemon_lock(&daemon_pid_path(root));
 }
 
-/// The pid exists and is not a zombie waiting to be reaped.
-fn process_running(pid: u32) -> bool {
-    let mut sys = sysinfo::System::new();
-    let spid = sysinfo::Pid::from_u32(pid);
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[spid]), true);
-    sys.process(spid)
-        .is_some_and(|p| !matches!(p.status(), sysinfo::ProcessStatus::Zombie))
-}
-
 /// Whether `pid` is the ax daemon described by `info`.
 fn is_ax_daemon(pid: u32, info: &DaemonInfo, hello_pid: Option<u32>) -> bool {
     if hello_pid == Some(pid) {
@@ -169,54 +163,9 @@ fn is_ax_daemon(pid: u32, info: &DaemonInfo, hello_pid: Option<u32>) -> bool {
     }
 }
 
-fn is_ax_name(stem: Option<&std::ffi::OsStr>) -> bool {
-    stem.and_then(|s| s.to_str())
-        .is_some_and(|s| s.eq_ignore_ascii_case("ax"))
-}
-
-/// Linux appends ` (deleted)` to `/proc/<pid>/exe` once the binary was replaced on disk.
-fn strip_deleted_suffix(path: &Path) -> PathBuf {
-    let text = path.to_string_lossy();
-    match text.strip_suffix(" (deleted)") {
-        Some(stripped) => PathBuf::from(stripped),
-        None => path.to_path_buf(),
-    }
-}
-
 fn same_file_path(a: &Path, b: &Path) -> bool {
     let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     canon(a) == canon(b)
-}
-
-/// Asks the process to exit: SIGTERM on Unix, `taskkill` without `/F` on Windows.
-fn send_terminate(pid: u32) {
-    #[cfg(unix)]
-    let _ = std::process::Command::new("kill")
-        .args(["-TERM", &pid.to_string()])
-        .status();
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let _ = std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string()])
-            .creation_flags(CREATE_NO_WINDOW)
-            .status();
-    }
-}
-
-/// Polls until `pid` is gone or `limit` passes; true when it is gone.
-async fn wait_for_exit(pid: u32, limit: Duration) -> bool {
-    let deadline = tokio::time::Instant::now() + limit;
-    loop {
-        if !process_running(pid) {
-            return true;
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return false;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
 }
 
 #[cfg(all(test, unix))]
@@ -257,7 +206,7 @@ mod tests {
         assert!(read_daemon_info(root).is_some(), "daemon info must parse");
     }
 
-    fn exe_of(pid: u32) -> PathBuf {
+    fn exe_of(pid: u32) -> std::path::PathBuf {
         let mut sys = sysinfo::System::new();
         let spid = sysinfo::Pid::from_u32(pid);
         sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[spid]), true);
