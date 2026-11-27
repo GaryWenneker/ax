@@ -130,10 +130,43 @@ pub fn has_structural_keyword(prompt: &str) -> bool {
     structural_en.is_match(prompt) || structural_cjk.is_match(prompt)
 }
 
+const HARNESS_BLOCK_OPEN: &str = "<system-reminder>";
+const HARNESS_BLOCK_CLOSE: &str = "</system-reminder>";
+const HARNESS_NOTIFICATION: &str = "<task-notification>";
+
+/// The part of a hook prompt the user wrote.
+///
+/// Agent harnesses append `<system-reminder>` blocks to the prompt and deliver
+/// background-task results as a prompt that is one `<task-notification>` block.
+/// Neither is a question about the code, so matching or exploring them injects
+/// context for text nobody asked about. Reminder blocks are cut out (an unclosed
+/// one hides the rest), and a prompt that is only a notification becomes empty.
+pub fn user_prompt_text(prompt: &str) -> String {
+    let mut text = String::with_capacity(prompt.len());
+    let mut rest = prompt;
+    while let Some(open) = rest.find(HARNESS_BLOCK_OPEN) {
+        text.push_str(&rest[..open]);
+        rest = match rest[open..].find(HARNESS_BLOCK_CLOSE) {
+            Some(close) => &rest[open + close + HARNESS_BLOCK_CLOSE.len()..],
+            None => "",
+        };
+    }
+    text.push_str(rest);
+    let text = text.trim();
+    if text.starts_with(HARNESS_NOTIFICATION) {
+        return String::new();
+    }
+    text.to_string()
+}
+
 pub fn extract_code_tokens(prompt: &str) -> Vec<String> {
     let mut tokens = Vec::new();
-    let re_camel =
-        regex::Regex::new(r"\b([A-Z][a-z]+(?:[A-Z][a-z]*)*|[a-z]+(?:[A-Z][a-z]*)+)\b").unwrap();
+    // Two humps or more: `IndexPathFilter`, `getUser`. One capitalized word
+    // ("Ok", "You") is ordinary language, and half the index has a node by that name.
+    let re_camel = regex::Regex::new(
+        r"\b([A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+|[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+)\b",
+    )
+    .unwrap();
     for cap in re_camel.captures_iter(prompt) {
         if let Some(m) = cap.get(1) {
             tokens.push(m.as_str().to_string());
@@ -547,5 +580,48 @@ mod discover_tests {
         }
         assert_eq!(names(&found), vec!["app".to_string()]);
         let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(test)]
+mod prompt_tests {
+    use super::*;
+
+    #[test]
+    fn e1_harness_blocks_are_removed_from_the_prompt() {
+        let prompt = "<system-reminder>how does the call graph work</system-reminder>\nYes";
+        assert_eq!(user_prompt_text(prompt), "Yes");
+        let two = "<system-reminder>a</system-reminder>fix getUser<system-reminder>\nb\n</system-reminder>";
+        assert_eq!(user_prompt_text(two), "fix getUser");
+        // An unclosed block hides everything after it: it is not the user's text.
+        assert_eq!(user_prompt_text("go <system-reminder>trace the flow"), "go");
+        assert_eq!(
+            user_prompt_text("  how does sync work  "),
+            "how does sync work"
+        );
+    }
+
+    #[test]
+    fn e2_a_notification_only_prompt_is_empty() {
+        let prompt = "<system-reminder>x</system-reminder>\n<task-notification>\n<summary>how does the build flow</summary>\n</task-notification>";
+        assert_eq!(user_prompt_text(prompt), "");
+        assert_eq!(
+            user_prompt_text("see <task-notification> in the docs, how does it flow"),
+            "see <task-notification> in the docs, how does it flow"
+        );
+    }
+
+    #[test]
+    fn e3_a_plain_capitalized_word_is_not_a_code_token() {
+        assert!(extract_code_tokens("Ok").is_empty());
+        assert!(extract_code_tokens("You choose. It must work perfectly").is_empty());
+        assert_eq!(
+            extract_code_tokens("fix capture_affected_paths and IndexPathFilter and getUser"),
+            vec!["IndexPathFilter", "getUser", "capture_affected_paths"]
+        );
+        assert_eq!(
+            extract_code_tokens("the Sha256Hasher type"),
+            vec!["Sha256Hasher"]
+        );
     }
 }

@@ -210,3 +210,31 @@ Scenario: F2 the chain an agent follows works end to end
   And   the session id from the first preflight is accepted by every later call
 ```
 
+- R2 (2026-11-27): C refined before RED. Whole-word-only would stop "test" matching "tests"
+  and "implement" matching "implementing", which substring matching allowed and skills rely on.
+  A skill trigger of 4+ characters also matches when the word continues with one of the
+  suffixes `s, es, d, ed, ing, er, ers, en`. Shorter triggers need the exact word.
+
+```gherkin
+Scenario: C4 an inflected form of a 4+ letter trigger matches
+  Given a skill with trigger "test" and a skill with trigger "implement"
+  When  the prompt is "add tests" / "meerdere testen" / "implementing the cap"
+  Then  the skill is matched
+Scenario: C5 an unrelated longer word does not match
+  Given a skill with trigger "spec" and a skill with trigger "test"
+  When  the prompt is "a specific contest about testament"
+  Then  neither skill is matched
+```
+
+- R3 (2026-11-27): D refined before RED. The existing test `detects_moet_altijd_without_je`
+  ("preflight moet altijd werken") requires a mid-sentence match, so "sentence start only"
+  for every prefix would break approved behavior. Prefixes are now two classes:
+  - phrase prefixes (`je moet`, `jij moet`, `u moet`, `moet altijd`, `moet nooit`,
+    `gebruik altijd`, `gebruik nooit`, `voortaan`, `vanaf nu`, `you must`,
+    `you should always`, `always use`, `never use`, `from now on`) match anywhere at a word
+    boundary, except directly after `i` / `ik` (first-person narrative);
+  - single-word prefixes (`moet`, `altijd`, `nooit`, `always`, `never`, `don't`, `do not`)
+    match only at the start of a sentence.
+  In both classes the body is the whole sentence that carries the prefix, and a sentence
+  ending in `?` is never a directive. No existing test is edited.
+

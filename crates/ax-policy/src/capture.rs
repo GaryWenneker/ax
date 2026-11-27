@@ -31,29 +31,32 @@ pub struct CaptureProposal {
     pub interview_instruction: String,
 }
 
-const DIRECTIVE_PREFIXES: &[&str] = &[
+/// Durable phrasing that marks a directive anywhere in a sentence.
+const PHRASE_PREFIXES: &[&str] = &[
     "je moet",
     "jij moet",
     "u moet",
     "moet altijd",
     "moet nooit",
-    "moet ",
     "gebruik altijd",
     "gebruik nooit",
-    "altijd ",
-    "nooit ",
-    "voortaan ",
-    "vanaf nu ",
+    "voortaan",
+    "vanaf nu",
     "you must",
     "you should always",
     "always use",
-    "always ",
     "never use",
-    "never ",
-    "don't ",
-    "do not ",
     "from now on",
 ];
+
+/// Single words that mark a directive only as the first word of a sentence.
+/// Inside a sentence they are ordinary language ("wat gedaan moet worden").
+const SENTENCE_START_PREFIXES: &[&str] = &[
+    "moet", "altijd", "nooit", "always", "never", "don't", "do not",
+];
+
+/// A phrase prefix right after one of these is narrative ("I never use that flag").
+const FIRST_PERSON: &[&str] = &["i", "ik"];
 
 const EXPLICIT_MARKERS: &[&str] = &["@rule", "#rule"];
 
@@ -293,28 +296,94 @@ fn extract_directive_body(prompt: &str) -> Option<(&'static str, String)> {
         }
     }
 
-    for prefix in DIRECTIVE_PREFIXES {
-        if let Some(pos) = lower.find(prefix) {
-            let rest = prompt[pos + prefix.len()..].trim();
-            // Short remainder ("… moet altijd werken") still counts — keep
-            // text from the prefix so the body stays ≥ 8 chars.
-            let body = if rest.len() >= 8 {
-                rest.to_string()
+    for sentence in sentences(prompt) {
+        if sentence.len() < 8 || sentence.ends_with('?') {
+            continue;
+        }
+        if let Some(prefix) = directive_prefix(sentence) {
+            let conf = if prefix.contains("moet") || prefix.contains("must") {
+                "high"
             } else {
-                prompt[pos..].trim().to_string()
+                "medium"
             };
-            if body.len() >= 8 {
-                let conf = if prefix.contains("moet") || prefix.contains("must") {
-                    "high"
-                } else {
-                    "medium"
-                };
-                return Some((conf, body));
-            }
+            return Some((conf, sentence.to_string()));
         }
     }
 
     None
+}
+
+/// The prompt split into trimmed sentences, list markers removed. A sentence
+/// ends at a newline, or at `.`, `!`, `?`, `;` or `:` followed by whitespace or
+/// the end of the prompt, so the dot in `.ax` or `v1.2` does not end one.
+fn sentences(prompt: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut chars = prompt.char_indices().peekable();
+    while let Some((idx, c)) = chars.next() {
+        let next_is_gap = chars.peek().is_none_or(|(_, n)| n.is_whitespace());
+        let end = match c {
+            '\n' => Some(idx),
+            '.' | '!' | '?' | ';' | ':' if next_is_gap => Some(idx + c.len_utf8()),
+            _ => None,
+        };
+        if let Some(end) = end {
+            out.push(&prompt[start..end]);
+            start = end;
+        }
+    }
+    out.push(&prompt[start..]);
+    out.into_iter()
+        .map(strip_list_marker)
+        .filter(|sentence| !sentence.is_empty())
+        .collect()
+}
+
+/// `- item`, `* item`, `• item`, `1. item` and `1) item` without the marker.
+fn strip_list_marker(sentence: &str) -> &str {
+    let sentence = sentence.trim();
+    for bullet in ["- ", "* ", "• "] {
+        if let Some(rest) = sentence.strip_prefix(bullet) {
+            return rest.trim();
+        }
+    }
+    let digits = sentence.chars().take_while(char::is_ascii_digit).count();
+    if digits > 0 {
+        if let Some(rest) = sentence[digits..]
+            .strip_prefix(". ")
+            .or_else(|| sentence[digits..].strip_prefix(") "))
+        {
+            return rest.trim();
+        }
+    }
+    sentence
+}
+
+/// The directive prefix this sentence carries, if any.
+fn directive_prefix(sentence: &str) -> Option<&'static str> {
+    let lower = sentence.to_lowercase();
+    let is_word = |c: char| c.is_alphanumeric();
+    let ends_word = |rest: &str| !rest.chars().next().is_some_and(is_word);
+    for prefix in PHRASE_PREFIXES {
+        let hit = lower.match_indices(prefix).any(|(at, _)| {
+            let before = lower[..at].trim_end();
+            let previous = before
+                .rsplit(|c: char| !is_word(c))
+                .next()
+                .unwrap_or_default();
+            !lower[..at].chars().next_back().is_some_and(is_word)
+                && ends_word(&lower[at + prefix.len()..])
+                && !FIRST_PERSON.contains(&previous)
+        });
+        if hit {
+            return Some(prefix);
+        }
+    }
+    SENTENCE_START_PREFIXES.iter().copied().find(|prefix| {
+        lower
+            .strip_prefix(prefix)
+            .is_some_and(|rest| ends_word(rest) && !rest.trim().is_empty())
+    })
 }
 
 fn format_rule_body(text: &str) -> String {
@@ -459,6 +528,65 @@ mod tests {
         let p = propose_rule_from_prompt("@rule: gebruik alleen Engels in commit messages", &[]);
         assert!(p.detected);
         assert_eq!(p.confidence, "high");
+    }
+
+    #[test]
+    fn d1_prefix_in_the_middle_of_a_sentence_is_not_a_directive() {
+        for prompt in [
+            "dus dat betekent dat je grondig onderzoek moet doen met meerdere testen.",
+            "jij weet het beste wat gedaan moet worden. dus ik vertrouw erop dat je de juiste dingen doet.",
+            "I never use that flag, why does it fail?",
+            "the build is always slow on this machine",
+        ] {
+            assert!(!propose_rule_from_prompt(prompt, &[]).detected, "{prompt}");
+        }
+    }
+
+    #[test]
+    fn d2_sentence_start_directive_keeps_its_own_words() {
+        let p = propose_rule_from_prompt("Fix the build. Never move, rename or delete .ax", &[]);
+        assert!(p.detected);
+        assert!(
+            p.body.ends_with("Never move, rename or delete .ax"),
+            "{}",
+            p.body
+        );
+        assert_eq!(p.suggested_id, "never-move-rename-or-delete-ax");
+        assert_eq!(p.confidence, "medium");
+    }
+
+    #[test]
+    fn d2_list_item_and_newline_start_a_sentence() {
+        let p =
+            propose_rule_from_prompt("Task:\n- do the thing\n- Always run cargo fmt first", &[]);
+        assert!(p.detected);
+        assert!(p.body.ends_with("Always run cargo fmt first"), "{}", p.body);
+    }
+
+    #[test]
+    fn d3_phrase_prefix_matches_inside_a_sentence_with_the_whole_sentence_as_body() {
+        let p = propose_rule_from_prompt("Thanks. The preflight moet altijd werken.", &[]);
+        assert!(p.detected);
+        assert!(
+            p.body.ends_with("The preflight moet altijd werken."),
+            "{}",
+            p.body
+        );
+        assert!(propose_rule_from_prompt("Always use pnpm", &[]).detected);
+        assert!(propose_rule_from_prompt("moet altijd werken", &[]).detected);
+    }
+
+    #[test]
+    fn d4_a_question_is_not_a_directive() {
+        for prompt in [
+            "Do not we already have a test for this?",
+            "Fine. Never mind the cache, right?",
+            "moet altijd alles groen zijn?",
+        ] {
+            assert!(!propose_rule_from_prompt(prompt, &[]).detected, "{prompt}");
+        }
+        // A question elsewhere does not hide a directive sentence.
+        assert!(propose_rule_from_prompt("Why is it red? Never skip the lint step.", &[]).detected);
     }
 
     #[test]
