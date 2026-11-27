@@ -1173,7 +1173,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
             .into_iter()
             .map(|r| r.id)
             .collect();
-        Some(finalize_proposal(proposal, &existing))
+        Some(finalize_proposal(proposal, &existing, ax.project_root()))
     } else {
         None
     };
@@ -2057,7 +2057,7 @@ async fn policy_capture(ax: &mut Ax, params: Value) -> Result<Value, String> {
         .into_iter()
         .map(|r| r.id)
         .collect();
-    let proposal = finalize_proposal(proposal, &existing);
+    let proposal = finalize_proposal(proposal, &existing, ax.project_root());
 
     Ok(json!({
         "ok": true,

@@ -292,9 +292,10 @@ pub fn agents_share_violations(project_root: &Path) -> Vec<String> {
     out
 }
 
-/// Point `.cursor/skills/<name>` at `.agents/skills/<name>` via symlink.
+/// Point `.cursor/skills/<name>` at `<agents folder>/skills/<name>` via symlink.
 pub fn link_cursor_skills_to_agents(project_root: &Path) -> Result<Vec<String>, String> {
-    let agents_skills = agents_dir(project_root).join(SKILLS_DIR);
+    let agents_name = crate::config::agents_dir_name(project_root);
+    let agents_skills = project_root.join(&agents_name).join(SKILLS_DIR);
     if !agents_skills.is_dir() {
         return Ok(vec![]);
     }
@@ -310,7 +311,7 @@ pub fn link_cursor_skills_to_agents(project_root: &Path) -> Result<Vec<String>, 
         let dest = cursor_skills.join(&name);
         let target = PathBuf::from("..")
             .join("..")
-            .join(AGENTS_DIR)
+            .join(&agents_name)
             .join(SKILLS_DIR)
             .join(&name);
         if dest.exists() || dest.symlink_metadata().is_ok() {
@@ -699,5 +700,27 @@ mod tests {
             std::fs::read_to_string(skill.join("SKILL.md")).unwrap()
         );
         assert!(link_cursor_skills_to_agents(p).unwrap().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cursor_skill_symlink_follows_configured_agents_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        std::fs::write(
+            p.join("ax.json"),
+            r#"{"policy":{"agentsDir":"team-policy"}}"#,
+        )
+        .unwrap();
+        let skill = p.join("team-policy/skills/foo");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(skill.join("SKILL.md"), "---\nname: foo\n---\n\nx\n").unwrap();
+        link_cursor_skills_to_agents(p).unwrap();
+        let dest = p.join(".cursor/skills/foo");
+        assert_eq!(
+            std::fs::read_link(&dest).unwrap(),
+            PathBuf::from("../../team-policy/skills/foo")
+        );
+        assert!(dest.join("SKILL.md").is_file(), "the link must resolve");
     }
 }

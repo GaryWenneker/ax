@@ -311,7 +311,7 @@ pub fn remove_ax_policy_file_sources(project_root: &Path, candidates: &[MigrateC
 }
 
 pub fn migrate_interview_instruction() -> String {
-    "For each candidate in order: ask every question in questions[]. Then run `ax policy storage database --yes` to import all with parsed defaults and delete `.agents/` / `.ax/policy/` files. Use `--keep-files` to leave markdown on disk. `.cursor/` bootstrap files are never deleted.".into()
+    "For each candidate in order: ask every question in questions[]. Then run `ax policy storage database --yes` to import all with parsed defaults and delete the agents folder (`policy.agentsDir`, `.agents` by default) and `.ax/policy/` files. Use `--keep-files` to leave markdown on disk. `.cursor/` bootstrap files are never deleted.".into()
 }
 
 pub fn migrate_rule_questions(doc: &PolicyRuleDoc, source: &str) -> Vec<CaptureInterviewQuestion> {

@@ -55,7 +55,8 @@ pub async fn guard_operation_with_extra_skills(
         }
     };
     let rel_lc = rel.to_lowercase();
-    let require_skill_exempt = is_require_skill_exempt(&rel);
+    let require_skill_exempt =
+        is_require_skill_exempt(&rel, &crate::config::agents_dir_name(project_root));
 
     for rule in rules.iter() {
         if PolicyLevel::parse(&rule.level) != Some(PolicyLevel::Critical) {
@@ -449,14 +450,16 @@ fn any_glob_matches(patterns: &[String], rel_path: &str) -> bool {
     patterns.iter().any(|p| path_matches_glob(p, rel_path))
 }
 
-/// Policy and template paths stay writable so seed/index can repair a missing skill.
-fn is_require_skill_exempt(rel: &str) -> bool {
+/// Policy folders (the configured agents folder and the legacy `.ax/policy`)
+/// stay writable so seed/index can repair a missing skill.
+fn is_require_skill_exempt(rel: &str, agents_name: &str) -> bool {
     let r = rel.replace('\\', "/");
+    let agents_prefix = format!("{agents_name}/");
+    let nested_agents = format!("/{agents_name}/");
     r.starts_with(".ax/policy/")
         || r.contains("/.ax/policy/")
-        || r.starts_with(".agents/")
-        || r.contains("/.agents/")
-        || r.starts_with("crates/ax-policy/templates/")
+        || r.starts_with(&agents_prefix)
+        || r.contains(&nested_agents)
 }
 
 fn skill_satisfies_require(skills: &[crate::types::PolicySkillRow], name: &str) -> bool {
@@ -946,6 +949,39 @@ mod tests {
         .await
         .unwrap();
         assert!(result.allowed, "{:?}", result.violations);
+    }
+
+    #[tokio::test]
+    async fn require_skill_exempts_the_configured_agents_dir_only() {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        insert_rule(
+            &pool,
+            "old-coder-mandatory",
+            "[]",
+            "guard: require-skill: \"old-coder\"\n",
+        )
+        .await;
+        let root = dir.path();
+        std::fs::write(
+            root.join("ax.json"),
+            r#"{"policy":{"agentsDir":"team-policy"}}"#,
+        )
+        .unwrap();
+        let skill = root.join("team-policy/skills/old-coder/SKILL.md");
+        let result = guard_operation(&pool, root, &skill, GuardOp::Write, Some(b"---\n---\n"))
+            .await
+            .unwrap();
+        assert!(
+            result.allowed,
+            "the configured agents folder must stay writable: {:?}",
+            result.violations
+        );
+        // A repository-specific template folder is an ordinary project path.
+        let template = root.join("crates/ax-policy/templates/rules/x.mdc");
+        let result = guard_operation(&pool, root, &template, GuardOp::Write, Some(b"x"))
+            .await
+            .unwrap();
+        assert!(!result.allowed, "templates/ is not a policy folder");
     }
 
     async fn pool_with_auth_rule() -> (TempDir, SqlitePool) {

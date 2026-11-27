@@ -217,10 +217,12 @@ pub fn interview_instruction_text() -> String {
     "Ask the user each question in plain language before save. Apply their answers to rule.frontmatter and rule.body. Save only after explicit yes — persisted to ax.db in database mode (not a disk-only file).".into()
 }
 
-/// Apply unique id resolution and refresh preview fields.
+/// Apply unique id resolution and refresh preview fields. The preview path
+/// names the project's agents folder (`policy.agentsDir`, `.agents` by default).
 pub fn finalize_proposal(
     mut proposal: CaptureProposal,
     existing_ids: &[String],
+    project_root: &std::path::Path,
 ) -> CaptureProposal {
     if !proposal.detected {
         return proposal;
@@ -229,9 +231,12 @@ pub fn finalize_proposal(
     if unique_id != proposal.suggested_id {
         proposal.frontmatter.id = unique_id.clone();
         proposal.suggested_id = unique_id.clone();
-        proposal.preview_path = format!(".agents/rules/{unique_id}.mdc");
         proposal.preview = crate::parse::serialize_rule(&proposal.frontmatter, &proposal.body);
     }
+    proposal.preview_path = format!(
+        "{}/rules/{unique_id}.mdc",
+        crate::config::agents_dir_name(project_root)
+    );
     proposal.questions = capture_interview_questions(&proposal);
     proposal
 }
@@ -425,6 +430,27 @@ fn globs_from_files(open_files: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finalized_preview_path_uses_the_configured_agents_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = propose_rule_from_prompt("you must always run the linter first", &[]);
+        let default = finalize_proposal(p.clone(), &[], dir.path());
+        assert!(default.preview_path.starts_with(".agents/rules/"));
+        std::fs::write(
+            dir.path().join("ax.json"),
+            r#"{"policy":{"agentsDir":"team-policy"}}"#,
+        )
+        .unwrap();
+        let id = p.suggested_id.clone();
+        let renamed = finalize_proposal(p.clone(), &[id], dir.path());
+        assert_eq!(
+            renamed.preview_path,
+            format!("team-policy/rules/{}.mdc", renamed.suggested_id)
+        );
+        let same = finalize_proposal(p, &[], dir.path());
+        assert!(same.preview_path.starts_with("team-policy/rules/"));
+    }
 
     #[test]
     fn detects_dutch_directive() {

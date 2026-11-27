@@ -1541,7 +1541,7 @@ async fn capture_prompt(
             Ok(rules) => rules.into_iter().map(|r| r.id).collect::<Vec<_>>(),
             Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
         };
-        proposal = finalize_proposal(proposal, &existing);
+        proposal = finalize_proposal(proposal, &existing, &ws.project_root);
 
         capture_propose_response(proposal)
     }

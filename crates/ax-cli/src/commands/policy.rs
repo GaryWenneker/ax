@@ -1206,7 +1206,7 @@ pub async fn run_capture(
         .into_iter()
         .map(|r| r.id)
         .collect();
-    proposal = ax_policy::finalize_proposal(proposal, &existing);
+    proposal = ax_policy::finalize_proposal(proposal, &existing, &root);
 
     if !yes {
         if json {
