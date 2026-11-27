@@ -1,4 +1,5 @@
 import MobileControls from '../components/ui/MobileControls';
+import { clickableRowProps } from '../lib/clickableRow';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { useLive, useNewKeys } from '../lib/useLive';
@@ -360,7 +361,7 @@ function RecentCallsTable({
             ]
               .filter(Boolean)
               .join(' ')}
-            onClick={() => onSelect(r)}
+            {...clickableRowProps(() => onSelect(r), { selected: selectedId === r.id })}
             title="Open token view"
           >
             <td className="mono">{fmtTs(r.created_at)}</td>

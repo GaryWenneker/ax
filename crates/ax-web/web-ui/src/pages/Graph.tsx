@@ -1,4 +1,5 @@
 import MobileControls from '../components/ui/MobileControls';
+import { clickableRowProps } from '../lib/clickableRow';
 import { PageHero } from '../components/ui/PageLayout';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -1737,7 +1738,9 @@ export default function GraphPage() {
                   key={c.id}
                   className={`graph-legend-row${communityFilter === String(c.id) ? ' active' : ''}`}
                   style={{ cursor: 'pointer' }}
-                  onClick={() => setCommunityFilter((prev) => (prev === String(c.id) ? '' : String(c.id)))}
+                  role="button"
+                  aria-pressed={communityFilter === String(c.id)}
+                  {...clickableRowProps(() => setCommunityFilter((prev) => (prev === String(c.id) ? '' : String(c.id))))}
                 >
                   <span className="graph-legend-swatch" style={{ background: c.color }} />
                   <span className="graph-legend-label">{c.label}</span>
