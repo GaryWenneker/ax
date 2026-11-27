@@ -1221,24 +1221,12 @@ pub async fn capture_graph_episodes(pool: &SqlitePool) -> Result<usize, AxError>
     // The vector table is created outside the transaction. sqlite-vec rejects that
     // create inside an open write transaction.
     ensure_vec_table(pool).await?;
-    let mut conn = pool.acquire().await.map_err(|e| db_err_pub(pool, e))?;
-    sqlx::query("BEGIN")
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| db_err_pub(pool, e))?;
-    match capture_graph_episodes_on(&mut conn).await {
-        Ok(written) => {
-            sqlx::query("COMMIT")
-                .execute(&mut *conn)
-                .await
-                .map_err(|e| db_err_pub(pool, e))?;
-            Ok(written)
-        }
-        Err(err) => {
-            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
-            Err(err)
-        }
-    }
+    // sqlx's Transaction rolls back when it is dropped, so a cancelled capture
+    // never returns its pooled connection with the transaction still open.
+    let mut tx = pool.begin().await.map_err(|e| db_err_pub(pool, e))?;
+    let written = capture_graph_episodes_on(&mut tx).await?;
+    tx.commit().await.map_err(|e| db_err_pub(pool, e))?;
+    Ok(written)
 }
 
 async fn write_graph_episode(

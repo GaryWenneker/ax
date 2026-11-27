@@ -1957,3 +1957,54 @@ async fn graph_episode_accepts_fingerprints_that_still_carry_line_numbers() {
     assert_eq!(stored, "run|function|src/run.rs|fn run(a: u8 | u16)");
     db.close().await;
 }
+
+/// A capture that is cancelled mid-loop must not hand its pooled connection
+/// back while it is still inside the write transaction.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_graph_capture_leaves_no_open_transaction() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    let mut tx = db.pool().begin().await.unwrap();
+    for n in 0..4000 {
+        sqlx::query(
+            "INSERT INTO nodes (id, kind, name, qualified_name, file_path, language, start_line, end_line, start_column, end_column, signature, updated_at)
+             VALUES (?, 'function', ?, ?, 'src/cancel.rs', 'rust', 1, 2, 0, 1, 'fn old()', 1)",
+        )
+        .bind(format!("sym-{n}"))
+        .bind(format!("fn_{n}"))
+        .bind(format!("cancel::fn_{n}"))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
+    assert_eq!(capture_graph_episodes(db.pool()).await.unwrap(), 0);
+    sqlx::query("UPDATE nodes SET signature = 'fn new()'")
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    let single = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(dir.path().join("ax.db"))
+                .busy_timeout(std::time::Duration::from_secs(5)),
+        )
+        .await
+        .unwrap();
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_millis(150),
+        capture_graph_episodes(&single),
+    )
+    .await;
+    assert!(outcome.is_err(), "capture finished before the timeout");
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let mut conn = single.acquire().await.unwrap();
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *conn)
+        .await
+        .expect("the reused connection is still inside the cancelled transaction");
+    sqlx::query("ROLLBACK").execute(&mut *conn).await.unwrap();
+}
