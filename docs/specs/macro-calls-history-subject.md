@@ -39,15 +39,17 @@ Scenario: M3 a method or path call
   Then  there are Calls references "name" and "rate"
 
 Scenario: M4 what is not a call
-  Given println!("{}", count) and vec![a, b] and matches!(x, Some(y) if y > 1)
-  Then  "count", "a", "b", "x", "y" get no Calls reference
+  Given println!("{}", count) and vec![a, b] and matches!(x, 1 | 2)
+  Then  "count", "a", "b", "x" get no Calls reference
   And   a macro name ("println", "vec", "matches") gets no Calls reference from this rule
   And   an identifier after the keyword `fn` gets none (an item defined inside a macro)
 
 Scenario: M5 the reference is attributed to the enclosing function, at the call's line
 ```
 
-The existing filters for noise and external callees apply unchanged. `macro_rules!`
+The existing filters for noise and external callees apply unchanged, and as in parsed code
+a tuple constructor such as `Some(x)` counts as a call. A call with a turbofish
+(`parse::<u32>(s)`) is not found. `macro_rules!`
 definitions are a different node kind and are not walked.
 
 Because extractor output changes, `EXTRACTION_VERSION` goes from 7 to 8.
