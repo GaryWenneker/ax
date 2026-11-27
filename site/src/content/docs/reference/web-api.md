@@ -96,6 +96,14 @@ The Microsoft sign-in routes follow the same share-token and sign-in rules as th
 
 See [Remote Policy Share](/guides/policy-sharing/).
 
+## Specs
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/specs` | List specs and imported plans |
+
+The list imports finished plans from the plan folders on disk at most once every 30 seconds. `GET /api/specs?refresh=1` (or `refresh=true`) rescans the folders first; the Specs page sends it. A read-only Command Center lists what is stored without importing.
+
 ## Memory and links
 
 | Method | Path | Purpose |

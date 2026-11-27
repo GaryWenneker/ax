@@ -33,7 +33,7 @@ Open **Rules** or **Skills**, select an item to read it, and edit only when you 
 - **Document (center):** the approved text, editing under **Content** (Markdown, WYSIWYG, Split, and Diff), and the version list under **History**.
 - **Context & evidence (right):** the sessions bound to the open document, each with Logging and Memory links. Evidence that is not indexed yet says so, instead of showing an empty history.
 
-The list imports finished plans from the plan folders (`.cursor/plans`, `.claude/plans` and the like) at most once every 30 seconds; `GET /api/specs?refresh=1` rescans at once. A read-only Command Center (`ax share`) lists what is stored without importing, and its viewers can still open the tree, provenance and plan comparisons.
+The Specs page imports finished plans from the plan folders (`.cursor/plans`, `.claude/plans` and the like) each time it opens or saves, so a plan written on disk shows up after a reload. Other panels that list specs reuse an import from the last 30 seconds. A read-only Command Center (`ax share`) lists what is stored without importing, and its viewers can still open the tree, provenance and plan comparisons.
 
 **All documents** switches to the flat list. Below 1280 px the context panel becomes a drawer, and on a phone one pane shows at a time.
 
