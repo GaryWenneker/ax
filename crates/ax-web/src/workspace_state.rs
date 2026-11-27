@@ -401,6 +401,7 @@ impl WorkspaceBundle {
         }
         self.graph_pool.close().await;
         self.policy.store.pool().close().await;
+        crate::node_tracker::forget(&self.db_path);
         self.closed = true;
     }
 }
