@@ -80,135 +80,164 @@ pub async fn auto_attach_memory(pool: &SqlitePool, memory_id: &str) -> Result<us
     Ok(written)
 }
 
-/// Flag anchors whose node disappeared or whose body hash drifted.
+/// An anchor is stale when the version it points at has a different body hash than the
+/// node's live (open) version, or when the node has no open version any more.
+const ANCHOR_DRIFTED: &str = "EXISTS (
+        SELECT 1 FROM graph_node_versions s
+        WHERE s.node_key = memory_anchors.node_key
+          AND s.version = memory_anchors.version
+          AND s.body_hash IS NOT (
+              SELECT l.body_hash FROM graph_node_versions l
+              WHERE l.node_key = memory_anchors.node_key AND l.valid_to IS NULL
+              ORDER BY l.version DESC LIMIT 1))";
+
+const NODE_EXISTS: &str = "EXISTS (SELECT 1 FROM nodes WHERE nodes.id = memory_anchors.node_key)";
+
+/// Bring the `orphan` and `stale` flags of every anchor in line with the graph.
+///
+/// Set-based: a few statements in one transaction, whatever the number of anchors.
+/// Flags go both ways: an anchor whose node comes back (file restored, branch switch)
+/// loses `orphan`, and one whose live body hash matches again loses `stale`.
+/// Returns `(newly_stale, newly_orphaned)`: anchors flagged by this run.
 pub async fn refresh_anchor_flags(pool: &SqlitePool) -> Result<(usize, usize), AxError> {
-    let anchors: Vec<(String, String, i64)> =
-        sqlx::query_as("SELECT memory_id, node_key, version FROM memory_anchors")
-            .fetch_all(pool)
-            .await
-            .map_err(|e| db_err(pool, e))?;
-    let mut stale = 0usize;
-    let mut orphan = 0usize;
-    for (memory_id, node_key, version) in anchors {
-        let node_exists: Option<i64> =
-            sqlx::query_scalar("SELECT 1 FROM nodes WHERE id = ? LIMIT 1")
-                .bind(&node_key)
-                .fetch_optional(pool)
-                .await
-                .map_err(|e| db_err(pool, e))?;
-        if node_exists.is_none() {
-            sqlx::query(
-                "UPDATE memory_anchors SET orphan = 1 WHERE memory_id = ? AND node_key = ? AND version = ?",
-            )
-            .bind(&memory_id)
-            .bind(&node_key)
-            .bind(version)
-            .execute(pool)
-            .await
-            .map_err(|e| db_err(pool, e))?;
-            orphan += 1;
-            continue;
-        }
-        let stored: Option<String> = sqlx::query_scalar(
-            "SELECT body_hash FROM graph_node_versions WHERE node_key = ? AND version = ?",
-        )
-        .bind(&node_key)
-        .bind(version)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| db_err(pool, e))?;
-        let live: Option<String> = sqlx::query_scalar(
-            "SELECT body_hash FROM graph_node_versions
-             WHERE node_key = ? AND valid_to IS NULL
-             ORDER BY version DESC LIMIT 1",
-        )
-        .bind(&node_key)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| db_err(pool, e))?;
-        let is_stale = match (stored, live) {
-            (Some(a), Some(b)) => a != b,
-            (Some(_), None) => true,
-            _ => false,
-        };
-        if is_stale {
-            sqlx::query(
-                "UPDATE memory_anchors SET stale = 1 WHERE memory_id = ? AND node_key = ? AND version = ?",
-            )
-            .bind(&memory_id)
-            .bind(&node_key)
-            .bind(version)
-            .execute(pool)
-            .await
-            .map_err(|e| db_err(pool, e))?;
-            stale += 1;
-        }
-    }
-    Ok((stale, orphan))
+    let mut tx = pool.begin().await.map_err(|e| db_err(pool, e))?;
+    let orphan = sqlx::query(&format!(
+        "UPDATE memory_anchors SET orphan = 1 WHERE orphan = 0 AND NOT {NODE_EXISTS}"
+    ))
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| db_err(pool, e))?
+    .rows_affected();
+    sqlx::query(&format!(
+        "UPDATE memory_anchors SET orphan = 0 WHERE orphan <> 0 AND {NODE_EXISTS}"
+    ))
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| db_err(pool, e))?;
+    let stale = sqlx::query(&format!(
+        "UPDATE memory_anchors SET stale = 1
+         WHERE stale = 0 AND {NODE_EXISTS} AND {ANCHOR_DRIFTED}"
+    ))
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| db_err(pool, e))?
+    .rows_affected();
+    sqlx::query(&format!(
+        "UPDATE memory_anchors SET stale = 0
+         WHERE stale <> 0 AND {NODE_EXISTS} AND NOT {ANCHOR_DRIFTED}"
+    ))
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| db_err(pool, e))?;
+    tx.commit().await.map_err(|e| db_err(pool, e))?;
+    Ok((stale as usize, orphan as usize))
 }
 
-/// Move anchors when a node body hash appears under a new key (rename/move).
+/// Rename pairs read per pass.
+const RENAME_PAGE: usize = 500;
+
+/// Move anchors from a removed symbol to the symbol that replaced it (rename or move).
+///
+/// A pair counts as a rename only when all of these hold:
+/// - the old key has anchors, an open version, and no row in `nodes` any more;
+/// - the new key is in `nodes`, has the same kind and live body hash, and its first
+///   version is not older than the old key's live version (it appeared afterwards);
+/// - the match is unique both ways: one candidate for the old key, one old key for
+///   the new key. Same-signature symbols elsewhere make the pair ambiguous; those
+///   anchors are left alone and later flagged as orphans.
+///
+/// The old key's open version is closed whether or not the move went ahead, so a
+/// removed symbol leaves the join after one pass.
 pub async fn reanchor_renames(pool: &SqlitePool) -> Result<usize, AxError> {
-    let pairs: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT a.node_key, b.node_key, a.body_hash
+    let pairs: Vec<(String, String)> = sqlx::query_as(
+        "SELECT a.node_key, b.node_key
          FROM graph_node_versions a
          JOIN graph_node_versions b
-           ON a.body_hash = b.body_hash AND a.node_key < b.node_key
+           ON a.body_hash = b.body_hash AND a.kind = b.kind AND a.node_key <> b.node_key
          WHERE a.valid_to IS NULL AND b.valid_to IS NULL
-         LIMIT 500",
+           AND NOT EXISTS (SELECT 1 FROM nodes WHERE id = a.node_key)
+           AND EXISTS (SELECT 1 FROM nodes WHERE id = b.node_key)
+           AND EXISTS (SELECT 1 FROM memory_anchors m WHERE m.node_key = a.node_key)
+           AND (SELECT MIN(f.valid_from) FROM graph_node_versions f
+                WHERE f.node_key = b.node_key) >= a.valid_from
+         ORDER BY a.node_key, b.node_key
+         LIMIT ?",
     )
+    .bind(RENAME_PAGE as i64)
     .fetch_all(pool)
     .await
     .map_err(|e| db_err(pool, e))?;
+
+    // A full page may cut the last old key's candidates short; leave it for the next pass.
+    let truncated_last = (pairs.len() == RENAME_PAGE)
+        .then(|| pairs.last().map(|(old, _)| old.clone()))
+        .flatten();
+    let mut per_old: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
+    let mut per_new: std::collections::HashMap<&str, usize> = Default::default();
+    for (old_key, new_key) in &pairs {
+        if truncated_last.as_deref() == Some(old_key.as_str()) {
+            continue;
+        }
+        per_old.entry(old_key).or_default().push(new_key);
+        *per_new.entry(new_key).or_default() += 1;
+    }
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+
     let mut moved = 0usize;
-    for (old_key, new_key, _hash) in pairs {
-        let old_exists: Option<i64> =
-            sqlx::query_scalar("SELECT 1 FROM nodes WHERE id = ? LIMIT 1")
-                .bind(&old_key)
-                .fetch_optional(pool)
-                .await
-                .map_err(|e| db_err(pool, e))?;
-        let new_exists: Option<i64> =
-            sqlx::query_scalar("SELECT 1 FROM nodes WHERE id = ? LIMIT 1")
-                .bind(&new_key)
-                .fetch_optional(pool)
-                .await
-                .map_err(|e| db_err(pool, e))?;
-        // Rename: old gone, new present — or both present with equal body.
-        if new_exists.is_none() {
-            continue;
+    for (old_key, candidates) in per_old {
+        let unique = match candidates.as_slice() {
+            [new_key] if per_new.get(new_key) == Some(&1) => Some(*new_key),
+            _ => None,
+        };
+        if let Some(new_key) = unique {
+            moved += move_anchors(pool, old_key, new_key).await?;
         }
-        if old_exists.is_some() && old_key == new_key {
-            continue;
+        sqlx::query(
+            "UPDATE graph_node_versions SET valid_to = ? WHERE node_key = ? AND valid_to IS NULL",
+        )
+        .bind(now_ms)
+        .bind(old_key)
+        .execute(pool)
+        .await
+        .map_err(|e| db_err(pool, e))?;
+    }
+    Ok(moved)
+}
+
+async fn move_anchors(pool: &SqlitePool, old_key: &str, new_key: &str) -> Result<usize, AxError> {
+    let anchors: Vec<(String, i64)> =
+        sqlx::query_as("SELECT memory_id, version FROM memory_anchors WHERE node_key = ?")
+            .bind(old_key)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| db_err(pool, e))?;
+    let mut moved = 0usize;
+    for (memory_id, version) in anchors {
+        let inserted = anchor_memory(pool, &memory_id, new_key, version).await?;
+        sqlx::query(
+            "DELETE FROM memory_anchors WHERE memory_id = ? AND node_key = ? AND version = ?",
+        )
+        .bind(&memory_id)
+        .bind(old_key)
+        .bind(version)
+        .execute(pool)
+        .await
+        .map_err(|e| db_err(pool, e))?;
+        if inserted {
+            moved += 1;
         }
-        let anchors: Vec<(String, i64)> =
-            sqlx::query_as("SELECT memory_id, version FROM memory_anchors WHERE node_key = ?")
-                .bind(&old_key)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| db_err(pool, e))?;
-        for (memory_id, version) in anchors {
-            let inserted = anchor_memory(pool, &memory_id, &new_key, version).await?;
-            if inserted {
-                sqlx::query(
-                    "DELETE FROM memory_anchors WHERE memory_id = ? AND node_key = ? AND version = ?",
-                )
-                .bind(&memory_id)
-                .bind(&old_key)
-                .bind(version)
-                .execute(pool)
-                .await
-                .map_err(|e| db_err(pool, e))?;
-                let _ = crate::store::link_memories(
-                    pool,
-                    &format!("node:{old_key}"),
-                    &format!("node:{new_key}"),
-                    "renamed",
-                )
-                .await;
-                moved += 1;
-            }
-        }
+    }
+    if moved > 0 {
+        let _ = crate::store::link_memories(
+            pool,
+            &format!("node:{old_key}"),
+            &format!("node:{new_key}"),
+            "renamed",
+        )
+        .await;
     }
     Ok(moved)
 }
