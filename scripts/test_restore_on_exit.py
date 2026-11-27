@@ -145,6 +145,21 @@ printf '%s' "$AX_GUARD_TMP" > "{marker}"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(Path(marker.read_text()).exists())
 
+    def test_runs_the_cleanup_hook_on_exit(self) -> None:
+        marker = self.dir / "cleaned"
+        result = self._run(f'ax_guard_cleanup() {{ touch "{marker}"; }}\nfalse\n')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(marker.exists())
+
+    def test_restored_file_gets_a_fresh_mtime(self) -> None:
+        old = time.time() - 3600
+        os.utime(self.target, (old, old))
+        result = self._run(f'ax_guard_file "{self.target}"\necho mutant > "{self.target}"\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.target.read_text(), ORIGINAL)
+        # cargo decides by mtime; an old mtime would keep the mutant build.
+        self.assertGreater(self.target.stat().st_mtime, old + 60)
+
     def test_restores_several_files_and_keeps_exit_code(self) -> None:
         other = self.dir / "other.rs"
         other.write_text("second\n")

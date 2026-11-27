@@ -10,8 +10,12 @@
 # AX_GUARD_TMP is a scratch directory for the script's own backups; it is
 # removed on exit, so nothing such as a `*.orig` file is left in the tree.
 #
+# A restored file gets a fresh mtime, so cargo rebuilds it instead of reusing
+# a build of the mutant.
+#
 # This file sets the EXIT, INT, TERM and HUP traps. A script that sources it
-# must not replace them.
+# must not replace them; it may define a function `ax_guard_cleanup`, which
+# runs on exit before the files are restored (for example to stop a server).
 
 _AX_GUARD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ax-guard.XXXXXX")"
 _AX_GUARD_COUNT=0
@@ -40,7 +44,7 @@ ax_restore_guarded() {
   while [ "$i" -lt "$_AX_GUARD_COUNT" ]; do
     path="$(cat "$_AX_GUARD_DIR/$i.path")"
     if ! cmp -s "$_AX_GUARD_DIR/$i.orig" "$path"; then
-      cp -p "$_AX_GUARD_DIR/$i.orig" "$path" || echo "ERROR: could not restore $path" >&2
+      cp "$_AX_GUARD_DIR/$i.orig" "$path" || echo "ERROR: could not restore $path" >&2
       echo "restored $path" >&2
     fi
     i=$((i + 1))
@@ -50,6 +54,9 @@ ax_restore_guarded() {
 _ax_guard_on_exit() {
   local status=$?
   trap - EXIT INT TERM HUP
+  if declare -F ax_guard_cleanup >/dev/null; then
+    ax_guard_cleanup || true
+  fi
   ax_restore_guarded
   rm -rf "$_AX_GUARD_DIR"
   exit "$status"
