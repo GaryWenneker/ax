@@ -104,6 +104,8 @@ Lines go to:
 
 When a Cursor session id is known, lines include `session=<uuid>` for tighter correlation.
 
+CLI tool lines (`[ax] inbound`, `outbound preview`, `error`) are redacted before they are written: string arguments under keys such as `password`, `token`, `secret` or `api_key` become `[redacted]`, and `key=value` secrets, `sk-…` and `AKIA…` keys and long key-like runs inside text are replaced the same way.
+
 The audit reads only the dated files that can overlap what it checks: for a rolling window, the files from the day before the window start onward; for `--session`, the files from the day before the transcript's first timed event (all files when the transcript has no timestamps). Older files stay on disk and are not pruned automatically; remove them by hand if you do not want to keep the prompts they contain.
 
 ## 2. Logging page (`ax web` → Logging)

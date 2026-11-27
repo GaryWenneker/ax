@@ -212,41 +212,12 @@ fn from_json_array(raw: &str) -> Vec<String> {
     serde_json::from_str(raw).unwrap_or_default()
 }
 
-fn looks_like_secret(token: &str) -> bool {
-    let lower = token.to_ascii_lowercase();
-    if lower.contains("password=") || lower.contains("token=") || lower.contains("api_key=") {
-        return true;
-    }
-    if token.starts_with("sk-") && token.len() > 20 {
-        return true;
-    }
-    token.len() >= 32
-        && token
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-
 fn redact_summary(summary: &str) -> String {
-    let mut out = String::new();
-    for token in summary.split_whitespace() {
-        if !out.is_empty() {
-            out.push(' ');
-        }
-        if let Some((k, _)) = token.split_once('=') {
-            let key = k.to_ascii_lowercase();
-            if key.contains("password") || key.contains("token") || key.contains("secret") {
-                out.push_str(k);
-                out.push_str("=[redacted]");
-                continue;
-            }
-        }
-        if looks_like_secret(token) {
-            out.push_str("[redacted]");
-        } else {
-            out.push_str(token);
-        }
-    }
-    out.chars().take(500).collect()
+    let single_line = summary.split_whitespace().collect::<Vec<_>>().join(" ");
+    crate::redact::redact_text(&single_line)
+        .chars()
+        .take(500)
+        .collect()
 }
 
 /// Record one activity event. Idempotent on `(project_id, idempotency_key)`.

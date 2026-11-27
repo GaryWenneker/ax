@@ -20,6 +20,7 @@ mod period;
 mod pricing;
 mod pricing_fetch;
 mod pricing_sync;
+mod redact;
 pub mod replay_validation;
 pub mod replication;
 mod reuse_cache;

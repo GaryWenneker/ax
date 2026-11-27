@@ -12,6 +12,7 @@ use serde_json::Value;
 
 use crate::log_brand::format_ax_tagged;
 use crate::mcp_verbose_log::append_verbose_log;
+use crate::redact::{redact_json, redact_text};
 
 const ARGS_FIELD_MAX: usize = 3_072;
 const PREVIEW_MAX: usize = 160;
@@ -62,9 +63,10 @@ impl Drop for ToolTrace {
     }
 }
 
-/// Append `inbound tool=… args=…` (CLI brand).
+/// Append `inbound tool=… args=…` (CLI brand). Secrets in the arguments are
+/// redacted before the line is written.
 pub fn log_tool_inbound(project_root: Option<&Path>, tool: &str, args: &Value) {
-    let rendered = truncate_chars(&compact_json(args), ARGS_FIELD_MAX);
+    let rendered = truncate_chars(&compact_json(&redact_json(args)), ARGS_FIELD_MAX);
     let line = format_ax_tagged(format!("inbound tool={tool} args={rendered}"));
     append_verbose_log(&[line], project_root);
 }
@@ -75,7 +77,7 @@ pub fn log_tool_outbound(project_root: Option<&Path>, tool: &str, duration_ms: i
     let mut lines = vec![format_ax_tagged(format!(
         "outbound tool={tool} mode=lean text_chars={text_chars} structured=false duration_ms={duration_ms}"
     ))];
-    let preview = truncate_chars(text, PREVIEW_MAX);
+    let preview = truncate_chars(&redact_text(text), PREVIEW_MAX);
     if !preview.is_empty() {
         lines.push(format_ax_tagged(format!(
             "outbound preview tool={tool} text={preview}"
@@ -86,7 +88,7 @@ pub fn log_tool_outbound(project_root: Option<&Path>, tool: &str, duration_ms: i
 
 /// Append `error tool=…`.
 pub fn log_tool_error(project_root: Option<&Path>, tool: &str, message: &str, duration_ms: i64) {
-    let msg = truncate_chars(message, ARGS_FIELD_MAX);
+    let msg = truncate_chars(&redact_text(message), ARGS_FIELD_MAX);
     let line = format_ax_tagged(format!(
         "error tool={tool} message={msg} duration_ms={duration_ms}"
     ));
@@ -183,6 +185,38 @@ mod tests {
         assert!(text.contains("inbound tool=ax_node"));
         assert!(text.contains("error tool=ax_node"));
         assert!(text.contains("message=missing"));
+    }
+
+    #[test]
+    fn secrets_in_arguments_previews_and_errors_are_redacted() {
+        let dir = tempfile_dir();
+        fs::create_dir_all(dir.join(".ax")).unwrap();
+
+        ToolTrace::begin(
+            Some(&dir),
+            "ax_remember",
+            &json!({
+                "body": "deploy with TOKEN=hunter2secret now",
+                "api_key": "plain-key-value",
+                "note": "sk-abcdefghijklmnopqrstuvwxyz0123"
+            }),
+        )
+        .finish_ok("stored key sk-zyxwvutsrqponmlkjihgfedcba9876");
+        ToolTrace::begin(Some(&dir), "ax_node", &json!({"symbol": "x"}))
+            .finish_err("bad password=letmein123");
+
+        let text = read_today_log(&dir);
+        for secret in [
+            "hunter2secret",
+            "plain-key-value",
+            "sk-abcdefghijklmnopqrstuvwxyz0123",
+            "sk-zyxwvutsrqponmlkjihgfedcba9876",
+            "letmein123",
+        ] {
+            assert!(!text.contains(secret), "{secret} leaked: {text}");
+        }
+        assert!(text.contains("deploy with TOKEN=[redacted] now"), "{text}");
+        assert!(text.contains("inbound tool=ax_remember"), "{text}");
     }
 
     fn tempfile_dir() -> PathBuf {
