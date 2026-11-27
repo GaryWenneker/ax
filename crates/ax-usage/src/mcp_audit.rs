@@ -553,7 +553,8 @@ pub fn find_cursor_transcripts(project_root: &Path) -> Vec<PathBuf> {
         .join(&slug)
         .join("agent-transcripts");
     if !dir.is_dir() {
-        // Fallback: scan all projects for matching slug substring
+        // Fallback: a project folder whose name normalises to the same slug
+        // (case or punctuation differences only).
         return find_transcripts_fallback(&home.join(".cursor").join("projects"), &slug);
     }
     collect_transcripts(&dir)
@@ -572,8 +573,11 @@ fn find_transcripts_fallback(projects: &Path, slug: &str) -> Vec<PathBuf> {
         if !entry.file_type().is_dir() {
             continue;
         }
+        if entry.depth() == 0 {
+            continue;
+        }
         let name = entry.file_name().to_string_lossy();
-        if name.contains(slug) || slug.contains(name.as_ref()) {
+        if cursor_project_slug(Path::new(name.as_ref())) == slug {
             let transcripts = entry.path().join("agent-transcripts");
             if transcripts.is_dir() {
                 best.extend(collect_transcripts(&transcripts));
@@ -590,18 +594,20 @@ fn collect_transcripts(dir: &Path) -> Vec<PathBuf> {
         .filter(|e| e.file_type().is_file())
         .filter(|e| {
             let p = e.path();
-            let s = p.to_string_lossy();
-            s.contains("agent-transcripts")
-                && !s.contains("subagents")
-                && p.extension().and_then(|x| x.to_str()) == Some("jsonl")
-                && {
-                    let parent = p
-                        .parent()
-                        .and_then(|x| x.file_name())
-                        .and_then(|n| n.to_str());
-                    let stem = p.file_stem().and_then(|n| n.to_str());
-                    parent.is_some() && parent == stem
-                }
+            // Subagent chats live in a `subagents` folder below the
+            // transcripts folder; names above it (the project slug) do not count.
+            let in_subagents = p.strip_prefix(dir).is_ok_and(|rel| {
+                rel.components()
+                    .any(|c| c.as_os_str() == std::ffi::OsStr::new("subagents"))
+            });
+            !in_subagents && p.extension().and_then(|x| x.to_str()) == Some("jsonl") && {
+                let parent = p
+                    .parent()
+                    .and_then(|x| x.file_name())
+                    .and_then(|n| n.to_str());
+                let stem = p.file_stem().and_then(|n| n.to_str());
+                parent.is_some() && parent == stem
+            }
         })
         .map(|e| {
             let mtime = e
@@ -1642,6 +1648,54 @@ pub fn format_markdown_report(snap: &QualitySnapshot) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn write_transcript(transcripts: &Path, id: &str) -> PathBuf {
+        let dir = transcripts.join(id);
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join(format!("{id}.jsonl"));
+        fs::write(&file, "{}\n").unwrap();
+        file
+    }
+
+    #[test]
+    fn transcript_fallback_ignores_parent_and_sibling_workspaces() {
+        let projects = tempfile::tempdir().unwrap();
+        write_transcript(
+            &projects
+                .path()
+                .join("users-me-io")
+                .join("agent-transcripts"),
+            "parent",
+        );
+        write_transcript(
+            &projects
+                .path()
+                .join("users-me-io-ax-site")
+                .join("agent-transcripts"),
+            "sibling",
+        );
+        let own = write_transcript(
+            &projects
+                .path()
+                .join("Users-Me-IO-AX")
+                .join("agent-transcripts"),
+            "own",
+        );
+        let found = find_transcripts_fallback(projects.path(), "users-me-io-ax");
+        assert_eq!(found, vec![own]);
+    }
+
+    #[test]
+    fn subagents_in_the_project_slug_does_not_hide_transcripts() {
+        let projects = tempfile::tempdir().unwrap();
+        let transcripts = projects
+            .path()
+            .join("users-me-subagents-lab")
+            .join("agent-transcripts");
+        let main = write_transcript(&transcripts, "chat");
+        write_transcript(&transcripts.join("chat").join("subagents"), "child");
+        assert_eq!(collect_transcripts(&transcripts), vec![main]);
+    }
 
     #[test]
     fn slug_sanitizes_windows_path() {
