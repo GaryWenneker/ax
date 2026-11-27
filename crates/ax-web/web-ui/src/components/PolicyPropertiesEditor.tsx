@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import SettingsSelect from './ui/SettingsSelect';
 import {
   draftsFromProperties,
+  invalidNumber,
   propertiesFromDrafts,
   reservedClash,
   type PropertyDraft,
@@ -73,6 +74,7 @@ export default function PolicyPropertiesEditor({ properties, reserved, descripti
 
   const clash = reservedClash(drafts, reserved);
   const duplicate = duplicateName(drafts);
+  const badNumber = invalidNumber(drafts);
 
   return (
     <>
@@ -161,6 +163,11 @@ export default function PolicyPropertiesEditor({ properties, reserved, descripti
       {clash ? (
         <p className="policy-properties-error" role="alert">
           {clash} is already a built-in field. Use the row above, or pick another name.
+        </p>
+      ) : null}
+      {badNumber ? (
+        <p className="policy-properties-error" role="alert">
+          {badNumber} needs a number. The stored value is kept until you enter one.
         </p>
       ) : null}
       {duplicate ? (
