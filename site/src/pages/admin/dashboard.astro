@@ -13,7 +13,14 @@ import LogoMark from '../../components/LogoMark.astro';
     <link rel="icon" href="/logo.png" type="image/png" />
     <title>ax — Telemetry Dashboard</title>
     <meta name="robots" content="noindex, nofollow" />
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <!-- is:inline keeps this tag (and its integrity check) out of Astro's bundler.
+         dist/chart.umd.js is the published, already minified UMD build. -->
+    <script
+      is:inline
+      src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.js"
+      integrity="sha256-bnCMssK0FgTbH13sAXJIVuxTrIZ4maHk4s+48Kzmvtk="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"></script>
   </head>
   <body>
     <div class="layout">
