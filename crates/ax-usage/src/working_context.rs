@@ -301,13 +301,13 @@ fn scope(conversation: &str, root: &Path) -> String {
     format!("{conversation}\u{1f}{}", root.display())
 }
 
-async fn load(pool: &SqlitePool, key: &str) -> Result<WorkingContext, String> {
+async fn load<'c>(db: impl sqlx::SqliteExecutor<'c>, key: &str) -> Result<WorkingContext, String> {
     let row: Option<(String, String, String, String, String, String, String)> = sqlx::query_as(
         "SELECT objective, facts, files, symbols, decisions, open_questions, index_fingerprint
          FROM mcp_working_context WHERE scope = ?",
     )
     .bind(key)
-    .fetch_optional(pool)
+    .fetch_optional(db)
     .await
     .map_err(|e| e.to_string())?;
     let Some((objective, facts, files, symbols, decisions, open_questions, index_fingerprint)) =
@@ -317,12 +317,23 @@ async fn load(pool: &SqlitePool, key: &str) -> Result<WorkingContext, String> {
     };
     Ok(WorkingContext {
         objective,
-        facts: decode_list(&facts)?,
-        files: decode_list(&files)?,
-        symbols: decode_list(&symbols)?,
-        decisions: decode_list(&decisions)?,
-        open_questions: decode_list(&open_questions)?,
+        facts: decode_section(&facts, "facts"),
+        files: decode_section(&files, "files"),
+        symbols: decode_section(&symbols, "symbols"),
+        decisions: decode_section(&decisions, "decisions"),
+        open_questions: decode_section(&open_questions, "open_questions"),
         index_fingerprint,
+    })
+}
+
+/// A stored section, or an empty one when it does not decode, so one damaged
+/// value never blocks reading, writing or clearing the rest of the notes.
+fn decode_section(raw: &str, name: &str) -> Vec<String> {
+    decode_list(raw).unwrap_or_else(|error| {
+        tracing::warn!(
+            "working context section {name} is unreadable and is treated as empty: {error}"
+        );
+        Vec::new()
     })
 }
 
@@ -344,7 +355,11 @@ fn encode_list(items: &[String]) -> String {
     serde_json::to_string(items).unwrap_or_else(|_| "[]".to_string())
 }
 
-async fn save(pool: &SqlitePool, key: &str, ctx: &WorkingContext) -> Result<(), String> {
+async fn save<'c>(
+    db: impl sqlx::SqliteExecutor<'c>,
+    key: &str,
+    ctx: &WorkingContext,
+) -> Result<(), String> {
     let now = chrono::Utc::now().timestamp();
     sqlx::query(
         "INSERT INTO mcp_working_context
@@ -371,7 +386,7 @@ async fn save(pool: &SqlitePool, key: &str, ctx: &WorkingContext) -> Result<(), 
     .bind(content_hash(ctx))
     .bind(&ctx.index_fingerprint)
     .bind(now)
-    .execute(pool)
+    .execute(db)
     .await
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -426,10 +441,10 @@ async fn evict(pool: &SqlitePool, root: &Path, kept: &str) -> Result<(), String>
     Ok(())
 }
 
-async fn delete(pool: &SqlitePool, key: &str) -> Result<(), String> {
+async fn delete<'c>(db: impl sqlx::SqliteExecutor<'c>, key: &str) -> Result<(), String> {
     sqlx::query("DELETE FROM mcp_working_context WHERE scope = ?")
         .bind(key)
-        .execute(pool)
+        .execute(db)
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -447,25 +462,46 @@ pub(crate) async fn apply_with(
         return Err("working context is off (AX_CONTEXT_CACHE=off)".into());
     }
     let key = scope(conversation, root);
-    let current = load(pool, &key).await?;
     let action = request
         .get("action")
         .and_then(Value::as_str)
         .unwrap_or("get");
+    if action == "clear" {
+        // Clear never reads the row, so a damaged row can always be removed.
+        delete(pool, &key).await?;
+        return Ok(render(&WorkingContext::default(), fingerprint));
+    }
     if fingerprint.is_empty() && matches!(action, "add" | "update" | "compact") {
         return Err("index unavailable; retry after ax_sync".into());
     }
-    match transition(&current, request, fingerprint)? {
-        Some(_) if action == "get" => Ok(render(&current, fingerprint)),
+    if action == "get" {
+        let current = load(pool, &key).await?;
+        return Ok(render(&current, fingerprint));
+    }
+    // Load and save in one write transaction, so two writes to the same chat
+    // at once apply one after the other instead of dropping each other's items.
+    let mut tx = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|e| e.to_string())?;
+    let current = load(&mut *tx, &key).await?;
+    let next = match transition(&current, request, fingerprint)? {
         Some(next) => {
-            save(pool, &key, &next).await?;
+            save(&mut *tx, &key, &next).await?;
+            Some(next)
+        }
+        None => {
+            delete(&mut *tx, &key).await?;
+            None
+        }
+    };
+    tx.commit().await.map_err(|e| e.to_string())?;
+    match next {
+        Some(next) => {
             evict(pool, root, &key).await?;
             Ok(render(&next, fingerprint))
         }
-        None => {
-            delete(pool, &key).await?;
-            Ok(render(&WorkingContext::default(), fingerprint))
-        }
+        None => Ok(render(&WorkingContext::default(), fingerprint)),
     }
 }
 
@@ -1315,6 +1351,114 @@ mod tests {
         )
         .await;
         assert!(replaced.contains("stale=false"), "full update: {replaced}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_adds_to_one_chat_keep_every_item() {
+        let (dir, pool) = pool().await;
+        let mut tasks = Vec::new();
+        for n in 0..12 {
+            let (pool, dir) = (pool.clone(), dir.clone());
+            tasks.push(tokio::spawn(async move {
+                apply_with(
+                    &pool,
+                    &dir,
+                    "chat-1",
+                    &json!({"action": "add", "facts": [format!("fact {n}")]}),
+                    "fp-1",
+                    true,
+                )
+                .await
+                .unwrap();
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+        let text = apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "get"}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        for n in 0..12 {
+            assert!(text.contains(&format!("fact {n}")), "fact {n} lost: {text}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_corrupt_section_does_not_block_get_add_or_clear() {
+        let (dir, pool) = pool().await;
+        apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "add", "facts": ["f"], "decisions": ["kept decision"]}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE mcp_working_context SET facts = '[\"trunc' WHERE scope = ?")
+            .bind(scope("chat-1", &dir))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let got = apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "get"}),
+            "fp-1",
+            true,
+        )
+        .await
+        .expect("get reads the sections that still decode");
+        assert!(got.contains("kept decision"), "{got}");
+        let added = apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "add", "facts": ["new"]}),
+            "fp-1",
+            true,
+        )
+        .await
+        .expect("add replaces the unreadable section");
+        assert!(
+            added.contains("new") && added.contains("kept decision"),
+            "{added}"
+        );
+        sqlx::query(
+            "UPDATE mcp_working_context SET objective = 'x', decisions = 'nope' WHERE scope = ?",
+        )
+        .bind(scope("chat-1", &dir))
+        .execute(&pool)
+        .await
+        .unwrap();
+        apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "clear"}),
+            "fp-1",
+            true,
+        )
+        .await
+        .expect("clear removes a corrupt row");
+        let rows: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM mcp_working_context WHERE scope = ?")
+                .bind(scope("chat-1", &dir))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(rows, 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
