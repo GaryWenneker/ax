@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import { emptyQualitySnapshot } from '../src/lib/mcpQuality';
 import { MCP_TRACE_MAX_ENTRIES } from '../src/lib/mcpTrace';
+import { baseReply, routeTraceStream } from './fixtures';
 
 const line = (i: number) => {
   const ts = new Date(Date.UTC(2026, 9, 12, 8, 0, 0) + i * 1000).toISOString();
@@ -14,25 +15,21 @@ test('the trace view keeps a bounded buffer of the newest rows', async ({ page, 
   test.setTimeout(90_000);
   const total = MCP_TRACE_MAX_ENTRIES + 300;
   const lines = Array.from({ length: total }, (_, i) => line(i));
-  let streams = 0;
   await page.route('**/api/**', (route) => {
     const path = new URL(route.request().url()).pathname;
-    if (path === '/api/usage/mcp-trace/events') {
-      const body = streams++ === 0
-        ? `retry: 50\nevent: batch\ndata: ${JSON.stringify(lines)}\n\nevent: ready\ndata: 1\n\n`
-        : 'retry: 50\n: heartbeat\n\n';
-      return route.fulfill({ contentType: 'text/event-stream', body });
-    }
     const json =
       path === '/api/usage/mcp-quality'
         ? { ...emptyQualitySnapshot(), projectLabel: 'Cap', verbosePresent: true, verboseEnabled: true }
         : path === '/api/usage/mcp-trace/path'
           ? { projectLabel: 'Cap', projectRoot: '/fixtures/cap', logDay: '2026-10-12', logExists: true }
-          : path === '/api/ship/config'
-            ? { config: { ship: {}, ui: {} }, sonar: {} }
-            : {};
+          : path === '/api/usage/mcp-trace/chunk'
+            ? { ok: true, day: null, lines: [], hasOlder: false }
+            : path === '/api/ship/config'
+              ? { config: { ship: {}, ui: {} }, sonar: {} }
+              : (baseReply(path) ?? {});
     return route.fulfill({ json });
   });
+  await routeTraceStream(page, lines);
   await page.setViewportSize({ width: 1600, height: 900 });
   await page.goto('/logging');
   await expect(page.locator('.mcp-trace-row[data-entry-id]').first()).toBeAttached({ timeout: 30_000 });

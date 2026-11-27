@@ -1,19 +1,15 @@
 import { expect, test, type Page } from '@playwright/test';
 
 import { emptyQualitySnapshot } from '../src/lib/mcpQuality';
+import { baseReply, routeTraceStream } from './fixtures';
 
 type ChunkReply = 'html500' | 'notOk';
 
 // Today's log is empty and the chunk endpoint for older days keeps failing.
-async function serve(page: Page, reply: ChunkReply, counter: { chunks: number; healthy: boolean; streams: number }): Promise<void> {
+async function serve(page: Page, reply: ChunkReply, counter: { chunks: number; healthy: boolean }): Promise<void> {
   await page.route('**/api/**', (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
-    if (path === '/api/usage/mcp-trace/events') {
-      // Reconnect at once so the view stays live between fulfilled responses.
-      const body = counter.streams++ === 0 ? 'retry: 20\nevent: batch\ndata: []\n\nevent: ready\ndata: 1\n\n' : 'retry: 20\n: heartbeat\n\n';
-      return route.fulfill({ contentType: 'text/event-stream', body });
-    }
     if (path === '/api/usage/mcp-trace/chunk') {
       counter.chunks++;
       if (counter.healthy) {
@@ -36,16 +32,18 @@ async function serve(page: Page, reply: ChunkReply, counter: { chunks: number; h
           ? { projectLabel: 'History', projectRoot: '/fixtures/history', logDay: '2026-10-12', logExists: true }
           : path === '/api/ship/config'
             ? { config: { ship: {}, ui: {} }, sonar: {} }
-            : {};
+            : (baseReply(path) ?? {});
     return route.fulfill({ json });
   });
+  // Today's log is empty: the stream sends an empty snapshot and stays open.
+  await routeTraceStream(page, []);
   await page.setViewportSize({ width: 1600, height: 900 });
 }
 
 for (const reply of ['html500', 'notOk'] as const) {
   test(`a failing history chunk (${reply}) is not retried in a loop`, async ({ page, isMobile }) => {
     test.skip(isMobile, 'desktop layout');
-    const counter = { chunks: 0, healthy: false, streams: 0 };
+    const counter = { chunks: 0, healthy: false };
     await serve(page, reply, counter);
     await page.goto('/logging');
     await expect.poll(() => counter.chunks).toBeGreaterThan(0);

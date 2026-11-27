@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
 import { emptyQualitySnapshot } from '../src/lib/mcpQuality';
+import { baseReply, routeTraceStream } from './fixtures';
 
 const line = '2026-10-12T20:00:00Z [ax-mcp] inbound tool=ax_search session=axs_live args={"query":"First event"}';
 
@@ -30,9 +31,6 @@ function field(page: Page, caption: string) {
 async function openLogging(page: Page, width = 1600): Promise<void> {
   await page.route('**/api/**', (route) => {
     const path = new URL(route.request().url()).pathname;
-    if (path === '/api/usage/mcp-trace/events') {
-      return route.fulfill({ contentType: 'text/event-stream', body: `event: batch\ndata: ${JSON.stringify([line])}\n\n` });
-    }
     const json =
       path === '/api/usage/mcp-quality'
         ? { ...emptyQualitySnapshot(), projectLabel: 'Continuity', verbosePresent: true, verboseEnabled: true }
@@ -42,9 +40,10 @@ async function openLogging(page: Page, width = 1600): Promise<void> {
             ? { config: { ship: {}, ui: {} }, sonar: {} }
             : path === '/api/specs'
               ? { specs: [] }
-              : {};
+              : (baseReply(path) ?? {});
     return route.fulfill({ json });
   });
+  await routeTraceStream(page, [line]);
   await page.setViewportSize({ width, height: 900 });
   await page.goto('/logging');
   await expect(page.locator('.mcp-trace-row')).toHaveCount(1);

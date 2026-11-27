@@ -1,5 +1,6 @@
 import {test,expect} from '@playwright/test';
 import {emptyQualitySnapshot} from '../src/lib/mcpQuality';
+import {routeTraceStream} from './fixtures';
 const streamFixture=process.env.AX_SSE_FIXTURE_URL;
 
 const lines=[
@@ -9,17 +10,13 @@ const lines=[
 ];
 test.beforeEach(async({page})=>{
  if(streamFixture) {const configured=await page.request.post(`${streamFixture}/configure`,{data:{lines}});expect(configured.ok()).toBe(true);}
- let sent=false;
  await page.route('**/api/**',route=>{
   const path=new URL(route.request().url()).pathname;
-  if(path==='/api/usage/mcp-trace/events') {
-   if(streamFixture) return route.continue();
-   const body=sent?': heartbeat\n\n':`event: batch\ndata: ${JSON.stringify(lines)}\n\n`;sent=true;
-   return route.fulfill({contentType:'text/event-stream',body});
-  }
+  if(path==='/api/usage/mcp-trace/events') return route.continue();
   const json=path==='/api/usage/mcp-quality'?{...emptyQualitySnapshot(),projectLabel:'Logging layout',verbosePresent:true,verboseEnabled:true}:path==='/api/usage/mcp-trace/path'?{projectLabel:'Logging layout',projectRoot:'/fixtures/logging',logDay:'2026-10-12',logExists:true}:path==='/api/ship/config'?{config:{ship:{},ui:{}},sonar:{}}:path==='/api/stats'?{project_name:'Logging layout',node_count:0,edge_count:0,file_count:0,languages:[],db_size_bytes:0}:{};
   return route.fulfill({json});
  });
+ if(!streamFixture) await routeTraceStream(page,lines);
 });
 
 test('logging keeps each event title and its description on one aligned line at every panel width',async({page})=>{
@@ -61,16 +58,13 @@ test('logging keyboard navigation follows the sorted visible rows',async({page})
 
 test('live log arrivals obey active column sort and filters',async({page},info)=>{
  const streamId='live-'+info.project.name;
- let deliveries=0;
- await page.route('**/api/usage/mcp-trace/events',route=>{
-  if(streamFixture) return route.continue();
-  const body=deliveries++===0?`event: batch\ndata: ${JSON.stringify(lines)}\n\n`:deliveries===2?'event: line\ndata: 2026-10-12T19:59:00Z [ax-mcp] inbound tool=ax_search args={"query":"Earlier arriving event"}\n\n':': heartbeat\n\n';
-  return route.fulfill({contentType:'text/event-stream',body});
- });
+ const earlier='2026-10-12T19:59:00Z [ax-mcp] inbound tool=ax_search args={"query":"Earlier arriving event"}';
+ const stream=streamFixture?null:await routeTraceStream(page,lines);
  await page.setViewportSize({width:2048,height:900});await page.goto('/logging');await expect(page.locator('.mcp-trace-row')).toHaveCount(3);
  const header=page.locator('.mcp-trace-calm .column-header');await header.getByRole('button',{name:'Sort Time',exact:true}).click();
  await header.locator('summary[aria-label="Filter Context"]').click();await header.getByRole('textbox',{name:'Filter Context',exact:true}).fill('Search');await expect(page.locator('.mcp-trace-row')).toHaveCount(2);
- if(streamFixture) {const emitted=await page.request.get(`${streamFixture}/emit?id=${streamId}&line=${encodeURIComponent('2026-10-12T19:59:00Z [ax-mcp] inbound tool=ax_search args={"query":"Earlier arriving event"}')}`);expect(emitted.ok()).toBe(true);}
+ if(stream) stream.send([earlier]);
+ if(streamFixture) {const emitted=await page.request.get(`${streamFixture}/emit?id=${streamId}&line=${encodeURIComponent(earlier)}`);expect(emitted.ok()).toBe(true);}
  await expect(page.locator('.mcp-trace-row')).toHaveCount(3);await expect(page.locator('.mcp-trace-row').first()).toContainText('Earlier arriving event');
 });
 
@@ -120,7 +114,7 @@ test('real domain lines show readable actions and preserve raw-field search',asy
   '2026-10-12T20:00:02Z [ax] 🪓 ship ok mode=evaluate passed=1 tool=ship',
  ];
  if(streamFixture){const response=await page.request.post(`${streamFixture}/configure`,{data:{lines:domainLines}});expect(response.ok()).toBe(true);}
- else {let sent=false;await page.route('**/api/usage/mcp-trace/events',route=>{const body=sent?': heartbeat\n\n':`event: batch\ndata: ${JSON.stringify(domainLines)}\n\n`;sent=true;return route.fulfill({contentType:'text/event-stream',body});});}
+ else await routeTraceStream(page,domainLines);
  await page.goto('/logging');await expect(page.locator('.mcp-trace-row')).toHaveCount(3);
  const workspace=page.locator('.mcp-trace-row--workspace');
  await expect(workspace.locator('.page-item-title')).toHaveText('Sync · 19 files synced');
@@ -149,7 +143,7 @@ test('real domain lines show readable actions and preserve raw-field search',asy
 test('inspector steps have a marker gutter and label the selected tool',async({page})=>{
  const mixed=[...lines,'2026-10-12T20:00:03Z [ax] 🪓 workspace sync ok files=19 duration_ms=162 tool=workspace'];
  if(streamFixture){const response=await page.request.post(`${streamFixture}/configure`,{data:{lines:mixed}});expect(response.ok()).toBe(true);}
- else {let sent=false;await page.route('**/api/usage/mcp-trace/events',route=>{const body=sent?': heartbeat\n\n':`event: batch\ndata: ${JSON.stringify(mixed)}\n\n`;sent=true;return route.fulfill({contentType:'text/event-stream',body});});}
+ else await routeTraceStream(page,mixed);
  await page.goto('/logging');await expect(page.locator('.mcp-trace-row')).toHaveCount(4);
  await page.locator('.mcp-trace-row--workspace .page-item-title').click();
  const blade=page.getByRole('complementary',{name:'Log event details'});

@@ -1,3 +1,6 @@
+import { createServer, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
+
 import { expect, type Locator, type Page, type Route } from '@playwright/test';
 
 import { emptyQualitySnapshot } from '../src/lib/mcpQuality';
@@ -131,6 +134,67 @@ export function graphStreamBody(nodes: object[], edges: object[]): string {
     { type: 'done' },
   ];
   return events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('');
+}
+
+export type TraceStreamOptions = {
+  /** Fields of the `project` event, over the fixture defaults. */
+  project?: Record<string, unknown>;
+};
+
+/** The frames the server sends when an /api/usage/mcp-trace/events connection opens. */
+export function traceSnapshotBody(lines: string[], opts: TraceStreamOptions = {}): string {
+  const project = {
+    path: '/fixtures/.ax/logs/mcp-verbose-2026-10-12.log',
+    projectRoot: '/fixtures',
+    logDay: '2026-10-12',
+    logExists: true,
+    verboseMcp: true,
+    ...opts.project,
+  };
+  return (
+    'event: reset\ndata: project /fixtures\n\n' +
+    `event: project\ndata: ${JSON.stringify(project)}\n\n` +
+    `event: batch\ndata: ${JSON.stringify(lines)}\n\n` +
+    'event: ready\ndata: following\n\n'
+  );
+}
+
+export type TraceStream = {
+  /** Append lines to the log and send them as `line` events on every open connection. */
+  send(lines: string[]): void;
+};
+
+/**
+ * Serve /api/usage/mcp-trace/events the way the server does: every connection opens
+ * with `reset`, `project`, the `batch` snapshot of the log so far and `ready`, then
+ * stays open for live lines. A fulfilled Playwright route would end the stream at
+ * once, so the request is sent on to a small streaming server in the test process.
+ */
+export async function routeTraceStream(page: Page, lines: string[], opts: TraceStreamOptions = {}): Promise<TraceStream> {
+  const log = [...lines];
+  const open = new Set<ServerResponse>();
+  const server = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+    res.write(traceSnapshotBody(log, opts));
+    open.add(res);
+    req.on('close', () => open.delete(res));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  page.once('close', () => {
+    server.closeAllConnections();
+    server.close();
+  });
+  await page.route('**/api/usage/mcp-trace/events', (route) =>
+    route.continue({ url: `http://127.0.0.1:${port}/api/usage/mcp-trace/events` }),
+  );
+  return {
+    send(more) {
+      log.push(...more);
+      const frames = more.map((line) => `event: line\ndata: ${line}\n\n`).join('');
+      for (const res of open) res.write(frames);
+    },
+  };
 }
 
 /** Where each graph node is drawn once the layout has settled, uncovered by panels. */
