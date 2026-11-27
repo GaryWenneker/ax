@@ -122,24 +122,30 @@ pub fn config_path(dir: &Path) -> PathBuf {
 /// Merge global `~/.ax/config.json` `"policy"` section with per-project `ax.json`
 /// (and workspace root `ax.json` roots when present).
 pub fn load_policy_config(project_root: &Path) -> PolicyConfig {
-    let global = read_policy_section(&global_config_path());
+    #[cfg(test)]
+    test_counters::CONFIG_LOADS.with(|c| c.set(c.get() + 1));
+    let global_path = global_config_path();
+    let global = read_policy_section(&global_path);
     let local = read_policy_section(&config_path(project_root));
+    let workspace = crate::hierarchy::find_workspace_root(project_root);
+    let member_name = workspace
+        .as_deref()
+        .and_then(|ws| current_member_name(ws, project_root));
+    let member = (project_root, member_name.as_deref());
     let mut roots = Vec::new();
     append_roots(
         &mut roots,
         &global.roots,
-        global_config_path()
-            .parent()
-            .unwrap_or_else(|| Path::new(".")),
-        project_root,
+        global_path.parent().unwrap_or_else(|| Path::new(".")),
+        member,
     );
-    if let Some(ws) = crate::hierarchy::find_workspace_root(project_root) {
+    if let Some(ws) = &workspace {
         if ws != project_root {
-            let ws_section = read_policy_section(&config_path(&ws));
-            append_roots(&mut roots, &ws_section.roots, &ws, project_root);
+            let ws_section = read_policy_section(&config_path(ws));
+            append_roots(&mut roots, &ws_section.roots, ws, member);
         }
     }
-    append_roots(&mut roots, &local.roots, project_root, project_root);
+    append_roots(&mut roots, &local.roots, project_root, member);
 
     PolicyConfig {
         storage: local
@@ -166,19 +172,19 @@ pub fn find_policy_root(project_root: &Path, root_id: &str) -> Option<PolicyRoot
         .find(|r| r.id == root_id)
 }
 
+/// `member` is the project root and its workspace member name, if any.
 fn append_roots(
     out: &mut Vec<PolicyRoot>,
     entries: &[PolicyRootFile],
     config_dir: &Path,
-    project_root: &Path,
+    (project_root, member_name): (&Path, Option<&str>),
 ) {
-    let member_name = current_member_name(project_root);
     for entry in entries {
         if entry.id.trim().is_empty() || entry.path.trim().is_empty() {
             continue;
         }
         if let Some(ref m) = entry.member {
-            match &member_name {
+            match member_name {
                 Some(name) if name == m || member_path_matches(project_root, m) => {}
                 _ => continue,
             }
@@ -211,9 +217,8 @@ fn resolve_config_path(config_dir: &Path, raw: &str) -> PathBuf {
     joined.canonicalize().unwrap_or(joined)
 }
 
-fn current_member_name(project_root: &Path) -> Option<String> {
-    let ws = crate::hierarchy::find_workspace_root(project_root)?;
-    let content = std::fs::read_to_string(config_path(&ws)).ok()?;
+fn current_member_name(ws: &Path, project_root: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(config_path(ws)).ok()?;
     let v = serde_json::from_str::<serde_json::Value>(&content).ok()?;
     let members = v.get("members").and_then(|m| m.as_array())?;
     let project_canon = project_root
@@ -589,6 +594,14 @@ pub fn write_project_agents_dir(project_root: &Path, raw: &str) -> Result<String
     Ok(name)
 }
 
+/// Per-thread counters that let tests check how often config is loaded.
+#[cfg(test)]
+pub(crate) mod test_counters {
+    thread_local! {
+        pub(crate) static CONFIG_LOADS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -649,6 +662,28 @@ mod tests {
         std::fs::write(p.join(CONFIG_FILENAME), r#"{"policySync":false}"#).unwrap();
         std::fs::write(&alias, r#"{"policySync":true}"#).unwrap();
         assert!(!policy_sync_enabled(p));
+    }
+
+    #[test]
+    fn workspace_roots_with_a_member_filter_apply_to_that_member_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        for m in ["svc", "web"] {
+            std::fs::create_dir_all(ws.join(m)).unwrap();
+        }
+        std::fs::create_dir_all(ws.join("team")).unwrap();
+        std::fs::write(
+            ws.join("ax.json"),
+            r#"{"members":[{"path":"svc","name":"api"},{"path":"web"}],
+                "policy":{"roots":[{"id":"api-only","path":"team","member":"api"},
+                                   {"id":"all","path":"team"}]}}"#,
+        )
+        .unwrap();
+        let ids = |p: &Path| -> Vec<String> {
+            load_policy_roots(p).into_iter().map(|r| r.id).collect()
+        };
+        assert_eq!(ids(&ws.join("svc")), vec!["api-only", "all"]);
+        assert_eq!(ids(&ws.join("web")), vec!["all"]);
     }
 
     #[test]

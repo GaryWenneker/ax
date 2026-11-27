@@ -48,38 +48,42 @@ pub fn policy_layer_dirs(project_root: &Path) -> Vec<PathBuf> {
 /// Built-in scope dirs are merged first; configured [`crate::config::PolicyRoot`]
 /// mounts are inserted immediately after the matching built-in scope layer.
 pub fn policy_layers(project_root: &Path) -> Vec<PolicyLayer> {
+    // Read the config, the workspace root and the agents folders once; the
+    // roots are grouped by scope in memory below.
+    let roots = crate::config::load_policy_roots(project_root);
+    let workspace = find_workspace_root(project_root);
+    let home = crate::paths::home_dir();
+    let local_agents = crate::agents_share::agents_dir(project_root);
+    let local_legacy = crate::agents_share::legacy_policy_dir(project_root);
     let mut layers = Vec::new();
 
-    if let Some(home) = crate::paths::home_dir() {
+    if let Some(home) = &home {
         let global = home.join(".ax").join("global_policy");
         if global.is_dir() {
             layers.push(PolicyLayer::builtin(global, PolicyScope::Company));
         }
     }
-    push_root_layers(&mut layers, project_root, PolicyScope::Company);
+    push_root_layers(&mut layers, &roots, PolicyScope::Company);
 
-    if let Some(ws) = find_workspace_root(project_root) {
-        let ws_legacy = crate::agents_share::legacy_policy_dir(&ws);
-        let ws_agents = crate::agents_share::agents_dir(&ws);
-        let member_legacy = crate::agents_share::legacy_policy_dir(project_root);
-        if ws_legacy.is_dir() && ws_legacy != member_legacy {
+    if let Some(ws) = &workspace {
+        let ws_legacy = crate::agents_share::legacy_policy_dir(ws);
+        let ws_agents = crate::agents_share::agents_dir(ws);
+        if ws_legacy.is_dir() && ws_legacy != local_legacy {
             layers.push(PolicyLayer::builtin(ws_legacy, PolicyScope::Workspace));
         }
-        if ws_agents.is_dir() && ws_agents != crate::agents_share::agents_dir(project_root) {
+        if ws_agents.is_dir() && ws_agents != local_agents {
             layers.push(PolicyLayer::builtin(ws_agents, PolicyScope::Workspace));
         }
     }
-    push_root_layers(&mut layers, project_root, PolicyScope::Workspace);
+    push_root_layers(&mut layers, &roots, PolicyScope::Workspace);
 
-    let local_legacy = crate::agents_share::legacy_policy_dir(project_root);
     if local_legacy.is_dir() {
         layers.push(PolicyLayer::builtin(local_legacy, PolicyScope::Project));
     }
-    let local_agents = crate::agents_share::agents_dir(project_root);
     if local_agents.is_dir() {
         layers.push(PolicyLayer::builtin(local_agents, PolicyScope::Project));
     }
-    push_root_layers(&mut layers, project_root, PolicyScope::Project);
+    push_root_layers(&mut layers, &roots, PolicyScope::Project);
 
     let inactive = crate::agents_share::inactive_dir(project_root);
     if inactive.is_dir() {
@@ -88,13 +92,13 @@ pub fn policy_layers(project_root: &Path) -> Vec<PolicyLayer> {
         layers.push(layer);
     }
 
-    if let Some(home) = crate::paths::home_dir() {
+    if let Some(home) = &home {
         let private_user = home.join(".ax").join("private_policy");
         if private_user.is_dir() {
             layers.push(PolicyLayer::builtin(private_user, PolicyScope::PrivateUser));
         }
     }
-    push_root_layers(&mut layers, project_root, PolicyScope::PrivateUser);
+    push_root_layers(&mut layers, &roots, PolicyScope::PrivateUser);
 
     let private_project = project_root.join(".ax").join("policy-private");
     if private_project.is_dir() {
@@ -103,13 +107,17 @@ pub fn policy_layers(project_root: &Path) -> Vec<PolicyLayer> {
             PolicyScope::PrivateProject,
         ));
     }
-    push_root_layers(&mut layers, project_root, PolicyScope::PrivateProject);
+    push_root_layers(&mut layers, &roots, PolicyScope::PrivateProject);
 
     layers
 }
 
-fn push_root_layers(layers: &mut Vec<PolicyLayer>, project_root: &Path, scope: PolicyScope) {
-    for root in crate::config::load_policy_roots(project_root) {
+fn push_root_layers(
+    layers: &mut Vec<PolicyLayer>,
+    roots: &[crate::config::PolicyRoot],
+    scope: PolicyScope,
+) {
+    for root in roots {
         if !root.exists {
             continue;
         }
@@ -120,7 +128,7 @@ fn push_root_layers(layers: &mut Vec<PolicyLayer>, project_root: &Path, scope: P
         layers.push(PolicyLayer {
             dir: root.path.clone(),
             scope: root_scope,
-            root_id: Some(root.id),
+            root_id: Some(root.id.clone()),
             preserve_item_scope: false,
         });
     }
@@ -217,6 +225,27 @@ mod tests {
             .any(|l| l.scope == PolicyScope::PrivateProject));
         let gi = std::fs::read_to_string(root.join(".ax/.gitignore")).unwrap();
         assert!(gi.contains("policy-private/"));
+    }
+
+    #[test]
+    fn policy_layers_loads_the_config_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("proj");
+        let shared = dir.path().join("shared");
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::create_dir_all(root.join(".agents/rules")).unwrap();
+        std::fs::write(
+            root.join("ax.json"),
+            r#"{"policy":{"roots":[{"id":"team","path":"../shared","scope":"workspace"}]}}"#,
+        )
+        .unwrap();
+        crate::config::test_counters::CONFIG_LOADS.with(|c| c.set(0));
+        let layers = policy_layers(&root);
+        let loads = crate::config::test_counters::CONFIG_LOADS.with(|c| c.get());
+        assert_eq!(loads, 1, "policy_layers must load the config once");
+        assert!(layers
+            .iter()
+            .any(|l| l.root_id.as_deref() == Some("team") && l.scope == PolicyScope::Workspace));
     }
 
     #[test]
