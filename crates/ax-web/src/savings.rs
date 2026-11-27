@@ -1,7 +1,7 @@
 //! Context savings API (`~/.ax/usage.db`).
 
 use axum::{
-    extract::{Path, Query},
+    extract::{DefaultBodyLimit, Path, Query},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -80,9 +80,20 @@ struct TokenizeBody {
     text: String,
 }
 
-async fn handle_tokenize(Json(body): Json<TokenizeBody>) -> impl IntoResponse {
-    let result = tokenize_text(&body.text);
-    (StatusCode::OK, Json(result)).into_response()
+/// Largest `/tokenize` request body. The tokenizer reads at most
+/// [`ax_usage::TOKENIZE_MAX_INPUT_BYTES`] of the text; this leaves room for
+/// longer text (answered as truncated) without parsing arbitrary bodies.
+const TOKENIZE_MAX_BODY_BYTES: usize = 512 * 1024;
+
+async fn handle_tokenize(Json(body): Json<TokenizeBody>) -> axum::response::Response {
+    match tokio::task::spawn_blocking(move || tokenize_text(&body.text)).await {
+        Ok(result) => (StatusCode::OK, Json(result)).into_response(),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "tokenize failed" })),
+        )
+            .into_response(),
+    }
 }
 
 async fn handle_call_detail(Path(id): Path<i64>) -> impl IntoResponse {
@@ -107,7 +118,10 @@ pub fn router(hub: crate::workspace_state::WebHub) -> Router {
         .route("/savings", get(handle_savings))
         .route("/savings/import", post(move || handle_import(readonly)))
         .route("/savings/call/{id}", get(handle_call_detail))
-        .route("/tokenize", post(handle_tokenize))
+        .route(
+            "/tokenize",
+            post(handle_tokenize).layer(DefaultBodyLimit::max(TOKENIZE_MAX_BODY_BYTES)),
+        )
         .merge(crate::pricing_api::router(readonly))
         .merge(crate::mcp_trace::router(hub.clone()))
         .merge(crate::mcp_quality::router(hub))
