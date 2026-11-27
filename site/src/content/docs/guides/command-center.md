@@ -163,6 +163,15 @@ message = "ax: auto-checkpoint before quality gate"
 revert_on_fail = false
 ```
 
+### Git repositories (`git_root`, `git_roots`)
+
+When the workspace is not itself a git repository, the gate works on the repositories under it. With neither `git_root` nor `git_roots` set, ax fills `git_roots` with the immediate child folders that hold a `.git` and saves it. With `git_roots` set, ax keeps every listed entry that is still a git repository, nested paths such as `services/api` included, in the order you wrote them, and appends repositories newly cloned directly under the workspace. With only `git_root` set, ax uses that one repository and does not add others.
+
+```toml
+[ship]
+git_roots = ["services/api", "services/web"]
+```
+
 ### Auto-commit / rollback (`[auto_commit]`)
 
 Off by default — a deliberate automation feature, not a silent behavior change. With `enabled = true`, every `ax ship --evaluate` commits the current uncommitted diff as a checkpoint before running index/diff/TIA/tests/Sonar/policy, across every git root under this workspace. If the gate passes, the checkpoint stays. If it fails and `revert_on_fail = true`, ax undoes *that exact commit* with `git reset --mixed HEAD~1` — never `--hard` — so the edits remain on disk, uncommitted, for the agent or user to fix and re-run. Rollback refuses if `HEAD` has moved since the checkpoint (e.g. something else was committed in between), rather than resetting the wrong commit.
