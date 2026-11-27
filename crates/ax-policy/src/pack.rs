@@ -536,6 +536,12 @@ async fn stage_pending_rule(
     doc: &mut PolicyRuleDoc,
     origin: &str,
 ) -> Result<(), AxError> {
+    if doc.frontmatter.id.is_empty() || !is_kebab_case(&doc.frontmatter.id) {
+        return Err(AxError::Other(format!(
+            "rule id `{}` must be kebab-case",
+            doc.frontmatter.id
+        )));
+    }
     doc.frontmatter.status = PolicyItemStatus::Pending.as_str().into();
     let raw = serialize_rule(&doc.frontmatter, &doc.body);
     let dir = pending_rules_dir(ax_dir);
@@ -550,6 +556,12 @@ async fn stage_pending_skill(
     doc: &mut PolicySkillDoc,
     origin: &str,
 ) -> Result<(), AxError> {
+    if doc.frontmatter.name.is_empty() || !is_kebab_case(&doc.frontmatter.name) {
+        return Err(AxError::Other(format!(
+            "skill name `{}` must be kebab-case",
+            doc.frontmatter.name
+        )));
+    }
     doc.frontmatter.status = PolicyItemStatus::Pending.as_str().into();
     let raw = serialize_skill(&doc.frontmatter, &doc.body);
     let dir = pending_skills_dir(ax_dir).join(&doc.frontmatter.name);

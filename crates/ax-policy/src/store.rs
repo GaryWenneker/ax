@@ -93,7 +93,11 @@ impl PolicyStore {
         if let Some(row) = crate::index::get_rule(&self.pool, id).await? {
             return Ok(Some(rule_row_to_doc(&row, &self.project_root)));
         }
-        // Fallback: search layer dirs by filename.
+        // Fallback: search layer dirs by filename. Only a valid id names a
+        // file, so a path-like id cannot reach outside the layer folders.
+        if !is_valid_item_id(id) {
+            return Ok(None);
+        }
         for layer in crate::hierarchy::policy_layers(&self.project_root) {
             let path = rule_file(&layer.dir.join("rules"), id);
             if path.is_file() {
@@ -110,6 +114,9 @@ impl PolicyStore {
     pub async fn get_skill_doc(&self, name: &str) -> Result<Option<PolicySkillDoc>, AxError> {
         if let Some(row) = crate::index::get_skill(&self.pool, name).await? {
             return Ok(Some(skill_row_to_doc(&row, &self.project_root)));
+        }
+        if !is_valid_item_id(name) {
+            return Ok(None);
         }
         for layer in crate::hierarchy::policy_layers(&self.project_root) {
             let path = skill_file(&layer.dir.join("skills"), name);
@@ -129,6 +136,10 @@ impl PolicyStore {
         mut frontmatter: RuleFrontmatter,
         body: String,
     ) -> Result<PolicyRuleDoc, ValidationError> {
+        // The id becomes a file name: validate it before anything is written.
+        if !is_valid_item_id(&frontmatter.id) {
+            return Err(item_id_error("id", &frontmatter.id));
+        }
         let scope = PolicyScope::parse(&frontmatter.scope).unwrap_or(PolicyScope::Project);
         frontmatter.scope = scope.as_str().into();
         if let Some(ref s) = frontmatter.storage {
@@ -354,13 +365,8 @@ impl PolicyStore {
         body: String,
     ) -> Result<PolicySkillDoc, ValidationError> {
         // The name becomes a folder name: validate it before anything is written.
-        if !frontmatter.name.is_empty() && !crate::parse::is_kebab_case(&frontmatter.name) {
-            return Err(ValidationError {
-                error: "validation_failed".into(),
-                fields: [("name".into(), "must be kebab-case".into())]
-                    .into_iter()
-                    .collect(),
-            });
+        if !is_valid_item_id(&frontmatter.name) {
+            return Err(item_id_error("name", &frontmatter.name));
         }
         let scope = PolicyScope::parse(&frontmatter.scope).unwrap_or(PolicyScope::Project);
         frontmatter.scope = scope.as_str().into();
@@ -757,6 +763,23 @@ impl PolicyStore {
     }
 }
 
+/// A rule id or skill name that can name a file: kebab-case, not empty.
+fn is_valid_item_id(id: &str) -> bool {
+    !id.is_empty() && crate::parse::is_kebab_case(id)
+}
+
+fn item_id_error(field: &str, value: &str) -> ValidationError {
+    let message = if value.is_empty() {
+        "required"
+    } else {
+        "must be kebab-case"
+    };
+    ValidationError {
+        error: "validation_failed".into(),
+        fields: [(field.into(), message.into())].into_iter().collect(),
+    }
+}
+
 fn write_utf8(path: &Path, content: &str) -> Result<(), String> {
     std::fs::write(path, content.as_bytes()).map_err(|e| e.to_string())
 }
@@ -793,6 +816,67 @@ pub async fn open_rw_pool(db_path: &Path) -> Result<sqlx::SqlitePool, AxError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn test_store(root: &Path) -> PolicyStore {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        ax_db::schema::apply_initial_schema(&pool).await.unwrap();
+        ax_db::migrations::run_migrations(&pool, 0).await.unwrap();
+        PolicyStore::new(pool, root.to_path_buf())
+    }
+
+    fn rule_frontmatter(id: &str) -> RuleFrontmatter {
+        let mut fm = parse_rule_file(
+            Path::new("r.mdc"),
+            "---\nid: placeholder\nlevel: INFO\nalwaysApply: true\n---\n\nBody.\n",
+        )
+        .unwrap()
+        .frontmatter;
+        fm.id = id.into();
+        fm
+    }
+
+    #[tokio::test]
+    async fn save_rule_refuses_a_bad_id_before_writing_any_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = test_store(dir.path()).await;
+        let err = store
+            .save_rule(rule_frontmatter("My Rule"), "Body.".into())
+            .await
+            .expect_err("a non-kebab id must be refused");
+        assert_eq!(
+            err.fields.get("id").map(String::as_str),
+            Some("must be kebab-case")
+        );
+        let rules = crate::agents_share::agents_dir(dir.path()).join("rules");
+        assert!(!rules.join("My Rule.mdc").exists());
+        let err = store
+            .save_rule(rule_frontmatter(""), "Body.".into())
+            .await
+            .expect_err("an empty id must be refused");
+        assert_eq!(err.fields.get("id").map(String::as_str), Some("required"));
+        assert!(!rules.join(".mdc").exists());
+    }
+
+    #[tokio::test]
+    async fn lookups_ignore_a_path_like_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("project");
+        let rules = crate::agents_share::agents_dir(&root).join("rules");
+        std::fs::create_dir_all(&rules).unwrap();
+        std::fs::write(
+            dir.path().join("outside.mdc"),
+            "---\nid: outside\nlevel: INFO\nalwaysApply: true\n---\n\nOutside.\n",
+        )
+        .unwrap();
+        let store = test_store(&root).await;
+        let id = "../../../outside";
+        assert!(store.get_rule_doc(id).await.unwrap().is_none());
+        assert!(store.get_skill_doc(id).await.unwrap().is_none());
+    }
 
     #[tokio::test]
     async fn save_skill_refuses_a_name_that_is_not_kebab_case_before_writing() {
