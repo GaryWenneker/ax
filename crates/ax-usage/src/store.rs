@@ -204,8 +204,8 @@ CREATE INDEX IF NOT EXISTS idx_ax_activity_source
 
 const MIGRATION_DROP_TOKEN_USAGE: &str = "DROP TABLE IF EXISTS token_usage";
 
-/// Additive columns for databases created before v2.2. Failures for
-/// already-existing columns are ignored.
+/// Additive columns for older databases. A "duplicate column name" failure is
+/// expected and ignored; any other failure is an error.
 const MIGRATION_ADD_COLUMNS: &[&str] = &[
     "ALTER TABLE mcp_context_cache ADD COLUMN project TEXT",
     "ALTER TABLE mcp_call_log ADD COLUMN counterfactual_exact_files INTEGER",
@@ -437,8 +437,16 @@ pub(crate) async fn open_pool_at(path: &std::path::Path) -> Result<SqlitePool, A
     }
 
     for stmt in MIGRATION_ADD_COLUMNS {
-        // "duplicate column name" is expected on already-migrated databases.
-        let _ = sqlx::query(stmt).execute(&pool).await;
+        // "duplicate column name" is expected on already-migrated databases. Any
+        // other failure (busy, read-only, disk full) leaves the column missing, so
+        // it is returned and the schema version stays unstamped for a retry.
+        if let Err(error) = sqlx::query(stmt).execute(&pool).await {
+            if !error.to_string().contains("duplicate column name") {
+                return Err(AxError::Database(DatabaseError::new(format!(
+                    "usage migration `{stmt}`: {error}"
+                ))));
+            }
+        }
     }
 
     sqlx::query(&format!("PRAGMA user_version = {fingerprint}"))
@@ -588,6 +596,56 @@ mod tests {
         pool.close().await;
         let pool = open_pool_at(&path).await.unwrap();
         assert!(index_exists(&pool, "idx_mcp_call_log_tool").await);
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn a_failed_additive_migration_is_an_error_and_is_retried() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("usage.db");
+        // A name the schema expects as a table, held by a view: `CREATE TABLE IF
+        // NOT EXISTS` passes, but adding a column fails with an error that is not
+        // "duplicate column name".
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&format!("sqlite://{}?mode=rwc", path.display()))
+            .await
+            .unwrap();
+        sqlx::query("CREATE VIEW agent_session_log AS SELECT 1 AS id")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+
+        let opened = open_pool_at(&path).await;
+        assert!(opened.is_err(), "a failed ALTER TABLE was ignored");
+
+        // The schema version is not stamped, so a later open tries again.
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&format!("sqlite://{}", path.display()))
+            .await
+            .unwrap();
+        let version: (i32,) = sqlx::query_as("PRAGMA user_version")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_ne!(version.0, schema_fingerprint());
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn reopening_a_migrated_database_ignores_existing_columns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("usage.db");
+        let pool = open_pool_at(&path).await.unwrap();
+        sqlx::query("PRAGMA user_version = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+        // Every additive column already exists: the rerun must still succeed.
+        let pool = open_pool_at(&path).await.unwrap();
         pool.close().await;
     }
 }
