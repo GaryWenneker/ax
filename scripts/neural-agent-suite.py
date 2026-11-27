@@ -3,6 +3,8 @@
 
 Same cursor-agent binary, model, and per-task prompt; only ax.json neural flags differ.
 Supports --limit/--offset for batched runs; merges into --out.
+A missing ax binary or cursor-agent prints not_measured and exits 2 without
+touching --out.
 """
 
 from __future__ import annotations
@@ -209,7 +211,7 @@ def main() -> int:
             "reason": "ax binary or cursor-agent missing",
             "taskCountDefined": len(suite["tasks"]),
         }
-        Path(opts.out).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        # Print only: the results file may hold rows from earlier batches.
         print(json.dumps(report, indent=2))
         return 2
 
