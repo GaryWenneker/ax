@@ -167,6 +167,10 @@ revert_on_fail = false
 
 Sonar setup saves the generated scanner token in `.ax/sonar.token`. On Unix the file is readable and writable by its owner only (mode 0600). The scanner reads the token from that file and gets it passed explicitly; ax does not export it into its own process environment. On Windows ax also stores the token in the user environment variable named by `token_env`. That name must be a plain variable name (letters, digits and `_`, not starting with a digit); any other name is skipped with a warning.
 
+### SonarQube project keys
+
+ax records the SonarQube projects it creates in `.ax/sonar-projects.json`. When `project_key` changes, a project that ax created under the old workspace key (`<folder>-<repo>`) is renamed to the new key (`<project_key>-<repo>`) before a scan. Projects that ax did not create are never renamed, and ax never deletes a project: when both the old and the new key exist, the old project stays and the log says so, so you can delete it in SonarQube yourself.
+
 ### Auto-commit / rollback (`[auto_commit]`)
 
 Off by default — a deliberate automation feature, not a silent behavior change. With `enabled = true`, every `ax ship --evaluate` commits the current uncommitted diff as a checkpoint before running index/diff/TIA/tests/Sonar/policy, across every git root under this workspace. If the gate passes, the checkpoint stays. If it fails and `revert_on_fail = true`, ax undoes *that exact commit* with `git reset --mixed HEAD~1` — never `--hard` — so the edits remain on disk, uncommitted, for the agent or user to fix and re-run. Rollback refuses if `HEAD` has moved since the checkpoint (e.g. something else was committed in between), rather than resetting the wrong commit.

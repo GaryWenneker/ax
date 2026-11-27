@@ -477,6 +477,7 @@ pub async fn ensure_sonar_projects(
             )
             .await?;
             projects_created = 1;
+            note_created_project(project_root, &workspace_key);
         }
         return Ok((projects_created, vec![], newly_created_repos));
     }
@@ -518,6 +519,7 @@ pub async fn ensure_sonar_projects(
         )
         .await?;
         project.exists = true;
+        note_created_project(project_root, &project.key);
         projects_created += 1;
         newly_created_repos.push(project.name.clone());
     }
@@ -868,6 +870,68 @@ async fn search_projects_batch(
     Ok(body.components.into_iter().map(|c| c.key).collect())
 }
 
+/// Where ax records the SonarQube project keys it created itself.
+fn created_projects_path(project_root: &Path) -> PathBuf {
+    project_root.join(".ax").join("sonar-projects.json")
+}
+
+#[derive(Default, serde::Serialize, Deserialize)]
+struct CreatedProjects {
+    #[serde(default)]
+    created: Vec<String>,
+}
+
+/// The SonarQube project keys ax created for this workspace.
+fn created_projects(project_root: &Path) -> HashSet<String> {
+    ax_utils::read_bounded(&created_projects_path(project_root), 1024 * 1024)
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<CreatedProjects>(&raw).ok())
+        .map(|r| r.created.into_iter().collect())
+        .unwrap_or_default()
+}
+
+/// Adds `add` to and removes `remove` from the record of projects ax created.
+fn update_created_projects(
+    project_root: &Path,
+    add: &[String],
+    remove: &[String],
+) -> std::io::Result<()> {
+    ax_utils::update_locked(&created_projects_path(project_root), |current| {
+        let mut record: CreatedProjects = current
+            .and_then(|raw| serde_json::from_slice(&raw).ok())
+            .unwrap_or_default();
+        record.created.retain(|k| !remove.contains(k));
+        for key in add {
+            if !record.created.contains(key) {
+                record.created.push(key.clone());
+            }
+        }
+        record.created.sort();
+        let mut out = serde_json::to_vec_pretty(&record)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        out.push(b'\n');
+        Ok(Some(out))
+    })
+    .map(|_| ())
+}
+
+fn record_created_projects(project_root: &Path, keys: &[String]) -> std::io::Result<()> {
+    update_created_projects(project_root, keys, &[])
+}
+
+/// Notes a project ax just created; a failure only costs the later
+/// migration of that key, so it is logged and not returned.
+fn note_created_project(project_root: &Path, key: &str) {
+    if let Err(e) = record_created_projects(project_root, &[key.to_string()]) {
+        tracing::warn!(project = key, error = %e, "could not record the SonarQube project ax created");
+    }
+}
+
+/// Moves projects from an older workspace key (`<folder>-<repo>`) to the
+/// current one (`<project_key>-<repo>`). Only projects that ax recorded as
+/// created in `.ax/sonar-projects.json` are touched, and nothing is ever
+/// deleted: a recorded legacy project whose canonical key already exists is
+/// left in place and reported, for the user to remove in SonarQube.
 async fn migrate_legacy_sonar_projects(
     config: &SonarBootstrapConfig,
     project_root: &Path,
@@ -882,6 +946,10 @@ async fn migrate_legacy_sonar_projects(
     let workspace_key = workspace_sonar_key(&config.project_key, project_root);
     let legacy_prefixes = legacy_workspace_prefixes(&workspace_key, project_root);
     if legacy_prefixes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ours = created_projects(project_root);
+    if ours.is_empty() {
         return Ok(Vec::new());
     }
 
@@ -911,19 +979,13 @@ async fn migrate_legacy_sonar_projects(
         let canonical = canonical_repo_project_key(&workspace_key, repo, multi_repo);
         for legacy_prefix in &legacy_prefixes {
             let legacy = format!("{legacy_prefix}-{}", sonar_key_from_name(repo));
-            if !exists.get(&legacy).copied().unwrap_or(false) {
+            if !ours.contains(&legacy) || !exists.get(&legacy).copied().unwrap_or(false) {
                 continue;
             }
             if exists.get(&canonical).copied().unwrap_or(false) {
-                delete_project(
-                    &config.host,
-                    &legacy,
-                    token,
-                    &config.admin_user,
-                    &config.admin_password,
-                )
-                .await?;
-                actions.push(format!("Removed duplicate SonarQube project '{legacy}'"));
+                actions.push(format!(
+                    "SonarQube project '{legacy}' duplicates '{canonical}' and was left in place; delete it in SonarQube if it is no longer needed"
+                ));
             } else {
                 update_project_key(
                     &config.host,
@@ -934,6 +996,13 @@ async fn migrate_legacy_sonar_projects(
                     &config.admin_password,
                 )
                 .await?;
+                if let Err(e) = update_created_projects(
+                    project_root,
+                    std::slice::from_ref(&canonical),
+                    std::slice::from_ref(&legacy),
+                ) {
+                    tracing::warn!(error = %e, "could not update the record of SonarQube projects ax created");
+                }
                 actions.push(format!(
                     "Renamed SonarQube project '{legacy}' → '{canonical}'"
                 ));
@@ -942,29 +1011,6 @@ async fn migrate_legacy_sonar_projects(
     }
 
     Ok(actions)
-}
-
-async fn delete_project(
-    host: &str,
-    project_key: &str,
-    token: Option<&str>,
-    user: &str,
-    password: &str,
-) -> Result<(), String> {
-    let url = format!(
-        "{}/api/projects/delete?project={}",
-        host.trim_end_matches('/'),
-        encode_query(project_key)
-    );
-    let resp = authed_post_with_token(&url, token, user, password).await?;
-    if resp.status().is_success() {
-        return Ok(());
-    }
-    let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
-    Err(format!(
-        "Failed to delete SonarQube project '{project_key}': HTTP {status} {body}"
-    ))
 }
 
 async fn update_project_key(
@@ -1322,6 +1368,140 @@ pub fn scanner_host_url(host: &str) -> String {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    /// A minimal HTTP server standing in for SonarQube. `respond` maps
+    /// `(method, path_and_query)` to `(status, body)`; every request line is
+    /// recorded.
+    pub(crate) mod mock_sonar {
+        use std::sync::{Arc, Mutex};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        pub struct MockSonar {
+            pub host: String,
+            pub requests: Arc<Mutex<Vec<String>>>,
+        }
+
+        impl MockSonar {
+            pub fn requests(&self) -> Vec<String> {
+                self.requests.lock().unwrap().clone()
+            }
+        }
+
+        pub async fn start<F>(respond: F) -> MockSonar
+        where
+            F: Fn(&str, &str) -> (u16, String) + Send + Sync + 'static,
+        {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let host = format!("http://{}", listener.local_addr().unwrap());
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let log = requests.clone();
+            let respond = Arc::new(respond);
+            tokio::spawn(async move {
+                loop {
+                    let Ok((mut sock, _)) = listener.accept().await else {
+                        return;
+                    };
+                    let log = log.clone();
+                    let respond = respond.clone();
+                    tokio::spawn(async move {
+                        let mut buf = Vec::new();
+                        let mut chunk = [0u8; 4096];
+                        while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                            match sock.read(&mut chunk).await {
+                                Ok(0) | Err(_) => return,
+                                Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                            }
+                        }
+                        let head = String::from_utf8_lossy(&buf).into_owned();
+                        let mut parts = head.lines().next().unwrap_or("").split(' ');
+                        let method = parts.next().unwrap_or("").to_string();
+                        let path = parts.next().unwrap_or("").to_string();
+                        log.lock().unwrap().push(format!("{method} {path}"));
+                        let (status, body) = respond(&method, &path);
+                        let reply = format!(
+                            "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = sock.write_all(reply.as_bytes()).await;
+                        let _ = sock.shutdown().await;
+                    });
+                }
+            });
+            MockSonar { host, requests }
+        }
+    }
+
+    /// Workspace folder `Contoso` with ship.toml key `ax` and repos Web and
+    /// Api: the legacy keys are `Contoso-Web` / `Contoso-Api`, the canonical
+    /// ones `ax-Web` / `ax-Api`.
+    fn contoso_workspace() -> (tempfile::TempDir, PathBuf, Vec<String>) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("Contoso");
+        std::fs::create_dir_all(&root).unwrap();
+        (dir, root, vec!["Web".to_string(), "Api".to_string()])
+    }
+
+    async fn sonar_with_projects(existing: &'static [&'static str]) -> mock_sonar::MockSonar {
+        mock_sonar::start(move |_method, path| {
+            if path.starts_with("/api/system/status") {
+                return (200, r#"{"status":"UP"}"#.into());
+            }
+            if path.starts_with("/api/projects/search") {
+                let comps: Vec<String> = existing
+                    .iter()
+                    .map(|k| format!(r#"{{"key":"{k}"}}"#))
+                    .collect();
+                return (200, format!(r#"{{"components":[{}]}}"#, comps.join(",")));
+            }
+            (200, "{}".into())
+        })
+        .await
+    }
+
+    fn mutating(requests: &[String]) -> Vec<String> {
+        requests
+            .iter()
+            .filter(|r| {
+                r.contains("/api/projects/delete") || r.contains("/api/projects/update_key")
+            })
+            .cloned()
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn migration_leaves_projects_ax_did_not_create_alone() {
+        let (_dir, root, repos) = contoso_workspace();
+        let sonar = sonar_with_projects(&["Contoso-Web", "ax-Web", "Contoso-Api"]).await;
+        let config = SonarBootstrapConfig::from_sonar(&sonar.host, "ax", "SONAR_TOKEN");
+        migrate_legacy_sonar_projects(&config, &root, &repos, None, true)
+            .await
+            .unwrap();
+        assert_eq!(mutating(&sonar.requests()), Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn migration_renames_only_a_project_ax_recorded_and_never_deletes() {
+        let (_dir, root, repos) = contoso_workspace();
+        record_created_projects(&root, &["Contoso-Web".into(), "Contoso-Api".into()]).unwrap();
+        // Contoso-Web has a canonical twin, Contoso-Api does not.
+        let sonar = sonar_with_projects(&["Contoso-Web", "ax-Web", "Contoso-Api"]).await;
+        let config = SonarBootstrapConfig::from_sonar(&sonar.host, "ax", "SONAR_TOKEN");
+        let log = migrate_legacy_sonar_projects(&config, &root, &repos, None, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            mutating(&sonar.requests()),
+            vec!["POST /api/projects/update_key?from=Contoso-Api&to=ax-Api".to_string()]
+        );
+        assert!(
+            log.iter()
+                .any(|l| l.contains("Contoso-Web") && l.contains("left in place")),
+            "{log:?}"
+        );
+        let created = created_projects(&root);
+        assert!(created.contains("ax-Api") && !created.contains("Contoso-Api"));
+        assert!(created.contains("Contoso-Web"));
+    }
 
     #[test]
     fn persist_token_writes_the_file_and_leaves_the_process_environment_alone() {
