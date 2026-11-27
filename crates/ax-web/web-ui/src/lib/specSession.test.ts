@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { isChatSession, linkedSessions, specForSession } from './specSession.ts';
+import { NAV_SECTIONS } from './nav.ts';
+import { buildPath, parseLocation } from './routes.ts';
+import { isChatSession, linkedSessions, sessionHopTargets, specForSession } from './specSession.ts';
 
 const specs = [
   { id: 'older', title: 'Older', sessions: 'plan-older' },
@@ -33,25 +34,32 @@ test('a session opens the spec that lists it', () => {
   assert.equal(specForSession(specs, 'missing'), undefined);
 });
 
-test('specs, memory, and logging link the same session in both directions', () => {
-  const specsPage = readFileSync(new URL('../pages/Specs.tsx', import.meta.url), 'utf8');
-  const memory = readFileSync(new URL('../pages/Memory.tsx', import.meta.url), 'utf8');
-  const logging = readFileSync(new URL('../components/McpTraceLive.tsx', import.meta.url), 'utf8');
-  const routes = readFileSync(new URL('./routes.ts', import.meta.url), 'utf8');
-  const nav = readFileSync(new URL('./nav.ts', import.meta.url), 'utf8');
-  assert.match(specsPage, /navigateRoute\(\{ page: 'memory', session: id \}\)/);
-  assert.doesNotMatch(specsPage, /navigateRoute\(\{ page: 'memory', recallQuery: id \}\)/);
-  assert.match(specsPage, /linkedSessions\(spec\.sessions\)/);
-  assert.match(specsPage, /searchParams\.get\('spec'\)/);
-  assert.match(memory, /SessionHop/);
-  assert.match(memory, /fetchMemories\(\{ limit: MEMORY_PAGE, session: session \|\| undefined \}\)/);
-  assert.match(memory, /if \(session\) setQ\(''\)/);
-  assert.match(memory, /typed !== sessionFilter/);
-  assert.match(logging, /mcp-trace-heading[\s\S]{0,240}SessionHop session=\{sessionFilter\} here="logging"/);
-  assert.match(routes, /page === 'memory' && state\.session/);
-  assert.match(routes, /page === 'specs' && state\.specId/);
-  assert.match(
-    nav,
-    /id: 'policy-skills', label: 'Skills'[\s\S]*?id: 'specs', label: 'Specs & Plans'[\s\S]*?id: 'memory', label: 'Memory'/,
-  );
+test('the session hop links Logging, Memory and the plan, without the current page', () => {
+  const id = '2057ea92-20ba-4bce-a732-3cbf46e61b9e';
+  assert.deepEqual(sessionHopTargets(id, 'memory', { id: 'live' }), [
+    { label: 'Logging', route: { page: 'logging', session: id } },
+    { label: 'Plan', route: { page: 'specs', specId: 'live' } },
+  ]);
+  assert.deepEqual(sessionHopTargets(id, 'logging', null), [{ label: 'Memory', route: { page: 'memory', session: id } }]);
+  assert.deepEqual(sessionHopTargets('sync', 'logging', { id: 'live' }), []);
+});
+
+test('session and spec links survive the URL round trip in both directions', () => {
+  const id = '2057ea92-20ba-4bce-a732-3cbf46e61b9e';
+  for (const page of ['memory', 'logging'] as const) {
+    const url = new URL(buildPath({ page, session: id }), 'http://ax.test');
+    const back = parseLocation({ pathname: url.pathname, search: url.search } as Location);
+    assert.equal(back.page, page);
+    assert.equal(back.session, id);
+  }
+  const url = new URL(buildPath({ page: 'specs', specId: 'live' }), 'http://ax.test');
+  const back = parseLocation({ pathname: url.pathname, search: url.search } as Location);
+  assert.equal(back.page, 'specs');
+  assert.equal(back.specId, 'live');
+});
+
+test('Specs & Plans sits between Skills and Memory in the navigation', () => {
+  const ids = NAV_SECTIONS.flatMap((section) => section.items.map((item) => item.id));
+  const at = (id: string) => ids.indexOf(id);
+  assert.ok(at('policy-skills') >= 0 && at('policy-skills') < at('specs') && at('specs') < at('memory'), ids.join(', '));
 });

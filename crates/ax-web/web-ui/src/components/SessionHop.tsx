@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { navigateRoute } from '../lib/routes';
 import { createSpecCatalog, type SpecLink } from '../lib/specCatalog';
-import { isChatSession, specForSession } from '../lib/specSession';
+import { isChatSession, sessionHopTargets, specForSession } from '../lib/specSession';
 import { WORKSPACE_SWITCHED } from '../workspaceEvents';
 
 const specCatalog = createSpecCatalog();
@@ -33,30 +33,28 @@ export function SessionHop({ session, here }: { session: string; here: 'memory' 
       cancel = true;
     };
   }, [session, workspace]);
-  if (!isChatSession(session)) return null;
+  const targets = sessionHopTargets(session, here, plan);
+  if (targets.length === 0) return null;
   const title = plan?.title || 'Plan';
   return (
     <span className="session-hop">
-      {here !== 'logging' && (
-        <button type="button" className="specs-jump" onClick={() => navigateRoute({ page: 'logging', session })}>
-          Logging
-        </button>
-      )}
-      {here !== 'memory' && (
-        <button type="button" className="specs-jump" onClick={() => navigateRoute({ page: 'memory', session })}>
-          Memory
-        </button>
-      )}
-      {plan && (
-        <button
-          type="button"
-          className="specs-jump"
-          title={title}
-          aria-label={`Open plan ${title}`}
-          onClick={() => navigateRoute({ page: 'specs', specId: plan.id })}
-        >
-          Plan
-        </button>
+      {targets.map((target) =>
+        target.label === 'Plan' ? (
+          <button
+            key={target.label}
+            type="button"
+            className="specs-jump"
+            title={title}
+            aria-label={`Open plan ${title}`}
+            onClick={() => navigateRoute(target.route)}
+          >
+            Plan
+          </button>
+        ) : (
+          <button key={target.label} type="button" className="specs-jump" onClick={() => navigateRoute(target.route)}>
+            {target.label}
+          </button>
+        ),
       )}
     </span>
   );
