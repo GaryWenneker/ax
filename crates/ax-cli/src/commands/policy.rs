@@ -153,6 +153,7 @@ pub async fn run_pull(
             "--depth",
             "1",
             "--quiet",
+            "--",
             &url,
             &dest.to_string_lossy(),
         ])

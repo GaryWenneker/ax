@@ -162,12 +162,64 @@ pub fn git_clone(url: &str, reference: Option<&str>, dest: &Path) -> Result<(), 
     git_clone_within(url, reference, dest, GIT_NETWORK_TIMEOUT)
 }
 
+/// Accepts only `https://`, `ssh://` and scp-style `user@host:path`
+/// remotes. Anything else (a value starting with `-`, `ext::`, `file://`, a
+/// local path, whitespace or control characters) is refused before git sees
+/// it, because the remote can come from a project file.
+fn check_git_remote(url: &str) -> Result<(), String> {
+    let refuse = || {
+        Err(format!(
+            "unsupported git remote {url:?}: use https://, ssh:// or user@host:path"
+        ))
+    };
+    if url.is_empty()
+        || url.starts_with('-')
+        || url.chars().any(|c| c.is_whitespace() || c.is_control())
+    {
+        return refuse();
+    }
+    let lower = url.to_ascii_lowercase();
+    for scheme in ["https://", "ssh://"] {
+        if let Some(rest) = lower.strip_prefix(scheme) {
+            let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+            let host = host.rsplit('@').next().unwrap_or("");
+            if host.is_empty() || host.starts_with('-') {
+                return refuse();
+            }
+            return Ok(());
+        }
+    }
+    // scp-style: user@host:path, with no scheme and no `::` transport.
+    let Some((user_host, path)) = url.split_once(':') else {
+        return refuse();
+    };
+    let Some((user, host)) = user_host.split_once('@') else {
+        return refuse();
+    };
+    let simple = |s: &str| {
+        !s.is_empty()
+            && !s.starts_with('-')
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+    };
+    if !simple(user)
+        || !simple(host)
+        || path.is_empty()
+        || path.starts_with(':')
+        || path.starts_with('-')
+    {
+        return refuse();
+    }
+    Ok(())
+}
+
 fn git_clone_within(
     url: &str,
     reference: Option<&str>,
     dest: &Path,
     timeout: Duration,
 ) -> Result<(), String> {
+    check_git_remote(url)?;
     let mut cmd = git_command();
     cmd.arg("clone").arg("--depth").arg("1");
     if let Some(reference) = reference {
@@ -439,7 +491,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let result = super::git_clone_within(
-                &format!("http://127.0.0.1:{port}/repo.git"),
+                &format!("https://127.0.0.1:{port}/repo.git"),
                 None,
                 &path,
                 std::time::Duration::from_secs(2),
@@ -451,6 +503,43 @@ mod tests {
             .expect("git clone must stop at its deadline");
         let err = result.unwrap_err();
         assert!(err.contains("timed out"), "{err}");
+    }
+
+    #[test]
+    fn git_clone_refuses_option_like_and_unsupported_remotes() {
+        let dest = tempfile::tempdir().unwrap();
+        let marker = dest.path().join("pwned");
+        for url in [
+            format!("--upload-pack=touch {};", marker.display()),
+            "-c".to_string(),
+            "ext::sh -c touch% /tmp/x".to_string(),
+            "file:///etc".to_string(),
+            "/tmp/repo".to_string(),
+            "http://example.com/repo.git".to_string(),
+            "https://example.com/repo.git\n--upload-pack=x".to_string(),
+            String::new(),
+        ] {
+            let err = super::git_clone_within(
+                &url,
+                None,
+                &dest.path().join("clone"),
+                std::time::Duration::from_secs(5),
+            )
+            .unwrap_err();
+            assert!(err.contains("git remote"), "{url}: {err}");
+        }
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn git_remote_check_accepts_https_ssh_and_scp_forms() {
+        for url in [
+            "https://github.com/you/skills.git",
+            "ssh://git@example.com/you/skills.git",
+            "git@github.com:you/skills.git",
+        ] {
+            assert!(super::check_git_remote(url).is_ok(), "{url}");
+        }
     }
 
     #[test]
