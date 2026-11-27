@@ -1047,7 +1047,10 @@ mod tests {
         // The idle timer fires right after accept, before the client's task ran.
         spawn_client(&lifecycle, std::future::pending());
         assert_eq!(lifecycle.client_count(), 1);
-        assert!(!lifecycle.idle_expired().await, "stopped with a client accepted");
+        assert!(
+            !lifecycle.idle_expired().await,
+            "stopped with a client accepted"
+        );
         assert!(pid_path.exists());
     }
 
@@ -1221,7 +1224,9 @@ mod tests {
             left -= n as u64;
         }
         let ended = tokio::time::timeout(Duration::from_secs(20), served).await;
-        let result = ended.expect("the daemon kept reading an endless line").unwrap();
+        let result = ended
+            .expect("the daemon kept reading an endless line")
+            .unwrap();
         assert!(result.is_err(), "an over-long line is an error");
     }
 
