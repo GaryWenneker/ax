@@ -66,6 +66,20 @@ pub fn source_store_warning(stats: &GraphStats) -> Option<String> {
 }
 
 /// Auto-injected index snapshot for `ax_preflight`.
+/// Pending paths listed in a status or preflight reply.
+pub const PENDING_LISTED: usize = 20;
+
+/// The pending files a reply lists (newest edit first, at most
+/// [`PENDING_LISTED`]) and how many are pending in total. A new worktree or a
+/// build can leave hundreds of paths pending; listing them all once made a
+/// single preflight 146,000 characters.
+pub fn listed_pending(pending: &[PendingFile]) -> (Vec<PendingFile>, usize) {
+    let mut listed = pending.to_vec();
+    listed.sort_by(|a, b| b.last_seen_ms.cmp(&a.last_seen_ms));
+    listed.truncate(PENDING_LISTED);
+    (listed, pending.len())
+}
+
 pub fn format_index_inject_block(stats: &GraphStats, pending: &[PendingFile]) -> String {
     let doc_total = stats.nodes_by_kind.get("doc").copied().unwrap_or(0);
     let docs_edges = stats.edges_by_kind.get("documents").copied().unwrap_or(0);
@@ -208,8 +222,12 @@ pub fn format_status_text(
     if pending.is_empty() {
         out.push_str("\nIndex is up to date — no files pending sync.\n");
     } else {
+        let (listed, total) = listed_pending(pending);
         out.push_str("\n### Pending sync:\n");
-        for p in pending {
+        if total > listed.len() {
+            out.push_str(&format!("{total} files pending ({} shown)\n", listed.len()));
+        }
+        for p in &listed {
             let age_ms = now_ms().saturating_sub(p.last_seen_ms);
             out.push_str(&format!("- {} (edited {}ms ago", p.path, age_ms));
             if p.indexing {
@@ -320,6 +338,49 @@ mod tests {
     fn empty_index_does_not_warn() {
         let stats = GraphStats::default();
         assert!(source_store_warning(&stats).is_none());
+    }
+
+    fn pending(count: usize) -> Vec<PendingFile> {
+        (0..count)
+            .map(|i| PendingFile {
+                path: format!("src/f{i}.rs"),
+                first_seen_ms: 0,
+                last_seen_ms: i as i64,
+                indexing: false,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn b1_at_most_twenty_pending_paths_are_listed_newest_first() {
+        let all = pending(885);
+        let (listed, total) = listed_pending(&all);
+        assert_eq!(total, 885);
+        assert_eq!(listed.len(), PENDING_LISTED);
+        assert_eq!(listed[0].path, "src/f884.rs");
+        assert_eq!(listed[19].path, "src/f865.rs");
+
+        let text = format_status_text(&GraphStats::default(), 1, &all);
+        assert!(text.contains("885 files pending (20 shown)"), "{text}");
+        assert!(text.contains("src/f884.rs"));
+        assert!(
+            !text.contains("src/f864.rs"),
+            "the 21st newest is not listed"
+        );
+        assert_eq!(text.matches("(edited ").count(), PENDING_LISTED);
+    }
+
+    #[test]
+    fn b2_a_short_pending_list_is_unchanged() {
+        let all = pending(3);
+        let (listed, total) = listed_pending(&all);
+        assert_eq!((listed.len(), total), (3, 3));
+        let text = format_status_text(&GraphStats::default(), 1, &all);
+        assert!(text.contains("### Pending sync:\n"), "{text}");
+        assert!(!text.contains("shown)"), "{text}");
+        assert_eq!(text.matches("(edited ").count(), 3);
+        let (none, zero) = listed_pending(&[]);
+        assert!(none.is_empty() && zero == 0);
     }
 
     #[test]

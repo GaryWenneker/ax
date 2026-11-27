@@ -27,12 +27,14 @@ pub async fn run(path: Option<String>, json: bool) -> Result<(), String> {
     let incident = ax_core::database_incident_value(&root);
     let notice = ax_core::database_incident_notice(&root);
     if json {
+        let (pending, pending_total) = ax_core::stats_format::listed_pending(&pending);
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "stats": stats,
                 "lastIndexedAt": last,
                 "pendingFiles": pending,
+                "pendingFilesTotal": pending_total,
                 "integrity": incident,
             }))
             .unwrap_or_default()
