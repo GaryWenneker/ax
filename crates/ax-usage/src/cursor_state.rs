@@ -485,35 +485,61 @@ async fn open_cursor_vscdb_readonly(path: &Path) -> Result<SqlitePool, String> {
     }
 }
 
+/// `composerData` blobs hold whole conversations, so they are read a page at a time.
+const COMPOSER_PAGE_ROWS: i64 = 32;
+
 /// Load all `composerData:*` rows from Cursor `state.vscdb`.
+///
+/// Blobs are read in pages of [`COMPOSER_PAGE_ROWS`] keys and parsed one by one, so only
+/// one page of raw conversation text is in memory at a time.
 pub async fn load_composer_state_rows(path: &Path) -> Result<Vec<ComposerStateRow>, String> {
     let pool = open_cursor_vscdb_readonly(path).await?;
-    let keys: Vec<(String, String)> =
-        sqlx::query_as("SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'")
-            .fetch_all(&pool)
-            .await
-            .map_err(|e| format!("cursor state query: {e}"))?;
-
-    let mut rows = Vec::with_capacity(keys.len());
-    for (key, raw) in keys {
-        let Some(session_id) = key.strip_prefix(COMPOSER_KEY_PREFIX) else {
-            continue;
+    let mut rows = Vec::new();
+    let mut after = COMPOSER_KEY_PREFIX.to_string();
+    loop {
+        let page: Vec<(String, String)> = sqlx::query_as(
+            "SELECT key, value FROM cursorDiskKV
+             WHERE key > ? AND key LIKE 'composerData:%'
+             ORDER BY key LIMIT ?",
+        )
+        .bind(&after)
+        .bind(COMPOSER_PAGE_ROWS)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| format!("cursor state query: {e}"))?;
+        let Some((last, _)) = page.last() else {
+            break;
         };
-        let Ok(value) = serde_json::from_str::<Value>(&raw) else {
-            continue;
-        };
-        if let Some(row) = parse_composer_data(session_id, &value) {
-            rows.push(row);
+        after = last.clone();
+        let full = page.len() as i64 == COMPOSER_PAGE_ROWS;
+        for (key, raw) in page {
+            let Some(session_id) = key.strip_prefix(COMPOSER_KEY_PREFIX) else {
+                continue;
+            };
+            let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+                continue;
+            };
+            if let Some(row) = parse_composer_data(session_id, &value) {
+                rows.push(row);
+            }
+        }
+        if !full {
+            break;
         }
     }
+    pool.close().await;
     Ok(rows)
 }
 
 /// Merge Composer state into `agent_session_log` without clobbering tool-call counts.
-pub(crate) async fn upsert_composer_state_row(
-    pool: &sqlx::SqlitePool,
+/// Returns true when the row was inserted or at least one stored value changed.
+pub(crate) async fn upsert_composer_state_row<'e, E>(
+    executor: E,
     row: &ComposerStateRow,
-) -> Result<bool, String> {
+) -> Result<bool, String>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let input = row.input_tokens.filter(|n| *n > 0);
     let result = sqlx::query(
         "INSERT INTO agent_session_log
@@ -546,20 +572,33 @@ pub(crate) async fn upsert_composer_state_row(
              WHEN agent_session_log.ended_at IS NULL THEN excluded.ended_at
              WHEN excluded.ended_at IS NULL THEN agent_session_log.ended_at
              ELSE MAX(agent_session_log.ended_at, excluded.ended_at)
-           END",
+           END
+         WHERE (excluded.model IS NOT NULL AND excluded.model != '' AND (
+                  agent_session_log.model IS NULL OR agent_session_log.model = ''
+                  OR length(excluded.model) > length(agent_session_log.model)))
+            OR (excluded.session_input_tokens IS NOT NULL AND (
+                  agent_session_log.session_input_tokens IS NULL
+                  OR excluded.session_input_tokens > agent_session_log.session_input_tokens))
+            OR (excluded.started_at IS NOT NULL AND (
+                  agent_session_log.started_at IS NULL
+                  OR excluded.started_at < agent_session_log.started_at))
+            OR (excluded.ended_at IS NOT NULL AND (
+                  agent_session_log.ended_at IS NULL
+                  OR excluded.ended_at > agent_session_log.ended_at))",
     )
     .bind(&row.session_id)
     .bind(input)
     .bind(&row.model)
     .bind(row.started_at)
     .bind(row.ended_at)
-    .execute(pool)
+    .execute(executor)
     .await
     .map_err(|e| e.to_string())?;
     Ok(result.rows_affected() > 0)
 }
 
-/// Import Composer metadata from Cursor `state.vscdb`.
+/// Import Composer metadata from Cursor `state.vscdb` in one transaction.
+/// Returns `(changed, unchanged)` session counts.
 pub async fn import_cursor_composer_state() -> Result<(usize, usize), String> {
     let Some(path) = cursor_state_vscdb_path() else {
         return Ok((0, 0));
@@ -577,10 +616,11 @@ pub async fn import_cursor_composer_state() -> Result<(usize, usize), String> {
     };
 
     let pool = open_pool().await.map_err(|e| e.to_string())?;
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     let mut enriched = 0usize;
     let mut skipped = 0usize;
     for row in &rows {
-        match upsert_composer_state_row(&pool, row).await {
+        match upsert_composer_state_row(&mut *tx, row).await {
             Ok(true) => enriched += 1,
             Ok(false) => skipped += 1,
             Err(e) => eprintln!(
@@ -589,6 +629,7 @@ pub async fn import_cursor_composer_state() -> Result<(usize, usize), String> {
             ),
         }
     }
+    tx.commit().await.map_err(|e| e.to_string())?;
     Ok((enriched, skipped))
 }
 
@@ -665,6 +706,59 @@ mod tests {
             "promptTokenBreakdown": { "totalUsedTokens": 126877 }
         });
         assert_eq!(parse_composer_input_tokens(&value), Some(126877));
+    }
+
+    async fn write_state_db(path: &Path, sessions: usize) {
+        let options = SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE cursorDiskKV (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        for n in 0..sessions {
+            let value = json!({
+                "modelConfig": { "modelName": "composer-2.5" },
+                "promptTokenBreakdown": { "totalUsedTokens": 1000 + n },
+                "createdAt": 1_700_000_000_000i64 + n as i64
+            });
+            sqlx::query("INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)")
+                .bind(format!("composerData:sess-{n:03}"))
+                .bind(value.to_string())
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query("INSERT INTO cursorDiskKV (key, value) VALUES ('other:key', '{}')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn import_counts_only_sessions_it_changed() {
+        let _guard = crate::store::USAGE_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state.vscdb");
+        write_state_db(&state, 70).await;
+        std::env::set_var("AX_CURSOR_STATE_VSCDB", &state);
+        std::env::set_var("AX_USAGE_DB", dir.path().join("usage.db"));
+        let first = import_cursor_composer_state().await;
+        let second = import_cursor_composer_state().await;
+        let loaded = load_composer_state_rows(&state)
+            .await
+            .map(|rows| rows.len());
+        std::env::remove_var("AX_CURSOR_STATE_VSCDB");
+        std::env::remove_var("AX_USAGE_DB");
+        assert_eq!(first, Ok((70, 0)));
+        assert_eq!(second, Ok((0, 70)));
+        assert_eq!(loaded, Ok(70));
     }
 
     #[test]
