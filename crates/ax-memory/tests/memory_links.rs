@@ -78,8 +78,72 @@ async fn only_the_named_link_kinds_are_stored() {
             "derived_from",
             "supersedes",
             "source",
+            "renamed",
+            "corroborates",
         ]
     );
+}
+
+async fn lesson(db: &ax_db::Database, title: &str) -> String {
+    remember(
+        db.pool(),
+        RememberInput {
+            title: title.into(),
+            body: title.into(),
+            kind: Some("lesson".into()),
+            tags: vec![],
+            files: vec![],
+            source: Some("extractor".into()),
+        },
+    )
+    .await
+    .unwrap()
+    .id
+}
+
+async fn confidence(db: &ax_db::Database, id: &str) -> f64 {
+    sqlx::query_scalar("SELECT confidence FROM memories WHERE id = ?")
+        .bind(id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn corroborating_two_lessons_links_them_and_counts_once() {
+    let (root, db) = open("corroborates").await;
+    let a = lesson(&db, "null panic in parse").await;
+    let b = lesson(&db, "null panic in parse again").await;
+    sqlx::query("UPDATE memories SET confidence = 0.5")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let before = confidence(&db, &a).await;
+
+    assert!(ax_memory::extract::corroborate_lessons(db.pool(), &a, &b)
+        .await
+        .unwrap());
+    let once = confidence(&db, &a).await;
+    let once_b = confidence(&db, &b).await;
+    assert!(once > before, "{before} -> {once}");
+    let links: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM memory_links WHERE kind = 'corroborates'")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(links, 1);
+
+    // The same pair, in either order, does not raise confidence again.
+    assert!(!ax_memory::extract::corroborate_lessons(db.pool(), &a, &b)
+        .await
+        .unwrap());
+    assert!(!ax_memory::extract::corroborate_lessons(db.pool(), &b, &a)
+        .await
+        .unwrap());
+    assert_eq!(confidence(&db, &a).await, once);
+    assert_eq!(confidence(&db, &b).await, once_b);
+    db.close().await;
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[tokio::test]

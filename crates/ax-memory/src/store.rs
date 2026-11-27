@@ -260,25 +260,31 @@ pub const MEMORY_LINK_KINDS: &[&str] = &[
     "derived_from",
     "supersedes",
     "source",
+    "renamed",
+    "corroborates",
 ];
 
+/// Store a link of a known kind. Returns whether a new link row was written
+/// (false when the same link already existed).
 pub async fn link_memories(
     pool: &SqlitePool,
     from_id: &str,
     to_id: &str,
     kind: &str,
-) -> Result<(), AxError> {
+) -> Result<bool, AxError> {
     if !MEMORY_LINK_KINDS.contains(&kind) {
         return Err(AxError::Other(format!("unknown memory link kind: {kind}")));
     }
-    sqlx::query("INSERT OR IGNORE INTO memory_links (from_id, to_id, kind) VALUES (?, ?, ?)")
-        .bind(from_id)
-        .bind(to_id)
-        .bind(kind)
-        .execute(pool)
-        .await
-        .map_err(|e| db_err(pool, e))?;
-    Ok(())
+    let result = sqlx::query(
+        "INSERT OR IGNORE INTO memory_links (from_id, to_id, kind) VALUES (?, ?, ?)",
+    )
+    .bind(from_id)
+    .bind(to_id)
+    .bind(kind)
+    .execute(pool)
+    .await
+    .map_err(|e| db_err(pool, e))?;
+    Ok(result.rows_affected() > 0)
 }
 
 pub(crate) async fn link_follows_in_session(pool: &SqlitePool, id: &str) -> Result<(), AxError> {
@@ -309,7 +315,8 @@ pub(crate) async fn link_follows_in_session(pool: &SqlitePool, id: &str) -> Resu
     let Some(previous) = previous else {
         return Ok(());
     };
-    link_memories(pool, id, &previous, "follows").await
+    link_memories(pool, id, &previous, "follows").await?;
+    Ok(())
 }
 
 pub(crate) async fn stamp_current_turn(pool: &SqlitePool, id: &str) -> Result<(), AxError> {

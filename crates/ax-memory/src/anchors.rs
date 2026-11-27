@@ -231,13 +231,13 @@ async fn move_anchors(pool: &SqlitePool, old_key: &str, new_key: &str) -> Result
         }
     }
     if moved > 0 {
-        let _ = crate::store::link_memories(
+        crate::store::link_memories(
             pool,
             &format!("node:{old_key}"),
             &format!("node:{new_key}"),
             "renamed",
         )
-        .await;
+        .await?;
     }
     Ok(moved)
 }

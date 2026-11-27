@@ -176,6 +176,14 @@ async fn reanchor_moves_anchors_when_a_symbol_is_renamed() {
     .await
     .unwrap();
     assert_eq!(open, 0);
+    let renamed: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM memory_links
+         WHERE from_id = 'node:z.rs::parse' AND to_id = 'node:a.rs::parse' AND kind = 'renamed'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(renamed, 1);
     assert_eq!(reanchor_renames(pool).await.unwrap(), 0);
     db.close().await;
 }
