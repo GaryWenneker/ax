@@ -121,8 +121,8 @@ MUTANTS = [
     {
         "id": "A-error-reply-keeps-structured",
         "file": "crates/ax-mcp/src/server.rs",
-        "find": '            reply.remove("structuredContent");',
-        "replace": "            let _ = &reply;",
+        "find": "        if let Some(reply) = wrapped.as_object_mut() {\n            reply.remove(\"structuredContent\");",
+        "replace": "        if let Some(reply) = wrapped.as_object_mut() {\n            let _ = &reply;",
         "test": ["cargo", "test", "-p", "ax-mcp", "--lib", "policy_integration::a"],
     },
     {
