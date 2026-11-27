@@ -336,55 +336,75 @@ fn write_share_at(path: &Path, config: &ShareConfig) -> Result<(), String> {
     if let Some(github) = share.get_mut("github").and_then(|g| g.as_object_mut()) {
         github.remove("hasToken");
     }
-    update_json_object(path, |obj| {
+    // The project's ax.json sits in the repository root next to committed
+    // files, so it is written atomically without the sibling `.lock` file
+    // that `update_json_object` leaves behind.
+    let current = match std::fs::read(path) {
+        Ok(bytes) => Some(bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("read {}: {e}", path.display())),
+    };
+    let next = edited_json_object(path, current, |obj| {
         obj.insert("share".into(), share);
         Ok(())
     })
+    .map_err(|e| e.to_string())?;
+    ax_utils::atomic_write(path, &next).map_err(|e| e.to_string())
 }
 
-/// Read-modify-write of a JSON config object under the shared file lock.
-/// A missing (or empty) file starts from `{}`. A file that does not parse,
-/// or whose root is not an object, is left untouched and reported, so a typo
-/// in a hand-edited config never costs the user their other settings.
+/// Read-modify-write of a JSON config object under the shared file lock
+/// (`<path>.lock`, which stays next to the file; use it for files under
+/// `~/.ax`). A missing (or empty) file starts from `{}`. A file that does
+/// not parse, or whose root is not an object, is left untouched and
+/// reported, so a typo in a hand-edited config never costs the user their
+/// other settings.
 pub(crate) fn update_json_object(
     path: &Path,
     edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> Result<(), String>,
 ) -> Result<(), String> {
-    use std::io;
     ax_utils::update_locked(path, |current| {
-        let mut root = match current {
-            Some(bytes) if !bytes.iter().all(u8::is_ascii_whitespace) => {
-                match serde_json::from_slice::<serde_json::Value>(&bytes) {
-                    Ok(value) if value.is_object() => value,
-                    Ok(_) => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!(
-                                "{} is not a JSON object; fix it and try again (it was not changed)",
-                                path.display()
-                            ),
-                        ))
-                    }
-                    Err(error) => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!(
-                                "{} is not valid JSON ({error}); fix it and try again (it was not changed)",
-                                path.display()
-                            ),
-                        ))
-                    }
-                }
-            }
-            _ => serde_json::json!({}),
-        };
-        let obj = root.as_object_mut().expect("root is an object");
-        edit(obj).map_err(io::Error::other)?;
-        let text = serde_json::to_string_pretty(&root).map_err(io::Error::other)? + "\n";
-        Ok(Some(text.into_bytes()))
+        edited_json_object(path, current, edit).map(Some)
     })
     .map(|_| ())
     .map_err(|e| e.to_string())
+}
+
+/// The new bytes of the JSON object at `path` (current content `current`)
+/// after `edit`; see [`update_json_object`] for the rules.
+fn edited_json_object(
+    path: &Path,
+    current: Option<Vec<u8>>,
+    edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> Result<(), String>,
+) -> std::io::Result<Vec<u8>> {
+    use std::io;
+    let mut root = match current {
+        Some(bytes) if !bytes.iter().all(u8::is_ascii_whitespace) => {
+            match serde_json::from_slice::<serde_json::Value>(&bytes) {
+                Ok(value) if value.is_object() => value,
+                Ok(_) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "{} is not a JSON object; fix it and try again (it was not changed)",
+                            path.display()
+                        ),
+                    ))
+                }
+                Err(error) => return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "{} is not valid JSON ({error}); fix it and try again (it was not changed)",
+                        path.display()
+                    ),
+                )),
+            }
+        }
+        _ => serde_json::json!({}),
+    };
+    let obj = root.as_object_mut().expect("root is an object");
+    edit(obj).map_err(io::Error::other)?;
+    let text = serde_json::to_string_pretty(&root).map_err(io::Error::other)? + "\n";
+    Ok(text.into_bytes())
 }
 
 #[cfg(test)]
@@ -423,6 +443,21 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(root["index"]["exclude"][0], "target");
         assert!(root["share"].is_object());
+    }
+
+    #[test]
+    fn share_settings_leave_no_lock_file_in_the_project() {
+        let project = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let store = home.path().join("git-share.json");
+        fs::write(project.path().join(CONFIG_FILENAME), "{}").unwrap();
+        write_project_share_config_with(project.path(), &ShareConfig::default(), &store).unwrap();
+        write_project_share_config_with(project.path(), &ShareConfig::default(), &store).unwrap();
+        let names: Vec<String> = fs::read_dir(project.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec![CONFIG_FILENAME.to_string()], "{names:?}");
     }
 
     #[test]
