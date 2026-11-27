@@ -102,15 +102,18 @@ async fn handle_export(
         Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     };
 
-    match export_okf_bundle(
-        &root,
-        &nodes,
-        &edges,
-        &OkfExportOptions {
-            out: None,
-            limit: input.limit.unwrap_or(0),
-        },
-    ) {
+    let limit = input.limit.unwrap_or(0);
+    let exported = tokio::task::spawn_blocking(move || {
+        export_okf_bundle(
+            &root,
+            &nodes,
+            &edges,
+            &OkfExportOptions { out: None, limit },
+        )
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()));
+    match exported {
         Ok(report) => (
             StatusCode::OK,
             Json(json!({
@@ -131,7 +134,11 @@ async fn handle_validate(State(hub): State<WebHub>) -> impl IntoResponse {
     let out_dir = cfg.out_dir_abs(&ws.project_root);
     drop(ws);
 
-    match validate_okf_bundle(&out_dir) {
+    let dir = out_dir.clone();
+    let validated = tokio::task::spawn_blocking(move || validate_okf_bundle(&dir))
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()));
+    match validated {
         Ok(report) => (
             StatusCode::OK,
             Json(json!({
@@ -182,14 +189,21 @@ async fn handle_publish(
         );
     }
 
-    match publish_okf_wiki(
-        &root,
-        &bundle_dir,
-        &OkfPublishOptions {
-            dry_run: input.dry_run,
-            no_push: input.no_push,
-        },
-    ) {
+    // Publishing clones, commits and pushes with git, which can take long;
+    // keep it off the async workers.
+    let published = tokio::task::spawn_blocking(move || {
+        publish_okf_wiki(
+            &root,
+            &bundle_dir,
+            &OkfPublishOptions {
+                dry_run: input.dry_run,
+                no_push: input.no_push,
+            },
+        )
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()));
+    match published {
         Ok(report) => (
             StatusCode::OK,
             Json(json!({

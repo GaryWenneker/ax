@@ -30,12 +30,18 @@ use tokio::sync::mpsc;
 use crate::workspace_state::WebHub;
 
 async fn handle_status(State(hub): State<WebHub>) -> impl IntoResponse {
-    ax_installer::ensure_global_config();
     let ws = hub.read().await;
     let root = ws.project_root.clone();
     drop(ws);
-    let targets = ax_installer::agent_status(&root).unwrap_or_default();
-    let cfg = refresh_auth_statuses().unwrap_or_else(|_| load_agents_config());
+    // Status detection runs agent CLIs and reads config files.
+    let (targets, cfg) = tokio::task::spawn_blocking(move || {
+        ax_installer::ensure_global_config();
+        let targets = ax_installer::agent_status(&root).unwrap_or_default();
+        let cfg = refresh_auth_statuses().unwrap_or_else(|_| load_agents_config());
+        (targets, cfg)
+    })
+    .await
+    .unwrap_or_else(|_| (Default::default(), load_agents_config()));
     Json(serde_json::json!({
         "ok": true,
         "readonly": hub.readonly,
@@ -89,7 +95,11 @@ async fn handle_install(
     let ws = hub.read().await;
     let root = ws.project_root.clone();
     drop(ws);
-    match install_selected(&root, &body.targets) {
+    let targets = body.targets;
+    let installed = tokio::task::spawn_blocking(move || install_selected(&root, &targets))
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()));
+    match installed {
         Ok(summary) => Json(serde_json::json!({
             "ok": true,
             "reports": summary.reports.iter().map(report_json).collect::<Vec<_>>(),
@@ -112,7 +122,7 @@ async fn handle_install_stream(
     let root = ws.project_root.clone();
     drop(ws);
     let targets = body.targets.clone();
-    tokio::spawn(async move {
+    tokio::task::spawn_blocking(move || {
         let _ = tx.send(
             serde_json::json!({"type":"line","text":"Installing ax MCP for selected agents…"})
                 .to_string(),
