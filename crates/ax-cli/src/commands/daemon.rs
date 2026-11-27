@@ -7,7 +7,7 @@ use ax_mcp::restart_daemon;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 use crate::ui::{info_line, ok_line};
 
 #[derive(Clone, Copy)]
@@ -18,7 +18,7 @@ pub enum DaemonAction {
 }
 
 pub async fn run(path: Option<String>, action: DaemonAction) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     if !is_initialized(&root) {
         return Err(format!(
             "project not initialized in {} — run ax init first",
@@ -267,14 +267,23 @@ mod tests {
             .expect("exe of test process")
     }
 
+    /// Waits until `pid` runs `sleep`: the orphan starts as `sh` and only then execs.
     async fn wait_running(pid: u32) {
-        for _ in 0..100 {
-            if process_running(pid) {
+        for _ in 0..250 {
+            let mut sys = sysinfo::System::new();
+            let spid = sysinfo::Pid::from_u32(pid);
+            sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[spid]), true);
+            let is_sleep = sys
+                .process(spid)
+                .and_then(|p| p.exe())
+                .and_then(|exe| exe.file_name())
+                .is_some_and(|name| name == "sleep");
+            if is_sleep {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        panic!("pid {pid} never started");
+        panic!("pid {pid} never started sleep");
     }
 
     #[tokio::test]
