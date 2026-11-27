@@ -184,6 +184,17 @@ All keys can also be set via environment variables (`AX_OFFLOAD_URL`, `AX_OFFLOA
 
 Offload is off by default. An API key in your environment (`OPENAI_API_KEY`, `CEREBRAS_API_KEY`, and so on) does not turn it on: ax sends explore context to an outside model only after you save an endpoint with `ax offload set-endpoint <url> --key-env <VAR>` or set `AX_OFFLOAD_URL`. `ax init` and `ax offload status` name a provider whose key they find, as a suggestion. `AX_OFFLOAD_DISABLE=1` turns offload off even when an endpoint is configured.
 
+Request limits are set with environment variables only:
+
+| Variable | Default | Description |
+|---|---|---|
+| `AX_OFFLOAD_TIMEOUT_MS` | `20000` | Longest wait for one request. Zero or an invalid value uses the default. Connecting to the endpoint (DNS and connect) is limited to 2 seconds |
+| `AX_OFFLOAD_MAXTOKENS` | `12000` | `max_tokens` sent with each request. Zero or an invalid value uses the default |
+| `AX_OFFLOAD_BACKOFF_MS` | `30000` | After the endpoint cannot be reached, explores skip offload for this long and return the plain output at once. `0` retries on every explore |
+| `AX_OFFLOAD_STRIP` | off | `1` removes ax's own navigation hints from the explore output before it is sent; retrieved source lines are never changed |
+
+`ax offload status` shows every one of these values.
+
 When the provider rejects a request or cannot be reached, ax falls back to the plain explore output and logs a warning with the status code and the start of the provider's reply (once per process; every time with `AX_OFFLOAD_DEBUG=1`). The API key is never logged.
 
 MCP graph calls log estimated context-token savings in **`~/.ax/usage.db`**. Query with [`ax savings`](/reference/cli/#ax-savings) or the **Savings** page in `ax web`. See [Token savings](/guides/token-savings/). Imported agent turns are quoted separately with [`ax costs`](/reference/cli/#ax-costs) and compared to a local plan with [`ax budget`](/reference/cli/#ax-budget). See [Agent budget](/guides/budget/). Pi runs stay in Pi; Ax can record their estimates with [`ax agent economics`](/reference/cli/#ax-agent-economics). See [Pi integration](/guides/pi/).

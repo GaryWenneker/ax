@@ -50,6 +50,9 @@ pub struct ResolvedOffload {
     pub effort: Option<String>,
     pub style: String,
     pub timeout_ms: u64,
+    /// How long offload is skipped after the endpoint could not be reached
+    /// (`AX_OFFLOAD_BACKOFF_MS`, default 30 s; `0` retries every time).
+    pub backoff_ms: u64,
     pub max_tokens: u32,
     pub strip: bool,
     pub debug: bool,
@@ -371,6 +374,19 @@ fn provider_for_url(url: &str) -> Option<&'static OffloadProviderSpec> {
         .find(|spec| spec.url.eq_ignore_ascii_case(url))
 }
 
+const DEFAULT_TIMEOUT_MS: u64 = 20_000;
+const DEFAULT_BACKOFF_MS: u64 = 30_000;
+const DEFAULT_MAX_TOKENS: u32 = 12_000;
+
+/// A positive number from env var `name`; zero, negative or unparsable
+/// values count as unset.
+fn positive_env<T: std::str::FromStr + PartialOrd + Default>(name: &str) -> Option<T> {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.trim().parse::<T>().ok())
+        .filter(|n| *n > T::default())
+}
+
 /// Whether two base URLs name the same endpoint (case and a trailing `/` ignored).
 fn same_endpoint(a: &str, b: &str) -> bool {
     a.trim()
@@ -396,8 +412,9 @@ pub fn resolve_offload() -> ResolvedOffload {
             key_source: None,
             effort: None,
             style: "plain".into(),
-            timeout_ms: 20000,
-            max_tokens: 12000,
+            timeout_ms: DEFAULT_TIMEOUT_MS,
+            backoff_ms: DEFAULT_BACKOFF_MS,
+            max_tokens: DEFAULT_MAX_TOKENS,
             strip: false,
             debug: std::env::var("AX_OFFLOAD_DEBUG").ok().as_deref() == Some("1"),
             origin: "none".into(),
@@ -476,14 +493,12 @@ pub fn resolve_offload() -> ResolvedOffload {
         style: trimmed(std::env::var("AX_OFFLOAD_STYLE").ok().as_deref())
             .or_else(|| trimmed(c.style.as_deref()))
             .unwrap_or_else(|| "plain".into()),
-        timeout_ms: std::env::var("AX_OFFLOAD_TIMEOUT_MS")
+        timeout_ms: positive_env("AX_OFFLOAD_TIMEOUT_MS").unwrap_or(DEFAULT_TIMEOUT_MS),
+        backoff_ms: std::env::var("AX_OFFLOAD_BACKOFF_MS")
             .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(20000),
-        max_tokens: std::env::var("AX_OFFLOAD_MAXTOKENS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(12000),
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(DEFAULT_BACKOFF_MS),
+        max_tokens: positive_env("AX_OFFLOAD_MAXTOKENS").unwrap_or(DEFAULT_MAX_TOKENS),
         strip: std::env::var("AX_OFFLOAD_STRIP").ok().as_deref() == Some("1"),
         debug: std::env::var("AX_OFFLOAD_DEBUG").ok().as_deref() == Some("1"),
         origin: origin.to_string(),
@@ -527,6 +542,7 @@ pub(crate) mod tests {
         "AX_OFFLOAD_STRIP",
         "AX_OFFLOAD_TIMEOUT_MS",
         "AX_OFFLOAD_MAXTOKENS",
+        "AX_OFFLOAD_BACKOFF_MS",
         "OPENAI_API_KEY",
         "CEREBRAS_API_KEY",
         "GROQ_API_KEY",
@@ -736,6 +752,30 @@ pub(crate) mod tests {
         let problem = r.problem.expect("status says why");
         assert!(problem.contains("Together AI"), "{problem}");
         assert!(problem.contains("AX_OFFLOAD_MODEL"), "{problem}");
+    }
+
+    #[test]
+    fn a_zero_or_invalid_timeout_uses_the_default() {
+        for raw in ["0", "-5", "soon"] {
+            let r = with_env(
+                &[
+                    ("AX_OFFLOAD_URL", "http://localhost:11434/v1"),
+                    ("AX_OFFLOAD_TIMEOUT_MS", raw),
+                    ("AX_OFFLOAD_MAXTOKENS", raw),
+                ],
+                |_| resolve_offload(),
+            );
+            assert_eq!(r.timeout_ms, 20000, "timeout {raw}");
+            assert_eq!(r.max_tokens, 12000, "max tokens {raw}");
+        }
+        let r = with_env(
+            &[
+                ("AX_OFFLOAD_URL", "http://localhost:11434/v1"),
+                ("AX_OFFLOAD_TIMEOUT_MS", "5000"),
+            ],
+            |_| resolve_offload(),
+        );
+        assert_eq!(r.timeout_ms, 5000);
     }
 
     #[test]

@@ -154,6 +154,35 @@ pub async fn synthesize_offload(
     answer
 }
 
+/// Longest wait for a connection (DNS and TCP/TLS connect) to the endpoint.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Endpoint that could not be reached and the time until which offload skips it.
+static BACKOFF: std::sync::Mutex<Option<(String, std::time::Instant)>> =
+    std::sync::Mutex::new(None);
+
+fn backing_off(url: &str) -> bool {
+    let guard = BACKOFF.lock().unwrap_or_else(|e| e.into_inner());
+    matches!(&*guard, Some((u, until)) if u == url && std::time::Instant::now() < *until)
+}
+
+fn set_backoff(url: &str, ms: u64) {
+    let mut guard = BACKOFF.lock().unwrap_or_else(|e| e.into_inner());
+    *guard = (ms > 0).then(|| {
+        (
+            url.to_string(),
+            std::time::Instant::now() + std::time::Duration::from_millis(ms),
+        )
+    });
+}
+
+fn clear_backoff(url: &str) {
+    let mut guard = BACKOFF.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.as_ref().is_some_and(|(u, _)| u == url) {
+        *guard = None;
+    }
+}
+
 /// One HTTP client for every offload request in this process, so connections
 /// and TLS sessions are reused between explores. The per-request timeout comes
 /// from the resolved settings. ax drives it from a single tokio runtime per
@@ -161,7 +190,12 @@ pub async fn synthesize_offload(
 fn shared_client() -> Option<&'static reqwest::Client> {
     static CLIENT: std::sync::OnceLock<Option<reqwest::Client>> = std::sync::OnceLock::new();
     CLIENT
-        .get_or_init(|| reqwest::Client::builder().build().ok())
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .connect_timeout(CONNECT_TIMEOUT)
+                .build()
+                .ok()
+        })
         .as_ref()
 }
 
@@ -178,6 +212,11 @@ async fn request_offload(
     let Some(url) = url else {
         return (None, "no_endpoint");
     };
+    // After a transport failure the endpoint is skipped for a while, so a dead
+    // endpoint does not delay every explore by the full timeout.
+    if backing_off(&url) {
+        return (None, "backoff");
+    }
     let ctx = if cfg.strip {
         strip_agent_directives(context)
     } else {
@@ -222,6 +261,7 @@ async fn request_offload(
         .await;
     match res {
         Ok(r) if r.status().is_success() => {
+            clear_backoff(&url);
             set_last_error(None, cfg.debug);
             let data: serde_json::Value = r.json().await.unwrap_or_default();
             let answer = data
@@ -243,6 +283,7 @@ async fn request_offload(
             (answer, outcome)
         }
         Ok(r) => {
+            clear_backoff(&url);
             let status = r.status();
             let text = r.text().await.unwrap_or_default();
             let text = ax_utils::truncate_chars(text.trim(), ERROR_BODY_CHARS, "…");
@@ -251,7 +292,13 @@ async fn request_offload(
         }
         Err(e) => {
             // reqwest errors name the URL and cause, never the request headers.
-            set_last_error(Some(format!("{url}: {e}")), cfg.debug);
+            set_backoff(&url, cfg.backoff_ms);
+            let pause = if cfg.backoff_ms > 0 {
+                format!(" (backing off for {} s)", cfg.backoff_ms.div_ceil(1000))
+            } else {
+                String::new()
+            };
+            set_last_error(Some(format!("{url}: {e}{pause}")), cfg.debug);
             (None, "transport_error")
         }
     }
@@ -279,6 +326,7 @@ pub fn offload_status() -> serde_json::Value {
         "effort": cfg.effort,
         "style": cfg.style,
         "timeout_ms": cfg.timeout_ms,
+        "backoff_ms": cfg.backoff_ms,
         "max_tokens": cfg.max_tokens,
         "strip": cfg.strip,
         "debug": cfg.debug,
@@ -404,6 +452,79 @@ mod tests {
             answers.1.is_some(),
             "the second request opened a new connection"
         );
+        assert_eq!(server.join().unwrap(), 2);
+    }
+
+    /// The first connection is closed without a reply (a transport failure);
+    /// every later connection gets a valid answer. Returns the base URL and a
+    /// handle that yields how many connections arrived within `window`.
+    fn fail_then_serve(window: std::time::Duration) -> (String, std::thread::JoinHandle<usize>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/v1", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + window;
+            let mut connections = 0;
+            while std::time::Instant::now() < deadline {
+                let Ok((stream, _)) = listener.accept() else {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                };
+                stream.set_nonblocking(false).unwrap();
+                connections += 1;
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                if !read_request(&mut reader) || connections == 1 {
+                    continue; // drop the stream: no response
+                }
+                let mut writer = stream;
+                let _ = write!(
+                    writer,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{OK}",
+                    OK.len()
+                );
+            }
+            connections
+        });
+        (url, handle)
+    }
+
+    fn two_requests(
+        url: &str,
+        extra: &[(&str, &str)],
+    ) -> (Option<String>, Option<String>, Option<String>) {
+        let mut vars = vec![("AX_OFFLOAD_URL", url), ("AX_OFFLOAD_MODEL", "gpt-4o")];
+        vars.extend_from_slice(extra);
+        with_env(&vars, |_| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let first = rt.block_on(synthesize_offload("q", "ctx", None));
+            let second = rt.block_on(synthesize_offload("q", "ctx", None));
+            (first, second, last_offload_error())
+        })
+    }
+
+    #[test]
+    fn an_unreachable_endpoint_is_skipped_for_a_while_after_a_failure() {
+        let (url, server) = fail_then_serve(std::time::Duration::from_millis(1500));
+        let (first, second, err) = two_requests(&url, &[]);
+        assert!(first.is_none());
+        assert!(
+            second.is_none(),
+            "offload must back off after a transport failure"
+        );
+        assert_eq!(server.join().unwrap(), 1, "no request during the back-off");
+        let err = err.unwrap_or_default();
+        assert!(err.contains("backing off"), "{err}");
+    }
+
+    #[test]
+    fn a_zero_back_off_retries_at_once() {
+        let (url, server) = fail_then_serve(std::time::Duration::from_millis(1500));
+        let (first, second, _) = two_requests(&url, &[("AX_OFFLOAD_BACKOFF_MS", "0")]);
+        assert!(first.is_none());
+        assert!(second.is_some());
         assert_eq!(server.join().unwrap(), 2);
     }
 
