@@ -20,7 +20,7 @@ test('the specs page lists path, status, project, and session through the calm l
   assert.match(page, /label: 'Version'/);
   assert.match(page, /label: 'Logging'/);
   assert.match(page, /label: 'Memory'/);
-  assert.match(page, /fetch\('\/api\/specs'\)/);
+  assert.match(page, /await fetchSpecList\(\)/);
   assert.match(page, /spec\.path \|\| 'No file'/);
   assert.match(page, /page-item-badge/);
   assert.match(page, /memory-blade specs-blade/);

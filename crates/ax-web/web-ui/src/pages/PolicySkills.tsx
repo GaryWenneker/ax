@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
   deletePolicyCopy,
   deletePolicySkill,
+  fetchCatalogAudits,
   fetchPolicySkills,
   fetchPolicySyncSettings,
   relocatePolicyItem,
@@ -149,9 +150,9 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
   }, []);
 
   function loadAuditHints() {
-    void fetch('/api/policy/skills/catalog/audits')
-      .then((res) => (res.ok ? res.json() : []))
-      .then((rows: { name: string; verdict?: string | null; mechanical_warns: number; mechanical_fails: number }[]) => {
+    // Audit hints are optional decoration: when they cannot be read the list keeps its current hints.
+    fetchCatalogAudits('skills')
+      .then((rows) => {
         const next: Record<string, string> = {};
         for (const row of rows) {
           next[row.name] = row.verdict

@@ -19,6 +19,15 @@ import SpecsDetail, { type EditorMode, type SpecRevision } from './SpecsDetail';
 import SpecWorkspace, { NewPlanModal } from './SpecWorkspace';
 import { workspaceFromHierarchy, workspaceFromLegacy, type WorkspaceDoc } from '../lib/specWorkspace';
 import type { ListColumn } from '../components/ui/ListColumns';
+import {
+  approveSpec,
+  createAlternativePlan,
+  fetchPlanRevisions,
+  fetchSpecList,
+  fetchSpecRevisions,
+  saveSpecPlanRevision,
+  saveSpecRevision,
+} from '../specsApi';
 
 type SpecItem = {
   id: string;
@@ -236,8 +245,7 @@ export default function SpecsPage() {
 
   async function load() {
     try {
-      const response = await fetch('/api/specs');
-      const data = await response.json();
+      const data = await fetchSpecList();
       setError(data.error ? String(data.error) : '');
       const parsed = parseSpecPayload(data);
       if (parsed.mode === 'hierarchy') {
@@ -272,8 +280,7 @@ export default function SpecsPage() {
     setEditorTarget('spec');
     setSelectedPlan(null);
     try {
-      const response = await fetch(`/api/specs/${encodeURIComponent(id)}/revisions`);
-      const data = await response.json();
+      const data = await fetchSpecRevisions(id);
       if (token !== loadToken.current) return;
       if (data.error) setError(String(data.error));
       const rows: SpecRevision[] = Array.isArray(data.revisions) ? data.revisions : [];
@@ -294,8 +301,7 @@ export default function SpecsPage() {
     setEditorTarget('plan');
     setBladeTab('plans');
     try {
-      const response = await fetch(`/api/specs/plan/${encodeURIComponent(planId)}/revisions`);
-      const data = await response.json();
+      const data = await fetchPlanRevisions(planId);
       if (token !== loadToken.current) return;
       if (data.error) setError(String(data.error));
       const rows: SpecRevision[] = Array.isArray(data.revisions) ? data.revisions : [];
@@ -446,12 +452,7 @@ export default function SpecsPage() {
   async function approve(version: number) {
     if (!selected || dirty || editorTarget !== 'spec') return;
     try {
-      const response = await fetch(`/api/specs/${encodeURIComponent(selected)}/approve`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ version }),
-      });
-      const data = await response.json();
+      const data = await approveSpec(selected, version);
       if (!data.ok) {
         setError(String(data.error || 'Approval failed'));
         return;
@@ -468,18 +469,13 @@ export default function SpecsPage() {
     if (!selected || openVersion == null || !dirty) return;
     try {
       if (editorTarget === 'plan' && selectedPlan) {
-        const response = await fetch('/api/specs/plan-revision', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            planId: selectedPlan,
-            basedOn: openVersion,
-            body: draftText,
-            sessionId: WEB_SESSION,
-            turnId: WEB_TURN,
-          }),
+        const data = await saveSpecPlanRevision({
+          planId: selectedPlan,
+          basedOn: openVersion,
+          body: draftText,
+          sessionId: WEB_SESSION,
+          turnId: WEB_TURN,
         });
-        const data = await response.json();
         if (!data.ok) {
           setError(String(data.error || 'Save failed'));
           return;
@@ -490,12 +486,7 @@ export default function SpecsPage() {
         setNotice(`Saved plan draft v${data.planVersion}. The previous body is still in the history.`);
         return;
       }
-      const response = await fetch(`/api/specs/${encodeURIComponent(selected)}/revisions`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ basedOn: openVersion, body: draftText }),
-      });
-      const data = await response.json();
+      const data = await saveSpecRevision(selected, openVersion, draftText);
       if (!data.ok) {
         setError(String(data.error || 'Save failed'));
         return;
@@ -513,20 +504,15 @@ export default function SpecsPage() {
     if (!selected || !projectId || !altTitle.trim() || !altBody.trim()) return false;
     const planId = `plan-${Date.now().toString(36)}`;
     try {
-      const response = await fetch('/api/specs/alternative-plan', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          projectId,
-          specId: selected,
-          planId,
-          planTitle: altTitle.trim(),
-          planBody: altBody.trim(),
-          sessionId: WEB_SESSION,
-          turnId: WEB_TURN,
-        }),
+      const data = await createAlternativePlan({
+        projectId,
+        specId: selected,
+        planId,
+        planTitle: altTitle.trim(),
+        planBody: altBody.trim(),
+        sessionId: WEB_SESSION,
+        turnId: WEB_TURN,
       });
-      const data = await response.json();
       if (!data.ok) {
         setError(String(data.error || 'Could not create plan'));
         return false;

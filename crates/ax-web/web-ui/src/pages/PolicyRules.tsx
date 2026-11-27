@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
   deletePolicyCopy,
   deletePolicyRule,
+  fetchCatalogAudits,
   fetchPolicyRules,
   fetchPolicySyncSettings,
   proposePolicyCapture,
@@ -159,9 +160,9 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
   }, []);
 
   function loadRuleAuditHints() {
-    void fetch('/api/policy/rules/catalog/audits')
-      .then((res) => (res.ok ? res.json() : []))
-      .then((rows: { name: string; verdict?: string | null; mechanical_warns: number; mechanical_fails: number }[]) => {
+    // Audit hints are optional decoration: when they cannot be read the list keeps its current hints.
+    fetchCatalogAudits('rules')
+      .then((rows) => {
         const next: Record<string, string> = {};
         for (const row of rows) {
           next[row.name] = row.verdict

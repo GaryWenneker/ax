@@ -10,7 +10,7 @@ import type {
   SkillFrontmatter,
 } from './policyTypes';
 import type { RestoreDecisionValue } from './policyPackage';
-import { hydratePolicyListItem, originQs } from './components/ui/policyListUtils';
+import { hydratePolicyListItem, originQs } from './components/ui/policyListUtils.ts';
 
 const POLICY = '/api/policy';
 
@@ -41,6 +41,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(formatApiError(body, res.status));
   }
   return res.json() as Promise<T>;
+}
+
+/** One row of a catalog audit: the reviewer's verdict or the mechanical check counts. */
+export interface CatalogAuditRow {
+  name: string;
+  verdict?: string | null;
+  mechanical_warns: number;
+  mechanical_fails: number;
+}
+
+/** Audit results for the rule or skill catalog. */
+export function fetchCatalogAudits(kind: 'rules' | 'skills'): Promise<CatalogAuditRow[]> {
+  return request<CatalogAuditRow[]>(`/${kind}/catalog/audits`);
 }
 
 export function fetchPolicyRules(): Promise<{ rules: PolicyRuleRow[]; groups?: unknown }> {

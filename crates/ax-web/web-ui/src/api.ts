@@ -972,3 +972,32 @@ export function fetchContextBudget(): Promise<ContextBudget> {
 export function saveContextBudget(tokens: number): Promise<ContextBudget> {
   return request<ContextBudget>('PUT', '/context-budget/', { tokens });
 }
+
+/** Language servers the LSP enrich run can use, as `/api/lsp/status` reports them. */
+export function fetchLspStatus(): Promise<{ servers?: unknown[] }> {
+  return get<{ servers?: unknown[] }>('/lsp/status');
+}
+
+/** Progress of the LSP enrich run; parse it with `parseProgress`. */
+export function fetchLspProgress(): Promise<unknown> {
+  return get<unknown>('/lsp/progress');
+}
+
+export interface LspActionReply {
+  ok?: boolean;
+  error?: string;
+  output?: string;
+  report?: Record<string, unknown>;
+}
+
+export function installLspServer(id: string): Promise<LspActionReply> {
+  return request<LspActionReply>('POST', '/lsp/install', { id });
+}
+
+export function cancelLspEnrich(): Promise<LspActionReply> {
+  return request<LspActionReply>('POST', '/lsp/cancel');
+}
+
+export function runLspEnrich(limit: number): Promise<LspActionReply> {
+  return request<LspActionReply>('POST', '/lsp/enrich', { limit });
+}
