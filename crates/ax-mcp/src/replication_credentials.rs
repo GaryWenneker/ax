@@ -112,7 +112,10 @@ mod tests {
             control: "local-control-secret".into(),
         };
         let previous = replace_entry(&entry, &credentials).unwrap();
-        assert!(previous.is_none(), "an unreadable value has nothing to roll back to");
+        assert!(
+            previous.is_none(),
+            "an unreadable value has nothing to roll back to"
+        );
         let saved: Credentials = serde_json::from_str(&entry.get_password().unwrap()).unwrap();
         assert_eq!(saved.token, credentials.token);
         let again = replace_entry(&entry, &credentials).unwrap().unwrap();

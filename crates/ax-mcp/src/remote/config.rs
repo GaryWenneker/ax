@@ -228,7 +228,10 @@ mod tests {
             "https://app.example.com/#frag",
             "http://app.example.com",
         ] {
-            assert!(config(serde_json::json!([bad])).validate().is_err(), "{bad}");
+            assert!(
+                config(serde_json::json!([bad])).validate().is_err(),
+                "{bad}"
+            );
         }
     }
 
