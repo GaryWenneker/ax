@@ -232,7 +232,7 @@ Authentication may be disabled for trusted local installations; remote Command C
 
 ## Team, clients and replication access
 
-These endpoints enforce the local-owner session or a client credential with the corresponding `admin:team`, `admin:clients` or `admin:nodes` scope. Mutations are rejected in read-only mode. Local browser mutations use the CSRF value from `/api/access/session` in `X-Ax-Access-Csrf`. Token values are returned only when created/revealed; keep them out of logs and screenshots.
+These endpoints enforce the local-owner session or a client credential with the corresponding `admin:team`, `admin:clients` or `admin:nodes` scope. Mutations are rejected in read-only mode. Local browser mutations use the CSRF value from `/api/access/session` in `X-Ax-Access-Csrf`. Token values are returned only when created/revealed; keep them out of logs and screenshots. A client credential acts with the role of the member it belongs to, so only an Owner can create, issue, rotate or change the scopes of a client that belongs to an Owner; anyone else gets 403.
 
 | Method | Path | Purpose |
 |---|---|---|

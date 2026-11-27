@@ -191,6 +191,59 @@ fn writable(hub: &WebHub) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     }
 }
 
+type JsonError = (StatusCode, Json<serde_json::Value>);
+
+/// A client credential authenticates with the role of the member it belongs
+/// to. Only an Owner may create, issue, rotate or widen one for an Owner;
+/// anyone else doing so would gain Owner rights.
+async fn may_manage_credentials_of(
+    db: &sqlx::SqlitePool,
+    actor: &Actor,
+    member_id: &str,
+) -> Result<(), JsonError> {
+    if actor.role == access::MemberRole::Owner {
+        return Ok(());
+    }
+    let members = access::list_members(db).await.map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error":"Members unavailable"})),
+        )
+    })?;
+    if members.iter().any(|m| {
+        m.id == member_id
+            && (m.role == access::MemberRole::Owner || m.roles.contains(&access::MemberRole::Owner))
+    }) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error":"Only an owner can manage an owner's credentials"})),
+        ));
+    }
+    Ok(())
+}
+
+/// [`may_manage_credentials_of`] for the member that owns client `client_id`.
+/// An unknown client passes, so the caller reports it as not found.
+async fn may_manage_client(
+    db: &sqlx::SqlitePool,
+    actor: &Actor,
+    client_id: &str,
+) -> Result<(), JsonError> {
+    if actor.role == access::MemberRole::Owner {
+        return Ok(());
+    }
+    let clients = access::list_clients(db).await.map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error":"Clients unavailable"})),
+        )
+    })?;
+    match clients.into_iter().find(|c| c.id == client_id) {
+        Some(client) => may_manage_credentials_of(db, actor, &client.member_id).await,
+        None => Ok(()),
+    }
+}
+
 async fn list_team() -> impl IntoResponse {
     match pool().await {
         Ok(pool) => match access::list_members(&pool).await {
@@ -331,6 +384,9 @@ async fn create_client(
             )
         }
     };
+    if let Err(resp) = may_manage_credentials_of(&pool, &actor, &body.member_id).await {
+        return resp;
+    }
     let id = Uuid::new_v4().to_string();
     match access::create_client(
         &pool,
@@ -379,6 +435,9 @@ async fn issue_client_token(
             )
         }
     };
+    if let Err(resp) = may_manage_client(&pool, &actor, &id).await {
+        return resp;
+    }
     match access::issue_client_credential(&pool, &id, None).await {
         Ok(credential) => {
             let _ = access::audit(
@@ -672,6 +731,9 @@ async fn update_scopes(
             )
         }
     };
+    if let Err(resp) = may_manage_client(&db, &actor, &id).await {
+        return resp.into_response();
+    }
     match access::update_client_scopes(&db, &id, &body.scopes).await {
         Ok(()) => {
             let _ = access::audit(
@@ -703,6 +765,9 @@ async fn rotate_token(Extension(actor): Extension<Actor>, Path(id): Path<String>
             )
         }
     };
+    if let Err(resp) = may_manage_client(&db, &actor, &id).await {
+        return resp.into_response();
+    }
     match access::rotate_client_credential(&db, &id).await {
         Ok(credential) => {
             let _ = access::audit(
