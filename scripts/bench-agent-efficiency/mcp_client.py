@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import subprocess
 import threading
 from pathlib import Path
@@ -34,15 +35,33 @@ class McpSession:
             encoding="utf-8",
         )
         self.next_id = 1
-        self.request(
-            "initialize",
-            {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "ax-savings-gauntlet", "version": "1"},
-            },
-        )
-        self.notify("notifications/initialized", {})
+        # One reader for the life of the process: a line that arrives after a
+        # timeout stays in the queue instead of vanishing with a stray thread.
+        self._lines: queue.Queue[str] = queue.Queue()
+        threading.Thread(target=self._pump, daemon=True).start()
+        try:
+            self.request(
+                "initialize",
+                {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "ax-savings-gauntlet", "version": "1"},
+                },
+            )
+            self.notify("notifications/initialized", {})
+        except BaseException:
+            self._stop()
+            raise
+
+    def _pump(self) -> None:
+        stdout = self.proc.stdout
+        if stdout is not None:
+            try:
+                for line in stdout:
+                    self._lines.put(line)
+            except (OSError, ValueError):
+                pass
+        self._lines.put("")
 
     def _send(self, message: dict) -> None:
         if self.proc.stdin is None:
@@ -54,14 +73,10 @@ class McpSession:
         self._send({"jsonrpc": "2.0", "method": method, "params": params})
 
     def _read_line(self) -> str:
-        box: list[str] = []
-        reader = threading.Thread(target=lambda: box.append(self.proc.stdout.readline() if self.proc.stdout else ""))
-        reader.daemon = True
-        reader.start()
-        reader.join(self.timeout)
-        if reader.is_alive():
-            raise McpError(f"MCP server did not answer within {self.timeout}s")
-        return box[0] if box else ""
+        try:
+            return self._lines.get(timeout=self.timeout)
+        except queue.Empty:
+            raise McpError(f"MCP server did not answer within {self.timeout}s") from None
 
     def request(self, method: str, params: dict) -> dict:
         request_id = self.next_id
@@ -88,13 +103,20 @@ class McpSession:
             raise McpError(f"{tool}: reply has no text content")
         return "\n".join(parts)
 
+    def _stop(self) -> None:
+        self.proc.kill()
+        try:
+            self.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+
     def close(self) -> None:
         try:
             if self.proc.stdin:
                 self.proc.stdin.close()
             self.proc.wait(timeout=5)
         except (OSError, subprocess.TimeoutExpired):
-            self.proc.kill()
+            self._stop()
 
     def __enter__(self) -> "McpSession":
         return self
