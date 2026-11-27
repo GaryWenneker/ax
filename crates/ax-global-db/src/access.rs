@@ -882,17 +882,29 @@ pub async fn register_trusted_replica(
         bail!("replica is blocked");
     }
 
+    // Enrollment grants access to a project the node never had. It never
+    // clears a per-project revoke: only `grant_node_project` (an admin) can.
     sqlx::query(
         "INSERT INTO node_project_access (node_id, project_id, revoked_at)
          VALUES (?, ?, NULL)
-         ON CONFLICT(node_id, project_id) DO UPDATE SET
-            revoked_at = NULL,
-            granted_at = CURRENT_TIMESTAMP",
+         ON CONFLICT(node_id, project_id) DO NOTHING",
     )
     .bind(node_id)
     .bind(project_id)
     .execute(&mut *tx)
     .await?;
+    let access_revoked: (bool,) = sqlx::query_as(
+        "SELECT revoked_at IS NOT NULL FROM node_project_access
+         WHERE node_id = ? AND project_id = ?",
+    )
+    .bind(node_id)
+    .bind(project_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if access_revoked.0 {
+        // Dropping the transaction rolls back the node upsert as well.
+        bail!("replica is blocked");
+    }
 
     sqlx::query(
         "INSERT INTO security_audit_log (event_type, subject_type, subject_id, details)
@@ -968,6 +980,16 @@ pub async fn issue_node_credential(
     if result.rows_affected() != 1 {
         bail!("node cannot be approved");
     }
+    // A node has one live credential: issuing a new one retires the old ones,
+    // so re-issuing after a suspected leak cuts the leaked token off.
+    sqlx::query(
+        "UPDATE node_credentials SET revoked_at = CURRENT_TIMESTAMP
+         WHERE node_id = ? AND id != ? AND revoked_at IS NULL",
+    )
+    .bind(node_id)
+    .bind(&credential_id)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
 
     Ok(IssuedNodeCredential {
@@ -1698,6 +1720,73 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(list_nodes(&pool).await.unwrap()[0].trust_state, "trusted");
+    }
+
+    #[tokio::test]
+    async fn enrollment_registration_does_not_restore_revoked_project_access() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_and_init(&dir.path().join("global.db")).await.unwrap();
+        register_trusted_replica(&pool, "n1", "Replica", None, "p1")
+            .await
+            .unwrap();
+        register_trusted_replica(&pool, "n1", "Replica", None, "p2")
+            .await
+            .unwrap();
+        let credential = issue_node_credential(&pool, "n1", None).await.unwrap();
+        assert!(revoke_node_project(&pool, "n1", "p1").await.unwrap());
+
+        // The enrollment secret for p1 must not undo the per-project revoke.
+        assert!(register_trusted_replica(&pool, "n1", "Replica", None, "p1")
+            .await
+            .is_err());
+        assert!(
+            authenticate_node_token_for_project(&pool, &credential.token, "p1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // Access to the other project, and repeat enrollment there, keep working.
+        register_trusted_replica(&pool, "n1", "Replica", None, "p2")
+            .await
+            .unwrap();
+        assert!(
+            authenticate_node_token_for_project(&pool, &credential.token, "p2")
+                .await
+                .unwrap()
+                .is_some()
+        );
+        // Only an explicit grant restores it.
+        grant_node_project(&pool, "n1", "p1").await.unwrap();
+        register_trusted_replica(&pool, "n1", "Replica", None, "p1")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn issuing_a_node_credential_revokes_the_earlier_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_and_init(&dir.path().join("global.db")).await.unwrap();
+        register_trusted_replica(&pool, "n1", "Replica", None, "p1")
+            .await
+            .unwrap();
+        register_trusted_replica(&pool, "n2", "Other", None, "p1")
+            .await
+            .unwrap();
+        let first = issue_node_credential(&pool, "n1", None).await.unwrap();
+        let other = issue_node_credential(&pool, "n2", None).await.unwrap();
+        let second = issue_node_credential(&pool, "n1", None).await.unwrap();
+        assert!(authenticate_node_token(&pool, &first.token)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(authenticate_node_token(&pool, &second.token)
+            .await
+            .unwrap()
+            .is_some());
+        assert!(authenticate_node_token(&pool, &other.token)
+            .await
+            .unwrap()
+            .is_some());
     }
 
     #[tokio::test]
