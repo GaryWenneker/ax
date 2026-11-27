@@ -39,6 +39,7 @@ mod project_purge;
 mod queries;
 mod remote_mcp;
 mod remote_mcp_publications;
+mod request_guard;
 mod savings;
 mod share_api;
 mod share_auth;

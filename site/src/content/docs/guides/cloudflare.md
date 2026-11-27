@@ -21,7 +21,13 @@ Cloudflare should send:
 - `X-Forwarded-Proto: https`
 - the browser `Origin`, for example `https://admin.example.com`
 
-Ax accepts that public host when the origin names the same host. A cross-site request is rejected.
+Ax answers only for host names it knows. Add the public hostname to `~/.ax/config.json`, or start Ax with `AX_WEB_AUTH_ORIGIN=https://admin.example.com`:
+
+```json
+{ "web": { "allowed_hosts": ["admin.example.com"] } }
+```
+
+Restart Command Center after changing the list. A request for any other host gets `403`. A cross-site request is rejected.
 
 ## Sign-in
 

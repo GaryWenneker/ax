@@ -6,6 +6,7 @@ description: Every HTTP endpoint served by ax web / ax ship --watch, grouped by 
 `ax web` (and `ax ship --watch`) serve the Command Center UI and a JSON API on the same port (default `7070`). Every path below is relative to that server, for example `http://127.0.0.1:7070/api/stats`.
 
 - Requests from the local machine need no token. Through `ax share`, every `/api`, `/dav` and `/ax` request needs the share token (see [Share Command Center](/guides/share/)).
+- The `Host` header must name this server: `localhost` or a loopback address, an IP address when the server is bound beyond loopback, the host of `AX_WEB_AUTH_ORIGIN`, or a name listed in `AX_WEB_ALLOWED_HOSTS` (comma separated) or in `web.allowed_hosts` in `~/.ax/config.json`. Any other `Host` gets `403`. This stops DNS rebinding, where a page on another domain points its name at this computer. The list is read when the server starts.
 - Endpoints ending in `/stream` or `/events` answer with Server-Sent Events (SSE).
 - UI routes like `/policy/rules` or `/graph` return the single-page app and work as bookmarks. Unknown `/api/` routes return an error rather than the HTML application shell.
 

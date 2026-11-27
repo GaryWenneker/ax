@@ -199,8 +199,13 @@ impl WebHub {
                 )),
             )
             .layer(axum::middleware::from_fn_with_state(
-                hub,
+                hub.clone(),
                 crate::web_auth::gate,
+            ))
+            // Outermost: refuse unexpected Host names before anything else runs.
+            .layer(axum::middleware::from_fn_with_state(
+                crate::request_guard::AllowedHosts::from_environment(hub.local_only),
+                crate::request_guard::guard,
             ))
     }
 }
