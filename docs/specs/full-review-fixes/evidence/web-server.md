@@ -75,7 +75,7 @@ RED means a test failed on the code before the fix. Where no RED was possible, t
 | web-server-065 | Fixed | yes | `ship::tests::a_panicking_evaluation_clears_the_evaluating_flag` | f63ebd64 |
 | web-server-066 | Fixed | yes | `sonar_proxy::tests::a_host_fallback_after_invalidate_does_not_mark_the_cache_ready` | a6119d38 |
 
-Final-check commits in this run: `5eea0cb3` (the Specs page source test now expects `/api/specs?refresh=1`, which c998cea5 introduced; embedded `dist` rebuilt from the current sources) and `ecc58c16` (rustfmt on `share_auth.rs`).
+Final-check commits in this run: `5eea0cb3` (the Specs page source test now expects `/api/specs?refresh=1`, which c998cea5 introduced; embedded `dist` rebuilt from the current sources) `ecc58c16` (rustfmt on `share_auth.rs`; it also recorded the dist entry files as deleted, because a test build was rewriting the dist folder when it was staged) and `846e4587` (puts those dist files back, identical to 5eea0cb3).
 
 ## Review rounds
 
