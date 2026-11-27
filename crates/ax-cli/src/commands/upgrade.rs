@@ -103,7 +103,7 @@ pub async fn run(
 
     if !explicit_version && !local_install {
         if let Some(cmp) = version_check::compare_versions(&target_version, current) {
-            if cmp < 0 {
+            if cmp == std::cmp::Ordering::Less {
                 return Err(format!(
                     "Refusing to downgrade from {} to {} (getax latest.txt may be stale). \
                      Use `ax upgrade {}` to pin a version, or install from GitHub Releases.",

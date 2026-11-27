@@ -3,6 +3,7 @@
 //! Primary source: GitHub Releases API / redirect (`GaryWenneker/ax`).
 //! Fallback:       `getax.wenneker.io/releases/latest.txt` and legacy CDN redirects.
 
+use std::cmp::Ordering;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -21,11 +22,71 @@ struct UpdateCheckCache {
     latest: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// `major.minor.patch`; the derived order compares the fields in that order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VersionTriple {
     pub major: u32,
     pub minor: u32,
     pub patch: u32,
+}
+
+/// A release version: the numeric triple plus an optional pre-release suffix
+/// (`2.1.0-rc.1`). Build metadata (`+...`) is ignored, as in semver.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseVersion {
+    pub triple: VersionTriple,
+    pub pre: Option<String>,
+}
+
+impl Ord for ReleaseVersion {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.triple
+            .cmp(&other.triple)
+            .then_with(|| match (&self.pre, &other.pre) {
+                (None, None) => Ordering::Equal,
+                // A pre-release sorts below the final release of the same triple.
+                (None, Some(_)) => Ordering::Greater,
+                (Some(_), None) => Ordering::Less,
+                (Some(a), Some(b)) => compare_prerelease(a, b),
+            })
+    }
+}
+
+impl PartialOrd for ReleaseVersion {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Semver pre-release precedence: dot-separated identifiers compared left to right,
+/// numeric ones numerically and below alphanumeric ones, a shorter list lower.
+fn compare_prerelease(a: &str, b: &str) -> Ordering {
+    fn numeric(id: &str) -> Option<&str> {
+        id.bytes()
+            .all(|c| c.is_ascii_digit())
+            .then(|| id.trim_start_matches('0'))
+    }
+    let mut ia = a.split('.');
+    let mut ib = b.split('.');
+    loop {
+        match (ia.next(), ib.next()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(x), Some(y)) => {
+                let ord = match (numeric(x), numeric(y)) {
+                    // Compare digit strings by length first, so any size works.
+                    (Some(nx), Some(ny)) => nx.len().cmp(&ny.len()).then_with(|| nx.cmp(ny)),
+                    (Some(_), None) => Ordering::Less,
+                    (None, Some(_)) => Ordering::Greater,
+                    (None, None) => x.cmp(y),
+                };
+                if ord != Ordering::Equal {
+                    return ord;
+                }
+            }
+        }
+    }
 }
 
 pub fn current_version() -> &'static str {
@@ -141,35 +202,54 @@ pub fn strip_v(v: &str) -> String {
     }
 }
 
-pub fn parse_version_triple(v: &str) -> Option<VersionTriple> {
+/// Parse `v1.2.3`, `1.2.3-rc.1` or `1.2.3+build`; anything else is `None`.
+pub fn parse_version(v: &str) -> Option<ReleaseVersion> {
     let core = strip_v(v);
-    let core = core.split('-').next()?.trim();
-    let mut parts = core.split('.');
-    Some(VersionTriple {
-        major: parts.next()?.parse().ok()?,
-        minor: parts.next()?.parse().ok()?,
-        patch: parts.next()?.parse().ok()?,
-    })
+    let core = core.trim();
+    let core = core.split_once('+').map_or(core, |(head, _)| head);
+    let (nums, pre) = match core.split_once('-') {
+        Some((nums, pre)) => (nums, Some(pre)),
+        None => (core, None),
+    };
+    let mut parts = nums.split('.');
+    let mut next = || -> Option<u32> {
+        let p = parts.next()?;
+        if p.is_empty() || !p.bytes().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        p.parse().ok()
+    };
+    let triple = VersionTriple {
+        major: next()?,
+        minor: next()?,
+        patch: next()?,
+    };
+    if parts.next().is_some() {
+        return None;
+    }
+    let pre = match pre {
+        None => None,
+        Some(p) => {
+            let valid = p.split('.').all(|id| {
+                !id.is_empty() && id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
+            });
+            if !valid {
+                return None;
+            }
+            Some(p.to_string())
+        }
+    };
+    Some(ReleaseVersion { triple, pre })
 }
 
-pub fn compare_versions(a: &str, b: &str) -> Option<i32> {
-    let va = parse_version_triple(a)?;
-    let vb = parse_version_triple(b)?;
-    if va.major != vb.major {
-        return Some((va.major as i32) - (vb.major as i32));
-    }
-    if va.minor != vb.minor {
-        return Some((va.minor as i32) - (vb.minor as i32));
-    }
-    Some((va.patch as i32) - (vb.patch as i32))
+/// Order of `a` relative to `b`, or `None` when either is not a release version.
+pub fn compare_versions(a: &str, b: &str) -> Option<Ordering> {
+    Some(parse_version(a)?.cmp(&parse_version(b)?))
 }
 
+/// True only when `latest` is a valid release version above `current`.
 pub fn is_update_available(current: &str, latest: &str) -> bool {
-    match compare_versions(latest, current) {
-        Some(cmp) if cmp > 0 => true,
-        Some(_) => false,
-        None => normalize_version(current) != normalize_version(latest),
-    }
+    compare_versions(latest, current) == Some(Ordering::Greater)
 }
 
 fn cache_path() -> PathBuf {
@@ -237,11 +317,23 @@ async fn fetch_latest_from_cdn(client: &reqwest::Client) -> Result<String, Strin
         return Err(format!("CDN returned HTTP {}", resp.status()));
     }
     let text = resp.text().await.map_err(|e| e.to_string())?;
+    parse_cdn_latest(&text)
+}
+
+/// Accept a `latest.txt` body only when it is a release version.
+fn parse_cdn_latest(text: &str) -> Result<String, String> {
     let v = text.trim();
     if v.is_empty() {
         return Err("CDN returned empty version".to_string());
     }
-    Ok(normalize_version(v))
+    let v = normalize_version(v);
+    if parse_version(&v).is_none() {
+        let preview = ax_utils::truncate_chars(text.trim(), 40, "…");
+        return Err(format!(
+            "CDN returned something that is not a version: {preview:?}"
+        ));
+    }
+    Ok(v)
 }
 
 pub async fn resolve_latest_version(repo: &str) -> Result<String, String> {
@@ -421,23 +513,22 @@ async fn fetch_release_tags(
         .collect())
 }
 
+/// Distinct release tags, highest version first. Tags that are not release
+/// versions (`nightly`, an HTML error page) are dropped.
 fn unique_tags_desc(tags: Vec<String>) -> Vec<String> {
-    use std::cmp::Ordering;
-
-    let mut out: Vec<String> = Vec::new();
+    let mut out: Vec<(ReleaseVersion, String)> = Vec::new();
     for tag in tags {
         let norm = normalize_version(&tag);
-        if norm.is_empty() || out.iter().any(|t| t == &norm) {
+        let Some(parsed) = parse_version(&norm) else {
+            continue;
+        };
+        if out.iter().any(|(_, t)| t == &norm) {
             continue;
         }
-        out.push(norm);
+        out.push((parsed, norm));
     }
-    out.sort_by(|a, b| match compare_versions(a, b) {
-        Some(c) if c > 0 => Ordering::Less,
-        Some(c) if c < 0 => Ordering::Greater,
-        _ => Ordering::Equal,
-    });
-    out
+    out.sort_by(|(a, _), (b, _)| b.cmp(a));
+    out.into_iter().map(|(_, tag)| tag).collect()
 }
 
 async fn release_asset_exists(
@@ -617,6 +708,59 @@ mod tests {
         // When GitHub tags are present, stale CDN latest.txt must not appear alone.
         let sorted = unique_tags_desc(vec!["v2.0.12".into(), "v2.0.5".into()]);
         assert_eq!(sorted.first().map(String::as_str), Some("v2.0.12"));
+    }
+
+    #[test]
+    fn huge_version_components_compare_without_wrapping() {
+        assert!(is_update_available("1.0.0", "4000000000.0.0"));
+        assert!(!is_update_available("4000000000.0.0", "1.0.0"));
+        assert!(is_update_available("1.4000000000.0", "1.4000000001.0"));
+    }
+
+    #[test]
+    fn prerelease_is_lower_than_its_final_release() {
+        assert!(is_update_available("2.1.0-rc.1", "2.1.0"));
+        assert!(!is_update_available("2.1.0", "2.1.0-rc.1"));
+        assert!(is_update_available("v2.1.0-rc.1", "v2.1.0-rc.2"));
+        assert!(is_update_available("2.1.0-rc.9", "2.1.0-rc.10"));
+        assert!(is_update_available("2.1.0-alpha", "2.1.0-beta"));
+        assert!(!is_update_available("2.1.0-rc.1", "2.1.0-rc.1"));
+        assert!(!is_update_available("2.1.0", "2.1.0+build.5"));
+    }
+
+    #[test]
+    fn unparseable_latest_is_not_an_update() {
+        assert!(!is_update_available("2.0.0", "<!doctype html><html>"));
+        assert!(!is_update_available("2.0.0", "vnightly"));
+        assert!(!is_update_available("2.0.0", ""));
+    }
+
+    #[test]
+    fn cdn_latest_must_be_a_release_version() {
+        assert_eq!(parse_cdn_latest("v2.3.4\n").as_deref(), Ok("v2.3.4"));
+        assert_eq!(parse_cdn_latest("2.3.4").as_deref(), Ok("v2.3.4"));
+        assert!(parse_cdn_latest("").is_err());
+        assert!(parse_cdn_latest("<!doctype html><html><body>Sign in</body></html>").is_err());
+        assert!(parse_cdn_latest("not found").is_err());
+    }
+
+    #[test]
+    fn unique_tags_desc_drops_non_semver_tags() {
+        let sorted = unique_tags_desc(vec!["v2.0.5".into(), "nightly".into(), "v2.0.7".into()]);
+        assert_eq!(sorted, vec!["v2.0.7", "v2.0.5"]);
+    }
+
+    #[test]
+    fn unique_tags_desc_orders_many_mixed_tags() {
+        let mut tags: Vec<String> = (0..40).map(|i| format!("v1.{}.{}", i % 7, i)).collect();
+        tags.extend(["nightly", "latest", "v1.x"].iter().map(|s| s.to_string()));
+        tags.push("v1.6.99-rc.1".into());
+        let sorted = unique_tags_desc(tags);
+        assert_eq!(sorted.len(), 41);
+        assert_eq!(sorted[0], "v1.6.99-rc.1");
+        assert!(sorted
+            .windows(2)
+            .all(|w| { compare_versions(&w[0], &w[1]).is_some_and(|c| c != Ordering::Less) }));
     }
 
     #[test]
