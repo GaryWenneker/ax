@@ -64,8 +64,16 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// A new turn id: the session, the time, this process and a per-process
+/// counter, so two begins in the same millisecond never share an id.
 fn mint_turn_id(session: &str) -> String {
-    let raw = format!("{session}\n{}", now_ms());
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let raw = format!("{session}\n{nanos}\n{}\n{seq}", std::process::id());
     format!("trn_{}", &sha256_hex(&raw)[..16])
 }
 
@@ -105,16 +113,54 @@ fn snapshot_path(root: &Path, session: &str, turn_id: &str) -> Result<PathBuf, S
     Ok(session_dir(root, session)?.join(format!("{turn_id}.json")))
 }
 
-fn write_snapshot(root: &Path, snap: &TurnSnapshot) -> Result<(), String> {
+fn io_err(message: String) -> std::io::Error {
+    std::io::Error::other(message)
+}
+
+fn encode_snapshot(snap: &TurnSnapshot) -> std::io::Result<Vec<u8>> {
+    serde_json::to_vec_pretty(snap).map_err(|e| io_err(e.to_string()))
+}
+
+/// Writes a new turn's snapshot under the turn's lock; an existing snapshot
+/// for the same id is an error, never overwritten.
+fn create_snapshot(root: &Path, snap: &TurnSnapshot) -> Result<(), String> {
     let path = snapshot_path(root, &snap.session_id, &snap.turn_id)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    ax_utils::update_locked(&path, |current| match current {
+        Some(_) => Err(io_err(format!("turn {} already exists", snap.turn_id))),
+        None => encode_snapshot(snap).map(Some),
+    })
+    .map(|_| ())
+    .map_err(|e| e.to_string())
+}
+
+/// Reads, changes and writes one turn's snapshot while holding the turn's
+/// lock, so concurrent writers to the same turn never drop each other's
+/// changes. `change` sees the current snapshot; its error leaves the file as it was.
+fn modify_snapshot<F>(
+    root: &Path,
+    session: &str,
+    turn_id: &str,
+    change: F,
+) -> Result<TurnSnapshot, String>
+where
+    F: FnOnce(&mut TurnSnapshot) -> Result<(), String>,
+{
+    let path = snapshot_path(root, session, turn_id)?;
+    if !path.is_file() {
+        return Err(format!("turn not found: {turn_id}"));
     }
-    let tmp = path.with_extension("json.tmp");
-    let body = serde_json::to_vec_pretty(snap).map_err(|e| e.to_string())?;
-    fs::write(&tmp, body).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
-    Ok(())
+    let mut saved = None;
+    ax_utils::update_locked(&path, |current| {
+        let raw = current.ok_or_else(|| io_err(format!("turn not found: {turn_id}")))?;
+        let mut snap: TurnSnapshot =
+            serde_json::from_slice(&raw).map_err(|e| io_err(e.to_string()))?;
+        change(&mut snap).map_err(io_err)?;
+        let body = encode_snapshot(&snap)?;
+        saved = Some(snap);
+        Ok(Some(body))
+    })
+    .map_err(|e| e.to_string())?;
+    saved.ok_or_else(|| format!("turn not found: {turn_id}"))
 }
 
 fn read_snapshot(root: &Path, session: &str, turn_id: &str) -> Result<TurnSnapshot, String> {
@@ -301,7 +347,7 @@ pub async fn turn_begin(
         finish_receipt: None,
         dirty_at_begin,
     };
-    write_snapshot(root, &snap)?;
+    create_snapshot(root, &snap)?;
     let _ = record_activity(
         root,
         ActivityRecord {
@@ -336,36 +382,37 @@ pub async fn turn_event(
     turn_id: &str,
     input: TurnEventInput,
 ) -> Result<TurnSnapshot, String> {
-    let mut snap = read_snapshot(root, session_id, turn_id)?;
-    if snap.state != TurnState::Open {
-        return Err(format!("turn is {:?}; cannot append events", snap.state));
-    }
     let kind = if input.kind.trim().is_empty() {
-        "note".into()
+        "note".to_string()
     } else {
         input.kind.trim().to_string()
     };
-    snap.events.push(TurnEvent {
-        kind: kind.clone(),
-        body: clip(&crate::redact::redact_text(&input.body), 4_000),
-        at_ms: now_ms(),
-    });
-    for f in input.files {
-        if !f.is_empty() && !snap.files.iter().any(|x| x == &f) {
-            snap.files.push(f);
+    let snap = modify_snapshot(root, session_id, turn_id, |snap| {
+        if snap.state != TurnState::Open {
+            return Err(format!("turn is {:?}; cannot append events", snap.state));
         }
-    }
-    for s in input.symbols {
-        if !s.is_empty() && !snap.symbols.iter().any(|x| x == &s) {
-            snap.symbols.push(s);
+        snap.events.push(TurnEvent {
+            kind: kind.clone(),
+            body: clip(&crate::redact::redact_text(&input.body), 4_000),
+            at_ms: now_ms(),
+        });
+        for f in &input.files {
+            if !f.is_empty() && !snap.files.iter().any(|x| x == f) {
+                snap.files.push(f.clone());
+            }
         }
-    }
-    for d in input.decisions {
-        if !d.is_empty() && !snap.decisions.iter().any(|x| x == &d) {
-            snap.decisions.push(d);
+        for s in &input.symbols {
+            if !s.is_empty() && !snap.symbols.iter().any(|x| x == s) {
+                snap.symbols.push(s.clone());
+            }
         }
-    }
-    write_snapshot(root, &snap)?;
+        for d in &input.decisions {
+            if !d.is_empty() && !snap.decisions.iter().any(|x| x == d) {
+                snap.decisions.push(d.clone());
+            }
+        }
+        Ok(())
+    })?;
     let _ = record_activity(
         root,
         ActivityRecord {
@@ -392,16 +439,17 @@ pub async fn turn_checkpoint(
     turn_id: &str,
     note: &str,
 ) -> Result<TurnSnapshot, String> {
-    let mut snap = read_snapshot(root, session_id, turn_id)?;
-    if snap.state != TurnState::Open {
-        return Err(format!("turn is {:?}; cannot checkpoint", snap.state));
-    }
-    snap.events.push(TurnEvent {
-        kind: "checkpoint".into(),
-        body: clip(&crate::redact::redact_text(note), 4_000),
-        at_ms: now_ms(),
-    });
-    write_snapshot(root, &snap)?;
+    let snap = modify_snapshot(root, session_id, turn_id, |snap| {
+        if snap.state != TurnState::Open {
+            return Err(format!("turn is {:?}; cannot checkpoint", snap.state));
+        }
+        snap.events.push(TurnEvent {
+            kind: "checkpoint".into(),
+            body: clip(&crate::redact::redact_text(note), 4_000),
+            at_ms: now_ms(),
+        });
+        Ok(())
+    })?;
     let _ = record_activity(
         root,
         ActivityRecord {
@@ -525,20 +573,66 @@ pub async fn turn_finish(
         }
     }
 
-    let receipt = TurnFinishReceipt {
-        turn_id: turn_id.to_string(),
-        session_id: session_id.to_string(),
-        memory_id: memory_id.clone(),
-        files: snap.files.clone(),
-        commits: commits.clone(),
-        state: "finished".into(),
-        idempotent: false,
-        semantic_memory_ids: semantic_ids.clone(),
-        warnings,
+    // Write the finish onto the snapshot as it is now, under the turn's lock:
+    // events added while finish ran are kept, and a finish that won a race
+    // with this one is returned as the receipt instead of being overwritten.
+    let mut receipt = None;
+    let mut already = None;
+    let snap = modify_snapshot(root, session_id, turn_id, |current| {
+        match current.state {
+            TurnState::Failed => return Err("turn already failed".into()),
+            TurnState::Finished => {
+                already = current.finish_receipt.clone();
+                return Ok(());
+            }
+            TurnState::Open => {}
+        }
+        for f in &snap.files {
+            if !current.files.iter().any(|x| x == f) {
+                current.files.push(f.clone());
+            }
+        }
+        for d in &snap.decisions {
+            if !current.decisions.iter().any(|x| x == d) {
+                current.decisions.push(d.clone());
+            }
+        }
+        current.outcome = Some(outcome.clone());
+        current.memory_id = memory_id.clone();
+        let made = TurnFinishReceipt {
+            turn_id: turn_id.to_string(),
+            session_id: session_id.to_string(),
+            memory_id: memory_id.clone(),
+            files: current.files.clone(),
+            commits: commits.clone(),
+            state: "finished".into(),
+            idempotent: false,
+            semantic_memory_ids: semantic_ids.clone(),
+            warnings: warnings.clone(),
+        };
+        current.state = TurnState::Finished;
+        current.finish_receipt = Some(serde_json::to_value(&made).unwrap_or(json!({})));
+        receipt = Some(made);
+        Ok(())
+    })?;
+    let Some(receipt) = receipt else {
+        let mut parsed: TurnFinishReceipt = match already {
+            Some(value) => serde_json::from_value(value).map_err(|e| e.to_string())?,
+            None => TurnFinishReceipt {
+                turn_id: turn_id.to_string(),
+                session_id: session_id.to_string(),
+                memory_id: snap.memory_id.clone(),
+                files: snap.files.clone(),
+                commits: Vec::new(),
+                state: "finished".into(),
+                idempotent: true,
+                semantic_memory_ids: Vec::new(),
+                warnings: Vec::new(),
+            },
+        };
+        parsed.idempotent = true;
+        return Ok(parsed);
     };
-    snap.state = TurnState::Finished;
-    snap.finish_receipt = Some(serde_json::to_value(&receipt).unwrap_or(json!({})));
-    write_snapshot(root, &snap)?;
 
     let activity_summary = match &memory_id {
         Some(mid) => format!("{} memory={mid}", clip(&outcome, 160)),
@@ -756,13 +850,14 @@ pub async fn turn_fail(
     turn_id: &str,
     reason: &str,
 ) -> Result<TurnSnapshot, String> {
-    let mut snap = read_snapshot(root, session_id, turn_id)?;
-    if snap.state != TurnState::Open {
-        return Err(format!("turn is {:?}; cannot fail", snap.state));
-    }
-    snap.state = TurnState::Failed;
-    snap.outcome = Some(clip(&crate::redact::redact_text(reason), 4_000));
-    write_snapshot(root, &snap)?;
+    let snap = modify_snapshot(root, session_id, turn_id, |snap| {
+        if snap.state != TurnState::Open {
+            return Err(format!("turn is {:?}; cannot fail", snap.state));
+        }
+        snap.state = TurnState::Failed;
+        snap.outcome = Some(clip(&crate::redact::redact_text(reason), 4_000));
+        Ok(())
+    })?;
     let _ = record_activity(
         root,
         ActivityRecord {
@@ -1170,5 +1265,55 @@ mod tests {
         assert!(open
             .iter()
             .any(|v| v.as_str() == Some(begin.turn_id.as_str())));
+    }
+
+    #[test]
+    fn turn_ids_minted_in_the_same_millisecond_differ() {
+        let ids: std::collections::HashSet<String> =
+            (0..1_000).map(|_| mint_turn_id("sess-same")).collect();
+        assert_eq!(ids.len(), 1_000);
+    }
+
+    #[tokio::test]
+    async fn begin_never_overwrites_an_existing_turn() {
+        let (root, _pool, _guard) = fixture().await;
+        let first = turn_begin(&root, "sess-o", "first", None).await.unwrap();
+        let mut copy = first.clone();
+        copy.prompt = "second".into();
+        assert!(create_snapshot(&root, &copy).is_err());
+        let kept = read_snapshot(&root, "sess-o", &first.turn_id).unwrap();
+        assert_eq!(kept.prompt, "first");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn concurrent_events_on_one_turn_are_all_kept() {
+        let (root, _pool, _guard) = fixture().await;
+        let begin = turn_begin(&root, "sess-c", "parallel", None).await.unwrap();
+        let mut tasks = Vec::new();
+        for worker in 0..8 {
+            let root = root.clone();
+            let turn = begin.turn_id.clone();
+            tasks.push(tokio::spawn(async move {
+                for n in 0..25 {
+                    turn_event(
+                        &root,
+                        "sess-c",
+                        &turn,
+                        TurnEventInput {
+                            kind: "note".into(),
+                            body: format!("w{worker}-e{n}"),
+                            ..TurnEventInput::default()
+                        },
+                    )
+                    .await
+                    .unwrap();
+                }
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+        let snap = read_snapshot(&root, "sess-c", &begin.turn_id).unwrap();
+        assert_eq!(snap.events.len(), 200);
     }
 }
