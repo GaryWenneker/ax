@@ -244,7 +244,17 @@ impl DaemonLifecycle {
     }
 
     pub async fn on_client_connected(self: &Arc<Self>) {
+        self.client_accepted();
+        self.client_started().await;
+    }
+
+    /// Counts a client the moment it is accepted, so an idle timer that fires
+    /// before the client's task runs sees it.
+    fn client_accepted(&self) {
         self.clients.fetch_add(1, Ordering::SeqCst);
+    }
+
+    async fn client_started(self: &Arc<Self>) {
         self.disarm_idle().await;
         self.touch_activity().await;
     }
@@ -265,11 +275,19 @@ impl DaemonLifecycle {
         let timeout = self.idle_timeout_ms;
         let handle = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(timeout)).await;
-            if me.idle_expired().await {
+            if me.idle_timer_fired().await {
                 std::process::exit(0);
             }
         });
         *self.idle_task.write().await = Some(handle);
+    }
+
+    /// Runs on the idle task when its timer ends. Returns true when it shut down.
+    async fn idle_timer_fired(self: &Arc<Self>) -> bool {
+        // This is the idle task: take its handle out without aborting it, so the
+        // shutdown below does not cancel the task that runs it.
+        drop(self.idle_task.write().await.take());
+        self.idle_expired().await
     }
 
     /// The idle timer fired: shuts the daemon down when no client is connected.
@@ -529,14 +547,9 @@ async fn run_socket_daemon(
         let root = project_root.clone();
         let lc = Arc::clone(&lifecycle);
         let sp = pipe_name.clone();
-        tokio::spawn(async move {
-            lc.on_client_connected().await;
+        spawn_client(&lifecycle, async move {
             let session = DaemonSession::from_io(connected);
-            let result = serve_session(session, engine, &root, 0, Some(sp), None, lc.clone()).await;
-            lc.on_client_disconnected().await;
-            if let Err(e) = result {
-                tracing::warn!("daemon client: {}", e);
-            }
+            serve_session(session, engine, &root, 0, Some(sp), None, lc).await
         });
     }
     Ok(())
@@ -575,15 +588,9 @@ async fn run_socket_daemon(
             let root = project_root.clone();
             let lc = Arc::clone(&lifecycle);
             let sp = socket_path.clone();
-            tokio::spawn(async move {
-                lc.on_client_connected().await;
+            spawn_client(&lifecycle, async move {
                 let session = DaemonSession::from_unix(stream);
-                let result =
-                    serve_session(session, engine, &root, 0, Some(sp), None, lc.clone()).await;
-                lc.on_client_disconnected().await;
-                if let Err(e) = result {
-                    tracing::warn!("daemon client: {}", e);
-                }
+                serve_session(session, engine, &root, 0, Some(sp), None, lc).await
             });
         },
     )
@@ -620,21 +627,33 @@ async fn run_tcp_daemon(
             let root = project_root.clone();
             let lc = Arc::clone(&lifecycle);
             let token = token.clone();
-            tokio::spawn(async move {
-                lc.on_client_connected().await;
+            spawn_client(&lifecycle, async move {
                 let session = DaemonSession::from_tcp(stream);
-                let result =
-                    serve_session(session, engine, &root, port, None, Some(token), lc.clone())
-                        .await;
-                lc.on_client_disconnected().await;
-                if let Err(e) = result {
-                    tracing::warn!("daemon client: {}", e);
-                }
+                serve_session(session, engine, &root, port, None, Some(token), lc).await
             });
         },
     )
     .await;
     Ok(())
+}
+
+/// Serves one accepted client on its own task and keeps the client count.
+fn spawn_client<F>(lifecycle: &Arc<DaemonLifecycle>, serve: F)
+where
+    F: std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>
+        + Send
+        + 'static,
+{
+    lifecycle.client_accepted();
+    let lc = Arc::clone(lifecycle);
+    tokio::spawn(async move {
+        lc.client_started().await;
+        let result = serve.await;
+        lc.on_client_disconnected().await;
+        if let Err(e) = result {
+            tracing::warn!("daemon client: {}", e);
+        }
+    });
 }
 
 /// Pause before accepting again after a failed accept.
@@ -1018,6 +1037,47 @@ mod tests {
         assert!(lifecycle.idle_task.read().await.is_some());
         assert_eq!(lifecycle.client_count(), 0);
         lifecycle.disarm_idle().await;
+    }
+
+    #[tokio::test]
+    async fn an_accepted_client_counts_before_its_task_runs() {
+        let (_dir, root) = ax_dir();
+        let pid_path = write_files_of(&root, std::process::id());
+        let lifecycle = lifecycle_with_idle(&root, 60_000);
+        // The idle timer fires right after accept, before the client's task ran.
+        spawn_client(&lifecycle, std::future::pending());
+        assert_eq!(lifecycle.client_count(), 1);
+        assert!(!lifecycle.idle_expired().await, "stopped with a client accepted");
+        assert!(pid_path.exists());
+    }
+
+    #[tokio::test]
+    async fn a_shutdown_started_by_the_idle_timer_is_not_cancelled_by_itself() {
+        let (_dir, root) = ax_dir();
+        write_files_of(&root, std::process::id());
+        let lifecycle = lifecycle_with_idle(&root, 60_000);
+        let finished = Arc::new(AtomicBool::new(false));
+        let start = Arc::new(tokio::sync::Notify::new());
+        let (lc, done, go) = (lifecycle.clone(), finished.clone(), start.clone());
+        let task = tokio::spawn(async move {
+            go.notified().await;
+            assert!(lc.idle_timer_fired().await);
+            // Any await after the shutdown must still run.
+            tokio::task::yield_now().await;
+            done.store(true, Ordering::SeqCst);
+        });
+        *lifecycle.idle_task.write().await = Some(task);
+        start.notify_one();
+        for _ in 0..200 {
+            if finished.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            finished.load(Ordering::SeqCst),
+            "the idle task aborted itself during shutdown"
+        );
     }
 
     #[tokio::test]
