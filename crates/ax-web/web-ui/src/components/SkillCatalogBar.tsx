@@ -1,19 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import Codicon from './Codicon';
 import { agentBrief, messageFrom, runAudit, summarizeAudit } from '../lib/policyAudit';
+import { createLatestGate } from '../lib/latestLoad';
+import { canSearchCatalog, parseCatalogHits, settingsAfterSave, type CatalogHit } from '../lib/skillCatalog';
 
-type Hit = {
-  id?: string;
-  name: string;
-  source: string;
-  installs: number;
-  install_url?: string | null;
-  summary?: string | null;
-  stars?: number | null;
-  stars_label?: string | null;
-  first_seen?: string | null;
-  audits?: { name: string; status: string; url: string }[];
-};
+type Hit = CatalogHit;
 
 function catalogId(hit: Hit): string {
   const id = (hit.id || '').trim();
@@ -54,6 +45,8 @@ export default function SkillCatalogBar({ onInstalled }: { onInstalled: () => vo
   const inputRef = useRef<HTMLInputElement>(null);
   const [reportInstalls, setReportInstalls] = useState(false);
   const [publishRemote, setPublishRemote] = useState('');
+  const searchGate = useRef(createLatestGate());
+  const canSearch = canSearchCatalog(busy, query);
 
   async function loadInstalled() {
     const res = await fetch('/api/policy/skills/catalog/installed');
@@ -100,16 +93,30 @@ export default function SkillCatalogBar({ onInstalled }: { onInstalled: () => vo
   }, [panel]);
 
   async function saveSettings(nextReport: boolean, remote: string) {
+    const before = { reportInstalls, publishRemote };
+    const wanted = { reportInstalls: nextReport, publishRemote: remote };
     setReportInstalls(nextReport);
     setPublishRemote(remote);
-    await fetch('/api/policy/skills/catalog/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ reportInstalls: nextReport, publishRemote: remote }),
-    });
+    let ok = false;
+    try {
+      const res = await fetch('/api/policy/skills/catalog/settings', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(wanted),
+      });
+      ok = res.ok;
+    } catch {
+      ok = false;
+    }
+    const shown = settingsAfterSave(before, wanted, ok);
+    setReportInstalls(shown.reportInstalls);
+    setPublishRemote(shown.publishRemote);
+    if (!ok) setError('Could not save the catalog settings.');
   }
 
   async function search() {
+    if (!canSearchCatalog(busy, query)) return;
+    const ticket = searchGate.current.begin();
     setError('');
     setNote('');
     setHits([]);
@@ -118,19 +125,22 @@ export default function SkillCatalogBar({ onInstalled }: { onInstalled: () => vo
     try {
       const res = await fetch(`/api/policy/skills/catalog/search?q=${encodeURIComponent(query)}`);
       const text = await res.text();
+      if (!searchGate.current.isLatest(ticket)) return;
       if (!res.ok) throw new Error(messageFrom(text, 'Search failed'));
-      const rows = JSON.parse(text) as Hit[];
+      const rows = parseCatalogHits(text);
       setHits(rows);
       setAuditNotes({});
       await loadInstalled().catch(() => undefined);
+      if (!searchGate.current.isLatest(ticket)) return;
       setNote(rows.length === 0 ? 'No skills match that search.' : '');
       setOpen(true);
     } catch (err) {
+      if (!searchGate.current.isLatest(ticket)) return;
       setHits([]);
       setError(err instanceof Error ? err.message : 'Search failed');
       setOpen(true);
     } finally {
-      setBusy(false);
+      if (searchGate.current.isLatest(ticket)) setBusy(false);
     }
   }
 
@@ -207,7 +217,7 @@ export default function SkillCatalogBar({ onInstalled }: { onInstalled: () => vo
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') void search();
+                if (e.key === 'Enter' && canSearch) void search();
               }}
               placeholder="Search more online"
               aria-label="Search more online"
@@ -215,7 +225,7 @@ export default function SkillCatalogBar({ onInstalled }: { onInstalled: () => vo
             />
             {busy ? <span className="ax-spinner ax-spinner--sm skill-catalog-field-spinner" role="status" aria-label="Searching" /> : null}
           </label>
-          <button type="button" className="btn btn-subtle" disabled={busy || query.trim().length < 2} onClick={() => void search()}>
+          <button type="button" className="btn btn-subtle" disabled={!canSearch} onClick={() => void search()}>
             {busy ? 'Searching…' : 'Search'}
           </button>
           <label className="policy-storage-default" title="Report installs to skills.sh">
