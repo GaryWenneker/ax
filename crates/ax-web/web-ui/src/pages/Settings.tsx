@@ -71,8 +71,11 @@ export default function SettingsPage() {
   const [contextBudgetSet, setContextBudgetSet] = useState(false);
   /** Saves the slider once it settles, one write at a time, reporting only the newest value. */
   const budgetSaver = useRef<LatestSaver<number> | null>(null);
-  if (!budgetSaver.current) {
-    budgetSaver.current = createLatestSaver<number>(saveContextBudget, {
+  // Made in an effect, not during render, so a remount (StrictMode runs the
+  // cleanup and then the effect again) gets a live saver. Disposing sends a
+  // value that is still waiting, so leaving the page right after a change keeps it.
+  useEffect(() => {
+    const saver = createLatestSaver<number>(saveContextBudget, {
       delayMs: 400,
       onSaved: (tokens) => {
         setErr(null);
@@ -80,8 +83,12 @@ export default function SettingsPage() {
       },
       onError: () => setErr('Could not save the context budget'),
     });
-  }
-  useEffect(() => () => budgetSaver.current?.dispose(), []);
+    budgetSaver.current = saver;
+    return () => {
+      saver.dispose();
+      if (budgetSaver.current === saver) budgetSaver.current = null;
+    };
+  }, []);
 
   usePageContext('Settings', 'Command Center · pipeline & agents');
 

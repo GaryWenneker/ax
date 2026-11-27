@@ -10,7 +10,11 @@ export interface LatestSaver<T> {
   set: (value: T) => void;
   /** Send the pending value now instead of waiting for the delay. */
   flush: () => void;
-  /** Drop the pending value and any report from a write in flight. */
+  /**
+   * Stop for good: a value still waiting is sent now (after a write in
+   * flight, if any), later `set` calls are ignored, and no write reports
+   * success or failure any more.
+   */
   dispose: () => void;
 }
 
@@ -34,7 +38,7 @@ export function createLatestSaver<T>(save: (value: T) => Promise<unknown>, optio
   }
 
   function pump() {
-    if (inFlight || !pending || disposed) return;
+    if (inFlight || !pending) return;
     const { value } = pending;
     pending = null;
     inFlight = true;
@@ -53,6 +57,7 @@ export function createLatestSaver<T>(save: (value: T) => Promise<unknown>, optio
 
   return {
     set(value) {
+      if (disposed) return;
       pending = { value };
       clearTimer();
       timer = setTimeout(() => {
@@ -65,9 +70,10 @@ export function createLatestSaver<T>(save: (value: T) => Promise<unknown>, optio
       pump();
     },
     dispose() {
+      if (disposed) return;
       disposed = true;
-      pending = null;
       clearTimer();
+      pump();
     },
   };
 }

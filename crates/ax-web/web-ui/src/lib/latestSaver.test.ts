@@ -62,3 +62,47 @@ test('only the newest value reports a failure', async () => {
   await tick();
   assert.equal(errors.length, 1);
 });
+
+test('dispose sends a value that is still waiting, but reports nothing', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const sent: number[] = [];
+  const saver = createLatestSaver<number>(async (v) => { sent.push(v); }, {
+    delayMs: 400,
+    onSaved: () => assert.fail('a disposed saver reports nothing'),
+    onError: () => assert.fail('a disposed saver reports nothing'),
+  });
+  saver.set(12000);
+  saver.dispose();
+  t.mock.timers.reset();
+  await tick();
+  assert.deepEqual(sent, [12000]);
+});
+
+test('dispose while a write is in flight still sends the newer value afterwards', async () => {
+  const writes: { value: number; done: ReturnType<typeof deferred> }[] = [];
+  const saver = createLatestSaver<number>((value) => {
+    const done = deferred();
+    writes.push({ value, done });
+    return done.promise;
+  }, { delayMs: 400, onSaved: () => assert.fail('no report after dispose'), onError: () => undefined });
+  saver.set(1000);
+  saver.flush();
+  saver.set(2000);
+  saver.dispose();
+  assert.equal(writes.length, 1);
+  writes[0].done.resolve();
+  await tick();
+  assert.deepEqual(writes.map((w) => w.value), [1000, 2000]);
+  writes[1].done.resolve();
+  await tick();
+});
+
+test('a value set after dispose is ignored', async () => {
+  const sent: number[] = [];
+  const saver = createLatestSaver<number>(async (v) => { sent.push(v); }, { delayMs: 0, onSaved: () => undefined, onError: () => undefined });
+  saver.dispose();
+  saver.set(5000);
+  saver.flush();
+  await tick();
+  assert.deepEqual(sent, []);
+});
