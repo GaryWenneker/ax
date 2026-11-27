@@ -232,7 +232,7 @@ fn score_skill(skill: &crate::types::PolicySkillRow, prompt_lc: &str) -> Option<
 
     for trigger in &skill.triggers {
         let t = trigger.to_lowercase();
-        if !t.is_empty() && prompt_lc.contains(&t) {
+        if !t.is_empty() && contains_phrase(prompt_lc, &t) {
             score += 25;
             reasons.push(format!("trigger:{trigger}"));
         }
@@ -241,6 +241,7 @@ fn score_skill(skill: &crate::types::PolicySkillRow, prompt_lc: &str) -> Option<
     let desc_lc = skill.description.to_lowercase();
     let words: Vec<&str> = prompt_lc
         .split_whitespace()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
         .filter(|w| w.len() > 3)
         .collect();
     let description_matches: std::collections::HashSet<_> = words
@@ -373,6 +374,27 @@ mod tests {
             "Send feature announcement emails to Hoornaarpreventie members via Brevo".into();
         assert!(score_skill(&skill, "implement the ax feature").is_none());
         assert!(score_skill(&skill, "send announcement emails").is_some());
+    }
+
+    #[test]
+    fn skill_trigger_needs_a_whole_word() {
+        let skill = skill_row("pr", false, &["pr"], 50);
+        assert!(score_skill(&skill, "improve the prompt parser").is_none());
+        assert!(score_skill(&skill, "express route").is_none());
+        assert!(score_skill(&skill, "open a pr for this").is_some());
+        let c = skill_row("c-review", false, &["c"], 50);
+        assert!(score_skill(&c, "edit crates/ax-db/src/queries.rs").is_none());
+        assert!(score_skill(&c, "review the c code").is_some());
+    }
+
+    #[test]
+    fn skill_description_ignores_punctuation_around_prompt_words() {
+        let skill = skill_row("old-coder", false, &[], 50);
+        let hit = score_skill(&skill, "start the implementation, evidence-first!");
+        assert!(
+            hit.is_some_and(|m| m.reason.contains("description:multiple-terms")),
+            "punctuation must not hide description words"
+        );
     }
 
     #[test]
