@@ -221,13 +221,28 @@ async fn snapshot(
     Ok(Json(result))
 }
 
+/// Largest exchange body: one snapshot plus room for its JSON framing.
+const EXCHANGE_BODY_LIMIT: usize = server_snapshot::MAX_SNAPSHOT_BYTES + 1024 * 1024;
+
+/// Read and parse an exchange body. Called only after the request has been
+/// authenticated, so an anonymous peer cannot make the server buffer it.
+async fn read_snapshot_body(
+    body: axum::body::Body,
+) -> Result<server_snapshot::Snapshot, StatusCode> {
+    let bytes = axum::body::to_bytes(body, EXCHANGE_BODY_LIMIT)
+        .await
+        .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
+    serde_json::from_slice(&bytes).map_err(|_| StatusCode::BAD_REQUEST)
+}
+
 async fn exchange(
     State(state): State<Arc<StateData>>,
     AxumPath(id): AxumPath<String>,
     headers: HeaderMap,
-    Json(incoming): Json<server_snapshot::Snapshot>,
+    body: axum::body::Body,
 ) -> Result<Json<crate::server_exchange::ExchangeReply>, StatusCode> {
     let node_id = authorize_project(&state, &id, &headers).await?;
+    let incoming = read_snapshot_body(body).await?;
     let warning =
         crate::server_replica::peer_warning(&headers).map_err(|_| StatusCode::CONFLICT)?;
     if incoming.primary_node_id != node_id {
@@ -424,9 +439,7 @@ fn public_routes() -> Router<Arc<StateData>> {
         .route("/v1/enrollment", post(enrollment))
         .route("/v1/projects/{id}/snapshot", get(snapshot))
         .route("/v1/projects/{id}/exchange", post(exchange))
-        .layer(DefaultBodyLimit::max(
-            server_snapshot::MAX_SNAPSHOT_BYTES + 1024 * 1024,
-        ))
+        .layer(DefaultBodyLimit::max(EXCHANGE_BODY_LIMIT))
         .merge(chunks)
         .layer(middleware::map_response(
             |mut response: axum::response::Response| async {
@@ -936,6 +949,88 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn exchange_bodies_are_capped_and_must_parse() {
+        let oversized = axum::body::Body::from(vec![b' '; EXCHANGE_BODY_LIMIT + 1]);
+        assert_eq!(
+            read_snapshot_body(oversized).await.unwrap_err(),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+        assert_eq!(
+            read_snapshot_body(axum::body::Body::from("{not json"))
+                .await
+                .unwrap_err(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test]
+    async fn exchange_rejects_unauthenticated_requests_before_reading_the_body() {
+        use crate::server_config::ProjectRegistration;
+        let dir = tempfile::tempdir().unwrap();
+        let db = ax_global_db::open_and_init(&dir.path().join("access.db"))
+            .await
+            .unwrap();
+        let state = Arc::new(StateData {
+            config: ServerConfig {
+                schema_version: 1,
+                cluster_id: "team".into(),
+                node_id: "primary".into(),
+                role: NodeRole::Primary,
+                primary_url: None,
+                projects: vec![ProjectRegistration {
+                    id: "project".into(),
+                    path: dir.path().into(),
+                    token_env: "AX_TEST_UNUSED_EXCHANGE_BODY".into(),
+                }],
+            },
+            access_db: db,
+            exports: Semaphore::new(4),
+            control: None,
+            shutdown: None,
+        });
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let (shutdown, receiver) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, public_routes().with_state(state))
+                .with_graceful_shutdown(async move {
+                    let _ = receiver.await;
+                })
+                .await
+                .unwrap();
+        });
+        let client = reqwest::Client::new();
+        let post = |body: &'static str, token: Option<&'static str>| {
+            let mut request = client
+                .post(format!("http://{address}/v1/projects/project/exchange"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(body);
+            if let Some(token) = token {
+                request = request
+                    .bearer_auth(token)
+                    .header("x-ax-node-id", "intruder");
+            }
+            request.send()
+        };
+        // A body that cannot be parsed shows whether it was read before the token check.
+        assert_eq!(
+            post("{not json", None).await.unwrap().status(),
+            reqwest::StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            post("{not json", Some("wrong-token-wrong-token-wrong-token"))
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::UNAUTHORIZED
+        );
+        let _ = shutdown.send(());
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn exchange_binds_authenticated_node_and_project_before_retaining_data() {
         use crate::server_config::ProjectRegistration;
         let dir = tempfile::tempdir().unwrap();
@@ -984,7 +1079,7 @@ mod tests {
             State(state.clone()),
             AxumPath("project".into()),
             headers.clone(),
-            Json(incoming.clone()),
+            axum::body::Body::from(serde_json::to_vec(&incoming).unwrap()),
         )
         .await;
         assert!(matches!(forged, Err(StatusCode::FORBIDDEN)));
@@ -992,7 +1087,7 @@ mod tests {
             State(state.clone()),
             AxumPath("other-project".into()),
             headers.clone(),
-            Json(incoming.clone()),
+            axum::body::Body::from(serde_json::to_vec(&incoming).unwrap()),
         )
         .await;
         assert!(matches!(wrong_project, Err(StatusCode::NOT_FOUND)));
@@ -1003,7 +1098,7 @@ mod tests {
             State(state),
             AxumPath("project".into()),
             headers,
-            Json(incoming),
+            axum::body::Body::from(serde_json::to_vec(&incoming).unwrap()),
         )
         .await;
         assert!(matches!(
