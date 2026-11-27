@@ -92,6 +92,16 @@ async fn run_catch_up(root: PathBuf) {
     }
 }
 
+/// Seeds the memory vault of a project that has none yet, from its git
+/// history or else from its graph. The remote server runs this once per
+/// registered project at startup, since its engines start no catch-up.
+pub async fn seed_project_memories(root: PathBuf) {
+    match Ax::open(&root).await {
+        Ok(ax) => seed_memories_if_empty(ax.db_pool(), &root).await,
+        Err(e) => tracing::warn!("memory seed could not open the project: {}", e),
+    }
+}
+
 fn default_catch_up_runner() -> CatchUpRunner {
     Arc::new(|root| Box::pin(run_catch_up(root)))
 }
@@ -182,9 +192,10 @@ impl McpEngine {
 
     /// Remote conversations must never inherit a local Cursor hook's chat ID.
     ///
-    /// A remote engine starts no catch-up: the remote server's background watch
-    /// syncs each registered project once at startup and keeps it current, and
-    /// a session must not start index work of its own.
+    /// A remote engine starts no catch-up: at startup the remote server seeds
+    /// each registered project's empty memory vault, and its background watch
+    /// syncs the project and keeps it current, so a session never starts index
+    /// work of its own.
     pub fn for_remote(project_root: PathBuf) -> Self {
         let mut engine = Self::with_project_root(project_root);
         engine.remote = true;
@@ -538,6 +549,41 @@ mod tests {
             found.to_string().contains("written_while_offline"),
             "{found}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_remote_project_with_an_empty_vault_gets_seeded_memories() {
+        let _env = crate::test_env::shared().await;
+        let (_dir, root) = project().await;
+        std::fs::write(root.join("lib.rs"), "pub fn seeded_from_the_graph() {}\n").unwrap();
+        let mut ax = Ax::open(&root).await.unwrap();
+        ax.sync(
+            IndexOptions {
+                quiet: true,
+                ..IndexOptions::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        let memories = |pool: SqlitePool| async move {
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM memories")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+        // Start from an empty vault, whatever indexing stored.
+        sqlx::query("DELETE FROM memories")
+            .execute(ax.db_pool())
+            .await
+            .unwrap();
+        assert_eq!(memories(ax.db_pool().clone()).await, 0);
+        seed_project_memories(root.clone()).await;
+        let seeded = memories(ax.db_pool().clone()).await;
+        assert!(seeded > 0, "the empty vault was not seeded");
+        // A vault that holds memories is left alone.
+        seed_project_memories(root).await;
+        assert_eq!(memories(ax.db_pool().clone()).await, seeded);
     }
 
     #[tokio::test]

@@ -1254,6 +1254,11 @@ pub async fn serve_on(
         .iter()
         .map(|project| ax_core::Ax::spawn_background_watch_as(project.root.clone(), "mcp"))
         .collect();
+    // Remote engines start no connect-time catch-up, so an empty memory vault
+    // is seeded here, once per registered project.
+    for project in &config.projects {
+        tokio::spawn(crate::engine::seed_project_memories(project.root.clone()));
+    }
     println!(
         "{}",
         json!({"port":addr.port(),"local_url":format!("http://{addr}"),"public_url":config.public_url,"socket":socket,"projects":config.projects.iter().map(|p| json!({"id":p.id,"url":format!("{}/projects/{}/mcp",config.public_url,p.id)})).collect::<Vec<_>>() })
