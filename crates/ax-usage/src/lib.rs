@@ -51,10 +51,9 @@ pub use cache_status::{
     CacheStatusSnapshot,
 };
 pub use context_cache::{
-    cache_enabled, cache_oversized_reply, cache_project_reply, cache_threshold, expand_cached,
-    expand_project_cached, format_catalog, format_session_ledger, ingest_jsonl_oversized,
-    note_session_event, project_scope, recent_catalog, recent_session_catalog, session_ledger,
-    spawn_note_session_event, stash_project_text, stash_text, tool_chunks_from_jsonl, CacheOutcome,
+    cache_enabled, cache_project_reply, cache_threshold, expand_project_cached, format_catalog,
+    format_session_ledger, note_session_event, project_scope, session_ledger,
+    spawn_note_session_event, stash_project_text, tool_chunks_from_jsonl, CacheOutcome,
     CatalogEntry, ExpandPage, StashReceipt,
 };
 pub use context_export::{
@@ -87,9 +86,7 @@ pub use domain_log::{
     log_action, log_cli, log_domain_event, log_embed, log_lsp, log_memory, log_plugin, log_policy,
     log_share, log_ship, log_ship_ci, log_workspace,
 };
-pub use durable::{
-    durable_apply, durable_project_apply, note_project_tool_if_open, note_tool_if_open,
-};
+pub use durable::{durable_project_apply, note_project_tool_if_open};
 pub use log_brand::{format_ax_mcp_trace, format_ax_tagged, AX_LOG_ICON};
 pub use mcp_audit::{
     audit_project, cursor_project_slug, find_cursor_transcripts, format_markdown_report,

@@ -234,10 +234,6 @@ fn render_head_stub(
     (text, sent, original.saturating_sub(sent))
 }
 
-pub async fn cache_oversized_reply(tool: &str, body: &str) -> CacheOutcome {
-    cache_reply(None, tool, body).await
-}
-
 /// Project-bound variant used by MCP. Unknown roots never create references.
 pub async fn cache_project_reply(
     root: Option<&std::path::Path>,
@@ -247,10 +243,10 @@ pub async fn cache_project_reply(
     let Some(root) = root else {
         return CacheOutcome::Passthrough;
     };
-    cache_reply(Some(root), tool, body).await
+    cache_reply(root, tool, body).await
 }
 
-async fn cache_reply(root: Option<&std::path::Path>, tool: &str, body: &str) -> CacheOutcome {
+async fn cache_reply(root: &std::path::Path, tool: &str, body: &str) -> CacheOutcome {
     if !cache_enabled() || exempt_from_cache(tool) {
         return CacheOutcome::Passthrough;
     }
@@ -259,9 +255,7 @@ async fn cache_reply(root: Option<&std::path::Path>, tool: &str, body: &str) -> 
     if original < threshold {
         return CacheOutcome::Passthrough;
     }
-    let id = root
-        .map(|r| project_cache_id(r, body))
-        .unwrap_or_else(|| cache_id(body));
+    let id = project_cache_id(root, body);
     let (stub, sent, removed) = if keeps_graph_head(tool) {
         render_head_stub(tool, &id, body, original, threshold)
     } else {
@@ -272,7 +266,7 @@ async fn cache_reply(root: Option<&std::path::Path>, tool: &str, body: &str) -> 
     }
     match open_pool().await {
         Ok(pool) => {
-            if store_project_body(&pool, root, &id, tool, body, original)
+            if store_project_body(&pool, Some(root), &id, tool, body, original)
                 .await
                 .is_err()
             {
@@ -290,20 +284,16 @@ async fn cache_reply(root: Option<&std::path::Path>, tool: &str, body: &str) -> 
     }
 }
 
-pub async fn stash_text(label: Option<&str>, text: &str) -> Result<StashReceipt, String> {
-    stash(None, label, text).await
-}
-
 pub async fn stash_project_text(
     root: &std::path::Path,
     label: Option<&str>,
     text: &str,
 ) -> Result<StashReceipt, String> {
-    stash(Some(root), label, text).await
+    stash(root, label, text).await
 }
 
 async fn stash(
-    root: Option<&std::path::Path>,
+    root: &std::path::Path,
     label: Option<&str>,
     text: &str,
 ) -> Result<StashReceipt, String> {
@@ -318,21 +308,14 @@ async fn stash(
         .filter(|s| !s.is_empty())
         .unwrap_or("stash");
     let tool: String = tool.chars().filter(|c| !c.is_control()).take(64).collect();
-    let id = root
-        .map(|r| project_cache_id(r, text))
-        .unwrap_or_else(|| cache_id(text));
+    let id = project_cache_id(root, text);
     let original_tokens = count_tokens(text) as i64;
     let pool = open_pool().await.map_err(|e| e.to_string())?;
-    store_project_body(&pool, root, &id, &tool, text, original_tokens).await?;
+    store_project_body(&pool, Some(root), &id, &tool, text, original_tokens).await?;
     Ok(StashReceipt {
         id,
         original_tokens,
     })
-}
-
-pub async fn recent_catalog(limit: usize) -> Result<Vec<CatalogEntry>, String> {
-    let pool = open_pool().await.map_err(|e| e.to_string())?;
-    list_recent(&pool, limit).await
 }
 
 pub fn format_catalog(entries: &[CatalogEntry], max_tokens: i64) -> String {
@@ -447,16 +430,6 @@ pub struct ContextCacheCounts {
     pub session_inline_tokens: i64,
 }
 
-pub async fn expand_cached(
-    id: &str,
-    offset: usize,
-    limit: Option<usize>,
-) -> Result<ExpandPage, String> {
-    let pool = open_pool().await.map_err(|e| e.to_string())?;
-    let body = load_body(&pool, id).await?;
-    Ok(page_body(&body, offset, limit))
-}
-
 /// Canonical path is an existing project identity; never infer ownership from a body.
 pub fn project_scope(root: &std::path::Path) -> String {
     root.canonicalize()
@@ -526,6 +499,7 @@ pub fn page_body(body: &str, offset: usize, limit: Option<usize>) -> ExpandPage 
     }
 }
 
+#[cfg(test)]
 pub(crate) async fn store_body(
     pool: &SqlitePool,
     id: &str,
@@ -573,29 +547,6 @@ pub(crate) async fn store_project_body(
     .await
     .map_err(|e| e.to_string())?;
     Ok(())
-}
-
-async fn list_recent(pool: &SqlitePool, limit: usize) -> Result<Vec<CatalogEntry>, String> {
-    let now = chrono::Utc::now().timestamp();
-    let limit = limit.clamp(1, 50) as i64;
-    let rows: Vec<(String, String, String, i64)> = sqlx::query_as(
-        "SELECT id, tool, body, original_tokens FROM mcp_context_cache
-         WHERE expires_at >= ? ORDER BY created_at DESC LIMIT ?",
-    )
-    .bind(now)
-    .bind(limit)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(rows
-        .into_iter()
-        .map(|(id, tool, body, original_tokens)| CatalogEntry {
-            summary: one_line_summary(&body),
-            id,
-            tool,
-            original_tokens,
-        })
-        .collect())
 }
 
 /// Record one session event in the session index. The body is never stored
@@ -663,47 +614,6 @@ pub fn spawn_note_session_event(
         )
         .await;
     });
-}
-
-pub async fn recent_session_catalog(
-    session_id: Option<&str>,
-    limit: usize,
-) -> Result<Vec<CatalogEntry>, String> {
-    let pool = open_pool().await.map_err(|e| e.to_string())?;
-    let limit = limit.clamp(1, 50) as i64;
-    let rows: Vec<CatalogRow> = sqlx::query_as(
-        "SELECT cache_id, tool, summary, original_tokens, session_id
-         FROM mcp_session_index
-         ORDER BY CASE WHEN session_id IS NOT NULL AND session_id = ?1 THEN 0 ELSE 1 END,
-                  created_at DESC
-         LIMIT ?2",
-    )
-    .bind(session_id.unwrap_or(""))
-    .bind(limit)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(scope_catalog(rows, session_id))
-}
-
-type CatalogRow = (Option<String>, String, String, i64, Option<String>);
-
-/// Entries from other chats and entries without a cache id cannot be expanded here; drop them.
-fn scope_catalog(rows: Vec<CatalogRow>, session_id: Option<&str>) -> Vec<CatalogEntry> {
-    let Some(session_id) = session_id else {
-        return Vec::new();
-    };
-    rows.into_iter()
-        .filter(|(_, _, _, _, session)| session.as_deref() == Some(session_id))
-        .filter_map(|(cache_id, tool, summary, original_tokens, _)| {
-            Some(CatalogEntry {
-                id: cache_id?,
-                tool,
-                summary,
-                original_tokens,
-            })
-        })
-        .collect()
 }
 
 /// Pull tool-result strings out of a Cursor or Claude JSONL transcript.
@@ -784,47 +694,7 @@ fn value_text(value: &serde_json::Value) -> Option<String> {
     }
 }
 
-/// Stash tool-result chunks that cross the token threshold. Returns how many were stored.
-pub async fn ingest_jsonl_oversized(
-    session_id: Option<&str>,
-    jsonl: &str,
-) -> Result<usize, String> {
-    if !cache_enabled() {
-        return Ok(0);
-    }
-    let mut stored = 0;
-    let pool = open_pool().await.map_err(|e| e.to_string())?;
-    for (tool, text) in tool_chunks_from_jsonl(jsonl) {
-        let tokens = count_tokens(&text) as i64;
-        if tokens < cache_threshold() {
-            continue;
-        }
-        let id = cache_id(&text);
-        if cache_id_recorded(&pool, &id).await? {
-            continue;
-        }
-        store_body(&pool, &id, &tool, &text, tokens).await?;
-        index_session_event(&pool, session_id, &tool, &text, Some(&id)).await?;
-        stored += 1;
-    }
-    Ok(stored)
-}
-
-async fn cache_id_recorded(pool: &SqlitePool, id: &str) -> Result<bool, String> {
-    let hit: Option<(i64,)> = sqlx::query_as(
-        "SELECT 1 FROM mcp_context_cache WHERE id = ?
-         UNION
-         SELECT 1 FROM mcp_session_index WHERE cache_id = ?
-         LIMIT 1",
-    )
-    .bind(id)
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(hit.is_some())
-}
-
+#[cfg(test)]
 pub(crate) async fn load_body(pool: &SqlitePool, id: &str) -> Result<String, String> {
     let now = chrono::Utc::now().timestamp();
     let row: Option<(String,)> =
@@ -842,39 +712,6 @@ pub(crate) async fn load_body(pool: &SqlitePool, id: &str) -> Result<String, Str
 mod tests {
     use super::*;
     use std::path::PathBuf;
-
-    type Row = (Option<String>, String, String, i64, Option<String>);
-
-    fn row(id: Option<&str>, session: Option<&str>) -> Row {
-        (
-            id.map(str::to_string),
-            "ax_explore".into(),
-            "summary".into(),
-            900,
-            session.map(str::to_string),
-        )
-    }
-
-    #[test]
-    fn catalog_keeps_only_expandable_entries_of_this_session() {
-        let rows = vec![
-            row(Some("mine"), Some("chat-a")),
-            row(Some("other"), Some("chat-b")),
-            row(None, Some("chat-a")),
-            row(Some("orphan"), None),
-        ];
-        let ids: Vec<String> = scope_catalog(rows, Some("chat-a"))
-            .into_iter()
-            .map(|e| e.id)
-            .collect();
-        assert_eq!(ids, vec!["mine".to_string()]);
-    }
-
-    #[test]
-    fn catalog_is_empty_without_a_session() {
-        let rows = vec![row(Some("mine"), Some("chat-a"))];
-        assert!(scope_catalog(rows, None).is_empty());
-    }
 
     fn big_body() -> String {
         "line one of the cached reply\n".repeat(4_000)
@@ -932,36 +769,6 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(row.0.as_deref(), Some("cc_given"));
-    }
-
-    #[tokio::test]
-    async fn ingest_still_stores_oversized_transcript_chunks() {
-        let (_dir, pool, _guard) = temp_usage_db().await;
-        let body = big_body().replace('\n', " ");
-        let line = format!(
-            r#"{{"message":{{"content":[{{"type":"tool_result","name":"Read","content":"{body}"}}]}}}}"#
-        );
-        assert_eq!(
-            ingest_jsonl_oversized(Some("sess-ingest"), &line)
-                .await
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            ingest_jsonl_oversized(Some("sess-ingest"), &line)
-                .await
-                .unwrap(),
-            0
-        );
-        let cached: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM mcp_context_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(cached.0, 1);
-        let counts = context_cache_counts(&pool, 0, Some("sess-ingest"))
-            .await
-            .unwrap();
-        assert_eq!(counts.session_stored_tokens, count_tokens(&body) as i64);
     }
 
     #[tokio::test]
@@ -1170,8 +977,6 @@ mod tests {
             .unwrap();
         let err = load_body(&pool, "cc_test").await.unwrap_err();
         assert!(err.contains("No cached MCP reply"));
-        let listed = list_recent(&pool, 20).await.unwrap();
-        assert!(listed.is_empty());
         let _ = std::fs::remove_file(&path);
     }
 

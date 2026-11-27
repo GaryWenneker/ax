@@ -32,11 +32,6 @@ pub struct DurableEntry {
     pub head: Option<i64>,
 }
 
-pub async fn durable_apply(conversation: &str, request: &Value) -> Result<String, String> {
-    let pool = crate::store::open_pool().await.map_err(|e| e.to_string())?;
-    apply_with(&pool, conversation, request).await
-}
-
 /// MCP conversations are namespaced by project, independently of hook session IDs.
 /// Unscoped legacy transcripts are retained but never silently assigned an owner.
 pub async fn durable_project_apply(
@@ -140,25 +135,6 @@ pub async fn note_project_tool_if_open(
             fire_hooks(&pool, &conversation, "tool").await?;
         }
     }
-    Ok(())
-}
-
-/// Record a tool call when this chat already has a durable conversation.
-pub async fn note_tool_if_open(
-    conversation: &str,
-    tool: &str,
-    summary: &str,
-) -> Result<(), String> {
-    if conversation.is_empty() || tool.is_empty() {
-        return Ok(());
-    }
-    let pool = crate::store::open_pool().await.map_err(|e| e.to_string())?;
-    if !conversation_exists(&pool, conversation).await? {
-        return Ok(());
-    }
-    let body = format!("{tool} {summary}");
-    append_entry(&pool, conversation, "tool", &clip(&body), None).await?;
-    fire_hooks(&pool, conversation, "tool").await?;
     Ok(())
 }
 
