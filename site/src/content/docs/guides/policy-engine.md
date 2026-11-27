@@ -364,7 +364,7 @@ group: deploy-ops
 
 The `name` is also the folder name, so it must be kebab-case (lowercase letters, digits and `-`), like a rule `id`. A `SKILL.md` with another name is skipped on index, a save with one is refused, and `ax policy export` never writes a skill or rule whose name is not a plain folder or file name.
 
-When `alwaysApply` is `true`, `ax_preflight` injects the skill body on **every** turn (including empty prompts) under **Skills (always apply)** — the same contract as always-apply rules. Otherwise the skill matches on triggers/description and appears under **Suggested skills**. A trigger matches only as a whole word or phrase, the same as a rule trigger: `pr` matches "open a pr" but not "improve". Load a specific workflow anytime with `ax_skill({ name: "deploy" })`.
+When `alwaysApply` is `true`, `ax_preflight` injects the skill body on **every** turn (including empty prompts) under **Skills (always apply)** — the same contract as always-apply rules. Otherwise the skill matches on triggers/description and appears under **Suggested skills**. A trigger matches only as a whole word or phrase, the same as a rule trigger: `pr` matches "open a pr" but not "improve". At most two suggested skills are sent per turn: the ones that match the prompt best (each trigger hit counts more than description words), with `priority` and then the name breaking a tie. Load a specific workflow anytime with `ax_skill({ name: "deploy" })`.
 
 Give every skill at least one `tags` value (same as rules) so Command Center can filter it.
 
