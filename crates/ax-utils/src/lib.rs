@@ -3,17 +3,27 @@
 pub mod debounce;
 pub mod errors;
 pub mod file_lock;
+pub mod fs_safe;
 pub mod logger;
 pub mod memory;
 pub mod mutex;
 pub mod paths;
 pub mod process;
 pub mod security;
+pub mod text;
 pub mod text_encoding;
 
 pub use debounce::{debounce, Throttle};
 pub use errors::*;
 pub use file_lock::{clear_stale_lock, FileLock, DEFAULT_LOCK_WAIT};
+pub use fs_safe::{
+    atomic_write, contained_join, ensure_within, read_bounded, read_to_end_bounded,
+    safe_relative, update_locked, PathEscape,
+};
+pub use text::{
+    ceil_char_boundary, floor_char_boundary, prefix_bytes, slice_bytes, suffix_bytes,
+    truncate_chars,
+};
 pub use logger::{get_logger, set_logger, Logger};
 pub use memory::{current_rss_bytes, MemoryMonitor};
 pub use mutex::AsyncMutex;
