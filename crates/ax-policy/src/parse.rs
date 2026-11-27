@@ -366,8 +366,8 @@ fn validate_skill(fm: &SkillFrontmatter) -> Result<(), ValidationError> {
 pub fn serialize_rule(fm: &RuleFrontmatter, body: &str) -> String {
     let mut lines = vec![
         "---".into(),
-        format!("id: {}", fm.id),
-        format!("level: {}", fm.level),
+        format!("id: {}", yaml_scalar(&fm.id)),
+        format!("level: {}", yaml_scalar(&fm.level)),
         format!("alwaysApply: {}", fm.always_apply),
         format!(
             "globs: {}",
@@ -383,23 +383,23 @@ pub fn serialize_rule(fm: &RuleFrontmatter, body: &str) -> String {
         ),
         format!("priority: {}", fm.priority),
         format!("enabled: {}", fm.enabled),
-        format!("status: {}", fm.status),
-        format!("scope: {}", fm.scope),
+        format!("status: {}", yaml_scalar(&fm.status)),
+        format!("scope: {}", yaml_scalar(&fm.scope)),
     ];
     if fm.share {
         lines.push("share: true".into());
     }
     if let Some(ref s) = fm.storage {
-        lines.push(format!("storage: {s}"));
+        lines.push(format!("storage: {}", yaml_scalar(s)));
     }
     if let Some(ref s) = fm.source {
         lines.push(format!("source: {}", yaml_string(s)));
     }
     if let Some(ref r) = fm.root_id {
-        lines.push(format!("rootId: {r}"));
+        lines.push(format!("rootId: {}", yaml_scalar(r)));
     }
     if let Some(ref g) = fm.group {
-        lines.push(format!("group: {g}"));
+        lines.push(format!("group: {}", yaml_scalar(g)));
     }
     push_properties(&mut lines, &fm.properties);
     lines.push("---".into());
@@ -421,7 +421,7 @@ pub fn serialize_skill_stub(fm: &SkillFrontmatter) -> String {
 pub fn serialize_skill(fm: &SkillFrontmatter, body: &str) -> String {
     let mut lines = vec![
         "---".into(),
-        format!("name: {}", fm.name),
+        format!("name: {}", yaml_scalar(&fm.name)),
         format!("description: {}", yaml_string(&fm.description)),
         format!("alwaysApply: {}", fm.always_apply),
     ];
@@ -439,25 +439,25 @@ pub fn serialize_skill(fm: &SkillFrontmatter, body: &str) -> String {
     }
     lines.push(format!("priority: {}", fm.priority));
     lines.push(format!("enabled: {}", fm.enabled));
-    lines.push(format!("status: {}", fm.status));
-    lines.push(format!("scope: {}", fm.scope));
+    lines.push(format!("status: {}", yaml_scalar(&fm.status)));
+    lines.push(format!("scope: {}", yaml_scalar(&fm.scope)));
     if fm.share {
         lines.push("share: true".into());
     }
     if let Some(ref s) = fm.storage {
-        lines.push(format!("storage: {s}"));
+        lines.push(format!("storage: {}", yaml_scalar(s)));
     }
     if let Some(ref s) = fm.source {
         lines.push(format!("source: {}", yaml_string(s)));
     }
     if let Some(ref r) = fm.root_id {
-        lines.push(format!("rootId: {r}"));
+        lines.push(format!("rootId: {}", yaml_scalar(r)));
     }
     if let Some(ref t) = fm.context_task {
         lines.push(format!("contextTask: {}", yaml_string(t)));
     }
     if let Some(ref g) = fm.group {
-        lines.push(format!("group: {g}"));
+        lines.push(format!("group: {}", yaml_scalar(g)));
     }
     push_properties(&mut lines, &fm.properties);
     lines.push("---".into());
@@ -466,11 +466,27 @@ pub fn serialize_skill(fm: &SkillFrontmatter, body: &str) -> String {
     lines.join("\n")
 }
 
+/// A YAML double-quoted scalar for free text. JSON string syntax is valid YAML
+/// and escapes backslashes, quotes and control characters, so the value reads
+/// back exactly, newlines and leading spaces included.
 fn yaml_string(s: &str) -> String {
-    if s.contains('\n') || s.contains(':') {
-        format!("|\n  {}", s.replace('\n', "\n  "))
+    serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into())
+}
+
+/// `s` as a plain YAML scalar when it reads back as the same string, and
+/// quoted otherwise (`#perf`, `review: api`, `true`, `123`, …).
+fn yaml_scalar(s: &str) -> String {
+    let plain_ok = !s.is_empty()
+        && !s.contains(['\n', '\r', '\t'])
+        && matches!(
+            serde_yaml::from_str::<Value>(&format!("k: {s}")),
+            Ok(Value::Mapping(m))
+                if m.len() == 1 && m.get("k") == Some(&Value::String(s.to_string()))
+        );
+    if plain_ok {
+        s.to_string()
     } else {
-        format!("\"{}\"", s.replace('"', "\\\""))
+        yaml_string(s)
     }
 }
 
@@ -615,6 +631,64 @@ mod tests {
         let doc = parse_rule_file(Path::new("hello-world.mdc"), &raw).unwrap();
         assert_eq!(doc.frontmatter.globs.len(), 2);
         assert!(doc.frontmatter.always_apply);
+    }
+
+    const AWKWARD: &[&str] = &[
+        "Use C:\\Users paths",
+        "Escape \\d in regex",
+        "D:/shared/rules/a.mdc",
+        "  leading spaces",
+        "multi\nline: text\n  indented",
+        "#perf",
+        "review: api",
+        "say \"hi\" & 'bye'",
+        "tab\there",
+        "true",
+        "123",
+        "- dash",
+        "{curly}",
+    ];
+
+    #[test]
+    fn skill_free_text_survives_a_save_unchanged() {
+        for value in AWKWARD {
+            let raw = "---\nname: round-trip\ndescription: d\n---\n\nBody.\n";
+            let mut fm = parse_skill_file(Path::new("SKILL.md"), raw)
+                .unwrap()
+                .frontmatter;
+            fm.description = (*value).into();
+            fm.source = Some((*value).into());
+            fm.context_task = Some((*value).into());
+            fm.group = Some((*value).into());
+            fm.root_id = Some((*value).into());
+            let saved = serialize_skill(&fm, "Body.");
+            let again = parse_skill_file(Path::new("SKILL.md"), &saved)
+                .unwrap_or_else(|e| panic!("{value:?} broke the file: {e:?}\n{saved}"));
+            let got = &again.frontmatter;
+            assert_eq!(got.description, *value, "description\n{saved}");
+            assert_eq!(got.source.as_deref(), Some(*value), "source\n{saved}");
+            assert_eq!(got.context_task.as_deref(), Some(*value), "contextTask\n{saved}");
+            assert_eq!(got.group.as_deref(), Some(*value), "group\n{saved}");
+            assert_eq!(got.root_id.as_deref(), Some(*value), "rootId\n{saved}");
+        }
+    }
+
+    #[test]
+    fn rule_free_text_survives_a_save_unchanged() {
+        for value in AWKWARD {
+            let raw = "---\nid: round-trip\nlevel: INFO\nalwaysApply: true\n---\n\nBody.\n";
+            let mut fm = parse_rule_file(Path::new("r.mdc"), raw).unwrap().frontmatter;
+            fm.source = Some((*value).into());
+            fm.group = Some((*value).into());
+            fm.root_id = Some((*value).into());
+            let saved = serialize_rule(&fm, "Body.");
+            let again = parse_rule_file(Path::new("r.mdc"), &saved)
+                .unwrap_or_else(|e| panic!("{value:?} broke the file: {e:?}\n{saved}"));
+            let got = &again.frontmatter;
+            assert_eq!(got.source.as_deref(), Some(*value), "source\n{saved}");
+            assert_eq!(got.group.as_deref(), Some(*value), "group\n{saved}");
+            assert_eq!(got.root_id.as_deref(), Some(*value), "rootId\n{saved}");
+        }
     }
 
     #[test]
