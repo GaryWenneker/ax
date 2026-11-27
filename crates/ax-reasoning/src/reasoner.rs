@@ -212,9 +212,10 @@ async fn request_offload(
     let Some(url) = url else {
         return (None, "no_endpoint");
     };
-    // After a transport failure (no connection, or a connection dropped without
-    // a reply) the endpoint is skipped for a while, so a dead endpoint does not
-    // delay every explore. A request that only times out does not start it.
+    // After a transport failure (no connection, a connect timeout, or a
+    // connection dropped without a reply) the endpoint is skipped for a while,
+    // so a dead endpoint does not delay every explore. A request that connected
+    // and then timed out waiting for the reply does not start it.
     if backing_off(&url) {
         return (None, "backoff");
     }
@@ -291,9 +292,10 @@ async fn request_offload(
             set_last_error(Some(format!("{url} returned {status}: {text}")), cfg.debug);
             (None, "rejected")
         }
-        Err(e) if e.is_timeout() => {
-            // The endpoint answered the connection but was slower than the
+        Err(e) if e.is_timeout() && !e.is_connect() => {
+            // The endpoint accepted the connection but was slower than the
             // timeout; the next explore tries again instead of backing off.
+            // A connect timeout is a connect error and backs off below.
             set_last_error(Some(format!("{url}: {e}")), cfg.debug);
             (None, "timeout")
         }
@@ -531,6 +533,26 @@ mod tests {
         assert_eq!(server.join().unwrap(), 1, "no request during the back-off");
         let err = err.unwrap_or_default();
         assert!(err.contains("backing off"), "{err}");
+    }
+
+    #[test]
+    fn a_connect_timeout_starts_the_back_off() {
+        // A non-routable address: the SYN gets no answer, so the connect times
+        // out (or the network reports it unreachable). Either way offload must
+        // skip the endpoint for the next request instead of waiting again.
+        let url = "http://10.255.255.1:9/v1";
+        let started = std::time::Instant::now();
+        let (first, second, err) = two_requests(url, &[("AX_OFFLOAD_TIMEOUT_MS", "10000")]);
+        assert!(first.is_none());
+        assert!(second.is_none());
+        let err = err.unwrap_or_default();
+        assert!(err.contains("backing off"), "{err}");
+        assert!(backing_off(&format!("{url}/chat/completions")));
+        assert!(
+            started.elapsed() < CONNECT_TIMEOUT * 2,
+            "the second request waited for the connect timeout again"
+        );
+        clear_backoff(&format!("{url}/chat/completions"));
     }
 
     /// The first request gets no reply until well after the client timeout;
