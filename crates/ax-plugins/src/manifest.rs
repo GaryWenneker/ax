@@ -18,6 +18,20 @@ pub struct PluginManifest {
     /// Working directory relative to the plugin folder (default: plugin root).
     #[serde(default)]
     pub cwd: Option<String>,
+    /// Seconds one file may take before the plugin is stopped
+    /// (default [`DEFAULT_TIMEOUT_SECS`]).
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+}
+
+/// Per-file time limit for a plugin whose manifest sets no `timeout_secs`.
+pub const DEFAULT_TIMEOUT_SECS: u64 = 60;
+
+impl PluginManifest {
+    /// The per-file time limit for this plugin.
+    pub fn timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS).max(1))
+    }
 }
 
 #[derive(Debug, Clone)]

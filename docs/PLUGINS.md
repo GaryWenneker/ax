@@ -29,6 +29,11 @@ JSON on stdin:
 Stdout must be an `ExtractionResult` JSON object (`nodes`, `edges`,
 `unresolved_references`, …).
 
+ax writes stdin and reads stdout and stderr concurrently. Each file may take
+at most 60 seconds (`timeout_secs` in `plugin.toml` changes this); then the
+plugin is killed and the file is reported as failed. Stdout or stderr above
+64 MiB is refused.
+
 See [examples/plugins/echo](../examples/plugins/echo/) for a minimal Python plugin.
 
 ## WASM plugin (optional build)
@@ -49,4 +54,6 @@ Guest exports:
 | `alloc` | `(i32) -> i32` |
 | `extract` | `(i32, i32) -> i64` (hi=out_ptr, lo=out_len) |
 
-Same JSON contract as process plugins.
+Same JSON contract as process plugins. The module is compiled once per index
+run; each file runs in a fresh store with the `timeout_secs` limit (default 60
+seconds), at most 512 MiB of guest memory and at most 64 MiB of output.

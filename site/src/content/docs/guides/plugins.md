@@ -28,7 +28,7 @@ command = "python"
 args = ["extract.py"]
 ```
 
-JSON on stdin → `ExtractionResult` JSON on stdout:
+JSON on stdin → `ExtractionResult` JSON on stdout. ax writes the input and reads stdout and stderr at the same time, so a plugin may log or answer before it has read all of its input. Each file may take at most 60 seconds; after that the plugin is stopped and the file is reported as failed. Set `timeout_secs = 300` in `plugin.toml` to allow longer. Output above 64 MiB on stdout or stderr is refused.
 
 ```bash
 # Copy the example plugin into a project
@@ -52,7 +52,7 @@ extensions = [".hcl"]
 wasm = "extractor.wasm"
 ```
 
-Guest exports: `memory`, `alloc(i32) -> i32`, `extract(i32, i32) -> i64` (hi = out ptr, lo = out len). Same JSON contract as process plugins.
+Guest exports: `memory`, `alloc(i32) -> i32`, `extract(i32, i32) -> i64` (hi = out ptr, lo = out len). Same JSON contract as process plugins. The module is compiled once per index run. Each file runs with the same `timeout_secs` limit (default 60 seconds), at most 512 MiB of guest memory, and at most 64 MiB of output.
 
 ## Visibility
 
