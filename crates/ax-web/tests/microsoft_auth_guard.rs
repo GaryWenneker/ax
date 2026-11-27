@@ -109,6 +109,7 @@ async fn only_the_local_owner_changes_microsoft_sign_in() {
     let _lock = env_lock();
     let dir = tempfile::tempdir().unwrap();
     std::env::remove_var("AX_SHARE_TOKEN");
+    std::env::remove_var("AX_MS_CLIENT_ID");
     let app = app(dir.path(), false).await;
 
     assert_eq!(
@@ -164,4 +165,32 @@ async fn saving_the_client_id_leaves_the_process_environment_alone() {
         "attacker-client"
     );
     assert!(ax_share::microsoft_auth_status().custom_client_id);
+}
+
+/// Sign-in prefers AX_MS_CLIENT_ID over the config file, so saving a client
+/// id while it is set would report success and change nothing.
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // process-global env; the guard must cover the awaits
+async fn saving_a_client_id_is_refused_while_the_environment_sets_one() {
+    let _lock = env_lock();
+    let dir = tempfile::tempdir().unwrap();
+    std::env::remove_var("AX_SHARE_TOKEN");
+    std::env::set_var("AX_MS_CLIENT_ID", "env-client");
+    let app = app(dir.path(), false).await;
+
+    let response = app
+        .clone()
+        .oneshot(request("PUT", "/api/auth/microsoft/config", LOOPBACK, None))
+        .await
+        .unwrap();
+    let code = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 1 << 16)
+        .await
+        .unwrap();
+    let client_id = ax_share::auth::microsoft::ms_client_id().unwrap();
+    std::env::remove_var("AX_MS_CLIENT_ID");
+    assert_eq!(code, StatusCode::CONFLICT);
+    assert!(String::from_utf8_lossy(&body).contains("AX_MS_CLIENT_ID"));
+    assert!(!config_written(dir.path()));
+    assert_eq!(client_id, "env-client");
 }

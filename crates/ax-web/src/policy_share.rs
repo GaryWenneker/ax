@@ -219,6 +219,16 @@ async fn ms_set_config(
     Json(body): Json<MsClientConfigBody>,
 ) -> Result<Json<ax_share::MicrosoftAuthStatus>, (StatusCode, Json<ApiError>)> {
     refuse_ms_change(&hub, &headers)?;
+    // Sign-in reads AX_MS_CLIENT_ID before the config file, so a saved id
+    // would have no effect while the variable is set.
+    if std::env::var("AX_MS_CLIENT_ID").is_ok_and(|value| !value.trim().is_empty()) {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiError {
+                error: "AX_MS_CLIENT_ID is set in the server's environment and overrides a saved client id; change or unset it and restart the server".into(),
+            }),
+        ));
+    }
     write_ms_client_id_to_config(&body.client_id)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiError { error: e })))?;
     // The new id is read back from the config file. The process environment

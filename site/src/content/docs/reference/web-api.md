@@ -92,7 +92,7 @@ Read-only mode (`ax share`, `AX_WEB_READONLY=1`) refuses every catalog route tha
 | PUT | `/api/auth/microsoft/config` | Tenant / client settings |
 | DELETE | `/api/auth/microsoft` | Sign out |
 
-The Microsoft sign-in routes follow the same share-token and sign-in rules as the rest of `/api`. Starting or polling sign-in, changing the client and signing out work only on a writable server, from a browser on this computer at the loopback address; other callers get `403`.
+The Microsoft sign-in routes follow the same share-token and sign-in rules as the rest of `/api`. Starting or polling sign-in, changing the client and signing out work only on a writable server, from a browser on this computer at the loopback address; other callers get `403`. While the server's environment sets `AX_MS_CLIENT_ID`, that value is used for sign-in and `PUT /api/auth/microsoft/config` answers `409`.
 
 See [Remote Policy Share](/guides/policy-sharing/).
 
