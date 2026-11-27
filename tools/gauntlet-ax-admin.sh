@@ -129,12 +129,13 @@ cmp install-admin.ps1 site/public/install-admin.ps1
 echo "site/public copies match"
 
 step "L12 changed files are UTF-8 without BOM"
-for f in $(git diff --name-only main...HEAD; git ls-files --others --exclude-standard); do
+# NUL-separated names, so a path with a space or a glob character is checked as itself.
+while IFS= read -r -d '' f; do
   [[ -f "$f" ]] || continue
   case "$f" in *.png|*.lock|*package-lock.json) continue ;; esac
   head -c 3 "$f" | xxd -p | grep -qiE '^(efbbbf|fffe|feff)' && { echo "FAIL: BOM in $f"; exit 1; }
   iconv -f UTF-8 -t UTF-8 "$f" >/dev/null 2>&1 || { echo "FAIL: not UTF-8: $f"; exit 1; }
-done
+done < <(git diff -z --name-only main...HEAD; git ls-files -z --others --exclude-standard)
 echo "encoding ok"
 
 step "L13 documentation site tests"

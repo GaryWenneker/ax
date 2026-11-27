@@ -87,5 +87,52 @@ class TestBaselineTest(unittest.TestCase):
         self.assertIn("tools/check-test-baseline.sh", text)
 
 
+def gauntlet_block(script, start, end):
+    """The lines of a gauntlet script between two step markers."""
+    text = (TOOLS / script).read_text()
+    return text[text.index(start):text.index(end)]
+
+
+class EncodingLayerTest(unittest.TestCase):
+    """gauntlet-ax-admin.sh L12 on file names with spaces."""
+
+    def run_layer(self, name, content):
+        block = gauntlet_block("gauntlet-ax-admin.sh", 'step "L12', 'step "L13')
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            git = lambda *args: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t",
+                                                "-c", "commit.gpgsign=false", *args], cwd=repo,
+                                               check=True, capture_output=True)
+            git("init", "-q", "-b", "main")
+            (repo / "README.md").write_text("base\n")
+            git("add", ".")
+            git("commit", "-qm", "base")
+            git("checkout", "-qb", "feature")
+            path = repo / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+            git("add", ".")
+            git("commit", "-qm", "change")
+            (repo / "untracked file.txt").write_bytes(content)
+            script = "set -euo pipefail\nstep() { :; }\nROOT=\"$PWD\"\n" + block
+            return subprocess.run(["bash", "-c", script], cwd=repo, capture_output=True, text=True,
+                                  timeout=60)
+
+    def test_a_bom_in_a_changed_file_with_a_space_in_its_name_fails(self):
+        run = self.run_layer("docs/My Notes.md", b"\xef\xbb\xbfhello\n")
+        self.assertNotEqual(run.returncode, 0, run.stdout)
+        self.assertIn("BOM in docs/My Notes.md", run.stdout)
+
+    def test_clean_files_with_spaces_pass(self):
+        run = self.run_layer("docs/My Notes.md", b"hello\n")
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertIn("encoding ok", run.stdout)
+
+    def test_a_glob_character_in_a_name_is_not_expanded(self):
+        run = self.run_layer("docs/*.md", b"\xef\xbb\xbfhello\n")
+        self.assertNotEqual(run.returncode, 0, run.stdout)
+        self.assertIn("BOM in docs/*.md", run.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
