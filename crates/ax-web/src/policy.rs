@@ -539,8 +539,32 @@ async fn put_policy_settings(
     if hub.readonly {
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
+    // Check every field before writing any, so a bad one changes nothing.
+    let storage = match payload.storage.as_deref() {
+        Some(s) => match ax_policy::PolicyStorage::parse(s) {
+            Some(mode) => Some(mode),
+            None => return err(StatusCode::BAD_REQUEST, "storage must be files or database"),
+        },
+        None => None,
+    };
+    if let Some(ref name) = payload.agents_dir {
+        if let Err(e) = ax_policy::validate_agents_dir_name(name) {
+            return err(StatusCode::BAD_REQUEST, &e);
+        }
+    }
     let ws = hub.read().await;
     let root = ws.policy.store.project_root();
+    // Moving the folder can still conflict with one on disk, so it goes first.
+    if let Some(ref name) = payload.agents_dir {
+        if let Err(e) = ax_policy::set_agents_dir(root, name) {
+            let status = if e.contains("already exists") {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            return err(status, &e);
+        }
+    }
     if let Some(v) = payload.policy_sync {
         if let Err(e) = ax_policy::write_project_policy_sync(root, v) {
             return err(StatusCode::INTERNAL_SERVER_ERROR, &e);
@@ -552,22 +576,9 @@ async fn put_policy_settings(
             return err(StatusCode::INTERNAL_SERVER_ERROR, &e);
         }
     }
-    if let Some(ref s) = payload.storage {
-        let Some(mode) = ax_policy::PolicyStorage::parse(s) else {
-            return err(StatusCode::BAD_REQUEST, "storage must be files or database");
-        };
+    if let Some(mode) = storage {
         if let Err(e) = ax_policy::write_project_policy_storage(root, mode) {
             return err(StatusCode::INTERNAL_SERVER_ERROR, &e);
-        }
-    }
-    if let Some(ref name) = payload.agents_dir {
-        if let Err(e) = ax_policy::set_agents_dir(root, name) {
-            let status = if e.contains("already exists") {
-                StatusCode::CONFLICT
-            } else {
-                StatusCode::BAD_REQUEST
-            };
-            return err(status, &e);
         }
     }
     (StatusCode::OK, Json(settings_response(root))).into_response()
@@ -1443,10 +1454,23 @@ async fn capture_prompt(
         {
             Ok(doc) => {
                 let id = doc.frontmatter.id.clone();
-                let storage = match ws.policy.store.storage() {
+                let effective = ws
+                    .policy
+                    .store
+                    .item_effective_storage(doc.frontmatter.storage.as_deref());
+                let storage = match effective {
                     ax_policy::PolicyStorage::Database => "database",
                     ax_policy::PolicyStorage::Files => "files",
                 };
+                // The file the rule was written to; a database rule has none.
+                let path = (effective == ax_policy::PolicyStorage::Files).then(|| {
+                    let source = std::path::Path::new(&doc.source_path);
+                    source
+                        .strip_prefix(ws.policy.store.project_root())
+                        .unwrap_or(source)
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                });
                 (
                     StatusCode::CREATED,
                     Json(serde_json::json!({
@@ -1454,7 +1478,7 @@ async fn capture_prompt(
                         "action": "save",
                         "id": id,
                         "storage": storage,
-                        "path": format!(".agents/rules/{id}.mdc"),
+                        "path": path,
                     })),
                 )
                     .into_response()
@@ -1600,7 +1624,7 @@ async fn create_zip_package(
     State(hub): State<WebHub>,
     Json(payload): Json<ZipPackagePayload>,
 ) -> impl IntoResponse {
-    let ws = hub.read().await;
+    let root = hub.read().await.policy.store.project_root().to_path_buf();
     let spec = PackSpec {
         name: payload.name,
         description: payload.description,
@@ -1610,19 +1634,22 @@ async fn create_zip_package(
         package_version: None,
         author: None,
     };
-    match build_policy_zip(ws.policy.store.project_root(), &spec) {
-        Ok(bytes) => {
-            let filename = slug_package_filename(&spec.name);
-            axum::http::Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "application/zip")
-                .header(
-                    header::CONTENT_DISPOSITION,
-                    format!("attachment; filename=\"{filename}\""),
-                )
-                .body(Body::from(bytes))
-                .unwrap_or_else(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "response"))
-        }
+    let filename = slug_package_filename(&spec.name);
+    // Reading the policy files and zipping them is blocking work.
+    let built = tokio::task::spawn_blocking(move || build_policy_zip(&root, &spec)).await;
+    let Ok(built) = built else {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "package build failed");
+    };
+    match built {
+        Ok(bytes) => axum::http::Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/zip")
+            .header(
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{filename}\""),
+            )
+            .body(Body::from(bytes))
+            .unwrap_or_else(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "response")),
         Err(e) => zip_err(e),
     }
 }
@@ -1635,8 +1662,12 @@ async fn preview_zip_package(
         Ok(v) => v,
         Err(e) => return err(StatusCode::BAD_REQUEST, &e),
     };
-    let ws = hub.read().await;
-    match preview_policy_zip(ws.policy.store.project_root(), &bytes) {
+    let root = hub.read().await.policy.store.project_root().to_path_buf();
+    let preview = tokio::task::spawn_blocking(move || preview_policy_zip(&root, &bytes)).await;
+    let Ok(preview) = preview else {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "package preview failed");
+    };
+    match preview {
         Ok(p) => (StatusCode::OK, Json(p)).into_response(),
         Err(e) => zip_err(e),
     }
@@ -1664,7 +1695,14 @@ async fn restore_zip_package(
     let root = ws.policy.store.project_root().to_path_buf();
     let pool = ws.policy.store.pool().clone();
     drop(ws);
-    match restore_policy_zip(&root, &bytes, &decisions) {
+    let restore_root = root.clone();
+    let restored =
+        tokio::task::spawn_blocking(move || restore_policy_zip(&restore_root, &bytes, &decisions))
+            .await;
+    let Ok(restored) = restored else {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "package restore failed");
+    };
+    match restored {
         Ok(result) => {
             if let Err(e) = index_policy(&pool, &root, true).await {
                 return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
@@ -1705,7 +1743,12 @@ async fn diff_zip_package(
     let ws = hub.read().await;
     let root = ws.policy.store.project_root().to_path_buf();
     drop(ws);
-    match diff_policy_zip_item(&root, &bytes, &kind, &id) {
+    let diff =
+        tokio::task::spawn_blocking(move || diff_policy_zip_item(&root, &bytes, &kind, &id)).await;
+    let Ok(diff) = diff else {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "package diff failed");
+    };
+    match diff {
         Ok(diff) => (StatusCode::OK, Json(diff)).into_response(),
         Err(e) => zip_err(e),
     }

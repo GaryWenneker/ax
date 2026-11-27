@@ -247,3 +247,104 @@ async fn relocate_to_global_rolls_back_when_the_local_delete_fails() {
     let (status, _) = send(&app, "GET", "/api/policy/rules/solo", "").await;
     assert_eq!(status, StatusCode::OK);
 }
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // process-global env; the guard must cover the awaits
+async fn a_captured_rule_reports_the_file_it_was_saved_to() {
+    let _lock = env_lock();
+    let home = tempfile::tempdir().unwrap();
+    let (app, root) = app(home.path()).await;
+    let (status, body) = send(
+        &app,
+        "PUT",
+        "/api/policy/settings",
+        r#"{"agentsDir":".team"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let rule = r#"{"prompt":"always test","action":"save","rule":{"frontmatter":{"id":"captured","level":"INFO","alwaysApply":true,"tags":["test"]},"body":"Always test."}}"#;
+    let (status, body) = send(&app, "POST", "/api/policy/capture", rule).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let path = body["path"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no path in {body}"));
+    assert!(root.join(path).is_file(), "{path} is not the saved file");
+    assert!(path.starts_with(".team"), "{path}");
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // process-global env; the guard must cover the awaits
+async fn invalid_policy_settings_change_nothing() {
+    let _lock = env_lock();
+    let home = tempfile::tempdir().unwrap();
+    let (app, _root) = app(home.path()).await;
+    let (_, before) = send(&app, "GET", "/api/policy/settings", "").await;
+    let flipped = !before["requireReview"]
+        .as_bool()
+        .unwrap_or_else(|| panic!("{before}"));
+
+    let body = format!(r#"{{"requireReview":{flipped},"storage":"floppy"}}"#);
+    let (status, reply) = send(&app, "PUT", "/api/policy/settings", &body).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{reply}");
+    let (_, after) = send(&app, "GET", "/api/policy/settings", "").await;
+    assert_eq!(after["requireReview"], before["requireReview"], "{after}");
+}
+
+async fn send_raw(
+    app: &Router,
+    uri: &str,
+    content_type: &str,
+    body: Vec<u8>,
+) -> (StatusCode, Vec<u8>) {
+    let mut req = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("host", "127.0.0.1:7070")
+        .header("content-type", content_type)
+        .body(Body::from(body))
+        .unwrap();
+    let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
+    req.extensions_mut().insert(ConnectInfo(peer));
+    let res = app.clone().oneshot(req).await.unwrap();
+    let status = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, bytes.to_vec())
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // process-global env; the guard must cover the awaits
+async fn a_policy_package_is_built_and_previewed() {
+    let _lock = env_lock();
+    let home = tempfile::tempdir().unwrap();
+    let (app, _root) = app(home.path()).await;
+    let (status, zip) = send_raw(
+        &app,
+        "/api/policy/package",
+        "application/json",
+        br#"{"name":"pack","ruleIds":["solo"]}"#.to_vec(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&zip));
+    assert!(zip.starts_with(b"PK"), "not a zip");
+
+    let boundary = "axboundary";
+    let mut form = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"package\"; filename=\"p.zip\"\r\nContent-Type: application/zip\r\n\r\n"
+    )
+    .into_bytes();
+    form.extend_from_slice(&zip);
+    form.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    let (status, preview) = send_raw(
+        &app,
+        "/api/policy/package/preview",
+        &format!("multipart/form-data; boundary={boundary}"),
+        form,
+    )
+    .await;
+    let preview = String::from_utf8_lossy(&preview);
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert!(preview.contains("solo"), "{preview}");
+}
