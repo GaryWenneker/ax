@@ -766,22 +766,27 @@ fn markdown_spec_id(file: &str) -> String {
 /// Earlier builds named a captured spec by the plain cut [`slug`] of its
 /// prompt or file path. When `id` is not taken yet and a spec with that legacy
 /// id and the same title exists, the legacy id is kept, so later revisions of
-/// the same document stay under one spec.
+/// the same document stay under one spec. Titles are compared with whitespace
+/// collapsed, because earlier builds stored a prompt title with its line breaks
+/// and runs of spaces joined into single spaces.
 async fn keep_legacy_spec_id(pool: &SqlitePool, id: String, text: &str) -> Result<String, String> {
     let legacy = slug(text);
     if legacy.is_empty() || legacy == id {
         return Ok(id);
     }
     ensure_spec_schema(pool).await?;
-    let ids: Vec<String> =
-        sqlx::query_scalar("SELECT id FROM specs WHERE id IN (?1, ?2) AND (id = ?1 OR title = ?3)")
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, title FROM specs WHERE id IN (?1, ?2)")
             .bind(&id)
             .bind(&legacy)
-            .bind(text)
             .fetch_all(pool)
             .await
             .map_err(|error| error.to_string())?;
-    if !ids.contains(&id) && ids.contains(&legacy) {
+    let id_taken = rows.iter().any(|(row_id, _)| *row_id == id);
+    let legacy_matches = rows.iter().any(|(row_id, title)| {
+        *row_id == legacy && title.split_whitespace().eq(text.split_whitespace())
+    });
+    if !id_taken && legacy_matches {
         Ok(legacy)
     } else {
         Ok(id)
@@ -2152,6 +2157,36 @@ pub(crate) mod tests {
             sync_markdown(pool, dir.path(), &spec_id).await.unwrap(),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn a_long_multi_line_plan_prompt_keeps_its_legacy_id() {
+        let _lock = HOME_LOCK.lock().await;
+        let _home = IsolatedHome::new();
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        let prompt =
+            "Make a plan for the new export feature\n\nfor the billing dashboard,\n  with  CSV and PDF output";
+        let legacy = slug(prompt);
+        assert_ne!(legacy, prompt_spec_id(prompt), "the prompt must be long");
+        // Earlier builds stored the title with whitespace collapsed.
+        let collapsed = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+        capture_finished_plan(
+            pool, "ax", &legacy, &collapsed, &collapsed, "First.", "s", "t1", "turn", true,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        on_turn_finished(pool, dir.path(), "ax", "s", "t2", prompt, "Second.", &[])
+            .await
+            .unwrap();
+        let revisions = list_revisions(pool, &legacy).await.unwrap();
+        assert_eq!(revisions.len(), 2, "{revisions:?}");
+        assert!(list_revisions(pool, &prompt_spec_id(prompt))
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]
