@@ -351,7 +351,10 @@ pub async fn open_pool() -> Result<SqlitePool, AxError> {
             return Ok(pool.clone());
         }
         let (stale, _) = cache.remove(&path).expect("cached pool");
-        stale.close().await;
+        // Close in the background: `close` waits for every checked-out
+        // connection, and waiting here would hold the cache lock for every
+        // other caller (or deadlock a caller that holds one of them).
+        tokio::spawn(async move { stale.close().await });
     }
     let pool = open_pool_at(&path).await?;
     if let Some(id) = file_id(&path) {
@@ -549,6 +552,28 @@ mod tests {
         std::env::remove_var("AX_USAGE_DB");
         assert_eq!(rows, 0);
         assert!(path.exists());
+    }
+
+    #[tokio::test]
+    async fn open_pool_does_not_wait_for_a_stale_pool_to_drain() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("usage.db");
+        std::env::set_var("AX_USAGE_DB", &path);
+        let first = open_pool().await.unwrap();
+        // Callers still hold connections from the old pool.
+        let held = first.acquire().await.unwrap();
+        let held2 = first.acquire().await.unwrap();
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        let reopened =
+            tokio::time::timeout(std::time::Duration::from_secs(5), open_pool()).await;
+        drop(held);
+        drop(held2);
+        std::env::remove_var("AX_USAGE_DB");
+        let second = reopened.expect("open_pool waited for the old pool to drain").unwrap();
+        assert!(sqlx::query("SELECT 1").execute(&second).await.is_ok());
     }
 
     #[test]
