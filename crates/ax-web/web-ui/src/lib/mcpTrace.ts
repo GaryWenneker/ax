@@ -833,7 +833,7 @@ export function isTraceLogLine(data: string): boolean {
   return (
     s.includes('[ax-mcp]') ||
     s.includes('[ax]') ||
-    s.includes('ts=') ||
+    /^ts=\d+\s/.test(s) ||
     /^\d{4}-\d{2}-\d{2}T/.test(s)
   );
 }

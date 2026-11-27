@@ -143,3 +143,13 @@ test('the trace buffer cap is a positive bound', async () => {
   const { MCP_TRACE_MAX_ENTRIES } = await import('./mcpTrace.ts');
   assert.ok(Number.isInteger(MCP_TRACE_MAX_ENTRIES) && MCP_TRACE_MAX_ENTRIES >= 1000 && MCP_TRACE_MAX_ENTRIES <= 20000);
 });
+
+test('isTraceLogLine only takes the legacy ts= format at the start of the line', async () => {
+  const { isTraceLogLine } = await import('./mcpTrace.ts');
+  assert.equal(isTraceLogLine('ts=1712345678901 inbound tool=ax_search'), true);
+  assert.equal(isTraceLogLine('[ax-mcp] inbound tool=ax_search'), true);
+  assert.equal(isTraceLogLine('2026-01-02T03:04:05Z inbound'), true);
+  assert.equal(isTraceLogLine('warning: 3 results=stale'), false);
+  assert.equal(isTraceLogLine('counts=4 hits=2'), false);
+  assert.equal(isTraceLogLine('ts=abc'), false);
+});
