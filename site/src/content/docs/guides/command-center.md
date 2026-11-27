@@ -171,6 +171,12 @@ Sonar setup saves the generated scanner token in `.ax/sonar.token`. On Unix the 
 
 When `host` is a loopback address (`localhost`, `127.0.0.1` or `[::1]`), ax publishes the SonarQube container on `127.0.0.1` only, so other machines on the network cannot reach it or try the default `admin` login. A container scanner joins the `ax-sonar-net` network and talks to the SonarQube container directly. To reach SonarQube from other machines, set `host` to a name or address other than loopback (for example `http://sonarqube.vsc:9000`); the port is then published on all interfaces. A container created before this change keeps its old port binding until you reset the stack.
 
+### SonarQube containers ax manages
+
+ax labels the SonarQube and PostgreSQL containers it creates with `ax.managed=true`. Install replaces an existing SonarQube container that still uses the embedded H2 database only when it carries that label. A container with the configured name that ax did not create (for example your own `sonarqube` container) is never removed: Install stops with a message instead. To let ax set up its own stack, back up what you need, remove the container yourself (`podman rm -f sonarqube`, or `docker rm -f sonarqube`) and run Install again, or set `podman_container` in `.ax/ship.toml` to another name.
+
+Every `podman`/`docker` command ax runs has a time limit (30 seconds for status queries, 2 minutes for start, stop and remove, 5 minutes for creating a container, 30 minutes for an image pull), and its output is captured in the install log rather than printed to the terminal.
+
 ### SonarQube project keys
 
 ax records the SonarQube projects it creates in `.ax/sonar-projects.json`. When `project_key` changes, a project that ax created under the old workspace key (`<folder>-<repo>`) is renamed to the new key (`<project_key>-<repo>`) before a scan. Projects that ax did not create are never renamed, and ax never deletes a project: when both the old and the new key exist, the old project stays and the log says so, so you can delete it in SonarQube yourself.
