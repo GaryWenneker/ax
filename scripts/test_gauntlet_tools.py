@@ -4,6 +4,7 @@ Each test drives the real script with fakes for the slow parts (cargo, npx, ax w
 so it runs in seconds without a build.
 """
 import importlib.util
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -45,6 +46,45 @@ class MutantTimeoutTest(unittest.TestCase):
             self.assertTrue(any(line.startswith("H02 next:") for line in lines), lines)
             self.assertIn("mutants killed", lines[-1])
             self.assertEqual(status, 1)
+
+
+class TestBaselineTest(unittest.TestCase):
+    """tools/check-test-baseline.sh, used by gauntlet-ax-admin.sh L4."""
+
+    BASELINE = "alpha_contract\nserver::beta_once\n"
+
+    def check(self, log):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "log").write_text(log)
+            (tmp / "baseline").write_text(self.BASELINE)
+            return subprocess.run(["bash", str(TOOLS / "check-test-baseline.sh"), str(tmp / "log"),
+                                   str(tmp / "baseline")], capture_output=True, text=True, timeout=30)
+
+    def test_failures_that_match_the_baseline_pass(self):
+        run = self.check("test alpha_contract ... FAILED\ntest server::beta_once ... FAILED\n"
+                         "test gamma ... ok\n")
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
+    def test_a_new_failure_fails(self):
+        run = self.check("test alpha_contract ... FAILED\ntest server::beta_once ... FAILED\n"
+                         "test gamma ... FAILED\n")
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIn("gamma", run.stdout)
+
+    def test_a_baseline_test_that_now_passes_fails(self):
+        run = self.check("test alpha_contract ... ok\ntest server::beta_once ... FAILED\n")
+        self.assertNotEqual(run.returncode, 0, run.stdout)
+        self.assertIn("alpha_contract", run.stdout)
+
+    def test_a_baseline_test_that_did_not_run_fails(self):
+        run = self.check("test server::beta_once ... FAILED\n")
+        self.assertNotEqual(run.returncode, 0, run.stdout)
+        self.assertIn("alpha_contract", run.stdout)
+
+    def test_the_gauntlet_uses_the_checker(self):
+        text = (TOOLS / "gauntlet-ax-admin.sh").read_text()
+        self.assertIn("tools/check-test-baseline.sh", text)
 
 
 if __name__ == "__main__":

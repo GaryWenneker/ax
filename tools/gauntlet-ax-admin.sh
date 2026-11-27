@@ -61,7 +61,8 @@ step "L3 Rust tests: remote MCP (new admin tests and the existing suite)"
 show "$RESULT" cargo test -p ax-mcp --test remote_admin --test remote_mcp
 
 step "L4 Rust tests: full ax-mcp and ax-usage against the recorded baseline"
-# On the base commit two ax-mcp tests fail (see EVIDENCE). Zero NEW failures is the bar.
+# Two ax-mcp tests are known to fail (see EVIDENCE). Zero NEW failures is the bar, and a
+# baseline test that no longer fails stops the run until it is taken off the list.
 FULL_LOG="$ROOT/target-dev/ax-admin-full-tests.log"
 set +e
 cargo test -p ax-mcp -p ax-usage --no-fail-fast >"$FULL_LOG" 2>&1
@@ -73,15 +74,12 @@ fi
 BINARIES="$(grep -c '^test result:' "$FULL_LOG" || true)"
 [[ "$BINARIES" -ge 12 ]] || { echo "FAIL: only $BINARIES test binaries reported a result"; exit 1; }
 PASSED="$(grep '^test result:' "$FULL_LOG" | sed -E 's/.* ([0-9]+) passed.*/\1/' | paste -sd+ - | bc)"
-grep -E '^test .* FAILED$' "$FULL_LOG" | sort -u > "$ROOT/target-dev/ax-admin-failed.txt" || true
-cat "$ROOT/target-dev/ax-admin-failed.txt"
 cat > "$ROOT/target-dev/ax-admin-baseline.txt" <<'BASELINE'
-test preflight_returns_exact_indexed_manifest_line ... FAILED
-test server::policy_integration::unchanged_catalog_and_memory_titles_are_sent_once_per_session ... FAILED
+preflight_returns_exact_indexed_manifest_line
+server::policy_integration::unchanged_catalog_and_memory_titles_are_sent_once_per_session
 BASELINE
-UNEXPECTED="$(grep -vxFf "$ROOT/target-dev/ax-admin-baseline.txt" "$ROOT/target-dev/ax-admin-failed.txt" || true)"
-[[ -z "$UNEXPECTED" ]] || { echo "NEW failures:"; echo "$UNEXPECTED"; exit 1; }
-echo "$BINARIES test binaries, $PASSED tests passed, $(wc -l < "$ROOT/target-dev/ax-admin-failed.txt" | tr -d ' ') failed (all in the baseline), no new failures"
+bash tools/check-test-baseline.sh "$FULL_LOG" "$ROOT/target-dev/ax-admin-baseline.txt"
+echo "$BINARIES test binaries, $PASSED tests passed, no new failures"
 
 step "L5 type check of ax-web and ax-cli after the client move (N2)"
 AX_SKIP_WEB_BUILD=1 show '^error|Finished' cargo check -p ax-web -p ax-cli
