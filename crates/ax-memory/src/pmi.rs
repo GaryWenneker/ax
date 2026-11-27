@@ -32,14 +32,20 @@ const PMI_BODY_CHARS: i64 = 4096;
 
 /// Active, enabled semantic-tier memories (decisions, notes, conventions),
 /// newest first with id as tie-break, so the same vault always yields the same
-/// sample. Turns, docs and archive rows are left out: they are large and
+/// sample. Turns, file changes, docs and archive rows are left out, by kind
+/// as well as by tier (older vaults can hold them in t2): they are large and
 /// would teach co-occurrences nobody chose to remember.
-const PMI_SAMPLE: &str = "SELECT title, substr(body, 1, ?) FROM memories
+const PMI_SAMPLE: &str = concat!(
+    "SELECT title, substr(body, 1, ?) FROM memories
      WHERE enabled = 1
        AND tier = 't2'
+       AND kind NOT IN ",
+    crate::types::recall_only_kinds_sql!(),
+    "
        AND COALESCE(status, 'active') = 'active'
      ORDER BY updated_at DESC, id
-     LIMIT ?";
+     LIMIT ?"
+);
 
 /// Expand query tokens with high-PMI co-occurring terms from memory titles/bodies.
 pub async fn expand_with_pmi(

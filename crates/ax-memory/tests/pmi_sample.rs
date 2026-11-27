@@ -22,6 +22,9 @@ async fn pmi_ignores_turns_docs_and_archive_rows() {
         ("t2", "turn", "t1", "zephyr quasar transcript again"),
         ("d1", "doc", "t3", "zephyr quasar document"),
         ("g1", "graph_diff", "t3", "zephyr quasar diff"),
+        // A file change written before file changes moved to t1.
+        ("f1", "file_change", "t2", "zephyr quasar file change"),
+        ("f2", "file_change", "t2", "zephyr quasar file change again"),
     ];
     for (i, (id, kind, tier, body)) in rows.iter().enumerate() {
         sqlx::query(
@@ -43,7 +46,7 @@ async fn pmi_ignores_turns_docs_and_archive_rows() {
     let expanded = expand_with_pmi(pool, "zephyr", 10).await.unwrap();
     assert!(
         !expanded.iter().any(|t| t == "quasar"),
-        "turn, doc and archive rows must not teach PMI: {expanded:?}"
+        "turn, file change, doc and archive rows must not teach PMI: {expanded:?}"
     );
     assert!(
         expanded.iter().any(|t| t == "budget"),
