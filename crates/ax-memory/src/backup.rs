@@ -10,7 +10,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::AxError;
 
-use crate::store::{list, remember_with_id};
+use crate::store::{backup_page, remember_with_id};
 use crate::types::{MemoryRow, RememberInput};
 
 #[derive(Debug, Clone)]
@@ -67,27 +67,7 @@ async fn write_backup(
     let path = dir.join(format!("{stem}{JSONL_SUFFIX}"));
     let manifest_path = dir.join(format!("{stem}{MANIFEST_SUFFIX}"));
 
-    // Page through the vault (newest first) so no row cap applies.
-    let mut body = String::new();
-    let mut count = 0usize;
-    let mut offset = 0usize;
-    'pages: loop {
-        let (rows, _) = list(pool, PAGE, offset).await?;
-        let page_len = rows.len();
-        for row in &rows {
-            if since_ms.is_some_and(|since| row.updated_at <= since) {
-                // Rows are ordered by updated_at DESC: the rest is older.
-                break 'pages;
-            }
-            body.push_str(&serde_json::to_string(row).map_err(other)?);
-            body.push('\n');
-            count += 1;
-        }
-        if page_len < PAGE {
-            break;
-        }
-        offset += page_len;
-    }
+    let (body, count) = collect_rows(pool, since_ms, PAGE).await?;
 
     let plain = body.into_bytes();
     let checksum = blake3::hash(&plain).to_hex().to_string();
@@ -116,6 +96,36 @@ async fn write_backup(
         count,
         checksum,
     })
+}
+
+/// Every memory updated after `since` (all of them when `None`) as JSONL,
+/// newest first, and the row count. The pages are read inside one read
+/// transaction, so the backup is one consistent snapshot of the vault even
+/// when memories are written while it runs.
+async fn collect_rows(
+    pool: &SqlitePool,
+    since: Option<i64>,
+    page: usize,
+) -> Result<(String, usize), AxError> {
+    let mut tx = pool.begin().await.map_err(other)?;
+    let mut body = String::new();
+    let mut count = 0usize;
+    let mut after: Option<(i64, String)> = None;
+    loop {
+        let cursor = after.as_ref().map(|(at, id)| (*at, id.as_str()));
+        let rows = backup_page(&mut *tx, cursor, since, page).await?;
+        for row in &rows {
+            body.push_str(&serde_json::to_string(row).map_err(other)?);
+            body.push('\n');
+            count += 1;
+        }
+        if rows.len() < page {
+            break;
+        }
+        after = rows.last().map(|row| (row.updated_at, row.id.clone()));
+    }
+    tx.commit().await.map_err(other)?;
+    Ok((body, count))
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -279,4 +289,88 @@ pub async fn restore_from_backup(
         report.restored += 1;
     }
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn vault_with_tied_rows(n: usize) -> (tempfile::TempDir, ax_db::Database) {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".ax")).unwrap();
+        let db = ax_db::Database::open(&dir.path().join(".ax/ax.db"))
+            .await
+            .unwrap();
+        for i in 0..n {
+            crate::store::remember(
+                db.pool(),
+                RememberInput {
+                    title: format!("tied {i}"),
+                    body: "body".into(),
+                    kind: Some("note".into()),
+                    ..RememberInput::default()
+                },
+            )
+            .await
+            .unwrap();
+        }
+        // Bulk captures and imports often share one timestamp.
+        sqlx::query("UPDATE memories SET updated_at = 100")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        (dir, db)
+    }
+
+    fn ids(body: &str) -> Vec<String> {
+        body.lines()
+            .map(|line| {
+                serde_json::from_str::<serde_json::Value>(line).unwrap()["id"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn paging_through_tied_timestamps_reads_every_row_once() {
+        let (_dir, db) = vault_with_tied_rows(7).await;
+        let (body, count) = collect_rows(db.pool(), None, 2).await.unwrap();
+        let mut seen = ids(&body);
+        db.close().await;
+        assert_eq!(count, 7);
+        seen.sort();
+        seen.dedup();
+        assert_eq!(seen.len(), 7, "a row was read twice or skipped");
+    }
+
+    #[tokio::test]
+    async fn a_row_updated_between_pages_does_not_shift_later_pages() {
+        let (_dir, db) = vault_with_tied_rows(5).await;
+        let mut conn = db.pool().acquire().await.unwrap();
+        let first = backup_page(&mut *conn, None, None, 2).await.unwrap();
+        // A hook updates a row the backup already read: it moves to the top.
+        sqlx::query("UPDATE memories SET updated_at = 500 WHERE id = ?")
+            .bind(&first[0].id)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        let mut seen: Vec<String> = first.iter().map(|r| r.id.clone()).collect();
+        let mut after = first.last().map(|r| (r.updated_at, r.id.clone()));
+        loop {
+            let cursor = after.as_ref().map(|(at, id)| (*at, id.as_str()));
+            let rows = backup_page(&mut *conn, cursor, None, 2).await.unwrap();
+            seen.extend(rows.iter().map(|r| r.id.clone()));
+            if rows.len() < 2 {
+                break;
+            }
+            after = rows.last().map(|r| (r.updated_at, r.id.clone()));
+        }
+        drop(conn);
+        db.close().await;
+        seen.sort();
+        seen.dedup();
+        assert_eq!(seen.len(), 5, "a row was skipped after another moved up");
+    }
 }

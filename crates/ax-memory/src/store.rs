@@ -1413,7 +1413,7 @@ pub async fn list(
         .await
         .map_err(|e| db_err(pool, e))?;
     let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
-        "{MEMORY_SELECT} ORDER BY updated_at DESC LIMIT ? OFFSET ?"
+        "{MEMORY_SELECT} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?"
     ))
     .bind(limit as i64)
     .bind(offset as i64)
@@ -1422,6 +1422,40 @@ pub async fn list(
     .map_err(|e| db_err(pool, e))?;
     let memories = rows.into_iter().map(row_from_db).collect();
     Ok((memories, total))
+}
+
+/// One page of memories for a backup: newest first with `id` breaking ties,
+/// strictly after `after` (the `updated_at` and `id` of the previous page's
+/// last row) and, when `since` is set, updated after it. Keyset paging keeps
+/// the page boundaries stable when rows share a timestamp or one is updated
+/// while the backup runs.
+pub(crate) async fn backup_page(
+    conn: &mut sqlx::SqliteConnection,
+    after: Option<(i64, &str)>,
+    since: Option<i64>,
+    limit: usize,
+) -> Result<Vec<MemoryRow>, AxError> {
+    let mut sql = format!("{MEMORY_SELECT} WHERE 1 = 1");
+    if after.is_some() {
+        sql.push_str(" AND (updated_at < ? OR (updated_at = ? AND id < ?))");
+    }
+    if since.is_some() {
+        sql.push_str(" AND updated_at > ?");
+    }
+    sql.push_str(" ORDER BY updated_at DESC, id DESC LIMIT ?");
+    let mut query = sqlx::query_as::<_, MemoryDbRow>(&sql);
+    if let Some((updated_at, id)) = after {
+        query = query.bind(updated_at).bind(updated_at).bind(id.to_string());
+    }
+    if let Some(since) = since {
+        query = query.bind(since);
+    }
+    let rows = query
+        .bind(limit as i64)
+        .fetch_all(conn)
+        .await
+        .map_err(|e| db_err_at(None, e))?;
+    Ok(rows.into_iter().map(row_from_db).collect())
 }
 
 /// Memories stored for one session, newest first.
