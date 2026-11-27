@@ -15,7 +15,7 @@ use ax_context::directory::get_ax_dir;
 
 use crate::daemon_conn::{connect_path, connect_tcp, DaemonSession};
 use crate::daemon_lock::{
-    clear_stale_daemon_lock, is_pid_alive, release_daemon_lock, rewrite_lock_socket_path,
+    clear_stale_daemon_lock, is_pid_alive, release_daemon_lock_if_owned, rewrite_lock_socket_path,
     try_acquire_daemon_lock, AcquireResult,
 };
 use crate::daemon_paths::{daemon_pid_path, daemon_socket_candidates};
@@ -160,8 +160,16 @@ pub fn read_daemon_info(project_root: &Path) -> Option<DaemonInfo> {
     serde_json::from_str(&content).ok()
 }
 
+/// Removes `daemon.json` whatever process wrote it (`ax daemon stop`).
 pub fn remove_daemon_info(project_root: &Path) {
     let _ = std::fs::remove_file(daemon_info_path(project_root));
+}
+
+/// Removes `daemon.json` only when it describes the daemon with `pid`.
+pub fn remove_daemon_info_if_owned(project_root: &Path, pid: u32) {
+    if read_daemon_info(project_root).is_some_and(|info| info.pid == pid) {
+        remove_daemon_info(project_root);
+    }
 }
 
 pub fn resolve_idle_timeout_ms() -> u64 {
@@ -318,10 +326,12 @@ impl DaemonLifecycle {
             "ax daemon shutting down ({reason}; clients={})",
             self.client_count()
         );
-        remove_daemon_info(&self.project_root);
+        // A newer daemon may own these files by now; only this daemon's go.
+        let me = std::process::id();
+        remove_daemon_info_if_owned(&self.project_root, me);
         ax_core::mark_clean_shutdown(&self.project_root);
         if let Some(pid_path) = &self.pid_path {
-            release_daemon_lock(pid_path);
+            release_daemon_lock_if_owned(pid_path, me);
         }
     }
 }
@@ -654,7 +664,7 @@ async fn start_daemon_core(
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
             lc_signal.shutdown("SIGINT").await;
-            remove_daemon_info(&root_signal);
+            remove_daemon_info_if_owned(&root_signal, std::process::id());
             std::process::exit(0);
         }
     });
@@ -881,6 +891,62 @@ pub async fn wait_for_any_daemon(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pid that is not this process (the lock and daemon.json of another daemon).
+    const OTHER_PID: u32 = 1;
+
+    fn write_files_of(root: &Path, pid: u32) -> PathBuf {
+        let info = DaemonInfo {
+            pid,
+            port: 0,
+            socket_path: Some("sock".into()),
+            version: "test".into(),
+            project_root: root.to_string_lossy().into_owned(),
+            exe: None,
+            token: None,
+        };
+        std::fs::write(
+            daemon_info_path(root),
+            serde_json::to_string(&info).unwrap(),
+        )
+        .unwrap();
+        let pid_path = daemon_pid_path(root);
+        let lock = crate::daemon_lock::DaemonLockInfo {
+            pid,
+            version: "test".into(),
+            socket_path: "sock".into(),
+            started_at: 0,
+        };
+        std::fs::write(&pid_path, serde_json::to_string(&lock).unwrap()).unwrap();
+        pid_path
+    }
+
+    #[tokio::test]
+    async fn shutdown_leaves_the_files_of_another_daemon() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        std::fs::create_dir_all(root.join(".ax")).unwrap();
+        let pid_path = write_files_of(&root, OTHER_PID);
+        let lifecycle = DaemonLifecycle::new(root.clone(), Some(pid_path.clone()));
+        lifecycle.shutdown("test").await;
+        assert_eq!(read_daemon_info(&root).map(|i| i.pid), Some(OTHER_PID));
+        assert_eq!(
+            crate::daemon_lock::read_lock_info(&pid_path).map(|i| i.pid),
+            Some(OTHER_PID)
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_removes_its_own_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        std::fs::create_dir_all(root.join(".ax")).unwrap();
+        let pid_path = write_files_of(&root, std::process::id());
+        let lifecycle = DaemonLifecycle::new(root.clone(), Some(pid_path.clone()));
+        lifecycle.shutdown("test").await;
+        assert!(read_daemon_info(&root).is_none());
+        assert!(!pid_path.exists());
+    }
 
     #[test]
     fn parse_idle_timeout_env() {

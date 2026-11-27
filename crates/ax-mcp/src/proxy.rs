@@ -13,7 +13,9 @@ use crate::daemon::{
     wait_for_daemon, DaemonHello,
 };
 use crate::daemon_conn::DaemonSession;
-use crate::daemon_lock::{is_pid_alive, kill_pid, read_lock_info, release_daemon_lock};
+use crate::daemon_lock::{
+    clear_stale_daemon_lock, is_pid_alive, kill_pid, read_lock_info, release_daemon_lock,
+};
 use crate::daemon_paths::daemon_pid_path;
 use crate::exe_identity::{current_exe_path, decide, Attach, ExeIdentity};
 use crate::liveness_watchdog::install_main_thread_watchdog;
@@ -166,23 +168,37 @@ pub async fn attach_or_spawn(project_root: &Path) -> Result<(), Box<dyn std::err
 /// Safe for Command Center: does **not** kill unrelated `ax.exe` processes (unlike `ax unlock`).
 pub async fn restart_daemon(project_root: &Path) -> Result<DaemonRestartReport, String> {
     let mut stopped_pid = None;
+    let mut killed = Vec::new();
     if let Some(info) = read_daemon_info(project_root) {
         if is_pid_alive(info.pid) {
             let _ = kill_pid(info.pid);
             stopped_pid = Some(info.pid);
+            killed.push(info.pid);
         }
     }
     let pid_path = daemon_pid_path(project_root);
     if let Some(lock) = read_lock_info(&pid_path) {
         if stopped_pid != Some(lock.pid) && is_pid_alive(lock.pid) {
             let _ = kill_pid(lock.pid);
+            killed.push(lock.pid);
             if stopped_pid.is_none() {
                 stopped_pid = Some(lock.pid);
             }
         }
     }
-    remove_daemon_info(project_root);
-    release_daemon_lock(&pid_path);
+    // Files of the daemon just stopped (or of a dead one) go; a daemon that
+    // started meanwhile keeps its own.
+    let gone = |pid: u32| killed.contains(&pid) || !is_pid_alive(pid);
+    if read_daemon_info(project_root).is_some_and(|info| gone(info.pid)) {
+        remove_daemon_info(project_root);
+    }
+    if let Some(lock) = read_lock_info(&pid_path) {
+        if gone(lock.pid) {
+            release_daemon_lock(&pid_path);
+        }
+    } else {
+        clear_stale_daemon_lock(&pid_path, None);
+    }
 
     let lock_path = get_ax_dir(project_root).join("ax.lock");
     let cleared_ax_lock = ax_utils::clear_stale_lock(&lock_path);
