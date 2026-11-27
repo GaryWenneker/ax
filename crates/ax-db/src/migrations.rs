@@ -1,6 +1,6 @@
 //! Schema migrations v2-v6.
 
-use sqlx::SqlitePool;
+use sqlx::{Connection, SqlitePool};
 
 use ax_utils::errors::{AxError, DatabaseError};
 
@@ -720,22 +720,12 @@ async fn run_migration_list(
     }
     let mut conn = pool.acquire().await.map_err(db_err)?;
     for migration in pending {
-        sqlx::query("BEGIN IMMEDIATE")
-            .execute(&mut *conn)
-            .await
-            .map_err(db_err)?;
-        match apply_migration(&mut conn, migration).await {
-            Ok(()) => {
-                sqlx::query("COMMIT")
-                    .execute(&mut *conn)
-                    .await
-                    .map_err(db_err)?;
-            }
-            Err(e) => {
-                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
-                return Err(e);
-            }
-        }
+        // A tracked transaction: on an error, a failed COMMIT, or a dropped
+        // future it rolls back before the connection goes back to the pool,
+        // so no later user inherits an open write transaction.
+        let mut tx = conn.begin_with("BEGIN IMMEDIATE").await.map_err(db_err)?;
+        apply_migration(&mut tx, migration).await?;
+        tx.commit().await.map_err(db_err)?;
     }
     Ok(())
 }
@@ -743,19 +733,19 @@ async fn run_migration_list(
 /// Runs one migration inside the caller's transaction, unless it is already
 /// recorded.
 async fn apply_migration(
-    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    conn: &mut sqlx::SqliteConnection,
     migration: &Migration,
 ) -> Result<(), AxError> {
     let applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM schema_versions WHERE version = ?")
         .bind(migration.version)
-        .fetch_one(&mut **conn)
+        .fetch_one(&mut *conn)
         .await
         .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     if applied > 0 {
         return Ok(());
     }
     for trimmed in crate::schema::split_statements(migration.sql) {
-        let result = sqlx::query(&trimmed).execute(&mut **conn).await;
+        let result = sqlx::query(&trimmed).execute(&mut *conn).await;
         if let Err(e) = result {
             let msg = e.to_string();
             if msg.contains("duplicate column") || msg.contains("already exists") {
@@ -773,7 +763,7 @@ async fn apply_migration(
     .bind(migration.version)
     .bind(chrono_now_ms())
     .bind(migration.description)
-    .execute(&mut **conn)
+    .execute(&mut *conn)
     .await
     .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(())
@@ -818,5 +808,76 @@ mod tests {
         assert_eq!(table, 0, "the first statement was rolled back");
         assert_eq!(get_current_version(pool).await.unwrap(), from);
         db.close().await;
+    }
+
+    /// A one-connection pool, so the next `acquire` gets the very connection
+    /// the migration used.
+    async fn single_connection_pool(path: &std::path::Path) -> SqlitePool {
+        let opts = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(true);
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE schema_versions (version INTEGER PRIMARY KEY, applied_at INTEGER, description TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool
+    }
+
+    /// True when the pooled connection is outside any transaction: a nested
+    /// `BEGIN` fails with "cannot start a transaction within a transaction".
+    async fn pooled_connection_is_idle(pool: &SqlitePool) -> bool {
+        let mut conn = pool.acquire().await.unwrap();
+        let ok = sqlx::query("BEGIN").execute(&mut *conn).await.is_ok();
+        if ok {
+            sqlx::query("ROLLBACK").execute(&mut *conn).await.unwrap();
+        }
+        ok
+    }
+
+    #[tokio::test]
+    async fn a_failing_migration_returns_its_connection_outside_a_transaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = single_connection_pool(&dir.path().join("m.db")).await;
+        let broken = [Migration {
+            version: 1,
+            description: "test: fails",
+            sql: "INSERT INTO no_such_table VALUES (1);",
+        }];
+        assert!(run_migration_list(&pool, 0, &broken).await.is_err());
+        assert!(pooled_connection_is_idle(&pool).await);
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_migration_returns_its_connection_outside_a_transaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = single_connection_pool(&dir.path().join("m.db")).await;
+        // Seconds of work, so the future is dropped while the migration's
+        // transaction is open.
+        let slow = [Migration {
+            version: 1,
+            description: "test: slow",
+            sql: "CREATE TABLE slow AS WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 30000000) SELECT count(*) AS n FROM c;",
+        }];
+        let cancelled = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            run_migration_list(&pool, 0, &slow),
+        )
+        .await;
+        assert!(cancelled.is_err(), "the migration should still be running");
+        assert!(pooled_connection_is_idle(&pool).await);
+        let recorded: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM schema_versions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(recorded, 0, "the cancelled migration was rolled back");
+        pool.close().await;
     }
 }
