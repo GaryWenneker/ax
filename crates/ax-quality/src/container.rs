@@ -339,7 +339,9 @@ fn sonar_reachable_sync(host: &str) -> bool {
     sonar_ping_fast(host)
 }
 
-/// Fast HTTP ping to SonarQube `/api/system/status` (shared client, ~800ms timeout).
+/// Fast liveness ping to SonarQube `/api/system/status` (shared client,
+/// ~800ms timeout): true for any successful answer, including `STARTING`.
+/// Use [`wait_for_sonar`] or `sonar_reachable` when the API must be ready.
 pub fn sonar_ping_fast(host: &str) -> bool {
     let url = format!("{}/api/system/status", host.trim_end_matches('/'));
     sonar_blocking_client()
@@ -361,23 +363,78 @@ pub fn sonar_localhost_candidates(host: &str) -> Vec<String> {
         .collect()
 }
 
-pub async fn wait_for_sonar(host: &str, timeout_secs: u64) -> Result<(), String> {
+/// Longest time one readiness request may take.
+const SONAR_STATUS_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+/// Pause between readiness requests.
+const SONAR_STATUS_POLL: Duration = Duration::from_secs(3);
+
+/// Whether a `/api/system/status` body says the server is `UP`. SonarQube
+/// answers HTTP 200 with `STARTING` or `DB_MIGRATION_NEEDED` before its API
+/// can serve requests, so the status code alone does not mean ready.
+pub fn sonar_status_body_is_up(body: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("status")?.as_str().map(|s| s == "UP"))
+        .unwrap_or(false)
+}
+
+/// Asks `/api/system/status` once and reports whether SonarQube is `UP`.
+pub async fn sonar_status_up(client: &reqwest::Client, host: &str) -> bool {
     let url = format!("{}/api/system/status", host.trim_end_matches('/'));
-    let client = reqwest::Client::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
-    loop {
-        if tokio::time::Instant::now() > deadline {
-            return Err(format!(
-                "SonarQube did not become ready at {host} within {timeout_secs}s"
-            ));
-        }
-        if let Ok(resp) = client.get(&url).send().await {
-            if resp.status().is_success() {
-                return Ok(());
-            }
-        }
-        tokio::time::sleep(Duration::from_secs(3)).await;
+    let Ok(resp) = client.get(&url).send().await else {
+        return false;
+    };
+    if !resp.status().is_success() {
+        return false;
     }
+    resp.text()
+        .await
+        .map(|body| sonar_status_body_is_up(&body))
+        .unwrap_or(false)
+}
+
+fn sonar_status_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(SONAR_STATUS_REQUEST_TIMEOUT)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+/// Polls until SonarQube reports `UP` or `timeout_secs` pass. Each request
+/// is cut off at the request timeout and at the deadline, so a hung request
+/// cannot outlive it. `tick` gets the seconds waited before each pause.
+async fn wait_until_up(
+    host: &str,
+    timeout_secs: u64,
+    mut tick: impl FnMut(u64),
+) -> Result<(), String> {
+    let client = sonar_status_client();
+    let started = tokio::time::Instant::now();
+    let deadline = started + Duration::from_secs(timeout_secs);
+    let timed_out = || format!("SonarQube did not become ready at {host} within {timeout_secs}s");
+    loop {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Err(timed_out());
+        }
+        let up = tokio::time::timeout(deadline - now, sonar_status_up(&client, host))
+            .await
+            .unwrap_or(false);
+        if up {
+            return Ok(());
+        }
+        tick(started.elapsed().as_secs());
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Err(timed_out());
+        }
+        tokio::time::sleep(SONAR_STATUS_POLL.min(deadline - now)).await;
+    }
+}
+
+/// Waits until SonarQube reports `UP`, for at most `timeout_secs`.
+pub async fn wait_for_sonar(host: &str, timeout_secs: u64) -> Result<(), String> {
+    wait_until_up(host, timeout_secs, |_| {}).await
 }
 
 const START_CONTAINER_ATTEMPTS: u32 = 3;
@@ -1010,32 +1067,37 @@ async fn wait_for_sonar_logged(
     timeout_secs: u64,
     log: &InstallLog,
 ) -> Result<(), String> {
-    let url = format!("{}/api/system/status", host.trim_end_matches('/'));
-    let client = reqwest::Client::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
-    let mut waited = 0u64;
-    loop {
-        if tokio::time::Instant::now() > deadline {
-            let msg = format!("SonarQube did not become ready at {host} within {timeout_secs}s");
-            log.push(format!("ERROR: {msg}"));
-            return Err(msg);
-        }
-        if let Ok(resp) = client.get(&url).send().await {
-            if resp.status().is_success() {
-                return Ok(());
-            }
-        }
-        if waited > 0 && waited.is_multiple_of(15) {
+    let mut last_report = 0u64;
+    wait_until_up(host, timeout_secs, |waited| {
+        if waited >= last_report + 15 {
+            last_report = waited - waited % 15;
             log.push(format!("Still waiting… ({waited}s)"));
         }
-        waited += 3;
-        tokio::time::sleep(Duration::from_secs(3)).await;
-    }
+    })
+    .await
+    .inspect_err(|msg| log.push(format!("ERROR: {msg}")))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_body_is_up_only_for_up() {
+        assert!(sonar_status_body_is_up(
+            r#"{"id":"x","version":"10","status":"UP"}"#
+        ));
+        for body in [
+            r#"{"status":"STARTING"}"#,
+            r#"{"status":"DB_MIGRATION_NEEDED"}"#,
+            r#"{"status":"up"}"#,
+            r#"{}"#,
+            "",
+            "<html>proxy</html>",
+        ] {
+            assert!(!sonar_status_body_is_up(body), "{body}");
+        }
+    }
 
     #[test]
     fn db_sidecar_name_derived_from_sonar_name() {

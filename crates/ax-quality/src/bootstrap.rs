@@ -671,15 +671,10 @@ pub async fn ensure_sonar_dark_theme(host: &str, user: &str, password: &str) {
     );
 }
 
-/// Whether the SonarQube HTTP API responds at `host`.
+/// Whether SonarQube at `host` is `UP` and can serve API calls (a server
+/// that is still `STARTING` does not count).
 pub async fn sonar_reachable(host: &str) -> bool {
-    let url = format!("{}/api/system/status", host.trim_end_matches('/'));
-    http_client()
-        .get(&url)
-        .send()
-        .await
-        .map(|r| r.status().is_success())
-        .unwrap_or(false)
+    crate::container::sonar_status_up(&http_client(), host).await
 }
 
 fn http_client() -> reqwest::Client {
@@ -1466,6 +1461,63 @@ mod tests {
             })
             .cloned()
             .collect()
+    }
+
+    async fn sonar_with_status(status: &'static str) -> mock_sonar::MockSonar {
+        mock_sonar::start(move |_m, path| {
+            if path.starts_with("/api/system/status") {
+                (200, format!(r#"{{"status":"{status}"}}"#))
+            } else {
+                (200, "{}".into())
+            }
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn sonar_is_ready_only_when_status_is_up() {
+        for status in ["STARTING", "DB_MIGRATION_NEEDED", "DOWN"] {
+            let sonar = sonar_with_status(status).await;
+            assert!(!sonar_reachable(&sonar.host).await, "{status}");
+            assert!(
+                crate::container::wait_for_sonar(&sonar.host, 1)
+                    .await
+                    .is_err(),
+                "{status}"
+            );
+        }
+        let sonar = sonar_with_status("UP").await;
+        assert!(sonar_reachable(&sonar.host).await);
+        crate::container::wait_for_sonar(&sonar.host, 5)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn wait_for_sonar_gives_up_at_the_deadline_when_a_request_hangs() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((sock, _)) = listener.accept().await {
+                held.push(sock); // never answer
+            }
+        });
+        let started = std::time::Instant::now();
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(30),
+            crate::container::wait_for_sonar(&host, 2),
+        )
+        .await;
+        assert!(
+            matches!(outcome, Ok(Err(_))),
+            "wait_for_sonar must fail on its own deadline"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "{:?}",
+            started.elapsed()
+        );
     }
 
     #[tokio::test]

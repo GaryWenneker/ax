@@ -312,7 +312,7 @@ When you run `ax ship --evaluate` (or when git hooks trigger evaluation), ax run
 2. **diff** — changed files and dirty symbols vs `target_branch`
 3. **tia** — test-impact analysis via `Covers` edges in the graph
 4. **tests** — runs impacted tests (when any are found)
-5. **sonar** — optional SonarQube scan + quality gate (when enabled). If SonarQube is offline but a Podman container already exists, the gate **always tries to start it** (up to **3** `podman start` retries, then waits for the API) before failing.
+5. **sonar** — optional SonarQube scan + quality gate (when enabled). If SonarQube is offline but a Podman container already exists, the gate **always tries to start it** (up to **3** `podman start` retries, then waits until `/api/system/status` reports `UP`; `STARTING` and `DB_MIGRATION_NEEDED` count as not ready, and each status request is cut off after 5 seconds) before failing.
 6. **policy** — business-rule and breaking-change warnings
 
 CLI quality-gate output remains available through `ax ship`; the shared event API is retained.
