@@ -142,6 +142,7 @@ What links do in ax:
 - `folders/` and each `folders/<name>/` cannot be deleted or moved. Rename and move work only within one folder.
 - `..`, absolute paths, and symlinks are refused, so nothing outside the folder is reachable. Symlinks are not listed.
 - Indexing reads at most 2,000 files per folder and skips files over 256 KB, hidden files and folders, `node_modules`, and `target*` folders.
+- A file that is skipped (over 256 KB, past the 2,000-file limit, or unreadable) keeps the memory it already had. A memory is removed only when its file is gone. If the folder itself is missing or cannot be read (for example an unmounted drive), the sync fails and no memory changes; if a subfolder cannot be read, the sync removes nothing.
 
 ## Safety
 
