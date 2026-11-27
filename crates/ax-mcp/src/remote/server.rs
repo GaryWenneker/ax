@@ -967,7 +967,24 @@ async fn post(
     }
     let mut value = match outcome.result {
         Ok(v) => v,
-        Err(_) => return rpc(request.id, Err(("Ax request failed", -32603))),
+        // Argument errors describe the caller's input and are safe to return.
+        Err(message) if outcome.error_code == crate::transport::INVALID_PARAMS => {
+            return rpc(request.id, Err((&message, outcome.error_code)));
+        }
+        // Anything else may name server paths or internals: keep it in the
+        // server log and answer with a generic message.
+        Err(message) => {
+            tracing::warn!(
+                project = %project.id,
+                method = %request.method,
+                "remote MCP request failed: {message}"
+            );
+            ax_usage::log_workspace(
+                Some(&project.root),
+                format!("request failed method={} via=remote-mcp: {message}", request.method),
+            );
+            return rpc(request.id, Err(("Ax request failed", outcome.error_code)));
+        }
     };
     if request.method == "tools/list" {
         if let Some(tools) = value.get_mut("tools").and_then(Value::as_array_mut) {

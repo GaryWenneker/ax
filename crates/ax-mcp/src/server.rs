@@ -12,7 +12,8 @@ use crate::ppid_watchdog::spawn_ppid_watchdog;
 use crate::proxy::attach_or_spawn;
 use crate::tools::{server_instructions, ToolHandler};
 use crate::transport::{
-    is_notification, StdioTransport, INTERNAL_ERROR, METHOD_NOT_FOUND, PARSE_ERROR,
+    is_notification, StdioTransport, INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND,
+    PARSE_ERROR,
 };
 use crate::verbose::{
     deliver_local, format_mcp_log_notification, push_error, push_inbound, push_internal, push_line,
@@ -40,6 +41,15 @@ impl RequestOutcome {
             result,
             verbose_lines,
             error_code: INTERNAL_ERROR,
+        }
+    }
+
+    /// The request's arguments were rejected before any work ran.
+    fn invalid_params(message: String) -> Self {
+        Self {
+            result: Err(message),
+            verbose_lines: Vec::new(),
+            error_code: INVALID_PARAMS,
         }
     }
 
@@ -188,7 +198,14 @@ pub async fn handle_request(engine: &mut McpEngine, method: &str, params: Value)
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let args = params.get("arguments").cloned().unwrap_or(Value::Null);
+            let args = crate::request_context::public_args(
+                params.get("arguments").cloned().unwrap_or(Value::Null),
+            );
+            if let Some(root) = project_root.as_deref() {
+                if let Err(message) = crate::request_context::validate(root, &args) {
+                    return RequestOutcome::invalid_params(message);
+                }
+            }
             let verbose = verbose_enabled(project_root.as_deref());
             if verbose {
                 let (result, verbose_lines) = with_trace_buffer(async {
@@ -342,10 +359,7 @@ async fn call_tool_and_wrap(
     project_root: Option<&std::path::Path>,
     verbose: bool,
 ) -> Result<Value, String> {
-    let args = crate::request_context::public_args(args);
-    if let Some(root) = project_root {
-        crate::request_context::validate(root, &args)?;
-    }
+    // handle_request already removed private keys and validated the arguments.
     if is_policy_tool(name) {
         if let Err(e) = engine.ensure_policy_fresh().await {
             tracing::warn!("ensure_policy_fresh failed (tool {name} continues): {e}");
@@ -2724,5 +2738,38 @@ mod reuse_integration {
         assert!(text(&reply).contains("Context budget exceeded"));
         assert!(text(&reply).contains("[CRITICAL]"));
         assert!(!text(&reply).contains("<ax_memory_titles>"));
+    }
+}
+
+#[cfg(test)]
+mod error_codes {
+    use super::*;
+    use crate::transport::INVALID_PARAMS;
+
+    #[tokio::test]
+    async fn invalid_tool_arguments_answer_invalid_params() {
+        let _env = crate::test_env::shared().await;
+        let mine = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        for dir in [&mine, &other] {
+            ax_core::Ax::init(dir.path()).await.unwrap();
+        }
+        let mut engine = McpEngine::with_project_root(mine.path().canonicalize().unwrap());
+        for arguments in [
+            json!({ "projectPath": other.path() }),
+            json!({ "projectPath": "" }),
+            json!("not an object"),
+        ] {
+            let outcome = handle_request(
+                &mut engine,
+                "tools/call",
+                json!({ "name": "ax_rules", "arguments": arguments }),
+            )
+            .await;
+            assert!(outcome.result.is_err(), "{arguments}");
+            assert_eq!(outcome.error_code, INVALID_PARAMS, "{arguments}");
+        }
+        let unknown = handle_request(&mut engine, "resources/list", json!({})).await;
+        assert_eq!(unknown.error_code, METHOD_NOT_FOUND);
     }
 }
