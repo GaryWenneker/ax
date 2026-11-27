@@ -47,12 +47,7 @@ pub async fn enrich_project(
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("");
-        let Some(spec) = spec_for_extension(ext) else {
-            report.examined += file_refs.len() as u32;
-            report.skipped_no_server += file_refs.len() as u32;
-            continue;
-        };
-        if !crate::servers::server_available_in(spec, Some(project_root)) {
+        if spec_for_extension(ext).is_none() {
             report.examined += file_refs.len() as u32;
             report.skipped_no_server += file_refs.len() as u32;
             continue;
@@ -67,16 +62,21 @@ pub async fn enrich_project(
         jobs.push((rel, full, language_id, file_refs));
     }
 
+    // Server discovery spawns processes; keep it and all LSP work off the async runtime.
     let root = project_root.to_path_buf();
-    let (mut batch_report, partials) =
-        tokio::task::spawn_blocking(move || enrich::enrich_files_blocking(&root, jobs))
-            .await
-            .map_err(|e| AxError::Other(e.to_string()))?;
+    let (mut batch_report, partials) = tokio::task::spawn_blocking(move || {
+        let mut resolver = crate::servers::ServerResolver::for_project(Some(&root));
+        let deadline = std::time::Instant::now() + enrich::ENRICH_DEADLINE;
+        enrich::enrich_files_blocking(&root, jobs, &mut resolver, deadline)
+    })
+    .await
+    .map_err(|e| AxError::Other(e.to_string()))?;
 
     report.examined += batch_report.examined;
     report.resolved += batch_report.resolved;
     report.skipped_no_server += batch_report.skipped_no_server;
     report.skipped_no_definition += batch_report.skipped_no_definition;
+    report.skipped_deadline += batch_report.skipped_deadline;
     report.errors.append(&mut batch_report.errors);
 
     for mut p in partials {

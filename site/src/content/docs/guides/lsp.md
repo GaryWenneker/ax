@@ -44,6 +44,8 @@ Successful definitions become edges with provenance `lsp` and confidence `exact`
 
 Enrich keeps **one language-server process per server** for the whole batch and waits until `rust-analyzer` reports `quiescent` before definition queries. On large Cargo workspaces the first Enrich can take 1–3 minutes; that warmup is required — a cold server often returns empty definitions with no error.
 
+Each server is looked up once per Enrich run, and a server that fails to start is not retried for the rest of that run. A version probe that does not answer within 5 seconds is killed and the server counts as unavailable. One Enrich run stops after 15 minutes; refs it did not reach stay unresolved for the next run and are counted as `skippedDeadline` in the JSON report.
+
 ### Reconcile vs Enrich
 
 | Action | What it does |

@@ -33,15 +33,14 @@ pub struct LspLocation {
 }
 
 impl LspClient {
-    pub fn start(spec: &ServerSpec, project_root: &Path) -> Result<Self, String> {
+    /// Start `bin` (the resolved binary for `spec`) as a language server.
+    pub fn start(spec: &ServerSpec, bin: &Path, project_root: &Path) -> Result<Self, String> {
         let project_root = strip_verbatim_prefix(
             &project_root
                 .canonicalize()
                 .unwrap_or_else(|_| project_root.to_path_buf()),
         );
-        let bin = crate::servers::working_binary(spec.command, Some(&project_root))
-            .ok_or_else(|| format!("{} is not installed or not runnable", spec.command))?;
-        let mut cmd = Command::new(&bin);
+        let mut cmd = Command::new(bin);
         cmd.args(spec.args)
             .current_dir(&project_root)
             .stdin(Stdio::piped())
@@ -577,7 +576,8 @@ mod tests {
         let col = column_for_name(&text, 74, 0, "config_path");
         eprintln!("query line={} col={} name=config_path", line_idx + 1, col);
 
-        let mut client = LspClient::start(spec, &root).expect("start ra");
+        let bin = crate::servers::working_binary(spec.command, Some(&root)).expect("ra binary");
+        let mut client = LspClient::start(spec, &bin, &root).expect("start ra");
         client.did_open(&path, "rust", &text).expect("didOpen");
         eprintln!("waiting for quiescent…");
         client
