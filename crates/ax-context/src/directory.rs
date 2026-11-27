@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 pub const AX_DIR: &str = ".ax";
 pub const DB_FILENAME: &str = "ax.db";
@@ -68,22 +69,27 @@ pub fn find_nearest_ax_root(cwd: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Why `path` must not be indexed: it is a filesystem root (`/`, `C:\`, any
+/// drive) or the home directory. Paths are compared after canonicalizing both
+/// sides, so a symlinked HOME, a trailing slash or a Windows `\\?\` prefix
+/// does not hide a match.
 pub fn unsafe_index_root_reason(path: &Path) -> Option<String> {
-    let canonical = path.canonicalize().ok();
-    let path_str = canonical
-        .as_ref()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.to_string_lossy().to_string());
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
-    let unsafe_roots = ["/", "C:\\", "C:/"];
-    for root in unsafe_roots {
-        if path_str == root || path_str == root.trim_end_matches('\\') {
-            return Some(format!("refusing to index unsafe root: {}", path_str));
-        }
+    if canonical.has_root() && canonical.parent().is_none() {
+        return Some(format!(
+            "refusing to index unsafe root: {}",
+            canonical.display()
+        ));
     }
 
-    if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
-        if path_str == home {
+    let home = std::env::var_os("USERPROFILE")
+        .filter(|h| !h.is_empty())
+        .or_else(|| std::env::var_os("HOME").filter(|h| !h.is_empty()));
+    if let Some(home) = home {
+        let home = PathBuf::from(home);
+        let home = home.canonicalize().unwrap_or(home);
+        if canonical == home {
             return Some("refusing to index home directory".to_string());
         }
     }
@@ -119,27 +125,39 @@ pub fn has_structural_keyword(prompt: &str) -> bool {
     if keywords.iter().any(|k| lower.contains(k)) {
         return true;
     }
-    let structural_en = regex::Regex::new(
-        r"\b(how|where|trace|flow|path|reach(?:es|ed)?|call(?:s|ed|er|ers|ee)?|depend|impact|affect|wired?|connect|implement|architect|structure|breaks?|what calls|why does)\b",
-    )
-    .unwrap();
-    let structural_cjk = regex::Regex::new(
-        r"如何|怎么|在哪|哪里|追踪|跟踪|流程|流向|路径|调用|依赖|影响|实现|架构|结构|介绍|解析|分析|原理|机制",
-    )
-    .unwrap();
+    static STRUCTURAL_EN: OnceLock<regex::Regex> = OnceLock::new();
+    static STRUCTURAL_CJK: OnceLock<regex::Regex> = OnceLock::new();
+    let structural_en = STRUCTURAL_EN.get_or_init(|| {
+        regex::Regex::new(
+            r"\b(how|where|trace|flow|path|reach(?:es|ed)?|call(?:s|ed|er|ers|ee)?|depend|impact|affect|wired?|connect|implement|architect|structure|breaks?|what calls|why does)\b",
+        )
+        .expect("structural regex")
+    });
+    let structural_cjk = STRUCTURAL_CJK.get_or_init(|| {
+        regex::Regex::new(
+            r"如何|怎么|在哪|哪里|追踪|跟踪|流程|流向|路径|调用|依赖|影响|实现|架构|结构|介绍|解析|分析|原理|机制",
+        )
+        .expect("structural CJK regex")
+    });
     structural_en.is_match(prompt) || structural_cjk.is_match(prompt)
 }
 
 pub fn extract_code_tokens(prompt: &str) -> Vec<String> {
     let mut tokens = Vec::new();
-    let re_camel =
-        regex::Regex::new(r"\b([A-Z][a-z]+(?:[A-Z][a-z]*)*|[a-z]+(?:[A-Z][a-z]*)+)\b").unwrap();
+    static RE_CAMEL: OnceLock<regex::Regex> = OnceLock::new();
+    static RE_SNAKE: OnceLock<regex::Regex> = OnceLock::new();
+    let re_camel = RE_CAMEL.get_or_init(|| {
+        regex::Regex::new(r"\b([A-Z][a-z]+(?:[A-Z][a-z]*)*|[a-z]+(?:[A-Z][a-z]*)+)\b")
+            .expect("camel regex")
+    });
     for cap in re_camel.captures_iter(prompt) {
         if let Some(m) = cap.get(1) {
             tokens.push(m.as_str().to_string());
         }
     }
-    let re_snake = regex::Regex::new(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b").unwrap();
+    let re_snake = RE_SNAKE.get_or_init(|| {
+        regex::Regex::new(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b").expect("snake regex")
+    });
     for cap in re_snake.captures_iter(prompt) {
         if let Some(m) = cap.get(1) {
             tokens.push(m.as_str().to_string());
