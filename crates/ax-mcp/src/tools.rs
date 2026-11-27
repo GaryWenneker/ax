@@ -2446,44 +2446,10 @@ fn guard_content_from_params(params: &Value) -> Option<Vec<u8>> {
 }
 
 fn base64_decode(input: &str) -> Option<Vec<u8>> {
-    const TABLE: &[u8; 256] = &{
-        let mut t = [255u8; 256];
-        let mut i = 0u8;
-        while i < 64 {
-            let c = match i {
-                0..=25 => b'A' + i,
-                26..=51 => b'a' + (i - 26),
-                52..=61 => b'0' + (i - 52),
-                62 => b'+',
-                _ => b'/',
-            };
-            t[c as usize] = i;
-            i += 1;
-        }
-        t[b'=' as usize] = 0;
-        t
-    };
-    let bytes = input.trim().as_bytes();
-    if bytes.is_empty() || !bytes.len().is_multiple_of(4) {
-        return None;
-    }
-    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
-    let mut buf = 0u32;
-    let mut bits = 0u32;
-    for &b in bytes {
-        let v = TABLE[b as usize];
-        if v == 255 {
-            return None;
-        }
-        buf = (buf << 6) | v as u32;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buf >> bits) as u8);
-            buf &= (1 << bits) - 1;
-        }
-    }
-    Some(out)
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD
+        .decode(input.trim())
+        .ok()
 }
 
 fn string_array(v: Option<&Value>) -> Vec<String> {
@@ -3462,6 +3428,20 @@ pub fn server_instructions(has_policy: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base64_decode_honors_padding_and_rejects_bad_input() {
+        assert_eq!(base64_decode("QUJD"), Some(b"ABC".to_vec()));
+        assert_eq!(base64_decode("QUI="), Some(b"AB".to_vec()));
+        assert_eq!(base64_decode("QQ=="), Some(b"A".to_vec()));
+        assert_eq!(base64_decode(" QQ==\n"), Some(b"A".to_vec()));
+        assert_eq!(base64_decode(""), Some(Vec::new()));
+        assert_eq!(base64_decode("Q=Q="), None);
+        assert_eq!(base64_decode("QQ"), None);
+        assert_eq!(base64_decode("Q!=="), None);
+        let params = serde_json::json!({ "contentBase64": "aGk=" });
+        assert_eq!(guard_content_from_params(&params), Some(b"hi".to_vec()));
+    }
 
     fn tool_names(v: &Value) -> Vec<String> {
         v["tools"]
