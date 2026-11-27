@@ -720,26 +720,61 @@ fn skill_reference_name(raw: &str) -> Option<String> {
     }
 }
 
+/// File references in a skill or rule body. Fenced code blocks are skipped.
+/// A markdown link target counts when it looks like a path; inline code
+/// counts only when it ends in a known file extension or names a skill
+/// (`skills/<name>`), so tokens such as `application/json` or `owner/repo`
+/// are not reported as missing files.
 fn referenced_paths(body: &str) -> Vec<String> {
+    let prose = strip_fenced_blocks(body);
     let mut out = Vec::new();
-    collect_between(body, "](", ")", &mut out);
-    collect_between(body, "`", "`", &mut out);
+    collect_between(&prose, "](", ")", false, &mut out);
+    collect_between(&prose, "`", "`", true, &mut out);
     out
 }
 
-fn collect_between(body: &str, open: &str, close: &str, out: &mut Vec<String>) {
+/// The body without fenced code blocks (``` or ~~~), fence lines included.
+fn strip_fenced_blocks(body: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut fence: Option<(char, usize)> = None;
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        let marker = trimmed.chars().next().filter(|c| *c == '`' || *c == '~');
+        let run = marker.map_or(0, |c| trimmed.chars().take_while(|x| *x == c).count());
+        match (fence, marker) {
+            (None, Some(c)) if run >= 3 => fence = Some((c, run)),
+            (None, _) => {
+                out.push_str(line);
+                out.push('\n');
+            }
+            (Some((open, len)), Some(c))
+                if c == open && run >= len && trimmed[run..].trim().is_empty() =>
+            {
+                fence = None
+            }
+            (Some(_), _) => {}
+        }
+    }
+    out
+}
+
+fn collect_between(body: &str, open: &str, close: &str, strict: bool, out: &mut Vec<String>) {
     let mut rest = body;
     while let Some(start) = rest.find(open) {
         rest = &rest[start + open.len()..];
         let Some(end) = rest.find(close) else {
             break;
         };
-        push_ref(out, &rest[..end]);
+        push_ref(out, &rest[..end], strict);
         rest = &rest[end + close.len()..];
     }
 }
 
-fn push_ref(out: &mut Vec<String>, raw: &str) {
+const PATH_EXTENSIONS: [&str; 11] = [
+    ".md", ".mdc", ".sh", ".py", ".js", ".ts", ".ps1", ".json", ".txt", ".yml", ".yaml",
+];
+
+fn push_ref(out: &mut Vec<String>, raw: &str, strict: bool) {
     let raw = raw.trim();
     if raw.is_empty()
         || raw.len() > 200
@@ -750,21 +785,19 @@ fn push_ref(out: &mut Vec<String>, raw: &str) {
         return;
     }
     let path = raw.split(['?', '#']).next().unwrap_or(raw).trim();
-    if path.is_empty() || path.contains(' ') || path.contains('<') || path.contains('>') {
+    if path.is_empty()
+        || path.contains(char::is_whitespace)
+        || path.contains('<')
+        || path.contains('>')
+    {
         return;
     }
-    let looks = path.contains('/')
-        || path.contains('\\')
-        || path.ends_with(".md")
-        || path.ends_with(".sh")
-        || path.ends_with(".py")
-        || path.ends_with(".js")
-        || path.ends_with(".ts")
-        || path.ends_with(".ps1")
-        || path.ends_with(".json")
-        || path.ends_with(".txt")
-        || path.ends_with(".yml")
-        || path.ends_with(".yaml");
+    let has_extension = PATH_EXTENSIONS.iter().any(|ext| path.ends_with(ext));
+    let looks = if strict {
+        has_extension || skill_reference_name(path).is_some()
+    } else {
+        has_extension || path.contains('/') || path.contains('\\')
+    };
     if looks {
         out.push(path.to_string());
     }
@@ -1165,6 +1198,29 @@ mod tests {
     }
 
     #[test]
+    fn code_fences_and_non_path_tokens_are_not_missing_files() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("pdf");
+        let description = "Use this when the user asks to extract text from a PDF file.";
+        let body = format!(
+            "---\nname: pdf\ndescription: {description}\n---\n\n\
+             Send `application/json` to `owner/repo`, and/or use `and/or`.\n\n\
+             ```bash\nscripts/fenced.sh --flag\n```\n\n\
+             ~~~\ncat other/fenced.md\n~~~\n\n\
+             Then read `docs/guide.md`.\n"
+        );
+        write_skill(&dir, &body);
+        let report = audit_directory(&dir).unwrap();
+        let missing: Vec<_> = report
+            .mechanical
+            .iter()
+            .filter(|f| f.check == "missing-file")
+            .map(|f| f.evidence.as_str())
+            .collect();
+        assert_eq!(missing, vec!["docs/guide.md"]);
+    }
+
+    #[test]
     fn name_mismatch_is_a_failure() {
         let root = tempfile::tempdir().unwrap();
         let dir = root.path().join("pdf");
@@ -1233,7 +1289,9 @@ mod tests {
             .mechanical
             .iter()
             .any(|f| f.check == "symlink" && f.severity == "fail"));
-        assert!(!serde_json::to_string(&report).unwrap().contains("TOPSECRET"));
+        assert!(!serde_json::to_string(&report)
+            .unwrap()
+            .contains("TOPSECRET"));
     }
 
     #[cfg(unix)]
@@ -1248,7 +1306,8 @@ mod tests {
         );
         // A symlinked SKILL.md in the first candidate, a symlinked directory in the second.
         fs::create_dir_all(root.path().join("pdf")).unwrap();
-        std::os::unix::fs::symlink(real.join("SKILL.md"), root.path().join("pdf/SKILL.md")).unwrap();
+        std::os::unix::fs::symlink(real.join("SKILL.md"), root.path().join("pdf/SKILL.md"))
+            .unwrap();
         fs::create_dir_all(root.path().join("skills")).unwrap();
         std::os::unix::fs::symlink(&real, root.path().join("skills/pdf")).unwrap();
         assert_eq!(
