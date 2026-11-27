@@ -13,6 +13,7 @@ use crate::advanced::{check_business_rules, detect_breaking_changes, find_affect
 use crate::auto_commit::{self, Checkpoint};
 use crate::events::{ShipEvent, ShipEventBus};
 use crate::git_root::{diff_all_repos, resolve_git_root, resolve_git_roots};
+use crate::git_watcher::{git_fingerprint, OwnGit};
 use crate::run_log::RunLogger;
 use crate::state::{AutoCommitOutcome, GateStepStatus, QualityGateSummary, ShipReport};
 
@@ -33,6 +34,9 @@ pub struct ShipPipeline {
     project_root: PathBuf,
     config: ShipConfig,
     bus: ShipEventBus,
+    /// The git roots and what this pipeline's runs did to git, for the
+    /// watcher (see [`OwnGit`]).
+    own_git: std::sync::Mutex<(Vec<PathBuf>, OwnGit)>,
 }
 
 impl ShipPipeline {
@@ -41,6 +45,21 @@ impl ShipPipeline {
             project_root,
             config,
             bus,
+            own_git: std::sync::Mutex::new((Vec::new(), OwnGit::Untouched)),
+        }
+    }
+
+    /// What the last run did to git itself.
+    pub(crate) fn own_git(&self) -> OwnGit {
+        self.own_git
+            .lock()
+            .map(|g| g.1.clone())
+            .unwrap_or(OwnGit::Disturbed)
+    }
+
+    fn set_own_git(&self, roots: &[PathBuf], own: OwnGit) {
+        if let Ok(mut g) = self.own_git.lock() {
+            *g = (roots.to_vec(), own);
         }
     }
 
@@ -142,6 +161,9 @@ impl ShipPipeline {
                     Ok(None) => {}
                     Err(e) => logger.line(format!("Checkpoint skipped in {label}: {e}")),
                 }
+            }
+            if !checkpoint_roots.is_empty() {
+                self.set_own_git(&git_roots, OwnGit::LeftAt(git_fingerprint(&git_roots)));
             }
         }
 
@@ -477,12 +499,29 @@ impl ShipPipeline {
                         .into(),
             };
         }
+        // Git changed since the checkpoint by someone else: the watcher must
+        // evaluate again whatever the rollback leaves.
+        let (roots, own) = self
+            .own_git
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or((Vec::new(), OwnGit::Disturbed));
+        let disturbed = match &own {
+            OwnGit::LeftAt(left) => git_fingerprint(&roots) != *left,
+            _ => true,
+        };
         let mut errors = Vec::new();
         for (root, cp) in checkpoint_roots.iter().rev() {
             if let Err(e) = auto_commit::revert_checkpoint(root, cp) {
                 errors.push(e);
             }
         }
+        let after = if disturbed {
+            OwnGit::Disturbed
+        } else {
+            OwnGit::LeftAt(git_fingerprint(&roots))
+        };
+        self.set_own_git(&roots, after);
         if errors.is_empty() {
             logger.line("Quality gate failed — checkpoint(s) reverted (changes kept, uncommitted)");
             AutoCommitOutcome {

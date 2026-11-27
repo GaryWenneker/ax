@@ -112,7 +112,7 @@ ax share --open                  # LAN share with token (read-only) — see Shar
 | `ax ship --draft` | Create a draft PR via configured remote provider |
 | `ax share` | Share Command Center on the LAN with a token |
 
-The git watcher looks at `.git/HEAD`, `.git/index` and `.git/refs` of each git root. After a change it waits until git has been quiet for 300 ms, then runs the gate once and shows the result in the dashboard. It runs again only when the branch, HEAD commit or staged content differs from what the previous run left behind, so the gate's own checkpoint commits, rollbacks and index refreshes do not start another run. Changes made while a run is in progress are picked up by the next change in git state.
+The git watcher looks at `.git/HEAD`, `.git/index` and `.git/refs` of each git root. After a change it waits until git has been quiet for 300 ms, then runs the gate once and shows the result in the dashboard. It runs again only when the branch, HEAD commit or staged content differs from what the previous run evaluated, so the gate's own checkpoint commits, rollbacks and index refreshes do not start another run. When you commit, stage or switch branch while a run is in progress, the gate runs again as soon as that run ends and git is quiet, so the dashboard never keeps showing a report for the state before your change.
 
 ## Configuration (`.ax/ship.toml`)
 

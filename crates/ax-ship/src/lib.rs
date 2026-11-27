@@ -131,9 +131,11 @@ impl ShipDaemon {
         let watch = git_watcher::start_git_watcher(git_roots, self.bus.clone(), move || {
             let handles = handles.clone();
             async move {
-                if let Err(e) = handles.evaluate_with(|_| {}).await {
+                let (result, own_git) = handles.evaluate_tracked(|_| {}).await;
+                if let Err(e) = result {
                     tracing::warn!(error = %e, "ship evaluation after git change failed");
                 }
+                own_git
             }
         })?;
         if let Ok(mut slot) = self.watch.lock() {
@@ -158,16 +160,30 @@ impl EvalHandles {
         &self,
         apply_overrides: impl FnOnce(&mut ax_remote::ShipConfig),
     ) -> Result<ShipReport, String> {
+        self.evaluate_tracked(apply_overrides).await.0
+    }
+
+    /// [`Self::evaluate_with`], plus what the run did to git itself, so the
+    /// git watcher can tell its own changes from the user's.
+    async fn evaluate_tracked(
+        &self,
+        apply_overrides: impl FnOnce(&mut ax_remote::ShipConfig),
+    ) -> (Result<ShipReport, String>, git_watcher::OwnGit) {
         reload_config_into(&self.project_root, &self.config).await;
         let mut cfg = self.config.lock().await.clone();
         apply_overrides(&mut cfg);
         let pipeline = ShipPipeline::new(self.project_root.clone(), cfg, self.bus.clone());
-        let report = pipeline.run_evaluate().await?;
+        let result = pipeline.run_evaluate().await;
+        let own_git = pipeline.own_git();
+        let report = match result {
+            Ok(report) => report,
+            Err(e) => return (Err(e), own_git),
+        };
         *self.state.lock().await = ShipState::from_report(&report);
         self.bus.publish(ShipEvent::ReportUpdated {
             report: Box::new(report.clone()),
         });
-        Ok(report)
+        (Ok(report), own_git)
     }
 }
 
