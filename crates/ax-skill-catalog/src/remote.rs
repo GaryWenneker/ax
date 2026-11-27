@@ -2,6 +2,7 @@ use crate::source::{GitHost, SkillSource};
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 pub struct Fetched {
     pub tree: PathBuf,
@@ -138,66 +139,82 @@ pub fn search_body(query: &str, owner: Option<&str>, limit: u32) -> Result<Strin
     http_text(&url)
 }
 
-pub fn git_clone(url: &str, reference: Option<&str>, dest: &Path) -> Result<(), String> {
+/// Deadline for git commands that talk to a remote (clone, push).
+const GIT_NETWORK_TIMEOUT: Duration = Duration::from_secs(300);
+/// Deadline for git commands that only touch the local repository.
+const GIT_LOCAL_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// A git command that never asks for input: terminal prompts and interactive
+/// credential managers are off, so a private or mistyped repository fails
+/// instead of waiting for a username on the server's terminal.
+fn git_command() -> Command {
     let mut cmd = Command::new("git");
+    cmd.env("GIT_TERMINAL_PROMPT", "0")
+        .env("GCM_INTERACTIVE", "never");
+    cmd
+}
+
+fn run_git(cmd: &mut Command, timeout: Duration) -> Result<crate::process::CmdOutput, String> {
+    crate::process::run_with_timeout(cmd, timeout)
+}
+
+pub fn git_clone(url: &str, reference: Option<&str>, dest: &Path) -> Result<(), String> {
+    git_clone_within(url, reference, dest, GIT_NETWORK_TIMEOUT)
+}
+
+fn git_clone_within(
+    url: &str,
+    reference: Option<&str>,
+    dest: &Path,
+    timeout: Duration,
+) -> Result<(), String> {
+    let mut cmd = git_command();
     cmd.arg("clone").arg("--depth").arg("1");
     if let Some(reference) = reference {
         cmd.arg("--branch").arg(reference);
     }
-    cmd.arg(url).arg(dest);
-    let output = cmd.output().map_err(|e| format!("git clone: {e}"))?;
+    cmd.arg("--").arg(url).arg(dest);
+    let output = run_git(&mut cmd, timeout).map_err(|e| format!("git clone: {e}"))?;
     if !output.status.success() {
-        return Err(format!(
-            "git clone failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
+        return Err(format!("git clone failed: {}", output.stderr.trim()));
     }
     Ok(())
 }
 
 pub fn git_rev(dest: &Path) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(dest)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let mut cmd = git_command();
+    cmd.args(["rev-parse", "HEAD"]).current_dir(dest);
+    let output = run_git(&mut cmd, GIT_LOCAL_TIMEOUT)?;
     if !output.status.success() {
         return Err("git rev-parse failed".into());
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    Ok(output.stdout.trim().to_string())
 }
 
 pub fn git_publish(repo: &Path, name: &str) -> Result<(), String> {
-    let add = Command::new("git")
-        .args(["add", "--", &format!("skills/{name}")])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let mut add = git_command();
+    add.args(["add", "--", &format!("skills/{name}")])
+        .current_dir(repo);
+    let add = run_git(&mut add, GIT_LOCAL_TIMEOUT)?;
     if !add.status.success() {
-        return Err(String::from_utf8_lossy(&add.stderr).trim().to_string());
+        return Err(add.stderr.trim().to_string());
     }
-    let commit = Command::new("git")
+    let mut commit = git_command();
+    commit
         .args(["commit", "-m", &format!("Publish skill {name}")])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !commit.status.success() {
-        let stderr = String::from_utf8_lossy(&commit.stderr);
-        let stdout = String::from_utf8_lossy(&commit.stdout);
-        if !stderr.contains("nothing to commit") && !stdout.contains("nothing to commit") {
-            return Err(stderr.trim().to_string());
-        }
+        .current_dir(repo);
+    let commit = run_git(&mut commit, GIT_LOCAL_TIMEOUT)?;
+    if !commit.status.success()
+        && !commit.stderr.contains("nothing to commit")
+        && !commit.stdout.contains("nothing to commit")
+    {
+        return Err(commit.stderr.trim().to_string());
     }
-    let push = Command::new("git")
-        .args(["push"])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let mut push = git_command();
+    push.args(["push"]).current_dir(repo);
+    let push = run_git(&mut push, GIT_NETWORK_TIMEOUT).map_err(|e| format!("git push: {e}"))?;
     if !push.status.success() {
-        return Err(format!(
-            "git push failed: {}",
-            String::from_utf8_lossy(&push.stderr).trim()
-        ));
+        return Err(format!("git push failed: {}", push.stderr.trim()));
     }
     Ok(())
 }
@@ -302,6 +319,49 @@ pub fn encode(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::vetted_download;
+
+    /// A server that accepts connections and never answers.
+    fn silent_server() -> (std::net::TcpListener, u16) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        (listener, port)
+    }
+
+    #[test]
+    fn a_git_clone_from_a_silent_server_stops_at_the_deadline() {
+        let (_listener, port) = silent_server();
+        let dest = tempfile::tempdir().unwrap();
+        let path = dest.path().join("clone");
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = super::git_clone_within(
+                &format!("http://127.0.0.1:{port}/repo.git"),
+                None,
+                &path,
+                std::time::Duration::from_secs(2),
+            );
+            let _ = tx.send(result);
+        });
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("git clone must stop at its deadline");
+        let err = result.unwrap_err();
+        assert!(err.contains("timed out"), "{err}");
+    }
+
+    #[test]
+    fn git_commands_never_prompt() {
+        let cmd = super::git_command();
+        let envs: Vec<_> = cmd.get_envs().collect();
+        assert!(envs.contains(&(
+            std::ffi::OsStr::new("GIT_TERMINAL_PROMPT"),
+            Some(std::ffi::OsStr::new("0"))
+        )));
+        assert!(envs.contains(&(
+            std::ffi::OsStr::new("GCM_INTERACTIVE"),
+            Some(std::ffi::OsStr::new("never"))
+        )));
+    }
 
     #[test]
     fn skill_downloads_reject_private_and_non_http_targets() {

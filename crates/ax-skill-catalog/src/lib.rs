@@ -3,6 +3,7 @@
 mod audit;
 mod install;
 mod lockfile;
+mod process;
 mod publish;
 mod remote;
 mod search;
