@@ -409,10 +409,18 @@ impl Ax {
     /// files: re-extract, resolve, light SQLite maintenance and change capture.
     /// Doc and contract rescans and the memory passes are left to the next
     /// sync or watch batch.
+    ///
+    /// Doc and contract files (Markdown, YAML, JSON, `.proto`, GraphQL) are not
+    /// re-extracted here: their `doc:` and `contract:` nodes come only from the
+    /// project-wide doc and contract passes, so a re-extract would drop them.
+    /// Such files keep their stale label and their stored hash, so the next
+    /// sync or watch batch sees the change and runs those passes.
     async fn try_resync_source(&mut self, paths: &[String]) -> bool {
+        let paths = read_path_resync_paths(paths);
         if paths.is_empty() {
             return false;
         }
+        let paths = paths.as_slice();
         let mutex = Arc::clone(&self.index_mutex);
         let guard = match tokio::time::timeout(SOURCE_RESYNC_MUTEX_WAIT, mutex.lock()).await {
             Ok(g) => g,
@@ -1088,6 +1096,19 @@ fn report_optimizing(on_progress: &mut Option<Box<dyn FnMut(IndexProgress) + Sen
     }
 }
 
+/// The stale paths a read-path resync may re-extract: everything except doc
+/// and contract files (see `Ax::try_resync_source`).
+fn read_path_resync_paths(paths: &[String]) -> Vec<String> {
+    paths
+        .iter()
+        .filter(|p| {
+            !ax_extraction::markdown::is_doc_path(p)
+                && !ax_extraction::contracts::may_be_contract_path(p)
+        })
+        .cloned()
+        .collect()
+}
+
 /// What a finalize pass covers.
 #[derive(Clone, Copy)]
 struct FinalizeRun<'a> {
@@ -1278,15 +1299,45 @@ mod read_path_tests {
         );
     }
 
+    const OPENAPI_V1: &str = "openapi: 3.0.0\ninfo:\n  title: a\n  version: '1'\npaths:\n  /users:\n    get:\n      operationId: listUsers\n";
+    const OPENAPI_V2: &str = "openapi: 3.0.0\ninfo:\n  title: b\n  version: '2'\npaths:\n  /users:\n    get:\n      operationId: listUsers\n    post:\n      operationId: addUser\n";
+
+    async fn node_ids(ax: &Ax, file: &str, prefix: &str) -> Vec<String> {
+        let mut ids: Vec<String> = ax
+            .queries
+            .get_nodes_by_file(file)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|n| n.id)
+            .filter(|id| id.starts_with(prefix))
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    fn a_read_path_resync_leaves_doc_and_contract_files_alone() {
+        let paths = [
+            "openapi.yaml",
+            "api.json",
+            "svc.proto",
+            "schema.graphql",
+            "README.md",
+            "src/app.ts",
+        ]
+        .map(String::from);
+        assert_eq!(
+            read_path_resync_paths(&paths),
+            vec!["src/app.ts".to_string()]
+        );
+    }
+
     #[tokio::test]
-    async fn a_read_path_resync_of_a_contract_or_doc_skips_the_rescans() {
+    async fn a_read_path_resync_keeps_contract_nodes_and_the_next_sync_refreshes_them() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        std::fs::write(
-            root.join("openapi.yaml"),
-            "openapi: 3.0.0\ninfo:\n  title: a\n  version: '1'\npaths: {}\n",
-        )
-        .unwrap();
+        std::fs::write(root.join("openapi.yaml"), OPENAPI_V1).unwrap();
         std::fs::write(root.join("README.md"), "# A\n").unwrap();
         let mut ax = Ax::init(root).await.unwrap();
         let quiet = IndexOptions {
@@ -1294,40 +1345,38 @@ mod read_path_tests {
             ..IndexOptions::default()
         };
         ax.index_all(quiet.clone(), None).await.unwrap();
-        std::fs::write(
-            root.join("openapi.yaml"),
-            "openapi: 3.0.0\ninfo:\n  title: b\n  version: '2'\npaths: {}\n",
-        )
-        .unwrap();
-        std::fs::write(root.join("README.md"), "# B\n").unwrap();
-
-        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let capture = Arc::clone(&seen);
-        let mut progress: Option<Box<dyn FnMut(IndexProgress) + Send>> =
-            Some(Box::new(move |event: IndexProgress| {
-                if event.phase == ax_types::IndexPhase::Optimizing {
-                    if let Some(label) = event.file_path {
-                        capture.lock().unwrap().push(label);
-                    }
-                }
-            }));
-        let mutex = Arc::clone(&ax.index_mutex);
-        let _guard = mutex.lock().await;
-        ax.index_files_locked(
-            &["openapi.yaml".to_string(), "README.md".to_string()],
-            quiet,
-            &mut progress,
-            SOURCE_RESYNC_FILE_LOCK_WAIT,
-            true,
-        )
-        .await
-        .unwrap();
-        let labels = seen.lock().unwrap().clone();
+        let before = node_ids(&ax, "openapi.yaml", "contract:").await;
         assert!(
-            !labels
-                .iter()
-                .any(|l| l == "contracts" || l == "markdown docs"),
-            "read path ran a project-wide rescan: {labels:?}"
+            before.iter().any(|id| id.contains(":GET:/users")),
+            "fixture produced no contract nodes: {before:?}"
+        );
+        let docs_before = node_ids(&ax, "README.md", "doc:").await;
+
+        std::fs::write(root.join("openapi.yaml"), OPENAPI_V2).unwrap();
+        std::fs::write(root.join("README.md"), "# B\n").unwrap();
+        let stale = vec!["openapi.yaml".to_string(), "README.md".to_string()];
+
+        assert!(!ax.try_resync_source(&stale).await);
+        assert_eq!(node_ids(&ax, "openapi.yaml", "contract:").await, before);
+        assert_eq!(node_ids(&ax, "README.md", "doc:").await, docs_before);
+        assert_eq!(
+            ax.queries
+                .stale_source_paths(&["openapi.yaml".to_string()])
+                .await
+                .unwrap(),
+            vec!["openapi.yaml".to_string()],
+            "the contract file must stay stale so the next sync revisits it"
+        );
+
+        ax.sync(quiet, None).await.unwrap();
+        let after = node_ids(&ax, "openapi.yaml", "contract:").await;
+        assert!(
+            after.iter().any(|id| id.contains(":GET:/users")),
+            "{after:?}"
+        );
+        assert!(
+            after.iter().any(|id| id.contains(":POST:/users")),
+            "{after:?}"
         );
     }
 }
