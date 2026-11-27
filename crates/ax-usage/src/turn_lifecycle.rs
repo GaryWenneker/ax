@@ -196,7 +196,7 @@ pub async fn turn_begin(
         turn_id: turn_id.clone(),
         session_id: session_id.to_string(),
         project_id: project_scope(root),
-        prompt: clip(&crate_redact(prompt), 8_000),
+        prompt: clip(&crate::redact::redact_text(prompt), 8_000),
         state: TurnState::Open,
         started_at_ms: now_ms(),
         head: git_head(root),
@@ -227,30 +227,6 @@ pub async fn turn_begin(
     Ok(snap)
 }
 
-fn crate_redact(text: &str) -> String {
-    // Lightweight local redaction (mirrors activity redaction).
-    let mut out = String::new();
-    for token in text.split_whitespace() {
-        if !out.is_empty() {
-            out.push(' ');
-        }
-        if token.starts_with("sk-") && token.len() > 20 {
-            out.push_str("[redacted]");
-        } else if let Some((k, _)) = token.split_once('=') {
-            let key = k.to_ascii_lowercase();
-            if key.contains("password") || key.contains("token") || key.contains("secret") {
-                out.push_str(k);
-                out.push_str("=[redacted]");
-            } else {
-                out.push_str(token);
-            }
-        } else {
-            out.push_str(token);
-        }
-    }
-    out
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct TurnEventInput {
     pub kind: String,
@@ -278,7 +254,7 @@ pub async fn turn_event(
     };
     snap.events.push(TurnEvent {
         kind: kind.clone(),
-        body: clip(&crate_redact(&input.body), 4_000),
+        body: clip(&crate::redact::redact_text(&input.body), 4_000),
         at_ms: now_ms(),
     });
     for f in input.files {
@@ -329,7 +305,7 @@ pub async fn turn_checkpoint(
     }
     snap.events.push(TurnEvent {
         kind: "checkpoint".into(),
-        body: clip(&crate_redact(note), 4_000),
+        body: clip(&crate::redact::redact_text(note), 4_000),
         at_ms: now_ms(),
     });
     write_snapshot(root, &snap)?;
@@ -422,7 +398,7 @@ pub async fn turn_finish(
             snap.decisions.push(d.clone());
         }
     }
-    let outcome = clip(&crate_redact(&input.outcome), 20_000);
+    let outcome = clip(&crate::redact::redact_text(&input.outcome), 20_000);
     snap.outcome = Some(outcome.clone());
 
     let memory_id = save_cli_turn_memory(pool, &snap, &commits, &outcome).await?;
@@ -622,7 +598,7 @@ async fn save_semantic_memory(
     } else {
         clip(&mem.title, 120)
     };
-    let body = crate_redact(&mem.body);
+    let body = crate::redact::redact_text(&mem.body);
     let id = format!(
         "mem-{}",
         &blake3_hex(&format!("{session_id}:{turn_id}:{kind}:{title}:{body}"))[..16]
@@ -665,7 +641,7 @@ pub async fn turn_fail(
         return Err(format!("turn is {:?}; cannot fail", snap.state));
     }
     snap.state = TurnState::Failed;
-    snap.outcome = Some(clip(&crate_redact(reason), 4_000));
+    snap.outcome = Some(clip(&crate::redact::redact_text(reason), 4_000));
     write_snapshot(root, &snap)?;
     let _ = record_activity(
         root,
@@ -803,6 +779,44 @@ mod tests {
         .unwrap();
         assert!(again.idempotent);
         assert_eq!(again.memory_id, receipt.memory_id);
+    }
+
+    #[tokio::test]
+    async fn redaction_keeps_the_line_structure_of_prompts_and_outcomes() {
+        let (root, pool, _guard) = fixture().await;
+        let begin = turn_begin(
+            &root,
+            "sess-c",
+            "Draft the rollout\n\nUse TOKEN=hunter2secret for staging.",
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            begin.prompt,
+            "Draft the rollout\n\nUse TOKEN=[redacted] for staging."
+        );
+        let outcome = "# Rollout\n\n## Steps\n\n- one\n- two\n\n```sh\nax up\n```";
+        turn_finish(
+            &root,
+            &pool,
+            "sess-c",
+            &begin.turn_id,
+            TurnFinishInput {
+                outcome: outcome.into(),
+                ..TurnFinishInput::default()
+            },
+        )
+        .await
+        .unwrap();
+        let (title, body): (String, String) =
+            sqlx::query_as("SELECT title, body FROM memories WHERE source != 'semantic' LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(title, "Draft the rollout");
+        assert!(body.contains(outcome), "{body}");
+        assert!(!body.contains("hunter2secret"), "{body}");
     }
 
     #[tokio::test]
