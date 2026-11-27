@@ -303,9 +303,143 @@ fn passkey_ceremonies() -> &'static Mutex<HashMap<String, (Instant, Ceremony)>> 
     static STORE: OnceLock<Mutex<HashMap<String, (Instant, Ceremony)>>> = OnceLock::new();
     STORE.get_or_init(|| Mutex::new(HashMap::new()))
 }
-fn login_attempts() -> &'static Mutex<HashMap<String, (u32, Instant)>> {
-    static STORE: OnceLock<Mutex<HashMap<String, (u32, Instant)>>> = OnceLock::new();
-    STORE.get_or_init(|| Mutex::new(HashMap::new()))
+/// How long a failed sign-in attempt counts against its keys.
+const ATTEMPT_WINDOW: Duration = Duration::from_secs(300);
+/// Attempts for one identity from one address within the window.
+const ATTEMPTS_PER_IDENTITY: u32 = 5;
+/// Attempts from one address within the window, whatever identity they name.
+const ATTEMPTS_PER_ADDRESS: u32 = 30;
+/// Most keys tracked at once. When full, new attempts are refused.
+const MAX_TRACKED_KEYS: usize = 10_000;
+
+/// Sign-in attempt counters. An attempt is counted before the password is
+/// checked, so parallel requests cannot all pass the limit at once.
+#[derive(Default)]
+struct AttemptLimiter {
+    entries: HashMap<String, (u32, Instant)>,
+}
+
+impl AttemptLimiter {
+    fn prune(&mut self, now: Instant) {
+        self.entries
+            .retain(|_, (_, first)| now.saturating_duration_since(*first) < ATTEMPT_WINDOW);
+    }
+
+    fn count(&self, key: &str) -> u32 {
+        self.entries.get(key).map_or(0, |(count, _)| *count)
+    }
+
+    /// Counts one attempt against every `(key, limit)` pair, or against none
+    /// when any key is at its limit or the table is full.
+    fn reserve(&mut self, keys: &[(&str, u32)], now: Instant) -> bool {
+        self.prune(now);
+        if keys.iter().any(|(key, limit)| self.count(key) >= *limit) {
+            return false;
+        }
+        let new_keys = keys
+            .iter()
+            .filter(|(key, _)| !self.entries.contains_key(*key))
+            .count();
+        if self.entries.len() + new_keys > MAX_TRACKED_KEYS {
+            return false;
+        }
+        for (key, _) in keys {
+            self.entries.entry((*key).to_string()).or_insert((0, now)).0 += 1;
+        }
+        true
+    }
+
+    /// A successful sign-in clears its identity key and returns its attempt to
+    /// the address.
+    fn forgive(&mut self, identity_key: &str, address_key: &str) {
+        self.entries.remove(identity_key);
+        if let Some(entry) = self.entries.get_mut(address_key) {
+            entry.0 = entry.0.saturating_sub(1);
+            if entry.0 == 0 {
+                self.entries.remove(address_key);
+            }
+        }
+    }
+}
+
+fn login_attempts() -> &'static Mutex<AttemptLimiter> {
+    static STORE: OnceLock<Mutex<AttemptLimiter>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(AttemptLimiter::default()))
+}
+
+/// The rate-limit keys of one sign-in kind (`login` or `recovery`).
+struct AttemptKeys {
+    identity: String,
+    address: String,
+}
+
+fn attempt_keys(kind: &str, peer: SocketAddr, identity: &str) -> AttemptKeys {
+    AttemptKeys {
+        identity: format!("{kind}:{}:{}", peer.ip(), hash(identity)),
+        address: format!("{kind}-address:{}", peer.ip()),
+    }
+}
+
+async fn reserve_attempt(keys: &AttemptKeys) -> bool {
+    login_attempts().lock().await.reserve(
+        &[
+            (&keys.identity, ATTEMPTS_PER_IDENTITY),
+            (&keys.address, ATTEMPTS_PER_ADDRESS),
+        ],
+        Instant::now(),
+    )
+}
+
+async fn forgive_attempt(keys: &AttemptKeys) {
+    login_attempts()
+        .lock()
+        .await
+        .forgive(&keys.identity, &keys.address);
+}
+
+/// Argon2 work at once. Each run takes tens of milliseconds of CPU and about
+/// 19 MB, so a burst of sign-ins waits here instead of starving the server.
+fn hashing_slots() -> &'static tokio::sync::Semaphore {
+    static SLOTS: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
+    SLOTS.get_or_init(|| tokio::sync::Semaphore::new(4))
+}
+
+/// Runs Argon2 work on the blocking pool, a few at a time, so the async
+/// workers keep serving other requests.
+async fn run_argon2<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, ErrorResponse> {
+    let failed = || err(StatusCode::INTERNAL_SERVER_ERROR, "Password check failed");
+    let _slot = hashing_slots().acquire().await.map_err(|_| failed())?;
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|_| failed())
+}
+
+/// Checks `password` against a stored Argon2 hash, or against the unusable
+/// dummy hash when `digest` is `None` so unknown identities take as long.
+async fn verify_password(password: String, digest: Option<String>) -> Result<bool, ErrorResponse> {
+    run_argon2(move || {
+        let digest = digest.as_deref().unwrap_or_else(|| dummy_password_hash());
+        PasswordHash::new(digest).ok().is_some_and(|parsed| {
+            Argon2::default()
+                .verify_password(password.as_bytes(), &parsed)
+                .is_ok()
+        })
+    })
+    .await
+}
+
+/// A new Argon2 hash of `password`.
+async fn hash_new_password(password: String) -> Result<String, ErrorResponse> {
+    run_argon2(move || {
+        let salt = SaltString::generate(&mut OsRng);
+        Argon2::default()
+            .hash_password(password.as_bytes(), &salt)
+            .map(|hash| hash.to_string())
+    })
+    .await?
+    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Password setup failed"))
 }
 fn dummy_password_hash() -> &'static str {
     static DUMMY: OnceLock<String> = OnceLock::new();
@@ -439,11 +573,7 @@ async fn setup(
         .into_iter()
         .find(|m| m.role == access::MemberRole::Owner && m.status == "active")
         .ok_or_else(|| err(StatusCode::FORBIDDEN, "Owner required"))?;
-    let salt = SaltString::generate(&mut OsRng);
-    let verifier = Argon2::default()
-        .hash_password(body.password.as_bytes(), &salt)
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Password setup failed"))?
-        .to_string();
+    let verifier = hash_new_password(body.password).await?;
     sqlx::query(
         "INSERT INTO web_password_credentials(member_id,password_hash) VALUES (?,?)
                  ON CONFLICT(member_id) DO UPDATE SET password_hash=excluded.password_hash",
@@ -573,18 +703,12 @@ async fn password_login(
     if identity.is_empty() || body.password.len() > 1024 {
         return Err(err(StatusCode::UNAUTHORIZED, PUBLIC_LOGIN_DENIED));
     }
-    let limit_key = format!("{}:{}", peer.ip(), hash(identity));
-    {
-        let attempts = login_attempts().lock().await;
-        if attempts
-            .get(&limit_key)
-            .is_some_and(|(count, first)| *count >= 5 && first.elapsed() < Duration::from_secs(300))
-        {
-            return Err(err(
-                StatusCode::TOO_MANY_REQUESTS,
-                "Too many login attempts",
-            ));
-        }
+    let keys = attempt_keys("login", peer, identity);
+    if !reserve_attempt(&keys).await {
+        return Err(err(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many login attempts",
+        ));
     }
     let row: Option<(String, String)> = sqlx::query_as(
         "SELECT m.id, c.password_hash FROM team_members m
@@ -599,25 +723,11 @@ async fn password_login(
     .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Sign-in unavailable"))?;
     // Always run Argon2, even for unknown identities, to avoid timing
     // differences that disclose account existence.
-    let digest = row
-        .as_ref()
-        .map(|(_, hash)| hash.as_str())
-        .unwrap_or_else(|| dummy_password_hash());
-    let valid = PasswordHash::new(digest).ok().is_some_and(|parsed| {
-        Argon2::default()
-            .verify_password(body.password.as_bytes(), &parsed)
-            .is_ok()
-    });
-    if !valid {
-        let mut attempts = login_attempts().lock().await;
-        let entry = attempts.entry(limit_key).or_insert((0, Instant::now()));
-        if entry.1.elapsed() >= Duration::from_secs(300) {
-            *entry = (0, Instant::now());
-        }
-        entry.0 += 1;
+    let digest = row.as_ref().map(|(_, hash)| hash.clone());
+    if !verify_password(body.password, digest).await? {
         return Err(err(StatusCode::UNAUTHORIZED, PUBLIC_LOGIN_DENIED));
     }
-    login_attempts().lock().await.remove(&limit_key);
+    forgive_attempt(&keys).await;
     establish(
         &pool,
         &row.expect("valid account has a password").0,
@@ -665,11 +775,7 @@ async fn user_password(
     if exists.is_none() {
         return Err(err(StatusCode::NOT_FOUND, "Active user not found"));
     }
-    let salt = SaltString::generate(&mut OsRng);
-    let verifier = Argon2::default()
-        .hash_password(body.password.as_bytes(), &salt)
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Password setup failed"))?
-        .to_string();
+    let verifier = hash_new_password(body.password).await?;
     let mut tx = pool
         .begin()
         .await
@@ -845,15 +951,9 @@ async fn recover_login(
     if !body.code.starts_with("axr-") || body.code.len() > 100 || identity.is_empty() {
         return Err(err(StatusCode::UNAUTHORIZED, PUBLIC_RECOVERY_DENIED));
     }
-    let limit_key = format!("recovery:{}:{}", peer.ip(), hash(identity));
-    {
-        let attempts = login_attempts().lock().await;
-        if attempts
-            .get(&limit_key)
-            .is_some_and(|(count, since)| *count >= 5 && since.elapsed() < Duration::from_secs(300))
-        {
-            return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many attempts"));
-        }
+    let keys = attempt_keys("recovery", peer, identity);
+    if !reserve_attempt(&keys).await {
+        return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many attempts"));
     }
     let verifier = hash(&body.code);
     let mut tx = pool
@@ -880,15 +980,7 @@ async fn recover_login(
     .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Recovery unavailable"))?;
     let member_id = match (member, code_holder) {
         (Some((id,)), Some((code_member,))) if id == code_member => id,
-        _ => {
-            let mut attempts = login_attempts().lock().await;
-            let attempt = attempts.entry(limit_key).or_insert((0, Instant::now()));
-            if attempt.1.elapsed() >= Duration::from_secs(300) {
-                *attempt = (0, Instant::now());
-            }
-            attempt.0 += 1;
-            return Err(err(StatusCode::UNAUTHORIZED, PUBLIC_RECOVERY_DENIED));
-        }
+        _ => return Err(err(StatusCode::UNAUTHORIZED, PUBLIC_RECOVERY_DENIED)),
     };
     let updated = sqlx::query(
         "UPDATE web_recovery_codes SET consumed_at=unixepoch()
@@ -915,6 +1007,7 @@ async fn recover_login(
         &serde_json::json!({}),
     )
     .await;
+    forgive_attempt(&keys).await;
     establish(&pool, &member_id, &headers, secure_origin(&headers)).await
 }
 async fn logout(headers: HeaderMap) -> Result<Response, ErrorResponse> {
@@ -1265,6 +1358,24 @@ fn is_vault_path(path: &str) -> bool {
         || path.starts_with("/api/dav/")
 }
 pub async fn gate(State(hub): State<WebHub>, mut req: Request, next: Next) -> Response {
+    let path = req.uri().path();
+    // All JSON data routes require the gate. The static SPA shell itself can
+    // load to display a login without exposing any indexed project data, so
+    // it is served before any database work and even when global.db is down.
+    if excluded(path) || (!is_vault_path(path) && !path.starts_with("/api/") && path != "/api") {
+        return next.run(req).await;
+    }
+    // Client credentials (`axc_`) are not browser sessions. The share-token
+    // middleware inside this gate authenticates them and applies their scopes
+    // (`http_scope`), whether or not web login is on.
+    let bearer = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|value| value.starts_with("Bearer axc_"));
+    if bearer && path.starts_with("/api/") {
+        return next.run(req).await;
+    }
     let pool = match db().await {
         Ok(pool) => pool,
         Err((s, j)) => return (s, j).into_response(),
@@ -1273,26 +1384,6 @@ pub async fn gate(State(hub): State<WebHub>, mut req: Request, next: Next) -> Re
         Ok(value) => value,
         Err((s, j)) => return (s, j).into_response(),
     };
-    let path = req.uri().path();
-    // All JSON data routes require the gate. The static SPA shell itself can
-    // load to display a login without exposing any indexed project data.
-    if excluded(path) || (!is_vault_path(path) && !path.starts_with("/api/") && path != "/api") {
-        // Static SPA assets and its unauthenticated login shell contain no user data;
-        // every data API remains behind the server-side gate.
-        return next.run(req).await;
-    }
-    // Machine bearer clients keep scope checks in their dedicated resource routers.
-    let bearer = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|value| value.starts_with("Bearer axc_"));
-    if bearer && path.starts_with("/api/access/") {
-        return next.run(req).await;
-    }
-    if bearer && path.starts_with("/api/") && !active {
-        return next.run(req).await;
-    }
     let peer = req
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
@@ -1393,6 +1484,46 @@ pub fn router(hub: WebHub) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn attempts_older_than_the_window_are_dropped() {
+        let mut limiter = AttemptLimiter::default();
+        let start = Instant::now();
+        for n in 0..100 {
+            let key = format!("login:198.51.100.1:{n}");
+            assert!(limiter.reserve(&[(&key, 5)], start));
+        }
+        assert_eq!(limiter.entries.len(), 100);
+        let later = start + ATTEMPT_WINDOW + Duration::from_secs(1);
+        assert!(limiter.reserve(&[("login:198.51.100.2:x", 5)], later));
+        assert_eq!(limiter.entries.len(), 1, "expired keys are pruned");
+    }
+
+    #[test]
+    fn a_full_table_refuses_new_keys_but_not_known_ones() {
+        let mut limiter = AttemptLimiter::default();
+        let now = Instant::now();
+        for n in 0..MAX_TRACKED_KEYS {
+            limiter.entries.insert(format!("k{n}"), (1, now));
+        }
+        assert!(!limiter.reserve(&[("new", 5)], now));
+        assert!(limiter.reserve(&[("k1", 5)], now));
+        assert_eq!(limiter.entries.len(), MAX_TRACKED_KEYS);
+    }
+
+    #[test]
+    fn a_limited_key_counts_nothing_and_success_forgives() {
+        let mut limiter = AttemptLimiter::default();
+        let now = Instant::now();
+        for _ in 0..5 {
+            assert!(limiter.reserve(&[("id", 5), ("ip", 30)], now));
+        }
+        assert!(!limiter.reserve(&[("id", 5), ("ip", 30)], now));
+        assert_eq!(limiter.count("ip"), 5, "a refused attempt is not counted");
+        limiter.forgive("id", "ip");
+        assert_eq!(limiter.count("id"), 0);
+        assert_eq!(limiter.count("ip"), 4);
+    }
+
     #[tokio::test]
     async fn revoking_two_owner_passkeys_preserves_one() {
         let directory = tempfile::tempdir().unwrap();
