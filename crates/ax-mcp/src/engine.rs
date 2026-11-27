@@ -96,12 +96,35 @@ fn default_catch_up_runner() -> CatchUpRunner {
     Arc::new(|root| Box::pin(run_catch_up(root)))
 }
 
+/// The connect-time catch-up of one project root, shared by every engine of
+/// this process: it runs once per root, not once per engine.
+#[derive(Clone)]
+struct CatchUp {
+    running: Arc<AtomicBool>,
+    /// Held by the catch-up while it runs; a sync or index call waits for it.
+    lock: Arc<Mutex<()>>,
+}
+
+fn catch_ups() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, CatchUp>> {
+    static CATCH_UPS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, CatchUp>>,
+    > = std::sync::OnceLock::new();
+    CATCH_UPS.get_or_init(Default::default)
+}
+
+/// Tools that sync or index the project themselves, and so wait for a running
+/// catch-up instead of contending with it for the project's file lock.
+fn waits_for_catch_up(tool: &str) -> bool {
+    matches!(tool, "ax_sync" | "ax_index")
+}
+
 pub struct McpEngine {
     remote: bool,
     ax: Arc<Mutex<Option<Ax>>>,
     project_root: Option<PathBuf>,
     catch_up_started: Arc<AtomicBool>,
-    catch_up_running: Arc<AtomicBool>,
+    /// The process-wide catch-up of this engine's root, once it started.
+    catch_up: Option<CatchUp>,
     catch_up_runner: CatchUpRunner,
     policy_sessions: PolicySessions,
     turns: TurnCounter,
@@ -122,7 +145,7 @@ impl McpEngine {
             ax: Arc::new(Mutex::new(None)),
             project_root: None,
             catch_up_started: Arc::new(AtomicBool::new(false)),
-            catch_up_running: Arc::new(AtomicBool::new(false)),
+            catch_up: None,
             catch_up_runner: default_catch_up_runner(),
             policy_sessions: PolicySessions::default(),
             turns: TurnCounter::default(),
@@ -136,7 +159,7 @@ impl McpEngine {
             ax: Arc::new(Mutex::new(None)),
             project_root: Some(project_root),
             catch_up_started: Arc::new(AtomicBool::new(false)),
-            catch_up_running: Arc::new(AtomicBool::new(false)),
+            catch_up: None,
             catch_up_runner: default_catch_up_runner(),
             policy_sessions: PolicySessions::default(),
             turns: TurnCounter::default(),
@@ -158,6 +181,10 @@ impl McpEngine {
     }
 
     /// Remote conversations must never inherit a local Cursor hook's chat ID.
+    ///
+    /// A remote engine starts no catch-up: the remote server's background watch
+    /// syncs each registered project once at startup and keeps it current, and
+    /// a session must not start index work of its own.
     pub fn for_remote(project_root: PathBuf) -> Self {
         let mut engine = Self::with_project_root(project_root);
         engine.remote = true;
@@ -190,31 +217,67 @@ impl McpEngine {
         Ok(())
     }
 
-    /// Starts the connect-time catch-up once per engine, in the background, so
-    /// the request that opened the handle is answered without waiting for it.
-    fn start_catch_up(&self, root: PathBuf) {
-        if self.catch_up_started.swap(true, Ordering::SeqCst) {
+    /// Starts the connect-time catch-up in the background, so the request that
+    /// opened the handle is answered without waiting for it. It runs once per
+    /// project root in this process; a later engine for the same root joins
+    /// the one already started. Remote engines start none.
+    fn start_catch_up(&mut self, root: PathBuf) {
+        if self.catch_up_started.swap(true, Ordering::SeqCst) || self.remote {
             return;
         }
-        self.catch_up_running.store(true, Ordering::SeqCst);
-        let running = Arc::clone(&self.catch_up_running);
+        let mut started = catch_ups().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(existing) = started.get(&root) {
+            self.catch_up = Some(existing.clone());
+            return;
+        }
+        let catch_up = CatchUp {
+            running: Arc::new(AtomicBool::new(true)),
+            lock: Arc::new(Mutex::new(())),
+        };
+        // A new mutex is free; holding its guard from here on means a sync or
+        // index call cannot slip in before the task starts.
+        let Ok(held) = Arc::clone(&catch_up.lock).try_lock_owned() else {
+            return;
+        };
+        started.insert(root.clone(), catch_up.clone());
+        drop(started);
+        self.catch_up = Some(catch_up.clone());
         let work = (self.catch_up_runner)(root);
         tokio::spawn(async move {
-            /// Clears the flag also when the catch-up panics.
-            struct Done(Arc<AtomicBool>);
+            /// Clears the flag and releases the lock also when the catch-up panics.
+            struct Done {
+                running: Arc<AtomicBool>,
+                _held: tokio::sync::OwnedMutexGuard<()>,
+            }
             impl Drop for Done {
                 fn drop(&mut self) {
-                    self.0.store(false, Ordering::SeqCst);
+                    self.running.store(false, Ordering::SeqCst);
                 }
             }
-            let _done = Done(running);
+            let _done = Done {
+                running: catch_up.running,
+                _held: held,
+            };
             work.await;
         });
     }
 
     /// True while the connect-time catch-up sync is still running.
     pub fn catch_up_running(&self) -> bool {
-        self.catch_up_running.load(Ordering::SeqCst)
+        self.catch_up
+            .as_ref()
+            .is_some_and(|c| c.running.load(Ordering::SeqCst))
+    }
+
+    /// Waits for a running catch-up before a tool that syncs or indexes the
+    /// project itself, so the two do not contend for the project's file lock.
+    pub async fn wait_for_catch_up(&self, tool: &str) {
+        if !waits_for_catch_up(tool) {
+            return;
+        }
+        if let Some(catch_up) = &self.catch_up {
+            drop(catch_up.lock.lock().await);
+        }
     }
 
     /// Marks an `ax_status` reply while the catch-up sync still runs, so an agent
@@ -335,6 +398,90 @@ mod tests {
         // A later first non-policy call does not start a second catch-up.
         engine.ensure_initialized().await.expect("initialized");
         assert!(engine.catch_up_started.load(Ordering::SeqCst));
+    }
+
+    fn counting_catch_up(count: Arc<std::sync::atomic::AtomicUsize>) -> CatchUpRunner {
+        Arc::new(move |_root| {
+            count.fetch_add(1, Ordering::SeqCst);
+            Box::pin(std::future::pending::<()>())
+        })
+    }
+
+    #[tokio::test]
+    async fn remote_engines_start_no_catch_up() {
+        let _env = crate::test_env::shared().await;
+        let (_dir, root) = project().await;
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        for _ in 0..4 {
+            let mut engine = McpEngine::for_remote(root.clone());
+            engine.catch_up_runner = counting_catch_up(Arc::clone(&count));
+            engine.ensure_initialized().await.expect("initialized");
+            engine.ensure_policy_fresh().await.expect("policy fresh");
+            assert!(!engine.catch_up_running());
+        }
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            0,
+            "a remote session started a catch-up"
+        );
+    }
+
+    #[tokio::test]
+    async fn engines_of_one_project_share_a_single_catch_up() {
+        let _env = crate::test_env::shared().await;
+        let (_dir, root) = project().await;
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut engines = Vec::new();
+        for _ in 0..4 {
+            let mut engine = McpEngine::with_project_root(root.clone());
+            engine.catch_up_runner = counting_catch_up(Arc::clone(&count));
+            engine.ensure_initialized().await.expect("initialized");
+            assert!(engine.catch_up_running());
+            engines.push(engine);
+        }
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "each engine started its own catch-up"
+        );
+    }
+
+    #[tokio::test]
+    async fn sync_and_index_calls_wait_for_the_catch_up() {
+        let _env = crate::test_env::shared().await;
+        let (_dir, root) = project().await;
+        let mut engine = McpEngine::with_project_root(root);
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let rx = Arc::new(std::sync::Mutex::new(Some(rx)));
+        engine.catch_up_runner = Arc::new(move |_root| {
+            let rx = rx.lock().unwrap().take();
+            Box::pin(async move {
+                if let Some(rx) = rx {
+                    let _ = rx.await;
+                }
+            })
+        });
+        engine.ensure_initialized().await.expect("initialized");
+        let short = std::time::Duration::from_millis(200);
+        for tool in ["ax_sync", "ax_index"] {
+            assert!(
+                tokio::time::timeout(short, engine.wait_for_catch_up(tool))
+                    .await
+                    .is_err(),
+                "{tool} did not wait for the running catch-up"
+            );
+        }
+        tokio::time::timeout(short, engine.wait_for_catch_up("ax_search"))
+            .await
+            .expect("a read-only tool waited for the catch-up");
+        tx.send(()).unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            engine.wait_for_catch_up("ax_sync"),
+        )
+        .await
+        .expect("ax_sync still waited after the catch-up finished");
+        assert!(!engine.catch_up_running());
     }
 
     #[tokio::test]

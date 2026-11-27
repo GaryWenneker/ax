@@ -433,6 +433,7 @@ async fn call_tool_and_wrap(
             .unwrap_or_else(|e| e.into_inner())
             .push((root.to_path_buf(), name.to_string()));
     }
+    engine.wait_for_catch_up(name).await;
     // Calls on one engine run one at a time: they share its single Ax handle.
     let result = {
         let mut guard = engine.lock_ax().await;
