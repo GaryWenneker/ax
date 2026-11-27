@@ -4,8 +4,10 @@
 # with `ax mcp remote serve`. The platform's HTTPS ingress terminates TLS and forwards to
 # $PORT; clients connect to <public URL>/projects/<id>/mcp with `Authorization: Bearer <key>`.
 #
-#   AX_REPO_URL       git URL to clone (required; may carry a token for private repos)
-#   AX_REPO_REF       branch or tag to check out (optional; default branch otherwise)
+#   AX_REPO_URL       git URL to fetch (required; may carry a token for private repos, which
+#                     is used for the fetch only and not stored in the checkout)
+#   AX_REPO_REF       branch or tag to check out (optional; default branch otherwise). A
+#                     restart with an existing checkout fetches this ref again.
 #   AX_API_KEY        bearer key clients send (required, at least 32 characters). Only its
 #                     SHA-256 is written to the server configuration.
 #   AX_API_KEY_WRITE  1 lets the key write memories and policy (default: read-only context)
@@ -54,13 +56,20 @@ port="${PORT:-8080}"
 case "$port" in ''|*[!0-9]*) die "PORT must be a number" ;; esac
 
 dir="${AX_WORKDIR:-/tmp/project}"
-if [ ! -d "$dir/.git" ]; then
-  if [ -n "${AX_REPO_REF:-}" ]; then
-    git clone --quiet --depth 1 --branch "$AX_REPO_REF" "$AX_REPO_URL" "$dir"
-  else
-    git clone --quiet --depth 1 "$AX_REPO_URL" "$dir"
-  fi
-fi
+# Fetch AX_REPO_URL at AX_REPO_REF (the default branch otherwise) into $dir. An existing
+# checkout is updated, so a restart picks up new commits and a changed AX_REPO_REF. The URL
+# is only passed to git fetch: origin is stored without credentials, so a token in the URL
+# never reaches .git/config.
+checkout_repo() {
+  mkdir -p "$dir"
+  [ -d "$dir/.git" ] || git -C "$dir" init --quiet
+  git -C "$dir" fetch --quiet --depth 1 "$AX_REPO_URL" "${AX_REPO_REF:-HEAD}"
+  git -C "$dir" -c advice.detachedHead=false checkout --quiet --force FETCH_HEAD
+  git -C "$dir" remote remove origin 2>/dev/null || true
+  git -C "$dir" remote add origin \
+    "$(printf '%s' "$AX_REPO_URL" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^@/]*@#\1#')"
+}
+checkout_repo
 cd "$dir"
 echo "ax-serve-repo: indexing $(git rev-parse --short HEAD) in $dir" >&2
 ax init . >&2

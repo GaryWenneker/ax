@@ -45,6 +45,8 @@ jobs:
         run: python -m unittest discover -s scripts -p 'test_install_self_heal.py'
       - name: Verify the ax-admin e2e script runs without uuidgen or shasum
         run: python -m unittest discover -s scripts -p 'test_ax_admin_e2e_tools.py'
+      - name: Verify the slim container entry points and Azure job script
+        run: python -m unittest discover -s scripts -p 'test_slim_scripts.py'
       - name: Verify no helper script rewrites git history
         run: python -m unittest discover -s scripts -p 'test_no_history_rewrite.py'
       - name: Verify the CLI docs check uses the binary it is given

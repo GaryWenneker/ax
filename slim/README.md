@@ -275,13 +275,16 @@ including an MCP check and the SDK call.
 ### Hosted remote MCP server (Azure, Render, Koyeb)
 
 `ax-serve-repo` (`slim/ax-serve-repo.sh`, the entry point of the `-server`
-image and also in `-ubuntu`) clones
-`AX_REPO_URL`, runs `ax init`, writes a remote configuration that grants
+image and also in `-ubuntu`) fetches
+`AX_REPO_URL` (at `AX_REPO_REF`, the default branch otherwise), runs `ax init`, writes a remote configuration that grants
 `AX_API_KEY` (stored only as its SHA-256) and runs
 `ax mcp remote serve --bind 0.0.0.0 --port $PORT`. Clients connect to
 `https://<service>/projects/project/mcp` with `Authorization: Bearer <key>`.
 The public URL comes from `AX_PUBLIC_URL` or is detected on Render, Koyeb,
-Railway and Azure Container Apps. The website's guide (Deploy to the cloud) has
+Railway and Azure Container Apps. An existing checkout in `AX_WORKDIR` is
+fetched again on every start, so a restart picks up new commits and a changed
+`AX_REPO_REF`. A token in `AX_REPO_URL` is used for the fetch only; the
+checkout's `origin` is stored without it. The website's guide (Deploy to the cloud) has
 the buttons:
 
 - Azure: `slim/azure/azuredeploy-server.json` (always-on Container App). Nothing
