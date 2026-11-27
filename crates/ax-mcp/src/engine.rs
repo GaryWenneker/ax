@@ -65,6 +65,8 @@ pub struct McpEngine {
     catch_up_done: Arc<AtomicBool>,
     policy_sessions: PolicySessions,
     turns: TurnCounter,
+    /// How many times this engine opened an `Ax` handle.
+    opens: u64,
 }
 
 impl Default for McpEngine {
@@ -83,6 +85,7 @@ impl McpEngine {
             catch_up_done: Arc::new(AtomicBool::new(false)),
             policy_sessions: PolicySessions::default(),
             turns: TurnCounter::default(),
+            opens: 0,
         }
     }
 
@@ -101,6 +104,7 @@ impl McpEngine {
             catch_up_done: Arc::new(AtomicBool::new(false)),
             policy_sessions: PolicySessions::default(),
             turns: TurnCounter::default(),
+            opens: 0,
         }
     }
 
@@ -148,7 +152,7 @@ impl McpEngine {
             find_nearest_ax_root(&cwd).unwrap_or(cwd)
         };
         self.project_root = Some(root.clone());
-        let ax = Ax::open(&root).await.map_err(|e| e.to_string())?;
+        let ax = self.open_handle(&root).await?;
         seed_memories_if_empty(ax.db_pool(), &root).await;
         *self.ax.lock().await = Some(ax);
         self.run_catch_up_sync().await;
@@ -181,7 +185,10 @@ impl McpEngine {
         }
     }
 
-    /// Fresh Ax handle + policy sync — avoids stale SQLite WAL in long-lived daemon.
+    /// Policy sync on the engine's one Ax handle.
+    ///
+    /// Opens the handle when there is none yet and reopens it only when the
+    /// database file was replaced on disk; every call re-checks `.agents/` policy.
     pub async fn ensure_policy_fresh(&mut self) -> Result<(), String> {
         let root = if let Some(r) = &self.project_root {
             r.clone()
@@ -190,10 +197,22 @@ impl McpEngine {
             find_nearest_ax_root(&cwd).ok_or_else(|| "no ax project root".to_string())?
         };
         self.project_root = Some(root.clone());
-        let ax = Ax::open(&root).await.map_err(|e| e.to_string())?;
+        if self.ax.lock().await.is_none() {
+            let ax = self.open_handle(&root).await?;
+            *self.ax.lock().await = Some(ax);
+        } else {
+            self.reopen_if_replaced().await?;
+        }
+        let guard = self.ax.lock().await;
+        let ax = guard.as_ref().ok_or("ax not initialized")?;
         ax.ensure_policy_ready().await.map_err(|e| e.to_string())?;
-        *self.ax.lock().await = Some(ax);
         Ok(())
+    }
+
+    async fn open_handle(&mut self, root: &Path) -> Result<Ax, String> {
+        let ax = Ax::open(root).await.map_err(|e| e.to_string())?;
+        self.opens += 1;
+        Ok(ax)
     }
 
     pub async fn reopen_if_replaced(&mut self) -> Result<bool, String> {
@@ -211,5 +230,59 @@ impl McpEngine {
 
     pub fn project_root(&self) -> Option<&PathBuf> {
         self.project_root.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn project() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        drop(Ax::init(&root).await.expect("init ax project"));
+        let root = root.canonicalize().unwrap();
+        (dir, root)
+    }
+
+    #[tokio::test]
+    async fn policy_tool_calls_keep_one_ax_handle() {
+        let (_dir, root) = project().await;
+        let mut engine = McpEngine::with_project_root(root);
+        for _ in 0..3 {
+            engine.ensure_policy_fresh().await.expect("policy fresh");
+        }
+        assert_eq!(engine.opens, 1, "policy calls reopened the database");
+        assert!(engine.lock_ax().await.is_some());
+    }
+
+    #[tokio::test]
+    async fn policy_tool_calls_see_rules_saved_by_another_process() {
+        let (_dir, root) = project().await;
+        let mut engine = McpEngine::with_project_root(root.clone());
+        engine.ensure_policy_fresh().await.expect("policy fresh");
+        // Another process (the CLI, another daemon) saves a rule with its own handle.
+        let mut other = Ax::open(&root).await.expect("open second handle");
+        let saved = crate::tools::ToolHandler::call_tool(
+            &mut other,
+            "ax_policy_capture",
+            serde_json::json!({"action":"save","rule":{
+                "frontmatter":{"id":"fresh-rule","level":"CRITICAL","alwaysApply":true},
+                "body":"Never write the marker.\n\nguard: forbid-content: \"FRESH_MARKER\"\n"}}),
+        )
+        .await
+        .expect("save rule");
+        assert_eq!(saved["ok"], true, "{saved}");
+        drop(other);
+        engine.ensure_policy_fresh().await.expect("policy fresh");
+        let mut guard = engine.lock_ax().await;
+        let ax = guard.as_mut().unwrap();
+        let listed = crate::tools::ToolHandler::call_tool(ax, "ax_rules", serde_json::json!({}))
+            .await
+            .expect("ax_rules");
+        assert!(listed.to_string().contains("fresh-rule"), "{listed}");
+        drop(guard);
+        assert_eq!(engine.opens, 1);
     }
 }
