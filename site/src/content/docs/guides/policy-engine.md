@@ -323,7 +323,7 @@ group: design
 | `triggers` | Match when user intent contains these phrases |
 | `priority` | Higher wins when multiple rules match |
 | `enabled` | When `false`, matcher/preflight skip the rule (default `true`) |
-| `status` | `approved` (active), `pending` (review queue), or `rejected` |
+| `status` | `approved` (active, the default), `pending` (review queue), or `rejected`. Any other value, and any unknown `scope`, fails validation, so the file is skipped on index instead of being treated as approved |
 | `tags` | Required for Command Center filtering; free-form labels. Use `local` or `noshare` to opt out of pack export |
 | `group` | Optional catalog folder id for Command Center **Rules** grouping (same catalog as skills). Matching ignores this field |
 | `share` | Optional alias — normalized to tag `shared` on parse (legacy; default export no longer requires it) |

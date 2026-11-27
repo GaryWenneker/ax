@@ -10,19 +10,64 @@ use crate::types::{
 pub fn split_frontmatter(raw: &str) -> Result<(String, String), ValidationError> {
     let raw = raw.strip_prefix('\u{feff}').unwrap_or(raw);
     let trimmed = raw.trim_start();
-    if !trimmed.starts_with("---") {
+    // The frontmatter opens and closes on a line that is exactly `---` (a trailing
+    // `\r` or spaces aside); `----` or `--- text` are content, not delimiters.
+    let mut lines = trimmed.split_inclusive('\n');
+    if lines.next().map(str::trim_end) != Some("---") {
         return Err(field_err(
             "body",
             "document must start with YAML frontmatter (---)",
         ));
     }
-    let rest = trimmed.trim_start_matches("---").trim_start();
-    let end = rest
-        .find("\n---")
-        .ok_or_else(|| field_err("body", "missing closing ---"))?;
-    let yaml = rest[..end].trim();
-    let body = rest[end + 4..].trim_start().trim_end().to_string();
-    Ok((yaml.to_string(), body))
+    let yaml_start = trimmed.find('\n').map_or(trimmed.len(), |i| i + 1);
+    let mut offset = yaml_start;
+    for line in lines {
+        if line.trim_end() == "---" {
+            let yaml = trimmed[yaml_start..offset].trim();
+            let body = trimmed[offset + line.len()..].trim().to_string();
+            return Ok((yaml.to_string(), body));
+        }
+        offset += line.len();
+    }
+    Err(field_err("body", "missing closing ---"))
+}
+
+/// A known status or scope value in its canonical spelling; an absent value
+/// takes the default, and an unknown one is a validation error.
+fn known_value<T>(
+    map: &HashMap<String, Value>,
+    key: &str,
+    parse: impl Fn(&str) -> Option<T>,
+    canonical: impl Fn(T) -> &'static str,
+    allowed: &str,
+) -> Result<String, ValidationError> {
+    match get_str(map, key) {
+        None => Ok(canonical(parse("").expect("empty value has a default"))),
+        Some(value) => parse(&value)
+            .map(canonical)
+            .ok_or_else(|| field_err(key, &format!("must be {allowed}"))),
+    }
+    .map(str::to_string)
+}
+
+fn parse_status(map: &HashMap<String, Value>) -> Result<String, ValidationError> {
+    known_value(
+        map,
+        "status",
+        crate::types::PolicyItemStatus::parse,
+        |s| s.as_str(),
+        "approved, pending, or rejected",
+    )
+}
+
+fn parse_scope(map: &HashMap<String, Value>) -> Result<String, ValidationError> {
+    known_value(
+        map,
+        "scope",
+        crate::types::PolicyScope::parse,
+        |s| s.as_str(),
+        "company, workspace, project, private_user, or private_project",
+    )
 }
 
 pub fn parse_rule_file(path: &Path, raw: &str) -> Result<PolicyRuleDoc, ValidationError> {
@@ -67,16 +112,8 @@ fn parse_rule_frontmatter(yaml: &str) -> Result<RuleFrontmatter, ValidationError
     let share = get_bool(&map, "share");
     let mut tags = get_str_list(&map, "tags");
     ensure_shared_tag(&mut tags, share);
-    let status = get_str(&map, "status").unwrap_or_else(|| "approved".into());
-    let status = crate::types::PolicyItemStatus::parse(&status)
-        .unwrap_or(crate::types::PolicyItemStatus::Approved)
-        .as_str()
-        .to_string();
-    let scope = get_str(&map, "scope").unwrap_or_else(|| "project".into());
-    let scope = crate::types::PolicyScope::parse(&scope)
-        .unwrap_or(crate::types::PolicyScope::Project)
-        .as_str()
-        .to_string();
+    let status = parse_status(&map)?;
+    let scope = parse_scope(&map)?;
     let storage = get_str(&map, "storage")
         .and_then(|s| crate::config::PolicyStorage::parse(&s).map(|p| p.as_str().to_string()));
     Ok(RuleFrontmatter {
@@ -118,16 +155,8 @@ fn parse_skill_frontmatter(yaml: &str) -> Result<SkillFrontmatter, ValidationErr
     let share = get_bool(&map, "share");
     let mut tags = get_str_list(&map, "tags");
     ensure_shared_tag(&mut tags, share);
-    let status = get_str(&map, "status").unwrap_or_else(|| "approved".into());
-    let status = crate::types::PolicyItemStatus::parse(&status)
-        .unwrap_or(crate::types::PolicyItemStatus::Approved)
-        .as_str()
-        .to_string();
-    let scope = get_str(&map, "scope").unwrap_or_else(|| "project".into());
-    let scope = crate::types::PolicyScope::parse(&scope)
-        .unwrap_or(crate::types::PolicyScope::Project)
-        .as_str()
-        .to_string();
+    let status = parse_status(&map)?;
+    let scope = parse_scope(&map)?;
     let storage = get_str(&map, "storage")
         .and_then(|s| crate::config::PolicyStorage::parse(&s).map(|p| p.as_str().to_string()));
     Ok(SkillFrontmatter {
@@ -552,6 +581,58 @@ fn field_err(field: &str, msg: &str) -> ValidationError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frontmatter_closes_only_on_a_line_that_is_exactly_three_dashes() {
+        let (yaml, body) =
+            split_frontmatter("---\nid: x\ndescription: |\n  a\n---- not a closer\n---\nBody.")
+                .unwrap();
+        assert_eq!(yaml, "id: x\ndescription: |\n  a\n---- not a closer");
+        assert_eq!(body, "Body.");
+
+        let (yaml, body) = split_frontmatter("---\nid: x\n--- trailing\n---\n\nBody.").unwrap();
+        assert_eq!(yaml, "id: x\n--- trailing");
+        assert_eq!(body, "Body.");
+    }
+
+    #[test]
+    fn empty_frontmatter_and_crlf_split() {
+        let (yaml, body) = split_frontmatter("---\n---\nBody.").unwrap();
+        assert_eq!(yaml, "");
+        assert_eq!(body, "Body.");
+
+        let (yaml, body) = split_frontmatter("---\r\nid: x\r\n---\r\n\r\nBody.\r\n").unwrap();
+        assert_eq!(yaml, "id: x");
+        assert_eq!(body, "Body.");
+
+        let (yaml, body) = split_frontmatter("---\nid: x\n---").unwrap();
+        assert_eq!(yaml, "id: x");
+        assert_eq!(body, "");
+
+        assert!(split_frontmatter("---\nid: x\nno closer").is_err());
+        assert!(split_frontmatter("id: x\n---\n").is_err());
+    }
+
+    #[test]
+    fn an_unknown_status_or_scope_is_a_validation_error() {
+        let rule = |extra: &str| {
+            format!("---\nid: r\nlevel: INFO\nalwaysApply: true\n{extra}\n---\n\nBody.")
+        };
+        let err = parse_rule_file(Path::new("r.mdc"), &rule("status: pendng")).unwrap_err();
+        assert!(err.fields.contains_key("status"), "{err:?}");
+        let err = parse_rule_file(Path::new("r.mdc"), &rule("scope: teams")).unwrap_err();
+        assert!(err.fields.contains_key("scope"), "{err:?}");
+        let ok =
+            parse_rule_file(Path::new("r.mdc"), &rule("status: pending\nscope: company")).unwrap();
+        assert_eq!(ok.frontmatter.status, "pending");
+        assert_eq!(ok.frontmatter.scope, "company");
+
+        let skill = |extra: &str| format!("---\nname: s\ndescription: d\n{extra}\n---\n\nSteps.");
+        let err = parse_skill_file(Path::new("SKILL.md"), &skill("status: aproved")).unwrap_err();
+        assert!(err.fields.contains_key("status"), "{err:?}");
+        let err = parse_skill_file(Path::new("SKILL.md"), &skill("scope: teams")).unwrap_err();
+        assert!(err.fields.contains_key("scope"), "{err:?}");
+    }
 
     #[test]
     fn a_windows_bom_still_parses() {
