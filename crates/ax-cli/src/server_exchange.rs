@@ -1,6 +1,8 @@
 //! Authenticated, additive node exchange. Native data is never replaced by an
-//! empty peer. Every accepted source revision remains in the project database;
+//! empty peer. Every record a node ever sent stays in the project database:
 //! absent records retain their last value and different origins retain both.
+//! Per node, the history is kept as its latest revision plus one compacted
+//! revision that holds the last value of every older record.
 use crate::{
     server_config::{NodeRole, ServerConfig},
     server_snapshot::{self, Snapshot},
@@ -208,6 +210,96 @@ async fn retain(
     Ok(())
 }
 
+/// Replaces all but the latest revision of one node with a single folded revision.
+struct Compaction {
+    /// Rows to remove; the first (lowest) seq is reused for the folded revision.
+    seqs: Vec<i64>,
+    /// `None` when the folded revision equals the latest one, which already covers it.
+    folded: Option<Snapshot>,
+}
+
+/// Per node with three or more retained revisions, folds every revision but the
+/// latest into one, keeping the last value of each record in `seq` order. Ids in
+/// [`merge`] include the node, so folding one node's revisions in order gives the
+/// same merged result as replaying them all.
+fn plan_compaction(histories: &[(i64, Snapshot)]) -> Result<Vec<Compaction>, String> {
+    let mut by_node = BTreeMap::<&str, Vec<&(i64, Snapshot)>>::new();
+    for entry in histories {
+        by_node
+            .entry(entry.1.primary_node_id.as_str())
+            .or_default()
+            .push(entry);
+    }
+    let mut plan = Vec::new();
+    for revisions in by_node.into_values() {
+        let Some((latest, older)) = revisions.split_last() else {
+            continue;
+        };
+        if older.len() < 2 {
+            continue;
+        }
+        let mut folded = older[0].1.clone();
+        for path in [
+            "state/memories.json",
+            "state/rules.json",
+            "state/skills.json",
+        ] {
+            let key = if path == "state/skills.json" {
+                "name"
+            } else {
+                "id"
+            };
+            let mut records = BTreeMap::<String, Value>::new();
+            for (_, snapshot) in older {
+                let rows: Vec<Value> =
+                    serde_json::from_str(snapshot.files.get(path).ok_or("missing state file")?)
+                        .map_err(|e| e.to_string())?;
+                for row in rows {
+                    let id = row
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .ok_or("invalid record key")?
+                        .to_owned();
+                    records.insert(id, row);
+                }
+            }
+            folded.files.insert(
+                path.into(),
+                serde_json::to_string(&records.into_values().collect::<Vec<_>>())
+                    .map_err(|e| e.to_string())?,
+            );
+        }
+        folded.revision = server_snapshot::revision(&folded)?;
+        server_snapshot::validate(&folded, &folded.cluster_id, &folded.project_id)?;
+        plan.push(Compaction {
+            seqs: older.iter().map(|(seq, _)| *seq).collect(),
+            folded: (folded.revision != latest.1.revision).then_some(folded),
+        });
+    }
+    Ok(plan)
+}
+
+async fn apply_compaction(
+    tx: &mut Transaction<'_, Sqlite>,
+    compaction: Compaction,
+) -> Result<(), String> {
+    for seq in &compaction.seqs {
+        sqlx::query("DELETE FROM ax_node_contributions WHERE seq=?")
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    if let Some(folded) = compaction.folded {
+        sqlx::query("INSERT INTO ax_node_contributions (seq,cluster_id,project_id,node_id,revision,snapshot) VALUES (?,?,?,?,?,?)")
+            .bind(compaction.seqs[0])
+            .bind(&folded.cluster_id).bind(&folded.project_id).bind(&folded.primary_node_id).bind(&folded.revision)
+            .bind(serde_json::to_string(&folded).map_err(|e| e.to_string())?)
+            .execute(&mut **tx).await.map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Only the authenticated Primary calls this. Incoming identity is separately
 /// bound to the authorized node header by the HTTP handler before this point.
 pub async fn publish(
@@ -251,28 +343,35 @@ pub async fn publish(
     if let Some(snapshot) = incoming {
         retain(&mut tx, &project.path, snapshot).await?;
     }
+    let raw: Vec<(i64, String)> = sqlx::query_as("SELECT seq, snapshot FROM ax_node_contributions WHERE cluster_id=? AND project_id=? ORDER BY seq")
+        .bind(&config.cluster_id).bind(project_id).fetch_all(&mut *tx).await.map_err(|e| e.to_string())?;
+    let mut histories = Vec::with_capacity(raw.len());
+    for (seq, raw) in raw {
+        let item: Snapshot =
+            serde_json::from_str(&raw).map_err(|e| format!("invalid retained snapshot: {e}"))?;
+        server_snapshot::validate(&item, &config.cluster_id, project_id)?;
+        histories.push((seq, item));
+    }
+    // Validate merged limits before committing a new contribution. Records are
+    // never dropped to make space; only superseded values of the same record are.
+    let merge_config = config.clone();
+    let merge_project = project_id.to_owned();
+    let (mut result, compactions) = tokio::task::spawn_blocking(move || {
+        let snapshots: Vec<Snapshot> = histories.iter().map(|(_, s)| s.clone()).collect();
+        let merged = merge(&snapshots, &merge_config, &merge_project)?;
+        let compactions = plan_compaction(&histories)?;
+        Ok::<_, String>((merged, compactions))
+    })
+    .await
+    .map_err(|e| format!("node merge task failed: {e}"))??;
+    for compaction in compactions {
+        apply_compaction(&mut tx, compaction).await?;
+    }
     let (bytes, nodes): (i64, i64) = sqlx::query_as("SELECT COALESCE(SUM(length(CAST(snapshot AS BLOB))),0), COUNT(DISTINCT node_id) FROM ax_node_contributions WHERE cluster_id=? AND project_id=?")
         .bind(&config.cluster_id).bind(project_id).fetch_one(&mut *tx).await.map_err(|e| e.to_string())?;
     if bytes > MAX_ARCHIVE_BYTES || nodes > MAX_NODES {
         return Err("node retention capacity reached; existing history was preserved, no contribution was accepted".into());
     }
-    let raw: Vec<(String,)> = sqlx::query_as("SELECT snapshot FROM ax_node_contributions WHERE cluster_id=? AND project_id=? ORDER BY seq")
-        .bind(&config.cluster_id).bind(project_id).fetch_all(&mut *tx).await.map_err(|e| e.to_string())?;
-    let mut histories = Vec::with_capacity(raw.len());
-    for (raw,) in raw {
-        let item: Snapshot =
-            serde_json::from_str(&raw).map_err(|e| format!("invalid retained snapshot: {e}"))?;
-        server_snapshot::validate(&item, &config.cluster_id, project_id)?;
-        histories.push(item);
-    }
-    // Validate merged limits before committing a new contribution. Never prune
-    // old history to make space or acknowledge data that cannot be published.
-    let merge_config = config.clone();
-    let merge_project = project_id.to_owned();
-    let mut result =
-        tokio::task::spawn_blocking(move || merge(&histories, &merge_config, &merge_project))
-            .await
-            .map_err(|e| format!("node merge task failed: {e}"))??;
     let raw:Vec<String>=sqlx::query_scalar("SELECT manifest FROM ax_node_datasets WHERE cluster_id=? AND project_id=? ORDER BY node_id").bind(&config.cluster_id).bind(project_id).fetch_all(&mut *tx).await.map_err(|e|e.to_string())?;
     let items: Vec<ax_db::replication::Dataset> = raw
         .iter()
@@ -422,6 +521,19 @@ mod tests {
         .await
         .unwrap();
         publish(&c, "project", Some(&earlier)).await.unwrap();
+        let retained = || async {
+            let raw: Vec<(String,)> = sqlx::query_as(
+                "SELECT snapshot FROM ax_node_contributions WHERE node_id='replica'",
+            )
+            .fetch_all(ax.db_pool())
+            .await
+            .unwrap();
+            raw.into_iter().map(|r| r.0).collect::<Vec<_>>()
+        };
+        let raw = retained().await;
+        assert_eq!(raw.len(), 2);
+        assert!(raw.iter().any(|r| r.contains("Earlier decision")));
+        assert!(raw.iter().any(|r| r.contains("Later decision")));
         let result = publish(&c, "project", Some(&snapshot("replica", None)))
             .await
             .unwrap();
@@ -429,14 +541,12 @@ mod tests {
             serde_json::from_str(&result.files["state/memories.json"]).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].body, "Earlier decision");
-        let raw: Vec<(String,)> =
-            sqlx::query_as("SELECT snapshot FROM ax_node_contributions WHERE node_id='replica'")
-                .fetch_all(ax.db_pool())
-                .await
-                .unwrap();
-        assert_eq!(raw.len(), 3);
-        assert!(raw.iter().any(|r| r.0.contains("Earlier decision")));
-        assert!(raw.iter().any(|r| r.0.contains("Later decision")));
+        // The two older revisions are folded into one; the superseded value of the
+        // same record is gone, the selected value stays.
+        let raw = retained().await;
+        assert_eq!(raw.len(), 2);
+        assert!(raw.iter().any(|r| r.contains("Earlier decision")));
+        assert!(!raw.iter().any(|r| r.contains("Later decision")));
     }
 
     #[tokio::test]
@@ -665,6 +775,91 @@ mod tests {
                     .expect("a concurrent exchange must not fail with SQLITE_BUSY");
             }
         }
+    }
+
+    fn memories(snapshot: &Snapshot) -> Vec<MemoryRow> {
+        serde_json::from_str(&snapshot.files["state/memories.json"]).unwrap()
+    }
+
+    /// A replica snapshot holding one memory per `(id, body)` pair.
+    fn snapshot_with(node: &str, rows: &[(&str, &str)]) -> Snapshot {
+        let template = memories(&snapshot(node, Some("template"))).remove(0);
+        let rows: Vec<MemoryRow> = rows
+            .iter()
+            .map(|(id, body)| MemoryRow {
+                id: (*id).into(),
+                body: (*body).into(),
+                ..template.clone()
+            })
+            .collect();
+        let mut s = snapshot(node, None);
+        s.files.insert(
+            "state/memories.json".into(),
+            serde_json::to_string(&rows).unwrap(),
+        );
+        s.revision = server_snapshot::revision(&s).unwrap();
+        s
+    }
+
+    async fn replica_rows(ax: &ax_core::Ax) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM ax_node_contributions WHERE node_id='replica'")
+            .fetch_one(ax.db_pool())
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn history_of_a_changing_node_is_compacted_without_losing_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let ax = ax_core::Ax::init(dir.path()).await.unwrap();
+        let c = config(dir.path());
+        // Each revision adds a record and edits the shared one; earlier records are then omitted.
+        let mut result = None;
+        for i in 0..8 {
+            let id = format!("record-{i}");
+            let body = format!("version {i}");
+            let incoming = snapshot_with("replica", &[(&id, "kept"), ("shared", &body)]);
+            result = Some(publish(&c, "project", Some(&incoming)).await.unwrap());
+        }
+        assert!(
+            replica_rows(&ax).await <= 2,
+            "history must not grow with every revision"
+        );
+        let rows = memories(&result.unwrap());
+        assert_eq!(rows.len(), 9, "every record ever sent is still published");
+        assert_eq!(rows.iter().filter(|r| r.body == "kept").count(), 8);
+        assert!(rows.iter().any(|r| r.body == "version 7"));
+        assert!(!rows.iter().any(|r| r.body == "version 6"));
+        // Re-sending an older revision still makes it the current value.
+        let older = snapshot_with("replica", &[("record-0", "kept"), ("shared", "version 0")]);
+        let rows = memories(&publish(&c, "project", Some(&older)).await.unwrap());
+        assert!(rows.iter().any(|r| r.body == "version 0"));
+        assert!(!rows.iter().any(|r| r.body == "version 7"));
+        assert_eq!(rows.len(), 9);
+    }
+
+    #[tokio::test]
+    async fn history_above_the_retention_cap_recovers_by_compaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let ax = ax_core::Ax::init(dir.path()).await.unwrap();
+        let c = config(dir.path());
+        publish(&c, "project", None).await.unwrap();
+        // Many large revisions of one record, as left behind by an older ax.
+        let big = "x".repeat(4 * 1024 * 1024);
+        for i in 0..17 {
+            let s = snapshot("replica", Some(&format!("{i}{big}")));
+            sqlx::query("INSERT INTO ax_node_contributions (cluster_id,project_id,node_id,revision,snapshot) VALUES (?,?,?,?,?)")
+                .bind(&s.cluster_id).bind(&s.project_id).bind(&s.primary_node_id).bind(&s.revision)
+                .bind(serde_json::to_string(&s).unwrap())
+                .execute(ax.db_pool()).await.unwrap();
+        }
+        let result = publish(&c, "project", None)
+            .await
+            .expect("a full history is compacted instead of failing every exchange");
+        let rows = memories(&result);
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].body.starts_with("16x"));
+        assert!(replica_rows(&ax).await <= 2);
     }
 
     #[tokio::test]
