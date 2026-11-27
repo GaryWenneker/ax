@@ -69,6 +69,24 @@ jobs:
         run: python -m unittest discover -s scripts -p 'test_install_slim.py'
       - name: Verify no ignored file is tracked
         run: python -m unittest discover -s scripts -p 'test_repo_hygiene.py'
+      - name: Verify the live bench arm denies tools it should not use
+        run: python -m unittest discover -s scripts -p 'test_bench_live_arm.py'
+      - name: Verify the bench MCP client reader thread
+        run: python -m unittest discover -s scripts -p 'test_bench_mcp_client.py'
+      - name: Verify changed-line coverage reads deleted-file diff headers
+        run: python -m unittest discover -s scripts -p 'test_changed_coverage.py'
+      - name: Verify the Chocolatey package preparation
+        run: python -m unittest discover -s scripts -p 'test_chocolatey_prepare.py'
+      - name: Verify the Cloudflare tunnel script (skips without pwsh)
+        run: python -m unittest discover -s scripts -p 'test_cloudflare_tunnel.py'
+      - name: Verify the GitHub Pages status check
+        run: python -m unittest discover -s scripts -p 'test_github_pages_status.py'
+      - name: Verify the mutant lists have no duplicates
+        run: python -m unittest discover -s scripts -p 'test_mutant_lists.py'
+      - name: Verify the real-world Neural metrics match exact paths
+        run: python -m unittest discover -s scripts -p 'test_neural_realworld_metrics.py'
+      - name: Verify ops scripts never publish the tree or overwrite live data
+        run: python -m unittest discover -s scripts -p 'test_ops_scripts.py'
       - name: Classify changed paths
         id: paths
         env:

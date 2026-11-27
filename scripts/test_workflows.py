@@ -171,6 +171,17 @@ class ExpressionInjection(unittest.TestCase):
         self.assertIn(r"'^v?\d+\.\d+\.\d+$'", text)
 
 
+class ScriptTestsRunInCi(unittest.TestCase):
+    def test_every_script_test_is_run_by_a_workflow(self) -> None:
+        text = "\n".join(path.read_text(encoding="utf-8") for path in WORKFLOWS)
+        missing = [
+            test.name
+            for test in sorted((ROOT / "scripts").glob("test_*.py"))
+            if not re.search(rf"-p '{re.escape(test.name)}'", text)
+        ]
+        self.assertEqual(missing, [], "add a `python -m unittest discover -s scripts -p '<name>'` step")
+
+
 class Permissions(unittest.TestCase):
     def test_multi_job_workflows_grant_write_only_per_job(self) -> None:
         for path in WORKFLOWS:
