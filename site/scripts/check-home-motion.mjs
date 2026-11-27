@@ -5,7 +5,7 @@ import sharp from 'sharp';
 
 const url = process.env.AX_SITE_URL ?? 'http://127.0.0.1:4322';
 assert.ok(['127.0.0.1','localhost'].includes(new URL(url).hostname),'Use a local preview');
-const output = '/tmp/ax-moire-local';
+const output = '/tmp/ax-home-motion-local';
 await mkdir(output,{recursive:true});
 const browser = await puppeteer.launch({executablePath:process.env.AX_CHROME_EXECUTABLE,headless:true,args:['--no-sandbox']});
 try {
@@ -14,8 +14,9 @@ try {
     await page.setViewport({width,height:900});
     await page.emulateMediaFeatures([{name:'prefers-reduced-motion',value:'no-preference'}]);
     await page.goto(url,{waitUntil:'networkidle0'});
-    await page.waitForSelector('.ax-halftone-screen-two');
-    const transform = () => page.$eval('.ax-halftone-screen-two',el=>getComputedStyle(el).transform);
+    await page.waitForSelector('[data-ax-silk]');
+    // One silk ring frame; it only changes while the animation loop runs.
+    const transform = () => page.$eval('[data-ax-silk]',canvas=>canvas.toDataURL());
     const first = await transform();
     const before = await page.screenshot({path:`${output}/${width}-before.png`});
     await new Promise(resolve=>setTimeout(resolve,1200));

@@ -371,6 +371,7 @@ ax savings import --claude          # Claude Code only
 | `AX_SAVINGS_TOKENS_PER_LINE` | 9 | Tokens per line for unreadable files |
 | `AX_SAVINGS_AVG_FILE_TOKENS` | 3500 | Fallback when no line count or path-only ref |
 | `AX_MCP_FULL` | unset | `1`/`true`/`yes` restores full `structuredContent` on every MCP tool |
+| `AX_MCP_STRUCTURED` | unset | `off` sends text-only replies (no `structuredContent`) to every client; `lean` sends the lean payload to every client. Unset: a client whose `initialize` name contains `claude` gets text-only replies, every other client the lean payload. `AX_MCP_FULL` wins over both |
 | `AX_MCP_VERBOSE` | unset | Legacy compatibility flag; MCP and CLI (from 8.4.4) always write inbound/outbound/internal traces to the project verbose log and optionally stderr (Cursor Output). See [MCP Logging & Quality](/guides/mcp-quality/). |
 | `AX_EXPLORE_MAX_LINES` | 40 | Max source lines per `ax_explore` snippet |
 | `AX_EXPLORE_MAX_SOURCE_CHARS` | 2000 | Max source characters per `ax_explore` snippet |

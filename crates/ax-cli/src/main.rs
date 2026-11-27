@@ -1548,6 +1548,16 @@ enum MemoryCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Remove automatic `changed <path>` memories for paths the index excludes (dry run unless --apply)
+    PruneFileChanges {
+        #[arg(
+            long,
+            help = "Delete the matched memories. Without it, only report what would go."
+        )]
+        apply: bool,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2590,6 +2600,9 @@ async fn async_main() {
                 commands::memory::run_import(path, quiet).await
             }
             MemoryCommands::Reindex { json } => commands::memory::run_reindex(json).await,
+            MemoryCommands::PruneFileChanges { apply, json } => {
+                commands::memory::run_prune_file_changes(apply, json).await
+            }
         },
         Some(Commands::Node { name }) => commands::node::run(name).await,
         Some(Commands::Spec { spec }) => commands::spec::show(spec).await,

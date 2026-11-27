@@ -61,3 +61,4 @@ pulldown-cmark = { workspace = true }
 
 [dev-dependencies]
 sqlx = { workspace = true }
+tempfile = "3"
