@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -33,8 +36,11 @@ class InstallSelfHealContract(unittest.TestCase):
         self.assertIn("Clear-AxPendingUpgradeState -InstallRoot $installDir", text)
         # The working install is only touched after the version resolves and the download succeeds.
         resolve_at = text.index("$version = Resolve-AxVersion")
-        swap_at = text.index("Switch-AxInstallTree -NewTree")
-        self.assertLess(resolve_at, swap_at)
+        calls = list(re.finditer(r"^(Switch-AxInstallTree -NewTree|Clear-AxPendingUpgradeState)\b", text,
+                                 flags=re.MULTILINE))
+        self.assertTrue(calls, "Switch-AxInstallTree must be invoked")
+        for call in calls:
+            self.assertLess(resolve_at, call.start(), call.group(0))
 
     def test_ps1_skips_rejected_github_tokens_without_changing_the_environment(self) -> None:
         # The token is skipped for this install only; User and Machine variables stay as they are.
@@ -59,38 +65,61 @@ class InstallSelfHealContract(unittest.TestCase):
         resolve_at = text.index('version="$(resolve_version)"')
         self.assertLess(resolve_at, invoke_matches[-1].start())
 
-    def test_pending_upgrade_fixture_cleanup_contract(self) -> None:
-        """Simulate the file operations Clear-AxPendingUpgradeState / clear_pending_upgrade_state perform."""
+
+def _function(text: str, pattern: str) -> str:
+    match = re.search(pattern + r".*?^\}\n", text, flags=re.MULTILINE | re.DOTALL)
+    if not match:
+        raise AssertionError(f"function not found: {pattern}")
+    return match.group(0)
+
+
+def _fixture(root: Path) -> None:
+    (root / "upgrade-status.txt").write_text("park current install: Access is denied.\n", encoding="utf-8")
+    staging = root / "upgrade-staging-9"
+    (staging / "bin").mkdir(parents=True)
+    (staging / "bin" / "ax.exe").write_text("x", encoding="utf-8")
+    parked = root / "current.old"
+    parked.mkdir()
+    (parked / "ax.exe").write_text("y", encoding="utf-8")
+    # Working install and user data must survive.
+    (root / "current").mkdir()
+    (root / "current" / "ax.exe").write_text("live", encoding="utf-8")
+    (root / "global.db").write_text("data", encoding="utf-8")
+
+
+class PendingUpgradeCleanup(unittest.TestCase):
+    """Runs the installers' own cleanup functions against a fixture install root."""
+
+    def assert_cleaned(self, root: Path) -> None:
+        self.assertFalse((root / "upgrade-status.txt").exists())
+        self.assertFalse((root / "upgrade-staging-9").exists())
+        self.assertFalse((root / "current.old").exists())
+        self.assertEqual((root / "current" / "ax.exe").read_text(encoding="utf-8"), "live")
+        self.assertEqual((root / "global.db").read_text(encoding="utf-8"), "data")
+
+    def test_install_sh_clears_pending_upgrade_state(self) -> None:
+        func = _function(_read(INSTALL_SH), r"^clear_pending_upgrade_state\(\) \{")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            status = root / "upgrade-status.txt"
-            status.write_text("park current install: Access is denied.\n", encoding="utf-8")
-            staging = root / "upgrade-staging-9"
-            staging.mkdir()
-            (staging / "ax.exe").write_text("x", encoding="utf-8")
-            parked = root / "current.old"
-            parked.mkdir()
-            (parked / "ax.exe").write_text("y", encoding="utf-8")
+            _fixture(root)
+            out = subprocess.run(["sh", "-c", func + "clear_pending_upgrade_state\n"],
+                                 env={**os.environ, "INSTALL_DIR": str(root)},
+                                 capture_output=True, text=True, timeout=60)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assert_cleaned(root)
 
-            # Mirror installer cleanup (keep in sync with install.ps1 / install.sh).
-            if status.is_file():
-                status.unlink()
-            for path in root.glob("upgrade-staging-*"):
-                if path.is_dir():
-                    for child in path.rglob("*"):
-                        if child.is_file():
-                            child.unlink()
-                    path.rmdir()
-            if parked.is_dir():
-                for child in parked.rglob("*"):
-                    if child.is_file():
-                        child.unlink()
-                parked.rmdir()
-
-            self.assertFalse(status.exists())
-            self.assertFalse(staging.exists())
-            self.assertFalse(parked.exists())
-
+    @unittest.skipUnless(shutil.which("pwsh"), "pwsh is not installed")
+    def test_install_ps1_clears_pending_upgrade_state(self) -> None:
+        func = _function(_read(INSTALL_PS1), r"^function Clear-AxPendingUpgradeState \{")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _fixture(root)
+            script = func + "Clear-AxPendingUpgradeState -InstallRoot $env:AX_TEST_ROOT\n"
+            out = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command", script],
+                                 env={**os.environ, "AX_TEST_ROOT": str(root)},
+                                 capture_output=True, text=True, timeout=60)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assert_cleaned(root)
 
 if __name__ == "__main__":
     unittest.main()
