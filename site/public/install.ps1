@@ -5,7 +5,7 @@
 #   irm https://getax.wenneker.io/install.ps1 | iex
 #
 # Always installs the latest published release (highest semver with assets).
-# Resolves, downloads and unpacks the release first; only then it stops ax,
+# Resolves, downloads, checks (SHA256SUMS) and unpacks the release first; only then it stops ax,
 # clears stuck upgrade-status/staging and swaps the new program in. It also
 # drops invalid AX_VERSION pins and retries GitHub without a rejected token
 # (stored GITHUB_TOKEN/GH_TOKEN values are never changed).
@@ -415,6 +415,42 @@ function Set-UserPathFirst([string]$entry) {
   [Environment]::SetEnvironmentVariable('Path', $joined, 'User')
 }
 
+function Confirm-AxArchiveChecksum {
+  # Checks the archive against the release's SHA256SUMS, taken from GitHub; the mirror's
+  # copy is used only when GitHub is unreachable.
+  param(
+    [Parameter(Mandatory = $true)][string]$Archive,
+    [Parameter(Mandatory = $true)][string]$Asset,
+    [Parameter(Mandatory = $true)][string]$Tag,
+    [Parameter(Mandatory = $true)][string]$WorkDir
+  )
+  $sums = Join-Path $WorkDir 'SHA256SUMS'
+  $fetched = $false
+  try {
+    Invoke-WebRequest -Uri "https://github.com/$repo/releases/download/$Tag/SHA256SUMS" -OutFile $sums -TimeoutSec 60 -UseBasicParsing
+    $fetched = $true
+  } catch { }
+  if (-not $fetched) {
+    try {
+      Invoke-WebRequest -Uri "$downloadBase/$Tag/SHA256SUMS" -OutFile $sums -TimeoutSec 60 -UseBasicParsing
+      $fetched = $true
+      Write-Host "ax: GitHub is unreachable; checking the archive against the mirror's SHA256SUMS." -ForegroundColor Yellow
+    } catch { }
+  }
+  if (-not $fetched) { throw "ax: could not download SHA256SUMS for $Tag; the archive was not installed." }
+  $expected = $null
+  foreach ($line in [IO.File]::ReadAllLines($sums)) {
+    $parts = $line.Trim() -split '\s+', 2
+    if ($parts.Count -eq 2 -and $parts[1].TrimStart('*') -eq $Asset) { $expected = $parts[0].ToLowerInvariant(); break }
+  }
+  if (-not $expected) { throw "ax: SHA256SUMS of $Tag has no entry for $Asset; the archive was not installed." }
+  $actual = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($actual -ne $expected) {
+    throw "ax: checksum mismatch for $Asset (expected $expected, got $actual); the archive was not installed."
+  }
+  Write-Host "  checksum verified: $Asset" -ForegroundColor DarkGray
+}
+
 # ---- install steps ----
 # Resolve, download and unpack first: a failure up to the swap leaves the working
 # install and the running ax processes alone.
@@ -443,6 +479,12 @@ if (-not $downloaded) {
   throw "ax: download failed. Try: cargo install --git https://github.com/$repo ax-cli"
 }
 Write-Host "  downloaded from: $downloadFrom" -ForegroundColor DarkGray
+try {
+  Confirm-AxArchiveChecksum -Archive $zip -Asset "ax-$target.zip" -Tag $version -WorkDir $tmp
+} catch {
+  Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
+  throw
+}
 
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 $staged = Join-Path $installDir (".install-new-" + [guid]::NewGuid().ToString('N'))

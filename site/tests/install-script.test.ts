@@ -36,10 +36,15 @@ function fixture(options: { os?: string; arch?: string; withoutPython?: boolean;
   const archive = join(root, 'ax.tar.gz');
   const packed = spawnSync('tar', ['-czf', archive, '-C', root, 'payload'], { encoding: 'utf8' });
   assert.equal(packed.status, 0, packed.stderr);
+  mkdirSync(join(root, 'tampered'));
+  writeFileSync(join(root, 'tampered/ax'), `#!/bin/sh\necho "ax ${options.binaryVersion ?? '8.1.0'}"\n# tampered\n`, { mode: 0o755 });
+  const tampered = join(root, 'tampered.tar.gz');
+  assert.equal(spawnSync('tar', ['-czf', tampered, '-C', root, 'tampered'], { encoding: 'utf8' }).status, 0);
   const realSort = spawnSync('sh', ['-c', 'command -v sort'], { encoding: 'utf8' }).stdout.trim();
   const mock = join(bin, 'mock.mjs');
   writeFileSync(mock, `#!${process.execPath}
-import { appendFileSync, copyFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 const name=basename(process.argv[1]), args=process.argv.slice(2), env=process.env;
@@ -75,6 +80,17 @@ else if(name==='sort') {
   else if(url?.endsWith('latest.txt')) emit('8.1.0');
   else if(args.includes('-r')) {if(wantCode) process.stdout.write('404'); process.exit(22);}
   else if(url?.includes('/v8.1.0/') && env.AX_TEST_DOWNLOAD_FAIL==='1') process.exit(22);
+  else if(url?.endsWith('/v8.1.0/SHA256SUMS')) {
+    const sha=(file)=>createHash('sha256').update(readFileSync(file)).digest('hex');
+    const mirror=!url.startsWith('https://github.com/');
+    const mode=env.AX_TEST_SUMS||'good';
+    if(mode==='github-down' && !mirror) process.exit(22);
+    const hash=mode==='bad'?'0'.repeat(64):mode==='mirror-tampered'&&mirror?sha(env.AX_TEST_TAMPERED):sha(env.AX_TEST_ARCHIVE);
+    const name=mode==='missing'?'ax-other.tar.gz':asset;
+    writeFileSync(args[args.indexOf('-o')+1], hash+'  '+name+'\\n'+'1'.repeat(64)+'  ax-slim-linux-x64.tar.gz\\n');
+  }
+  else if(url?.includes('/v8.1.0/') && env.AX_TEST_SUMS==='mirror-tampered' && url.startsWith('https://github.com/')) process.exit(22);
+  else if(url?.includes('/v8.1.0/') && env.AX_TEST_SUMS==='mirror-tampered') copyFileSync(env.AX_TEST_TAMPERED,args[args.indexOf('-o')+1]);
   else if(url?.includes('/v8.1.0/')) {copyFileSync(env.AX_TEST_ARCHIVE,args[args.indexOf('-o')+1]); if(wantCode) process.stdout.write('200');}
   else process.exit(22);
 } else process.exit(1);
@@ -90,7 +106,7 @@ else if(name==='sort') {
     AX_INSTALL_DIR: join(root, 'install'), AX_BIN_DIR: binaryDir,
     AX_KEEP_CARGO_BIN: '1', AX_SKIP_PROJECT_INIT: '1',
     AX_TEST_OS: options.os ?? 'Darwin', AX_TEST_ARCH: options.arch ?? 'arm64',
-    AX_TEST_TRACE: trace, AX_TEST_ARCHIVE: archive, AX_TEST_SORT: realSort,
+    AX_TEST_TRACE: trace, AX_TEST_ARCHIVE: archive, AX_TEST_TAMPERED: tampered, AX_TEST_SORT: realSort,
     AX_TEST_TOKEN_FAILURE: options.tokenFailure ?? '',
   };
   delete env.GITHUB_TOKEN;
@@ -362,6 +378,32 @@ test('a failed download keeps the working install and running ax processes', () 
     assert.equal(spawnSync(join(f.binaryDir, 'ax'), ['version'], { encoding: 'utf8' }).status, 0);
     const trace = readFileSync(f.trace, 'utf8');
     assert.ok(!trace.includes('"name":"pkill"'), 'running ax processes are only stopped once the new program is ready');
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+for (const [sums, expected] of [['bad', /checksum mismatch/], ['missing', /no entry/], ['mirror-tampered', /checksum mismatch/]] as const) {
+  test(`an archive that fails the SHA256SUMS check (${sums}) is never installed`, () => {
+    const f = fixture();
+    try {
+      assert.equal(runInstaller(installers[0], f.env).status, 0);
+      const current = join(f.env.AX_INSTALL_DIR as string, 'current/ax');
+      const before = readFileSync(current, 'utf8');
+      writeFileSync(f.trace, '');
+      const result = runInstaller(installers[0], { ...f.env, AX_TEST_SUMS: sums });
+      assert.notEqual(result.status, 0, 'the install must fail');
+      assert.match(result.stderr, expected);
+      assert.equal(readFileSync(current, 'utf8'), before);
+      assert.ok(!readFileSync(f.trace, 'utf8').includes('"name":"pkill"'));
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  });
+}
+
+test('the mirror checksum list is used when GitHub is unreachable', () => {
+  const f = fixture();
+  try {
+    const result = runInstaller(installers[0], { ...f.env, AX_TEST_SUMS: 'github-down' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /mirror/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 

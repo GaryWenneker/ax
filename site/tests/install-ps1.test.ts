@@ -172,3 +172,19 @@ test('a Windows install swaps the new program in and leaves no staging folders',
   assert.match(result.stdout, /LEFTOVERS=0/);
   assert.match(result.stdout, /STOP-AX-PROCESSES/);
 });
+
+for (const [name, sums, expected] of [
+  ['a wrong checksum', `Set-Content -Path $OutFile -Value "${'0'.repeat(64)}  ax-${bundle}.zip"`, /checksum mismatch/],
+  ['no entry for the archive', `Set-Content -Path $OutFile -Value "${'0'.repeat(64)}  ax-other.zip"`, /no entry/],
+  ['no SHA256SUMS at all', `throw 'not found'`, /SHA256SUMS/],
+] as const) {
+  test(`a Windows archive with ${name} is never installed`, { skip }, () => {
+    const result = runInstall(online(sums), reportTree, seedWorkingInstall);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /INSTALL-FAILED/);
+    assert.match(result.stdout, expected);
+    assert.match(result.stdout, /CURRENT=previous program/);
+    assert.match(result.stdout, /LEFTOVERS=0/);
+    assert.doesNotMatch(result.stdout, /STOP-AX-PROCESSES/);
+  });
+}

@@ -6,7 +6,7 @@
 #   curl -fsSL https://getax.wenneker.io/install.sh | sh
 #
 # Always installs the latest published release (highest semver with assets).
-# Resolves, downloads and unpacks the release first; only then it stops ax,
+# Resolves, downloads, checks (SHA256SUMS) and unpacks the release first; only then it stops ax,
 # clears stuck upgrade-status/staging and swaps the new program in. It also
 # drops invalid AX_VERSION pins and retries GitHub without a rejected token
 # (stored GITHUB_TOKEN/GH_TOKEN values are never changed).
@@ -501,6 +501,48 @@ if [ "$ax_uninstall" = 1 ]; then
   exit 0
 fi
 
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{ print $1 }'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{ print $1 }'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 -r "$1" | awk '{ print $1 }'
+  else
+    return 1
+  fi
+}
+
+verify_archive() {
+  # Args: archive asset_name sums_path. Checks the archive against the release's
+  # SHA256SUMS, taken from GitHub; the mirror's copy is used only when GitHub is unreachable.
+  ax_archive="$1"
+  ax_asset="$2"
+  ax_sums="$3"
+  if ! curl -fsSL "https://github.com/$REPO/releases/download/$version/SHA256SUMS" -o "$ax_sums" 2>/dev/null; then
+    if curl -fsSL "$DOWNLOAD_BASE/$version/SHA256SUMS" -o "$ax_sums" 2>/dev/null; then
+      echo "ax: GitHub is unreachable; checking the archive against the mirror's SHA256SUMS." >&2
+    else
+      echo "ax: could not download SHA256SUMS for $version; the archive was not installed." >&2
+      return 1
+    fi
+  fi
+  ax_expected="$(awk -v a="$ax_asset" '{ f = $2; sub(/^\*/, "", f) } f == a { print tolower($1); exit }' "$ax_sums")"
+  if [ -z "$ax_expected" ]; then
+    echo "ax: SHA256SUMS of $version has no entry for $ax_asset; the archive was not installed." >&2
+    return 1
+  fi
+  if ! ax_actual="$(sha256_of "$ax_archive")" || [ -z "$ax_actual" ]; then
+    echo "ax: no sha256sum, shasum or openssl found to check the archive; install one and re-run." >&2
+    return 1
+  fi
+  if [ "$ax_actual" != "$ax_expected" ]; then
+    echo "ax: checksum mismatch for $ax_asset (expected $ax_expected, got $ax_actual); the archive was not installed." >&2
+    return 1
+  fi
+  echo "  checksum verified: $ax_asset"
+}
+
 # ---- install steps ----
 # Resolve, download and unpack first: a failure up to the swap leaves the working
 # install and the running ax processes alone.
@@ -527,6 +569,8 @@ else
   echo "  For a dev build: cargo install --git https://github.com/$REPO ax-cli" >&2
   exit 1
 fi
+
+verify_archive "$tmp/ax.tar.gz" "ax-${target}.tar.gz" "$tmp/SHA256SUMS" || exit 1
 
 mkdir -p "$INSTALL_DIR"
 staged="$INSTALL_DIR/.install-new-$$"
