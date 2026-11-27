@@ -38,5 +38,6 @@ pub async fn call_tool(engine: &mut McpEngine, name: &str, args: Value) -> Resul
         let ax = guard.as_mut().ok_or("ax not initialized")?;
         ToolHandler::call_tool(ax, name, args).await?
     };
-    Ok(crate::server::record_policy_delivery(engine, result))
+    let result = crate::server::record_policy_delivery(engine, result);
+    Ok(engine.note_catch_up(name, result))
 }

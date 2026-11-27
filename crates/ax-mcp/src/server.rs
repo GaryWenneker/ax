@@ -453,6 +453,7 @@ async fn call_tool_and_wrap(
     }
     ax_telemetry::trigger_background_flush();
     let result = result.map(|value| record_policy_delivery(engine, value));
+    let result = result.map(|value| engine.note_catch_up(name, value));
     let duration_ms = started.elapsed().as_millis() as i64;
     let project = project_root.map(|p| p.display().to_string());
     match &result {
