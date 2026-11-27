@@ -6,19 +6,20 @@ export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target-dev}"
 export CARGO_INCREMENTAL=0
 # Tests read ~/.ax (global policy, global.db). On a machine with a large global
 # policy the required rules alone exceed the 12,000-token test budget and
-# ice_preflight fails, so every layer runs against an empty, throwaway HOME.
+# ice_preflight fails, so the test binaries run against an empty, throwaway HOME.
+# Builds keep the real HOME: the ax-web build script runs npm, which needs it.
 export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
 export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
 GAUNTLET_HOME="$(mktemp -d)"
 trap 'rm -rf "$GAUNTLET_HOME"' EXIT
-export HOME="$GAUNTLET_HOME" AX_HOME_DIR="$GAUNTLET_HOME"
 CRATES=(-p ax-policy -p ax-context -p ax-core -p ax-mcp -p ax-cli)
 
 echo "== source state: $(git rev-parse HEAD) ($(git status --porcelain | wc -l | tr -d ' ') uncommitted files)"
 echo "== toolchain: $(rustc --version); $(python3 --version)"
 
 echo "== 1/6 tests"
-cargo test "${CRATES[@]}" 2>&1 | tee "$CARGO_TARGET_DIR/gauntlet-tests.log" | grep -E "^test result|FAILED|panicked" || true
+cargo test "${CRATES[@]}" --no-run
+HOME="$GAUNTLET_HOME" AX_HOME_DIR="$GAUNTLET_HOME" cargo test "${CRATES[@]}" 2>&1 | tee "$CARGO_TARGET_DIR/gauntlet-tests.log" | grep -E "^test result|FAILED|panicked" || true
 if grep -qE "test result: FAILED|^error" "$CARGO_TARGET_DIR/gauntlet-tests.log"; then echo "tests failed"; exit 1; fi
 grep -c "^test result: ok" "$CARGO_TARGET_DIR/gauntlet-tests.log" | sed 's/^/suites ok: /'
 awk '/^test result: ok/ {p+=$4} END {print "tests passed: " p}' "$CARGO_TARGET_DIR/gauntlet-tests.log"
