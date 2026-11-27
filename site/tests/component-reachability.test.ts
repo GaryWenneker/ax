@@ -46,3 +46,22 @@ test('every component and client script is reachable from a page, layout or the 
   const unused = candidates.filter(f => !seen.has(f)).map(f => relative(site, f)).sort();
   assert.deepEqual(unused, [], `unused site sources: ${unused.join(', ')}`);
 });
+
+const exportedNames = (file: string): Set<string> => new Set(
+  [...readFileSync(file, 'utf8').matchAll(
+    /export\s+(?:declare\s+)?(?:async\s+)?(?:function\*?|const|let|var|class|type|interface|enum)\s+([A-Za-z_$][\w$]*)/g,
+  )].map(m => m[1]));
+
+test('no compiled .js or .d.ts sibling exports a symbol its .ts source no longer has', () => {
+  const stale: string[] = [];
+  for (const file of walk(join(site, 'src'))) {
+    if (!/\.(js|d\.ts)$/.test(file)) continue;
+    const source = file.replace(/(\.d\.ts|\.js)$/, '.ts');
+    if (!existsSync(source)) continue;
+    const current = exportedNames(source);
+    for (const name of exportedNames(file)) {
+      if (!current.has(name)) stale.push(`${relative(site, file)}: ${name}`);
+    }
+  }
+  assert.deepEqual(stale.sort(), [], `compiled siblings export removed symbols: ${stale.join(', ')}`);
+});
