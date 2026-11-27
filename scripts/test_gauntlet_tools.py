@@ -209,6 +209,13 @@ class NegativeControlTest(unittest.TestCase):
             with self.subTest(name):
                 self.assertIsNone(vacuous.search((TOOLS / name).read_text()))
 
+    def test_no_gauntlet_announces_a_control_it_does_not_run(self):
+        # A GAUNTLET_NEGATIVE switch that only prints a heading passes on a clean tree,
+        # so it claims a negative control that can never fail.
+        for path in sorted(TOOLS.glob("gauntlet-*")):
+            with self.subTest(path.name):
+                self.assertNotIn("GAUNTLET_NEGATIVE", path.read_text())
+
     def test_every_gauntlet_control_holds_on_the_current_tree(self):
         for name in CONTROLLED_GAUNTLETS:
             text = (TOOLS / name).read_text()
