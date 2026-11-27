@@ -100,15 +100,25 @@ pub fn extract_symbols_with(
     };
     result.nodes.push(file_node);
 
-    for (kind, node_type) in kinds {
-        walk_nodes(root, node_type, &mut |n| {
+    // One iterative pass collects the matches of every kind; they are then
+    // emitted kind by kind, in tree order within each kind.
+    let mut matches: Vec<Vec<TsNode>> = vec![Vec::new(); kinds.len()];
+    for_each_node(root, |n| {
+        for (i, (_, node_type)) in kinds.iter().enumerate() {
+            if n.kind() == *node_type {
+                matches[i].push(n);
+            }
+        }
+    });
+    for ((kind, node_type), found) in kinds.iter().zip(matches) {
+        for n in found {
             if !seen_nodes.insert(n.id()) {
-                return;
+                continue;
             }
             let kind = &classify(n, *kind);
             let name = declaration_name(n, source, node_type);
             if name.is_empty() {
-                return;
+                continue;
             }
             let qualified = format!("{}::{}", file_path, name);
             let id = make_node_id(file_path, &qualified);
@@ -146,7 +156,7 @@ pub fn extract_symbols_with(
                 provenance: Some(Provenance::TreeSitter),
                 confidence: Some(ax_types::EdgeConfidence::Extracted),
             });
-        });
+        }
     }
 
     result
@@ -218,16 +228,24 @@ fn short_text(node: TsNode, source: &[u8]) -> Option<String> {
     (!t.is_empty() && !t.contains('\n') && t.chars().count() <= MAX_NAME_CHARS)
         .then(|| t.to_string())
 }
-fn walk_nodes<F>(node: TsNode, node_type: &str, f: &mut F)
-where
-    F: FnMut(TsNode),
-{
-    if node.kind() == node_type {
-        f(node);
-    }
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            walk_nodes(child, node_type, f);
+/// Calls `f` on `root` and every node below it, in tree (pre-)order.
+///
+/// Iterative, so a deeply nested file cannot overflow the parse worker's
+/// stack — an overflow aborts the whole process rather than panicking.
+pub(crate) fn for_each_node<'t>(root: TsNode<'t>, mut f: impl FnMut(TsNode<'t>)) {
+    let mut cursor = root.walk();
+    loop {
+        f(cursor.node());
+        if cursor.goto_first_child() {
+            continue;
+        }
+        loop {
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            if !cursor.goto_parent() {
+                return;
+            }
         }
     }
 }

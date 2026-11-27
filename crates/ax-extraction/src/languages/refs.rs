@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use ax_types::{Language, NodeKind, ReferenceKind, UnresolvedReference};
 use tree_sitter::{Node as TsNode, Tree};
 
-use super::common::SymbolSpan;
+use super::common::{for_each_node, SymbolSpan};
 
 /// Per-file inputs shared by the call and function-reference walkers.
 pub struct RefCtx<'a> {
@@ -60,33 +60,34 @@ pub fn append_lang_call_refs(
 type LocalCalls = Vec<usize>;
 
 fn walk_for_calls(
-    node: TsNode,
+    root: TsNode,
     ctx: &RefCtx,
     result: &mut ax_types::ExtractionResult,
     local: &mut LocalCalls,
 ) {
-    if node.kind() == "call_expression" {
+    for_each_node(root, |node| {
+        if node.kind() != "call_expression" {
+            return;
+        }
         if let Some(callee) = extract_ts_js_callee(node, ctx.source) {
             // extract_ts_js_callee keeps `receiver.` unless the receiver is this/self.
             let via_receiver = callee.contains('.');
             push_call_ref(node, ctx, &callee, via_receiver, result, local);
         }
-    }
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            walk_for_calls(child, ctx, result, local);
-        }
-    }
+    });
 }
 
 fn walk_call_nodes(
-    node: TsNode,
+    root: TsNode,
     ctx: &RefCtx,
     call_kind: &str,
     result: &mut ax_types::ExtractionResult,
     local: &mut LocalCalls,
 ) {
-    if node.kind() == call_kind {
+    for_each_node(root, |node| {
+        if node.kind() != call_kind {
+            return;
+        }
         let callee = if call_kind == "method_invocation" {
             field_text(node, ctx.source, "name")
         } else {
@@ -98,12 +99,7 @@ fn walk_call_nodes(
                 push_call_ref(node, ctx, &callee, via_receiver, result, local);
             }
         }
-    }
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            walk_call_nodes(child, ctx, call_kind, result, local);
-        }
-    }
+    });
 }
 
 /// Whether a call goes through an object other than this/self
@@ -173,14 +169,14 @@ fn push_call_ref(
 }
 
 fn walk_for_imports(
-    node: TsNode,
+    root: TsNode,
     source: &[u8],
     file_path: &str,
     file_id: &str,
     language: Language,
     result: &mut ax_types::ExtractionResult,
 ) {
-    match node.kind() {
+    for_each_node(root, |node| match node.kind() {
         "import_statement" | "import_declaration" => {
             emit_ts_js_import_refs(node, source, file_path, file_id, language, result);
         }
@@ -188,12 +184,7 @@ fn walk_for_imports(
             emit_ts_js_reexport_refs(node, source, file_path, file_id, result);
         }
         _ => {}
-    }
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            walk_for_imports(child, source, file_path, file_id, language, result);
-        }
-    }
+    });
 }
 
 fn emit_ts_js_import_refs(
@@ -374,7 +365,19 @@ fn push_import_name(
     });
 }
 
+/// How far callee and function-ref lookups descend through chained calls and
+/// parentheses. Real code stays far below this; generated code can nest
+/// arbitrarily deep, and every call node in a chain repeats the descent.
+const MAX_EXPR_DEPTH: usize = 32;
+
 fn extract_ts_js_callee(node: TsNode, source: &[u8]) -> Option<String> {
+    ts_js_callee(node, source, 0)
+}
+
+fn ts_js_callee(node: TsNode, source: &[u8], depth: usize) -> Option<String> {
+    if depth > MAX_EXPR_DEPTH {
+        return None;
+    }
     let func = node.child_by_field_name("function")?;
     match func.kind() {
         "identifier" => Some(node_text(func, source)),
@@ -398,25 +401,25 @@ fn extract_ts_js_callee(node: TsNode, source: &[u8]) -> Option<String> {
         }
         "call_expression" => {
             // Chained call: inner().method() — use inner callee + ().method if member follows
-            extract_ts_js_callee(func, source)
+            ts_js_callee(func, source, depth + 1)
         }
         "parenthesized_expression" | "await_expression" => {
             for i in 0..func.named_child_count() {
                 let child = func.named_child(i).unwrap();
-                if let Some(c) = extract_ts_js_callee_from_expr(child, source) {
+                if let Some(c) = ts_js_callee_from_expr(child, source, depth + 1) {
                     return Some(c);
                 }
             }
             None
         }
-        _ => extract_ts_js_callee_from_expr(func, source),
+        _ => ts_js_callee_from_expr(func, source, depth + 1),
     }
     .filter(|s| !s.is_empty())
 }
 
-fn extract_ts_js_callee_from_expr(node: TsNode, source: &[u8]) -> Option<String> {
+fn ts_js_callee_from_expr(node: TsNode, source: &[u8], depth: usize) -> Option<String> {
     if node.kind() == "call_expression" {
-        return extract_ts_js_callee(node, source);
+        return ts_js_callee(node, source, depth);
     }
     if node.kind() == "identifier" {
         let t = node_text(node, source);
@@ -601,12 +604,12 @@ fn build_fn_ref_gate(result: &ax_types::ExtractionResult, spans: &[SymbolSpan]) 
 }
 
 fn walk_fn_ref_nodes(
-    node: TsNode,
+    root: TsNode,
     ctx: &RefCtx,
     gate: &HashSet<String>,
     result: &mut ax_types::ExtractionResult,
 ) {
-    match node.kind() {
+    for_each_node(root, |node| match node.kind() {
         "call_expression" => {
             if let Some(args) = node.child_by_field_name("arguments") {
                 collect_fn_ref_from_args(args, ctx, gate, result);
@@ -618,12 +621,7 @@ fn walk_fn_ref_nodes(
             }
         }
         _ => {}
-    }
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            walk_fn_ref_nodes(child, ctx, gate, result);
-        }
-    }
+    });
 }
 
 fn collect_fn_ref_from_args(
@@ -669,6 +667,13 @@ fn maybe_emit_fn_ref(
 }
 
 fn extract_fn_ref_name(node: TsNode, source: &[u8]) -> Option<String> {
+    fn_ref_name(node, source, 0)
+}
+
+fn fn_ref_name(node: TsNode, source: &[u8], depth: usize) -> Option<String> {
+    if depth > MAX_EXPR_DEPTH {
+        return None;
+    }
     match node.kind() {
         "identifier" => {
             let t = node_text(node, source);
@@ -681,7 +686,7 @@ fn extract_fn_ref_name(node: TsNode, source: &[u8]) -> Option<String> {
         "parenthesized_expression" | "await_expression" => {
             for i in 0..node.named_child_count() {
                 let child = node.named_child(i).unwrap();
-                if let Some(n) = extract_fn_ref_name(child, source) {
+                if let Some(n) = fn_ref_name(child, source, depth + 1) {
                     return Some(n);
                 }
             }
