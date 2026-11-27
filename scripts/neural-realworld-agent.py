@@ -38,6 +38,15 @@ ARMS = {
 }
 
 
+# Exit code for errors a rerun cannot fix (sysexits EX_CONFIG); the daemon does not retry it.
+EXIT_CONFIG = 78
+
+
+def config_error(message: str) -> SystemExit:
+    print(message, file=sys.stderr)
+    return SystemExit(EXIT_CONFIG)
+
+
 def run(cmd: list[str], cwd: Path, env: dict | None = None, timeout: int | None = None) -> subprocess.CompletedProcess[str]:
     merged = os.environ.copy()
     if env:
@@ -62,14 +71,14 @@ def inject(action: str, task_id: str) -> dict:
     except json.JSONDecodeError:
         result = None
     if done.returncode != 0 or not isinstance(result, dict) or not (result.get("applied") or result.get("noop")):
-        raise SystemExit(f"inject {action} {task_id} failed: {(done.stderr or done.stdout).strip()[-500:]}")
+        raise config_error(f"inject {action} {task_id} failed: {(done.stderr or done.stdout).strip()[-500:]}")
     return result
 
 
 def git(*args: str) -> str:
     done = run(["git", *args], cwd=ROOT)
     if done.returncode != 0:
-        raise SystemExit(f"git {' '.join(args)} failed: {done.stderr.strip()}")
+        raise config_error(f"git {' '.join(args)} failed: {done.stderr.strip()}")
     return done.stdout
 
 
@@ -98,7 +107,7 @@ class Attempt:
             git("checkout", "HEAD", "--", *changed)
         left = changed_tracked_files()
         if left:
-            raise SystemExit(f"could not restore tracked files after the attempt: {', '.join(left)}")
+            raise config_error(f"could not restore tracked files after the attempt: {', '.join(left)}")
 
 
 def tail(text: str | bytes | None, size: int) -> str:
@@ -207,6 +216,9 @@ def main() -> int:
     if opts.inject_heldout:
         selected = [t for t in held if t.get("inject")]
     elif opts.task:
+        unknown = [i for i in opts.task if i not in by_id]
+        if unknown:
+            raise config_error(f"unknown task {', '.join(unknown)}")
         selected = [by_id[i] for i in opts.task]
     else:
         selected = [t for t in held if t.get("inject")][:1]
@@ -221,11 +233,11 @@ def main() -> int:
     arms = [a.strip() for a in opts.arms.split(",") if a.strip()]
     for a in arms:
         if a not in ARMS:
-            raise SystemExit(f"unknown or blocked arm {a}")
+            raise config_error(f"unknown or blocked arm {a}")
 
     dirty = changed_tracked_files()
     if dirty:
-        raise SystemExit(
+        raise config_error(
             "tracked files have uncommitted changes; every attempt resets tracked files to HEAD, "
             f"so commit or stash these first: {', '.join(dirty)}"
         )

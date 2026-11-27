@@ -116,7 +116,7 @@ class RealworldAgent(unittest.TestCase):
     def test_a_tree_with_uncommitted_changes_is_refused(self) -> None:
         (self.root / "src/other.rs").write_text("my work in progress\n")
         result = self._run("rewrite")
-        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.returncode, 78, result.stdout)  # configuration error: not retried
         self.assertIn("src/other.rs", result.stdout + result.stderr)
         self.assertEqual((self.root / "src/other.rs").read_text(), "my work in progress\n")
         self.assertEqual((self.root / "src/a.rs").read_text(), SOURCE)
@@ -126,7 +126,7 @@ class RealworldAgent(unittest.TestCase):
         (self.root / "src/a.rs").write_text("fn mode() {}\n")
         self._git("commit", "-qam", "drift")
         result = self._run("rewrite")
-        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.returncode, 78, result.stdout)
         self.assertIn("inject fix t1 failed", result.stderr)
         self.assertEqual((self.root / "ax.json").read_text(), AX_JSON)
 
