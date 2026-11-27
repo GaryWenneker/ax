@@ -158,7 +158,7 @@ The `/api/ship/sonar/*` endpoints (discover, install, start, stop, bootstrap, se
 | GET | `/api/usage/mcp-trace/path` | Path of today's log file |
 | GET | `/api/usage/mcp-quality` | Quality metrics (Q slide-out) |
 | GET | `/api/usage/mcp-quality/events` | Quality updates (SSE) |
-| POST | `/api/usage/mcp-audit` | Run the audit (`ax mcp audit`) |
+| POST | `/api/usage/mcp-audit` | Run the audit (`ax mcp audit`). `session` is a session id or one of this project's agent transcript files; other paths get 400. Refused in read-only mode |
 
 ## Workspace
 
@@ -198,7 +198,7 @@ In read-only mode every `/api/agent` request other than `GET` and `HEAD` returns
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/ops/mcp-health` | Shared MCP daemon health |
-| POST | `/api/ops/mcp-reload` | Restart the MCP daemon (**Reload MCP**) |
+| POST | `/api/ops/mcp-reload` | Restart the MCP daemon (**Reload MCP**). Only from the local owner's own Command Center page; refused in read-only mode |
 | GET | `/api/lsp/status` | Language-server status |
 | POST | `/api/lsp/enrich` | Add exact edges from language servers |
 | GET | `/api/plugins` | Extractor plugins |

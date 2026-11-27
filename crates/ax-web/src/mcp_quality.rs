@@ -191,10 +191,39 @@ struct AuditBody {
     markdown: bool,
 }
 
+/// A transcript session id: letters, digits, `-`, `_` and `.`, never a path.
+fn is_session_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value != "."
+        && value != ".."
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+/// The transcript `requested` names, when it is one of this project's agent
+/// transcripts. Any other file is refused, so a caller cannot probe or parse
+/// arbitrary files.
+fn known_transcript(root: &std::path::Path, requested: &str) -> Option<PathBuf> {
+    let wanted = std::path::Path::new(requested).canonicalize().ok()?;
+    ax_usage::find_cursor_transcripts(root)
+        .into_iter()
+        .find(|p| p.canonicalize().ok().as_ref() == Some(&wanted))
+}
+
 async fn handle_audit(
     State((hub, state)): State<(WebHub, QualityState)>,
     Json(body): Json<AuditBody>,
 ) -> impl IntoResponse {
+    if hub.readonly {
+        ax_usage::log_share(None, "readonly write denied");
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            Json(json!({ "error": "read-only mode (AX_WEB_READONLY=1)" })),
+        )
+            .into_response();
+    }
     let root = {
         let ws = hub.read().await;
         ws.project_root.clone()
@@ -205,12 +234,17 @@ async fn handle_audit(
         ..Default::default()
     };
     if let Some(s) = body.session.or(body.session_id) {
-        let p = PathBuf::from(&s);
-        if p.is_file() {
-            opts.session_path = Some(p);
-        } else {
+        if is_session_id(&s) {
             opts.session_id = Some(s);
             opts.window_minutes = None; // full session
+        } else if let Some(p) = known_transcript(&root, &s) {
+            opts.session_path = Some(p);
+        } else {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "session must be a session id or one of this project's agent transcripts" })),
+            )
+                .into_response();
         }
     }
     let snap = match tokio::task::spawn_blocking(move || audit_project(&root, &opts)).await {
