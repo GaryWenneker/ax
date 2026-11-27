@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
 const app = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
@@ -22,11 +22,6 @@ describe('B2 wave ribbon height is zero', () => {
   });
 });
 
-describe('B3 leftover wave markup does not paint', () => {
-  it('hides .cc-waves under portal layout', () => {
-    assert.match(portalCss, /html\[data-ax-layout="portal"\]\s+\.cc-waves\s*\{[^}]*display:\s*none/s);
-  });
-});
 
 describe('B5 selected-node orbit glow is off in portal', () => {
   it('disables orbit and breathe animations', () => {
@@ -35,5 +30,22 @@ describe('B5 selected-node orbit glow is off in portal', () => {
       /html\[data-ax-layout="portal"\][\s\S]*ax-node-orbit|page-item-node::before[\s\S]*animation:\s*none/,
     );
     assert.match(portalCss, /page-item-node::(before|after)[\s\S]*animation:\s*none/);
+  });
+});
+
+describe('B4 no dead wave component or spec remains', () => {
+  it('has no HeaderWaves component', () => {
+    assert.equal(existsSync(new URL('./components/HeaderWaves.tsx', import.meta.url)), false);
+  });
+  it('has no e2e spec that expects titlebar waves', () => {
+    const e2eDir = new URL('../e2e/', import.meta.url);
+    for (const name of readdirSync(e2eDir).filter((n) => n.endsWith('.spec.ts'))) {
+      const text = readFileSync(new URL(name, e2eDir), 'utf8');
+      assert.equal(text.includes('cc-waves'), false, name);
+    }
+  });
+  it('has no wave styles left in the stylesheets', () => {
+    assert.equal(indexCss.includes('.cc-waves'), false);
+    assert.equal(portalCss.includes('.cc-waves'), false);
   });
 });

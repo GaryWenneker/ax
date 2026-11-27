@@ -312,8 +312,6 @@ html[data-ax-layout="portal"] .access-row-control > .btn { flex-shrink: 0; }
 }
 
 /* Edge glow stays off: no titlebar wave, no orbiting dots on a selected row. */
-html[data-ax-layout="portal"] .cc-waves { display: none; }
-html[data-ax-layout="portal"] :is(.cc-waves__motion, .cc-waves__parallax > use) { animation: none; }
 html[data-ax-layout="portal"] :is(.memory-vault-list, .calm-list) .page-item--selected.page-item--graph .page-item-node::before,
 html[data-ax-layout="portal"] :is(.memory-vault-list, .calm-list) .page-item--selected.page-item--graph .page-item-node::after {
   animation: none;
