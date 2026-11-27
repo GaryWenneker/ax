@@ -99,7 +99,7 @@ fi
 if want 5 || want 7; then
 echo "== 5. release build and CLI docs"
 cargo_ build -q --release -p ax-cli >"$LOG/build.log" 2>&1 || fail "release build"
-AX_BIN="$ROOT/target-dev/release/ax" node scripts/check-cli-docs.mjs || fail "cli docs"
+node scripts/check-cli-docs.mjs "$ROOT/target-dev/release/ax" || fail "cli docs"
 fi
 
 if want 6; then
