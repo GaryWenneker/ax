@@ -41,8 +41,10 @@ function Stop-AxProcesses {
 }
 
 function Clear-AxPendingUpgradeState {
+  # KeepPath names the tree this install is staging; every other leftover goes.
   param(
-    [Parameter(Mandatory = $true)][string]$InstallRoot
+    [Parameter(Mandatory = $true)][string]$InstallRoot,
+    [string]$KeepPath = ''
   )
   if (-not (Test-Path $InstallRoot)) { return }
   $status = Join-Path $InstallRoot 'upgrade-status.txt'
@@ -54,6 +56,16 @@ function Clear-AxPendingUpgradeState {
     ForEach-Object {
       Remove-Item -Recurse -Force $_.FullName -ErrorAction SilentlyContinue
       Write-Host "ax: removed leftover $($_.Name)" -ForegroundColor Yellow
+    }
+  # Unpacked bundles from an install that failed or was interrupted before activation.
+  $keepFull = if ($KeepPath) { [System.IO.Path]::GetFullPath($KeepPath) } else { '' }
+  Get-ChildItem -LiteralPath $InstallRoot -Directory -Force -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like '.install-new-*' -and $_.FullName -ne $keepFull } |
+    ForEach-Object {
+      Remove-Item -Recurse -Force -LiteralPath $_.FullName -ErrorAction SilentlyContinue
+      if (-not (Test-Path -LiteralPath $_.FullName)) {
+        Write-Host "ax: removed leftover $($_.Name)" -ForegroundColor Yellow
+      }
     }
   # Parked trees from a failed Windows activate (current.old or current.old-<id> next to current).
   Get-ChildItem -LiteralPath $InstallRoot -Directory -ErrorAction SilentlyContinue |
@@ -100,7 +112,7 @@ function Switch-AxInstallTree {
     [Parameter(Mandatory = $true)][string]$Live
   )
   Stop-AxProcesses
-  Clear-AxPendingUpgradeState -InstallRoot $installDir
+  Clear-AxPendingUpgradeState -InstallRoot $installDir -KeepPath $NewTree
   # Move-Item into an existing directory would nest the live tree inside it, so a
   # parked tree that cannot be removed (a locked file) gets a unique name instead.
   $parked = "$Live.old"
@@ -129,6 +141,7 @@ function Switch-AxInstallTree {
     Move-Item -LiteralPath $NewTree -Destination $Live -ErrorAction Stop
   } catch {
     if (Test-Path -LiteralPath $parked) { Move-Item -LiteralPath $parked -Destination $Live -ErrorAction SilentlyContinue }
+    Remove-Item -Recurse -Force -LiteralPath $NewTree -ErrorAction SilentlyContinue
     throw "ax: could not activate the new install ($_); the previous install was restored."
   }
   if (Test-Path -LiteralPath $parked) { Remove-Item -Recurse -Force -LiteralPath $parked -ErrorAction SilentlyContinue }

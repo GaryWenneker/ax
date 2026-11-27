@@ -45,6 +45,9 @@ clear_pending_upgrade_state() {
     echo "ax: cleared stuck upgrade-status.txt" >&2
   fi
   find "$INSTALL_DIR" -maxdepth 1 -type d -name 'upgrade-staging-*' -exec rm -rf {} + 2>/dev/null || true
+  # Unpacked bundles from an install that failed or was interrupted; this install's own stays.
+  find "$INSTALL_DIR" -maxdepth 1 -type d -name '.install-new-*' ! -name ".install-new-$$" \
+    -exec rm -rf {} + 2>/dev/null || true
   for ax_old in "$INSTALL_DIR"/current.old "$INSTALL_DIR"/current.old.*; do
     if [ -d "$ax_old" ] && rm -rf "$ax_old" 2>/dev/null; then
       echo "ax: removed parked ${ax_old##*/}" >&2
@@ -566,6 +569,8 @@ github_url="https://github.com/$REPO/releases/download/$version/ax-${target}.tar
 echo "Installing ax $version ($target) — latest available..."
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+# POSIX sh skips the EXIT trap when a signal ends the script; exiting from the signal runs it.
+trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
 
 if curl -fsSL "$github_url" -o "$tmp/ax.tar.gz" 2>/dev/null; then
   echo "  downloaded from: $github_url"
