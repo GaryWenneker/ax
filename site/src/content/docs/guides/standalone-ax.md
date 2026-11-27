@@ -175,7 +175,7 @@ The knowledge envelope retains its 8 MiB and 10,000-record-per-kind limits; its 
 
 `ax server discover --config ./ax-replica.json --seconds 5` lists candidate peers when a primary was started with `--discovery-port 9071 --advertise https://primary.example.com`. Announcements are public hints, never authentication. The replica continues to trust only its configured `primary_url`.
 
-**UDP registration is different**: it uses `--push-port 9072` and signed messages with the per-project token. Registration never automatically trusts a new node simply because it answered an announcement.
+**UDP registration is different**: it uses `--push-port 9072` and signed messages with the per-project token. Registration never automatically trusts a new node simply because it answered an announcement. The primary listens for UDP on the same address as `--bind`: with the default loopback bind only replicas on the same computer can register, so bind a private interface (with `--allow-private-http`) for LAN replicas. Each signed message carries a one-time nonce, and a captured message sent again is ignored.
 
 ## 7. Docker, hosting and remote clients
 

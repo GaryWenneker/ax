@@ -3,7 +3,8 @@
 //! Replica -> primary: signed REGISTER heartbeats (node, project and socket).
 //! Primary -> replica: signed CHANGE hints containing only the new revision.
 //! A hint causes an authenticated HTTPS pull. UDP never transports Ax data.
-//! All UDP messages are size-bounded and short-lived. No automatic leader
+//! The primary listens on its HTTP bind address only. Every UDP message is
+//! size-bounded and short-lived, and a nonce is accepted once. No automatic leader
 //! election, no change to export/share settings and no unauthenticated peers.
 
 use crate::{
@@ -160,6 +161,48 @@ fn local_lan(ip: IpAddr) -> bool {
     }
 }
 
+const MAX_REMEMBERED_NONCES: usize = 4096;
+
+/// Nonces of accepted datagrams, kept until the message would fail the clock
+/// check anyway. A captured datagram sent again is rejected.
+#[derive(Default)]
+struct ReplayGuard {
+    seen: HashMap<String, u64>,
+}
+
+impl ReplayGuard {
+    /// True the first time a datagram's nonce is seen while it is still fresh.
+    /// Call only after the signature was verified.
+    fn first_use(&mut self, message: &Datagram, now: u64) -> bool {
+        self.seen.retain(|_, expires| *expires >= now);
+        let key = format!(
+            "{}|{}|{}",
+            message.project_id, message.node_id, message.nonce
+        );
+        if self.seen.contains_key(&key) {
+            return false;
+        }
+        if self.seen.len() >= MAX_REMEMBERED_NONCES {
+            if let Some(oldest) = self
+                .seen
+                .iter()
+                .min_by_key(|(_, expires)| **expires)
+                .map(|(key, _)| key.clone())
+            {
+                self.seen.remove(&oldest);
+            }
+        }
+        self.seen
+            .insert(key, message.timestamp.saturating_add(CLOCK_SKEW_SECS));
+        true
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.seen.len()
+    }
+}
+
 #[derive(Clone)]
 struct Registration {
     address: SocketAddr,
@@ -260,17 +303,21 @@ impl ChangeDetector {
     }
 }
 
+/// The primary listens for registrations on the same address as its HTTP
+/// listener, so a loopback-only node never opens UDP on other interfaces.
+async fn bind_primary_socket(http_ip: IpAddr, udp_port: u16) -> Result<UdpSocket, String> {
+    UdpSocket::bind((http_ip, udp_port))
+        .await
+        .map_err(|e| format!("cannot bind UDP push listener: {e}"))
+}
+
 /// Primary: register only authenticated replicas. Never trust a discovered
 /// primary or a claimed IP in packet JSON: use the UDP socket source address.
-pub async fn primary(config: ServerConfig, udp_port: u16) -> Result<(), String> {
+pub async fn primary(config: ServerConfig, http_ip: IpAddr, udp_port: u16) -> Result<(), String> {
     if config.role != NodeRole::Primary {
         return Err("UDP primary registration requires a primary node".into());
     }
-    let socket = Arc::new(
-        UdpSocket::bind(("0.0.0.0", udp_port))
-            .await
-            .map_err(|e| format!("cannot bind UDP push listener: {e}"))?,
-    );
+    let socket = Arc::new(bind_primary_socket(http_ip, udp_port).await?);
     let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
     let access_db_path = ax_global_db::global_db_path().map_err(|e| e.to_string())?;
     let access_db = ax_global_db::open_and_init(&access_db_path)
@@ -282,6 +329,7 @@ pub async fn primary(config: ServerConfig, udp_port: u16) -> Result<(), String> 
     let receive_access_db = access_db.clone();
     let _receiver = tokio::spawn(async move {
         let mut buf = [0u8; MAX_MESSAGE_BYTES + 1];
+        let mut replays = ReplayGuard::default();
         loop {
             let Ok((length, sender)) = receive_socket.recv_from(&mut buf).await else {
                 continue;
@@ -298,6 +346,9 @@ pub async fn primary(config: ServerConfig, udp_port: u16) -> Result<(), String> 
             let Some(message) = decode(&buf[..length], &receive_config, "register", &token) else {
                 continue;
             };
+            if !replays.first_use(&message, now_seconds()) {
+                continue;
+            }
             if let Err(error) = crate::server_http::ensure_trusted_replica(
                 &receive_access_db,
                 &message.node_id,
@@ -429,6 +480,7 @@ pub async fn replica(
         }
     });
     let mut previous_change: HashMap<String, String> = HashMap::new();
+    let mut replays = ReplayGuard::default();
     let mut buf = [0u8; MAX_MESSAGE_BYTES + 1];
     loop {
         let (length, source) = socket
@@ -447,6 +499,9 @@ pub async fn replica(
         let Some(message) = decode(&buf[..length], &config, "changed", &token) else {
             continue;
         };
+        if !replays.first_use(&message, now_seconds()) {
+            continue;
+        }
         let Some(revision) = message.revision else {
             continue;
         };
@@ -545,6 +600,43 @@ mod tests {
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         )
         .is_none());
+    }
+
+    #[tokio::test]
+    async fn primary_listens_on_the_http_bind_address_only() {
+        let socket = bind_primary_socket(IpAddr::from([127, 0, 0, 1]), 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            socket.local_addr().unwrap().ip(),
+            IpAddr::from([127, 0, 0, 1])
+        );
+    }
+
+    #[test]
+    fn a_replayed_datagram_is_rejected() {
+        let sender = config(NodeRole::Replica);
+        let message = packet("register", &sender, "work", None, &"a".repeat(32));
+        let mut seen = ReplayGuard::default();
+        let now = message.timestamp;
+        assert!(seen.first_use(&message, now));
+        assert!(!seen.first_use(&message, now + 1));
+        let fresh = packet("register", &sender, "work", None, &"a".repeat(32));
+        assert!(seen.first_use(&fresh, now + 1));
+        // A nonce is forgotten only after the message could no longer pass the clock check.
+        assert!(!seen.first_use(&message, now + CLOCK_SKEW_SECS));
+    }
+
+    #[test]
+    fn the_replay_guard_stays_bounded() {
+        let sender = config(NodeRole::Replica);
+        let mut seen = ReplayGuard::default();
+        let now = now_seconds();
+        for _ in 0..MAX_REMEMBERED_NONCES + 10 {
+            let message = packet("register", &sender, "work", None, &"a".repeat(32));
+            assert!(seen.first_use(&message, now));
+        }
+        assert!(seen.len() <= MAX_REMEMBERED_NONCES);
     }
 
     #[tokio::test]

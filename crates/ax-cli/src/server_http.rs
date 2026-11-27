@@ -582,7 +582,7 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
         let config_path = path.to_path_buf();
         Some(tokio::spawn(async move {
             let result = match node.role {
-                NodeRole::Primary => server_push::primary(node, push_port).await,
+                NodeRole::Primary => server_push::primary(node, bind.ip(), push_port).await,
                 NodeRole::Replica => {
                     server_push::replica(node, config_path, push_port, auto_apply_memories).await
                 }
