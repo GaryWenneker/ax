@@ -22,6 +22,8 @@ interface Props {
   /** Open the properties popup as soon as this skill is shown. */
   openProperties?: boolean;
   propertiesTick?: number;
+  /** Called with true while the editor holds changes that are not saved yet. */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 function parseCsv(s: string): string[] {
@@ -41,7 +43,11 @@ function normalizeSkillFm(fm: SkillFrontmatter): SkillFrontmatter {
   };
 }
 
-export default function PolicySkillInlineWorkspace({ skillName, origin, projectId, onClose, onSaved, openProperties = false, propertiesTick = 0 }: Props) {
+function editorSnapshot(fm: unknown, body: string, ...texts: string[]): string {
+  return JSON.stringify([fm, body, ...texts]);
+}
+
+export default function PolicySkillInlineWorkspace({ skillName, origin, projectId, onClose, onSaved, openProperties = false, propertiesTick = 0, onDirtyChange }: Props) {
   const [fm, setFm] = useState<SkillFrontmatter | null>(null);
   const [body, setBody] = useState('');
   const links = useItemLinks('skill', skillName, origin, body);
@@ -54,6 +60,13 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
   /** Reveal content when switching rows; first open uses the blade slide-in only. */
   const [reveal, setReveal] = useState(false);
   const prevSkillNameRef = useRef<string | null>(null);
+  /** Snapshot of the editor right after load or save; differs once there are unsaved edits. */
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+  const currentSnapshot = fm ? editorSnapshot(fm, body, triggersText, tagsText) : null;
+  const dirty = savedSnapshot !== null && currentSnapshot !== null && currentSnapshot !== savedSnapshot;
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -64,6 +77,7 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
     setError('');
     setFm(null);
     setBody('');
+    setSavedSnapshot(null);
     fetchPolicySkill(skillName, { origin, projectId })
       .then((doc) => {
         if (cancelled) return;
@@ -72,6 +86,7 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
         setBody(doc.body);
         setTriggersText(normalized.triggers.join(', '));
         setTagsText(normalized.tags.join(', '));
+        setSavedSnapshot(editorSnapshot(normalized, doc.body, normalized.triggers.join(', '), normalized.tags.join(', ')));
       })
       .catch((e: Error) => {
         if (!cancelled) setError(e.message);
@@ -90,6 +105,7 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
 
   async function save() {
     if (!fm) return;
+    const snapshotAtSave = currentSnapshot;
     setSaving(true);
     setError('');
     try {
@@ -105,6 +121,7 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
         tags,
       };
       await savePolicySkill(skillName, frontmatter, body, { origin, projectId });
+      setSavedSnapshot(snapshotAtSave);
       onSaved?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed');
@@ -136,6 +153,7 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
                   setBody(doc.body);
                   setTriggersText(normalized.triggers.join(', '));
                   setTagsText(normalized.tags.join(', '));
+                  setSavedSnapshot(editorSnapshot(normalized, doc.body, normalized.triggers.join(', '), normalized.tags.join(', ')));
                   onSaved?.();
                 })
                 .catch((e: Error) => setError(e.message))

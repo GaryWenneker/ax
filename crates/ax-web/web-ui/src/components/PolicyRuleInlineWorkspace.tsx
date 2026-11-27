@@ -22,6 +22,8 @@ interface Props {
   /** Open the properties popup as soon as this rule is shown. */
   openProperties?: boolean;
   propertiesTick?: number;
+  /** Called with true while the editor holds changes that are not saved yet. */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 function parseCsv(s: string): string[] {
@@ -42,7 +44,11 @@ function normalizeRuleFm(fm: RuleFrontmatter): RuleFrontmatter {
   };
 }
 
-export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, onClose, onSaved, openProperties = false, propertiesTick = 0 }: Props) {
+function editorSnapshot(fm: unknown, body: string, ...texts: string[]): string {
+  return JSON.stringify([fm, body, ...texts]);
+}
+
+export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, onClose, onSaved, openProperties = false, propertiesTick = 0, onDirtyChange }: Props) {
   const [fm, setFm] = useState<RuleFrontmatter | null>(null);
   const [body, setBody] = useState('');
   const links = useItemLinks('rule', ruleId, origin, body);
@@ -56,6 +62,13 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
   /** Reveal content when switching rows; first open uses the blade slide-in only. */
   const [reveal, setReveal] = useState(false);
   const prevRuleIdRef = useRef<string | null>(null);
+  /** Snapshot of the editor right after load or save; differs once there are unsaved edits. */
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+  const currentSnapshot = fm ? editorSnapshot(fm, body, globsText, triggersText, tagsText) : null;
+  const dirty = savedSnapshot !== null && currentSnapshot !== null && currentSnapshot !== savedSnapshot;
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,6 +79,7 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
     setError('');
     setFm(null);
     setBody('');
+    setSavedSnapshot(null);
     fetchPolicyRule(ruleId, { origin, projectId })
       .then((doc) => {
         if (cancelled) return;
@@ -75,6 +89,7 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
         setGlobsText(normalized.globs.join(', '));
         setTriggersText(normalized.triggers.join(', '));
         setTagsText(normalized.tags.join(', '));
+        setSavedSnapshot(editorSnapshot(normalized, doc.body, normalized.globs.join(', '), normalized.triggers.join(', '), normalized.tags.join(', ')));
       })
       .catch((e: Error) => {
         if (!cancelled) setError(e.message);
@@ -93,6 +108,7 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
 
   async function save() {
     if (!fm) return;
+    const snapshotAtSave = currentSnapshot;
     setSaving(true);
     setError('');
     try {
@@ -116,6 +132,7 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
         tags,
       };
       await savePolicyRule(ruleId, frontmatter, body, { origin, projectId });
+      setSavedSnapshot(snapshotAtSave);
       onSaved?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed');
@@ -148,6 +165,7 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
                   setGlobsText(normalized.globs.join(', '));
                   setTriggersText(normalized.triggers.join(', '));
                   setTagsText(normalized.tags.join(', '));
+                  setSavedSnapshot(editorSnapshot(normalized, doc.body, normalized.globs.join(', '), normalized.triggers.join(', '), normalized.tags.join(', ')));
                   onSaved?.();
                 })
                 .catch((e: Error) => setError(e.message))
