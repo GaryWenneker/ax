@@ -251,8 +251,9 @@ async fn handle_ship_command(
             let evaluating = ctx.evaluating.clone();
             let report_store = ctx.report.clone();
             tokio::spawn(async move {
-                let result = daemon.evaluate().await;
-                evaluating.store(false, Ordering::SeqCst);
+                let runner = daemon.clone();
+                let result =
+                    run_clearing_flag(evaluating, async move { runner.evaluate().await }).await;
                 match result {
                     Ok(report) => {
                         *report_store.lock().await = Some(report);
@@ -1188,9 +1189,55 @@ fn parse_host_port(host: &str) -> Option<u16> {
     after_scheme.split(':').nth(1).and_then(|p| p.parse().ok())
 }
 
+/// Run one evaluation in its own task and clear the `evaluating` flag when it
+/// ends, also when it panics; a panic comes back as an error message.
+async fn run_clearing_flag<T, F>(evaluating: Arc<AtomicBool>, run: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: std::future::Future<Output = Result<T, String>> + Send + 'static,
+{
+    let result = match tokio::spawn(run).await {
+        Ok(result) => result,
+        Err(error) if error.is_panic() => Err("Evaluation stopped unexpectedly".into()),
+        Err(_) => Err("Evaluation was cancelled".into()),
+    };
+    evaluating.store(false, Ordering::SeqCst);
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_panicking_evaluation_clears_the_evaluating_flag() {
+        let flag = Arc::new(AtomicBool::new(true));
+        let task = tokio::spawn(run_clearing_flag(flag.clone(), async {
+            if flag_panics() {
+                panic!("unexpected git state");
+            }
+            Ok::<(), String>(())
+        }));
+        let outcome = task.await;
+        assert!(
+            !flag.load(Ordering::SeqCst),
+            "a panic must not leave evaluate marked as running"
+        );
+        let message = outcome
+            .expect("the supervisor reports the panic instead of dying")
+            .unwrap_err();
+        assert!(message.contains("unexpectedly"), "{message}");
+
+        // A normal run clears the flag and passes its result through.
+        flag.store(true, Ordering::SeqCst);
+        let value = run_clearing_flag(flag.clone(), async { Ok::<u8, String>(7) }).await;
+        assert_eq!(value, Ok(7));
+        assert!(!flag.load(Ordering::SeqCst));
+    }
+
+    fn flag_panics() -> bool {
+        true
+    }
 
     #[tokio::test]
     async fn a_long_sonar_operation_keeps_settings_changed_while_it_ran() {
