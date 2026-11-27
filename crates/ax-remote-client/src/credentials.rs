@@ -6,7 +6,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Connection {
     pub url: String,
     pub client_id: String,
@@ -15,12 +15,71 @@ pub struct Connection {
     pub token_endpoint: String,
     pub revocation_endpoint: Option<String>,
     pub expires_at: u64,
+    /// Who uses this sign-in ([`USER_AX`], [`USER_ADMIN`]). One entry per
+    /// address is shared by all of them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub users: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct Tokens {
     pub access_token: String,
     pub refresh_token: Option<String>,
+}
+
+/// `ax mcp remote login` and the Command Center.
+pub const USER_AX: &str = "ax";
+/// The ax-admin application.
+pub const USER_ADMIN: &str = "ax-admin";
+
+/// What is left after one user lets go of a sign-in.
+#[derive(Debug, PartialEq)]
+enum Release {
+    /// Nobody uses it any more: remove the tokens and revoke them.
+    Revoke,
+    /// Others still use it (or nothing was stored): keep it, with this list.
+    Keep(Vec<Connection>),
+}
+
+/// Stands for the users of an entry stored before users were recorded. They
+/// are unknown, so such an entry is never revoked on someone else's behalf.
+const USER_UNKNOWN: &str = "unknown";
+
+fn users_of(connection: &Connection) -> Vec<String> {
+    if connection.users.is_empty() {
+        vec![USER_UNKNOWN.to_string()]
+    } else {
+        connection.users.clone()
+    }
+}
+
+/// The list after saving `connection`, which replaces the entry of its
+/// address. The users of the old entry stay users of the new one.
+fn merged(mut list: Vec<Connection>, mut connection: Connection) -> Vec<Connection> {
+    if let Some(old) = list.iter().find(|c| c.url == connection.url) {
+        for user in users_of(old) {
+            if !connection.users.contains(&user) {
+                connection.users.push(user);
+            }
+        }
+    }
+    list.retain(|c| c.url != connection.url);
+    list.push(connection);
+    list
+}
+
+/// What happens when `user` stops using the sign-in for `url`.
+fn released(mut list: Vec<Connection>, url: &str, user: &str) -> Release {
+    let Some(entry) = list.iter_mut().find(|c| c.url == url) else {
+        return Release::Keep(list);
+    };
+    let mut users = users_of(entry);
+    users.retain(|u| u != user);
+    if users.is_empty() {
+        return Release::Revoke;
+    }
+    entry.users = users;
+    Release::Keep(list)
 }
 
 pub fn now() -> u64 {
@@ -96,9 +155,7 @@ fn write_connections(connections: &[Connection]) -> Result<(), String> {
 pub fn save(connection: Connection, tokens: &Tokens) -> Result<(), String> {
     let _lock = lock_file("remote-connections.lock")?;
     write_tokens(&entry(&connection.url)?, tokens)?;
-    let mut list = read_connections()?;
-    list.retain(|c| c.url != connection.url);
-    list.push(connection);
+    let list = merged(read_connections()?, connection);
     write_connections(&list)
 }
 
@@ -118,6 +175,17 @@ pub fn remove(url: &str) -> Result<(), String> {
     let mut list = read_connections()?;
     list.retain(|c| c.url != url);
     write_connections(&list)
+}
+
+/// Lets `user` stop using the sign-in for `url`. Returns true when nobody
+/// uses it any more, so the caller removes and revokes the tokens. Otherwise
+/// only `user` is taken off the entry.
+pub fn release(url: &str, user: &str) -> Result<bool, String> {
+    let _lock = lock_file("remote-connections.lock")?;
+    match released(read_connections()?, url, user) {
+        Release::Revoke => Ok(true),
+        Release::Keep(list) => write_connections(&list).map(|()| false),
+    }
 }
 
 fn lock_file(name: &str) -> Result<std::fs::File, String> {
@@ -180,8 +248,59 @@ mod tests {
             token_endpoint: "https://issuer.example/token".into(),
             revocation_endpoint: None,
             expires_at: 1,
+            users: Vec::new(),
         };
         let metadata = serde_json::to_string(&connection).unwrap();
         assert!(!metadata.contains("private-access") && !metadata.contains("private-refresh"));
+    }
+
+    fn entry_for(url: &str, users: &[&str]) -> Connection {
+        Connection {
+            url: url.into(),
+            client_id: "native".into(),
+            issuer: "https://issuer.example/".into(),
+            resource: "https://ax.example".into(),
+            token_endpoint: "https://issuer.example/token".into(),
+            revocation_endpoint: None,
+            expires_at: 1,
+            users: users.iter().map(|u| u.to_string()).collect(),
+        }
+    }
+
+    const URL: &str = "https://ax.example/projects/app/mcp";
+
+    #[test]
+    fn a_sign_in_used_by_the_cli_is_not_revoked_when_ax_admin_lets_go() {
+        // The CLI signed in, then ax-admin signed in to the same address.
+        let list = merged(
+            vec![entry_for(URL, &[USER_AX])],
+            entry_for(URL, &[USER_ADMIN]),
+        );
+        assert_eq!(list.len(), 1);
+        match released(list, URL, USER_ADMIN) {
+            Release::Keep(list) => assert_eq!(list[0].users, vec![USER_AX.to_string()]),
+            Release::Revoke => panic!("ax-admin revoked the CLI's sign-in"),
+        }
+    }
+
+    #[test]
+    fn a_sign_in_stored_before_users_were_recorded_is_never_revoked_by_ax_admin() {
+        let list = merged(vec![entry_for(URL, &[])], entry_for(URL, &[USER_ADMIN]));
+        assert!(matches!(released(list, URL, USER_ADMIN), Release::Keep(_)));
+        // A refresh keeps the users it found.
+        let list = merged(vec![entry_for(URL, &[USER_ADMIN])], entry_for(URL, &[]));
+        assert_eq!(list[0].users, vec![USER_ADMIN.to_string()]);
+    }
+
+    #[test]
+    fn a_sign_in_only_ax_admin_uses_is_revoked_when_it_lets_go() {
+        let other = "https://ax.example/projects/other/mcp";
+        let list = vec![entry_for(URL, &[USER_ADMIN]), entry_for(other, &[USER_AX])];
+        assert_eq!(released(list.clone(), URL, USER_ADMIN), Release::Revoke);
+        // Nothing stored for the address: nothing to revoke.
+        assert!(matches!(
+            released(list, "https://ax.example/projects/none/mcp", USER_ADMIN),
+            Release::Keep(_)
+        ));
     }
 }

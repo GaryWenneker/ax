@@ -101,7 +101,7 @@ Choose **Browser sign-in**, enter the public client ID of the environment and se
 
 Tick **Also ask for admin access** when your account has the admin grant and you want the management pages; it asks for write access as well. An environment whose authorization server does not issue the admin scope refuses such a sign-in, so leave it off there.
 
-Browser sign-in needs an `https://` address. It uses the same sign-in as `ax mcp remote login` and shares its stored tokens for that address: removing the connection in `ax-admin` also signs out `ax mcp remote` for that address on this computer. Closing or cancelling the sign-in before it finishes stores nothing.
+Browser sign-in needs an `https://` address. It uses the same sign-in as `ax mcp remote login` and shares its stored tokens for that address. Removing the connection in `ax-admin`, or a sign-in whose check fails, removes and revokes those tokens only when nothing else uses them: when `ax mcp remote login` or the Command Center also signed in to that address (or the tokens were stored by a version that did not record who uses them), they stay and `ax mcp remote` keeps working. `ax mcp remote logout` still signs the address out for everyone. Closing or cancelling the sign-in before it finishes stores nothing.
 
 ## Several environments
 
@@ -111,7 +111,7 @@ The **Connections** button in the title bar is always visible. It lists the save
 - **Switch to this**: make another environment the one you are looking at. The pages reload from that server.
 - **Test**: check a saved connection without retyping its key.
 - **Edit**: change the name, the address or the key. A changed key is checked before it replaces the saved one. A saved key is only ever sent to the address it was saved for, so another address needs its key entered again.
-- **Remove**: delete the connection and its stored credential from this computer. The environment itself is not changed.
+- **Remove**: delete the connection and its stored credential from this computer. A browser sign-in that `ax mcp remote` also uses stays for it. The environment itself is not changed.
 
 ![The Connections panel with saved environments](/screenshots/ax-admin-connections.png)
 

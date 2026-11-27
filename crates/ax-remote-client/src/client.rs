@@ -266,6 +266,18 @@ pub async fn start_login_scoped(
     write: bool,
     admin: bool,
 ) -> Result<LoginStart, String> {
+    start_login_as(url, client_id, write, admin, credentials::USER_AX).await
+}
+
+/// Like `start_login_scoped`, recording `user` as a user of the stored
+/// sign-in so that [`release`] by another user leaves it in place.
+pub async fn start_login_as(
+    url: String,
+    client_id: String,
+    write: bool,
+    admin: bool,
+    user: &'static str,
+) -> Result<LoginStart, String> {
     let scope = login_scope(write, admin);
     if client_id.trim().is_empty() || client_id.len() > 2048 {
         return Err("A registered native OAuth client ID is required".into());
@@ -348,6 +360,10 @@ pub async fn start_login_scoped(
                 verifier.secret(),
             )
             .await?;
+            let connection = credentials::Connection {
+                users: vec![user.to_string()],
+                ..connection
+            };
             tokio::task::spawn_blocking(move || credentials::save(connection, &tokens))
                 .await
                 .map_err(|_| "Credential storage task failed")??;
@@ -408,6 +424,7 @@ async fn exchange_login(
             token_endpoint: metadata.token_endpoint,
             revocation_endpoint: metadata.revocation_endpoint,
             expires_at: credentials::now() + token.expires_in,
+            users: Vec::new(),
         },
         Tokens {
             access_token: token.access_token,
@@ -598,6 +615,7 @@ async fn token_for(url: &str, force_refresh: bool) -> Result<String, String> {
     Ok(token)
 }
 
+/// Removes the sign-in for `url` for every user and revokes its tokens.
 pub async fn logout(url: &str) -> Result<(), String> {
     let url = url.to_owned();
     // Serialize with refresh so an in-flight refresh cannot recreate a disconnected login.
@@ -605,6 +623,31 @@ pub async fn logout(url: &str) -> Result<(), String> {
     let _refresh_lock = tokio::task::spawn_blocking(move || credentials::lock_refresh(&lock_url))
         .await
         .map_err(|_| "Credential lock task failed")??;
+    revoke_locked(url).await
+}
+
+/// Lets `user` stop using the sign-in for `url`. The tokens are removed and
+/// revoked only when no other user (such as `ax mcp remote`, or an entry
+/// whose users are unknown) still uses them.
+pub async fn release(url: &str, user: &'static str) -> Result<(), String> {
+    let url = url.to_owned();
+    let lock_url = url.clone();
+    let _refresh_lock = tokio::task::spawn_blocking(move || credentials::lock_refresh(&lock_url))
+        .await
+        .map_err(|_| "Credential lock task failed")??;
+    let release_url = url.clone();
+    let unused = tokio::task::spawn_blocking(move || credentials::release(&release_url, user))
+        .await
+        .map_err(|_| "Credential storage task failed")??;
+    if unused {
+        revoke_locked(url).await
+    } else {
+        Ok(())
+    }
+}
+
+/// The body of `logout`; the caller holds the refresh lock of `url`.
+async fn revoke_locked(url: String) -> Result<(), String> {
     let connection = credentials::connection(&url)?;
     let tokens = credentials::load_tokens(&url).ok();
     // Always remove local access even if remote revocation is unavailable.
