@@ -129,7 +129,7 @@ The replica uses its own transient UDP socket, so it can run on the same host as
 
 1. The replica sends an authenticated registration over UDP to the configured primary every 10 seconds.
 2. The primary tracks connected project/node IDs and their real UDP source addresses. Missing heartbeats expire after 45 seconds.
-3. Every three seconds the primary compares snapshot revisions of enrolled projects.
+3. Every three seconds the primary checks each project that has a registered replica. It builds a snapshot and compares its revision only when the project database, its WAL, the MCP logs or the usage database changed since the last check.
 4. On a new revision, it sends a **signed UDP change notification** to registered replicas.
 5. The replica verifies the message, contributes its native project data, and receives the combined knowledge and chunked datasets using the project-specific secret over HTTP(S).
 6. If UDP is dropped or blocked, a scheduled HTTPS pull still converges the mirror.
