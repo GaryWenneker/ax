@@ -38,13 +38,7 @@ pub async fn run() -> Result<(), String> {
 
     super::turn_hook::end_from_input(&input).await;
 
-    // Claude sets this true when re-invoking the hook after a prior block —
-    // never block twice on the same turn, or the conversation loops forever.
-    if input
-        .get("stop_hook_active")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-    {
+    if already_blocked(&input) {
         return Ok(());
     }
 
@@ -71,9 +65,63 @@ pub async fn run() -> Result<(), String> {
         return Ok(());
     }
 
-    let unscanned = targets.len().saturating_sub(MAX_FILES_SCANNED);
     let pool = ax.db_pool().clone();
-    let mut violations: Vec<(String, String)> = Vec::new();
+    let (violations, unscanned) = scan_targets(targets, |abs_path, bytes| {
+        let pool = pool.clone();
+        let root = root.clone();
+        async move {
+            guard_operation(&pool, &root, &abs_path, GuardOp::Write, Some(&bytes))
+                .await
+                .map(|result| {
+                    result
+                        .violations
+                        .into_iter()
+                        .map(|v| format!("[{}] {}", v.rule_id, v.message))
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+    })
+    .await;
+
+    let Some(out) = block_decision(&violations, unscanned) else {
+        if unscanned > 0 {
+            eprintln!(
+                "ax stop-hook: {unscanned} changed file(s) were not guard-scanned (limit {MAX_FILES_SCANNED} per turn)."
+            );
+        }
+        return Ok(());
+    };
+    let mut stdout = io::stdout();
+    stdout
+        .write_all(out.to_string().as_bytes())
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Claude sets `stop_hook_active` when it re-invokes the hook after a prior
+/// block. The hook never blocks twice on the same turn, or the conversation
+/// loops forever.
+fn already_blocked(input: &serde_json::Value) -> bool {
+    input
+        .get("stop_hook_active")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// Run `guard` on the first [`MAX_FILES_SCANNED`] targets, skipping files that
+/// cannot be read or are larger than [`MAX_FILE_BYTES`]. Returns each
+/// violation as `(path shown, message)` and the number of targets left out.
+async fn scan_targets<F, Fut>(
+    targets: Vec<GuardTarget>,
+    mut guard: F,
+) -> (Vec<(String, String)>, usize)
+where
+    F: FnMut(PathBuf, Vec<u8>) -> Fut,
+    Fut: std::future::Future<Output = Vec<String>>,
+{
+    let unscanned = targets.len().saturating_sub(MAX_FILES_SCANNED);
+    let mut violations = Vec::new();
     for GuardTarget { rel_path, abs_path } in targets.into_iter().take(MAX_FILES_SCANNED) {
         let Ok(meta) = std::fs::metadata(&abs_path) else {
             continue; // unreadable — nothing to guard
@@ -84,24 +132,19 @@ pub async fn run() -> Result<(), String> {
         let Ok(bytes) = std::fs::read(&abs_path) else {
             continue;
         };
-        if let Ok(result) =
-            guard_operation(&pool, &root, &abs_path, GuardOp::Write, Some(&bytes)).await
-        {
-            for v in result.violations {
-                violations.push((rel_path.clone(), format!("[{}] {}", v.rule_id, v.message)));
-            }
+        for message in guard(abs_path, bytes).await {
+            violations.push((rel_path.clone(), message));
         }
     }
+    (violations, unscanned)
+}
 
+/// The Stop hook's block decision for these violations, or `None` to let the
+/// turn end.
+fn block_decision(violations: &[(String, String)], unscanned: usize) -> Option<serde_json::Value> {
     if violations.is_empty() {
-        if unscanned > 0 {
-            eprintln!(
-                "ax stop-hook: {unscanned} changed file(s) were not guard-scanned (limit {MAX_FILES_SCANNED} per turn)."
-            );
-        }
-        return Ok(());
+        return None;
     }
-
     let mut lines: Vec<String> = violations
         .iter()
         .take(MAX_VIOLATIONS_SHOWN)
@@ -123,13 +166,7 @@ pub async fn run() -> Result<(), String> {
         violations.len(),
         lines.join("\n")
     );
-
-    let out = serde_json::json!({ "decision": "block", "reason": reason });
-    let mut stdout = io::stdout();
-    stdout
-        .write_all(out.to_string().as_bytes())
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    Some(serde_json::json!({ "decision": "block", "reason": reason }))
 }
 
 #[derive(Debug, PartialEq)]
@@ -355,14 +392,92 @@ mod tests {
     }
 
     #[test]
-    fn stop_hook_active_short_circuits_without_stdin_block() {
-        // stop_hook_active=true must never be treated as a violation signal —
-        // this is a smoke check that the JSON field name/shape used in `run()`
-        // matches what Claude Code actually sends.
-        let input: serde_json::Value = serde_json::json!({ "stop_hook_active": true, "cwd": "." });
+    fn stop_hook_active_short_circuits() {
+        assert!(already_blocked(
+            &serde_json::json!({ "stop_hook_active": true, "cwd": "." })
+        ));
+        assert!(!already_blocked(
+            &serde_json::json!({ "stop_hook_active": false })
+        ));
+        assert!(!already_blocked(
+            &serde_json::json!({ "stop_hook_active": "true" })
+        ));
+        assert!(!already_blocked(&serde_json::Value::Null));
+    }
+
+    #[test]
+    fn no_violations_never_block() {
+        assert_eq!(block_decision(&[], 0), None);
+        assert_eq!(block_decision(&[], 7), None);
+    }
+
+    #[test]
+    fn violations_block_with_a_capped_reason() {
+        let violations: Vec<(String, String)> = (0..MAX_VIOLATIONS_SHOWN + 2)
+            .map(|i| (format!("f{i}.rs"), format!("[rule] bad {i}")))
+            .collect();
+        let out = block_decision(&violations, 3).unwrap();
+        assert_eq!(out["decision"], "block");
+        let reason = out["reason"].as_str().unwrap();
+        assert!(reason.starts_with(&format!(
+            "ax policy guard found {} CRITICAL violation(s)",
+            violations.len()
+        )));
+        assert!(reason.contains("- f0.rs: [rule] bad 0"));
+        assert!(!reason.contains(&format!("f{MAX_VIOLATIONS_SHOWN}.rs")));
+        assert!(reason.contains("- …and 2 more"));
+        assert!(reason.contains("- 3 more changed file(s) were not scanned"));
+    }
+
+    fn target(dir: &Path, name: &str, bytes: &[u8]) -> GuardTarget {
+        let abs_path = dir.join(name);
+        std::fs::write(&abs_path, bytes).unwrap();
+        GuardTarget {
+            rel_path: name.to_string(),
+            abs_path,
+        }
+    }
+
+    #[tokio::test]
+    async fn scan_caps_files_and_skips_large_or_missing_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut targets: Vec<GuardTarget> = (0..MAX_FILES_SCANNED + 4)
+            .map(|i| target(dir.path(), &format!("f{i:02}.rs"), b"bad"))
+            .collect();
+        targets[0] = target(
+            dir.path(),
+            "big.rs",
+            &vec![b'x'; MAX_FILE_BYTES as usize + 1],
+        );
+        targets[1] = GuardTarget {
+            rel_path: "gone.rs".into(),
+            abs_path: dir.path().join("gone.rs"),
+        };
+        let mut calls = 0;
+        let (violations, unscanned) = scan_targets(targets, |_, bytes| {
+            calls += 1;
+            async move {
+                if bytes == b"bad" {
+                    vec!["[rule] bad".to_string()]
+                } else {
+                    Vec::new()
+                }
+            }
+        })
+        .await;
+        assert_eq!(unscanned, 4);
         assert_eq!(
-            input.get("stop_hook_active").and_then(|v| v.as_bool()),
-            Some(true)
+            calls,
+            MAX_FILES_SCANNED - 2,
+            "big and missing files are not guarded"
+        );
+        assert_eq!(violations.len(), MAX_FILES_SCANNED - 2);
+        assert!(violations
+            .iter()
+            .all(|(path, _)| path != "big.rs" && path != "gone.rs"));
+        assert_eq!(
+            violations[0],
+            ("f02.rs".to_string(), "[rule] bad".to_string())
         );
     }
 }
