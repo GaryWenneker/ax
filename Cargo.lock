@@ -598,6 +598,7 @@ dependencies = [
  "dialoguer",
  "dirs",
  "flate2",
+ "if-addrs",
  "indicatif",
  "mimalloc",
  "owo-colors",

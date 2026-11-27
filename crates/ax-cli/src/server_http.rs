@@ -10,7 +10,7 @@ use crate::{
 };
 use axum::{
     body::Bytes,
-    extract::{DefaultBodyLimit, Path as AxumPath, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Path as AxumPath, State},
     http::{header, HeaderMap, StatusCode},
     middleware,
     routing::{get, post},
@@ -74,8 +74,12 @@ fn authorize_control(state: &StateData, headers: &HeaderMap) -> Result<(), Statu
 
 async fn managed_status(
     State(state): State<Arc<StateData>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !control_peer_allowed(peer) {
+        return Err(StatusCode::NOT_FOUND);
+    }
     authorize_control(&state, &headers)?;
     Ok(Json(
         serde_json::json!({"node_id":state.config.node_id,"cluster_id":state.config.cluster_id,"role":state.config.role}),
@@ -84,8 +88,12 @@ async fn managed_status(
 
 async fn managed_stop(
     State(state): State<Arc<StateData>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !control_peer_allowed(peer) {
+        return Err(StatusCode::NOT_FOUND);
+    }
     authorize_control(&state, &headers)?;
     state
         .shutdown
@@ -336,11 +344,72 @@ async fn chunk_write(
     Ok(StatusCode::CREATED)
 }
 
+/// A specific private or link-local interface address. The wildcard addresses
+/// are not private targets: they also listen on every public interface.
 fn private_bind(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(ip) => ip.is_private() || ip.is_link_local() || ip.is_unspecified(),
-        IpAddr::V6(ip) => ip.is_unique_local() || ip.is_unicast_link_local() || ip.is_unspecified(),
+        IpAddr::V4(ip) => ip.is_private() || ip.is_link_local(),
+        IpAddr::V6(ip) => ip.is_unique_local() || ip.is_unicast_link_local(),
     }
+}
+
+/// Addresses of this machine's network interfaces, empty when they cannot be listed.
+fn local_interface_addresses() -> Vec<IpAddr> {
+    if_addrs::get_if_addrs()
+        .map(|items| items.into_iter().map(|item| item.ip()).collect())
+        .unwrap_or_default()
+}
+
+/// Plain HTTP stays on loopback unless `--allow-private-http` is given and the
+/// listener reaches private networks only. A wildcard bind (`0.0.0.0` or `::`)
+/// is accepted only when every interface address it listens on is private;
+/// otherwise the operator binds one private interface address.
+fn check_bind(ip: IpAddr, allow_private_http: bool, interfaces: &[IpAddr]) -> Result<(), String> {
+    if ip.is_loopback() {
+        return Ok(());
+    }
+    if !allow_private_http {
+        return Err("non-loopback bind requires --allow-private-http on a private network; terminate TLS at the reverse proxy".into());
+    }
+    if ip.is_unspecified() {
+        let reached: Vec<IpAddr> = interfaces
+            .iter()
+            .copied()
+            .filter(|address| !address.is_loopback())
+            .filter(|address| ip.is_ipv6() || address.is_ipv4())
+            .collect();
+        if reached.is_empty() {
+            return Err(format!("--bind {ip} listens on every interface, and the interface addresses could not be listed; bind one private interface address instead"));
+        }
+        if let Some(public) = reached.iter().find(|address| !private_bind(**address)) {
+            return Err(format!("--bind {ip} listens on every interface, and {public} is not a private address; bind one private interface address instead"));
+        }
+        return Ok(());
+    }
+    if !private_bind(ip) {
+        return Err(format!("--bind {ip} is not a private address; plain HTTP is allowed on loopback or a private network only, terminate TLS at the reverse proxy"));
+    }
+    Ok(())
+}
+
+/// Control routes on a listener that also accepts other peers answer only
+/// connections from this machine.
+fn control_peer_allowed(peer: SocketAddr) -> bool {
+    match peer.ip() {
+        IpAddr::V4(ip) => ip.is_loopback(),
+        IpAddr::V6(ip) => {
+            ip.is_loopback() || ip.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
+        }
+    }
+}
+
+/// Whether managed control routes need their own loopback listener. A
+/// loopback bind serves them itself. A wildcard bind already accepts loopback
+/// connections, and a second listener on 127.0.0.1 with the same port makes
+/// the wildcard bind fail on Linux, so it serves them too, to loopback peers
+/// only. A specific non-loopback address gets a 127.0.0.1 listener.
+fn separate_control_listener(managed: bool, bind: SocketAddr) -> bool {
+    managed && !bind.ip().is_loopback() && !bind.ip().is_unspecified()
 }
 
 fn public_routes() -> Router<Arc<StateData>> {
@@ -372,6 +441,15 @@ fn public_routes() -> Router<Arc<StateData>> {
                 response
             },
         ))
+}
+
+/// Public routes plus the managed control routes. Serve them with
+/// `into_make_service_with_connect_info::<SocketAddr>()`: the control
+/// handlers read the peer address.
+fn controlled_routes() -> Router<Arc<StateData>> {
+    public_routes()
+        .route("/managed/status", post(managed_status))
+        .route("/managed/stop", post(managed_stop))
 }
 
 pub struct RunOptions {
@@ -431,9 +509,12 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
     if let Some(url) = advertise.as_deref() {
         server_discovery::validate_advertise(&config, url)?;
     }
-    if !bind.ip().is_loopback() && (!allow_private_http || !private_bind(bind.ip())) {
-        return Err("non-loopback bind requires --allow-private-http on a private network; terminate TLS at the reverse proxy".into());
-    }
+    let interfaces = if bind.ip().is_unspecified() {
+        local_interface_addresses()
+    } else {
+        Vec::new()
+    };
+    check_bind(bind.ip(), allow_private_http, &interfaces)?;
     let access_db_path = ax_global_db::global_db_path().map_err(|e| e.to_string())?;
     let access_db = ax_global_db::open_and_init(&access_db_path)
         .await
@@ -510,11 +591,8 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
         shutdown: managed.then_some(shutdown.clone()),
     });
     let public = public_routes();
-    let controlled = public
-        .clone()
-        .route("/managed/status", post(managed_status))
-        .route("/managed/stop", post(managed_stop));
-    let separate_control = managed && bind.ip() != IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+    let controlled = controlled_routes();
+    let separate_control = separate_control_listener(managed, bind);
     let app = if separate_control {
         public.clone()
     } else {
@@ -528,11 +606,14 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
         let app = controlled.with_state(state.clone());
         let mut receiver = shutdown.subscribe();
         Some(tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async move {
-                    let _ = receiver.changed().await;
-                })
-                .await
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(async move {
+                let _ = receiver.changed().await;
+            })
+            .await
         }))
     } else {
         None
@@ -552,13 +633,19 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
         .iter()
         .map(|project| ax_core::Ax::spawn_background_watch(project.path.clone()))
         .collect();
-    let result = axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            if managed { tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = shutdown_rx.changed() => {} } }
-            else { let _ = tokio::signal::ctrl_c().await; }
-        })
-        .await
-        .map_err(|e| e.to_string());
+    let result = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        if managed {
+            tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = shutdown_rx.changed() => {} }
+        } else {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+    })
+    .await
+    .map_err(|e| e.to_string());
     let _ = shutdown.send(true);
     if let Some(task) = control_task {
         let _ = task.await;
@@ -596,6 +683,101 @@ mod tests {
         assert!(!private_bind("8.8.8.8".parse().unwrap()));
         assert!(private_bind("192.168.1.5".parse().unwrap()));
         assert!(private_bind("fd00::1".parse().unwrap()));
+        // A wildcard bind also listens on public interfaces, so it is not a private target.
+        assert!(!private_bind("0.0.0.0".parse().unwrap()));
+        assert!(!private_bind("::".parse().unwrap()));
+    }
+
+    #[test]
+    fn wildcard_bind_is_allowed_only_when_every_interface_is_private() {
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+        let lan = [ip("127.0.0.1"), ip("::1"), ip("172.17.0.2"), ip("fe80::1")];
+        assert!(check_bind(ip("0.0.0.0"), true, &lan).is_ok());
+        assert!(check_bind(ip("::"), true, &lan).is_ok());
+        let cloud = [ip("127.0.0.1"), ip("10.0.0.4"), ip("203.0.113.7")];
+        let error = check_bind(ip("0.0.0.0"), true, &cloud).unwrap_err();
+        assert!(error.contains("203.0.113.7"), "{error}");
+        // 0.0.0.0 listens on IPv4 only; a public IPv6 address does not matter to it.
+        let v6_public = [ip("192.168.1.5"), ip("2001:db8::5")];
+        assert!(check_bind(ip("0.0.0.0"), true, &v6_public).is_ok());
+        assert!(check_bind(ip("::"), true, &v6_public).is_err());
+        // No interface list: fail closed.
+        assert!(check_bind(ip("0.0.0.0"), true, &[]).is_err());
+        // The flag is still required, and loopback needs nothing.
+        assert!(check_bind(ip("0.0.0.0"), false, &lan).is_err());
+        assert!(check_bind(ip("192.168.1.5"), false, &lan).is_err());
+        assert!(check_bind(ip("192.168.1.5"), true, &cloud).is_ok());
+        assert!(check_bind(ip("8.8.8.8"), true, &lan).is_err());
+        assert!(check_bind(ip("127.0.0.1"), false, &cloud).is_ok());
+        assert!(check_bind(ip("::1"), false, &cloud).is_ok());
+    }
+
+    #[test]
+    fn managed_control_gets_a_second_listener_only_for_a_specific_non_loopback_address() {
+        let addr = |s: &str| s.parse::<SocketAddr>().unwrap();
+        assert!(!separate_control_listener(false, addr("192.168.1.5:9070")));
+        assert!(!separate_control_listener(true, addr("127.0.0.1:9070")));
+        assert!(!separate_control_listener(true, addr("[::1]:9070")));
+        // A wildcard bind already accepts loopback connections. A second listener on
+        // 127.0.0.1 with the same port makes the wildcard bind fail on Linux.
+        assert!(!separate_control_listener(true, addr("0.0.0.0:9070")));
+        assert!(!separate_control_listener(true, addr("[::]:9070")));
+        assert!(separate_control_listener(true, addr("192.168.1.5:9070")));
+    }
+
+    #[tokio::test]
+    async fn managed_control_routes_read_the_peer_address_over_tcp() {
+        let (shutdown, _receiver) = tokio::sync::watch::channel(false);
+        let state = Arc::new(StateData {
+            config: ServerConfig {
+                schema_version: 1,
+                cluster_id: "team".into(),
+                node_id: "primary".into(),
+                role: NodeRole::Primary,
+                primary_url: None,
+                projects: vec![],
+            },
+            access_db: sqlx::sqlite::SqlitePoolOptions::new()
+                .connect_lazy("sqlite::memory:")
+                .unwrap(),
+            exports: Semaphore::new(4),
+            control: Some("c".repeat(40)),
+            shutdown: Some(shutdown),
+        });
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                controlled_routes()
+                    .with_state(state)
+                    .into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+        });
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .post(format!("http://{address}/managed/status"))
+            .bearer_auth("c".repeat(40))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        server.abort();
+    }
+
+    #[test]
+    fn managed_control_on_a_shared_listener_answers_loopback_peers_only() {
+        let peer = |s: &str| s.parse::<SocketAddr>().unwrap();
+        assert!(control_peer_allowed(peer("127.0.0.1:50000")));
+        assert!(control_peer_allowed(peer("[::1]:50000")));
+        assert!(control_peer_allowed(peer("[::ffff:127.0.0.1]:50000")));
+        assert!(!control_peer_allowed(peer("192.168.1.20:50000")));
+        assert!(!control_peer_allowed(peer("[fd00::2]:50000")));
     }
 
     #[tokio::test]
@@ -635,7 +817,14 @@ mod tests {
             header::AUTHORIZATION,
             "Bearer local-control-secret".parse().unwrap(),
         );
-        let result = managed_stop(State(Arc::new(state)), headers.clone()).await;
+        let remote = ConnectInfo("192.168.1.20:50000".parse::<SocketAddr>().unwrap());
+        let local = ConnectInfo("127.0.0.1:50000".parse::<SocketAddr>().unwrap());
+        let shared = Arc::new(state);
+        // The right secret from another machine is refused on a shared listener.
+        let result = managed_stop(State(shared.clone()), remote, headers.clone()).await;
+        assert!(matches!(result, Err(StatusCode::NOT_FOUND)));
+        assert!(!*receiver.borrow());
+        let result = managed_stop(State(shared), local, headers.clone()).await;
         assert!(result.is_ok());
         receiver.changed().await.unwrap();
         assert!(*receiver.borrow());
