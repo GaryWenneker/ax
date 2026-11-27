@@ -104,6 +104,8 @@ Lines go to:
 
 When a Cursor session id is known, lines include `session=<uuid>` for tighter correlation.
 
+The audit reads only the dated files that can overlap what it checks: for a rolling window, the files from the day before the window start onward; for `--session`, the files from the day before the transcript's first timed event (all files when the transcript has no timestamps). Older files stay on disk and are not pruned automatically; remove them by hand if you do not want to keep the prompts they contain.
+
 ## 2. Logging page (`ax web` → Logging)
 
 Open via the status-bar **Logging** chip, or navigate to `/logging`.

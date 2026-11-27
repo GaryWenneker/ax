@@ -1427,6 +1427,29 @@ fn enrichment_from(clusters: &[VerboseCluster]) -> EnrichmentMetrics {
     }
 }
 
+/// Earliest time (Unix ms) whose log files the audit must read; 0 reads all.
+///
+/// A rolling window reads from its start. An explicit session reads from its
+/// first timed transcript event, or everything when the transcript is untimed.
+fn log_read_bound_ms(explicit_session: bool, since_ms: i64, events: &[TranscriptEvent]) -> i64 {
+    if !explicit_session {
+        return since_ms;
+    }
+    events
+        .iter()
+        .map(|e| e.ts_ms)
+        .filter(|ts| *ts > 0)
+        .min()
+        .unwrap_or(0)
+}
+
+/// Whether any non-empty verbose log file exists, without reading it.
+fn any_verbose_log_on_disk(project_root: &Path) -> bool {
+    crate::mcp_verbose_log::list_dated_log_files(project_root)
+        .iter()
+        .any(|(_, p)| fs::metadata(p).is_ok_and(|m| m.len() > 0))
+}
+
 /// Run a quality audit for a project (rolling window or full session).
 pub fn audit_project(project_root: &Path, opts: &AuditOptions) -> Result<QualitySnapshot, String> {
     let window = opts.window_minutes.unwrap_or(DEFAULT_WINDOW_MINUTES);
@@ -1436,13 +1459,6 @@ pub fn audit_project(project_root: &Path, opts: &AuditOptions) -> Result<Quality
     } else {
         now_ms().saturating_sub((window as i64) * 60_000)
     };
-
-    let verbose_enabled = verbose_enabled_for(project_root);
-    let log_path = crate::mcp_verbose_log::current_log_path(Some(project_root));
-    let verbose_text = crate::mcp_verbose_log::read_merged_verbose_log(project_root);
-    let verbose_present = !verbose_text.trim().is_empty();
-    let (lines, mut clusters) = parse_verbose_log(&verbose_text, since_ms);
-    let domain_blob = domain_blob_from(&lines);
 
     let session_path = resolve_session_path(opts, project_root);
     let mut events = Vec::new();
@@ -1455,6 +1471,16 @@ pub fn audit_project(project_root: &Path, opts: &AuditOptions) -> Result<Quality
             .and_then(|n| n.to_str())
             .map(|s| s.to_string());
     }
+
+    let verbose_enabled = verbose_enabled_for(project_root);
+    let log_path = crate::mcp_verbose_log::current_log_path(Some(project_root));
+    let verbose_text = crate::mcp_verbose_log::read_merged_verbose_log_since(
+        project_root,
+        log_read_bound_ms(explicit_session, since_ms, &events),
+    );
+    let verbose_present = !verbose_text.trim().is_empty() || any_verbose_log_on_disk(project_root);
+    let (lines, mut clusters) = parse_verbose_log(&verbose_text, since_ms);
+    let domain_blob = domain_blob_from(&lines);
 
     // Rolling-window + untimed transcript: if verbose is quiet in-window, drop the
     // whole-session transcript tail so we don't false-flag UncorrelatedTool /
@@ -1948,6 +1974,33 @@ mod tests {
             &blob,
         );
         findings.into_iter().map(|f| f.check).collect()
+    }
+
+    #[test]
+    fn log_read_bound_follows_window_or_first_timed_session_event() {
+        let ev = |ts_ms| TranscriptEvent {
+            ts_ms,
+            kind: TranscriptKind::AxTool,
+            name: "ax_preflight".into(),
+            ax_tool: Some("ax_preflight".into()),
+        };
+        assert_eq!(log_read_bound_ms(false, 5_000, &[ev(10)]), 5_000);
+        assert_eq!(log_read_bound_ms(true, 0, &[ev(0), ev(900), ev(700)]), 700);
+        assert_eq!(log_read_bound_ms(true, 0, &[ev(0)]), 0, "untimed reads all");
+        assert_eq!(log_read_bound_ms(true, 0, &[]), 0);
+    }
+
+    #[test]
+    fn any_verbose_log_on_disk_sees_old_files_outside_the_window() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!any_verbose_log_on_disk(dir.path()));
+        std::fs::create_dir_all(dir.path().join(".ax")).unwrap();
+        std::fs::write(
+            dir.path().join(".ax/mcp-verbose-2020-01-01.log"),
+            "2020-01-01T10:00:00.000Z [ax-mcp] inbound tool=ax_preflight\n",
+        )
+        .unwrap();
+        assert!(any_verbose_log_on_disk(dir.path()));
     }
 
     #[test]
