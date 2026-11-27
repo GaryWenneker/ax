@@ -154,6 +154,17 @@ pub async fn synthesize_offload(
     answer
 }
 
+/// One HTTP client for every offload request in this process, so connections
+/// and TLS sessions are reused between explores. The per-request timeout comes
+/// from the resolved settings. ax drives it from a single tokio runtime per
+/// process.
+fn shared_client() -> Option<&'static reqwest::Client> {
+    static CLIENT: std::sync::OnceLock<Option<reqwest::Client>> = std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| reqwest::Client::builder().build().ok())
+        .as_ref()
+}
+
 /// One offload request; returns the answer and a short outcome for the log.
 async fn request_offload(
     cfg: &crate::config::ResolvedOffload,
@@ -173,10 +184,7 @@ async fn request_offload(
         context.to_string()
     };
 
-    let Ok(client) = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(cfg.timeout_ms))
-        .build()
-    else {
+    let Some(client) = shared_client() else {
         return (None, "client_error");
     };
 
@@ -205,7 +213,13 @@ async fn request_offload(
         body["reasoning_effort"] = serde_json::Value::String(effort.clone());
     }
 
-    let res = client.post(&url).headers(headers).json(&body).send().await;
+    let res = client
+        .post(&url)
+        .timeout(std::time::Duration::from_millis(cfg.timeout_ms))
+        .headers(headers)
+        .json(&body)
+        .send()
+        .await;
     match res {
         Ok(r) if r.status().is_success() => {
             set_last_error(None, cfg.debug);
@@ -321,6 +335,76 @@ mod tests {
             serde_json::from_slice(&buf).unwrap()
         });
         (url, handle)
+    }
+
+    /// Reads one HTTP request from `reader`; `false` when the peer closed.
+    fn read_request(reader: &mut BufReader<std::net::TcpStream>) -> bool {
+        let mut len = 0usize;
+        let mut first = true;
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => return false,
+                Ok(_) => {}
+            }
+            if line == "\r\n" {
+                break;
+            }
+            first = false;
+            if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                len = v.trim().parse().unwrap();
+            }
+        }
+        let mut buf = vec![0u8; len];
+        !first && reader.read_exact(&mut buf).is_ok()
+    }
+
+    #[test]
+    fn requests_reuse_one_connection() {
+        // The server accepts a single connection and answers every request on it.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/v1", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut writer = stream;
+            let mut served = 0;
+            while served < 2 && read_request(&mut reader) {
+                write!(
+                    writer,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{OK}",
+                    OK.len()
+                )
+                .unwrap();
+                served += 1;
+            }
+            served
+        });
+        let answers = with_env(
+            &[
+                ("AX_OFFLOAD_URL", url.as_str()),
+                ("AX_OFFLOAD_MODEL", "gpt-4o"),
+                ("AX_OFFLOAD_TIMEOUT_MS", "3000"),
+            ],
+            |_| {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                let first = rt.block_on(synthesize_offload("q", "ctx", None));
+                let second = rt.block_on(synthesize_offload("q", "ctx", None));
+                (first, second)
+            },
+        );
+        assert!(answers.0.is_some());
+        assert!(
+            answers.1.is_some(),
+            "the second request opened a new connection"
+        );
+        assert_eq!(server.join().unwrap(), 2);
     }
 
     /// Runs one offload request against `url` and returns the answer and the
