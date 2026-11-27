@@ -1054,7 +1054,7 @@ ax savings hook install
 |---|---|
 | `import --all` | Import Cursor + Claude Code session transcripts |
 | `tag-session` | Manually record model name for a session id |
-| `hook install` | Install Cursor sessionStart hook into `~/.cursor/hooks/` |
+| `hook install` | Install the Cursor sessionStart hook into `~/.cursor/hooks/` (executable) and merge it into `~/.cursor/hooks.json`; a `hooks.json` that is not valid JSON is left untouched with a message |
 
 The **Savings** page in `ax web` (enable in Settings) exposes the same filters. See [Token savings](/guides/token-savings/).
 
