@@ -19,30 +19,32 @@ export class ApiError extends Error {
 }
 
 function errorMessage(body: unknown): string | null {
-  if (body && typeof body === 'object' && 'error' in body) {
-    const error = (body as { error?: unknown }).error;
-    if (typeof error === 'string' && error.trim()) return error;
+  if (!body || typeof body !== 'object' || !('error' in body)) return null;
+  const { error, fields } = body as { error?: unknown; fields?: unknown };
+  if (typeof error !== 'string' || !error.trim()) return null;
+  if (fields && typeof fields === 'object' && Object.keys(fields).length > 0) {
+    const details = Object.entries(fields as Record<string, unknown>)
+      .map(([field, msg]) => `${field}: ${String(msg)}`)
+      .join('; ');
+    return `${error} (${details})`;
   }
-  return null;
+  return error;
 }
 
 /**
- * Call a JSON endpoint under `/api`. A non-2xx reply, or a reply that is not
- * JSON (an HTML error or login page from a proxy), throws an {@link ApiError}.
- * An empty 2xx body resolves to `undefined`.
+ * Fetch a JSON endpoint. A string body is sent as JSON unless the caller
+ * names another Content-Type; caller headers extend the default. A non-2xx
+ * reply, or a reply that is not JSON (an HTML error or login page from a
+ * proxy), throws an {@link ApiError} with the status and the server's
+ * message (and field errors). An empty 2xx body, such as a 204, resolves to
+ * `undefined`.
  */
-export async function request<T>(
-  method: string,
-  path: string,
-  body?: unknown,
-  init?: { signal?: AbortSignal; credentials?: RequestCredentials },
-): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
-    ...(init?.signal ? { signal: init.signal } : {}),
-    ...(init?.credentials ? { credentials: init.credentials } : {}),
-  });
+export async function apiFetch<T>(url: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  if (typeof init.body === 'string' && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  const res = await fetch(url, { ...init, headers });
   const text = await res.text();
   let data: unknown;
   let parsed = true;
@@ -58,6 +60,40 @@ export async function request<T>(
   }
   if (!parsed) throw new ApiError(`The server reply was not JSON (HTTP ${res.status})`, res.status);
   return data as T;
+}
+
+/**
+ * Throw an {@link ApiError} for a non-2xx response whose body is not read as
+ * JSON data (a download or a form upload). Its message is the server's
+ * error (and field errors) when the body is a JSON error, else `HTTP <status>`.
+ */
+export async function ensureOk(res: Response): Promise<void> {
+  if (res.ok) return;
+  const text = await res.text().catch(() => '');
+  let data: unknown = null;
+  try {
+    data = text.trim() ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+  throw new ApiError(errorMessage(data) ?? `HTTP ${res.status}`, res.status, data);
+}
+
+/**
+ * Call a JSON endpoint under `/api`, with the error rules of {@link apiFetch}.
+ */
+export function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  init?: { signal?: AbortSignal; credentials?: RequestCredentials },
+): Promise<T> {
+  return apiFetch<T>(`${BASE}${path}`, {
+    method,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(init?.signal ? { signal: init.signal } : {}),
+    ...(init?.credentials ? { credentials: init.credentials } : {}),
+  });
 }
 
 function get<T>(path: string, signal?: AbortSignal): Promise<T> {

@@ -46,15 +46,27 @@ export function mountError(status: number, body: unknown): MountError {
   return { message: `HTTP ${status}`, command };
 }
 
-async function call(method: string, path = '', body?: unknown): Promise<MountStatus> {
-  const res = await fetch(`${BASE}${path}`, {
+/**
+ * Send a vault request and read its JSON reply. A non-2xx reply throws a
+ * {@link MountError}; so does a 2xx reply that is not a JSON object (an HTML
+ * login page from a proxy), instead of returning it as data.
+ */
+async function vaultRequest<T>(url: string, method: string, body?: unknown): Promise<T> {
+  const res = await fetch(url, {
     method,
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data: unknown = await res.json().catch(() => null);
   if (!res.ok) throw mountError(res.status, data);
-  return data as MountStatus;
+  if (!data || typeof data !== 'object') {
+    throw { message: `The server reply was not JSON (HTTP ${res.status})`, command: null } satisfies MountError;
+  }
+  return data as T;
+}
+
+function call(method: string, path = '', body?: unknown): Promise<MountStatus> {
+  return vaultRequest<MountStatus>(`${BASE}${path}`, method, body);
 }
 
 export const fetchMountStatus = () => call('GET');
@@ -93,14 +105,11 @@ export interface VaultFolderList {
 }
 
 async function folderCall<T>(method: string, path = '', body?: unknown): Promise<T> {
-  const res = await fetch(`${FOLDERS}${path}`, {
-    method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const data: unknown = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(mountError(res.status, data).message);
-  return data as T;
+  try {
+    return await vaultRequest<T>(`${FOLDERS}${path}`, method, body);
+  } catch (err) {
+    throw new Error((err as MountError).message);
+  }
 }
 
 export const fetchVaultFolders = () => folderCall<VaultFolderList>('GET');

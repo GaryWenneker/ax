@@ -1,3 +1,5 @@
+import { apiFetch } from './api.ts';
+
 const SHARE = '/api/policy/share';
 const MS_AUTH = '/api/auth/microsoft';
 
@@ -79,23 +81,8 @@ export interface DevicePollResponse {
 
 export type SyncDirection = 'pull' | 'push' | 'both';
 
-interface ApiErrorBody {
-  error?: string;
-}
-
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
-    ...init,
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as ApiErrorBody;
-    throw new Error(body.error ?? `HTTP ${res.status}`);
-  }
-  if (res.status === 204) {
-    return undefined as T;
-  }
-  return res.json() as Promise<T>;
+function request<T>(url: string, init?: RequestInit): Promise<T> {
+  return apiFetch<T>(url, init);
 }
 
 export function fetchShareConfig(): Promise<ShareConfigResponse> {

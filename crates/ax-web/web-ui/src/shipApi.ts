@@ -1,3 +1,4 @@
+import { apiFetch } from './api.ts';
 import { readSseJson } from './lib/sse.ts';
 
 const SHIP = '/api/ship';
@@ -127,16 +128,8 @@ export interface SonarBootstrapResult {
   message: string;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${SHIP}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
-    ...init,
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  return body as T;
+function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return apiFetch<T>(`${SHIP}${path}`, init);
 }
 
 export function fetchShipStatus(): Promise<{
