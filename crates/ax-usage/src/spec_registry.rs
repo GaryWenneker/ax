@@ -120,9 +120,24 @@ pub async fn capture_finished_plan(
         .await?;
         return Ok(None);
     }
+    // A changed spec file only binds a session that has no spec yet.
+    let bind = |pool, session_id, spec_id| async move {
+        if source == "file" {
+            bind_session_if_unbound(pool, session_id, spec_id).await
+        } else {
+            bind_session(pool, session_id, spec_id).await
+        }
+    };
     if let Some(existing) = revision_for_turn(pool, spec_id, session_id, turn_id).await? {
-        bind_session(pool, session_id, spec_id).await?;
+        bind(pool, session_id, spec_id).await?;
         return Ok(Some(existing));
+    }
+    // The same body as the latest revision is not a new draft.
+    if let Some(latest) = latest_revision(pool, spec_id).await? {
+        if latest.content_hash == hash_text(body) {
+            bind(pool, session_id, spec_id).await?;
+            return Ok(Some(latest));
+        }
     }
     let markdown_path = format!("docs/specs/{spec_id}/SPEC.md");
     sqlx::query(
@@ -142,7 +157,7 @@ pub async fn capture_finished_plan(
         pool, spec_id, "draft", body, source, session_id, turn_id, None,
     )
     .await?;
-    bind_session(pool, session_id, spec_id).await?;
+    bind(pool, session_id, spec_id).await?;
     Ok(Some(revision))
 }
 
@@ -163,12 +178,13 @@ pub async fn on_turn_finished(
     )
     .await?;
     for file in files {
-        if is_spec_markdown(file) {
+        // The Markdown mirror of an existing spec is checked by `sync_markdown`.
+        if is_spec_markdown(file) && spec_for_markdown(pool, file).await?.is_none() {
             if let Ok(body) = std::fs::read_to_string(root.join(file)) {
                 let _ = capture_finished_plan(
                     pool,
                     project_id,
-                    &slug(file),
+                    &markdown_spec_id(file),
                     file,
                     file,
                     &body,
@@ -608,6 +624,68 @@ async fn bind_session(pool: &SqlitePool, session_id: &str, spec_id: &str) -> Res
     .await
     .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+async fn bind_session_if_unbound(
+    pool: &SqlitePool,
+    session_id: &str,
+    spec_id: &str,
+) -> Result<(), String> {
+    if session_id.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(
+        "INSERT INTO spec_bindings (session_id, spec_id) VALUES (?1, ?2)
+         ON CONFLICT(session_id) DO NOTHING",
+    )
+    .bind(session_id)
+    .bind(spec_id)
+    .execute(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+async fn latest_revision(pool: &SqlitePool, spec_id: &str) -> Result<Option<SpecRevision>, String> {
+    let version: Option<i64> = sqlx::query_scalar(
+        "SELECT version FROM spec_revisions WHERE spec_id = ?1 ORDER BY version DESC LIMIT 1",
+    )
+    .bind(spec_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    match version {
+        Some(version) => revision_optional(pool, spec_id, version).await,
+        None => Ok(None),
+    }
+}
+
+/// The spec whose Markdown mirror is this project-relative path.
+async fn spec_for_markdown(pool: &SqlitePool, file: &str) -> Result<Option<String>, String> {
+    ensure_spec_schema(pool).await?;
+    sqlx::query_scalar("SELECT id FROM specs WHERE markdown_path = ?1 LIMIT 1")
+        .bind(file.replace('\\', "/"))
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Spec id for a changed spec file: the folder name for `docs/specs/<id>/SPEC.md`,
+/// else a slug of the whole path.
+fn markdown_spec_id(file: &str) -> String {
+    let path = file.replace('\\', "/");
+    let parts: Vec<&str> = path.split('/').collect();
+    match parts.as_slice() {
+        ["docs", "specs", dir, name] if name.eq_ignore_ascii_case("SPEC.md") => {
+            let id = slug(dir);
+            if id.is_empty() {
+                slug(file)
+            } else {
+                id
+            }
+        }
+        _ => slug(file),
+    }
 }
 
 async fn bound_spec(pool: &SqlitePool, session_id: &str) -> Result<Option<String>, String> {
@@ -1541,6 +1619,85 @@ pub(crate) mod tests {
         let current = approved_revision(pool, "registry").await.unwrap().unwrap();
         assert_eq!(current.version, 2);
         assert_eq!(current.body, "two");
+    }
+
+    #[tokio::test]
+    async fn the_approved_spec_markdown_is_not_captured_as_another_spec() {
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        capture_finished_plan(
+            pool,
+            "ax",
+            "registry",
+            "Registry",
+            "make a plan",
+            "one",
+            "s",
+            "t1",
+            "turn",
+            true,
+        )
+        .await
+        .unwrap();
+        approve_revision(pool, dir.path(), "registry", 1, &[])
+            .await
+            .unwrap();
+        let changed = vec!["docs/specs/registry/SPEC.md".to_string()];
+        for turn in ["t2", "t3", "t4"] {
+            on_turn_finished(pool, dir.path(), "ax", "s", turn, "", "", &changed)
+                .await
+                .unwrap();
+        }
+        let ids: Vec<String> = list_specs(pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|item| item.id)
+            .collect();
+        assert_eq!(ids, vec!["registry".to_string()]);
+        assert_eq!(
+            bound_spec(pool, "s").await.unwrap().as_deref(),
+            Some("registry")
+        );
+        assert_eq!(list_revisions(pool, "registry").await.unwrap().len(), 1);
+        assert_eq!(delivered_version(pool, "s", "t4").await.unwrap(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn a_dirty_spec_file_adds_one_draft_and_keeps_the_binding() {
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        capture_finished_plan(
+            pool,
+            "ax",
+            "registry",
+            "Registry",
+            "make a plan",
+            "one",
+            "s",
+            "t1",
+            "turn",
+            true,
+        )
+        .await
+        .unwrap();
+        let other = dir.path().join("docs/specs/billing/SPEC.md");
+        std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+        std::fs::write(&other, "Charge once.\n").unwrap();
+        let changed = vec!["docs/specs/billing/SPEC.md".to_string()];
+        for turn in ["t2", "t3", "t4"] {
+            on_turn_finished(pool, dir.path(), "ax", "s", turn, "", "", &changed)
+                .await
+                .unwrap();
+        }
+        // The spec id comes from its folder, and one body is one draft.
+        assert_eq!(list_revisions(pool, "billing").await.unwrap().len(), 1);
+        assert_eq!(
+            bound_spec(pool, "s").await.unwrap().as_deref(),
+            Some("registry")
+        );
     }
 
     #[tokio::test]

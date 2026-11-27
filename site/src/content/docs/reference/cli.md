@@ -1879,6 +1879,8 @@ Not for daily use — invoked by agents, installers, or upgrade helpers.
 
 `ax spec <id>` prints the stored body (`id` or `id@version`). Specifications and plans can also be stored as separate rows. That hierarchy stays off until you turn it on, and turning it off restores the flat list and the previous capture path. Rows already written stay. Nothing is dropped.
 
+When a turn finishes, each changed `docs/specs/*.md` or `docs/plans/*.md` file is stored as a draft. `docs/specs/<id>/SPEC.md` belongs to spec `<id>`. The Markdown copy of an existing spec, such as the `SPEC.md` written on approval, is compared with the approved body instead of being stored as another spec. A body equal to the latest revision adds no draft, and a changed file binds the session only when it has no spec yet.
+
 ```bash
 ax spec billing-spec
 ax spec-flag
