@@ -1656,9 +1656,11 @@ mod tests {
         ] {
             assert_eq!(scanner_major_version(out), major, "{out}");
         }
-        assert!(check_scanner_supports_env_token("INFO: SonarScanner 4.8.0.2856")
-            .unwrap_err()
-            .contains("5.0"));
+        assert!(
+            check_scanner_supports_env_token("INFO: SonarScanner 4.8.0.2856")
+                .unwrap_err()
+                .contains("5.0")
+        );
         assert!(check_scanner_supports_env_token("INFO: SonarScanner 5.0.1.3006").is_ok());
         // An unknown banner is not refused.
         assert!(check_scanner_supports_env_token("something else").is_ok());

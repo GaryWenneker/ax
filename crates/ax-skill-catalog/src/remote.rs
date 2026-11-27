@@ -98,10 +98,7 @@ pub fn fetch_source_allowing(
     }
 }
 
-fn fetch_index(
-    base: &str,
-    allow_private_hosts: &[String],
-) -> Result<(String, String), String> {
+fn fetch_index(base: &str, allow_private_hosts: &[String]) -> Result<(String, String), String> {
     let base = base.trim_end_matches('/');
     let urls = if base.contains("/.well-known/") {
         vec![format!("{base}/index.json")]
@@ -497,8 +494,7 @@ fn vet(url: &str, resolve: Resolve, blocked: Blocked, allow: &[String]) -> Resul
     }
     let domain = host.to_string();
     let name = domain.trim_end_matches('.').to_ascii_lowercase();
-    if !allowed
-        && (name == "localhost" || name.ends_with(".localhost") || name.ends_with(".local"))
+    if !allowed && (name == "localhost" || name.ends_with(".localhost") || name.ends_with(".local"))
     {
         return Err("skill downloads cannot target a local host".into());
     }

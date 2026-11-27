@@ -1973,7 +1973,9 @@ mod tests {
         );
         let skills = list_skills(&pool).await.unwrap();
         assert!(
-            !skills.iter().any(|s| s.name == "review" || s.name == "My_Skill"),
+            !skills
+                .iter()
+                .any(|s| s.name == "review" || s.name == "My_Skill"),
             "{skills:?}"
         );
         let matched = crate::matcher::match_policy(
