@@ -12,41 +12,89 @@ Cite every factual claim with file:line from the provided source.";
 const PLAIN_FOOTER: &str =
     "\n\n— Synthesized by ax's reasoning model from the retrieved source; verify citations or run another ax_explore for gaps.";
 
+/// Whether `ln` is a line of numbered source (`12\tcode`, `12|code`, `12: code`).
+fn is_numbered_source(ln: &str) -> bool {
+    let rest = ln
+        .trim_start()
+        .trim_start_matches(|c: char| c.is_ascii_digit());
+    rest.len() < ln.trim_start().len() && rest.starts_with(['\t', '|', ':'])
+}
+
+/// Removes ax's own navigation hints (aimed at the calling agent) from explore
+/// output before it goes to the offload model. Retrieved source is never
+/// touched: lines inside a `### Source` section (up to its `---`), inside a
+/// code fence, or that are numbered source lines are always kept. Runs of
+/// blank lines collapse to one blank line.
 pub fn strip_agent_directives(context: &str) -> String {
-    let mut out = Vec::new();
-    let lines: Vec<&str> = context.lines().collect();
-    let mut i = 0;
-    while i < lines.len() {
-        let ln = lines[i];
-        if ln.starts_with("**Exploration:") || ln.starts_with("Found ") {
-            i += 1;
+    let mut out: Vec<&str> = Vec::new();
+    let mut in_fence = false;
+    let mut in_source = false;
+    let mut in_not_shown = false;
+    for ln in context.lines() {
+        if ln.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            in_not_shown = false;
+            out.push(ln);
+            continue;
+        }
+        if in_fence {
+            out.push(ln);
+            continue;
+        }
+        if in_source {
+            if ln == "---" {
+                in_source = false;
+            }
+            out.push(ln);
+            continue;
+        }
+        if ln == "### Source" {
+            in_source = true;
+            in_not_shown = false;
+            out.push(ln);
+            continue;
+        }
+        if in_not_shown {
+            // The list of omitted hits ends at a blank line or the next section.
+            if ln.trim().is_empty()
+                || ln.starts_with("---")
+                || ln.starts_with('#')
+                || ln.starts_with("**")
+            {
+                in_not_shown = false;
+            } else {
+                continue;
+            }
+        }
+        if is_numbered_source(ln) {
+            out.push(ln);
             continue;
         }
         if ln.starts_with("**Not shown above") {
-            i += 1;
-            while i < lines.len() && !lines[i].starts_with("---") && !lines[i].starts_with("**") {
-                i += 1;
-            }
+            in_not_shown = true;
             continue;
         }
-        if ln.starts_with("> ")
-            && (ln.contains("do NOT re-read")
-                || ln.contains("Explore budget:")
-                || ln.contains("ax_explore")
-                || ln.contains("output truncated"))
-        {
-            i += 1;
-            continue;
+        let hint = ln.starts_with("**Exploration:")
+            || ln.starts_with("Found ")
+            || ln.contains("output truncated to budget")
+            || (ln.starts_with("> ")
+                && (ln.contains("do NOT re-read")
+                    || ln.contains("Explore budget:")
+                    || ln.contains("ax_explore")
+                    || ln.contains("output truncated")));
+        if !hint {
+            out.push(ln);
         }
-        if ln.contains("output truncated to budget") {
-            i += 1;
-            continue;
-        }
-        out.push(ln);
-        i += 1;
     }
-    let joined = out.join("\n");
-    joined.replace("\n\n\n", "\n\n").trim_end().to_string()
+    let mut kept: Vec<&str> = Vec::with_capacity(out.len());
+    for ln in out {
+        let blank = ln.trim().is_empty();
+        if blank && kept.last().is_none_or(|prev| prev.trim().is_empty()) {
+            continue;
+        }
+        kept.push(ln);
+    }
+    kept.join("\n").trim_end().to_string()
 }
 
 /// Longest part of an upstream error body kept for logs and status.
@@ -263,6 +311,43 @@ mod tests {
     }
 
     const OK: &str = r#"{"choices":[{"message":{"content":"Coverage: full."}}]}"#;
+
+    #[test]
+    fn strip_removes_ax_hints_outside_source() {
+        let ctx = "**Exploration: 3 hits**\nFound 3 entry points\n> Explore budget: 4000 tokens\n> call ax_explore again for more\n## Entry 1: a\nkept\n...output truncated to budget\n";
+        assert_eq!(strip_agent_directives(ctx), "## Entry 1: a\nkept");
+    }
+
+    #[test]
+    fn strip_keeps_retrieved_source_verbatim() {
+        let ctx = "## Entry 1: docs (Doc) — README.md:1-4\n\n### Source\n1\tFound 3 results\n2\t> call ax_explore first\n3\tsee output truncated to budget\n4\tFound it\n---\n\n";
+        let out = strip_agent_directives(ctx);
+        for line in [
+            "1\tFound 3 results",
+            "2\t> call ax_explore first",
+            "3\tsee output truncated to budget",
+            "4\tFound it",
+        ] {
+            assert!(out.contains(line), "{line:?} missing from {out:?}");
+        }
+
+        let fenced = "```md\nFound 3 results\n> call ax_explore first\nnote: output truncated to budget\n```";
+        assert_eq!(strip_agent_directives(fenced), fenced);
+    }
+
+    #[test]
+    fn strip_not_shown_block_ends_at_a_blank_line_or_heading() {
+        let ctx = "**Not shown above (2):**\n- a\n- b\n\nreal content\n**Not shown above:**\n- c\n## Entry 2: x\nmore";
+        assert_eq!(
+            strip_agent_directives(ctx),
+            "real content\n## Entry 2: x\nmore"
+        );
+    }
+
+    #[test]
+    fn strip_collapses_every_run_of_blank_lines() {
+        assert_eq!(strip_agent_directives("a\n\n\n\n\n\nb\n\n\n"), "a\n\nb");
+    }
 
     #[test]
     fn reasoning_effort_is_sent_only_when_configured() {
