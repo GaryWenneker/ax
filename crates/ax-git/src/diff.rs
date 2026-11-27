@@ -158,16 +158,47 @@ fn git_output(repo_path: &Path, args: &[&str]) -> Result<String, GitError> {
 fn parse_unified_diff(text: &str) -> Vec<ChangedHunk> {
     let mut hunks = Vec::new();
     let mut current_path = String::new();
+    // Body lines still expected in the current hunk, from its header. While
+    // any remain, a line is content even when it looks like a header: an
+    // added `++ i;` shows up as `+++ i;`, a removed `-- x` as `--- x`.
+    let mut old_left: u32 = 0;
+    let mut new_left: u32 = 0;
 
     for line in text.lines() {
+        if old_left > 0 || new_left > 0 {
+            match line.as_bytes().first() {
+                Some(b'+') => new_left = new_left.saturating_sub(1),
+                Some(b'-') => old_left = old_left.saturating_sub(1),
+                Some(b' ') => {
+                    old_left = old_left.saturating_sub(1);
+                    new_left = new_left.saturating_sub(1);
+                }
+                // "\ No newline at end of file" belongs to the hunk.
+                Some(b'\\') => {}
+                // Anything else ends a hunk whose header over-counted.
+                _ => {
+                    old_left = 0;
+                    new_left = 0;
+                }
+            }
+            if old_left > 0 || new_left > 0 || line.starts_with(['+', '-', ' ', '\\']) {
+                continue;
+            }
+        }
         if let Some(target) = line.strip_prefix("+++ ") {
             // `/dev/null` (deleted file) leaves no path, so its hunks are skipped.
             current_path = diff_target_path(target).unwrap_or_default();
             continue;
         }
-        if line.starts_with("@@ ") && !current_path.is_empty() {
+        if line.starts_with("@@ ") {
+            // Parsed for its line counts even when the path is skipped, so
+            // the body of a deleted file's hunk is not read as headers.
             if let Some(hunk) = parse_hunk_header(line, &current_path) {
-                hunks.push(hunk);
+                old_left = hunk.old_lines;
+                new_left = hunk.new_lines;
+                if !current_path.is_empty() {
+                    hunks.push(hunk);
+                }
             }
         }
     }
@@ -302,6 +333,65 @@ mod tests {
             Some("café \"q\".rs")
         );
         assert_eq!(diff_target_path("/dev/null"), None);
+    }
+
+    #[test]
+    fn content_lines_that_look_like_headers_stay_in_their_hunk() {
+        let diff = "diff --git a/src/a.c b/src/a.c
+--- a/src/a.c
++++ b/src/a.c
+@@ -3,0 +4,2 @@ int main() {
++++ i;
++++ j;
+@@ -10 +12 @@ int main() {
+--- k;
++++ k;
+@@ -20,0 +22 @@
++x
+diff --git a/src/b.c b/src/b.c
+--- a/src/b.c
++++ b/src/b.c
+@@ -1 +1 @@
+-a
+\\ No newline at end of file
++b
+";
+        let hunks = parse_unified_diff(diff);
+        let got: Vec<(&str, u32)> = hunks
+            .iter()
+            .map(|h| (h.path.as_str(), h.new_start))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("src/a.c", 4),
+                ("src/a.c", 12),
+                ("src/a.c", 22),
+                ("src/b.c", 1)
+            ]
+        );
+    }
+
+    #[test]
+    fn hunks_of_a_deleted_file_are_skipped_without_eating_the_next_file() {
+        let diff = "diff --git a/old.c b/old.c
+deleted file mode 100644
+--- a/old.c
++++ /dev/null
+@@ -1,2 +0,0 @@
+-+++ b/fake.c
+-@@ -1 +1 @@
+diff --git a/new.c b/new.c
+--- a/new.c
++++ b/new.c
+@@ -5 +5 @@
+-x
++y
+";
+        let hunks = parse_unified_diff(diff);
+        assert_eq!(hunks.len(), 1, "{hunks:?}");
+        assert_eq!(hunks[0].path, "new.c");
+        assert_eq!(hunks[0].new_start, 5);
     }
 
     #[test]
