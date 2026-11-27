@@ -142,8 +142,14 @@ impl OkfConfig {
 fn read_okf_section(project_root: &Path) -> Option<OkfJson> {
     for name in ["ax.json", ".ax.json"] {
         let path = project_root.join(name);
-        let content = std::fs::read_to_string(&path).ok()?;
-        let root: AxJsonRoot = serde_json::from_str(&content).ok()?;
+        // A missing or unparseable file falls through to the alias.
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(root) = serde_json::from_str::<AxJsonRoot>(&content) else {
+            tracing::warn!("ignoring {}: not valid JSON", path.display());
+            continue;
+        };
         if root.okf.is_some() {
             return root.okf;
         }
@@ -789,6 +795,21 @@ mod tests {
             return_type: None,
             updated_at: 0,
         }
+    }
+
+    #[test]
+    fn dot_ax_json_is_read_when_ax_json_is_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(".ax.json"), r#"{"okf":{"outDir":"kb"}}"#).unwrap();
+        assert_eq!(OkfConfig::load(tmp.path()).out_dir, "kb");
+    }
+
+    #[test]
+    fn dot_ax_json_is_read_when_ax_json_does_not_parse() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("ax.json"), "{ not json").unwrap();
+        std::fs::write(tmp.path().join(".ax.json"), r#"{"okf":{"outDir":"kb"}}"#).unwrap();
+        assert_eq!(OkfConfig::load(tmp.path()).out_dir, "kb");
     }
 
     #[test]
