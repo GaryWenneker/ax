@@ -1055,28 +1055,118 @@ fn guess_lan_ip() -> Option<String> {
 }
 
 async fn bind_web_listener(addr: &str, port: u16) -> Result<tokio::net::TcpListener, String> {
-    free_web_port(port);
-
     match tokio::net::TcpListener::bind(addr).await {
         Ok(listener) => Ok(listener),
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-            free_web_port(port);
-            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-            tokio::net::TcpListener::bind(addr)
+            // Only an earlier `ax web` is stopped; any other program keeps the port.
+            let stopped = tokio::task::spawn_blocking(move || stop_previous_ax_web(port))
                 .await
-                .map_err(|e| format!("Cannot bind to {addr}: {e}"))
+                .map_err(|e| format!("Cannot bind to {addr}: {e}"))??;
+            if stopped > 0 {
+                eprintln!("ax web: stopped the previous ax web on port {port}");
+            }
+            for _ in 0..10 {
+                match tokio::net::TcpListener::bind(addr).await {
+                    Ok(listener) => return Ok(listener),
+                    Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    }
+                    Err(e) => return Err(format!("Cannot bind to {addr}: {e}")),
+                }
+            }
+            Err(format!(
+                "Cannot bind to {addr}: port {port} is still in use. Choose another port with --port."
+            ))
         }
         Err(e) => Err(format!("Cannot bind to {addr}: {e}")),
     }
 }
 
-fn free_web_port(port: u16) {
-    let self_pid = std::process::id();
-    match ax_utils::kill_listening_on_port(port, self_pid) {
-        Ok(0) => {}
-        Ok(n) => eprintln!("ax web: freed port {port} (stopped {n} process(es))"),
-        Err(e) => eprintln!("ax web: warning: could not free port {port}: {e}"),
+/// Whether a process command (name or executable path) is the `ax` binary.
+fn is_ax_command(command: &str) -> bool {
+    let name = command
+        .trim()
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default();
+    name == "ax" || name.eq_ignore_ascii_case("ax.exe")
+}
+
+/// The command name of `pid`, or `None` when it cannot be read.
+fn process_command(pid: u32) -> Option<String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let out = std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let first = text.lines().next()?.split(',').next()?.trim_matches('"');
+        (!first.is_empty() && !first.contains(' ')).then(|| first.to_string())
     }
+    #[cfg(unix)]
+    {
+        let out = std::process::Command::new("ps")
+            .args(["-o", "comm=", "-p", &pid.to_string()])
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (out.status.success() && !text.is_empty()).then_some(text)
+    }
+}
+
+/// Asks `pid` to stop, waits, and force-stops it only if it is still running.
+fn stop_pid_gracefully(pid: u32) {
+    #[cfg(windows)]
+    let (soft, hard): (Vec<String>, Vec<String>) = (
+        vec!["/PID".into(), pid.to_string()],
+        vec!["/PID".into(), pid.to_string(), "/F".into()],
+    );
+    #[cfg(windows)]
+    let program = "taskkill";
+    #[cfg(unix)]
+    let (soft, hard): (Vec<String>, Vec<String>) = (
+        vec!["-TERM".into(), pid.to_string()],
+        vec!["-KILL".into(), pid.to_string()],
+    );
+    #[cfg(unix)]
+    let program = "kill";
+    let _ = std::process::Command::new(program).args(&soft).status();
+    for _ in 0..30 {
+        if !ax_utils::is_pid_alive(pid) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let _ = std::process::Command::new(program).args(&hard).status();
+}
+
+/// Stops an earlier `ax web` that holds `port`. Fails, and stops nothing,
+/// when the port belongs to any other program. Returns how many processes
+/// were stopped.
+fn stop_previous_ax_web(port: u16) -> Result<usize, String> {
+    let self_pid = std::process::id();
+    let pids: Vec<u32> = ax_utils::pids_listening_on_port(port)
+        .map_err(|e| format!("Port {port} is in use ({e}). Choose another port with --port."))?
+        .into_iter()
+        .filter(|pid| *pid != self_pid)
+        .collect();
+    for pid in &pids {
+        let command = process_command(*pid);
+        if !command.as_deref().is_some_and(is_ax_command) {
+            let who = command.unwrap_or_else(|| "an unknown program".into());
+            return Err(format!(
+                "Port {port} is in use by {who} (pid {pid}). ax web does not stop other programs; choose another port with --port."
+            ));
+        }
+    }
+    for pid in &pids {
+        stop_pid_gracefully(*pid);
+    }
+    Ok(pids.len())
 }
 
 fn open_browser(url: &str) {
@@ -1093,4 +1183,60 @@ fn open_browser(url: &str) {
 async fn shutdown_signal() {
     tokio::signal::ctrl_c().await.ok();
     eprintln!("\nax web: shutting down.");
+}
+
+#[cfg(test)]
+mod port_tests {
+    use super::*;
+
+    #[test]
+    fn only_ax_commands_count_as_ax() {
+        assert!(is_ax_command("ax"));
+        assert!(is_ax_command("/usr/local/bin/ax"));
+        assert!(is_ax_command("C:\\Tools\\ax.exe"));
+        assert!(is_ax_command("ax.exe"));
+        assert!(!is_ax_command("node"));
+        assert!(!is_ax_command("/usr/bin/python3"));
+        assert!(!is_ax_command("max"));
+        assert!(!is_ax_command("ax-something-else"));
+        assert!(!is_ax_command(""));
+    }
+
+    /// Another program holding the port is left alone: binding fails with a
+    /// message that names `--port`, and the program keeps running.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_foreign_listener_is_not_killed() {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+        let script = format!(
+            "import socket,time\ns=socket.socket()\ns.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\ns.bind(('127.0.0.1',{port}))\ns.listen()\ntime.sleep(60)"
+        );
+        let Ok(mut child) = std::process::Command::new("python3")
+            .args(["-c", &script])
+            .spawn()
+        else {
+            eprintln!("skip: python3 not available");
+            return;
+        };
+        let addr = format!("127.0.0.1:{port}");
+        let mut up = false;
+        for _ in 0..100 {
+            if std::net::TcpStream::connect(&addr).is_ok() {
+                up = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(up, "helper listener did not start");
+
+        let result = bind_web_listener(&addr, port).await;
+        let alive = child.try_wait().unwrap().is_none();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(alive, "the foreign listener was killed");
+        let err = result.expect_err("bind must fail while the port is taken");
+        assert!(err.contains("--port"), "{err}");
+    }
 }

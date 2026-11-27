@@ -1290,6 +1290,8 @@ Local web UI — graph browser, policy editor, token usage dashboard, Command Ce
 
 Set `AX_WEB_READONLY=1` for browse-only mode.
 
+When the port is taken by an earlier `ax web`, that process is asked to stop (then force-stopped after 3 seconds) and the new server takes the port. When any other program holds the port, `ax web` leaves it running and exits with a message naming the program; pick another port with `--port`.
+
 On start, `ax web` checks GitHub for a newer release (skips the 24-hour `~/.ax/update-check.json` cache) and prints the boxed notice to stderr **before** the server blocks. Disable with `AX_NO_UPDATE_CHECK=1`. Short commands still check after they exit.
 
 ```bash
