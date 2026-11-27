@@ -167,6 +167,10 @@ impl ReferenceResolver {
             }
         }
 
+        // A reference resolved to its own source (a compiler macro such as
+        // `defineProps`, a Svelte rune, a virtual module) is handled: its row
+        // goes, but it stands for no edge, so no self-loop is stored.
+        result.resolved.retain(|r| !is_self_resolution(r));
         // One transaction for all edges instead of one commit per reference.
         // Only drop the unresolved rows once their edges are stored.
         let edges: Vec<Edge> = result.resolved.iter().map(resolved_edge).collect();
@@ -281,6 +285,11 @@ fn unresolved_from_db(r: &UnresolvedReference) -> UnresolvedRef {
         language: r.language.unwrap_or(ax_types::Language::Unknown),
         candidates: r.candidates.clone(),
     }
+}
+
+/// True when a reference resolved to the node it comes from.
+fn is_self_resolution(resolved: &ResolvedRef) -> bool {
+    resolved.target_node_id == resolved.original.from_node_id
 }
 
 /// The edge a resolution stands for. Fuzzy matches picked one of several

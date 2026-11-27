@@ -97,3 +97,121 @@ async fn sveltekit_routes_reach_the_graph() {
         .collect();
     assert_eq!(routes, vec!["/blog/:slug".to_string()]);
 }
+
+async fn call(q: &QueryBuilder, from: &str, name: &str, file_path: &str, language: Language) {
+    q.insert_unresolved_ref(&ax_types::UnresolvedReference {
+        from_node_id: from.into(),
+        reference_name: name.into(),
+        reference_kind: ax_types::ReferenceKind::Calls,
+        line: 2,
+        column: 4,
+        file_path: Some(file_path.into()),
+        language: Some(language),
+        candidates: None,
+    })
+    .await
+    .unwrap();
+}
+
+async fn self_loops(q: &QueryBuilder) -> Vec<String> {
+    q.get_all_edges()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.source == e.target)
+        .map(|e| format!("{} {:?}", e.source, e.kind))
+        .collect()
+}
+
+async fn open_refs(q: &QueryBuilder) -> Vec<String> {
+    q.get_unresolved_refs()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.reference_name)
+        .collect()
+}
+
+#[tokio::test]
+async fn compiler_macros_are_dropped_without_a_self_edge() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("package.json"),
+        r#"{"dependencies":{"vue":"3.4.0","svelte":"5.0.0"}}"#,
+    )
+    .unwrap();
+    let q = open(root.path()).await;
+    let vue = "src/components/Card.vue";
+    let svelte = "src/lib/Counter.svelte";
+    add(
+        &q,
+        root.path(),
+        vue,
+        "<script setup>defineProps()</script>\n",
+        Language::Vue,
+    )
+    .await;
+    add(
+        &q,
+        root.path(),
+        svelte,
+        "<script>let n = $state(0)</script>\n",
+        Language::Svelte,
+    )
+    .await;
+    q.upsert_nodes(&[
+        node("card", NodeKind::Component, "Card", vue, Language::Vue),
+        node(
+            "counter",
+            NodeKind::Component,
+            "Counter",
+            svelte,
+            Language::Svelte,
+        ),
+    ])
+    .await
+    .unwrap();
+    call(&q, "card", "defineProps", vue, Language::Vue).await;
+    call(&q, "card", "useRoute", vue, Language::Vue).await;
+    call(&q, "counter", "$state", svelte, Language::Svelte).await;
+
+    ReferenceResolver::new(root.path())
+        .resolve_all(&q, None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(self_loops(&q).await, Vec::<String>::new());
+    assert_eq!(open_refs(&q).await, Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn vue_auto_imports_are_left_alone_outside_vue_projects() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("package.json"),
+        r#"{"dependencies":{"react":"18.3.1"}}"#,
+    )
+    .unwrap();
+    let q = open(root.path()).await;
+    let app = "src/App.tsx";
+    add(
+        &q,
+        root.path(),
+        app,
+        "export function App() { useState(0) }\n",
+        Language::Tsx,
+    )
+    .await;
+    q.upsert_nodes(&[node("app", NodeKind::Function, "App", app, Language::Tsx)])
+        .await
+        .unwrap();
+    call(&q, "app", "useState", app, Language::Tsx).await;
+
+    ReferenceResolver::new(root.path())
+        .resolve_all(&q, None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(self_loops(&q).await, Vec::<String>::new());
+    assert_eq!(open_refs(&q).await, vec!["useState".to_string()]);
+}

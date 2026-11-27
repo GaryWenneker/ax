@@ -16,22 +16,28 @@ pub async fn try_resolve(
 ) -> Option<ResolvedRef> {
     let mut best: Option<(ax_types::Node, f64)> = None;
 
-    // Vue handles Nuxt aliases (@/, ~/) and compiler macros — including Imports.
-    if let Some((node, conf)) = vue::try_resolve_target(queries, project_root, ref_).await {
-        if conf >= 0.9 {
-            return commit_resolution(ref_, &node, conf).await;
+    // Vue handles Nuxt aliases (@/, ~/) and compiler macros, Svelte its runes
+    // and `$app/*` modules. Macro names such as `useState` are common, so
+    // each runs only in a project where that framework was detected.
+    if gates.vue {
+        if let Some((node, conf)) = vue::try_resolve_target(queries, project_root, ref_).await {
+            if conf >= 0.9 {
+                return commit_resolution(ref_, &node, conf).await;
+            }
+            best = Some((node, conf));
         }
-        best = Some((node, conf));
     }
 
-    if let Some((node, conf)) = svelte::try_resolve_target(queries, project_root, ref_).await {
-        if conf >= 0.9 {
-            return commit_resolution(ref_, &node, conf).await;
-        }
-        match &best {
-            Some((_, b)) if conf > *b => best = Some((node, conf)),
-            None => best = Some((node, conf)),
-            _ => {}
+    if gates.svelte {
+        if let Some((node, conf)) = svelte::try_resolve_target(queries, project_root, ref_).await {
+            if conf >= 0.9 {
+                return commit_resolution(ref_, &node, conf).await;
+            }
+            match &best {
+                Some((_, b)) if conf > *b => best = Some((node, conf)),
+                None => best = Some((node, conf)),
+                _ => {}
+            }
         }
     }
 
@@ -104,9 +110,7 @@ pub async fn try_resolve(
     }
 
     if ref_.language == Language::Php {
-        if let Some((node, conf)) =
-            laravel::try_resolve_target(queries, project_root, ref_).await
-        {
+        if let Some((node, conf)) = laravel::try_resolve_target(queries, project_root, ref_).await {
             if conf >= 0.9 {
                 return commit_resolution(ref_, &node, conf).await;
             }

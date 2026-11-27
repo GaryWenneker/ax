@@ -32,6 +32,10 @@ pub struct FrameworkGates {
     pub django: bool,
     /// Spring was detected.
     pub spring: bool,
+    /// Vue or Nuxt was detected.
+    pub vue: bool,
+    /// Svelte or SvelteKit was detected.
+    pub svelte: bool,
 }
 
 pub struct FrameworkRegistry {
@@ -107,6 +111,8 @@ impl FrameworkRegistry {
             flask: flask_active || fastapi_active,
             django: django_active,
             spring: spring_active,
+            vue: vue_active,
+            svelte: svelte_active,
         };
         if !express_active
             && !react_active
