@@ -1040,7 +1040,7 @@ async fn scan_sonar_with_log(
     log.push("Fetching quality gate status…");
     let gate_client = SonarClient::new(config.sonar.clone());
     gate_client
-        .fetch_quality_gate(project_root, &repo_names)
+        .fetch_quality_gate_multi(project_root, &repo_names, workspace_repo_count)
         .await
 }
 

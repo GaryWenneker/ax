@@ -348,6 +348,7 @@ impl SonarClient {
         emit_skipped_repos(
             &workspace_key,
             repo_names,
+            workspace_repo_count,
             &targets,
             full_repo,
             progress,
@@ -574,6 +575,18 @@ impl SonarClient {
             .await
     }
 
+    /// Gate for a scan made with [`Self::run_full_scan_with_log_multi`]: the
+    /// project keys follow the same `workspace_repo_count` the scan used.
+    pub async fn fetch_quality_gate_multi(
+        &self,
+        project_root: &Path,
+        repo_names: &[String],
+        workspace_repo_count: usize,
+    ) -> Result<QualityGateResult, String> {
+        self.fetch_quality_gate_counted(project_root, repo_names, workspace_repo_count, true)
+            .await
+    }
+
     /// Fetch without waiting for the Compute Engine (for status checks / dashboards).
     pub async fn fetch_quality_gate_snapshot(
         &self,
@@ -590,6 +603,17 @@ impl SonarClient {
         repo_names: &[String],
         wait_for_ce: bool,
     ) -> Result<QualityGateResult, String> {
+        self.fetch_quality_gate_counted(project_root, repo_names, repo_names.len(), wait_for_ce)
+            .await
+    }
+
+    async fn fetch_quality_gate_counted(
+        &self,
+        project_root: &Path,
+        repo_names: &[String],
+        workspace_repo_count: usize,
+        wait_for_ce: bool,
+    ) -> Result<QualityGateResult, String> {
         if !self.config.enabled {
             return Ok(QualityGateResult {
                 status: "SKIPPED".into(),
@@ -599,14 +623,7 @@ impl SonarClient {
         }
 
         let workspace_key = workspace_sonar_key(&self.config.project_key, project_root);
-        let keys: Vec<String> = if repo_names.len() <= 1 {
-            vec![workspace_key]
-        } else {
-            repo_names
-                .iter()
-                .map(|repo| canonical_repo_project_key(&workspace_key, repo, true))
-                .collect()
-        };
+        let keys = scan_project_keys(&workspace_key, repo_names, workspace_repo_count);
 
         let mut combined = QualityGateResult {
             status: "OK".into(),
@@ -766,6 +783,7 @@ pub(crate) fn build_inclusions(files: &[String]) -> String {
 fn emit_skipped_repos(
     workspace_key: &str,
     repo_names: &[String],
+    workspace_repo_count: usize,
     targets: &[ScanTarget],
     full_repo: bool,
     progress: &mut Option<&mut dyn FnMut(SonarScanProgressEvent)>,
@@ -774,14 +792,13 @@ fn emit_skipped_repos(
     if repo_names.is_empty() {
         return;
     }
-    let multi_repo = repo_names.len() > 1;
     let target_sources: std::collections::HashSet<&str> =
         targets.iter().map(|t| t.sources.as_str()).collect();
     for repo in repo_names {
         if target_sources.contains(repo.as_str()) {
             continue;
         }
-        let project_key = canonical_repo_project_key(workspace_key, repo, multi_repo);
+        let project_key = repo_project_key(workspace_key, repo, workspace_repo_count);
         let reason: String = if full_repo {
             "not selected".into()
         } else {
@@ -798,6 +815,32 @@ fn emit_skipped_repos(
             log.push(format!("– {repo} skipped ({reason})"));
         }
     }
+}
+
+/// Sonar project key a scan of `repo` writes to. A repo of a multi-repo
+/// workspace gets its own prefixed key even when it is scanned alone.
+fn repo_project_key(workspace_key: &str, repo: &str, workspace_repo_count: usize) -> String {
+    canonical_repo_project_key(workspace_key, repo, workspace_repo_count > 1)
+}
+
+/// Every project key a scan of `repo_names` writes to (the workspace key when
+/// no repos are listed).
+fn scan_project_keys(
+    workspace_key: &str,
+    repo_names: &[String],
+    workspace_repo_count: usize,
+) -> Vec<String> {
+    if repo_names.is_empty() {
+        return vec![workspace_key.to_string()];
+    }
+    let mut keys: Vec<String> = Vec::new();
+    for repo in repo_names {
+        let key = repo_project_key(workspace_key, repo, workspace_repo_count);
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+    keys
 }
 
 #[cfg(test)]
@@ -855,9 +898,6 @@ fn build_scan_targets_with_count(
             .push(file.clone());
     }
 
-    // Use workspace_repo_count for multi-repo detection so that scanning a single repo
-    // from a multi-repo workspace still uses the correct prefixed project key.
-    let multi_repo = workspace_repo_count > 1;
     let mut targets: Vec<ScanTarget> = repo_names
         .iter()
         .filter_map(|repo| {
@@ -871,7 +911,7 @@ fn build_scan_targets_with_count(
                 build_inclusions(&files)
             };
             Some(ScanTarget {
-                project_key: canonical_repo_project_key(workspace_key, repo, multi_repo),
+                project_key: repo_project_key(workspace_key, repo, workspace_repo_count),
                 sources: repo.clone(),
                 inclusions,
             })
@@ -914,7 +954,135 @@ fn write_scan_properties(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
     use std::time::Instant;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    type Handler = dyn Fn(&str, usize) -> (u16, String) + Send + Sync;
+
+    /// A minimal SonarQube stand-in. `handler` gets the request path with its
+    /// query and how many times that path was requested before.
+    struct MockSonar {
+        host: String,
+        hits: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl MockSonar {
+        async fn start(
+            handler: impl Fn(&str, usize) -> (u16, String) + Send + Sync + 'static,
+        ) -> Self {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let host = format!("http://{}", listener.local_addr().unwrap());
+            let hits: Arc<Mutex<Vec<String>>> = Arc::default();
+            let handler: Arc<Handler> = Arc::new(handler);
+            let seen = hits.clone();
+            tokio::spawn(async move {
+                loop {
+                    let Ok((mut sock, _)) = listener.accept().await else {
+                        return;
+                    };
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 1024];
+                    while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match sock.read(&mut chunk).await {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                        }
+                    }
+                    let text = String::from_utf8_lossy(&buf);
+                    let path = text.split_whitespace().nth(1).unwrap_or("").to_string();
+                    let before = {
+                        let mut seen = seen.lock().unwrap();
+                        let n = seen.iter().filter(|p| **p == path).count();
+                        seen.push(path.clone());
+                        n
+                    };
+                    let (code, body) = handler(&path, before);
+                    let resp = format!(
+                        "HTTP/1.1 {code} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                    let _ = sock.shutdown().await;
+                }
+            });
+            Self { host, hits }
+        }
+
+        fn hits(&self) -> Vec<String> {
+            self.hits.lock().unwrap().clone()
+        }
+    }
+
+    fn client_for(host: &str) -> SonarClient {
+        SonarClient::new(SonarConfig {
+            enabled: true,
+            host: host.to_string(),
+            project_key: "ax".into(),
+            token_env: "AX_TEST_SONAR_TOKEN_UNSET".into(),
+            ..SonarConfig::default()
+        })
+    }
+
+    fn gate_body(status: &str) -> String {
+        format!("{{\"projectStatus\":{{\"status\":\"{status}\",\"conditions\":[]}}}}")
+    }
+
+    #[test]
+    fn skipped_repo_of_a_multi_repo_workspace_reports_its_prefixed_key() {
+        let repos = vec!["AcmeAdvisor".to_string()];
+        let mut keys = Vec::new();
+        let mut record = |e: SonarScanProgressEvent| {
+            if let SonarScanProgressEvent::Skipped { project_key, .. } = e {
+                keys.push(project_key);
+            }
+        };
+        let mut progress: Option<&mut dyn FnMut(SonarScanProgressEvent)> = Some(&mut record);
+        emit_skipped_repos("ax", &repos, 10, &[], false, &mut progress, None);
+        assert_eq!(keys, vec!["ax-AcmeAdvisor".to_string()]);
+    }
+
+    #[test]
+    fn scan_and_gate_keys_agree() {
+        let one = vec!["AcmeAdvisor".to_string()];
+        assert_eq!(scan_project_keys("ax", &one, 10), vec!["ax-AcmeAdvisor"]);
+        assert_eq!(scan_project_keys("ax", &one, 1), vec!["ax"]);
+        assert_eq!(scan_project_keys("ax", &[], 0), vec!["ax"]);
+        let two = vec!["a".to_string(), "b".to_string()];
+        assert_eq!(scan_project_keys("ax", &two, 2), vec!["ax-a", "ax-b"]);
+    }
+
+    #[tokio::test]
+    async fn gate_for_one_repo_of_a_multi_repo_workspace_reads_the_scanned_key() {
+        let sonar = MockSonar::start(|path, _| {
+            if path.starts_with("/api/qualitygates/project_status") {
+                (200, gate_body("OK"))
+            } else {
+                (200, "{\"queue\":[]}".into())
+            }
+        })
+        .await;
+        let root = tempfile::tempdir().unwrap();
+        let repos = vec!["AcmeAdvisor".to_string()];
+        // The scan for this selection writes to `ax-AcmeAdvisor`.
+        let targets = build_scan_targets_with_count("ax", &repos, &[], true, 10);
+        assert_eq!(targets[0].project_key, "ax-AcmeAdvisor");
+
+        client_for(&sonar.host)
+            .fetch_quality_gate_multi(root.path(), &repos, 10)
+            .await
+            .unwrap();
+        let gate_calls: Vec<String> = sonar
+            .hits()
+            .into_iter()
+            .filter(|p| p.starts_with("/api/qualitygates/project_status"))
+            .collect();
+        assert_eq!(gate_calls.len(), 1, "{gate_calls:?}");
+        assert!(
+            gate_calls[0].contains("projectKey=ax-AcmeAdvisor"),
+            "{gate_calls:?}"
+        );
+    }
 
     #[cfg(unix)]
     #[test]
