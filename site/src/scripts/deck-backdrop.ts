@@ -1,16 +1,26 @@
 /**
- * Violet silk ring for the homepage backdrop, ported from the Ax presentation deck.
+ * Site backdrop, ported from the Ax presentation deck: a breathing lime halftone field and a foggy
+ * violet silk ring, on every page.
  *
- * Each layer is a bundle of fine closed curves around one ring. The ring radius is modulated by
- * two travelling waves; a per-line phase shift makes the lines cross like woven silk, and an
- * envelope pinches the bundle into folds. Layers add up (`lighter`), a blurred low-res copy gives
- * the haze, and sparkles ride the layers.
+ * - Silk ring: each layer is a bundle of fine closed curves around one ring. The radius is
+ *   modulated by two travelling waves; a per-line phase shift makes the lines cross like woven
+ *   silk, and an envelope pinches the bundle into folds. Layers add up (`lighter`), a blurred
+ *   low-res copy gives the haze, and sparkles ride the layers.
+ * - Halftone: lime dots that swell near the ring centre and ripple with slow interference waves.
  *
- * Motion follows html[data-ax-motion] (the visible Pause motion control) and
- * prefers-reduced-motion: when paused it draws one still frame and stops the loop.
+ * The homepage uses the `hero` variant (large ring right of the copy). Docs pages use `page`,
+ * like the deck's inner slides: a wider, fainter ring whose position follows the page, so each
+ * page has its own composition.
+ *
+ * Motion follows html[data-ax-motion] (the visible Pause motion control), prefers-reduced-motion
+ * and hidden tabs: when paused it draws one still frame and stops the loop. The light docs theme
+ * hides the backdrop, and then nothing is drawn.
  */
 
 const TAU = Math.PI * 2;
+const LIME = '#b9ff6a';
+
+export type Variant = 'hero' | 'page';
 
 export type Ribbon = {
   color: string;
@@ -50,14 +60,36 @@ export function makeSparks(count: number): Spark[] {
   });
 }
 
+/** Stable small number for a page path, so a page always gets the same composition. */
+export function pageSeed(path: string): number {
+  let hash = 0;
+  for (const ch of path.replace(/\/+$/, '')) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return hash % 997;
+}
+
+export type Layout = {
+  fx: number; // ring centre, fraction of width
+  fy: number; // ring centre, fraction of height
+  r: number; // ring radius, fraction of the short side
+  k: number; // presence: 1 = hero, lower = quieter inner page
+  spin: number; // extra rotation so pages do not repeat the same fold
+};
+
 /**
- * Ring centre (fractions of the viewport) and radius (fraction of the short side).
- * Wide screens keep the ring to the right of the copy; narrow screens push it up and off the edge.
+ * Where the ring sits. Hero: right of the copy on wide screens, up and off the edge on narrow ones.
+ * Page: like the deck's inner slides, the centre walks around the screen by the golden angle per
+ * page, but stays on the right half on wide screens so the article column stays calm.
  */
-export function ringLayout(w: number, h: number): { fx: number; fy: number; r: number } {
-  if (w < 600) return { fx: 0.92, fy: 0.16, r: 0.5 };
-  if (w < 900) return { fx: 0.9, fy: 0.3, r: 0.44 };
-  return { fx: 0.76, fy: 0.5, r: Math.min(0.4, 0.4 * (w / h) / 1.6) };
+export function backdropLayout(variant: Variant, w: number, h: number, seed = 0): Layout {
+  if (variant === 'hero') {
+    if (w < 600) return { fx: 0.92, fy: 0.16, r: 0.5, k: 1, spin: 0 };
+    if (w < 900) return { fx: 0.9, fy: 0.3, r: 0.44, k: 1, spin: 0 };
+    return { fx: 0.76, fy: 0.5, r: Math.min(0.4, (0.4 * (w / h)) / 1.6), k: 1, spin: 0 };
+  }
+  const a = seed * 2.399;
+  const spin = (seed % 7) * 0.9;
+  if (w < 900) return { fx: 0.75 + 0.2 * Math.cos(a), fy: 0.3 + 0.2 * Math.sin(a), r: 0.55, k: 0.45, spin };
+  return { fx: 0.74 + 0.16 * Math.cos(a), fy: 0.5 + 0.3 * Math.sin(a), r: 0.48, k: 0.45, spin };
 }
 
 // Pixel budgets per quality tier. A slow frame rate steps down a tier: fewer pixels, lines and segments.
@@ -68,14 +100,18 @@ const TIERS = [
   { px: 0.3e6, q: 0.36, seg: 80 },
 ] as const;
 
-export function mountSilkRing(root: HTMLElement): () => void {
+export function mountDeckBackdrop(root: HTMLElement): () => void {
+  const dots = root.querySelector<HTMLCanvasElement>('[data-ax-backdrop-dots]');
   const silk = root.querySelector<HTMLCanvasElement>('[data-ax-silk]');
   const fog = root.querySelector<HTMLCanvasElement>('[data-ax-silk-fog]');
+  const dctx = dots?.getContext('2d');
   const ctx = silk?.getContext('2d');
   const fctx = fog?.getContext('2d');
-  if (!silk || !fog || !ctx || !fctx) return () => {};
+  if (!dots || !silk || !fog || !dctx || !ctx || !fctx) return () => {};
 
-  const sparks = makeSparks(90);
+  const variant: Variant = root.dataset.axVariant === 'page' ? 'page' : 'hero';
+  const seed = pageSeed(location.pathname);
+  const sparks = makeSparks(variant === 'hero' ? 90 : 70);
   const html = document.documentElement;
   const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
   const nativeBlur = typeof fctx.filter === 'string';
@@ -95,6 +131,10 @@ export function mountSilkRing(root: HTMLElement): () => void {
     // The root can still be 0×0 before the stylesheet applies; fall back to the viewport.
     w = Math.max(1, root.clientWidth || window.innerWidth);
     h = Math.max(1, root.clientHeight || window.innerHeight);
+    const ds = Math.min(dpr, Math.sqrt(1.6e6 / (w * h)));
+    dots.width = Math.ceil(w * ds);
+    dots.height = Math.ceil(h * ds);
+    dctx.setTransform(ds, 0, 0, ds, 0, 0);
     const ss = Math.min(dpr, Math.sqrt(TIERS[tier].px / (w * h)));
     silk.width = Math.ceil(w * ss);
     silk.height = Math.ceil(h * ss);
@@ -106,12 +146,39 @@ export function mountSilkRing(root: HTMLElement): () => void {
 
   const render = (t: number): void => {
     const { q, seg } = TIERS[tier];
-    const layout = ringLayout(w, h);
+    const layout = backdropLayout(variant, w, h, seed);
     const m = Math.min(w, h);
     const R = m * layout.r;
     const cx = layout.fx * w;
     const cy = layout.fy * h;
+    const strength = 0.75 + 0.25 * layout.k;
 
+    // --- halftone field, centred on the ring ---
+    dctx.clearRect(0, 0, w, h);
+    const sp = Math.max(14, Math.round(w / 96));
+    const aspect = w / h;
+    dctx.fillStyle = LIME;
+    dctx.globalAlpha = 0.09 + 0.2 * layout.k;
+    dctx.beginPath();
+    for (let y = sp / 2; y < h; y += sp) {
+      for (let x = sp / 2; x < w; x += sp) {
+        const dx = (x / w - layout.fx) * aspect;
+        const dy = y / h - layout.fy;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        const n =
+          Math.sin(x * 0.011 + t * 0.6) +
+          Math.sin(y * 0.014 - t * 0.45) +
+          Math.sin((x + y) * 0.007 + t * 0.3);
+        const v = 1 - d * 1.5 + n * 0.2;
+        if (v <= 0.04) continue;
+        const r = Math.min(v, 1) * sp * 0.4 * (0.55 + 0.45 * layout.k);
+        dctx.moveTo(x + r, y);
+        dctx.arc(x, y, r, 0, TAU);
+      }
+    }
+    dctx.fill();
+
+    // --- silk layers ---
     ctx.globalCompositeOperation = 'source-over';
     ctx.clearRect(0, 0, w, h);
     ctx.globalCompositeOperation = 'lighter';
@@ -121,8 +188,8 @@ export function mountSilkRing(root: HTMLElement): () => void {
       ctx.strokeStyle = rb.color;
       const lines = Math.max(6, Math.round(rb.lines * q));
       // fewer lines on a lower tier, each a little brighter, so the ring keeps its weight
-      ctx.globalAlpha = Math.min(1, (rb.alpha * rb.lines) / lines);
-      const base = rb.p + t * rb.rot;
+      ctx.globalAlpha = Math.min(1, (rb.alpha * strength * rb.lines) / lines);
+      const base = rb.p + layout.spin * 0.6 + t * rb.rot;
       const breathe = 1 + 0.035 * Math.sin(t * 0.23 + rb.p * 1.7);
       for (let j = 0; j < lines; j++) {
         const u = j / (lines - 1);
@@ -147,31 +214,34 @@ export function mountSilkRing(root: HTMLElement): () => void {
       }
     }
 
+    // --- sparkles ---
     ctx.fillStyle = '#ede9fe';
     for (const sk of sparks) {
-      const a = sk.a + t * sk.sp;
+      const a = sk.a + t * sk.sp + layout.spin * 0.6;
       const rr = R * (1 + sk.r + 0.03 * Math.sin(t * 0.4 + sk.ph));
       const x = cx + rr * Math.cos(a);
       const y = cy + rr * Math.sin(a);
       if (x < -10 || y < -10 || x > w + 10 || y > h + 10) continue;
       const tw = 0.5 + 0.5 * Math.sin(t * sk.tw + sk.ph);
-      ctx.globalAlpha = 0.12 * tw;
+      ctx.globalAlpha = 0.12 * tw * strength;
       ctx.beginPath();
       ctx.arc(x, y, sk.size * 3.2, 0, TAU);
       ctx.fill();
-      ctx.globalAlpha = 0.35 + 0.65 * tw;
+      ctx.globalAlpha = (0.35 + 0.65 * tw) * strength;
       ctx.beginPath();
       ctx.arc(x, y, sk.size, 0, TAU);
       ctx.fill();
     }
     ctx.globalAlpha = 1;
 
-    // haze: a low-res, blurred copy of the silk
+    // --- haze: a low-res, blurred copy of the silk ---
     fctx.clearRect(0, 0, fog.width, fog.height);
     if (nativeBlur) fctx.filter = `blur(${(fog.width * 0.014).toFixed(1)}px)`;
     fctx.drawImage(silk, 0, 0, fog.width, fog.height);
   };
 
+  // Hidden by the light theme (display:none) → nothing to draw.
+  const visible = (): boolean => root.getClientRects().length > 0;
   const paused = (): boolean => html.dataset.axMotion === 'paused' || document.hidden;
 
   const loop = (now: number): void => {
@@ -194,11 +264,14 @@ export function mountSilkRing(root: HTMLElement): () => void {
     }
 
     render(clock);
-    raf = paused() ? 0 : requestAnimationFrame(loop);
+    raf = paused() || !visible() ? 0 : requestAnimationFrame(loop);
   };
 
   const sync = (): void => {
-    if (paused()) {
+    if (!visible()) {
+      cancelAnimationFrame(raf);
+      raf = 0;
+    } else if (paused()) {
       cancelAnimationFrame(raf);
       raf = 0;
       render(clock);
@@ -209,15 +282,22 @@ export function mountSilkRing(root: HTMLElement): () => void {
   };
 
   const onResize = (): void => {
+    if (!visible()) return;
     resize();
     if (!raf) render(clock);
   };
 
   resize();
-  render(clock);
+  if (visible()) render(clock);
   sync();
   const observer = new ResizeObserver(onResize);
   observer.observe(root);
+  // The theme picker and the motion control both flip attributes on <html>.
+  const attributes = new MutationObserver(() => {
+    onResize();
+    sync();
+  });
+  attributes.observe(html, { attributes: true, attributeFilter: ['data-theme', 'data-ax-motion'] });
   window.addEventListener('ax:motion', sync);
   document.addEventListener('visibilitychange', sync);
 
@@ -225,6 +305,7 @@ export function mountSilkRing(root: HTMLElement): () => void {
     cancelAnimationFrame(raf);
     raf = 0;
     observer.disconnect();
+    attributes.disconnect();
     window.removeEventListener('ax:motion', sync);
     document.removeEventListener('visibilitychange', sync);
   };

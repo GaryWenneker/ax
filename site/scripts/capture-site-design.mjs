@@ -98,7 +98,7 @@ try {
         throw new Error(name + ': incorrect slogan, font, accent or layout: ' + JSON.stringify(hero));
       }
     }
-    // Pixel-level visual regression: the silk ring must visibly move on both desktop and mobile.
+    // Pixel-level visual regression: the deck backdrop (dots and silk ring) must visibly move on desktop and mobile.
     if (name === "home-desktop" || name === "home-mobile") {
       const clip = width >= 900
         ? { x: Math.floor(width * 0.55), y: Math.floor(height * 0.1), width: width - Math.floor(width * 0.55), height: Math.floor(height * 0.8) }
@@ -107,16 +107,17 @@ try {
       await new Promise(resolve => setTimeout(resolve, 1500));
       const finish = await sharp(await page.screenshot({ clip })).removeAlpha().raw().toBuffer();
       const delta = start.reduce((sum, value, i) => sum + Math.abs(value - finish[i]), 0) / start.length;
-      if (delta < 0.5) throw new Error(name + ': silk ring not visibly moving (pixel delta ' + delta.toFixed(2) + ')');
-      console.log(name, 'silk ring visible motion, pixel delta', delta.toFixed(2));
+      if (delta < 0.5) throw new Error(name + ': backdrop not visibly moving (pixel delta ' + delta.toFixed(2) + ')');
+      console.log(name, 'backdrop visible motion, pixel delta', delta.toFixed(2));
     }
     if (route !== "/" && name.startsWith("docs-")) {
       const docsTheme = await page.evaluate(() => ({
         wordmark: document.querySelector('.cg-site-title__wordmark')?.textContent?.trim(),
-        moire: !!document.querySelector('.ax-doc-moire'),
+        backdrop: getComputedStyle(document.querySelector('[data-ax-backdrop-root]') ?? document.body).position === 'fixed',
+        moire: !!document.querySelector('.ax-doc-moire, .ax-halftone'),
         lime: getComputedStyle(document.documentElement).getPropertyValue('--ax-lime').trim(),
       }));
-      if (docsTheme.wordmark !== 'Ax_' || !docsTheme.moire || docsTheme.lime !== '#b9ff6a') {
+      if (docsTheme.wordmark !== 'Ax_' || !docsTheme.backdrop || docsTheme.moire || docsTheme.lime !== '#b9ff6a') {
         throw new Error(name + ': docs did not inherit landing identity: ' + JSON.stringify(docsTheme));
       }
     }
@@ -141,19 +142,20 @@ try {
     throw new Error("Old cinematic layout is still rendered");
   }
   const silk = await page.evaluate(() => {
-    const root = document.querySelector('[data-ax-silk-root]');
+    const root = document.querySelector('[data-ax-backdrop-root]');
     const lines = root?.querySelector('[data-ax-silk]');
     const fog = root?.querySelector('[data-ax-silk-fog]');
+    const dots = root?.querySelector('[data-ax-backdrop-dots]');
     return {
       moire: !!document.querySelector('.ax-landing .ax-page .ax-halftone'),
       hidden: root?.getAttribute('aria-hidden'),
-      sized: !!lines && lines.width > 0 && lines.height > 0 && !!fog && fog.width > 0 && fog.height > 0,
-      mask: root ? getComputedStyle(root).maskImage : '',
+      sized: [lines, fog, dots].every(canvas => !!canvas && canvas.width > 0 && canvas.height > 0),
+      vignette: !!root?.querySelector('.ax-backdrop-vignette'),
       pointer: root ? getComputedStyle(root).pointerEvents : '',
     };
   });
-  if (silk.moire || silk.hidden !== 'true' || !silk.sized || !silk.mask.includes('linear-gradient') || silk.pointer !== 'none') {
-    throw new Error('Decorative silk ring with a side fade required instead of the moiré: ' + JSON.stringify(silk));
+  if (silk.moire || silk.hidden !== 'true' || !silk.sized || !silk.vignette || silk.pointer !== 'none') {
+    throw new Error('Decorative deck backdrop (dots, silk ring, vignette) required instead of the moiré: ' + JSON.stringify(silk));
   }
   await page.click("[data-ax-platform-toggle]");
   await page.click('[data-ax-os="windows"]');
@@ -170,12 +172,12 @@ try {
   const silkFrame = () => page.$eval('[data-ax-silk]', canvas => canvas.toDataURL());
   const stillBefore = await silkFrame();
   await new Promise(resolve => setTimeout(resolve, 600));
-  if (await silkFrame() !== stillBefore) throw new Error("Reduced-motion preference ignored by the silk ring");
+  if (await silkFrame() !== stillBefore) throw new Error("Reduced-motion preference ignored by the backdrop");
   const targets = await page.$$eval('a[href]', links =>
     [...new Set(links.map(x => x.getAttribute("href")).filter(x => x.startsWith("/") && !x.includes("#")))]);
   for (const target of targets) await access(path.join(site, "dist", target, "index.html"));
   if (errors.length) throw new Error(errors.join("\n"));
-  console.log("Minimal homepage checks passed: responsive viewport, silk ring motion and side fade, native download links, and reduced motion.");
+  console.log("Minimal homepage checks passed: responsive viewport, deck backdrop motion and vignette, native download links, and reduced motion.");
 } finally {
   await browser?.close();
   server.kill();

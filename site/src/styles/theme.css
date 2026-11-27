@@ -341,9 +341,6 @@ h1#_top,.sl-markdown-content h2,.sl-markdown-content h3{
   font-family:"Oxanium Variable","Oxanium",var(--sl-font);
   font-weight:550
 }
-/* Homepage CMY screens are shared through minimal-home.css. */
-.ax-doc-moire{--ax-lime:#b9ff6a;position:fixed;inset:var(--sl-nav-height,4.5rem) 0 0 0;z-index:0;pointer-events:none;overflow:hidden}
-.ax-doc-moire.ax-landing .ax-halftone{inset:0 0 0 20%;opacity:.75}
 .header,.sidebar-pane{z-index:3}
 .main-pane{position:relative;z-index:2;background:transparent}
 .main-pane .content-panel{position:relative;isolation:isolate;background:transparent}
@@ -358,7 +355,6 @@ h1#_top,.sl-markdown-content h2,.sl-markdown-content h3{
 :root[data-theme='light'] .main-pane .content-panel::before{background:linear-gradient(90deg,rgba(255,255,255,.96) 0%,rgba(255,255,255,.9) 58%,rgba(255,255,255,.4) 82%,transparent 100%)}
 :root[data-theme='light'] .right-sidebar-panel::before{background:rgba(255,255,255,.88)}
 :root[data-theme='light'] .right-sidebar-panel h2,:root[data-theme='light'] .right-sidebar-panel a{color:#20281d}
-@media(max-width:600px){.ax-doc-moire.ax-landing .ax-halftone{opacity:.4}}
 
 /* Content is visible by default; JS only arms reveal when motion is enabled. */
 .ax-reveal { transition:opacity .65s ease, transform .65s cubic-bezier(.2,.65,.25,1); }
@@ -409,3 +405,48 @@ html[data-ax-motion="paused"] .ax-reveal-pending { opacity:1; transform:none; }
   background: #b9ff6a;
   color: #101510;
 }
+
+/* ---------- Deck styling (from the Ax presentation) ----------
+   Rounded translucent panels on hairlines, lime accents, terminal-style code, diamond bullets.
+   Dark theme only: the light theme keeps its plain, high-contrast surfaces. */
+:root{--ax-line:rgba(255,255,255,.09);--ax-panel:rgba(14,18,15,.86);--ax-lime-soft:rgba(185,255,106,.14);--ax-term:rgba(6,9,7,.92)}
+:root:not([data-theme='light']) h1#_top{font-family:"Oxanium Variable","Oxanium",var(--sl-font);font-weight:500;letter-spacing:-.01em;line-height:1.04;text-wrap:balance}
+:root:not([data-theme='light']) .sl-markdown-content h2{font-weight:500;letter-spacing:-.01em}
+:root:not([data-theme='light']) .sl-markdown-content h2::before{content:"";display:inline-block;width:.32em;height:.32em;margin:0 .55em .18em 0;background:var(--ax-lime);vertical-align:middle}
+:root:not([data-theme='light']) .sl-markdown-content h3{font-weight:500}
+/* inline code: lime on a soft lime wash */
+:root:not([data-theme='light']) .sl-markdown-content :not(pre) > code{color:var(--ax-lime);background:var(--ax-lime-soft);border:0;border-radius:.3em;padding:.08em .4em}
+/* code blocks: the deck's terminal panel */
+:root:not([data-theme='light']) .expressive-code .frame{border:1px solid var(--ax-line)!important;border-radius:.7em;overflow:hidden;background:var(--ax-term);box-shadow:0 1.5rem 3.5rem rgba(0,0,0,.45),0 0 0 1px rgba(185,255,106,.04)!important}
+:root:not([data-theme='light']) .expressive-code pre{background:var(--ax-term)!important;border:0!important}
+:root:not([data-theme='light']) .expressive-code .frame .header{background:transparent!important;border-bottom:1px solid var(--ax-line)!important}
+:root:not([data-theme='light']) .expressive-code .frame .header .title{font:500 .68rem/1.4 var(--sl-font-mono);letter-spacing:.14em;text-transform:uppercase;color:#849087}
+:root:not([data-theme='light']) .expressive-code .frame .header::after{border-color:var(--ax-line)!important}
+/* cards, asides, pagination and tables: rounded translucent panels */
+:root:not([data-theme='light']) .card,
+:root:not([data-theme='light']) .pagination-links a{border:1px solid var(--ax-line);border-radius:.7em;background:var(--ax-panel)}
+:root:not([data-theme='light']) .card:hover,
+:root:not([data-theme='light']) .pagination-links a:hover{border-color:rgba(185,255,106,.38);background:var(--ax-panel)}
+:root:not([data-theme='light']) .starlight-aside{border:1px solid rgba(185,255,106,.32);border-radius:.7em;background:var(--ax-lime-soft)}
+:root:not([data-theme='light']) .starlight-aside--caution{border-color:rgba(255,157,77,.4);background:rgba(255,157,77,.1)}
+:root:not([data-theme='light']) .starlight-aside--danger{border-color:rgba(255,110,110,.42);background:rgba(255,110,110,.1)}
+:root:not([data-theme='light']) .sl-markdown-content table{border-collapse:separate;border-spacing:0;border:1px solid var(--ax-line);border-radius:.7em;overflow:hidden;background:var(--ax-panel)}
+:root:not([data-theme='light']) .sl-markdown-content th{background:rgba(255,255,255,.025);font:500 .68rem/1.4 var(--sl-font-mono);letter-spacing:.14em;text-transform:uppercase;color:#a3aaa2}
+:root:not([data-theme='light']) .sl-markdown-content th,
+:root:not([data-theme='light']) .sl-markdown-content td{border-bottom:1px solid var(--ax-line)}
+:root:not([data-theme='light']) .sl-markdown-content tr:last-child td{border-bottom:0}
+/* bullets: the deck's lime diamonds (tab bars, task lists and steps keep their own markers) */
+:root:not([data-theme='light']) .sl-markdown-content ul:not([role]):not(.contains-task-list):not(.sl-steps){list-style:none;padding-left:0}
+:root:not([data-theme='light']) .sl-markdown-content ul:not([role]):not(.contains-task-list):not(.sl-steps) > li{position:relative;padding-left:1.5em}
+:root:not([data-theme='light']) .sl-markdown-content ul:not([role]):not(.contains-task-list):not(.sl-steps) > li::before{content:"";position:absolute;left:.1em;top:.72em;width:.42em;height:.42em;background:var(--ax-lime);border-radius:1px;transform:rotate(45deg)}
+/* chips: badges and the search button */
+:root:not([data-theme='light']) .sl-badge{border:1px solid rgba(185,255,106,.35);border-radius:99em;background:rgba(255,255,255,.03);color:var(--ax-lime);font-family:var(--sl-font-mono);letter-spacing:.08em}
+:root:not([data-theme='light']) button[data-open-modal]{border:1px solid var(--ax-line)!important;border-radius:99em;background:rgba(255,255,255,.03)}
+:root:not([data-theme='light']) .ax-motion-toggle{border-radius:99em;border-color:rgba(185,255,106,.35);color:var(--ax-lime)}
+/* chrome: mono labels with wide tracking, lime kickers */
+:root:not([data-theme='light']) .sidebar-content summary{font:500 .68rem/1.4 var(--sl-font-mono);letter-spacing:.14em;text-transform:uppercase;color:#a3aaa2}
+:root:not([data-theme='light']) .sidebar-content a[aria-current="page"]{background:var(--ax-lime-soft);border-left:2px solid var(--ax-lime);border-radius:0 .4em .4em 0;color:var(--cg-ink)}
+:root:not([data-theme='light']) .right-sidebar-panel h2,
+:root:not([data-theme='light']) starlight-toc > nav > h2{color:var(--ax-lime);letter-spacing:.2em}
+:root:not([data-theme='light']) .header{background:rgba(8,10,9,.86)!important;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+:root:not([data-theme='light']) .sidebar-pane{background:rgba(8,10,9,.9)}

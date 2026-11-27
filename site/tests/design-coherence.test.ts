@@ -7,17 +7,21 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const file = (relative: string) => readFileSync(path.join(root, relative), 'utf8');
 
-test('docs use the landing graphite/lime theme and responsive moving overprint', () => {
+test('docs use the landing graphite/lime theme, the deck backdrop and deck building blocks', () => {
   const theme = file('site/src/styles/theme.css');
   const header = file('site/src/components/Header.astro');
   const title = file('site/src/components/SiteTitle.astro');
   const astro = file('site/astro.config.mjs');
   assert.match(theme, /--ax-lime:#b9ff6a/);
   assert.match(theme, /--sl-color-accent: #b9ff6a/);
-  assert.match(header, /import '..\/styles\/minimal-home.css'/);
-  assert.match(header, /class="ax-doc-moire ax-landing"/);
-  for (const screen of ['one', 'two', 'three']) assert.ok(header.includes(`ax-halftone-screen-${screen}`));
-  assert.match(header, /axParkDocMoire/);
+  assert.match(header, /<DeckBackdrop variant="page" \/>/);
+  assert.match(header, /axParkDocBackdrop/);
+  assert.doesNotMatch(header + theme, /ax-doc-moire|ax-halftone/);
+  // Deck building blocks, dark theme only.
+  assert.match(theme, /:root:not\(\[data-theme='light'\]\) \.expressive-code \.frame\{[^}]*border-radius:\.7em/);
+  assert.match(theme, /:root:not\(\[data-theme='light'\]\) \.sl-markdown-content :not\(pre\) > code\{color:var\(--ax-lime\);background:var\(--ax-lime-soft\)/);
+  assert.match(theme, /:root:not\(\[data-theme='light'\]\) \.sl-markdown-content table\{[^}]*border-radius:\.7em/);
+  assert.match(theme, /ul:not\(\[role\]\):not\(\.contains-task-list\):not\(\.sl-steps\) > li::before\{[^}]*transform:rotate\(45deg\)/);
   assert.match(theme, /content-panel::before\{[^}]*linear-gradient\(90deg,rgba\(8,10,9,\.94\)/);
   assert.match(theme, /\.right-sidebar-panel::before\{[^}]*background:rgba\(18,22,20,\.45\)[^}]*mask-composite:intersect/);
   assert.match(theme, /\.right-sidebar\{z-index:4;background:transparent;pointer-events:none\}/);

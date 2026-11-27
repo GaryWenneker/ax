@@ -33,38 +33,49 @@ test('Oxanium is bundled and used for the heading, not loaded from Google Fonts'
   assert.doesNotMatch(page, /fonts\.googleapis\.com|fonts\.gstatic\.com/);
 });
 
-test('homepage backdrop is the violet silk ring, not the CMY moiré', () => {
-  const ring = read('src/components/SilkRing.astro');
-  const script = read('src/scripts/silk-ring.ts');
-  assert.match(home, /<SilkRing\s*\/>/);
-  assert.doesNotMatch(home, /ax-halftone/);
-  assert.match(ring, /class="ax-silk" data-ax-silk-root aria-hidden="true"/);
-  assert.match(ring, /data-ax-silk-fog/);
-  assert.match(ring, /mountSilkRing\(root\)/);
-  assert.match(ring, /astro:before-swap/);
-  for (const ink of ['#6d28d9', '#7c3aed', '#a78bfa', '#d946ef', '#c4b5fd']) assert.ok(script.includes(ink));
+test('homepage backdrop is the deck backdrop (halftone, silk ring, vignette), not the CMY moiré', () => {
+  const backdrop = read('src/components/DeckBackdrop.astro');
+  const script = read('src/scripts/deck-backdrop.ts');
+  const styles = read('src/styles/deck-backdrop.css');
+  assert.match(home, /<DeckBackdrop\s*\/>/);
+  assert.doesNotMatch(home + css, /ax-halftone|ax-moire/);
+  assert.match(backdrop, /data-ax-backdrop-root data-ax-variant=\{variant\} aria-hidden="true"/);
+  for (const hook of ['data-ax-backdrop-dots', 'data-ax-silk-fog', 'data-ax-silk', 'ax-backdrop-vignette']) assert.ok(backdrop.includes(hook), hook);
+  assert.match(backdrop, /mountDeckBackdrop\(root\)/);
+  assert.match(backdrop, /astro:before-swap/);
+  for (const ink of ['#6d28d9', '#7c3aed', '#a78bfa', '#d946ef', '#c4b5fd', '#b9ff6a']) assert.ok(script.includes(ink), ink);
   // Motion: the visible Pause motion control and hidden tabs stop the loop on a still frame.
   assert.match(script, /html\.dataset\.axMotion === 'paused' \|\| document\.hidden/);
-  assert.match(script, /addEventListener\('ax:motion', sync\)/);
+  assert.match(script, /attributeFilter: \['data-theme', 'data-ax-motion'\]/);
   assert.match(script, /new ResizeObserver\(onResize\)/);
   assert.match(home, /<MotionControl\s*\/>/);
-  // The ring fades out toward the copy so text keeps its contrast.
-  assert.match(css, /\.ax-landing \.ax-silk\{[^}]*pointer-events:none;mask-image:linear-gradient\(90deg,transparent 0%,transparent 30%/);
-  assert.match(css, /@media\(max-width:899px\)\{\.ax-landing \.ax-silk\{opacity:\.55;mask-image:linear-gradient\(180deg/);
-  assert.doesNotMatch(css, /ax-halftone-soft|ax-halftone-sharp|ax-moire-breath/);
+  // The deck's vignette keeps the copy readable; the light docs theme hides the glow.
+  assert.match(styles, /\.ax-backdrop-vignette\{[^}]*radial-gradient\(ellipse at 30% 50%,rgba\(8,10,9,\.66\)/);
+  assert.match(styles, /\.ax-backdrop\{pointer-events:none/);
+  assert.match(styles, /:root\[data-theme='light'\] \.ax-backdrop\{display:none\}/);
+  // Deck kicker and lime chips on the hero.
+  assert.match(css, /\.ax-eyebrow\{[^}]*color:var\(--ax-lime\)/);
+  assert.match(css, /\.ax-feature-strip>\*\{[^}]*border-radius:99em/);
   assert.match(css, /\.ax-install-command\{[^}]*position:absolute[^}]*backdrop-filter:blur\(18px\)/);
   assert.doesNotMatch(css, /data-ax-install-panel\]:not\(\[hidden\]\).*overflow-y:auto/);
   assert.match(css, /prefers-reduced-motion:reduce/);
   assert.doesNotMatch(css, /background-image:\s*url\(/);
 });
 
-test('silk ring layout keeps the ring clear of the copy on each breakpoint', async () => {
-  const { ringLayout, makeSparks } = await import('../src/scripts/silk-ring.ts');
-  assert.deepEqual(ringLayout(375, 812), { fx: 0.92, fy: 0.16, r: 0.5 });
-  assert.deepEqual(ringLayout(768, 1024), { fx: 0.9, fy: 0.3, r: 0.44 });
-  const desktop = ringLayout(1440, 900);
+test('backdrop layout: hero clears the copy, docs pages each get their own stable composition', async () => {
+  const { backdropLayout, makeSparks, pageSeed } = await import('../src/scripts/deck-backdrop.ts');
+  assert.deepEqual(backdropLayout('hero', 375, 812), { fx: 0.92, fy: 0.16, r: 0.5, k: 1, spin: 0 });
+  assert.deepEqual(backdropLayout('hero', 768, 1024), { fx: 0.9, fy: 0.3, r: 0.44, k: 1, spin: 0 });
+  const desktop = backdropLayout('hero', 1440, 900);
   assert.equal(desktop.fx, 0.76);
   assert.ok(desktop.r <= 0.4);
+  assert.equal(pageSeed('/guides/memory/'), pageSeed('/guides/memory'));
+  assert.notEqual(pageSeed('/guides/memory/'), pageSeed('/guides/policy-engine/'));
+  for (const path of ['/getting-started/introduction/', '/guides/memory/', '/reference/cli/']) {
+    const page = backdropLayout('page', 1440, 900, pageSeed(path));
+    assert.equal(page.k, 0.45);
+    assert.ok(page.fx >= 0.58 && page.fx <= 0.9, `${path} ring stays right of the article (${page.fx})`);
+  }
   assert.deepEqual(makeSparks(5), makeSparks(5));
 });
 
