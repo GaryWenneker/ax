@@ -3,8 +3,9 @@
 
 Each mutant is one plausible bug in a security or correctness check. The mutant
 is applied, the named test is run, and the mutant counts as killed only when
-cargo built the code and a test failed ("test result: FAILED" in the output).
-A build error, a missing anchor or a passing test is a failure of this run.
+cargo built the code and a test failed ("test result: FAILED" in the output),
+or when the test run hangs past MUTANT_TIMEOUT. The run then goes on with the
+next mutant. A build error, a missing anchor or a passing test is a failure of this run.
 
     python3 tools/ax_admin_mutants.py             # run every mutant
     python3 tools/ax_admin_mutants.py --self-test # prove a survivor is reported
@@ -32,6 +33,10 @@ R_SERVER = "crates/ax-mcp/src/remote/server.rs"
 R_AUTH = "crates/ax-mcp/src/remote/auth.rs"
 R_CONFIG = "crates/ax-mcp/src/remote/config.rs"
 USAGE = "crates/ax-usage/src/savings.rs"
+
+# Seconds one mutant's test run may take. A run that hangs longer counts as killed:
+# the mutant made a test stop finishing, which the suite noticed.
+MUTANT_TIMEOUT = 1800
 
 # (id, what breaks, file, original text, mutated text, test command, test filter)
 MUTANTS = [
@@ -174,15 +179,22 @@ def run_mutant(mutant) -> str:
     if text.count(old) != 1:
         return f"BROKEN (anchor found {text.count(old)} times)"
     before = digest(path)
+    timed_out = False
     try:
         path.write_bytes(text.replace(old, new).encode("utf-8"))
         env = dict(os.environ, AX_SKIP_WEB_BUILD="1")
-        done = subprocess.run(command + [test_filter], cwd=ROOT, env=env,
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=1800)
+        try:
+            done = subprocess.run(command + [test_filter], cwd=ROOT, env=env,
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                  timeout=MUTANT_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            timed_out = True
     finally:
         path.write_bytes(original)
     if digest(path) != before:
         return "BROKEN (file not restored)"
+    if timed_out:
+        return f"killed by timeout (no result after {MUTANT_TIMEOUT} s)"
     out = done.stdout
     ran = [line for line in out.splitlines() if line.startswith("test result:")]
     if "error: could not compile" in out or "error[E" in out:
