@@ -4,7 +4,7 @@ if (process.env.AX_CHROME_EXECUTABLE) {
   test.use({ launchOptions: { executablePath: process.env.AX_CHROME_EXECUTABLE } });
 }
 
-test('access management sends CSRF and shows new tokens only until dismissed', async ({ page }) => {
+test('access management sends CSRF and shows new tokens until dismissed', async ({ page }) => {
   const mutations: { path: string; body: unknown }[] = [];
   const member = { id: 'm1', display_name: 'Demo member', role: 'member', status: 'active', created_at: '2026-10-11' };
   const client = { id: 'c1', member_id: 'm1', display_name: 'Demo client', client_type: 'cli', scopes: ['memory:read'], status: 'active', created_at: '2026-10-11' };
@@ -47,11 +47,13 @@ test('access management sends CSRF and shows new tokens only until dismissed', a
   const clients = page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Clients & tokens', exact: true }) });
   await clients.getByRole('button', { name: 'Issue token', exact: true }).click();
   await expect(page.getByText('axc_test_shown_once', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Dismiss', exact: true }).click();
-  await expect(page.getByText('axc_test_shown_once', { exact: true })).toHaveCount(0);
   await clients.getByLabel('context:read', { exact: true }).check();
   await clients.getByRole('button', { name: 'Save scopes' }).click();
   await expect.poll(() => client.scopes).toContain('context:read');
+  // The token cannot be shown again, so another change must not hide it.
+  await expect(page.getByText('axc_test_shown_once', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Dismiss', exact: true }).click();
+  await expect(page.getByText('axc_test_shown_once', { exact: true })).toHaveCount(0);
   await clients.getByRole('button', { name: 'Rotate tokens' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Rotate tokens', exact: true }).click();
   await expect(page.getByText('axc_test_shown_once', { exact: true })).toBeVisible();
