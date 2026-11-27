@@ -711,16 +711,25 @@ pub async fn handle_reset_client_cache() -> impl IntoResponse {
         .unwrap()
 }
 
+/// Reads one web UI file. `path` comes from the request URL, so it must stay
+/// inside a dist folder: `..`, absolute paths, backslashes and links that
+/// point out of the folder are refused.
 fn dist_file(path: &str) -> Option<(Vec<u8>, &'static str)> {
     let _ = WEB_DIST_DISK_HINT;
+    if path.contains('\\') {
+        return None;
+    }
+    let rel = ax_utils::safe_relative(path).ok()?;
     for root in dist_roots() {
-        let disk = root.join(path);
+        let Ok(disk) = ax_utils::contained_join(&root, path) else {
+            continue;
+        };
         if disk.is_file() {
             return std::fs::read(disk).ok().map(|b| (b, "disk"));
         }
     }
     WEB_DIST
-        .get_file(path)
+        .get_file(&rel)
         .map(|f| (f.contents().to_vec(), "embed"))
 }
 
