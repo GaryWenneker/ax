@@ -148,6 +148,19 @@ export function buildPath(state: Partial<RouteState> & Pick<RouteState, 'page'>)
   return qs ? `${base}?${qs}` : base;
 }
 
+/**
+ * Old bookmarks such as `/policy/rules/edit?id=x` (no `mode=edit`) now open the slideout
+ * view on the list page. Returns that list route, or null when the route is not one.
+ */
+export function legacyEditRedirect(route: RouteState): RouteState | null {
+  let page: Page | null = null;
+  if (route.page === 'policy-rule-edit' && route.ruleId && !route.ruleEditMode) page = 'policy-rules';
+  if (route.page === 'policy-skill-edit' && route.skillName && !route.skillEditMode) page = 'policy-skills';
+  if (!page) return null;
+  // Keep every other field (origin, projectId among them) so a global copy stays selected.
+  return { ...route, page, ruleEditMode: false, skillEditMode: false };
+}
+
 export function navigateRoute(state: Partial<RouteState> & Pick<RouteState, 'page'>, replace = false) {
   const path = buildPath({
     page: state.page,

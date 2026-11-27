@@ -18,6 +18,7 @@ import { saveString } from './lib/uiStorage';
 import { AX_FULL_NAME } from './lib/brand';
 import {
   FULL_BLEED_PAGES,
+  legacyEditRedirect,
   migrateLegacyHash,
   navigateRoute,
   parseLocation,
@@ -227,35 +228,9 @@ function AppShell() {
 
   // Old bookmarks: /policy/rules/edit?id=x → slideout view at /policy/rules?id=x
   useEffect(() => {
-    if (page === 'policy-rule-edit' && editRuleId && !ruleEditMode) {
-      applyRoute(
-        {
-          page: 'policy-rules',
-          ruleId: editRuleId,
-          skillName: editSkillName,
-          kind: route.kind,
-          sonarTab: route.sonarTab,
-          ruleEditMode: false,
-          skillEditMode: false,
-        },
-        true,
-      );
-    }
-    if (page === 'policy-skill-edit' && editSkillName && !skillEditMode) {
-      applyRoute(
-        {
-          page: 'policy-skills',
-          ruleId: editRuleId,
-          skillName: editSkillName,
-          kind: route.kind,
-          sonarTab: route.sonarTab,
-          ruleEditMode: false,
-          skillEditMode: false,
-        },
-        true,
-      );
-    }
-  }, [page, editRuleId, editSkillName, ruleEditMode, skillEditMode, route.kind, route.sonarTab]);
+    const target = legacyEditRedirect(route);
+    if (target) applyRoute(target, true);
+  }, [route]);
 
   function adjFont(delta: number) {
     setFontScale(adjustUiScale(delta));

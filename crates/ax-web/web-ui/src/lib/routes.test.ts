@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildPath, migrateLegacyHash, navigateRoute, pageFromNavId, parseLocation, parsePathname, type Page, type RouteState } from './routes.ts';
+import { buildPath, legacyEditRedirect, migrateLegacyHash, navigateRoute, pageFromNavId, parseLocation, parsePathname, type Page, type RouteState } from './routes.ts';
 
 function withWindow(run: (pushed: string[]) => void) {
   const pushed: string[] = [];
@@ -155,4 +155,24 @@ test('pageFromNavId refuses editor and match pages', () => {
   assert.equal(pageFromNavId('policy-rule-edit'), null);
   assert.equal(pageFromNavId('policy-match'), null);
   assert.equal(pageFromNavId('ship'), null);
+});
+
+test('old edit bookmarks keep the global origin and project when they redirect to the list view', () => {
+  const rule = parseLocation({ pathname: '/policy/rules/edit', search: '?id=team-style&origin=global&projectId=7' } as Location);
+  const ruleTarget = legacyEditRedirect(rule);
+  assert.ok(ruleTarget);
+  assert.equal(ruleTarget.page, 'policy-rules');
+  assert.equal(ruleTarget.ruleEditMode, false);
+  assert.equal(buildPath(ruleTarget), '/policy/rules?id=team-style&origin=global&projectId=7');
+
+  const skill = parseLocation({ pathname: '/policy/skills/edit', search: '?name=deploy&origin=global&projectId=3' } as Location);
+  const skillTarget = legacyEditRedirect(skill);
+  assert.ok(skillTarget);
+  assert.equal(skillTarget.page, 'policy-skills');
+  assert.equal(skillTarget.skillEditMode, false);
+  assert.equal(buildPath(skillTarget), '/policy/skills?name=deploy&origin=global&projectId=3');
+
+  assert.equal(legacyEditRedirect(parseLocation({ pathname: '/policy/rules/edit', search: '?id=x&mode=edit' } as Location)), null);
+  assert.equal(legacyEditRedirect(parseLocation({ pathname: '/policy/rules/edit', search: '' } as Location)), null);
+  assert.equal(legacyEditRedirect(parseLocation({ pathname: '/policy/rules', search: '?id=x' } as Location)), null);
 });
