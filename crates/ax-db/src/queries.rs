@@ -780,6 +780,41 @@ impl QueryBuilder {
         Ok(())
     }
 
+    /// Remove every node whose id starts with `prefix` and is not in `keep`
+    /// (edges cascade via FK). Replica nodes are never touched.
+    ///
+    /// Used by passes that rewrite a whole id namespace, such as `contract:`,
+    /// so ids an older run wrote and the current run no longer produces do
+    /// not linger. Returns the number of nodes removed.
+    pub async fn delete_nodes_with_prefix_except(
+        &self,
+        prefix: &str,
+        keep: &std::collections::HashSet<String>,
+    ) -> Result<usize, AxError> {
+        let ids = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM nodes WHERE substr(id, 1, length(?1)) = ?1 \
+             AND id NOT GLOB 'ax-replica/*'",
+        )
+        .bind(prefix)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| self.sql_err(e))?;
+        let stale: Vec<String> = ids.into_iter().filter(|id| !keep.contains(id)).collect();
+        if stale.is_empty() {
+            return Ok(0);
+        }
+        let mut tx = self.pool.begin().await.map_err(|e| self.sql_err(e))?;
+        for id in &stale {
+            sqlx::query("DELETE FROM nodes WHERE id = ?")
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| self.sql_err(e))?;
+        }
+        tx.commit().await.map_err(|e| self.sql_err(e))?;
+        Ok(stale.len())
+    }
+
     /// Node ids whose exact `qualified_name` or `name` equals `symbol`
     /// (excluding doc nodes). Used to link doc mentions to code symbols.
     pub async fn get_node_ids_by_symbol(

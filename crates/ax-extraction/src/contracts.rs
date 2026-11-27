@@ -81,9 +81,13 @@ pub async fn index_contracts(
         file_ops.insert(file.rel.clone(), ids);
     }
 
-    // Idempotent: remove previous contract:* route nodes and their edges by rewriting
-    // only the set we own (upsert). Stale contract routes from deleted files remain
-    // until full re-index; acceptable for MVP.
+    // This pass scans every contract file, so the ops above are the whole
+    // `contract:` namespace. Drop ids it no longer writes (deleted files, or an
+    // id format an older extractor used) with their edges, then upsert the rest.
+    let keep: HashSet<String> = ops.iter().map(|op| op.id.clone()).collect();
+    queries
+        .delete_nodes_with_prefix_except("contract:", &keep)
+        .await?;
     let mut nodes: Vec<Node> = doc_nodes;
     for op in &ops {
         nodes.push(op_node(op, now));

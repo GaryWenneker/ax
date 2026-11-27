@@ -190,6 +190,71 @@ async fn sync_reindexes_everything_on_extractor_version_change() {
 }
 
 #[tokio::test]
+async fn sync_after_extractor_upgrade_drops_old_format_contract_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "api/openapi.yaml",
+        "openapi: 3.0.0\npaths:\n  /users:\n    get:\n      operationId: listUsers\n",
+    );
+    let mut ax = init_project(dir.path()).await;
+
+    // What the previous extractor left: a stamp of the old version and a
+    // contract id without the file in it.
+    let old_id = "contract:openapi:GET:/users";
+    ax.queries()
+        .upsert_nodes(&[ax_types::Node {
+            id: old_id.into(),
+            kind: ax_types::NodeKind::Route,
+            name: "GET /users".into(),
+            qualified_name: old_id.into(),
+            file_path: "api/openapi.yaml".into(),
+            language: ax_types::Language::Unknown,
+            start_line: 1,
+            end_line: 1,
+            start_column: 0,
+            end_column: 0,
+            docstring: None,
+            signature: None,
+            visibility: None,
+            is_exported: Some(true),
+            is_async: None,
+            is_static: None,
+            is_abstract: None,
+            decorators: None,
+            type_parameters: None,
+            return_type: None,
+            updated_at: 0,
+        }])
+        .await
+        .unwrap();
+    ax.queries()
+        .set_metadata("extraction_version", "7")
+        .await
+        .unwrap();
+    assert_ne!(ax_extraction::EXTRACTION_VERSION, "7");
+
+    let result = ax.sync(quiet_opts(), None).await.unwrap();
+    assert!(
+        result.files_indexed >= 2,
+        "an older extraction version forces a full reindex, got {}",
+        result.files_indexed
+    );
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM nodes WHERE substr(id, 1, 9) = 'contract:'")
+            .fetch_all(ax.db_pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        ids,
+        vec!["contract:openapi:api/openapi.yaml:GET:/users".to_string()],
+        "only the current per-file contract id remains"
+    );
+
+    ax.destroy().await.unwrap();
+}
+
+#[tokio::test]
 async fn sync_resolves_only_affected_files() {
     let dir = tempfile::tempdir().unwrap();
     write(
