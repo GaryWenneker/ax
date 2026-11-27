@@ -2,8 +2,8 @@ use ax_memory::{remember, write_full_backup, RememberInput};
 
 #[tokio::test]
 async fn full_backup_writes_jsonl_and_manifest() {
-    let root = std::env::temp_dir().join(format!("ax-backup-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
@@ -39,7 +39,6 @@ async fn full_backup_writes_jsonl_and_manifest() {
     let manifest: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&full.manifest_path).unwrap()).unwrap();
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
 
     assert_eq!(full.count, 1);
     assert!(jsonl.contains(&row.id));

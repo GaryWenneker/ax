@@ -6,13 +6,14 @@ use ax_memory::{
 };
 use sqlx::SqlitePool;
 
-async fn open(tag: &str) -> ax_db::Database {
-    let root = std::env::temp_dir().join(format!("ax-upd-del-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+async fn open() -> (tempfile::TempDir, ax_db::Database) {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
-    ax_db::Database::open(&root.join(".ax/ax.db"))
+    let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
-        .unwrap()
+        .unwrap();
+    (tmp, db)
 }
 
 fn input(title: &str, body: &str, files: &[&str]) -> RememberInput {
@@ -50,7 +51,7 @@ async fn count(pool: &SqlitePool, sql: &str, id: &str) -> i64 {
 
 #[tokio::test]
 async fn update_rederives_search_text_instruction_flag_and_anchors() {
-    let db = open("derive").await;
+    let (_tmp, db) = open().await;
     let pool = db.pool();
     add_node(pool, "old_node", "src/old.rs").await;
     add_node(pool, "new_node", "src/new.rs").await;
@@ -117,7 +118,7 @@ async fn update_rederives_search_text_instruction_flag_and_anchors() {
 
 #[tokio::test]
 async fn update_keeps_explicit_triggers() {
-    let db = open("triggers").await;
+    let (_tmp, db) = open().await;
     let pool = db.pool();
     let row = remember_with_triggers(
         pool,
@@ -154,7 +155,7 @@ async fn update_keeps_explicit_triggers() {
 
 #[tokio::test]
 async fn delete_removes_cues_links_anchors_access_and_vectors() {
-    let db = open("delete").await;
+    let (_tmp, db) = open().await;
     let pool = db.pool();
     add_node(pool, "n1", "src/a.rs").await;
     // An archive-tier kind, so the memory also gets a memory_vec row.

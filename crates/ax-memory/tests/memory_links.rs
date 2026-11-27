@@ -1,18 +1,18 @@
 use ax_memory::{link_memories, remember, save_turn, RememberInput, TurnRecord, MEMORY_LINK_KINDS};
 
-async fn open(name: &str) -> (std::path::PathBuf, ax_db::Database) {
-    let root = std::env::temp_dir().join(format!("ax-mem-links-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+async fn open() -> (tempfile::TempDir, std::path::PathBuf, ax_db::Database) {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax/turns")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
         .unwrap();
-    (root, db)
+    (tmp, root, db)
 }
 
 #[tokio::test]
 async fn only_the_named_link_kinds_are_stored() {
-    let (root, db) = open("kinds").await;
+    let (_tmp, _, db) = open().await;
     let a = remember(
         db.pool(),
         RememberInput {
@@ -62,7 +62,6 @@ async fn only_the_named_link_kinds_are_stored() {
         .await
         .unwrap();
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
 
     assert_eq!(count, 1);
     assert_eq!(nope, 0);
@@ -111,7 +110,7 @@ async fn confidence(db: &ax_db::Database, id: &str) -> f64 {
 
 #[tokio::test]
 async fn corroborating_two_lessons_links_them_and_counts_once() {
-    let (root, db) = open("corroborates").await;
+    let (_tmp, _, db) = open().await;
     let a = lesson(&db, "null panic in parse").await;
     let b = lesson(&db, "null panic in parse again").await;
     sqlx::query("UPDATE memories SET confidence = 0.5")
@@ -143,12 +142,11 @@ async fn corroborating_two_lessons_links_them_and_counts_once() {
     assert_eq!(confidence(&db, &a).await, once);
     assert_eq!(confidence(&db, &b).await, once_b);
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[tokio::test]
 async fn a_newer_turn_follows_the_earlier_turn_in_the_same_session() {
-    let (root, db) = open("follows").await;
+    let (_tmp, root, db) = open().await;
     std::fs::write(
         root.join(".ax/turns/current.json"),
         r#"{"session_id":"conv-1","turn_id":"gen-1"}"#,
@@ -186,6 +184,5 @@ async fn a_newer_turn_follows_the_earlier_turn_in_the_same_session() {
     .await
     .unwrap();
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
     assert_eq!(linked.as_deref(), Some("follows"));
 }

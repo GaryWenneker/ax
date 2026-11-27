@@ -2,8 +2,8 @@ use ax_memory::save_file_changes;
 
 #[tokio::test]
 async fn saving_file_changes_writes_one_memory_per_path() {
-    let root = std::env::temp_dir().join(format!("ax-file-change-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
@@ -32,7 +32,6 @@ async fn saving_file_changes_writes_one_memory_per_path() {
     .await
     .unwrap();
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
 
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].0, "file_change");
@@ -42,14 +41,14 @@ async fn saving_file_changes_writes_one_memory_per_path() {
     assert_eq!(rows[1].1, "[\"src/b.rs\"]");
 }
 
-async fn open_db(tag: &str) -> (std::path::PathBuf, ax_db::Database) {
-    let root = std::env::temp_dir().join(format!("ax-fc-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+async fn open_db() -> (tempfile::TempDir, std::path::PathBuf, ax_db::Database) {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
         .unwrap();
-    (root, db)
+    (tmp, root, db)
 }
 
 async fn set_content_hash(pool: &sqlx::SqlitePool, path: &str, hash: &str) {
@@ -67,7 +66,7 @@ async fn set_content_hash(pool: &sqlx::SqlitePool, path: &str, hash: &str) {
 
 #[tokio::test]
 async fn sync_file_changes_are_recent_tier_and_record_every_new_content() {
-    let (root, db) = open_db("tier").await;
+    let (_tmp, root, db) = open_db().await;
     let pool = db.pool();
     let paths = vec!["src/a.rs".to_string()];
     set_content_hash(pool, "src/a.rs", "h1").await;
@@ -98,12 +97,11 @@ async fn sync_file_changes_are_recent_tier_and_record_every_new_content() {
             .unwrap();
     assert_eq!(tiers, vec!["t1".to_string(), "t1".to_string()]);
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[tokio::test]
 async fn turn_retention_archives_old_file_changes() {
-    let (root, db) = open_db("prune").await;
+    let (_tmp, root, db) = open_db().await;
     let pool = db.pool();
     save_file_changes(pool, &["src/old.rs".into()], "c", "t", 1_000)
         .await
@@ -118,12 +116,11 @@ async fn turn_retention_archives_old_file_changes() {
         .unwrap();
     assert_eq!(tier, "t3");
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[tokio::test]
 async fn file_change_cues_do_not_crowd_out_prompt_cue_hits() {
-    let (root, db) = open_db("cues").await;
+    let (_tmp, _, db) = open_db().await;
     let pool = db.pool();
     let decision = ax_memory::remember(
         pool,
@@ -147,5 +144,4 @@ async fn file_change_cues_do_not_crowd_out_prompt_cue_hits() {
     let ids: Vec<&str> = hits.iter().map(|hit| hit.memory.id.as_str()).collect();
     assert_eq!(ids, vec![decision.id.as_str()]);
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
 }

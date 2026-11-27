@@ -5,8 +5,8 @@ use ax_memory::{
 
 #[tokio::test]
 async fn restore_skips_existing_and_tombstoned_ids() {
-    let root = std::env::temp_dir().join(format!("ax-restore-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
@@ -45,7 +45,6 @@ async fn restore_skips_existing_and_tombstoned_ids() {
         .await
         .unwrap();
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
 
     assert_eq!(blocked.skipped_tombstone, 1);
     assert_eq!(count, 0);
@@ -55,8 +54,8 @@ async fn restore_skips_existing_and_tombstoned_ids() {
 /// then a full restore into an empty vault recovers every row with regenerated cues.
 #[tokio::test]
 async fn depth_backup_finds_purged_row_and_full_restore_round_trips() {
-    let root = std::env::temp_dir().join(format!("ax-backup-rt-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
@@ -180,7 +179,6 @@ async fn depth_backup_finds_purged_row_and_full_restore_round_trips() {
     assert!(backup.manifest_path.exists());
 
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
 }
 
 async fn fresh_db() -> (tempfile::TempDir, ax_db::Database) {

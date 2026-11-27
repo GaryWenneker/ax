@@ -2,8 +2,8 @@ use ax_memory::anchor_memory;
 
 #[tokio::test]
 async fn anchoring_a_memory_is_idempotent() {
-    let root = std::env::temp_dir().join(format!("ax-anchor-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
@@ -19,7 +19,6 @@ async fn anchoring_a_memory_is_idempotent() {
         .await
         .unwrap();
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
 
     assert!(first);
     assert!(!second);

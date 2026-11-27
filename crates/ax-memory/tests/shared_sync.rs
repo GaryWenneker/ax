@@ -4,14 +4,14 @@ use ax_memory::{
     export_shared, get, import_shared, remember, remember_with_triggers, update, RememberInput,
 };
 
-async fn open(tag: &str) -> (std::path::PathBuf, ax_db::Database) {
-    let root = std::env::temp_dir().join(format!("ax-shared-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+async fn open() -> (tempfile::TempDir, std::path::PathBuf, ax_db::Database) {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
         .unwrap();
-    (root, db)
+    (tmp, root, db)
 }
 
 fn shared(title: &str, body: &str) -> RememberInput {
@@ -27,7 +27,7 @@ fn shared(title: &str, body: &str) -> RememberInput {
 
 #[tokio::test]
 async fn export_includes_shared_memories_older_than_ten_thousand_other_rows() {
-    let (root, db) = open("export-cap").await;
+    let (_tmp, root, db) = open().await;
     let pool = db.pool();
     let old = remember(pool, shared("Old shared decision", "Keep it."))
         .await
@@ -68,7 +68,7 @@ async fn export_includes_shared_memories_older_than_ten_thousand_other_rows() {
 
 #[tokio::test]
 async fn import_never_replaces_a_newer_local_edit() {
-    let (root, db) = open("import-newer").await;
+    let (_tmp, root, db) = open().await;
     let pool = db.pool();
     let row = remember_with_triggers(
         pool,
@@ -101,7 +101,7 @@ async fn import_never_replaces_a_newer_local_edit() {
 
 #[tokio::test]
 async fn import_applies_a_newer_shared_row_and_keeps_its_timestamp() {
-    let (root, db) = open("import-older").await;
+    let (_tmp, root, db) = open().await;
     let pool = db.pool();
     let row = remember(pool, shared("Release rule", "Tag before push."))
         .await
@@ -130,7 +130,7 @@ async fn import_applies_a_newer_shared_row_and_keeps_its_timestamp() {
 
 #[tokio::test]
 async fn a_bad_line_aborts_the_import_before_anything_is_written() {
-    let (root, db) = open("import-bad").await;
+    let (_tmp, root, db) = open().await;
     let pool = db.pool();
     let row = remember(pool, shared("Release rule", "Tag before push."))
         .await
@@ -171,7 +171,7 @@ fn incoming_line(id: &str, kind: &str, title: &str, body: &str, tags: &[&str]) -
 
 #[tokio::test]
 async fn imported_rows_are_untrusted_and_get_derived_columns() {
-    let (root, db) = open("import-untrusted").await;
+    let (_tmp, root, db) = open().await;
     let pool = db.pool();
     let file = root.join("shared.jsonl");
     std::fs::write(
@@ -204,7 +204,7 @@ async fn imported_rows_are_untrusted_and_get_derived_columns() {
 
 #[tokio::test]
 async fn import_never_recreates_a_purged_memory() {
-    let (root, db) = open("import-tomb").await;
+    let (_tmp, root, db) = open().await;
     let pool = db.pool();
     let row = remember(pool, shared("Old rule", "Gone now."))
         .await
@@ -224,7 +224,7 @@ async fn import_never_recreates_a_purged_memory() {
 
 #[tokio::test]
 async fn import_rejects_unknown_and_recall_only_kinds() {
-    let (root, db) = open("import-kind").await;
+    let (_tmp, root, db) = open().await;
     let pool = db.pool();
     let file = root.join("shared.jsonl");
     let mut text = incoming_line("k-1", "system", "Odd", "Unknown kind.", &["shared"]);
@@ -245,7 +245,7 @@ async fn import_rejects_unknown_and_recall_only_kinds() {
 
 #[tokio::test]
 async fn import_never_overwrites_a_local_memory_that_is_not_shared() {
-    let (root, db) = open("import-local").await;
+    let (_tmp, root, db) = open().await;
     let pool = db.pool();
     let mut input = shared("Convention", "Run fmt before commit.");
     input.tags = vec![];
@@ -273,7 +273,7 @@ async fn import_never_overwrites_a_local_memory_that_is_not_shared() {
 
 #[tokio::test]
 async fn an_applied_shared_update_marks_the_row_untrusted() {
-    let (root, db) = open("import-update-trust").await;
+    let (_tmp, root, db) = open().await;
     let pool = db.pool();
     let row = remember(pool, shared("Release rule", "Tag before push."))
         .await
@@ -303,7 +303,7 @@ async fn an_applied_shared_update_marks_the_row_untrusted() {
 
 #[tokio::test]
 async fn instruction_like_imports_wait_as_candidates() {
-    let (root, db) = open("import-candidate").await;
+    let (_tmp, root, db) = open().await;
     let pool = db.pool();
     let file = root.join("shared.jsonl");
     std::fs::write(

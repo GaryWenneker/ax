@@ -4,8 +4,8 @@ use ax_memory::expand_with_pmi;
 
 #[tokio::test]
 async fn pmi_ignores_turns_docs_and_archive_rows() {
-    let root = std::env::temp_dir().join(format!("ax-pmi-sample-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await

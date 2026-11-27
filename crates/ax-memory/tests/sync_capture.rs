@@ -2,8 +2,8 @@ use ax_memory::capture_sync_file_change;
 
 #[tokio::test]
 async fn sync_capture_writes_only_when_the_hash_changes() {
-    let root = std::env::temp_dir().join(format!("ax-sync-cap-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
@@ -45,7 +45,6 @@ async fn sync_capture_writes_only_when_the_hash_changes() {
         .await
         .unwrap();
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
     assert_eq!(count, 1);
 }
 
@@ -73,8 +72,8 @@ async fn anchor_states(pool: &sqlx::SqlitePool) -> Vec<(i64, i64)> {
 
 #[tokio::test]
 async fn a_body_rewrite_with_the_same_signature_makes_the_anchor_stale() {
-    let root = std::env::temp_dir().join(format!("ax-sync-body-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
@@ -140,13 +139,12 @@ async fn a_body_rewrite_with_the_same_signature_makes_the_anchor_stale() {
     ax_memory::refresh_anchor_flags(pool).await.unwrap();
     assert_eq!(anchor_states(pool).await, vec![(1, 1)]);
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[tokio::test]
 async fn versions_recorded_with_the_old_signature_hash_are_upgraded_not_flagged() {
-    let root = std::env::temp_dir().join(format!("ax-sync-legacy-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
@@ -215,5 +213,4 @@ async fn versions_recorded_with_the_old_signature_hash_are_upgraded_not_flagged(
     ax_memory::refresh_anchor_flags(pool).await.unwrap();
     assert_eq!(anchor_states(pool).await, vec![(1, 1)]);
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
 }

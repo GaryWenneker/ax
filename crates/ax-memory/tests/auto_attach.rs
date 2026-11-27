@@ -3,8 +3,8 @@ use ax_memory::{auto_attach_memory, refresh_anchor_flags, remember, RememberInpu
 
 #[tokio::test]
 async fn auto_attach_links_memory_files_to_node_versions() {
-    let root = std::env::temp_dir().join(format!("ax-attach-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
@@ -65,5 +65,4 @@ async fn auto_attach_links_memory_files_to_node_versions() {
     assert_eq!(stale + orphan, 0);
 
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
 }
