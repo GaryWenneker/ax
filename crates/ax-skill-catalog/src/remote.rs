@@ -286,11 +286,21 @@ fn fetch_vetted(url: &str, resolve: Resolve, blocked: Blocked) -> Result<Vec<u8>
         if !response.status().is_success() {
             return Err(format!("GET {current} returned {}", response.status()));
         }
-        let bytes = response.bytes().map_err(|e| e.to_string())?;
-        if bytes.len() as u64 > DOWNLOAD_MAX_BYTES {
+        if response
+            .content_length()
+            .is_some_and(|len| len > DOWNLOAD_MAX_BYTES)
+        {
             return Err("download is larger than 25 MiB".into());
         }
-        return Ok(bytes.to_vec());
+        // Read at most the cap, whatever the server claims, so a large body is
+        // never held in memory.
+        return ax_utils::read_to_end_bounded(response, DOWNLOAD_MAX_BYTES).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::InvalidData {
+                "download is larger than 25 MiB".to_string()
+            } else {
+                e.to_string()
+            }
+        });
     }
     Err(format!(
         "GET {url} redirected more than {MAX_REDIRECTS} times"
@@ -513,6 +523,34 @@ mod tests {
         .unwrap();
         assert_eq!(body, b"/index.json");
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_body_past_the_cap_is_refused_without_a_content_length() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+            let chunk = vec![b'x'; 1024 * 1024];
+            for _ in 0..30 {
+                if stream.write_all(&chunk).is_err() {
+                    break;
+                }
+            }
+        });
+        let resolve =
+            move |_: &str, _: u16| Ok(vec![std::net::SocketAddr::from(([127, 0, 0, 1], port))]);
+        let err = super::fetch_vetted(
+            &format!("http://big.invalid:{port}/skill.zip"),
+            &resolve,
+            &v4_private_only,
+        )
+        .unwrap_err();
+        assert!(err.contains("larger than 25 MiB"), "{err}");
     }
 
     #[test]

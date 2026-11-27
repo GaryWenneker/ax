@@ -84,7 +84,7 @@ pub fn materialize_well_known(
                 .ok_or_else(|| format!("skill {} has no files", skill.name))?;
             let bytes = fetch(url)?;
             if bytes.len() as u64 > COPY_MAX_BYTES {
-                return Err("well-known skill is larger than the size cap".into());
+                return Err(TOO_LARGE.into());
             }
             if url.ends_with(".md") {
                 fs::write(dir.join("SKILL.md"), &bytes).map_err(|e| e.to_string())?;
@@ -96,11 +96,23 @@ pub fn materialize_well_known(
                 return Err(format!("unsupported well-known artifact: {url}"));
             }
         } else {
+            if skill.files.len() > crate::install::COPY_MAX_FILES {
+                return Err(format!(
+                    "skill {} lists more than {} files",
+                    skill.name,
+                    crate::install::COPY_MAX_FILES
+                ));
+            }
+            let mut used = 0u64;
             for file in &skill.files {
                 if file.contains("..") || file.starts_with('/') {
                     return Err(format!("refusing well-known path {file}"));
                 }
                 let bytes = fetch(file)?;
+                used += bytes.len() as u64;
+                if used > COPY_MAX_BYTES {
+                    return Err(TOO_LARGE.into());
+                }
                 let target = dir.join(file);
                 if let Some(parent) = target.parent() {
                     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -112,12 +124,33 @@ pub fn materialize_well_known(
     })
 }
 
+const TOO_LARGE: &str = "well-known skill is larger than the size cap";
+
+/// Streams `reader` into a new file at `target`, counting the bytes against
+/// the skill's total in `used`. Writing stops (and the file is removed) as soon
+/// as the total passes [`COPY_MAX_BYTES`], so a decompression bomb cannot fill
+/// the disk.
+fn write_capped(reader: &mut impl Read, target: &Path, used: &mut u64) -> Result<(), String> {
+    let remaining = COPY_MAX_BYTES.saturating_sub(*used);
+    let mut out = fs::File::create(target).map_err(|e| e.to_string())?;
+    let copied =
+        std::io::copy(&mut reader.take(remaining + 1), &mut out).map_err(|e| e.to_string())?;
+    *used += copied;
+    if *used > COPY_MAX_BYTES {
+        drop(out);
+        let _ = fs::remove_file(target);
+        return Err(TOO_LARGE.into());
+    }
+    Ok(())
+}
+
 fn extract_zip(bytes: &[u8], dest: &Path) -> Result<(), String> {
     let cursor = std::io::Cursor::new(bytes);
     let mut archive = zip::ZipArchive::new(cursor).map_err(|e| e.to_string())?;
     if archive.len() > crate::install::COPY_MAX_FILES {
         return Err("zip has too many files".into());
     }
+    let mut used = 0u64;
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
         let name = file
@@ -131,8 +164,7 @@ fn extract_zip(bytes: &[u8], dest: &Path) -> Result<(), String> {
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        let mut out = fs::File::create(&target).map_err(|e| e.to_string())?;
-        std::io::copy(&mut file, &mut out).map_err(|e| e.to_string())?;
+        write_capped(&mut file, &target, &mut used)?;
     }
     Ok(())
 }
@@ -141,6 +173,7 @@ fn extract_tar_gz(bytes: &[u8], dest: &Path) -> Result<(), String> {
     let decoder = flate2::read::GzDecoder::new(bytes);
     let mut archive = tar::Archive::new(decoder);
     let mut count = 0usize;
+    let mut used = 0u64;
     for entry in archive.entries().map_err(|e| e.to_string())? {
         let mut entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path().map_err(|e| e.to_string())?;
@@ -174,9 +207,7 @@ fn extract_tar_gz(bytes: &[u8], dest: &Path) -> Result<(), String> {
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        let mut data = Vec::new();
-        entry.read_to_end(&mut data).map_err(|e| e.to_string())?;
-        fs::write(target, data).map_err(|e| e.to_string())?;
+        write_capped(&mut entry, &target, &mut used)?;
     }
     Ok(())
 }
@@ -303,6 +334,115 @@ mod tests {
         assert_eq!(std::fs::read(dest.path().join("pdf/SKILL.md")).unwrap(), v2);
         assert_eq!(receipt.hash, content_hash(&receipt.directory).unwrap());
         assert!(leftovers(dest.path()).is_empty());
+    }
+
+    const BOMB: usize = COPY_MAX_BYTES as usize + 1024 * 1024;
+
+    fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        use std::io::Write;
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(&mut cursor);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .large_file(true);
+        for (name, data) in entries {
+            zip.start_file(*name, options).unwrap();
+            zip.write_all(data).unwrap();
+        }
+        zip.finish().unwrap();
+        cursor.into_inner()
+    }
+
+    fn dir_bytes(dir: &Path) -> u64 {
+        walkdir::WalkDir::new(dir)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_type().is_file())
+            .map(|e| e.metadata().unwrap().len())
+            .sum()
+    }
+
+    #[test]
+    fn a_zip_that_expands_past_the_cap_stops_extracting() {
+        let zeros = vec![0u8; BOMB];
+        let bytes = zip_of(&[("SKILL.md", PDF_V1), ("big.bin", &zeros)]);
+        assert!((bytes.len() as u64) < COPY_MAX_BYTES);
+        let dest = tempfile::tempdir().unwrap();
+        let err = extract_zip(&bytes, dest.path()).unwrap_err();
+        assert!(err.contains("larger than"), "{err}");
+        assert!(dir_bytes(dest.path()) <= COPY_MAX_BYTES);
+    }
+
+    #[test]
+    fn a_tar_that_expands_past_the_cap_stops_extracting() {
+        let zeros = vec![0u8; BOMB];
+        let bytes = raw_tar_gz(&[
+            ("SKILL.md", tar::EntryType::Regular, PDF_V1),
+            ("big.bin", tar::EntryType::Regular, &zeros),
+        ]);
+        assert!((bytes.len() as u64) < COPY_MAX_BYTES);
+        let dest = tempfile::tempdir().unwrap();
+        let err = extract_tar_gz(&bytes, dest.path()).unwrap_err();
+        assert!(err.contains("larger than"), "{err}");
+        assert!(dir_bytes(dest.path()) <= COPY_MAX_BYTES);
+    }
+
+    #[test]
+    fn a_zip_entry_escaping_the_archive_is_refused() {
+        let bytes = zip_of(&[("SKILL.md", PDF_V1), ("../escape.txt", b"x")]);
+        let root = tempfile::tempdir().unwrap();
+        let dest = root.path().join("skill");
+        std::fs::create_dir_all(&dest).unwrap();
+        assert!(extract_zip(&bytes, &dest).is_err());
+        assert!(!root.path().join("escape.txt").exists());
+    }
+
+    #[test]
+    fn a_plain_zip_installs() {
+        let bytes = zip_of(&[("SKILL.md", PDF_V1), ("scripts/run.py", b"print(1)\n")]);
+        let dest = tempfile::tempdir().unwrap();
+        let index = r#"{"skills":[{"name":"pdf","description":"d","url":"https://host/pdf.zip"}]}"#;
+        let receipt =
+            materialize_well_known(index, "pdf", dest.path(), false, |_| Ok(bytes.clone()))
+                .unwrap();
+        assert!(receipt.directory.join("scripts/run.py").is_file());
+    }
+
+    #[test]
+    fn a_file_list_longer_than_the_cap_is_refused_before_fetching() {
+        let files: Vec<String> = (0..=crate::install::COPY_MAX_FILES)
+            .map(|i| format!("f{i}.txt"))
+            .collect();
+        let index = serde_json::json!({"skills":[{"name":"pdf","description":"d","files":files}]})
+            .to_string();
+        let dest = tempfile::tempdir().unwrap();
+        let mut fetched = 0usize;
+        let err = materialize_well_known(&index, "pdf", dest.path(), false, |_| {
+            fetched += 1;
+            Ok(b"x".to_vec())
+        })
+        .unwrap_err();
+        assert!(err.contains("files"), "{err}");
+        assert_eq!(fetched, 0);
+    }
+
+    #[test]
+    fn a_file_list_past_the_byte_cap_stops_fetching() {
+        let index = r#"{"skills":[{"name":"pdf","description":"d","files":["SKILL.md","a.bin","b.bin","c.bin"]}]}"#;
+        let dest = tempfile::tempdir().unwrap();
+        let mut fetched = 0usize;
+        let half = vec![0u8; (COPY_MAX_BYTES / 2) as usize + 1];
+        let err = materialize_well_known(index, "pdf", dest.path(), false, |file| {
+            fetched += 1;
+            Ok(if file == "SKILL.md" {
+                PDF_V1.to_vec()
+            } else {
+                half.clone()
+            })
+        })
+        .unwrap_err();
+        assert!(err.contains("well-known skill is larger than"), "{err}");
+        assert_eq!(fetched, 3);
     }
 
     /// A gzip tar with raw member names, as a hostile archive would carry them.
