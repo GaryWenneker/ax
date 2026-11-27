@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use ax_types::{Edge, EdgeKind, Node, NodeKind};
+use ax_utils::{contained_join, ensure_within, safe_relative};
 use serde::Deserialize;
 
 const DEFAULT_OUT_DIR: &str = ".ax/knowledge";
@@ -137,6 +138,45 @@ impl OkfConfig {
     pub fn wiki_local_abs(&self, project_root: &Path) -> PathBuf {
         project_root.join(&self.azdo_wiki.local)
     }
+
+    /// `outDir` under the project root; refuses absolute paths, `..` and
+    /// links that lead outside the project.
+    pub fn out_dir_checked(&self, project_root: &Path) -> Result<PathBuf, String> {
+        contained_join(project_root, &self.out_dir)
+            .map_err(|e| format!("okf.outDir {:?} is not allowed: {e}", self.out_dir))
+    }
+
+    /// The wiki clone folder (`azdoWiki.local`) under the project root.
+    pub fn wiki_local_checked(&self, project_root: &Path) -> Result<PathBuf, String> {
+        contained_join(project_root, &self.azdo_wiki.local).map_err(|e| {
+            format!(
+                "okf.azdoWiki.local {:?} is not allowed: {e}",
+                self.azdo_wiki.local
+            )
+        })
+    }
+
+    /// The folder inside the wiki clone that publish replaces. It must be a
+    /// real subfolder: never the clone itself and never its `.git` folder.
+    pub fn wiki_subdir_checked(&self, wiki_local: &Path) -> Result<PathBuf, String> {
+        let bad = |e: String| {
+            format!(
+                "okf.azdoWiki.subdir {:?} is not allowed: {e}",
+                self.azdo_wiki.subdir
+            )
+        };
+        let rel = safe_relative(&self.azdo_wiki.subdir).map_err(|e| bad(e.to_string()))?;
+        if rel
+            .components()
+            .next()
+            .is_some_and(|c| c.as_os_str().eq_ignore_ascii_case(".git"))
+        {
+            return Err(bad("it points into the clone's .git folder".into()));
+        }
+        let dest = wiki_local.join(rel);
+        ensure_within(wiki_local, &dest).map_err(|e| bad(e.to_string()))?;
+        Ok(dest)
+    }
 }
 
 fn read_okf_section(project_root: &Path) -> Option<OkfJson> {
@@ -157,8 +197,11 @@ fn read_okf_section(project_root: &Path) -> Option<OkfJson> {
     None
 }
 
+/// Swaps backslashes and drops trailing slashes. A leading slash is kept so
+/// an absolute path is refused when the path is used, not silently made
+/// relative.
 fn normalize_rel(s: &str) -> String {
-    s.replace('\\', "/").trim_matches('/').to_string()
+    s.replace('\\', "/").trim_end_matches('/').to_string()
 }
 
 /// Result of writing an Open Knowledge Format (OKF) bundle.
@@ -194,7 +237,7 @@ pub fn export_okf_bundle(
     let out_dir = match &opts.out {
         Some(p) if p.is_absolute() => p.clone(),
         Some(p) => project_root.join(p),
-        None => cfg.out_dir_abs(project_root),
+        None => cfg.out_dir_checked(project_root)?,
     };
 
     let by_id: HashMap<&str, &Node> = nodes.iter().map(|n| (n.id.as_str(), n)).collect();
@@ -614,8 +657,9 @@ pub fn publish_okf_wiki(
         ));
     }
 
-    let wiki_local = cfg.wiki_local_abs(project_root);
-    let dest = wiki_local.join(&cfg.azdo_wiki.subdir);
+    let wiki_local = cfg.wiki_local_checked(project_root)?;
+    let dest = cfg.wiki_subdir_checked(&wiki_local)?;
+    check_remote(&cfg.azdo_wiki.remote)?;
 
     if opts.dry_run {
         let mut files_copied = 0usize;
@@ -631,22 +675,26 @@ pub fn publish_okf_wiki(
     }
 
     let wiki_action = sync_wiki_repo(&cfg.azdo_wiki.remote, &wiki_local)?;
+    // The clone now exists; check again so a link inside it cannot redirect
+    // the delete below.
+    let dest = cfg.wiki_subdir_checked(&wiki_local)?;
     if dest.exists() {
         std::fs::remove_dir_all(&dest).map_err(|e| e.to_string())?;
     }
     std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
     let files_copied = copy_dir_md(bundle_dir, &dest)?;
 
-    let status = Command::new("git")
+    let status = git()
         .current_dir(&wiki_local)
-        .args(["add", "-A", &cfg.azdo_wiki.subdir])
+        .args(["add", "-A", "--"])
+        .arg(dest.strip_prefix(&wiki_local).map_err(|e| e.to_string())?)
         .status()
         .map_err(|e| format!("git add failed: {e}"))?;
     if !status.success() {
         return Err("git add failed for OKF wiki publish".into());
     }
 
-    let diff = Command::new("git")
+    let diff = git()
         .current_dir(&wiki_local)
         .args(["diff", "--cached", "--quiet"])
         .status()
@@ -655,7 +703,7 @@ pub fn publish_okf_wiki(
 
     let mut committed = false;
     if has_changes {
-        let status = Command::new("git")
+        let status = git()
             .current_dir(&wiki_local)
             .args(["commit", "-m", &cfg.azdo_wiki.commit_message])
             .status()
@@ -668,7 +716,7 @@ pub fn publish_okf_wiki(
 
     let mut pushed = false;
     if committed && !opts.no_push {
-        let status = Command::new("git")
+        let status = git()
             .current_dir(&wiki_local)
             .args(["push"])
             .status()
@@ -692,13 +740,33 @@ pub fn publish_okf_wiki(
     })
 }
 
+/// `git` with credential prompts off, so a missing login fails instead of
+/// waiting for input that never comes.
+fn git() -> Command {
+    let mut cmd = Command::new("git");
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
+    cmd
+}
+
+/// The remote comes from the project's ax.json; a value that starts with `-`
+/// would be read by git as an option.
+fn check_remote(remote: &str) -> Result<(), String> {
+    if remote.trim_start().starts_with('-') {
+        return Err(format!(
+            "okf.azdoWiki.remote {remote:?} is not allowed: it must not start with '-'"
+        ));
+    }
+    Ok(())
+}
+
 fn sync_wiki_repo(remote: &str, local: &Path) -> Result<String, String> {
+    check_remote(remote)?;
     if !local.exists() {
         if let Some(parent) = local.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        let status = Command::new("git")
-            .args(["clone", remote])
+        let status = git()
+            .args(["clone", "--", remote])
             .arg(local)
             .status()
             .map_err(|e| format!("git clone failed: {e}"))?;
@@ -707,7 +775,7 @@ fn sync_wiki_repo(remote: &str, local: &Path) -> Result<String, String> {
         }
         return Ok("cloned".into());
     }
-    let output = Command::new("git")
+    let output = git()
         .current_dir(local)
         .args(["pull", "--ff-only"])
         .output()
@@ -920,5 +988,107 @@ mod tests {
         let name = pages[0].file_name().to_string_lossy().into_owned();
         assert!(name.ends_with(".md"));
         assert!(name.len() < 255);
+    }
+
+    fn git_ok(args: &[&str], dir: &Path) {
+        let st = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("git runs");
+        assert!(st.status.success(), "git {args:?}: {st:?}");
+    }
+
+    /// A project whose wiki remote is a local bare repository, plus a bundle.
+    fn wiki_project(okf_wiki: &str) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("proj");
+        std::fs::create_dir_all(root.join(".ax")).unwrap();
+        std::fs::write(root.join(".ax/ax.db"), "keep").unwrap();
+        let remote = tmp.path().join("remote.git");
+        std::fs::create_dir_all(&remote).unwrap();
+        git_ok(&["init", "--bare", "-q"], &remote);
+        let wiki = okf_wiki.replace("REMOTE", &remote.display().to_string().replace('\\', "/"));
+        std::fs::write(
+            root.join("ax.json"),
+            format!(r#"{{"okf":{{"azdoWiki":{wiki}}}}}"#),
+        )
+        .unwrap();
+        let bundle = root.join(".ax/knowledge");
+        std::fs::create_dir_all(&bundle).unwrap();
+        std::fs::write(bundle.join("index.md"), "# ok\n").unwrap();
+        (tmp, root)
+    }
+
+    #[test]
+    fn publish_refuses_subdir_that_climbs_out_of_the_wiki_clone() {
+        for subdir in ["..", "../..", ".", "a/../..", ".git", "/etc"] {
+            let (_tmp, root) = wiki_project(&format!(
+                r#"{{"enabled":true,"remote":"REMOTE","subdir":"{subdir}"}}"#
+            ));
+            let opts = OkfPublishOptions {
+                dry_run: false,
+                no_push: true,
+            };
+            let res = publish_okf_wiki(&root, &root.join(".ax/knowledge"), &opts);
+            assert!(res.is_err(), "subdir {subdir:?} must be refused");
+            assert!(
+                root.join(".ax/ax.db").is_file(),
+                "subdir {subdir:?} deleted .ax"
+            );
+        }
+    }
+
+    #[test]
+    fn publish_refuses_local_clone_outside_the_project() {
+        let (tmp, root) =
+            wiki_project(r#"{"enabled":true,"remote":"REMOTE","local":"../outside"}"#);
+        let opts = OkfPublishOptions {
+            dry_run: false,
+            no_push: true,
+        };
+        assert!(publish_okf_wiki(&root, &root.join(".ax/knowledge"), &opts).is_err());
+        assert!(!tmp.path().join("outside").exists());
+    }
+
+    #[test]
+    fn export_refuses_out_dir_outside_the_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("proj");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("ax.json"), r#"{"okf":{"outDir":"../escaped"}}"#).unwrap();
+        let n = sample_node("fn:a", "a", NodeKind::Function);
+        assert!(export_okf_bundle(&root, &[n], &[], &OkfExportOptions::default()).is_err());
+        assert!(!tmp.path().join("escaped").exists());
+    }
+
+    #[test]
+    fn publish_refuses_remote_that_looks_like_a_git_option() {
+        let (tmp, root) = wiki_project(
+            r#"{"enabled":true,"remote":"--upload-pack=touch pwned","local":".ax/wiki"}"#,
+        );
+        let opts = OkfPublishOptions {
+            dry_run: false,
+            no_push: true,
+        };
+        let err = publish_okf_wiki(&root, &root.join(".ax/knowledge"), &opts).unwrap_err();
+        assert!(err.contains("must not start with '-'"), "{err}");
+        assert!(!root.join(".ax/wiki").exists());
+        assert!(!tmp.path().join("pwned").exists());
+    }
+
+    #[test]
+    fn publish_clones_a_valid_remote_into_the_configured_subdir() {
+        let (_tmp, root) =
+            wiki_project(r#"{"enabled":true,"remote":"REMOTE","subdir":"docs/okf"}"#);
+        let opts = OkfPublishOptions {
+            dry_run: false,
+            no_push: true,
+        };
+        // The commit may fail without a git identity; the copy happens first.
+        let _ = publish_okf_wiki(&root, &root.join(".ax/knowledge"), &opts);
+        assert!(root.join(".ax/wiki-okf/docs/okf/index.md").is_file());
+        assert!(root.join(".ax/wiki-okf/.git").is_dir());
+        assert!(root.join(".ax/ax.db").is_file());
     }
 }
