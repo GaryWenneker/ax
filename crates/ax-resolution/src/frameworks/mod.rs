@@ -23,6 +23,17 @@ use ax_types::{EdgeKind, Provenance};
 use crate::resolver::ResolutionScope;
 use extract::{is_js_family, FrameworkExtractResult};
 
+/// Which framework resolvers apply to this project, decided once per run.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FrameworkGates {
+    /// Flask or FastAPI was detected.
+    pub flask: bool,
+    /// Django was detected.
+    pub django: bool,
+    /// Spring was detected.
+    pub spring: bool,
+}
+
 pub struct FrameworkRegistry {
     frameworks: Vec<&'static str>,
 }
@@ -72,7 +83,7 @@ impl FrameworkRegistry {
         project_root: &Path,
         queries: &QueryBuilder,
         scope: ResolutionScope<'_>,
-    ) -> Result<(), ax_utils::errors::AxError> {
+    ) -> Result<FrameworkGates, ax_utils::errors::AxError> {
         let files = queries.get_all_files().await?;
         let scoped: std::collections::HashSet<&str> = match scope {
             Some(paths) => paths.iter().map(|s| s.as_str()).collect(),
@@ -92,6 +103,11 @@ impl FrameworkRegistry {
         let svelte_active = svelte::detect(project_root, &file_paths);
         let spring_active = spring::detect(project_root, &file_paths);
         let angular_active = angular::detect(project_root);
+        let gates = FrameworkGates {
+            flask: flask_active || fastapi_active,
+            django: django_active,
+            spring: spring_active,
+        };
         if !express_active
             && !react_active
             && !nestjs_active
@@ -106,7 +122,7 @@ impl FrameworkRegistry {
             && !spring_active
             && !angular_active
         {
-            return Ok(());
+            return Ok(gates);
         }
 
         for file in files {
@@ -179,7 +195,7 @@ impl FrameworkRegistry {
             apply_extract(queries, &file.path, extracted).await?;
         }
 
-        Ok(())
+        Ok(gates)
     }
 }
 

@@ -41,7 +41,8 @@ impl ReferenceResolver {
         scope: ResolutionScope<'_>,
         mut on_progress: Option<&mut Box<dyn FnMut(IndexProgress) + Send>>,
     ) -> Result<ResolutionResult, ax_utils::errors::AxError> {
-        self.frameworks
+        let gates = self
+            .frameworks
             .run_post_extract(self.import_resolver.project_root(), queries, scope)
             .await?;
 
@@ -108,6 +109,7 @@ impl ReferenceResolver {
                         self.import_resolver.project_root(),
                         &reads,
                         &ref_,
+                        gates,
                     )
                     .await
                     {
