@@ -584,6 +584,39 @@ impl QueryBuilder {
         Ok(nodes)
     }
 
+    /// One page of non-exported nodes of `kinds` that no edge other than
+    /// `contains` points at, in a stable order (file, line, id). Callers page
+    /// with `offset` until a page comes back shorter than `limit`.
+    pub async fn get_unreferenced_nodes(
+        &self,
+        kinds: &[NodeKind],
+        limit: u32,
+        offset: u64,
+    ) -> Result<Vec<Node>, AxError> {
+        if kinds.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ph = kinds.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT n.* FROM nodes n \
+             WHERE n.kind IN ({ph}) AND COALESCE(n.is_exported, 0) = 0 \
+             AND NOT EXISTS (SELECT 1 FROM edges e WHERE e.target = n.id AND e.kind != ?) \
+             ORDER BY n.file_path, n.start_line, n.id LIMIT ? OFFSET ?"
+        );
+        let mut query = sqlx::query_as::<_, NodeRow>(&sql);
+        for kind in kinds {
+            query = query.bind(kind.as_str());
+        }
+        let rows = query
+            .bind(EdgeKind::Contains.as_str())
+            .bind(i64::from(limit))
+            .bind(i64::try_from(offset).unwrap_or(i64::MAX))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| self.sql_err(e))?;
+        Ok(rows.into_iter().map(|r| r.into_node()).collect())
+    }
+
     pub async fn get_nodes_by_name(&self, name: &str) -> Result<Vec<Node>, AxError> {
         // SQLite's lower() folds ASCII only, so the cache key does the same.
         let key = name.to_ascii_lowercase();
