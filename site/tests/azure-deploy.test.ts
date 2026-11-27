@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cloudDeploys } from '../src/lib/cloud-deploy.mjs';
@@ -19,11 +19,15 @@ const byId = Object.fromEntries(cloudDeploys.map((d) => [d.id, d]));
 
 function generate(latest: string) {
 	const dir = mkdtempSync(join(tmpdir(), 'ax-azure-'));
-	mkdirSync(join(dir, 'public', 'releases'), { recursive: true });
-	writeFileSync(join(dir, 'public', 'releases', 'latest.txt'), `${latest}\n`);
-	execFileSync(process.execPath, [script], { cwd: dir, stdio: 'pipe' });
-	const out = (name: string) => JSON.parse(readFileSync(join(dir, 'public', 'deploy', name), 'utf8'));
-	return { job: out('azure-slim.json'), server: out('azure-slim-server.json') };
+	try {
+		mkdirSync(join(dir, 'public', 'releases'), { recursive: true });
+		writeFileSync(join(dir, 'public', 'releases', 'latest.txt'), `${latest}\n`);
+		execFileSync(process.execPath, [script], { cwd: dir, stdio: 'pipe' });
+		const out = (name: string) => JSON.parse(readFileSync(join(dir, 'public', 'deploy', name), 'utf8'));
+		return { job: out('azure-slim.json'), server: out('azure-slim-server.json') };
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 }
 
 const withoutVersion = (t: any) => ({ ...t, parameters: { ...t.parameters, axVersion: undefined } });

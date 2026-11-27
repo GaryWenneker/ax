@@ -1,7 +1,7 @@
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHandler } from '../netlify/functions/latest-release.ts';
@@ -35,8 +35,9 @@ test('answers 503 instead of a made-up version when the version is empty', async
 	assert.equal(res.headers['Cache-Control'], 'no-store');
 });
 
-function siteDir(latest?: string) {
+function siteDir(t: TestContext, latest?: string) {
 	const dir = mkdtempSync(join(tmpdir(), 'latest-version-'));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
 	mkdirSync(join(dir, 'netlify'));
 	if (latest !== undefined) {
 		mkdirSync(join(dir, 'public', 'releases'), { recursive: true });
@@ -45,15 +46,15 @@ function siteDir(latest?: string) {
 	return dir;
 }
 
-test('the build step writes the version from latest.txt', () => {
-	const dir = siteDir('v6.0.1\n');
+test('the build step writes the version from latest.txt', (t) => {
+	const dir = siteDir(t, 'v6.0.1\n');
 	execFileSync('node', [script], { cwd: dir });
 	const json = JSON.parse(readFileSync(join(dir, 'netlify', 'latest-version.json'), 'utf8'));
 	assert.deepEqual(json, { version: 'v6.0.1' });
 });
 
-test('the build step fails when latest.txt is empty or missing', () => {
-	for (const dir of [siteDir('  \n'), siteDir()]) {
+test('the build step fails when latest.txt is empty or missing', (t) => {
+	for (const dir of [siteDir(t, '  \n'), siteDir(t)]) {
 		assert.throws(() => execFileSync('node', [script], { cwd: dir, stdio: 'pipe' }));
 	}
 });
