@@ -27,3 +27,12 @@ test('no e2e spec writes into a path the live server reports', () => {
     assert.equal(asksForPath && writes, false, name);
   }
 });
+
+test('shared fixture rows and API stubs live in e2e/fixtures.ts', () => {
+  // A copied fixture drifts: when an endpoint gains a required field, every copy must
+  // be found and edited. Specs build rows and stubs with the helpers in fixtures.ts.
+  for (const { name, text } of specs) {
+    assert.equal(/id:\s*'responsive-row'/.test(text), false, `${name} copies the policyRow fixture`);
+    assert.equal(/id:\s*'responsive-memory'/.test(text), false, `${name} copies the memoryRow fixture`);
+  }
+});

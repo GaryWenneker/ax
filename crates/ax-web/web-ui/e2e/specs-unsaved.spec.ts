@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { emptyQualitySnapshot } from '../src/lib/mcpQuality';
+import { mockApi } from './fixtures';
 
 const spec = (id: string, title: string) => ({
   id,
@@ -27,19 +27,10 @@ const revision = (id: string) => ({
 });
 
 async function openDocuments(page: Page): Promise<void> {
-  await page.route('**/api/**', (route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (path === '/api/specs') {
-      return route.fulfill({ json: { specs: [spec('alpha', 'Alpha spec'), spec('beta', 'Beta spec')] } });
-    }
-    const m = path.match(/^\/api\/specs\/([a-z]+)\/revisions$/);
-    if (m) return route.fulfill({ json: { revisions: [revision(m[1])] } });
-    if (path === '/api/stats') {
-      return route.fulfill({ json: { project_name: 'Specs', node_count: 0, edge_count: 0, file_count: 0, languages: [], db_size_bytes: 0 } });
-    }
-    if (path === '/api/usage/mcp-quality') return route.fulfill({ json: { ...emptyQualitySnapshot(), projectLabel: 'Specs' } });
-    if (path === '/api/ship/config') return route.fulfill({ json: { config: { ship: {}, ui: {} }, sonar: {} } });
-    return route.fulfill({ json: {} });
+  await mockApi(page, {
+    '/api/specs': { specs: [spec('alpha', 'Alpha spec'), spec('beta', 'Beta spec')] },
+    '/api/specs/alpha/revisions': { revisions: [revision('alpha')] },
+    '/api/specs/beta/revisions': { revisions: [revision('beta')] },
   });
   await page.setViewportSize({ width: 1600, height: 900 });
   await page.goto('/specs?view=documents');

@@ -95,6 +95,13 @@ export function baseApi(): Record<string, Reply> {
   };
 }
 
+/** The shared stub for an endpoint every page shell calls, or undefined. Specs with
+ *  their own route handler use it as the fallback before answering 404. */
+export function baseReply(path: string): unknown {
+  const reply = baseApi()[path];
+  return typeof reply === 'function' ? undefined : reply;
+}
+
 /**
  * Serve the Command Center API from fixtures. `overrides` maps a path (without a
  * trailing slash) to a reply and replaces the base reply for that path. Any other
