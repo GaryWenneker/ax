@@ -14,24 +14,10 @@ CHANGED_RS=(
   crates/ax-cli/src/commands/ship.rs
   crates/ax-cli/src/main.rs
 )
-# Known failures on this machine before the change (see the spec's baseline note). The last two are
-# flaky: they pass alone and fail only sometimes in the full workspace run.
-BASELINE_FAILURES="bootstrap::tests::legacy_prefix_from_workspace_folder
-bootstrap::tests::resolves_placeholder_to_folder_name
-savings::tests::cursor_transcript_path_filter
-savings::tests::transcript_import_does_not_wipe_state_tokens
-seed::tests::seeds_sonar_project_key_from_folder_name"
-LOG="$(mktemp -d /tmp/ax-gauntlet.XXXX)"
-cargo_() { env -u CARGO_TARGET_DIR cargo "$@"; }
-fail() { echo "GAUNTLET FAILED: $*" >&2; echo "logs: $LOG" >&2; exit 1; }
-LAYERS="${GAUNTLET_LAYERS:-1 2 3 4 5 6 7}"
-want() { [[ " $LAYERS " == *" $1 "* ]]; }
-
-echo "source: $(git rev-parse HEAD) (base $BASE $(git rev-parse --short "$BASE"))"
-echo "tools: $(cargo --version) | $(rustfmt --version) | node $(node --version)"
-if [ "${GAUNTLET_ALLOW_DIRTY:-0}" != 1 ] && [ -n "$(git status --porcelain -- crates scripts site/src)" ]; then
-  fail "uncommitted changes under crates/, scripts/ or site/src/; commit first so the run matches a SHA"
-fi
+source "$ROOT/scripts/lib/gauntlet.sh"
+gauntlet_init git-hooks
+gauntlet_load_baseline scripts/lib/baseline-git-hooks.txt
+gauntlet_header
 
 if want 1; then
 echo "== 1. targeted tests"
@@ -39,68 +25,10 @@ cargo_ test -q -p ax-sync -p ax-mcp -p ax-cli >"$LOG/targeted.log" 2>&1 || fail 
 grep -E "^test result" "$LOG/targeted.log" | awk '{p+=$4; f+=$6} END {print "   passed="p" failed="f}'
 fi
 
-if want 2; then
-echo "== 2. workspace suite against the baseline"
-set +e
-cargo_ test --workspace --no-fail-fast >"$LOG/workspace.log" 2>&1
-ws_exit=$?
-set -e
-grep -qE "^test result" "$LOG/workspace.log" || fail "workspace suite produced no results (exit $ws_exit)"
-grep -E "^error(\[E[0-9]+\])?: could not compile|^error\[E[0-9]+\]" "$LOG/workspace.log" &&
-  fail "workspace suite did not compile"
-failed="$(grep -E "^test .* \.\.\. FAILED$" "$LOG/workspace.log" | sed -E 's/^test (.*) \.\.\. FAILED$/\1/' | sort -u)"
-new_failures="$(comm -23 <(printf '%s\n' "$failed" | sed '/^$/d') <(printf '%s\n' "$BASELINE_FAILURES" | sort))"
-grep -E "^test result" "$LOG/workspace.log" | awk '{p+=$4; f+=$6} END {print "   passed="p" failed="f}'
-printf '%s\n' "$failed" | sed '/^$/d; s/^/   failed: /'
-[ -z "$new_failures" ] || fail "new test failures: $new_failures"
-if [ "$ws_exit" -ne 0 ] && [ -z "$failed" ]; then
-  fail "workspace suite exited $ws_exit without a failing test"
-fi
-fi
-
-changed_lines() { # file -> one changed line number per line, relative to BASE
-  git diff -U0 "$BASE" -- "$1" | sed -nE 's/^@@ -[0-9,]+ \+([0-9]+)(,([0-9]+))? @@.*/\1 \3/p' |
-    while read -r start count; do
-      count="${count:-1}"
-      for ((i = 0; i < count; i++)); do echo $((start + i)); done
-    done
-}
-
-if want 3; then
-echo "== 3. clippy: no warnings on changed lines"
-cargo_ clippy -p ax-sync -p ax-mcp -p ax-cli --all-targets --message-format short -- -A clippy::invalid_regex \
-  >"$LOG/clippy.log" 2>&1 || fail "clippy did not finish"
-hits=0
-for f in "${CHANGED_RS[@]}"; do
-  lines="$(changed_lines "$f")"
-  while IFS=: read -r line msg; do
-    [ -n "$line" ] || continue
-    if grep -qx "$line" <<<"$lines"; then
-      echo "   $f:$line:$msg"
-      hits=$((hits + 1))
-    fi
-  done < <(grep -E "^$f:[0-9]+:[0-9]+: (warning|error)" "$LOG/clippy.log" | sed -E "s#^$f:([0-9]+):[0-9]+:#\1:#")
-done
-[ "$hits" -eq 0 ] || fail "$hits clippy finding(s) on changed lines"
-echo "   0 on changed lines"
-fi
-
-if want 4; then
-echo "== 4. rustfmt: no drift beyond $BASE"
-for f in "${CHANGED_RS[@]}"; do
-  # By path rustfmt also checks every `mod` the file declares; count only this file's hunks.
-  now="$(rustfmt --edition 2021 --check "$f" 2>&1 | grep -c "^Diff in $ROOT/$f:" || true)"
-  before="$(git show "$BASE:$f" | rustfmt --edition 2021 --check 2>&1 | grep -c '^Diff in' || true)"
-  echo "   $f: $now diff hunks (was $before)"
-  [ "$now" -le "$before" ] || fail "rustfmt drift grew in $f"
-done
-fi
-
-if want 5 || want 7; then
-echo "== 5. release build and CLI docs"
-cargo_ build -q --release -p ax-cli >"$LOG/build.log" 2>&1 || fail "release build"
-node scripts/check-cli-docs.mjs "$ROOT/target-dev/release/ax" || fail "cli docs"
-fi
+if want 2; then gauntlet_workspace_against_baseline; fi
+if want 3; then gauntlet_clippy_changed_lines -p ax-sync -p ax-mcp -p ax-cli; fi
+if want 4; then gauntlet_rustfmt_drift; fi
+if want 5 || want 7; then gauntlet_build_and_check_docs; fi
 
 if want 6; then
 echo "== 6. mutants"
@@ -155,8 +83,4 @@ agent_files_after="$(user_agent_files)"
 echo "   hooks executable with shebang and quiet ship line; commit printed only git's summary; git memory captured"
 fi
 
-if [ "$LAYERS" != "1 2 3 4 5 6 7" ] || [ "${GAUNTLET_ALLOW_DIRTY:-0}" = 1 ]; then
-  echo "PARTIAL RUN ($LAYERS, dirty=${GAUNTLET_ALLOW_DIRTY:-0}): not evidence"
-  exit 0
-fi
-echo "GAUNTLET PASSED ($(git rev-parse --short HEAD))"
+gauntlet_finish

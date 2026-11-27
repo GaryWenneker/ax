@@ -72,12 +72,16 @@ class CheckCliDocsBinary(unittest.TestCase):
 
 class GauntletsNameTheBinary(unittest.TestCase):
     def test_every_gauntlet_passes_the_binary_as_an_argument(self) -> None:
-        for script in sorted((ROOT / "scripts").glob("gauntlet-*.sh")):
+        scripts = sorted((ROOT / "scripts").glob("gauntlet-*.sh")) + [ROOT / "scripts/lib/gauntlet.sh"]
+        calls = 0
+        for script in scripts:
             for line in script.read_text(encoding="utf-8").splitlines():
                 if "check-cli-docs.mjs" not in line:
                     continue
+                calls += 1
                 with self.subTest(script=script.name):
                     self.assertRegex(line, r'check-cli-docs\.mjs\s+"\$', f"{script.name}: pass the built binary")
+        self.assertGreater(calls, 0, "no gauntlet runs the CLI docs check")
 
 
 if __name__ == "__main__":
