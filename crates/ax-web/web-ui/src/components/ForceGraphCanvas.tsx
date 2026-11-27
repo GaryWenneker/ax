@@ -16,6 +16,7 @@ import { filterGraph, groupColor, type FilterEdge } from '../lib/graphFilter';
 import { buildNeighbors, highlightFor, selectionPulse } from '../lib/graphHover';
 import { forceParams, seedCluster } from '../lib/graphForces';
 import { labelAlpha, labelPx, placeLabels, type LabelBox } from '../lib/graphLabels';
+import { exposeGraphNodes, markGraphSettled, screenNodes } from '../lib/graphProbe';
 
 export interface CanvasNode {
   key: string;
@@ -228,6 +229,7 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
       const shown = sim.filter((n) => visible.nodes.has(n.i));
       const links = shownEdges.map((e) => ({ source: sim[e.source], target: sim[e.target] }));
       simRef.current?.stop();
+      markGraphSettled(wrapRef.current, false);
       simRef.current = forceSimulation(shown)
         .force('charge', forceManyBody<SimNode>().strength(f.charge).distanceMax(900))
         .force(
@@ -240,7 +242,8 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
         .force('y', forceY(0).strength(f.center))
         .force('collide', forceCollide<SimNode>((n) => radius(nodes[n.i].degree, settings.nodeSize) + 14).strength(0.9))
         .alpha(alpha)
-        .on('tick', () => drawRef.current());
+        .on('tick', () => drawRef.current())
+        .on('end', () => markGraphSettled(wrapRef.current, true));
     },
     [nodes, shownEdges, visible, settings],
   );
@@ -250,6 +253,20 @@ export default function ForceGraphCanvas({ nodes, edges, selectedKey, onSelect, 
   }, [restart]);
 
   useEffect(() => () => void simRef.current?.stop(), []);
+
+  useEffect(() => {
+    exposeGraphNodes(wrapRef.current, () => {
+      const canvas = canvasRef.current;
+      if (!canvas) return [];
+      const { x, y, k } = view.current;
+      return screenNodes(
+        simNodesRef.current,
+        (n) => (visible.nodes.has(n.i) ? { key: nodes[n.i].key, x: n.x!, y: n.y! } : null),
+        { scale: k, offsetX: x, offsetY: y },
+        canvas.getBoundingClientRect(),
+      );
+    });
+  }, [nodes, visible]);
 
   useEffect(() => {
     if (selectedKey == null) return;

@@ -44,6 +44,7 @@ import { forceParams, seedCluster } from '../lib/graphForces';
 import { labelAlpha, labelPx, placeLabels, type LabelBox } from '../lib/graphLabels';
 import SettingsSelect from '../components/ui/SettingsSelect';
 import { AS_OF_COMMIT_MS, acceptsLiveMerge, asOfFromSlider, graphSource, sliderFromAsOf } from '../lib/graphAsOf';
+import { exposeGraphNodes, markGraphSettled, screenNodes } from '../lib/graphProbe';
 
 interface SimNode extends GraphNode {
   x: number;
@@ -843,6 +844,7 @@ export default function GraphPage() {
   // Start (or reheat) the d3-force simulation over the visible nodes.
   function ensureSimulation(alpha = 1) {
     if (viewModeRef.current === 'domain') {
+      markGraphSettled(wrapRef.current, true);
       requestDraw();
       return;
     }
@@ -870,6 +872,7 @@ export default function GraphPage() {
     if (!sim) {
       sim = forceSimulation<SimNode, SimLink>().alphaDecay(0.0228).velocityDecay(0.4);
       sim.on('tick', draw);
+      sim.on('end', () => markGraphSettled(wrapRef.current, true));
       simRef.current = sim;
     }
     const endDegree = (end: SimNode | string | number) => degree.get(end as SimNode) ?? 1;
@@ -885,6 +888,7 @@ export default function GraphPage() {
       .force('x', forceX<SimNode>(cx).strength(p.center))
       .force('y', forceY<SimNode>(cy).strength(p.center))
       .force('collide', forceCollide<SimNode>((n) => worldRadius(n) + 14).strength(0.9));
+    markGraphSettled(wrapRef.current, false);
     sim.alpha(Math.max(sim.alpha(), alpha)).restart();
   }
 
@@ -1197,6 +1201,20 @@ export default function GraphPage() {
     centerOnNode(node);
     requestDraw();
   }
+
+  useEffect(() => {
+    exposeGraphNodes(wrapRef.current, () => {
+      const canvas = canvasRef.current;
+      if (!canvas) return [];
+      const vis = viewModeRef.current === 'domain' ? null : visibleRef.current;
+      return screenNodes(
+        simNodesRef.current.map((n, i) => ({ n, i })),
+        ({ n, i }) => (vis && !vis.nodes.has(i) ? null : { key: n.name, x: n.x, y: n.y }),
+        transformRef.current,
+        canvas.getBoundingClientRect(),
+      );
+    });
+  }, []);
 
   useEffect(() => {
     saveGraphSettings(settings);
