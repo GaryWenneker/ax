@@ -847,11 +847,12 @@ fn build_scan_targets_with_count(
         if !repo_names.iter().any(|r| r == repo) {
             continue;
         }
-        let rel = file.strip_prefix(&format!("{repo}/")).unwrap_or(file);
+        // Keep the `{repo}/` prefix: the scanner's base directory is the
+        // workspace root, and inclusion patterns are relative to it.
         grouped
             .entry(repo.to_string())
             .or_default()
-            .push(rel.to_string());
+            .push(file.clone());
     }
 
     // Use workspace_repo_count for multi-repo detection so that scanning a single repo
@@ -994,6 +995,29 @@ mod tests {
             .find(|t| t.sources == "ContosoPortal")
             .unwrap();
         assert!(contoso.inclusions.contains("Bar.cs"));
+    }
+
+    #[test]
+    fn multi_repo_inclusions_are_relative_to_the_scan_base_directory() {
+        // The scanner runs from the workspace root, so inclusion patterns are
+        // matched against `<repo>/<path>`, not against the repo-relative path.
+        let repos = vec!["Contoso-Web".into(), "ContosoPortal".into()];
+        let files = vec![
+            "Contoso-Web/src/Foo.cs".into(),
+            "Contoso-Web/src/Baz.cs".into(),
+            "ContosoPortal/src/Bar.cs".into(),
+        ];
+        let targets = build_scan_targets("Contoso", &repos, &files, false);
+        let web = targets.iter().find(|t| t.sources == "Contoso-Web").unwrap();
+        assert_eq!(
+            web.inclusions,
+            "Contoso-Web/src/Foo.cs,Contoso-Web/src/Baz.cs"
+        );
+        let portal = targets
+            .iter()
+            .find(|t| t.sources == "ContosoPortal")
+            .unwrap();
+        assert_eq!(portal.inclusions, "ContosoPortal/src/Bar.cs");
     }
 
     #[test]
