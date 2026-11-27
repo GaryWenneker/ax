@@ -722,75 +722,293 @@ async fn revoke_locked(url: String) -> Result<(), String> {
 pub async fn proxy(url: String) -> Result<(), String> {
     https_url(&url)?;
     let client = http_client()?;
-    let mut input = BufReader::new(tokio::io::stdin()).lines();
-    let mut output = tokio::io::stdout();
-    let mut session: Option<String> = None;
-    let mut version = "2025-11-25".to_string();
+    proxy_io(
+        &client,
+        &url,
+        &StoredTokens(&url),
+        BufReader::new(tokio::io::stdin()),
+        tokio::io::stdout(),
+    )
+    .await
+}
+
+/// Where the proxy gets its bearer token.
+trait TokenSource {
+    async fn access(&self) -> Result<String, String>;
+    async fn refresh(&self) -> Result<String, String>;
+}
+
+/// The tokens stored for one remote address.
+struct StoredTokens<'a>(&'a str);
+
+impl TokenSource for StoredTokens<'_> {
+    async fn access(&self) -> Result<String, String> {
+        access_token(self.0).await
+    }
+    async fn refresh(&self) -> Result<String, String> {
+        refresh_access_token(self.0).await
+    }
+}
+
+/// The largest request line the proxy forwards.
+const MAX_REQUEST_LINE: usize = 128 * 1024;
+/// The largest reply the proxy reads from the server.
+const MAX_REPLY: usize = 8 * 1024 * 1024;
+/// How much of an HTTP error body the proxy reads for its message.
+const MAX_ERROR_BODY: usize = 16 * 1024;
+
+/// The MCP session the proxy holds with the server on behalf of the IDE.
+struct ProxySession {
+    id: Option<String>,
+    version: String,
+    /// The IDE's `initialize` request, replayed when the server lost the session.
+    initialize: Option<Value>,
+}
+
+/// Why one request could not be answered by the server.
+struct ProxyError {
+    message: String,
+    http_status: Option<u16>,
+}
+
+impl From<String> for ProxyError {
+    fn from(message: String) -> Self {
+        ProxyError {
+            message,
+            http_status: None,
+        }
+    }
+}
+
+fn rpc_error(id: Value, code: i64, message: &str, http_status: Option<u16>) -> Value {
+    let mut error = json!({ "code": code, "message": message });
+    if let Some(status) = http_status {
+        error["data"] = json!({ "httpStatus": status });
+    }
+    json!({ "jsonrpc": "2.0", "id": id, "error": error })
+}
+
+async fn write_line<W: tokio::io::AsyncWrite + Unpin>(
+    output: &mut W,
+    value: &Value,
+) -> Result<(), String> {
+    output
+        .write_all(format!("{value}\n").as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+    output.flush().await.map_err(|e| e.to_string())
+}
+
+/// The proxy loop: one JSON-RPC message per line from `reader`, one reply per
+/// line to `writer`.
+///
+/// A request the server does not answer (an HTTP error status, an unreachable
+/// server, a line that is not JSON) gets a JSON-RPC error with its id and the
+/// loop goes on; a notification gets no reply. A 401 refreshes the token once
+/// and retries; a 404 for a known session initializes a new session with the
+/// IDE's own `initialize` request and retries.
+async fn proxy_io<R, W, T>(
+    client: &reqwest::Client,
+    url: &str,
+    tokens: &T,
+    reader: R,
+    mut output: W,
+) -> Result<(), String>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+    T: TokenSource,
+{
+    let mut input = reader.lines();
+    let mut session = ProxySession {
+        id: None,
+        version: "2025-11-25".to_string(),
+        initialize: None,
+    };
     while let Some(line) = input.next_line().await.map_err(|e| e.to_string())? {
         if line.trim().is_empty() {
             continue;
         }
-        if line.len() > 128 * 1024 {
-            return Err("MCP request is too large".into());
+        if line.len() > MAX_REQUEST_LINE {
+            let reply = rpc_error(Value::Null, -32600, "MCP request is too large", None);
+            write_line(&mut output, &reply).await?;
+            continue;
         }
-        let request: Value = serde_json::from_str(&line).map_err(|_| "Invalid JSON-RPC input")?;
-        let token = access_token(&url).await?;
-        let mut builder = client
-            .post(&url)
-            .bearer_auth(token)
-            .header("accept", "application/json, text/event-stream")
-            .json(&request);
-        if let Some(id) = &session {
-            builder = builder
+        let Ok(request) = serde_json::from_str::<Value>(&line) else {
+            let reply = rpc_error(Value::Null, -32700, "Invalid JSON-RPC input", None);
+            write_line(&mut output, &reply).await?;
+            continue;
+        };
+        match forward(client, url, tokens, &mut session, &request).await {
+            Ok(Some(value)) => write_line(&mut output, &value).await?,
+            Ok(None) => {}
+            Err(error) => {
+                // A notification has no id and gets no reply.
+                if let Some(id) = request.get("id") {
+                    let reply = rpc_error(id.clone(), -32000, &error.message, error.http_status);
+                    write_line(&mut output, &reply).await?;
+                }
+            }
+        }
+    }
+    if let Some(id) = session.id {
+        if let Ok(token) = tokens.access().await {
+            let _ = client
+                .delete(url)
+                .bearer_auth(token)
                 .header("mcp-session-id", id)
-                .header("mcp-protocol-version", &version);
+                .send()
+                .await;
         }
-        let response = builder
-            .send()
-            .await
-            .map_err(|_| "Cannot reach remote MCP server")?;
-        if !response.status().is_success() {
-            return Err(format!(
-                "Remote MCP returned HTTP {}; reconnect if the session expired",
-                response.status()
-            ));
+    }
+    Ok(())
+}
+
+async fn send(
+    client: &reqwest::Client,
+    url: &str,
+    token: &str,
+    session: &ProxySession,
+    request: &Value,
+) -> Result<reqwest::Response, ProxyError> {
+    let mut builder = client
+        .post(url)
+        .bearer_auth(token)
+        .header("accept", "application/json, text/event-stream")
+        .json(request);
+    if let Some(id) = &session.id {
+        builder = builder
+            .header("mcp-session-id", id)
+            .header("mcp-protocol-version", &session.version);
+    }
+    builder
+        .send()
+        .await
+        .map_err(|_| ProxyError::from("Cannot reach remote MCP server".to_string()))
+}
+
+/// Sends one request to the server and returns its reply (`None` for 202).
+async fn forward<T: TokenSource>(
+    client: &reqwest::Client,
+    url: &str,
+    tokens: &T,
+    session: &mut ProxySession,
+    request: &Value,
+) -> Result<Option<Value>, ProxyError> {
+    let is_initialize = request["method"] == "initialize";
+    let mut token = tokens.access().await?;
+    let mut refreshed = false;
+    let mut reinitialized = false;
+    loop {
+        let response = send(client, url, &token, session, request).await?;
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED && !refreshed {
+            refreshed = true;
+            token = tokens.refresh().await?;
+            continue;
+        }
+        if status == reqwest::StatusCode::NOT_FOUND
+            && session.id.is_some()
+            && !is_initialize
+            && !reinitialized
+        {
+            if let Some(initialize) = session.initialize.clone() {
+                reinitialized = true;
+                session.id = None;
+                reinitialize(client, url, &token, session, &initialize).await?;
+                continue;
+            }
+        }
+        if !status.is_success() {
+            return Err(http_error(response).await);
         }
         if let Some(id) = response
             .headers()
             .get("mcp-session-id")
             .and_then(|h| h.to_str().ok())
         {
-            session = Some(id.to_owned());
+            session.id = Some(id.to_owned());
         }
-        if response.status() == reqwest::StatusCode::ACCEPTED {
-            continue;
+        if status == reqwest::StatusCode::ACCEPTED {
+            return Ok(None);
         }
-        let value: Value = bounded_json_limit(response, 8 * 1024 * 1024).await?;
-        if request["method"] == "initialize" {
+        let value: Value = bounded_json_limit(response, MAX_REPLY)
+            .await
+            .map_err(|_| ProxyError::from("Invalid reply from remote MCP server".to_string()))?;
+        if is_initialize {
             if let Some(v) = value
                 .pointer("/result/protocolVersion")
                 .and_then(Value::as_str)
             {
-                version = v.to_owned();
+                session.version = v.to_owned();
             }
+            session.initialize = Some(request.clone());
         }
-        output
-            .write_all(format!("{value}\n").as_bytes())
-            .await
-            .map_err(|e| e.to_string())?;
-        output.flush().await.map_err(|e| e.to_string())?;
+        return Ok(Some(value));
     }
-    if let Some(session) = session {
-        if let Ok(token) = access_token(&url).await {
-            let _ = client
-                .delete(&url)
-                .bearer_auth(token)
-                .header("mcp-session-id", session)
-                .send()
-                .await;
-        }
+}
+
+/// Starts a new server session with the IDE's earlier `initialize` request.
+async fn reinitialize(
+    client: &reqwest::Client,
+    url: &str,
+    token: &str,
+    session: &mut ProxySession,
+    initialize: &Value,
+) -> Result<(), ProxyError> {
+    let response = send(client, url, token, session, initialize).await?;
+    if !response.status().is_success() {
+        return Err(http_error(response).await);
     }
+    session.id = response
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|h| h.to_str().ok())
+        .map(str::to_owned);
+    let value: Value = bounded_json_limit(response, MAX_REPLY)
+        .await
+        .map_err(|_| ProxyError::from("Invalid reply from remote MCP server".to_string()))?;
+    if let Some(v) = value
+        .pointer("/result/protocolVersion")
+        .and_then(Value::as_str)
+    {
+        session.version = v.to_owned();
+    }
+    let initialized = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
+    let _ = send(client, url, token, session, &initialized).await;
     Ok(())
+}
+
+/// The error for a non-2xx reply, with the server's own error text.
+async fn http_error(mut response: reqwest::Response) -> ProxyError {
+    let status = response.status();
+    let mut body = Vec::new();
+    while let Ok(Some(chunk)) = response.chunk().await {
+        let room = MAX_ERROR_BODY.saturating_sub(body.len());
+        body.extend_from_slice(&chunk[..chunk.len().min(room)]);
+        if body.len() >= MAX_ERROR_BODY {
+            break;
+        }
+    }
+    let detail = serde_json::from_slice::<Value>(&body)
+        .ok()
+        .and_then(|v| {
+            v.get("error")
+                .and_then(|e| e.as_str().or_else(|| e.get("message")?.as_str()))
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| {
+            ax_utils::truncate_chars(String::from_utf8_lossy(&body).trim(), 500, "...")
+        });
+    let message = if detail.is_empty() {
+        format!("Remote MCP returned HTTP {}", status.as_u16())
+    } else {
+        format!("Remote MCP returned HTTP {}: {detail}", status.as_u16())
+    };
+    ProxyError {
+        message,
+        http_status: Some(status.as_u16()),
+    }
 }
 
 #[cfg(test)]
@@ -1130,5 +1348,208 @@ mod exchange_tests {
             assert_eq!(saved.lock().unwrap()[0].1.as_deref(), Some("refresh-two"));
             task.abort();
         }
+    }
+}
+
+#[cfg(test)]
+mod proxy_tests {
+    use super::*;
+    use axum::{routing::post, Json};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Default)]
+    struct Server {
+        session: std::sync::Mutex<Option<String>>,
+        sessions_started: AtomicUsize,
+        restarted: std::sync::atomic::AtomicBool,
+        calls: std::sync::Mutex<Vec<String>>,
+    }
+
+    fn err(status: StatusCode, message: &str) -> axum::response::Response {
+        (status, Json(json!({ "error": message }))).into_response()
+    }
+
+    async fn mcp(
+        State(server): State<Arc<Server>>,
+        headers: HeaderMap,
+        Json(request): Json<Value>,
+    ) -> axum::response::Response {
+        let header = |name: &str| headers.get(name).and_then(|h| h.to_str().ok());
+        if header("authorization") != Some("Bearer fresh") {
+            return err(StatusCode::UNAUTHORIZED, "Authentication required");
+        }
+        let method = request["method"].as_str().unwrap_or_default().to_string();
+        server.calls.lock().unwrap().push(method.clone());
+        if method == "initialize" {
+            let n = server.sessions_started.fetch_add(1, Ordering::SeqCst);
+            let id = format!("session-{n}");
+            *server.session.lock().unwrap() = Some(id.clone());
+            let mut response = Json(json!({
+                "jsonrpc": "2.0",
+                "id": request["id"],
+                "result": { "protocolVersion": "2025-06-18" }
+            }))
+            .into_response();
+            response
+                .headers_mut()
+                .insert("mcp-session-id", id.parse().unwrap());
+            return response;
+        }
+        let current = server.session.lock().unwrap().clone();
+        if current.is_none() || header("mcp-session-id") != current.as_deref() {
+            return err(StatusCode::NOT_FOUND, "Unknown or expired MCP session");
+        }
+        assert_eq!(header("mcp-protocol-version"), Some("2025-06-18"));
+        if request.get("id").is_none() {
+            return StatusCode::ACCEPTED.into_response();
+        }
+        match request.pointer("/params/name").and_then(Value::as_str) {
+            Some("forbidden") => err(StatusCode::FORBIDDEN, "Tool is unavailable remotely"),
+            Some("busy") => err(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Project is being re-indexed",
+            ),
+            Some("restart") if !server.restarted.swap(true, Ordering::SeqCst) => {
+                *server.session.lock().unwrap() = None;
+                err(StatusCode::NOT_FOUND, "Unknown or expired MCP session")
+            }
+            _ => Json(json!({"jsonrpc":"2.0","id":request["id"],"result":{"ok":true}}))
+                .into_response(),
+        }
+    }
+
+    struct FakeTokens {
+        current: std::sync::Mutex<String>,
+        refreshes: AtomicUsize,
+    }
+
+    impl FakeTokens {
+        fn new(token: &str) -> Self {
+            FakeTokens {
+                current: std::sync::Mutex::new(token.into()),
+                refreshes: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl TokenSource for FakeTokens {
+        async fn access(&self) -> Result<String, String> {
+            Ok(self.current.lock().unwrap().clone())
+        }
+        async fn refresh(&self) -> Result<String, String> {
+            self.refreshes.fetch_add(1, Ordering::SeqCst);
+            *self.current.lock().unwrap() = "fresh".into();
+            Ok("fresh".into())
+        }
+    }
+
+    async fn serve() -> (String, Arc<Server>, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let url = format!(
+            "http://{}/projects/demo/mcp",
+            listener.local_addr().unwrap()
+        );
+        let server = Arc::new(Server::default());
+        let app = Router::new()
+            .route(
+                "/projects/demo/mcp",
+                post(mcp).delete(|| async { StatusCode::OK }),
+            )
+            .with_state(server.clone());
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (url, server, task)
+    }
+
+    async fn run(url: &str, tokens: &FakeTokens, lines: &[String]) -> Vec<Value> {
+        let input = lines.join("\n") + "\n";
+        let mut output = Vec::new();
+        proxy_io(
+            &http_client().unwrap(),
+            url,
+            tokens,
+            input.as_bytes(),
+            &mut output,
+        )
+        .await
+        .expect("the proxy keeps running until its input ends");
+        String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect()
+    }
+
+    fn initialize(id: u64) -> String {
+        json!({"jsonrpc":"2.0","id":id,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ide","version":"1"}}}).to_string()
+    }
+
+    fn call(id: u64, name: &str) -> String {
+        json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":name,"arguments":{}}})
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn per_call_http_errors_become_json_rpc_errors_and_the_proxy_keeps_running() {
+        let (url, _server, task) = serve().await;
+        let tokens = FakeTokens::new("fresh");
+        let replies = run(
+            &url,
+            &tokens,
+            &[
+                initialize(1),
+                json!({"jsonrpc":"2.0","method":"notifications/initialized"}).to_string(),
+                "{not json".into(),
+                call(2, "forbidden"),
+                call(3, "busy"),
+                format!("\"{}\"", "x".repeat(200 * 1024)),
+                call(4, "ok"),
+            ],
+        )
+        .await;
+        assert_eq!(replies.len(), 6, "{replies:?}");
+        assert_eq!(replies[0]["id"], 1);
+        assert_eq!(replies[1]["id"], Value::Null);
+        assert_eq!(replies[1]["error"]["code"], -32700);
+        assert_eq!(replies[2]["id"], 2);
+        assert!(replies[2]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Tool is unavailable remotely"));
+        assert_eq!(replies[2]["error"]["data"]["httpStatus"], 403);
+        assert_eq!(replies[3]["id"], 3);
+        assert!(replies[3]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("re-indexed"));
+        assert_eq!(replies[4]["id"], Value::Null);
+        assert_eq!(replies[4]["error"]["code"], -32600);
+        assert_eq!(replies[5]["id"], 4);
+        assert_eq!(replies[5]["result"]["ok"], true);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn a_rejected_token_is_refreshed_once_and_the_request_retried() {
+        let (url, _server, task) = serve().await;
+        let tokens = FakeTokens::new("stale");
+        let replies = run(&url, &tokens, &[initialize(1), call(2, "ok")]).await;
+        assert_eq!(replies[0]["result"]["protocolVersion"], "2025-06-18");
+        assert_eq!(replies[1]["result"]["ok"], true);
+        assert_eq!(tokens.refreshes.load(Ordering::SeqCst), 1);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn an_expired_session_is_initialized_again_and_the_request_retried() {
+        let (url, server, task) = serve().await;
+        let tokens = FakeTokens::new("fresh");
+        let replies = run(&url, &tokens, &[initialize(1), call(2, "restart")]).await;
+        assert_eq!(replies.len(), 2, "{replies:?}");
+        assert_eq!(replies[1]["id"], 2);
+        assert_eq!(replies[1]["result"]["ok"], true);
+        assert_eq!(server.sessions_started.load(Ordering::SeqCst), 2);
+        task.abort();
     }
 }

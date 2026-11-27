@@ -249,7 +249,11 @@ For stdio-only clients, first log in on that laptop, then configure its MCP proc
 }
 ```
 
-The bridge sends authenticated HTTPS requests, preserves JSON-RPC responses, forwards the transport session and refreshes a saved token before expiry when possible. Its logs go to stderr; stdout carries MCP responses only. Expired transport sessions require reconnecting the bridge.
+The bridge sends authenticated HTTPS requests, preserves JSON-RPC responses, forwards the transport session and refreshes a saved token before expiry when possible. Its logs go to stderr; stdout carries MCP responses only.
+
+The bridge keeps running when one request fails. When the server answers with an HTTP error (for example 403 for a tool that is unavailable remotely, 429 when the server is busy, or 503 while the project is re-indexed), the IDE gets a JSON-RPC error for that request with code `-32000`, the server's message and `data.httpStatus`. A line that is not JSON gets a parse error (`-32700`), and a line over 128 KiB gets `-32600`. When the server rejects the token (401), the bridge refreshes it once and retries. When the server no longer knows the session (404), for example after a restart, the bridge starts a new session with the IDE's original `initialize` request and retries.
+
+When a token refresh succeeds at the sign-in provider, the new tokens are saved right away, so a rotated refresh token is never lost. If the Ax server then answers 401 or 403, the refresh reports that the account lost access; if the server is briefly unavailable, the new token is used and the request reports the outage.
 
 An IDE that can securely supply a custom Bearer header can alternatively use a long random API key. Add only its SHA-256 hex hash, a unique key ID and explicit project IDs to `api_keys`:
 
