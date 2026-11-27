@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+import { baseReply } from './fixtures';
+
 // The sign-in gate must keep the app mounted when a background session check
 // fails for a transient reason, and only show the sign-in page on a real 401.
 test('a failed background session check keeps the app and its state', async ({ page }) => {
@@ -14,7 +16,7 @@ test('a failed background session check keeps the app and its state', async ({ p
       if (session === 'unauthorized') return route.fulfill({ status: 401, json: { error: 'no session' } });
       return route.fulfill({ json: { authenticated: true } });
     }
-    return route.fulfill({ json: {} });
+    return route.fulfill({ json: baseReply(path) ?? {} });
   });
   await page.goto('/logging');
   const nav = page.getByRole('navigation', { name: 'Main navigation' });

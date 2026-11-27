@@ -36,14 +36,14 @@ test('access management sends CSRF and shows new tokens until dismissed', async 
     }
   });
   await page.goto('/settings');
-  // These controls also work after integration with the portal Settings panels.
+  // Access settings sit in their own panels; open each one from the Settings navigation.
   const teamNav = page.locator('.settings-navigation-item[aria-controls="settings-panel-team"]');
-  if (await teamNav.count()) await teamNav.click();
+  await teamNav.click();
   const team = page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Team', exact: true }) });
   await team.getByRole('group', { name: 'Roles for Demo member' }).getByLabel('Read-only').click();
   await expect.poll(() => (member as typeof member & { roles?: string[] }).roles).toContain('readonly');
   const clientsNav = page.locator('.settings-navigation-item[aria-controls="settings-panel-clients"]');
-  if (await clientsNav.count()) await clientsNav.click();
+  await clientsNav.click();
   const clients = page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Clients & tokens', exact: true }) });
   await clients.getByRole('button', { name: 'Issue token', exact: true }).click();
   await expect(page.getByText('axc_test_shown_once', { exact: true })).toBeVisible();
