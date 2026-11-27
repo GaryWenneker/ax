@@ -339,7 +339,7 @@ fn sync_wiki_repo(
             std::fs::create_dir_all(parent).map_err(|e| SyncError::msg(e.to_string()))?;
         }
         let status = Command::new("git")
-            .args(["clone", remote])
+            .args(["clone", "--", remote])
             .arg(local)
             .status()
             .map_err(|e| SyncError::msg(format!("git clone failed: {e}")))?;
