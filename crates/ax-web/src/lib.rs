@@ -48,6 +48,7 @@ mod ship;
 mod skill_catalog_api;
 mod sonar_proxy;
 mod specs;
+mod utf8_stream;
 mod vault_folders;
 mod web_auth;
 mod workspace;

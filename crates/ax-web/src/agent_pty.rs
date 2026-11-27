@@ -120,12 +120,16 @@ async fn handle_pty_socket(socket: WebSocket, hub: WebHub, query: PtyQuery) {
         ))
         .await;
 
-    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (out_tx, mut out_rx) = output_channel();
     let session = PtySession::start(pty.handles, out_tx);
 
     let forward = tokio::spawn(async move {
+        let mut decoder = crate::utf8_stream::Utf8Decoder::default();
         while let Some(chunk) = out_rx.recv().await {
-            let text = String::from_utf8_lossy(&chunk).into_owned();
+            let text = decoder.decode(&chunk);
+            if text.is_empty() {
+                continue;
+            }
             if ws_tx
                 .send(Message::Text(
                     serde_json::json!({"t":"o","d": text}).to_string().into(),
@@ -170,6 +174,73 @@ async fn handle_pty_socket(socket: WebSocket, hub: WebHub, query: PtyQuery) {
     forward.abort();
 }
 
+/// Output chunks (of up to 8 KiB) queued for a browser that reads slowly;
+/// when they are full the reader waits, and so does the child.
+const OUTPUT_CHUNKS: usize = 64;
+
+type OutputSender = mpsc::Sender<Vec<u8>>;
+
+/// The channel that carries PTY output to the WebSocket. It is bounded, so a
+/// child that prints faster than the browser reads waits instead of filling
+/// memory.
+fn output_channel() -> (OutputSender, mpsc::Receiver<Vec<u8>>) {
+    mpsc::channel(OUTPUT_CHUNKS)
+}
+
+/// Reads PTY output on its own thread until the PTY hangs up or nobody
+/// listens any more.
+fn spawn_reader(mut reader: Box<dyn Read + Send>, out_tx: OutputSender) {
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if out_tx.blocking_send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+}
+
+#[cfg(test)]
+mod reader_tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    /// A child that prints forever.
+    struct Endless(Arc<AtomicUsize>);
+
+    impl Read for Endless {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            buf.fill(b'y');
+            Ok(buf.len())
+        }
+    }
+
+    #[tokio::test]
+    async fn output_waits_for_a_slow_browser_instead_of_piling_up() {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let (tx, mut rx) = output_channel();
+        spawn_reader(Box::new(Endless(reads.clone())), tx);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let queued = reads.load(Ordering::SeqCst);
+        assert!(
+            queued <= OUTPUT_CHUNKS + 2,
+            "{queued} chunks of 8 KiB read while nobody sent any"
+        );
+        // Once the browser takes output again, reading goes on.
+        for _ in 0..OUTPUT_CHUNKS * 2 {
+            assert!(rx.recv().await.is_some());
+        }
+        drop(rx);
+    }
+}
+
 enum PtyInput {
     Data(Vec<u8>),
     Resize { rows: u16, cols: u16 },
@@ -195,28 +266,15 @@ impl Drop for PtySession {
 impl PtySession {
     /// Starts the threads that serve `handles`. Output and the exit notice go
     /// to `out_tx`.
-    fn start(handles: PtyHandles, out_tx: mpsc::UnboundedSender<Vec<u8>>) -> Self {
+    fn start(handles: PtyHandles, out_tx: OutputSender) -> Self {
         let PtyHandles {
             mut writer,
-            mut reader,
+            reader,
             mut child,
             master,
         } = handles;
         let out_tx_exit = out_tx.clone();
-        std::thread::spawn(move || {
-            let mut buf = [0u8; 8192];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if out_tx.send(buf[..n].to_vec()).is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
+        spawn_reader(reader, out_tx);
         // The waiter owns the child. It polls instead of blocking in
         // `wait()` so it can kill the child itself when the terminal closes:
         // killing through the same handle before it is reaped can never hit
@@ -238,7 +296,7 @@ impl PtySession {
             };
             if let Some(status) = status {
                 let code = status.exit_code();
-                let _ = out_tx_exit.send(
+                let _ = out_tx_exit.blocking_send(
                     format!(
                         "\r\n\x1b[33m{}\x1b[0m\r\n",
                         ax_usage::format_ax_tagged(format!("Process exited (code {code})"))
@@ -387,7 +445,7 @@ mod tests {
         // An idle interactive CLI: it waits for input and prints nothing.
         cmd.arg(format!("echo $$ > '{}'; exec sleep 60", file.display()));
         let handles = open_pty_command(cmd).unwrap();
-        let (out_tx, _out_rx) = mpsc::unbounded_channel();
+        let (out_tx, _out_rx) = output_channel();
         let session = PtySession::start(handles, out_tx);
         let mut pid = String::new();
         for _ in 0..100 {

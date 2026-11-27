@@ -331,8 +331,10 @@ async fn read_new_chunk(path: &Path, offset: u64) -> Result<(String, u64), std::
     file.seek(SeekFrom::Start(offset)).await?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf).await?;
-    let new_offset = offset + buf.len() as u64;
-    let text = String::from_utf8_lossy(&buf).into_owned();
+    // A character still being written stays for the next read.
+    let complete = crate::utf8_stream::complete_len(&buf);
+    let new_offset = offset + complete as u64;
+    let text = String::from_utf8_lossy(&buf[..complete]).into_owned();
     Ok((text, new_offset))
 }
 
@@ -341,6 +343,23 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::Path;
+
+    #[tokio::test]
+    async fn a_character_half_written_to_the_log_is_read_once_complete() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp-verbose.log");
+        let line = "tool ─ 🦀\n".as_bytes();
+        let cut = line.len() - 3; // inside the 4-byte crab
+        fs::write(&path, &line[..cut]).unwrap();
+        let (first, offset) = read_new_chunk(&path, 0).await.unwrap();
+        assert!(!first.contains('\u{fffd}'), "{first:?}");
+
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        std::io::Write::write_all(&mut file, &line[cut..]).unwrap();
+        let (second, end) = read_new_chunk(&path, offset).await.unwrap();
+        assert_eq!(format!("{first}{second}"), "tool ─ 🦀\n");
+        assert_eq!(end, line.len() as u64);
+    }
 
     #[test]
     fn log_path_is_dated_under_project_ax() {
