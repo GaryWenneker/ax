@@ -61,8 +61,8 @@ pub fn load_output_format() -> McpOutputFormat {
 }
 
 pub fn load_output_format_from(path: &Path) -> Option<McpOutputFormat> {
-    let text = fs::read_to_string(path).ok()?;
-    let root: Value = serde_json::from_str(&text).ok()?;
+    let bytes = fs::read(path).ok()?;
+    let root: Value = crate::budget::parse_config_json(&bytes).ok()?;
     let raw = root
         .get("mcp")
         .and_then(|v| v.get("outputFormat"))
@@ -81,15 +81,13 @@ pub fn save_output_format_at(path: &Path, format: McpOutputFormat) -> Result<(),
     let invalid = |message: String| std::io::Error::new(std::io::ErrorKind::InvalidData, message);
     ax_utils::update_locked(path, |existing| {
         let mut root: Value = match existing {
-            Some(bytes) if !bytes.iter().all(u8::is_ascii_whitespace) => {
-                serde_json::from_slice(&bytes).map_err(|e| {
-                    invalid(format!(
-                        "{} is not valid JSON ({e}); fix it before changing the output format",
-                        path.display()
-                    ))
-                })?
-            }
-            _ => json!({}),
+            Some(bytes) => crate::budget::parse_config_json(&bytes).map_err(|e| {
+                invalid(format!(
+                    "{} is not valid JSON ({e}); fix it before changing the output format",
+                    path.display()
+                ))
+            })?,
+            None => json!({}),
         };
         let obj = root
             .as_object_mut()
@@ -287,6 +285,36 @@ mod tests {
         assert_eq!(
             load_output_format_from(&path),
             Some(McpOutputFormat::Markdown)
+        );
+    }
+
+    #[test]
+    fn save_accepts_a_config_with_a_bom_or_only_a_bom() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, body) in [
+            ("bom.json", "\u{feff}{\"budget\": {\"monthly\": 50}}"),
+            ("bom-only.json", "\u{feff}\n "),
+        ] {
+            let path = dir.path().join(name);
+            fs::write(&path, body).unwrap();
+            save_output_format_at(&path, McpOutputFormat::Markdown)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let text = fs::read_to_string(&path).unwrap();
+            assert!(!text.starts_with('\u{feff}'), "{name}");
+            assert_eq!(
+                load_output_format_from(&path),
+                Some(McpOutputFormat::Markdown),
+                "{name}"
+            );
+        }
+        let path = dir.path().join("bom.json");
+        let root: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(root["budget"]["monthly"], 50);
+        // The reader accepts a BOM too.
+        fs::write(&path, "\u{feff}{\"mcp\": {\"outputFormat\": \"plaintext\"}}").unwrap();
+        assert_eq!(
+            load_output_format_from(&path),
+            Some(McpOutputFormat::Plaintext)
         );
     }
 

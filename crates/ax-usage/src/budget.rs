@@ -140,6 +140,22 @@ fn strip_bom(text: &str) -> &str {
     text.strip_prefix('\u{feff}').unwrap_or(text)
 }
 
+/// Parses the bytes of a JSON config file. A leading UTF-8 BOM is skipped, and
+/// a file that is empty or holds only whitespace is `{}`. Every writer of a
+/// shared config file reads it through this, so they agree on what is valid.
+pub(crate) fn parse_config_json(bytes: &[u8]) -> Result<Value, String> {
+    let text = std::str::from_utf8(bytes).map_err(|e| e.to_string())?;
+    let text = strip_bom(text);
+    if text
+        .trim_matches(|c: char| c.is_ascii_whitespace())
+        .is_empty()
+    {
+        // An empty file (made with `touch`) has no settings yet.
+        return Ok(Value::Object(Default::default()));
+    }
+    serde_json::from_str::<Value>(text).map_err(|e| e.to_string())
+}
+
 /// Reads a number field. Numeric strings such as `"60"` are accepted.
 fn number_field(section: &Value, key: &str, path: &str, diags: &mut Vec<String>) -> Option<f64> {
     let raw = section.get(key)?;
@@ -427,20 +443,7 @@ where
         let mut root = match current {
             None => Value::Object(Default::default()),
             Some(bytes) => {
-                let parsed = std::str::from_utf8(&bytes)
-                    .map_err(|e| e.to_string())
-                    .and_then(|text| {
-                        let text = strip_bom(text);
-                        if text
-                            .trim_matches(|c: char| c.is_ascii_whitespace())
-                            .is_empty()
-                        {
-                            // An empty file (made with `touch`) has no settings yet.
-                            return Ok(Value::Object(Default::default()));
-                        }
-                        serde_json::from_str::<Value>(text).map_err(|e| e.to_string())
-                    });
-                match parsed {
+                match parse_config_json(&bytes) {
                     Ok(v) => v,
                     Err(e) => {
                         failure = Some(format!(
