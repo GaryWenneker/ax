@@ -165,7 +165,6 @@ Stored in `~/.ax/config.json` under a separate `"offload"` key. Lets ax delegate
     "url": "https://api.openai.com/v1",
     "model": "gpt-4o",
     "key_env": "OPENAI_API_KEY",
-    "effort": "low",
     "style": "plain"
   }
 }
@@ -176,7 +175,7 @@ Stored in `~/.ax/config.json` under a separate `"offload"` key. Lets ax delegate
 | `url` | — | OpenAI-compatible base URL. Offload is on only when this (or `AX_OFFLOAD_URL`) is set |
 | `model` | the provider's default | Model name. Without it, a known provider uses its default model (OpenAI `gpt-4o`, Cerebras `gpt-oss-120b`, Groq `llama-3.3-70b-versatile`, Ollama `llama3`). Together AI, Fireworks and OpenRouter have no default: offload stays off and `ax offload status` shows a `problem` until you set a model. Other endpoints fall back to `gpt-oss-120b` |
 | `key_env` | — | Name of the env var that holds the API key |
-| `effort` | `low` | `low` / `medium` / `high` |
+| `effort` | not sent | `low` / `medium` / `high`, sent as `reasoning_effort`. Set it only for a reasoning model: non-reasoning models such as `gpt-4o` reject the parameter |
 | `style` | `plain` | Response style hint |
 
 `ax offload set-endpoint`, `ax offload clear` and `ax init` change only their own section of `~/.ax/config.json` and replace the file atomically. When the file is not valid JSON, or its top level is not an object, they stop with an error naming the file and leave it as it is.
@@ -184,6 +183,8 @@ Stored in `~/.ax/config.json` under a separate `"offload"` key. Lets ax delegate
 All keys can also be set via environment variables (`AX_OFFLOAD_URL`, `AX_OFFLOAD_MODEL`, `AX_OFFLOAD_KEY`, `AX_OFFLOAD_EFFORT`, `AX_OFFLOAD_STYLE`). Env vars take precedence over the file.
 
 Offload is off by default. An API key in your environment (`OPENAI_API_KEY`, `CEREBRAS_API_KEY`, and so on) does not turn it on: ax sends explore context to an outside model only after you save an endpoint with `ax offload set-endpoint <url> --key-env <VAR>` or set `AX_OFFLOAD_URL`. `ax init` and `ax offload status` name a provider whose key they find, as a suggestion. `AX_OFFLOAD_DISABLE=1` turns offload off even when an endpoint is configured.
+
+When the provider rejects a request or cannot be reached, ax falls back to the plain explore output and logs a warning with the status code and the start of the provider's reply (once per process; every time with `AX_OFFLOAD_DEBUG=1`). The API key is never logged.
 
 MCP graph calls log estimated context-token savings in **`~/.ax/usage.db`**. Query with [`ax savings`](/reference/cli/#ax-savings) or the **Savings** page in `ax web`. See [Token savings](/guides/token-savings/). Imported agent turns are quoted separately with [`ax costs`](/reference/cli/#ax-costs) and compared to a local plan with [`ax budget`](/reference/cli/#ax-budget). See [Agent budget](/guides/budget/). Pi runs stay in Pi; Ax can record their estimates with [`ax agent economics`](/reference/cli/#ax-agent-economics). See [Pi integration](/guides/pi/).
 

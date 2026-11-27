@@ -1223,7 +1223,7 @@ Configure optional LLM offload for `ax explore` (BYO OpenAI-compatible API). Sto
 
 #### `ax offload status`
 
-Show current endpoint and key env var name. When offload is off and a provider key is in the environment, `suggestion` names the command that would enable it.
+Show current endpoint and key env var name. When offload is off and a provider key is in the environment, `suggestion` names the command that would enable it. `last_error` holds the last failed offload request made by the same process (status code and the start of the provider's reply); a separate `ax offload status` run starts with none.
 
 ```bash
 ax offload status

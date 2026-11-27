@@ -45,7 +45,9 @@ pub struct ResolvedOffload {
     pub model: String,
     pub api_key: Option<String>,
     pub key_source: Option<String>,
-    pub effort: String,
+    /// `reasoning_effort` to send; `None` unless the user set one, because
+    /// non-reasoning models reject the parameter.
+    pub effort: Option<String>,
     pub style: String,
     pub timeout_ms: u64,
     pub max_tokens: u32,
@@ -382,7 +384,7 @@ pub fn resolve_offload() -> ResolvedOffload {
             model: FALLBACK_MODEL.into(),
             api_key: None,
             key_source: None,
-            effort: "low".into(),
+            effort: None,
             style: "plain".into(),
             timeout_ms: 20000,
             max_tokens: 12000,
@@ -453,8 +455,7 @@ pub fn resolve_offload() -> ResolvedOffload {
         api_key,
         key_source,
         effort: trimmed(std::env::var("AX_OFFLOAD_EFFORT").ok().as_deref())
-            .or_else(|| trimmed(c.effort.as_deref()))
-            .unwrap_or_else(|| "low".into()),
+            .or_else(|| trimmed(c.effort.as_deref())),
         style: trimmed(std::env::var("AX_OFFLOAD_STYLE").ok().as_deref())
             .or_else(|| trimmed(c.style.as_deref()))
             .unwrap_or_else(|| "plain".into()),
@@ -484,7 +485,7 @@ pub fn is_offload_enabled() -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -503,6 +504,9 @@ mod tests {
         "AX_OFFLOAD_URL",
         "AX_OFFLOAD_KEY",
         "AX_OFFLOAD_MODEL",
+        "AX_OFFLOAD_EFFORT",
+        "AX_OFFLOAD_STYLE",
+        "AX_OFFLOAD_DEBUG",
         "OPENAI_API_KEY",
         "CEREBRAS_API_KEY",
         "GROQ_API_KEY",
@@ -512,7 +516,7 @@ mod tests {
     ];
 
     /// Runs `f` with a fresh home dir, no offload env, then `vars` set; restores the env after.
-    fn with_env<T>(vars: &[(&str, &str)], f: impl FnOnce(&std::path::Path) -> T) -> T {
+    pub(crate) fn with_env<T>(vars: &[(&str, &str)], f: impl FnOnce(&std::path::Path) -> T) -> T {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved: Vec<(&str, Option<String>)> = OFFLOAD_ENV
             .iter()
