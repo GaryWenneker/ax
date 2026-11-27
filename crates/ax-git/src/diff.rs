@@ -40,29 +40,17 @@ pub fn diff_vs_base(repo_path: &Path, base_ref: &str) -> Result<DiffResult, GitE
     let base_oid = git_output(repo_path, &["rev-parse", &format!("{base_ref}^{{commit}}")])
         .or_else(|_| git_output(repo_path, &["rev-parse", base_ref]))?;
 
-    let names = git_output(
+    let names = git_raw_output(
         repo_path,
-        &["diff", "--name-status", &format!("{base_ref}...HEAD")],
+        &[
+            "diff",
+            "--no-ext-diff",
+            "--name-status",
+            "-z",
+            &format!("{base_ref}...HEAD"),
+        ],
     )?;
-    let mut files = Vec::new();
-    for line in names.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let mut parts = line.splitn(2, '\t');
-        let status = parts.next().unwrap_or("M");
-        let path = parts.next().unwrap_or("").to_string();
-        let change = match status.chars().next() {
-            Some('A') => "added",
-            Some('D') => "deleted",
-            Some('R') => "renamed",
-            _ => "modified",
-        };
-        files.push(ChangedFile {
-            path,
-            change: change.to_string(),
-        });
-    }
+    let files = parse_name_status_z(&names);
 
     let hunks = line_hunks_via_git(repo_path, base_ref)?;
 
@@ -88,18 +76,69 @@ pub fn changed_files(repo_path: &Path, base_ref: &str) -> Result<Vec<String>, Gi
 }
 
 fn line_hunks_via_git(repo_path: &Path, base_ref: &str) -> Result<Vec<ChangedHunk>, GitError> {
+    let text = git_raw_output(
+        repo_path,
+        &[
+            "diff",
+            "--no-ext-diff",
+            "--no-color",
+            "--unified=0",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            &format!("{base_ref}...HEAD"),
+        ],
+    )?;
+    Ok(parse_unified_diff(&text))
+}
+
+/// Run git with `core.quotePath=false` (non-ASCII paths stay readable) and
+/// return stdout untrimmed, since NUL-separated output and paths may end in
+/// whitespace.
+fn git_raw_output(repo_path: &Path, args: &[&str]) -> Result<String, GitError> {
     let output = std::process::Command::new("git")
         .current_dir(repo_path)
-        .args(["diff", "--unified=0", &format!("{base_ref}...HEAD")])
+        .args(["-c", "core.quotePath=false"])
+        .args(args)
         .output()
-        .map_err(|e| GitError::Other(format!("git diff failed: {e}")))?;
-
+        .map_err(|e| GitError::Other(format!("git {} failed: {e}", args[0])))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GitError::Other(format!("git diff: {stderr}")));
+        return Err(GitError::Other(format!("git {}: {stderr}", args[0])));
     }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
 
-    Ok(parse_unified_diff(&String::from_utf8_lossy(&output.stdout)))
+/// Parse `git diff --name-status -z`: `STATUS NUL path NUL`, or for renames
+/// and copies `STATUS NUL old NUL new NUL`. The new path is the one reported.
+fn parse_name_status_z(text: &str) -> Vec<ChangedFile> {
+    let mut files = Vec::new();
+    let mut fields = text.split('\0');
+    while let Some(status) = fields.next() {
+        let status = status.trim();
+        if status.is_empty() {
+            continue;
+        }
+        let kind = status.chars().next().unwrap_or('M');
+        let mut path = fields.next().unwrap_or("");
+        if matches!(kind, 'R' | 'C') {
+            path = fields.next().unwrap_or(path);
+        }
+        if path.is_empty() {
+            continue;
+        }
+        let change = match kind {
+            'A' => "added",
+            'D' => "deleted",
+            'R' => "renamed",
+            'C' => "copied",
+            _ => "modified",
+        };
+        files.push(ChangedFile {
+            path: path.to_string(),
+            change: change.to_string(),
+        });
+    }
+    files
 }
 
 fn git_output(repo_path: &Path, args: &[&str]) -> Result<String, GitError> {
@@ -121,17 +160,64 @@ fn parse_unified_diff(text: &str) -> Vec<ChangedHunk> {
     let mut current_path = String::new();
 
     for line in text.lines() {
-        if let Some(path) = line.strip_prefix("+++ b/") {
-            current_path = path.to_string();
+        if let Some(target) = line.strip_prefix("+++ ") {
+            // `/dev/null` (deleted file) leaves no path, so its hunks are skipped.
+            current_path = diff_target_path(target).unwrap_or_default();
             continue;
         }
-        if line.starts_with("@@ ") {
+        if line.starts_with("@@ ") && !current_path.is_empty() {
             if let Some(hunk) = parse_hunk_header(line, &current_path) {
                 hunks.push(hunk);
             }
         }
     }
     hunks
+}
+
+/// Path from a `+++ ` line: `b/path`, `b/path<TAB>` (git adds a tab when the
+/// name has a space) or a C-quoted `"b/..."`. `None` for `/dev/null`.
+fn diff_target_path(target: &str) -> Option<String> {
+    let target = target.strip_suffix('\t').unwrap_or(target);
+    let unquoted = if target.starts_with('"') {
+        unquote_c_style(target)?
+    } else {
+        target.to_string()
+    };
+    unquoted.strip_prefix("b/").map(str::to_string)
+}
+
+/// Undo git's C-style path quoting (`"a\tb\303\251"`).
+fn unquote_c_style(quoted: &str) -> Option<String> {
+    let inner = quoted.strip_prefix('"')?.strip_suffix('"')?;
+    let bytes = inner.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'\\' {
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        let next = *bytes.get(i + 1)?;
+        i += 2;
+        match next {
+            b'n' => out.push(b'\n'),
+            b't' => out.push(b'\t'),
+            b'r' => out.push(b'\r'),
+            b'a' => out.push(0x07),
+            b'b' => out.push(0x08),
+            b'f' => out.push(0x0c),
+            b'v' => out.push(0x0b),
+            b'0'..=b'7' => {
+                let digits = bytes.get(i - 1..i + 2)?;
+                let text = std::str::from_utf8(digits).ok()?;
+                out.push(u8::from_str_radix(text, 8).ok()?);
+                i += 2;
+            }
+            other => out.push(other),
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 /// Parse `@@ -a,b +c,d @@ [function context]`. Git appends the enclosing
@@ -177,9 +263,45 @@ mod tests {
     #[test]
     fn hunk_header_with_function_context_is_parsed() {
         let h = parse_hunk_header("@@ -40 +40 @@ pub fn run() {", "src/lib.rs").unwrap();
-        assert_eq!((h.old_start, h.old_lines, h.new_start, h.new_lines), (40, 1, 40, 1));
+        assert_eq!(
+            (h.old_start, h.old_lines, h.new_start, h.new_lines),
+            (40, 1, 40, 1)
+        );
         let h = parse_hunk_header("@@ -10,5 +12,0 @@ fn a() -> u8 { 1 @@ 2 }", "x").unwrap();
         assert_eq!((h.new_start, h.new_lines), (12, 0));
+    }
+
+    #[test]
+    fn name_status_z_takes_the_new_path_of_renames_and_copies() {
+        let files = parse_name_status_z(
+            "R100\0src/a.rs\0src/b.rs\0C75\0x.rs\0y.rs\0M\0my file.rs\0D\0gone.rs\0",
+        );
+        let got: Vec<(&str, &str)> = files
+            .iter()
+            .map(|f| (f.path.as_str(), f.change.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("src/b.rs", "renamed"),
+                ("y.rs", "copied"),
+                ("my file.rs", "modified"),
+                ("gone.rs", "deleted"),
+            ]
+        );
+    }
+
+    #[test]
+    fn target_paths_are_unquoted() {
+        assert_eq!(
+            diff_target_path("b/my file.rs\t").as_deref(),
+            Some("my file.rs")
+        );
+        assert_eq!(
+            diff_target_path("\"b/caf\\303\\251 \\\"q\\\".rs\"").as_deref(),
+            Some("café \"q\".rs")
+        );
+        assert_eq!(diff_target_path("/dev/null"), None);
     }
 
     #[test]
