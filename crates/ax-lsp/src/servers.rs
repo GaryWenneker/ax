@@ -66,10 +66,11 @@ pub fn discover_servers() -> Vec<ServerStatus> {
 }
 
 pub fn discover_servers_in(project_root: Option<&Path>) -> Vec<ServerStatus> {
-    let extra = extra_bin_dirs(project_root);
+    let trusted = project_bins_trusted();
     SERVERS
         .iter()
         .map(|s| {
+            let extra = project_bin_dirs(s.command, project_root, trusted);
             let (display, working) = resolve_command(s.command, &extra);
             ServerStatus {
                 id: s.id.into(),
@@ -82,22 +83,42 @@ pub fn discover_servers_in(project_root: Option<&Path>) -> Vec<ServerStatus> {
         .collect()
 }
 
-pub(crate) fn extra_bin_dirs(project_root: Option<&Path>) -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Some(root) = project_root {
-        dirs.push(root.join("node_modules/.bin"));
-        dirs.push(root.join("crates/ax-web/web-ui/node_modules/.bin"));
+/// Environment switch that lets ax run language servers from the indexed
+/// project's `node_modules/.bin`. Off by default: discovery executes every
+/// candidate, so a repository could otherwise plant a binary that ax runs.
+pub const PROJECT_BINS_ENV: &str = "AX_LSP_PROJECT_BINS";
+
+/// Node-based servers that a project may install locally.
+const NODE_SERVER_COMMANDS: &[&str] = &["typescript-language-server", "pyright-langserver"];
+
+fn project_bins_trusted() -> bool {
+    matches!(
+        std::env::var(PROJECT_BINS_ENV).as_deref().map(str::trim),
+        Ok("1") | Ok("true") | Ok("yes") | Ok("on")
+    )
+}
+
+/// Project-local directories searched for `command`, after rustup and PATH.
+///
+/// Only the Node-based servers are ever looked up there, and only when the
+/// owner trusts the project's binaries ([`PROJECT_BINS_ENV`]).
+pub(crate) fn project_bin_dirs(
+    command: &str,
+    project_root: Option<&Path>,
+    trusted: bool,
+) -> Vec<PathBuf> {
+    match project_root {
+        Some(root) if trusted && NODE_SERVER_COMMANDS.contains(&command) => {
+            vec![root.join("node_modules/.bin")]
+        }
+        _ => Vec::new(),
     }
-    if let Ok(cwd) = std::env::current_dir() {
-        dirs.push(cwd.join("node_modules/.bin"));
-        dirs.push(cwd.join("crates/ax-web/web-ui/node_modules/.bin"));
-    }
-    dirs
 }
 
 /// Absolute path of a runnable server, if any.
 pub fn working_binary(command: &str, project_root: Option<&Path>) -> Option<PathBuf> {
-    resolve_command(command, &extra_bin_dirs(project_root)).1
+    let extra = project_bin_dirs(command, project_root, project_bins_trusted());
+    resolve_command(command, &extra).1
 }
 
 /// Resolves each server once and remembers the answer for the rest of a run.
@@ -105,6 +126,9 @@ pub fn working_binary(command: &str, project_root: Option<&Path>) -> Option<Path
 /// Resolving runs `rustup which` and version probes, so an enrich batch must not
 /// repeat it per file.
 pub(crate) struct ServerResolver {
+    project_root: Option<PathBuf>,
+    trusted: bool,
+    /// Test-only directories searched for every command.
     extra: Vec<PathBuf>,
     /// Also search `rustup which` and PATH (off only in tests).
     system: bool,
@@ -114,7 +138,9 @@ pub(crate) struct ServerResolver {
 impl ServerResolver {
     pub(crate) fn for_project(project_root: Option<&Path>) -> Self {
         Self {
-            extra: extra_bin_dirs(project_root),
+            project_root: project_root.map(Path::to_path_buf),
+            trusted: project_bins_trusted(),
+            extra: Vec::new(),
             system: true,
             cache: HashMap::new(),
         }
@@ -124,6 +150,8 @@ impl ServerResolver {
     #[cfg(test)]
     pub(crate) fn only_dirs(dirs: Vec<PathBuf>) -> Self {
         Self {
+            project_root: None,
+            trusted: false,
             extra: dirs,
             system: false,
             cache: HashMap::new(),
@@ -131,10 +159,16 @@ impl ServerResolver {
     }
 
     pub(crate) fn binary(&mut self, spec: &'static ServerSpec) -> Option<PathBuf> {
-        let (extra, system) = (&self.extra, self.system);
+        let mut extra = self.extra.clone();
+        extra.extend(project_bin_dirs(
+            spec.command,
+            self.project_root.as_deref(),
+            self.trusted,
+        ));
+        let system = self.system;
         self.cache
             .entry(spec.id)
-            .or_insert_with(|| resolve_in(spec.command, extra, system).1)
+            .or_insert_with(|| resolve_in(spec.command, &extra, system).1)
             .clone()
     }
 }
@@ -249,17 +283,15 @@ fn collect_candidates(command: &str, extra: &[PathBuf], system: bool) -> Vec<Pat
         if let Some(p) = rustup_which(command) {
             push(p);
         }
-    }
-    for dir in extra {
-        for p in join_command(dir, command) {
-            push(p);
-        }
-    }
-    if system {
         if let Ok(iter) = which::which_all(command) {
             for p in iter {
                 push(p);
             }
+        }
+    }
+    for dir in extra {
+        for p in join_command(dir, command) {
+            push(p);
         }
     }
     out
@@ -393,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn l3_node_modules_bin_is_searched() {
+    fn l3_trusted_node_modules_bin_is_searched_for_node_servers() {
         let root = tempfile::tempdir().unwrap();
         let bin = root.path().join("node_modules/.bin");
         fs::create_dir_all(&bin).unwrap();
@@ -402,9 +434,15 @@ mod tests {
             &tls,
             "#!/bin/sh\necho typescript-language-server 4.0.0\nexit 0\n",
         );
-        let extra = extra_bin_dirs(Some(root.path()));
-        let (_, working) = resolve_command("typescript-language-server", &extra);
+        let extra = project_bin_dirs("typescript-language-server", Some(root.path()), true);
+        let (_, working) = resolve_in("typescript-language-server", &extra, false);
         assert_eq!(working.as_ref(), Some(&tls));
+        // Never for servers that are not Node packages, trusted or not.
+        assert!(project_bin_dirs("gopls", Some(root.path()), true).is_empty());
+        assert!(project_bin_dirs("rust-analyzer", Some(root.path()), true).is_empty());
+        assert!(
+            project_bin_dirs("typescript-language-server", Some(root.path()), false).is_empty()
+        );
     }
 
     #[test]
@@ -441,5 +479,35 @@ mod probe_timeout_tests {
             "probe took {elapsed:?}"
         );
         assert!(!works, "a probe that never answers is not a working server");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod project_bin_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn plant(root: &Path, command: &str) -> PathBuf {
+        let bin = root.join("node_modules/.bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let path = bin.join(command);
+        std::fs::write(&path, "#!/bin/sh\necho planted\nexit 0\n").unwrap();
+        let mut p = std::fs::metadata(&path).unwrap().permissions();
+        p.set_mode(0o755);
+        std::fs::set_permissions(&path, p).unwrap();
+        path
+    }
+
+    #[test]
+    fn project_local_binaries_are_not_run_by_default() {
+        let root = tempfile::tempdir().unwrap();
+        for command in ["gopls", "rust-analyzer", "typescript-language-server"] {
+            let planted = plant(root.path(), command);
+            assert_ne!(
+                working_binary(command, Some(root.path())),
+                Some(planted),
+                "{command} from the indexed project must not be run"
+            );
+        }
     }
 }

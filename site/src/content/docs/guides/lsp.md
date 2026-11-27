@@ -19,13 +19,15 @@ ax lsp enrich --limit 50 --json
 rustup component add rust-analyzer
 ```
 
-ax also uses `rustup which rust-analyzer` (so a working toolchain binary wins over a cargo-bin proxy) and `{project}/node_modules/.bin` plus `crates/ax-web/web-ui/node_modules/.bin` for `typescript-language-server`.
+ax also uses `rustup which rust-analyzer` (so a working toolchain binary wins over a cargo-bin proxy), then PATH.
+
+ax does not run language servers from the indexed project by default: finding a server means executing it, so a repository could otherwise plant a `gopls` or `rust-analyzer` that ax runs. To use a project-local `typescript-language-server` or `pyright-langserver` from `{project}/node_modules/.bin`, set `AX_LSP_PROJECT_BINS=1` for a project you trust. That folder is searched after rustup and PATH, and never for `rust-analyzer` or `gopls`.
 
 Install the other servers (examples):
 
 ```bash
 npm install -g typescript typescript-language-server pyright
-# or: npm --prefix crates/ax-web/web-ui install -D typescript-language-server
+# or, in a trusted project with AX_LSP_PROJECT_BINS=1: npm install -D typescript-language-server
 go install golang.org/x/tools/gopls@latest
 ```
 
@@ -62,7 +64,7 @@ On **Unresolved**, use **Enrich with LSP** (ModalShell) — calls `POST /api/lsp
 
 | Badge | Meaning |
 |-------|---------|
-| `available` | Runnable binary (`rustup which`, PATH, or project `node_modules/.bin`) |
+| `available` | Runnable binary (`rustup which`, PATH, or, with `AX_LSP_PROJECT_BINS=1`, project `node_modules/.bin`) |
 | `shim` | On PATH but not runnable (common: rustup shim without the component) |
 | `missing` | Not found |
 
