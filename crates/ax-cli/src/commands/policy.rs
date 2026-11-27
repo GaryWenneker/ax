@@ -71,6 +71,12 @@ pub async fn run_index(path: Option<String>, force: bool) -> Result<(), String> 
             );
         }
     }
+    for skip in &result.skipped {
+        eprintln!(
+            "Skipped {} (previous version kept): {}",
+            skip.path, skip.reason
+        );
+    }
     Ok(())
 }
 

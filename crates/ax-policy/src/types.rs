@@ -361,6 +361,17 @@ pub struct MatchResult {
 pub struct PolicyIndexResult {
     pub rules_indexed: u32,
     pub skills_indexed: u32,
+    /// Policy files the import could not read or parse. A row indexed earlier from such a file
+    /// is kept as it was instead of being pruned.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped: Vec<PolicySkip>,
+}
+
+/// One policy file an import left out, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PolicySkip {
+    pub path: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
