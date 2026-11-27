@@ -401,6 +401,50 @@ def lean_contract(ax):
         shutil.rmtree(home, ignore_errors=True)
 
 
+def hook_checks(ax):
+    """The prompt hook, run as the IDE runs it: JSON on stdin, context on stdout."""
+    project, home, env = build_project(ax)
+
+    def hook(prompt):
+        done = subprocess.run([ax, "prompt-hook"], cwd=project, env=env, capture_output=True,
+                              text=True, timeout=STEP_TIMEOUT_S,
+                              input=json.dumps({"prompt": prompt, "cwd": project}))
+        if done.returncode != 0:
+            raise Failure(f"prompt-hook exit {done.returncode}: {done.stderr[-200:]}")
+        return done.stdout
+
+    question = "how does invoice_total work"
+    cases = [
+        ("hook: a structural question gets context", question,
+         lambda out: "<ax_context" in out and "invoice_total" in out),
+        ("hook: harness reminder text is not explored",
+         f"<system-reminder>{question}</system-reminder>\nYes",
+         lambda out: "<ax_context" not in out),
+        ("hook: a task notification prints nothing",
+         f"<task-notification>\n<summary>{question}</summary>\n</task-notification>",
+         lambda out: out == ""),
+        ("hook: a plain word is not a symbol", "Ok", lambda out: "<ax_context" not in out),
+    ]
+    rows = []
+    try:
+        for label, prompt, passes in cases:
+            problems = []
+            out = ""
+            try:
+                out = hook(prompt)
+                if not passes(out):
+                    problems.append("unexpected hook output")
+            except (Failure, subprocess.TimeoutExpired) as error:
+                problems.append(str(error))
+            rows.append({"label": label, "tool": "prompt-hook", "ok": not problems,
+                         "chars": len(out), "structured": False, "problems": problems,
+                         "preview": " ".join(out.split())[:160]})
+    finally:
+        shutil.rmtree(project, ignore_errors=True)
+        shutil.rmtree(home, ignore_errors=True)
+    return rows
+
+
 def main(argv):
     if len(argv) < 2:
         print(__doc__)
@@ -415,6 +459,7 @@ def main(argv):
     try:
         report = run_client(ax, client, text_only="claude" in client.lower())
         report["rows"].append(lean_contract(ax))
+        report["rows"].extend(hook_checks(ax))
     except Failure as error:
         print(f"FAILED before the run finished: {error}")
         return 1

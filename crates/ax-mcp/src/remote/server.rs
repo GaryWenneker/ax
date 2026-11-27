@@ -916,6 +916,9 @@ async fn post(
             }
         }
     }
+    if request.method == "tools/call" {
+        crate::server::strip_for_text_only_client(&mut engine.engine, &mut value);
+    }
     rpc(request.id, Ok(value))
 }
 

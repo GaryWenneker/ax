@@ -133,6 +133,20 @@ MUTANTS = [
         "test": ["cargo", "test", "-p", "ax-mcp", "--lib", "policy_integration::a"],
     },
     {
+        "id": "A-remote-keeps-structured",
+        "file": "crates/ax-mcp/src/remote/server.rs",
+        "find": "        crate::server::strip_for_text_only_client(&mut engine.engine, &mut value);",
+        "replace": "        let _ = &mut value;",
+        "test": ["cargo", "test", "-p", "ax-mcp", "--test", "remote_mcp", "remote_claude"],
+    },
+    {
+        "id": "A-remote-loses-its-ids",
+        "file": "crates/ax-mcp/src/server.rs",
+        "find": "        StructuredMode::TextOnly if engine.is_remote() => StructuredMode::Lean,",
+        "replace": "",
+        "test": ["cargo", "test", "-p", "ax-mcp", "--test", "remote_mcp", "remote_claude"],
+    },
+    {
         "id": "control",
         "expect": "survive",
         "file": "crates/ax-core/src/stats_format.rs",

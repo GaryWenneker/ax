@@ -335,12 +335,13 @@ async fn call_tool_and_wrap(
     project_root: Option<&std::path::Path>,
     verbose: bool,
 ) -> Result<Value, String> {
-    let choice = std::env::var("AX_MCP_STRUCTURED").ok();
-    let mode = structured_mode(
-        engine.policy_sessions().client_name(),
-        render_full(),
-        choice.as_deref(),
-    );
+    // The remote server reads the chat and cache ids it issued out of the lean
+    // payload, so it gets that payload and drops it itself just before sending
+    // (`strip_for_text_only_client`).
+    let mode = match client_structured_mode(engine) {
+        StructuredMode::TextOnly if engine.is_remote() => StructuredMode::Lean,
+        mode => mode,
+    };
     let mut wrapped =
         call_tool_and_wrap_as(engine, name, args, project_root, verbose, mode).await?;
     if mode == StructuredMode::TextOnly {
@@ -350,6 +351,26 @@ async fn call_tool_and_wrap(
         }
     }
     Ok(wrapped)
+}
+
+/// The reply shape for the client on the active connection.
+fn client_structured_mode(engine: &mut McpEngine) -> StructuredMode {
+    let choice = std::env::var("AX_MCP_STRUCTURED").ok();
+    structured_mode(
+        engine.policy_sessions().client_name(),
+        render_full(),
+        choice.as_deref(),
+    )
+}
+
+/// Last step of the remote transport: after the server has recorded the ids in
+/// a reply, a text-only client gets it without `structuredContent`.
+pub(crate) fn strip_for_text_only_client(engine: &mut McpEngine, reply: &mut Value) {
+    if client_structured_mode(engine) == StructuredMode::TextOnly {
+        if let Some(reply) = reply.as_object_mut() {
+            reply.remove("structuredContent");
+        }
+    }
 }
 
 async fn call_tool_and_wrap_as(

@@ -254,3 +254,25 @@ Scenario: C5 an unrelated longer word does not match
     output), so no new tags are added. The test asserts they are in the text of a text-only
     reply. The capture hint no longer points at a `captureProposal` field the model cannot see.
 
+- R5 (2026-11-27): the owner asked for the same on the slim (headless) build, which serves
+  agents over `ax serve --mcp` and `ax mcp remote serve`. Reading the remote server showed
+  that R4 broke it for Claude clients: it records the cache ids it issued from the lean
+  payload, so a text-only reply made `ax_expand` answer 403 on the same connection. N4 is
+  therefore replaced:
+  - N4' The remote server keeps the lean payload internally and drops `structuredContent`
+    only as its last step, for a text-only client. Replies to other clients are unchanged.
+
+```gherkin
+Scenario: A5 a Claude client over the remote server
+  Given two remote connections initialized with clientInfo.name "claude-code"
+  When  connection A calls ax_preflight, then ax_stash, then ax_expand with the id from the text
+  Then  no reply carries structuredContent
+  And   the chat id is in the preflight text and a second preflight with it returns 200
+  And   ax_expand returns the stashed text to A and 403 to B
+
+Scenario: G1 the slim build passes the same end-to-end run
+  Given `cargo build --profile release-slim -p ax-cli --no-default-features --features "minimal-grammars mimalloc"`
+  When  tools/ax_agent_e2e.py runs against that binary
+  Then  every check passes that passes on the full build, including the prompt-hook checks
+```
+
