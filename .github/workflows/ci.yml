@@ -129,8 +129,8 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Build UI
         run: npm run build
-      - name: Theme contrast tests
-        run: node --experimental-strip-types --test src/lib/themes.test.ts
+      - name: Unit tests
+        run: npm test
       - name: Test Remote Settings and portal pages
         env:
           AX_WEB_URL: http://127.0.0.1:5190

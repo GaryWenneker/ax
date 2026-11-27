@@ -1,4 +1,4 @@
-import {extractFields, extractPayloadJson, tryParseJson, type TraceEntry} from './mcpTrace';
+import {extractFields, extractPayloadJson, tryParseJson, type TraceEntry} from './mcpTrace.ts';
 
 const DOMAIN_ACTIONS: Partial<Record<TraceEntry['kind'], {pattern: RegExp; start: string; ok: string}>> = {
   workspace: {pattern: /^workspace sync (start|ok)(?:\s|$)/, start: 'Workspace sync started', ok: 'Workspace sync completed'},
