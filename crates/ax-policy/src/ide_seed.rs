@@ -628,14 +628,37 @@ fn prepare_ide_history(project_root: &Path) -> std::io::Result<()> {
             project_root.join(".clinerules").exists(),
         ),
     ];
-    let established =
-        project_root.join(".ax").join("ax.db").exists() || items.iter().any(|(_, exists)| *exists);
+    // Only ax-owned evidence marks an existing install: the database, an ax-dedicated file, or
+    // the ax marker block inside a shared file. A hand-written AGENTS.md (or any other shared
+    // instructions file) alone says nothing about ax, so it must not turn every absent ax file
+    // into an intentional removal.
+    let established = project_root.join(".ax").join("ax.db").exists()
+        || items.iter().any(|(rel, exists)| {
+            *exists && (!is_shared_instructions_file(rel) || has_ax_block(&project_root.join(rel)))
+        });
     crate::history::establish(
         &crate::history::project_history_path(project_root),
         "ide",
         &items,
         established,
     )
+}
+
+/// Instruction files that users also write without ax; ax only owns its marked block in them.
+fn is_shared_instructions_file(rel: &str) -> bool {
+    matches!(
+        rel,
+        ".claude/CLAUDE.md"
+            | "AGENTS.md"
+            | "GEMINI.md"
+            | ".github/copilot-instructions.md"
+            | ".windsurfrules"
+            | ".clinerules"
+    )
+}
+
+fn has_ax_block(path: &Path) -> bool {
+    std::fs::read_to_string(path).is_ok_and(|content| content.contains(AX_SECTION_START))
 }
 
 fn ide_removed(project_root: &Path, rel: &str, force: bool) -> std::io::Result<bool> {
@@ -1402,6 +1425,38 @@ mod tests {
             seeded.created
         );
         assert!(!dir.path().join(".cursor/rules/ax.mdc").exists());
+    }
+
+    #[test]
+    fn a_hand_written_agents_md_does_not_mark_ax_files_as_removed() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("AGENTS.md"), "# Our own agent notes\n").unwrap();
+        let seeded = seed_ide_agent_workflow(dir.path()).unwrap();
+        assert!(
+            dir.path().join(".cursor/rules/ax.mdc").exists(),
+            "first seed must create the Cursor rule: {:?}",
+            seeded.created
+        );
+        assert!(dir.path().join(".claude/rules/ax.md").exists());
+        let agents = std::fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+        assert!(agents.starts_with("# Our own agent notes"));
+        assert!(agents.contains(AX_SECTION_START));
+    }
+
+    #[test]
+    fn a_shared_file_with_the_ax_block_still_marks_an_existing_install() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("AGENTS.md"),
+            "# Notes\n\n<!-- AX_START -->\nold\n<!-- AX_END -->\n",
+        )
+        .unwrap();
+        let seeded = seed_ide_agent_workflow(dir.path()).unwrap();
+        assert!(
+            !dir.path().join(".cursor/rules/ax.mdc").exists(),
+            "a deleted ax file must stay gone: {:?}",
+            seeded.created
+        );
     }
 
     #[test]
