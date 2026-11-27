@@ -795,7 +795,9 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-fn build_exclude_matcher(project_root: &Path, patterns: &[String]) -> Option<Gitignore> {
+/// Gitignore-style matcher for the `ax.json` `exclude` patterns, shared by every
+/// scan so a pattern means the same thing for code, docs and contracts.
+pub(crate) fn build_exclude_matcher(project_root: &Path, patterns: &[String]) -> Option<Gitignore> {
     if patterns.is_empty() {
         return None;
     }
