@@ -51,7 +51,8 @@ pub const FILE_CHANGE_KIND: &str = "file_change";
 
 /// Whether `path` already has a file_change memory (any content version) for
 /// this session and turn. Sync capture and the turn-end hook report the same
-/// edit; the hook skips a path sync already recorded.
+/// edit; the hook skips a path sync already recorded, and sync skips a path
+/// the hook already recorded.
 async fn file_change_recorded(
     pool: &SqlitePool,
     path: &str,
@@ -73,6 +74,27 @@ async fn file_change_recorded(
     Ok(found.is_some())
 }
 
+fn file_change_id(source: &str) -> String {
+    format!(
+        "filechange-{}",
+        &blake3::hash(source.as_bytes()).to_hex()[..16]
+    )
+}
+
+/// Id of the file_change memory the turn-end hook writes (no content version).
+fn hook_file_change_id(session_id: &str, turn_id: &str, path: &str) -> String {
+    file_change_id(&format!("{session_id}\n{turn_id}\n{path}"))
+}
+
+async fn memory_exists(pool: &SqlitePool, id: &str) -> Result<bool, AxError> {
+    let found: Option<i64> = sqlx::query_scalar("SELECT 1 FROM memories WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(db_err)?;
+    Ok(found.is_some())
+}
+
 pub async fn save_file_changes(
     pool: &SqlitePool,
     paths: &[String],
@@ -87,7 +109,9 @@ pub async fn save_file_changes(
 /// (usually the file's content hash). The same content in the same turn is
 /// stored once; a new version of the file is a new memory. With an empty
 /// `content_version` (the turn-end hook) a path that already has a
-/// file_change memory in this turn is skipped.
+/// file_change memory in this turn is skipped; with a `content_version`
+/// (sync capture) a path the hook already recorded in this turn is skipped,
+/// so either order leaves one memory per edit.
 pub(crate) async fn save_file_change_versions(
     pool: &SqlitePool,
     paths: &[String],
@@ -102,20 +126,21 @@ pub(crate) async fn save_file_change_versions(
         if path.is_empty() {
             continue;
         }
-        if content_version.is_empty()
-            && file_change_recorded(pool, path, session_id, turn_id).await?
-        {
+        if content_version.is_empty() {
+            if file_change_recorded(pool, path, session_id, turn_id).await? {
+                continue;
+            }
+        } else if memory_exists(pool, &hook_file_change_id(session_id, turn_id, path)).await? {
+            // The turn-end hook already recorded this path for this turn.
             continue;
         }
-        let id_source = if content_version.is_empty() {
-            format!("{session_id}\n{turn_id}\n{path}")
+        let id = if content_version.is_empty() {
+            hook_file_change_id(session_id, turn_id, path)
         } else {
-            format!("{session_id}\n{turn_id}\n{path}\n{content_version}")
+            file_change_id(&format!(
+                "{session_id}\n{turn_id}\n{path}\n{content_version}"
+            ))
         };
-        let id = format!(
-            "filechange-{}",
-            &blake3::hash(id_source.as_bytes()).to_hex()[..16]
-        );
         let title = redact_secrets(&format!("changed {path}"));
         let files =
             serde_json::to_string(&vec![path]).map_err(|e| AxError::Other(e.to_string()))?;
@@ -170,11 +195,7 @@ pub async fn save_file_change_with_hunk(
     if path.is_empty() || file_change_recorded(pool, path, session_id, turn_id).await? {
         return Ok(0);
     }
-    let id_source = format!("{session_id}\n{turn_id}\n{path}");
-    let id = format!(
-        "filechange-{}",
-        &blake3::hash(id_source.as_bytes()).to_hex()[..16]
-    );
+    let id = hook_file_change_id(session_id, turn_id, path);
     let title = redact_secrets(&format!("changed {path}"));
     let mut body = title.clone();
     if let Some(h) = hunk {

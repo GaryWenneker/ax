@@ -202,3 +202,66 @@ async fn turn_end_hook_does_not_duplicate_a_synced_file_change() {
     );
     db.close().await;
 }
+
+#[tokio::test]
+async fn sync_capture_does_not_duplicate_a_file_change_the_hook_recorded() {
+    let (_tmp, root, db) = open_db().await;
+    let pool = db.pool();
+    std::fs::create_dir_all(root.join(".ax/turns")).unwrap();
+    std::fs::write(
+        root.join(".ax/turns/current.json"),
+        r#"{"session_id":"conv-1","turn_id":"gen-1"}"#,
+    )
+    .unwrap();
+    let paths = vec!["src/a.rs".to_string(), "src/b.rs".to_string()];
+    // The turn-end hook records the edit first.
+    assert_eq!(
+        save_file_changes(pool, &paths[..1], "conv-1", "gen-1", 10)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        ax_memory::save_file_change_with_hunk(
+            pool,
+            "src/b.rs",
+            Some("+x"),
+            None,
+            None,
+            "conv-1",
+            "gen-1",
+            10
+        )
+        .await
+        .unwrap(),
+        1
+    );
+    // A delayed sync for the same session and turn reports the same edits.
+    set_content_hash(pool, "src/a.rs", "h1").await;
+    set_content_hash(pool, "src/b.rs", "h1").await;
+    assert_eq!(
+        ax_memory::capture_affected_paths(pool, &root, &paths, 20)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        ax_memory::capture_sync_file_change(pool, "src/a.rs", None, "h2", "conv-1", "gen-1", 30)
+            .await
+            .unwrap(),
+        0
+    );
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memories WHERE kind = 'file_change'")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 2);
+    // Another turn still records the path.
+    assert_eq!(
+        ax_memory::capture_sync_file_change(pool, "src/a.rs", None, "h1", "conv-1", "gen-2", 40)
+            .await
+            .unwrap(),
+        1
+    );
+    db.close().await;
+}
