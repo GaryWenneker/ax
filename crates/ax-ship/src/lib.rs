@@ -37,6 +37,9 @@ pub struct ShipDaemon {
     pub bus: ShipEventBus,
     pub state: Arc<Mutex<ShipState>>,
     sonar_provisioning: Arc<AtomicBool>,
+    /// The git watcher started by `run_watch`; replaced on the next call and
+    /// stopped when the daemon is dropped.
+    watch: std::sync::Mutex<Option<git_watcher::GitWatch>>,
 }
 
 impl ShipDaemon {
@@ -51,6 +54,7 @@ impl ShipDaemon {
             bus: ShipEventBus::new(256),
             state: Arc::new(Mutex::new(ShipState::default())),
             sonar_provisioning: Arc::new(AtomicBool::new(false)),
+            watch: std::sync::Mutex::new(None),
         }
     }
 
@@ -65,9 +69,7 @@ impl ShipDaemon {
     }
 
     pub async fn reload_config(&self) {
-        let mut config = ax_remote::load_ship_config(&self.project_root);
-        sync_discovered_git_roots(&self.project_root, &mut config);
-        *self.config.lock().await = config;
+        reload_config_into(&self.project_root, &self.config).await;
     }
 
     /// Background Sonar provisioning from autodiscovered git repos (idempotent).
@@ -107,7 +109,56 @@ impl ShipDaemon {
         &self,
         apply_overrides: impl FnOnce(&mut ax_remote::ShipConfig),
     ) -> Result<ShipReport, String> {
-        self.reload_config().await;
+        self.handles().evaluate_with(apply_overrides).await
+    }
+
+    fn handles(&self) -> EvalHandles {
+        EvalHandles {
+            project_root: self.project_root.clone(),
+            config: self.config.clone(),
+            bus: self.bus.clone(),
+            state: self.state.clone(),
+        }
+    }
+
+    /// Watches the configured git repositories and evaluates through this
+    /// daemon (so `state` and the event bus follow) when their git state
+    /// changes. A second call replaces the earlier watcher.
+    pub async fn run_watch(&self) -> Result<(), String> {
+        let cfg = self.config.lock().await.clone();
+        let git_roots = resolve_git_roots(&self.project_root, &cfg)?;
+        let handles = self.handles();
+        let watch = git_watcher::start_git_watcher(git_roots, self.bus.clone(), move || {
+            let handles = handles.clone();
+            async move {
+                if let Err(e) = handles.evaluate_with(|_| {}).await {
+                    tracing::warn!(error = %e, "ship evaluation after git change failed");
+                }
+            }
+        })?;
+        if let Ok(mut slot) = self.watch.lock() {
+            *slot = Some(watch);
+        }
+        Ok(())
+    }
+}
+
+/// The shared parts of a daemon an evaluation needs, so a background task can
+/// evaluate without holding the daemon itself.
+#[derive(Clone)]
+struct EvalHandles {
+    project_root: PathBuf,
+    config: Arc<Mutex<ax_remote::ShipConfig>>,
+    bus: ShipEventBus,
+    state: Arc<Mutex<ShipState>>,
+}
+
+impl EvalHandles {
+    async fn evaluate_with(
+        &self,
+        apply_overrides: impl FnOnce(&mut ax_remote::ShipConfig),
+    ) -> Result<ShipReport, String> {
+        reload_config_into(&self.project_root, &self.config).await;
         let mut cfg = self.config.lock().await.clone();
         apply_overrides(&mut cfg);
         let pipeline = ShipPipeline::new(self.project_root.clone(), cfg, self.bus.clone());
@@ -118,14 +169,12 @@ impl ShipDaemon {
         });
         Ok(report)
     }
+}
 
-    pub async fn run_watch(&self) -> Result<(), String> {
-        let cfg = self.config.lock().await.clone();
-        let git_roots = resolve_git_roots(&self.project_root, &cfg)?;
-        git_watcher::start_git_watcher(self.project_root.clone(), git_roots, self.bus.clone())
-            .await?;
-        Ok(())
-    }
+async fn reload_config_into(project_root: &std::path::Path, slot: &Mutex<ax_remote::ShipConfig>) {
+    let mut config = ax_remote::load_ship_config(project_root);
+    sync_discovered_git_roots(project_root, &mut config);
+    *slot.lock().await = config;
 }
 
 pub async fn evaluate_project(project_root: PathBuf) -> Result<ShipReport, String> {
