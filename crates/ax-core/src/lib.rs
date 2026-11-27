@@ -512,10 +512,11 @@ impl Ax {
             if ready.is_empty() {
                 continue;
             }
-            if let Some(w) = &self.watcher {
-                w.mark_indexing(&ready).await;
-            }
-            match self
+            let taken = match &self.watcher {
+                Some(w) => w.mark_indexing(&ready).await,
+                None => Vec::new(),
+            };
+            let succeeded = match self
                 .index_files(&ready, opts.clone(), &mut on_progress)
                 .await
             {
@@ -527,11 +528,16 @@ impl Ax {
                             r.duration_ms
                         );
                     }
+                    true
                 }
-                Err(e) => tracing::warn!("auto-sync failed: {}", e),
-            }
+                Err(e) => {
+                    tracing::warn!("auto-sync failed, will retry: {}", e);
+                    false
+                }
+            };
+            // Keeps failed files and files saved again during the batch pending.
             if let Some(w) = &self.watcher {
-                w.clear_pending(&ready).await;
+                w.finish_indexing(&taken, succeeded).await;
             }
         }
     }
