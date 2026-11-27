@@ -2030,6 +2030,9 @@ pub async fn capture_plan_draft(pool: &SqlitePool, body: serde_json::Value) -> s
     revise_plan_from_json(pool, body).await
 }
 
+/// Queue a finished plan for import review. A body equal to the latest queued
+/// body for the same id is not stored again, so an unchanged file does not
+/// add a row on every turn.
 #[allow(clippy::too_many_arguments)]
 pub async fn queue_finished_plan(
     pool: &SqlitePool,
@@ -2045,7 +2048,12 @@ pub async fn queue_finished_plan(
     sqlx::query(
         "INSERT OR IGNORE INTO import_review
          (id, turn_id, source, project_id, title, body, session_id, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+         WHERE NOT EXISTS (
+             SELECT 1 FROM (
+                 SELECT body FROM import_review WHERE id = ?1 ORDER BY rowid DESC LIMIT 1
+             ) WHERE body = ?6
+         )",
     )
     .bind(spec_id)
     .bind(turn_id)
@@ -2070,7 +2078,7 @@ pub async fn import_review_from_json(pool: &SqlitePool) -> serde_json::Value {
 
 pub async fn import_review_ids(pool: &SqlitePool) -> Result<Vec<String>, String> {
     ensure_hierarchy_schema(pool).await?;
-    sqlx::query_scalar("SELECT id FROM import_review ORDER BY id")
+    sqlx::query_scalar("SELECT DISTINCT id FROM import_review ORDER BY id")
         .fetch_all(pool)
         .await
         .map_err(|error| error.to_string())
@@ -3187,6 +3195,44 @@ mod tests {
         assert_eq!(review["ok"], true);
         assert_eq!(review["ids"], serde_json::json!(["plan-queued"]));
         assert_eq!(count(&pool, "specs").await, 0);
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_plan_is_queued_once_across_turns() {
+        let (_dir, pool) = open().await;
+        set_hierarchy_flag(&pool, true).await.unwrap();
+        for turn in ["turn-1", "turn-2", "turn-3"] {
+            queue_finished_plan(
+                &pool,
+                "ax",
+                "plan-x",
+                "X",
+                "Same body.",
+                "session-1",
+                turn,
+                "file",
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(count(&pool, "import_review").await, 1);
+        queue_finished_plan(
+            &pool,
+            "ax",
+            "plan-x",
+            "X",
+            "Changed body.",
+            "session-1",
+            "turn-4",
+            "file",
+        )
+        .await
+        .unwrap();
+        assert_eq!(count(&pool, "import_review").await, 2);
+        assert_eq!(
+            import_review_ids(&pool).await.unwrap(),
+            vec!["plan-x".to_string()]
+        );
     }
 
     #[tokio::test]
