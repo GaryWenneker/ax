@@ -225,7 +225,7 @@ function ToolTable({ tools, totalSaved }: { tools: ToolSavingsRow[]; totalSaved:
       <tbody>
         {sorted.map((t) => {
           const share = totalSaved > 0 ? Math.round((t.tokens_saved_est / totalSaved) * 100) : 0;
-          const cat = toolCategory(t.tool);
+          const cat = toolCategory(t.tool, t.graph_calls);
           return (
             <tr key={t.tool} className={cat === 'policy' ? 'sv-row-dim' : undefined}>
               <td>
