@@ -128,5 +128,60 @@ class CreateJobHelpTest(unittest.TestCase):
         self.assertNotIn("#!/bin/sh", run.stdout)
 
 
+FAKE_AZ = """#!/bin/sh
+# Records argv, and the content of every @file argument the way the Azure CLI loads it.
+printf '%s\\n' "$*" >> "$AZ_LOG"
+for arg in "$@"; do
+  case "$arg" in @*) { cat "${arg#@}"; echo; } >> "$AZ_FILES" ;; esac
+done
+case "$*" in
+  "containerapp job show"*) [ "${JOB_EXISTS:-0}" = 1 ] ;;
+  *) exit 0 ;;
+esac
+"""
+
+
+class CreateJobSecretTest(unittest.TestCase):
+    def run_job(self, args, job_exists, env_url=None):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "bin").mkdir()
+        (tmp / "bin" / "az").write_text(FAKE_AZ)
+        (tmp / "bin" / "az").chmod(0o755)
+        (tmp / "t").mkdir()
+        env = {
+            "PATH": f"{tmp / 'bin'}{os.pathsep}{os.environ['PATH']}",
+            "AZ_LOG": str(tmp / "argv.log"),
+            "AZ_FILES": str(tmp / "files.log"),
+            "JOB_EXISTS": "1" if job_exists else "0",
+            "TMPDIR": str(tmp / "t"),
+        }
+        if env_url:
+            env["AX_REPO_URL"] = env_url
+        run = subprocess.run(
+            ["sh", str(SLIM / "azure" / "create-job.sh"), "--resource-group", "rg", "--environment", "env",
+             "--version", "v1.2.3", *args],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(run.returncode, 0, run.stderr)
+        argv = (tmp / "argv.log").read_text()
+        files = (tmp / "files.log").read_text() if (tmp / "files.log").exists() else ""
+        self.assertEqual(list((tmp / "t").iterdir()), [], "the secret file must be removed")
+        return argv, files
+
+    def check(self, args, env_url=None):
+        for job_exists in (False, True):
+            argv, files = self.run_job(args, job_exists, env_url)
+            self.assertNotIn(TOKEN, argv, "the repository token must not be on the az command line")
+            self.assertIn(f"ax-repo-url={REPO_URL}", files.splitlines())
+            self.assertIn("AX_REPO_URL=secretref:ax-repo-url", argv)
+
+    def test_repo_url_from_environment_never_reaches_argv(self):
+        self.check([], env_url=REPO_URL)
+
+    def test_repo_flag_keeps_the_token_off_the_az_command_line(self):
+        self.check(["--repo", REPO_URL])
+
+
 if __name__ == "__main__":
     unittest.main()

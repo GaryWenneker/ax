@@ -229,7 +229,7 @@ The template is `slim/azure/azuredeploy.json` in the repository; you can also de
 
 #### Deploy from the command line
 
-`slim/azure/create-job.sh` in the repository creates a manual Container Apps job around it, stores the repository URL as a job secret (so a URL with a token stays out of plain environment variables) and can start the first run. It needs the Azure CLI, logged in with `az login`:
+`slim/azure/create-job.sh` in the repository creates a manual Container Apps job around it, stores the repository URL as a job secret (so a URL with a token stays out of plain environment variables) and can start the first run. The URL reaches `az` through a private temporary file, not its command line. For a URL with a token, set `AX_REPO_URL` instead of passing `--repo`, so the token stays out of the process list and shell history too. It needs the Azure CLI, logged in with `az login`:
 
 ```bash
 slim/azure/create-job.sh --resource-group my-rg --environment my-env --location westeurope --repo https://github.com/<owner>/<repo> --version <version> --command "ax status && ax query main" --start

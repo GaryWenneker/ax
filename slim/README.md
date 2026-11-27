@@ -321,7 +321,9 @@ az deployment group create --resource-group my-rg --template-file slim/azure/azu
 `slim/azure/create-job.sh` creates (or updates) a manual job from the
 `-ubuntu` image. The job runs `ax-index-repo` (`slim/ax-index-repo.sh`), which
 clones `AX_REPO_URL`, runs `ax init` and then `AX_JOB_COMMAND`. The repository
-URL is stored as a job secret.
+URL is stored as a job secret and reaches `az` through a private temporary file,
+not its command line. For a URL with a token, set `AX_REPO_URL` instead of
+`--repo` so the token stays out of the process list and shell history.
 
 ```bash
 slim/azure/create-job.sh --resource-group my-rg --environment my-env --location westeurope --repo https://github.com/<owner>/<repo> --version <version> --start
