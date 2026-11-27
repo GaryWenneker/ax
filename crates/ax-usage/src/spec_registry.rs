@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS spec_bindings (
 CREATE TABLE IF NOT EXISTS spec_implicit_bindings (
     session_id TEXT PRIMARY KEY
 );
+-- Plan files already imported, so an unchanged file is not read again.
+CREATE TABLE IF NOT EXISTS spec_plan_files (
+    path TEXT PRIMARY KEY,
+    modified INTEGER NOT NULL,
+    size INTEGER NOT NULL,
+    spec_id TEXT,
+    stored INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS spec_deliveries (
     session_id TEXT NOT NULL,
     turn_id TEXT NOT NULL,
@@ -1101,6 +1109,91 @@ fn extra_user_plan_dirs() -> Vec<PathBuf> {
 const MAX_PLAN_FILES: usize = 400;
 const SKIP_PLAN_DIRS: &[&str] = &["node_modules", "target", "target-dev", ".git"];
 
+/// One Markdown file found in a plan folder. `body` is read only when the
+/// file is new or its size or modification time changed since the last import.
+struct PlanFile {
+    path: PathBuf,
+    modified: i64,
+    size: i64,
+    body: Option<String>,
+}
+
+/// What an earlier import recorded for a file: its size and modification
+/// time, the spec it became (none for a fragment), and whether a revision was
+/// stored for it.
+struct KnownPlanFile {
+    modified: i64,
+    size: i64,
+    spec_id: Option<String>,
+    stored: bool,
+}
+
+fn modified_nanos(meta: &std::fs::Metadata) -> i64 {
+    meta.modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| i64::try_from(duration.as_nanos()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
+/// Walk the plan folders and read the files that changed. Blocking file
+/// access, so it runs on the blocking pool.
+fn scan_plan_files(
+    dirs: &[PathBuf],
+    known: &std::collections::HashMap<String, (i64, i64)>,
+) -> Vec<PlanFile> {
+    let mut paths = Vec::new();
+    for dir in dirs {
+        collect_plan_markdown(dir, &mut paths, 0);
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            let meta = std::fs::metadata(&path).ok()?;
+            let modified = modified_nanos(&meta);
+            let size = i64::try_from(meta.len()).unwrap_or(i64::MAX);
+            let key = path.to_string_lossy().into_owned();
+            let body = if known.get(&key) == Some(&(modified, size)) {
+                None
+            } else {
+                Some(std::fs::read_to_string(&path).ok()?)
+            };
+            Some(PlanFile {
+                path,
+                modified,
+                size,
+                body,
+            })
+        })
+        .collect()
+}
+
+async fn known_plan_files(
+    pool: &SqlitePool,
+) -> Result<std::collections::HashMap<String, KnownPlanFile>, String> {
+    let rows: Vec<(String, i64, i64, Option<String>, i64)> =
+        sqlx::query_as("SELECT path, modified, size, spec_id, stored FROM spec_plan_files")
+            .fetch_all(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(|(path, modified, size, spec_id, stored)| {
+            (
+                path,
+                KnownPlanFile {
+                    modified,
+                    size,
+                    spec_id,
+                    stored: stored != 0,
+                },
+            )
+        })
+        .collect())
+}
+
 async fn import_plan_dirs(
     pool: &SqlitePool,
     project_id: &str,
@@ -1109,65 +1202,115 @@ async fn import_plan_dirs(
     live_sessions: &[String],
 ) -> Result<usize, String> {
     ensure_spec_schema(pool).await?;
-    let mut files = Vec::new();
-    for dir in dirs {
-        collect_plan_markdown(dir, &mut files, 0);
-    }
-    files.sort();
-    files.dedup();
-    let newest = newest_user_plan(&files, user_plans_dir);
-    let mut stored = 0usize;
-    let mut newest_id: Option<String> = None;
-    for path in &files {
-        let Ok(body) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        if !plan_file_is_finished(&body) {
-            continue;
-        }
-        let stem = path
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .unwrap_or("plan");
-        let spec_id = slug(stem);
-        if spec_id.is_empty() {
-            continue;
-        }
-        let title = plan_title(&body, stem);
-        let hash = hash_bytes(body.trim().as_bytes());
-        let session = format!("plan-{spec_id}");
-        if capture_finished_plan(
-            pool,
-            project_id,
-            &spec_id,
-            &title,
-            "plan mode",
-            body.trim(),
-            &session,
-            &hash,
-            "plan_mode",
-            true,
-        )
+    let known = known_plan_files(pool).await?;
+    let stamps: std::collections::HashMap<String, (i64, i64)> = known
+        .iter()
+        .map(|(path, file)| (path.clone(), (file.modified, file.size)))
+        .collect();
+    let scan_dirs = dirs.to_vec();
+    let files = tokio::task::spawn_blocking(move || scan_plan_files(&scan_dirs, &stamps))
         .await
-        .ok()
-        .flatten()
-        .is_some()
-        {
+        .map_err(|error| error.to_string())?;
+    let mut stored = 0usize;
+    // The newest finished file in the user plan folder, by modification time.
+    let mut newest: Option<(i64, String)> = None;
+    for file in &files {
+        let key = file.path.to_string_lossy().into_owned();
+        let (spec_id, was_stored) = match &file.body {
+            None => {
+                let Some(entry) = known.get(&key) else {
+                    continue;
+                };
+                (entry.spec_id.clone(), entry.stored)
+            }
+            Some(body) => {
+                let Some(outcome) = import_plan_file(pool, project_id, &file.path, body).await
+                else {
+                    continue;
+                };
+                sqlx::query(
+                    "INSERT INTO spec_plan_files (path, modified, size, spec_id, stored)
+                     VALUES (?1, ?2, ?3, ?4, ?5)
+                     ON CONFLICT(path) DO UPDATE SET modified = excluded.modified,
+                        size = excluded.size, spec_id = excluded.spec_id,
+                        stored = excluded.stored",
+                )
+                .bind(&key)
+                .bind(file.modified)
+                .bind(file.size)
+                .bind(outcome.0.as_deref())
+                .bind(i64::from(outcome.1))
+                .execute(pool)
+                .await
+                .map_err(|error| error.to_string())?;
+                outcome
+            }
+        };
+        if was_stored {
             stored += 1;
         }
-        for extra in sessions_named_in(&body) {
-            bind_session_implicit(pool, &extra, &spec_id).await?;
-        }
-        if newest.as_ref().is_some_and(|chosen| chosen == path) {
-            newest_id = Some(spec_id);
+        let Some(spec_id) = spec_id else {
+            continue;
+        };
+        let in_user_dir = user_plans_dir.is_some_and(|dir| file.path.starts_with(dir));
+        if in_user_dir
+            && newest
+                .as_ref()
+                .is_none_or(|(time, _)| file.modified >= *time)
+        {
+            newest = Some((file.modified, spec_id));
         }
     }
-    if let Some(spec_id) = newest_id {
+    if let Some((_, spec_id)) = newest {
         for session in live_sessions {
             bind_session_implicit(pool, session, &spec_id).await?;
         }
     }
     Ok(stored)
+}
+
+/// Store one changed plan file and bind the sessions it names. Returns the
+/// spec id (none for a fragment) and whether a revision was stored, or `None`
+/// when the import failed and should be tried again on the next scan.
+async fn import_plan_file(
+    pool: &SqlitePool,
+    project_id: &str,
+    path: &Path,
+    body: &str,
+) -> Option<(Option<String>, bool)> {
+    if !plan_file_is_finished(body) {
+        return Some((None, false));
+    }
+    let stem = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("plan");
+    let spec_id = slug(stem);
+    if spec_id.is_empty() {
+        return Some((None, false));
+    }
+    let title = plan_title(body, stem);
+    let hash = hash_bytes(body.trim().as_bytes());
+    let session = format!("plan-{spec_id}");
+    let stored = capture_finished_plan(
+        pool,
+        project_id,
+        &spec_id,
+        &title,
+        "plan mode",
+        body.trim(),
+        &session,
+        &hash,
+        "plan_mode",
+        true,
+    )
+    .await
+    .ok()?
+    .is_some();
+    for extra in sessions_named_in(body) {
+        bind_session_implicit(pool, &extra, &spec_id).await.ok()?;
+    }
+    Some((Some(spec_id), stored))
 }
 
 fn collect_plan_markdown(dir: &Path, out: &mut Vec<PathBuf>, depth: u8) {
@@ -1400,29 +1543,6 @@ fn is_broad_root(path: &Path) -> bool {
         return true;
     }
     ax_utils::paths::home_dir().is_some_and(|home| path == home)
-}
-
-fn newest_user_plan(files: &[PathBuf], user_plans_dir: Option<&Path>) -> Option<PathBuf> {
-    let user_dir = user_plans_dir?;
-    let mut newest: Option<(PathBuf, std::time::SystemTime)> = None;
-    for path in files {
-        if !path.starts_with(user_dir) {
-            continue;
-        }
-        let Ok(body) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        if !plan_file_is_finished(&body) {
-            continue;
-        }
-        let Ok(modified) = std::fs::metadata(path).and_then(|meta| meta.modified()) else {
-            continue;
-        };
-        if newest.as_ref().is_none_or(|(_, time)| modified >= *time) {
-            newest = Some((path.clone(), modified));
-        }
-    }
-    newest.map(|(path, _)| path)
 }
 
 fn paths_named_in(body: &str) -> Vec<String> {
