@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { appStylesheets, cssRules } from '../test-support/cssRules.ts';
 import { contrastRatioHex, THEMES } from './lib/themes.ts';
@@ -103,5 +105,45 @@ describe('reduced motion', () => {
     const selectors = kept.flatMap((rule) => rule.selectors);
     assert.ok(selectors.length > 0, 'spinners are re-enabled explicitly');
     for (const selector of selectors) assert.match(selector, /spin|ship-step-icon--live/, selector);
+  });
+});
+
+describe('unused class selectors', () => {
+  /** Every word the components, index.html and e2e specs mention, plus prefixes they build names from. */
+  const sourceWords = () => {
+    const root = new URL('../', import.meta.url);
+    const texts: string[] = [readFileSync(new URL('index.html', root), 'utf8')];
+    for (const dir of ['src', 'e2e']) {
+      for (const entry of readdirSync(new URL(`${dir}/`, root), { recursive: true, withFileTypes: true })) {
+        if (!entry.isFile() || !/\.tsx?$/.test(entry.name) || /\.(test|d)\.tsx?$/.test(entry.name)) continue;
+        texts.push(readFileSync(join(entry.parentPath, entry.name), 'utf8'));
+      }
+    }
+    const text = texts.join('\n');
+    const words = new Set(text.match(/[A-Za-z0-9_-]+/g) ?? []);
+    const prefixes = [...text.matchAll(/([A-Za-z0-9_-]+-)\$\{/g), ...text.matchAll(/['"`]([A-Za-z0-9_-]+-)['"`]\s*\+/g)].map((m) => m[1]);
+    return { words, prefixes };
+  };
+  const { words, prefixes } = sourceWords();
+  const unreferenced = new Set<string>();
+  for (const rule of [...sheets.values()].flatMap((css) => cssRules(css))) {
+    for (const selector of rule.selectors) {
+      for (const m of selector.replace(/url\([^)]*\)/g, '').matchAll(/\.([A-Za-z_][\w-]*)/g)) {
+        const name = m[1];
+        if (/^(hljs|w-md-editor|wmde|cm-|token)/.test(name)) continue;
+        if (!words.has(name) && !prefixes.some((prefix) => name.startsWith(prefix))) unreferenced.add(name);
+      }
+    }
+  }
+
+  it('keeps no rules for retired screens that nothing renders', () => {
+    const retired = /^(ship-(gate|metric|banner|alert|actions|page|pipeline$|file-list|subtitle|step--)|agent-target-|agent-chip|lang-|stats-summary|policy-item|capture-(panel|actions|hint|questions)|sq-|sv-tool-(card|grid)|list-item|filter-(row|input|select)|pagination$|search-(bar|input)|count-label)/;
+    assert.deepEqual([...unreferenced].filter((name) => retired.test(name)).sort(), []);
+  });
+
+  it('does not add class selectors that no component, page or e2e spec uses', () => {
+    // Older classes still waiting for review; lower this ceiling as they are removed, never raise it.
+    const ceiling = 204;
+    assert.ok(unreferenced.size <= ceiling, `${unreferenced.size} unreferenced classes:\n${[...unreferenced].sort().join(' ')}`);
   });
 });

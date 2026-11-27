@@ -123,7 +123,7 @@ html, body {
     scroll-behavior: auto !important;
   }
 
-  :is(.ax-spinner, .sq-spinner, .agent-install-spinner, .ship-step-icon--live, .codicon-modifier-spin) {
+  :is(.ax-spinner, .agent-install-spinner, .ship-step-icon--live, .codicon-modifier-spin) {
     animation-duration: 1s !important;
     animation-iteration-count: infinite !important;
   }

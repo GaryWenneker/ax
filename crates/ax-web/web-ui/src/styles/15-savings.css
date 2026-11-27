@@ -1121,82 +1121,6 @@
   align-items: center;
 }
 
-/* Tool cards */
-.sv-tool-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 8px;
-}
-
-.sv-tool-card {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 14px;
-  background: var(--bg-side);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.sv-tool-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.sv-tool-card-name {
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  color: var(--text-hi);
-}
-
-.sv-tool-card-share {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--accent-text);
-  font-weight: 700;
-}
-
-.sv-tool-card-stats {
-  display: flex;
-  gap: 12px;
-}
-
-.sv-tool-card-stat {
-  display: flex;
-  flex-direction: column;
-}
-
-.sv-tool-card-stat-value {
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  color: var(--text-hi);
-  font-variant-numeric: tabular-nums;
-}
-
-.sv-tool-card-stat-label {
-  font-size: 10px;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.sv-tool-card-bar {
-  height: 3px;
-  background: var(--bg-input);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.sv-tool-card-bar-fill {
-  height: 100%;
-  background: var(--accent);
-  border-radius: 2px;
-  min-width: 2px;
-}
-
 /* Efficiency metrics */
 .sv-efficiency-grid {
   display: flex;
@@ -1346,7 +1270,4 @@
     grid-template-columns: 80px 1fr auto;
   }
 
-  .sv-tool-grid {
-    grid-template-columns: 1fr;
-  }
 }

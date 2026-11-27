@@ -28,10 +28,6 @@
 .settings-stack > .settings-card + .settings-card {
   margin-top: 2px;
 }
-.ship-step--active,
-.ship-step--active .ship-step-icon {
-  color: var(--accent-text);
-}
 .theme-swatch--active {
   border-color: var(--accent) !important;
   box-shadow: 0 0 0 1px var(--ax-project-glow, color-mix(in srgb, var(--accent) 20%, transparent));
@@ -46,7 +42,6 @@ a:not(.nav-item):not(.btn):not(.btn-secondary):not(.status-panel-link):not(.ax-a
 a:not(.nav-item):not(.btn):not(.btn-secondary):not(.status-panel-link):not(.ax-app-wordmark):hover {
   color: color-mix(in srgb, var(--accent) 80%, #fff);
 }
-
 
 /* Prices page */
 .prices-page .prices-list-card {
