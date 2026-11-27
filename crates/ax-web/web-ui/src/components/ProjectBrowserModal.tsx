@@ -3,18 +3,9 @@ import { createPortal } from 'react-dom';
 
 import Codicon from './Codicon';
 import { displayPath, pathBreadcrumbs } from '../pathDisplay';
-import {
-  browseWorkspace,
-  fetchWorkspaceCurrent,
-  mkdirWorkspace,
-  streamWorkspaceInit,
-  switchWorkspace,
-  type RecentProject,
-} from '../workspaceApi';
-import { notifyWorkspaceSwitched } from '../workspaceEvents';
+import { fetchWorkspaceCurrent, type RecentProject } from '../workspaceApi';
 import {containOverlayFocus} from '../lib/overlayFocus';
-import { createLatestGate } from '../lib/latestLoad';
-import { browseOutcome, EMPTY_BROWSE_VIEW, type BrowseResponse, type BrowseView } from '../lib/projectBrowse';
+import { useWorkspaceBrowser } from './useWorkspaceBrowser';
 
 interface Props {
   onClose: () => void;
@@ -30,42 +21,33 @@ function AxProjectBadge({ compact }: { compact?: boolean }) {
   );
 }
 
-export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
+export default function ProjectBrowserModal(props: Props) {
+  const { onClose } = props;
   const modal = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
   useEffect(() => {close.current = onClose;}, [onClose]);
   const [currentPath, setCurrentPath] = useState('');
   const [recent, setRecent] = useState<RecentProject[]>([]);
-  /** The folder on screen. Path, parent, flag and entries change together, only from a successful browse. */
-  const [view, setView] = useState<BrowseView>(EMPTY_BROWSE_VIEW);
-  const viewRef = useRef(view);
-  viewRef.current = view;
-  const browseGate = useRef(createLatestGate()).current;
-  const { path: browsePath, parent, initialized: browseInitialized, entries } = view;
   const [filter, setFilter] = useState('');
   const [axOnly, setAxOnly] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [busy, setBusy] = useState<string | null>(null);
-  const [log, setLog] = useState<string[]>([]);
-  const [err, setErr] = useState<string | null>(null);
   const [pathDraft, setPathDraft] = useState('');
   const [editingPath, setEditingPath] = useState(false);
-  const loadBrowse = useCallback(async (path: string) => {
-    const ticket = browseGate.begin();
-    setErr(null);
-    let data: BrowseResponse;
-    try {
-      data = await browseWorkspace(path);
-    } catch (e) {
-      data = { ok: false, error: e instanceof Error ? e.message : String(e) };
-    }
-    const out = browseOutcome(viewRef.current, data, browseGate.isLatest(ticket));
-    if (!out) return;
-    setView(out.view);
-    setPathDraft(out.draft);
-    setErr(out.error);
-    if (!out.error) setEditingPath(false);
-  }, [browseGate]);
+  const onBrowsed = useCallback((draft: string, ok: boolean) => {
+    setPathDraft(draft);
+    if (ok) setEditingPath(false);
+  }, []);
+  const switched = useRef(props.onSwitched);
+  useEffect(() => {switched.current = props.onSwitched;}, [props.onSwitched]);
+  const onSwitched = useCallback(() => {
+    close.current();
+    switched.current?.();
+  }, []);
+  const { view, busy, log, err, setErr, newName, setNewName, loadBrowse, doSwitch, doMkdir, doInit } = useWorkspaceBrowser({
+    onSwitched,
+    onBrowsed,
+  });
+  /** The folder on screen. Path, parent, flag and entries change together, only from a successful browse. */
+  const { path: browsePath, parent, initialized: browseInitialized, entries } = view;
 
   useEffect(() => {
     void (async () => {
@@ -81,7 +63,7 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
     })();
     // Do not autofocus the filter — on mobile that opens the keyboard and
     // steals attention from Recent / browse. Users tap the field when needed.
-  }, [loadBrowse]);
+  }, [loadBrowse, setErr]);
 
   const crumbs = useMemo(() => pathBreadcrumbs(browsePath), [browsePath]);
 
@@ -98,57 +80,6 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
   useEffect(() => {
     if (modal.current) return containOverlayFocus(modal.current, () => close.current());
   }, []);
-
-  async function doSwitch(path: string) {
-    setBusy('switch');
-    setErr(null);
-    const res = await switchWorkspace(path);
-    setBusy(null);
-    if (res.ok && res.reloading) {
-      window.location.reload();
-      return;
-    }
-    if (res.needs_init) {
-      setErr('Not an ax project yet — use Initialize below.');
-      void loadBrowse(path);
-      return;
-    }
-    if (!res.ok) {
-      setErr(res.error ?? 'Switch failed');
-      return;
-    }
-    onClose();
-    notifyWorkspaceSwitched(res.path);
-    onSwitched?.();
-  }
-
-  async function doMkdir() {
-    if (!newName.trim() || !browsePath) return;
-    setBusy('mkdir');
-    setErr(null);
-    const res = await mkdirWorkspace(browsePath, newName.trim());
-    setBusy(null);
-    if (!res.ok) {
-      setErr(res.error ?? 'Create failed');
-      return;
-    }
-    setNewName('');
-    await loadBrowse(res.path ?? browsePath);
-  }
-
-  async function doInit(path: string) {
-    setBusy('init');
-    setLog([]);
-    setErr(null);
-    await streamWorkspaceInit(path, (ev) => {
-      if (ev.type === 'line') setLog((l) => [...l, ev.text]);
-      if (ev.type === 'done') {
-        setBusy(null);
-        if (!ev.ok) setErr(ev.error ?? 'Init failed');
-        else if (ev.initialized) void doSwitch(path);
-      }
-    });
-  }
 
   const axRecent = recent.filter((r) => r.initialized);
   const needle = filter.trim().toLowerCase();
