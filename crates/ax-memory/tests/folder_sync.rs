@@ -282,13 +282,19 @@ async fn s7_unreadable_files_and_folders_keep_their_memories() {
     write(&root, "gone.md", "gone");
     sync_folder(db.pool(), "notes", &root).await.unwrap();
 
-    std::fs::set_permissions(root.join("locked.md"), std::fs::Permissions::from_mode(0o000))
-        .unwrap();
+    std::fs::set_permissions(
+        root.join("locked.md"),
+        std::fs::Permissions::from_mode(0o000),
+    )
+    .unwrap();
     std::fs::set_permissions(root.join("sub"), std::fs::Permissions::from_mode(0o000)).unwrap();
     std::fs::remove_file(root.join("gone.md")).unwrap();
     let got = sync_folder(db.pool(), "notes", &root).await;
-    std::fs::set_permissions(root.join("locked.md"), std::fs::Permissions::from_mode(0o644))
-        .unwrap();
+    std::fs::set_permissions(
+        root.join("locked.md"),
+        std::fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
     std::fs::set_permissions(root.join("sub"), std::fs::Permissions::from_mode(0o755)).unwrap();
 
     let got = got.unwrap();

@@ -6,9 +6,10 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::AxError;
 
-use crate::turns::save_file_changes;
+use crate::turns::save_file_change_versions;
 
-/// When `previous_hash` differs from `new_hash`, write one file_change memory.
+/// When `previous_hash` differs from `new_hash`, write one file_change memory
+/// for that path, turn and `new_hash`.
 pub async fn capture_sync_file_change(
     pool: &SqlitePool,
     path: &str,
@@ -29,7 +30,15 @@ pub async fn capture_sync_file_change(
     if previous_hash.map(str::trim) == Some(new_hash) {
         return Ok(0);
     }
-    save_file_changes(pool, &[path.to_string()], session_id, turn_id, now_ms).await
+    save_file_change_versions(
+        pool,
+        &[path.to_string()],
+        new_hash,
+        session_id,
+        turn_id,
+        now_ms,
+    )
+    .await
 }
 
 /// Read `.ax/turns/current.json` next to the database when present.
@@ -57,7 +66,10 @@ pub fn current_session_turn(project_root: &Path) -> (String, String) {
     (session.to_string(), turn.to_string())
 }
 
-/// After sync/index, write file_change memories for every affected path.
+/// After sync/index, write a file_change memory for every affected path whose
+/// stored content is new for this turn. The content hash comes from
+/// `file_contents`; a path without stored content (deleted) is recorded once
+/// per turn.
 pub async fn capture_affected_paths(
     pool: &SqlitePool,
     project_root: &Path,
@@ -70,9 +82,15 @@ pub async fn capture_affected_paths(
     let (session_id, turn_id) = current_session_turn(project_root);
     let mut written = 0usize;
     for path in paths {
-        // Paths reaching finalize already changed; pass a sentinel new hash.
+        let content_hash: Option<String> =
+            sqlx::query_scalar("SELECT content_hash FROM file_contents WHERE path = ?")
+                .bind(path.trim())
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| AxError::Other(e.to_string()))?;
+        let version = content_hash.unwrap_or_else(|| "missing".into());
         written +=
-            capture_sync_file_change(pool, path, None, "changed", &session_id, &turn_id, now_ms)
+            capture_sync_file_change(pool, path, None, &version, &session_id, &turn_id, now_ms)
                 .await?;
     }
     Ok(written)

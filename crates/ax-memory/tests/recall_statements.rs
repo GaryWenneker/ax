@@ -28,11 +28,17 @@ async fn hot_recall_does_not_prepare_a_new_statement_per_hot_set() {
         .await
         .unwrap();
 
-    assert!(!recall(&single, "release checklist", 5).await.unwrap().is_empty());
+    assert!(!recall(&single, "release checklist", 5)
+        .await
+        .unwrap()
+        .is_empty());
     let before = single.acquire().await.unwrap().cached_statements_size();
     for n in 3..13 {
         remember(db.pool(), note(n)).await.unwrap();
-        assert!(!recall(&single, "release checklist", 5).await.unwrap().is_empty());
+        assert!(!recall(&single, "release checklist", 5)
+            .await
+            .unwrap()
+            .is_empty());
     }
     let after = single.acquire().await.unwrap().cached_statements_size();
     assert!(
@@ -46,7 +52,9 @@ async fn hot_recall_does_not_prepare_a_new_statement_per_hot_set() {
 #[tokio::test]
 async fn find_similar_keeps_the_best_rows_across_many_candidates() {
     let dir = tempfile::tempdir().unwrap();
-    let db = ax_db::Database::open(&dir.path().join("ax.db")).await.unwrap();
+    let db = ax_db::Database::open(&dir.path().join("ax.db"))
+        .await
+        .unwrap();
     for n in 0..150 {
         remember(
             db.pool(),

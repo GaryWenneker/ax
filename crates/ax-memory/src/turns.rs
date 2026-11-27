@@ -53,13 +53,31 @@ pub async fn save_file_changes(
     turn_id: &str,
     now_ms: i64,
 ) -> Result<usize, AxError> {
+    save_file_change_versions(pool, paths, "", session_id, turn_id, now_ms).await
+}
+
+/// One file_change memory per path, per turn and per `content_version`
+/// (usually the file's content hash). The same content in the same turn is
+/// stored once; a new version of the file is a new memory.
+pub(crate) async fn save_file_change_versions(
+    pool: &SqlitePool,
+    paths: &[String],
+    content_version: &str,
+    session_id: &str,
+    turn_id: &str,
+    now_ms: i64,
+) -> Result<usize, AxError> {
     let mut written = 0usize;
     for path in paths {
         let path = path.trim();
         if path.is_empty() {
             continue;
         }
-        let id_source = format!("{session_id}\n{turn_id}\n{path}");
+        let id_source = if content_version.is_empty() {
+            format!("{session_id}\n{turn_id}\n{path}")
+        } else {
+            format!("{session_id}\n{turn_id}\n{path}\n{content_version}")
+        };
         let id = format!(
             "filechange-{}",
             &blake3::hash(id_source.as_bytes()).to_hex()[..16]
@@ -696,7 +714,8 @@ fn encode_component(value: &str) -> String {
     out
 }
 
-/// Move `turn` memories older than `max_age_days` into the permanent archive.
+/// Move `turn` and `file_change` memories older than `max_age_days` into the
+/// permanent archive.
 /// They stay fetchable by id and by cue. A JSONL copy is written first; nothing
 /// changes when that write fails.
 pub async fn prune_turns(
@@ -715,10 +734,11 @@ pub async fn prune_turns(
     let mut deleted = 0;
     for row in &expired {
         let result = sqlx::query(
-            "UPDATE memories SET tier = 't3' WHERE id = ? AND kind = ? AND COALESCE(tier, 't1') != 't3'",
+            "UPDATE memories SET tier = 't3' WHERE id = ? AND kind IN (?, ?) AND COALESCE(tier, 't1') != 't3'",
         )
         .bind(&row.id)
         .bind(TURN_KIND)
+        .bind(FILE_CHANGE_KIND)
         .execute(&mut *tx)
         .await
         .map_err(db_err)?;

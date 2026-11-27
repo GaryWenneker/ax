@@ -113,15 +113,17 @@ fn row_from_db(
 const MEMORY_SELECT: &str = r#"SELECT id, kind, title, body, tags, files, confidence, source, created_at, updated_at, enabled, COALESCE(tier, 't2')
            FROM memories"#;
 
-/// `turn` memories created before `before`, enabled or not, oldest first; at most 10,000 per call.
+/// `turn` and `file_change` memories created before `before`, enabled or not,
+/// oldest first; at most 10,000 per call.
 pub(crate) async fn expired_turn_rows(
     pool: &SqlitePool,
     before: i64,
 ) -> Result<Vec<MemoryRow>, AxError> {
     let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
-        "{MEMORY_SELECT} WHERE kind = ? AND created_at < ? AND COALESCE(tier, 't1') != 't3' ORDER BY created_at, id LIMIT 10000"
+        "{MEMORY_SELECT} WHERE kind IN (?, ?) AND created_at < ? AND COALESCE(tier, 't1') != 't3' ORDER BY created_at, id LIMIT 10000"
     ))
     .bind(crate::turns::TURN_KIND)
+    .bind(crate::turns::FILE_CHANGE_KIND)
     .bind(before)
     .fetch_all(pool)
     .await

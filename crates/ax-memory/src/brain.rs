@@ -22,9 +22,10 @@ pub fn is_build_output_path(path: &str) -> bool {
         .any(|segment| matches!(segment, "target" | "target-dev" | "node_modules" | "dist"))
 }
 
-/// Tier for a memory kind. Git captures and folder docs stay in the archive.
+/// Tier for a memory kind. Turns and file changes are recent (t1) until turn
+/// retention archives them; git captures and folder docs stay in the archive.
 pub fn tier_for_kind(kind: &str) -> &'static str {
-    if kind == crate::turns::TURN_KIND {
+    if kind == crate::turns::TURN_KIND || kind == crate::turns::FILE_CHANGE_KIND {
         TIER_EPISODIC
     } else if kind == "graph_diff"
         || kind == "activity"
@@ -752,7 +753,7 @@ pub async fn prompt_cues(
            AND m.enabled = 1
            AND m.tier IN ('t1', 't2')
            AND COALESCE(m.status, 'active') = 'active'
-           AND m.kind NOT IN ('turn', 'doc', 'graph_diff', 'activity')",
+           AND m.kind NOT IN ('turn', 'doc', 'graph_diff', 'activity', 'file_change')",
     )
     .bind(&json)
     .fetch_all(pool)
@@ -767,6 +768,7 @@ pub async fn prompt_cues(
            AND m.enabled = 1
            AND m.tier IN ('t1', 't2')
            AND COALESCE(m.status, 'active') = 'active'
+           AND m.kind NOT IN ('turn', 'doc', 'graph_diff', 'activity', 'file_change')
          GROUP BY c.cue",
     )
     .bind(&json)
