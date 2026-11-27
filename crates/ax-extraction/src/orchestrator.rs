@@ -142,11 +142,10 @@ impl ExtractionOrchestrator {
 
     /// Whether any parser claims this extension.
     ///
-    /// `scan_files` uses this to decide what to walk, and the source store uses
-    /// it to decide what to keep: snippets are only ever served for graph nodes,
-    /// and only a file some parser claims can produce one. `index_files` takes
-    /// paths straight from its caller — the daemon's watcher reports every `.o`
-    /// and `.rmeta` a build writes — so it has to apply the test itself.
+    /// `scan_files` uses this to decide what to walk. `index_files` takes paths
+    /// straight from its caller — the daemon's watcher reports every `.o` and
+    /// `.rmeta` a build writes — so it applies the test itself, before reading:
+    /// such a file never gets a files row or stored source.
     fn is_extractable(
         &self,
         path: &Path,
@@ -188,6 +187,32 @@ impl ExtractionOrchestrator {
                 language: Language::Unknown,
                 size,
                 modified_at,
+                indexed_at: now_ms(),
+                node_count: 0,
+                errors: None,
+            })
+            .await
+    }
+
+    /// Record a generated file (protoc output, a minified bundle) without parsing
+    /// it. The row has no content hash, so a sync only revisits the file when
+    /// its size or mtime changes, and any nodes from an earlier hand-written
+    /// version are cleared.
+    async fn record_generated(
+        &self,
+        queries: &QueryBuilder,
+        rel: &str,
+    ) -> Result<(), ax_utils::errors::AxError> {
+        queries.clear_file_for_reindex(rel).await?;
+        queries.delete_file_content(rel).await?;
+        let full_path = self.project_root.join(rel);
+        queries
+            .upsert_file(&FileRecord {
+                path: rel.to_string(),
+                content_hash: String::new(),
+                language: Language::Unknown,
+                size: file_size(&full_path),
+                modified_at: file_mtime_ms(&full_path).unwrap_or_else(now_ms),
                 indexed_at: now_ms(),
                 node_count: 0,
                 errors: None,
@@ -275,6 +300,7 @@ impl ExtractionOrchestrator {
                 .replace('\\', "/");
             let content = ax_utils::read_text_file(path)?;
             if is_generated(&content) {
+                self.record_generated(queries, &rel).await?;
                 continue;
             }
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -561,15 +587,28 @@ impl ExtractionOrchestrator {
         let mut manifest_count = 0;
         let ext_map = extension_map();
         let plugin_exts = ax_plugins::load_plugins(&self.project_root).extensions();
+        let exclude_matcher = build_exclude_matcher(&self.project_root, &opts.exclude);
         for file_path in file_paths {
             let rel = file_path.replace('\\', "/");
+            // Callers (the file watcher, reindex_damaged_files) did not run the
+            // scan, so apply its filters before reading anything: a path the
+            // scan drops would be indexed here and removed by the next sync.
+            if should_skip_path(&rel, exclude_matcher.as_ref()) {
+                continue;
+            }
             let full_path = self.project_root.join(&rel);
+            if !(is_context_manifest(&rel)
+                || self.is_extractable(&full_path, opts, &ext_map, &plugin_exts))
+            {
+                continue;
+            }
             if !full_path.is_file() {
                 continue;
             }
             let content =
                 ax_utils::read_text_file(&full_path).map_err(ax_utils::errors::AxError::File)?;
             if is_generated(&content) {
+                self.record_generated(queries, &rel).await?;
                 continue;
             }
             let ext = full_path.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -582,16 +621,9 @@ impl ExtractionOrchestrator {
             let content_hash = hash(content.as_bytes()).to_hex().to_string();
             // Store the text now, while we still own it — query-time snippets are
             // served from here so a graph read never touches the working tree.
-            // Only for files a parser claims: callers of index_files did not run
-            // the scan filter, and storing build output would put megabytes of
-            // object-file text in ax.db that no snippet could ever use.
-            if is_context_manifest(&rel)
-                || self.is_extractable(&full_path, opts, &ext_map, &plugin_exts)
-            {
-                queries
-                    .upsert_file_content(&rel, &content_hash, &content)
-                    .await?;
-            }
+            queries
+                .upsert_file_content(&rel, &content_hash, &content)
+                .await?;
             if is_context_manifest(&rel) {
                 self.index_manifest(queries, &rel, &content_hash).await?;
                 manifest_count += 1;
@@ -818,7 +850,11 @@ fn should_skip_path(rel: &str, exclude: Option<&Gitignore>) -> bool {
         }
     }
     if let Some(ex) = exclude {
-        if ex.matched(rel_norm.as_str(), false).is_ignore() {
+        // A directory pattern such as `gen/` must also exclude the files below it.
+        if ex
+            .matched_path_or_any_parents(rel_norm.as_str(), false)
+            .is_ignore()
+        {
             return true;
         }
     }
