@@ -4,9 +4,14 @@ type Poll = 'abort' | 'html502' | 'pending' | 'connected' | 'gone';
 
 const connection = { url: 'https://ax.example.com/projects/demo/mcp', client_id: 'native', issuer: 'https://login.example', state: 'stored', expires_at: 0 };
 
+// The UI only opens an HTTPS (or loopback HTTP) sign-in address. The sign-in popup is
+// answered with a blank page so the test never leaves the machine.
+const authorizationUrl = 'https://login.example/authorize';
+
 async function serve(page: Page, polls: Poll[], seen: { status: number; list: number; maxInFlight: number }, slowMs = 0): Promise<void> {
   let connected = false;
   let inFlight = 0;
+  await page.context().route('https://login.example/**', (route) => route.fulfill({ contentType: 'text/html', body: '<title>Sign in</title>' }));
   await page.route('**/api/**', async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -15,7 +20,7 @@ async function serve(page: Page, polls: Poll[], seen: { status: number; list: nu
       return route.fulfill({ json: { csrf: 'csrf', connections: connected ? [connection] : [] } });
     }
     if (path === '/api/remote-mcp/login' && request.method() === 'POST') {
-      return route.fulfill({ json: { id: 'attempt-1', authorization_url: 'about:blank#authorize' } });
+      return route.fulfill({ json: { id: 'attempt-1', authorization_url: authorizationUrl } });
     }
     if (path === '/api/remote-mcp/login/attempt-1') {
       seen.status++;
