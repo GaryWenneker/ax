@@ -58,3 +58,38 @@ test('section headers appear where the kind changes', () => {
   assert.equal(sectionLabelForKind('struct'), 'Structs');
   assert.equal(sectionLabelForKind('macro'), 'macro');
 });
+
+function fnWith(id: string, start: number, signature: string, qualified = id): NodeRow {
+  return { ...node(id, 'function', start, start + 1), qualified_name: qualified, signature };
+}
+
+test('a top-level function joins the type named in its signature or qualified name', () => {
+  const tree = buildSymbolTree([
+    node('file', 'file', 1, 100),
+    node('Store', 'struct', 1, 10),
+    fnWith('open', 20, 'fn open(path: &Path) -> Store'),
+    fnWith('reset', 30, 'fn reset()', 'Store::reset'),
+  ]);
+  assert.deepEqual(shape(tree), [{ Store: ['open', 'reset'] }]);
+});
+
+test('a type name inside a longer identifier does not adopt the function', () => {
+  const tree = buildSymbolTree([
+    node('file', 'file', 1, 100),
+    node('Set', 'class', 1, 10),
+    node('Row', 'struct', 11, 20),
+    fnWith('getSettings', 30, 'function getSettings(): Settings'),
+    fnWith('buildArrowRows', 40, 'fn buildArrowRows(n: usize) -> Vec<ArrowRows>'),
+  ]);
+  assert.deepEqual(shape(tree), ['Set', 'Row', 'buildArrowRows', 'getSettings']);
+});
+
+test('the longest whole-word type name wins when several match', () => {
+  const tree = buildSymbolTree([
+    node('file', 'file', 1, 100),
+    node('Row', 'struct', 1, 10),
+    node('RowSet', 'struct', 11, 20),
+    fnWith('collect', 30, 'fn collect(rows: Vec<Row>) -> RowSet'),
+  ]);
+  assert.deepEqual(shape(tree), ['Row', { RowSet: ['collect'] }]);
+});
