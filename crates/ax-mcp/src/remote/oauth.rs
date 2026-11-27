@@ -1,7 +1,7 @@
 //! Built-in public-client OAuth with PKCE and explicit local-owner approval.
 use super::{
     auth::{Principal, CONTEXT_SCOPE, WRITE_SCOPE},
-    config::RemoteConfig,
+    config::{ClientAddressHeader, RemoteConfig},
 };
 use axum::{
     extract::{Path, Query, State},
@@ -229,70 +229,121 @@ const UNUSED_CLIENT_TTL: i64 = 3600;
 /// Unauthenticated calls to `/oauth/authorize` and `/oauth/register` (each) per
 /// minute from one source address.
 const OAUTH_CALLS_PER_MINUTE: u32 = 30;
-/// Source addresses whose call counts are kept at once.
+/// Unauthenticated calls to `/oauth/authorize` and `/oauth/register` (each) per
+/// minute from all source addresses together. It bounds a caller that has many
+/// addresses: at this pace a flood needs more than two minutes to push the
+/// oldest of [`MAX_PENDING`] waiting sign-ins out.
+const HOST_OAUTH_CALLS_PER_MINUTE: u32 = 60;
+/// Source addresses whose call counts are kept at once. Further addresses
+/// share one window.
 const MAX_RATE_SOURCES: usize = 4096;
-/// The source of a request whose proxy named no client address.
+/// The source of a request when no trusted proxy names the client address.
 const UNKNOWN_SOURCE: &str = "direct";
 
-/// The client address a request came from, as named by the proxy in front of
-/// Ax. The listener binds to loopback (or a socket bridge, or a platform
-/// ingress), so the peer address is always that proxy. Cloudflare's
-/// `CF-Connecting-IP` comes first; otherwise the last `X-Forwarded-For` entry,
-/// which the nearest proxy appends. Only used to share out limits, never to
-/// trust a caller.
-fn source(headers: &HeaderMap) -> String {
+/// The client address a request came from, as named by the trusted proxy in
+/// front of Ax. The listener binds to loopback (or a socket bridge, or a
+/// platform ingress), so the peer address is always that proxy. Without a
+/// configured [`ClientAddressHeader`] every request has the same source: a
+/// caller can set `CF-Connecting-IP` or `X-Forwarded-For` itself when no proxy
+/// overwrites them. Only used to share out limits, never to trust a caller.
+fn source(headers: &HeaderMap, trusted: Option<ClientAddressHeader>) -> String {
     let ip = |value: &str| value.trim().parse::<std::net::IpAddr>().ok();
-    headers
-        .get("cf-connecting-ip")
-        .and_then(|v| v.to_str().ok())
-        .and_then(ip)
-        .or_else(|| {
-            headers
-                .get_all("x-forwarded-for")
-                .iter()
-                .filter_map(|v| v.to_str().ok())
-                .flat_map(|v| v.split(','))
-                .last()
-                .and_then(ip)
-        })
-        .map_or_else(|| UNKNOWN_SOURCE.to_string(), |ip| ip.to_string())
+    let named = match trusted {
+        None => None,
+        Some(ClientAddressHeader::CfConnectingIp) => headers
+            .get("cf-connecting-ip")
+            .and_then(|v| v.to_str().ok())
+            .and_then(ip),
+        Some(ClientAddressHeader::XForwardedFor) => headers
+            .get_all("x-forwarded-for")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .flat_map(|v| v.split(','))
+            .last()
+            .and_then(ip),
+    };
+    named.map_or_else(|| UNKNOWN_SOURCE.to_string(), |ip| ip.to_string())
 }
 
-/// A fixed one-minute window per source address that counts calls to an
-/// unauthenticated endpoint, so one caller cannot use up everyone's calls.
+/// A fixed one-minute window of calls.
+#[derive(Clone, Copy)]
+struct Window {
+    start: std::time::Instant,
+    calls: u32,
+}
+impl Window {
+    fn new() -> Self {
+        Self {
+            start: std::time::Instant::now(),
+            calls: 0,
+        }
+    }
+    /// Starts a new minute when this one ran out.
+    fn current(&mut self) -> &mut Self {
+        if self.start.elapsed() >= std::time::Duration::from_secs(60) {
+            *self = Self::new();
+        }
+        self
+    }
+    fn retry_after(&self) -> u64 {
+        60u64.saturating_sub(self.start.elapsed().as_secs()).max(1)
+    }
+}
+
+#[derive(Default)]
+struct Windows {
+    by_source: std::collections::HashMap<String, Window>,
+    /// Shared by the sources that found the table full.
+    overflow: Option<Window>,
+    host: Option<Window>,
+}
+
+/// Counts calls to an unauthenticated endpoint in one-minute windows: per
+/// source address, so one caller cannot use up everyone's calls, and for the
+/// whole host, so a caller with many addresses cannot either.
 struct RateLimit {
     per_minute: u32,
-    windows: std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, u32)>>,
+    host_per_minute: u32,
+    windows: std::sync::Mutex<Windows>,
 }
 impl RateLimit {
-    fn per_minute(per_minute: u32) -> Self {
+    fn new(per_minute: u32, host_per_minute: u32) -> Self {
         Self {
             per_minute,
+            host_per_minute,
             windows: std::sync::Mutex::default(),
         }
     }
-    /// Counts one call from `source`; `Err(seconds)` tells how long until its
-    /// window reopens.
+    /// Counts one call from `source`; `Err(seconds)` tells how long until a
+    /// window reopens. A source that finds the address table full is counted
+    /// in one window shared by all such sources, never let through uncounted.
     fn check(&self, source: &str) -> Result<(), u64> {
-        let minute = std::time::Duration::from_secs(60);
         let mut windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
-        if !windows.contains_key(source) && windows.len() >= MAX_RATE_SOURCES {
-            windows.retain(|_, window| window.0.elapsed() < minute);
-            if windows.len() >= MAX_RATE_SOURCES {
-                // Too many sources to track: the pending-request caps still apply.
-                return Ok(());
-            }
+        let Windows {
+            by_source,
+            overflow,
+            host,
+        } = &mut *windows;
+        if !by_source.contains_key(source) && by_source.len() >= MAX_RATE_SOURCES {
+            by_source.retain(|_, w| w.start.elapsed() < std::time::Duration::from_secs(60));
         }
-        let window = windows
-            .entry(source.to_owned())
-            .or_insert_with(|| (std::time::Instant::now(), 0));
-        if window.0.elapsed() >= minute {
-            *window = (std::time::Instant::now(), 0);
+        let mine = if by_source.contains_key(source) || by_source.len() < MAX_RATE_SOURCES {
+            by_source
+                .entry(source.to_owned())
+                .or_insert_with(Window::new)
+        } else {
+            overflow.get_or_insert_with(Window::new)
         }
-        if window.1 >= self.per_minute {
-            return Err(60u64.saturating_sub(window.0.elapsed().as_secs()).max(1));
+        .current();
+        if mine.calls >= self.per_minute {
+            return Err(mine.retry_after());
         }
-        window.1 += 1;
+        let host = host.get_or_insert_with(Window::new).current();
+        if host.calls >= self.host_per_minute {
+            return Err(host.retry_after());
+        }
+        mine.calls += 1;
+        host.calls += 1;
         Ok(())
     }
 }
@@ -315,13 +366,22 @@ struct Provider {
     register_limit: Arc<RateLimit>,
 }
 impl Provider {
-    fn new(store: OAuthStore, config: Arc<RemoteConfig>, per_minute: u32) -> Self {
+    fn new(
+        store: OAuthStore,
+        config: Arc<RemoteConfig>,
+        per_minute: u32,
+        host_per_minute: u32,
+    ) -> Self {
         Self {
             store,
             config,
-            authorize_limit: Arc::new(RateLimit::per_minute(per_minute)),
-            register_limit: Arc::new(RateLimit::per_minute(per_minute)),
+            authorize_limit: Arc::new(RateLimit::new(per_minute, host_per_minute)),
+            register_limit: Arc::new(RateLimit::new(per_minute, host_per_minute)),
         }
+    }
+    /// The client address of a request, as far as the configuration trusts it.
+    fn source(&self, headers: &HeaderMap) -> String {
+        source(headers, self.config.client_address_header)
     }
 }
 fn response(status: StatusCode, value: Value) -> Response {
@@ -355,7 +415,12 @@ pub fn router(store: OAuthStore, config: Arc<RemoteConfig>) -> Router {
         .route("/oauth/requests/{nonce}", get(poll))
         .route("/oauth/token", post(token))
         .route("/oauth/revoke", post(revoke))
-        .with_state(Provider::new(store, config, OAUTH_CALLS_PER_MINUTE))
+        .with_state(Provider::new(
+            store,
+            config,
+            OAUTH_CALLS_PER_MINUTE,
+            HOST_OAUTH_CALLS_PER_MINUTE,
+        ))
 }
 async fn metadata(State(p): State<Provider>) -> Response {
     let origin = &p.store.origin;
@@ -395,7 +460,7 @@ async fn register(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    if let Err(retry) = p.register_limit.check(&source(&headers)) {
+    if let Err(retry) = p.register_limit.check(&p.source(&headers)) {
         return too_many(retry);
     }
     let result=async {
@@ -444,7 +509,7 @@ async fn authorize(
     headers: HeaderMap,
     Query(q): Query<Authorization>,
 ) -> Response {
-    let source = source(&headers);
+    let source = p.source(&headers);
     if let Err(retry) = p.authorize_limit.check(&source) {
         return too_many(retry);
     }
@@ -579,7 +644,9 @@ mod tests {
                 }],
                 api_keys: vec![],
                 allowed_origins: vec![],
+                client_address_header: Some(ClientAddressHeader::XForwardedFor),
             }),
+            10_000,
             10_000,
         )
     }
@@ -999,8 +1066,8 @@ mod tests {
     #[tokio::test]
     async fn unauthenticated_oauth_endpoints_are_rate_limited() {
         let mut p = provider().await;
-        p.authorize_limit = Arc::new(RateLimit::per_minute(3));
-        p.register_limit = Arc::new(RateLimit::per_minute(2));
+        p.authorize_limit = Arc::new(RateLimit::new(3, 10_000));
+        p.register_limit = Arc::new(RateLimit::new(2, 10_000));
         let native = p.store.native_client().await.unwrap();
         for i in 0..3 {
             let q = sign_in(&native, NATIVE_REDIRECT, &format!("s{i}"));
@@ -1048,22 +1115,98 @@ mod tests {
     }
 
     #[test]
-    fn the_source_is_the_address_the_nearest_proxy_names() {
-        assert_eq!(source(&from("198.51.100.1")), "198.51.100.1");
+    fn the_source_is_the_address_the_configured_proxy_header_names() {
+        let forwarded = Some(ClientAddressHeader::XForwardedFor);
+        let cloudflare_only = Some(ClientAddressHeader::CfConnectingIp);
+        assert_eq!(source(&from("198.51.100.1"), forwarded), "198.51.100.1");
         let mut cloudflare = from("198.51.100.1");
         cloudflare.insert("cf-connecting-ip", HeaderValue::from_static("2001:db8::7"));
-        assert_eq!(source(&cloudflare), "2001:db8::7");
+        assert_eq!(source(&cloudflare, cloudflare_only), "2001:db8::7");
+        // Each setting reads only its own header.
+        assert_eq!(source(&cloudflare, forwarded), "198.51.100.1");
+        assert_eq!(
+            source(&from("198.51.100.1"), cloudflare_only),
+            UNKNOWN_SOURCE
+        );
         let mut garbage = HeaderMap::new();
         garbage.insert("x-forwarded-for", HeaderValue::from_static("not-an-ip"));
-        assert_eq!(source(&garbage), UNKNOWN_SOURCE);
-        assert_eq!(source(&HeaderMap::new()), UNKNOWN_SOURCE);
+        assert_eq!(source(&garbage, forwarded), UNKNOWN_SOURCE);
+        assert_eq!(source(&HeaderMap::new(), forwarded), UNKNOWN_SOURCE);
+    }
+
+    #[test]
+    fn without_a_configured_proxy_header_every_caller_shares_one_source() {
+        let mut spoofed = from("198.51.100.1");
+        spoofed.insert("cf-connecting-ip", HeaderValue::from_static("2001:db8::7"));
+        assert_eq!(source(&spoofed, None), UNKNOWN_SOURCE);
+    }
+
+    #[tokio::test]
+    async fn spoofed_addresses_still_meet_the_host_wide_limit() {
+        let mut p = provider().await;
+        p.authorize_limit = Arc::new(RateLimit::new(3, 10));
+        let native = p.store.native_client().await.unwrap();
+        let q = sign_in(&native, NATIVE_REDIRECT, "real-user");
+        assert_eq!(
+            authorize(State(p.clone()), from("198.51.100.2"), Query(q))
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        let mut refused = 0;
+        for i in 0..(MAX_PENDING + 20) {
+            // Every call claims a new address.
+            let address = format!("2001:db8::{i:x}");
+            let q = sign_in(&native, NATIVE_REDIRECT, &format!("flood-{i}"));
+            let response = authorize(State(p.clone()), from(&address), Query(q)).await;
+            if response.status() == StatusCode::TOO_MANY_REQUESTS {
+                assert!(response.headers().contains_key("retry-after"));
+                refused += 1;
+            }
+        }
+        assert_eq!(
+            refused,
+            MAX_PENDING + 20 - 9,
+            "the host-wide limit let calls through"
+        );
+        let kept: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM remote_oauth_requests WHERE state='real-user' AND status='pending'",
+        )
+        .fetch_one(&p.store.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            kept, 1,
+            "a flood of spoofed addresses evicted a waiting sign-in"
+        );
+    }
+
+    #[test]
+    fn a_full_address_table_counts_new_addresses_in_one_shared_window() {
+        let limit = RateLimit::new(3, u32::MAX);
+        for i in 0..MAX_RATE_SOURCES {
+            assert!(limit.check(&format!("source-{i}")).is_ok());
+        }
+        for _ in 0..3 {
+            assert!(limit.check("late-a").is_ok());
+        }
+        assert!(
+            limit.check("late-a").is_err(),
+            "a late address went uncounted"
+        );
+        assert!(
+            limit.check("late-b").is_err(),
+            "late addresses do not share one window"
+        );
+        // An address already tracked keeps its own window.
+        assert!(limit.check("source-0").is_ok());
     }
 
     #[tokio::test]
     async fn a_flood_from_one_source_does_not_refuse_another_source() {
         let mut p = provider().await;
-        p.authorize_limit = Arc::new(RateLimit::per_minute(3));
-        p.register_limit = Arc::new(RateLimit::per_minute(2));
+        p.authorize_limit = Arc::new(RateLimit::new(3, 10_000));
+        p.register_limit = Arc::new(RateLimit::new(2, 10_000));
         let native = p.store.native_client().await.unwrap();
         let (flood, user) = ("198.51.100.1", "198.51.100.2");
         for i in 0..4 {

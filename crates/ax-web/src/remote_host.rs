@@ -243,6 +243,7 @@ pub(crate) async fn setup(
             }],
             api_keys: vec![],
             allowed_origins: vec![],
+            client_address_header: None,
         }
     };
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))

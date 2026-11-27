@@ -87,6 +87,7 @@ pub fn remote_config(projects: Vec<Project>, api_keys: Vec<ApiKey>) -> RemoteCon
         projects,
         api_keys,
         allowed_origins: vec![],
+        client_address_header: None,
     }
 }
 

@@ -14,6 +14,23 @@ pub struct RemoteConfig {
     pub api_keys: Vec<ApiKey>,
     #[serde(default)]
     pub allowed_origins: Vec<String>,
+    /// The header the proxy in front of Ax sets to the caller's address. Only
+    /// with this set are the unauthenticated OAuth limits shared out per
+    /// address; without it every caller shares one budget, since a caller can
+    /// set either header itself when no proxy overwrites it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_address_header: Option<ClientAddressHeader>,
+}
+
+/// A request header that names the caller's address, set by a trusted proxy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub enum ClientAddressHeader {
+    /// Cloudflare's `CF-Connecting-IP`, which Cloudflare always overwrites.
+    #[serde(rename = "cf-connecting-ip")]
+    CfConnectingIp,
+    /// The last `X-Forwarded-For` entry, which the nearest proxy appends.
+    #[serde(rename = "x-forwarded-for")]
+    XForwardedFor,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -235,5 +252,34 @@ mod tests {
             serde_json::json!({"issuer":"https://id.example/","jwks_uri":"https://id.example/jwks","clock_skew_seconds":MAX_CLOCK_SKEW_SECONDS + 1}),
         );
         assert!(loose.validate().is_err());
+    }
+
+    #[test]
+    fn the_client_address_header_is_named_explicitly_or_left_out() {
+        let config = |extra: serde_json::Value| -> Result<RemoteConfig, serde_json::Error> {
+            let mut value = serde_json::json!({"public_url":"https://ax.example.com","oauth":{"issuer":"https://id.example/","jwks_uri":"https://id.example/jwks"},"projects":[]});
+            for (name, v) in extra.as_object().unwrap() {
+                value[name] = v.clone();
+            }
+            serde_json::from_value(value)
+        };
+        let plain = config(serde_json::json!({})).unwrap();
+        assert_eq!(plain.client_address_header, None);
+        assert!(!serde_json::to_string(&plain)
+            .unwrap()
+            .contains("client_address_header"));
+        assert_eq!(
+            config(serde_json::json!({"client_address_header":"cf-connecting-ip"}))
+                .unwrap()
+                .client_address_header,
+            Some(ClientAddressHeader::CfConnectingIp)
+        );
+        assert_eq!(
+            config(serde_json::json!({"client_address_header":"x-forwarded-for"}))
+                .unwrap()
+                .client_address_header,
+            Some(ClientAddressHeader::XForwardedFor)
+        );
+        assert!(config(serde_json::json!({"client_address_header":"x-real-ip"})).is_err());
     }
 }

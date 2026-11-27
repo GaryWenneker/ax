@@ -115,6 +115,7 @@ impl Upstream {
                 key("beta", BETA_KEY, "beta", false),
             ],
             allowed_origins: vec![],
+            client_address_header: None,
         };
         config.validate().unwrap();
         let config = Arc::new(config);

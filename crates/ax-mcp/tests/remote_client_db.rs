@@ -32,6 +32,7 @@ fn config(root: &Path, subject: &str) -> Arc<RemoteConfig> {
         }],
         api_keys: vec![],
         allowed_origins: vec![],
+        client_address_header: None,
     })
 }
 

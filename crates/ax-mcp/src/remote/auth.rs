@@ -494,6 +494,7 @@ mod key_refresh {
             projects: vec![],
             api_keys: vec![],
             allowed_origins: vec![],
+            client_address_header: None,
         });
         let verifier = TokenVerifier::with_keys(
             config,

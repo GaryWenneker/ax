@@ -53,6 +53,7 @@ fn setup_with_jwks(jwks_uri: &str) -> (tempfile::TempDir, RemoteState, Router) {
             .map(key)
             .collect(),
         allowed_origins: vec![],
+        client_address_header: None,
     });
     let verifier = TokenVerifier::with_keys(
         config.clone(),

@@ -33,6 +33,7 @@ async fn an_invalid_host_control_credential_fails_before_any_lease_or_socket_exi
         }],
         api_keys: vec![],
         allowed_origins: vec![],
+        client_address_header: None,
     };
     let socket = dir.path().join("remote.sock");
     let error = serve_on(
