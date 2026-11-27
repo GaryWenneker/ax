@@ -2,6 +2,30 @@ import type { GateStep, LastRunLog } from './shipApi';
 
 const VISIBLE_STEPS = new Set(['index', 'tia', 'tests', 'policy']);
 
+/**
+ * The run-log lines ax-ship's RunLogger writes (crates/ax-ship/src/run_log.rs)
+ * and the pipeline prints (crates/ax-ship/src/pipeline.rs). The UI reads the
+ * pipeline state from these lines, so keep them in step with the writers.
+ */
+export const RUN_LOG_PATTERNS = {
+  /** `▶ sonar:<key> — <repo> (<i>/<n>)` */
+  sonarStart: /▶ sonar:([\w.-]+) — (.+?) \(\d+\/\d+\)/,
+  /** `✓ sonar:<key> — <repo>` */
+  sonarOk: /✓ sonar:([\w.-]+) — (.+)/,
+  /** `✕ sonar:<key> — <repo>: <detail>`; the `: <detail>` part is optional. */
+  sonarFail: /✕ sonar:([\w.-]+) — (.+?)(?::.*)?$/,
+  /** `– sonar:<key> — <repo> — skipped (<reason>)` */
+  sonarSkip: /– sonar:([\w.-]+) — (.+?) — skipped \((.+)\)/,
+  sonarPreparing: /Preparing SonarQube|Ensuring SonarQube projects/,
+  sonarScan: /SonarQube scan —|Full SonarQube scan —/,
+  /** `▶ <step>` */
+  stepStart: /▶ (\w+)/,
+  /** `✓ <step>` with an optional ` — <detail>` */
+  stepOk: /✓ (\w+)(?: — (.+))?/,
+  /** `✕ <step>` with an optional ` — <detail>` */
+  stepFail: /✕ (\w+)(?: — (.+))?/,
+} as const;
+
 export type SonarProjectStatus = 'pending' | 'active' | 'passed' | 'failed' | 'skipped';
 
 export interface SonarProjectStep {
@@ -32,7 +56,7 @@ export function parsePipelineFromLog(log: LastRunLog | null | undefined): {
   }
 
   for (const line of log.lines) {
-    const sonarStart = line.match(/▶ sonar:([\w.-]+) — (.+?) \(\d+\/\d+\)/);
+    const sonarStart = line.match(RUN_LOG_PATTERNS.sonarStart);
     if (sonarStart) {
       liveStep = 'sonar';
       sonarPhase = 'scanning';
@@ -45,7 +69,7 @@ export function parsePipelineFromLog(log: LastRunLog | null | undefined): {
       continue;
     }
 
-    const sonarOk = line.match(/✓ sonar:([\w.-]+) — (.+)/);
+    const sonarOk = line.match(RUN_LOG_PATTERNS.sonarOk);
     if (sonarOk) {
       sonarProjects.set(sonarOk[1], {
         key: sonarOk[1],
@@ -56,7 +80,7 @@ export function parsePipelineFromLog(log: LastRunLog | null | undefined): {
       continue;
     }
 
-    const sonarFail = line.match(/✕ sonar:([\w.-]+) — (.+?):/);
+    const sonarFail = line.match(RUN_LOG_PATTERNS.sonarFail);
     if (sonarFail) {
       sonarProjects.set(sonarFail[1], {
         key: sonarFail[1],
@@ -67,7 +91,7 @@ export function parsePipelineFromLog(log: LastRunLog | null | undefined): {
       continue;
     }
 
-    const sonarSkip = line.match(/– sonar:([\w.-]+) — (.+?) — skipped \((.+)\)/);
+    const sonarSkip = line.match(RUN_LOG_PATTERNS.sonarSkip);
     if (sonarSkip) {
       sonarProjects.set(sonarSkip[1], {
         key: sonarSkip[1],
@@ -78,13 +102,13 @@ export function parsePipelineFromLog(log: LastRunLog | null | undefined): {
       continue;
     }
 
-    if (/Preparing SonarQube|Ensuring SonarQube projects/.test(line)) {
+    if (RUN_LOG_PATTERNS.sonarPreparing.test(line)) {
       liveStep = 'sonar';
       sonarPhase = 'preparing';
       continue;
     }
 
-    if (/SonarQube scan —|Full SonarQube scan —/.test(line)) {
+    if (RUN_LOG_PATTERNS.sonarScan.test(line)) {
       liveStep = 'sonar';
       if (!sonarProjects.size) {
         sonarPhase = 'scanning';
@@ -92,14 +116,14 @@ export function parsePipelineFromLog(log: LastRunLog | null | undefined): {
       continue;
     }
 
-    const startMatch = line.match(/▶ (\w+)/);
+    const startMatch = line.match(RUN_LOG_PATTERNS.stepStart);
     if (startMatch && VISIBLE_STEPS.has(startMatch[1])) {
       liveStep = startMatch[1];
-      if (startMatch[1] !== 'sonar') liveSonarKey = null;
+      liveSonarKey = null;
       continue;
     }
 
-    const okMatch = line.match(/✓ (\w+)(?: — (.+))?/);
+    const okMatch = line.match(RUN_LOG_PATTERNS.stepOk);
     if (okMatch && VISIBLE_STEPS.has(okMatch[1])) {
       const step = okMatch[1];
       const detail = okMatch[2];
@@ -108,16 +132,16 @@ export function parsePipelineFromLog(log: LastRunLog | null | undefined): {
         lower.includes('disabled') || lower.includes('skipped') ? 'skipped' : 'passed';
       liveSteps.set(step, { step, status, detail });
       if (liveStep === step) liveStep = null;
-      if (step !== 'sonar') liveSonarKey = null;
+      liveSonarKey = null;
       continue;
     }
 
-    const failMatch = line.match(/✕ (\w+)(?: — (.+))?/);
+    const failMatch = line.match(RUN_LOG_PATTERNS.stepFail);
     if (failMatch && VISIBLE_STEPS.has(failMatch[1])) {
       const step = failMatch[1];
       liveSteps.set(step, { step, status: 'failed', detail: failMatch[2] });
       if (liveStep === step) liveStep = null;
-      if (step !== 'sonar') liveSonarKey = null;
+      liveSonarKey = null;
     }
   }
 

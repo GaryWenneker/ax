@@ -1,3 +1,5 @@
+import { RUN_LOG_PATTERNS } from './pipelineState.ts';
+
 /**
  * Normalize a leading unix timestamp in a log line to local date/time.
  * A value above 1e12 is milliseconds, a smaller one seconds; a stamp that
@@ -36,9 +38,9 @@ export function liveActivityLabel(
   if (!lines?.length) return null;
   for (let i = lines.length - 1; i >= 0; i--) {
     const formatted = formatLogLine(lines[i]);
-    const sonar = formatted.match(/▶ sonar:[\w.-]+ — (.+?) \(\d+\/\d+\)/);
-    if (sonar) return `Sonar · ${sonar[1]}`;
-    const step = formatted.match(/▶ (\w+)/);
+    const sonar = formatted.match(RUN_LOG_PATTERNS.sonarStart);
+    if (sonar) return `Sonar · ${sonar[2]}`;
+    const step = formatted.match(RUN_LOG_PATTERNS.stepStart);
     if (step) return step[1];
   }
   return null;

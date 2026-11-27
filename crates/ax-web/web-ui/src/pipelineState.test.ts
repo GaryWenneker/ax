@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import {
   applySonarProjectEvent,
@@ -6,6 +7,7 @@ import {
   mergePipelineFromLog,
   parsePipelineFromLog,
   resolveSonarProjectCardStatus,
+  RUN_LOG_PATTERNS,
   seedSonarProjects,
 } from './pipelineState.ts';
 
@@ -66,6 +68,24 @@ test('sonar preparation, per-project scans and outcomes', () => {
   ]);
 });
 
+test('a failed sonar project is recorded with or without a detail after the name', () => {
+  for (const failLine of [
+    '✕ sonar:org.api — api: scanner exited with 1',
+    '✕ sonar:org.api — api:',
+    '✕ sonar:org.api — api',
+  ]) {
+    const parsed = parsePipelineFromLog({ ...RUNNING, lines: [at('▶ sonar:org.api — api (1/2)'), at(failLine)] });
+    assert.deepEqual(parsed.sonarProjects.get('org.api'), { key: 'org.api', name: 'api', status: 'failed' }, failLine);
+    assert.equal(parsed.liveSonarKey, null, failLine);
+  }
+});
+
+test('a later visible step clears the live sonar project', () => {
+  const parsed = parsePipelineFromLog({ ...RUNNING, lines: [at('▶ sonar:org.api — api (1/1)'), at('▶ policy')] });
+  assert.equal(parsed.liveStep, 'policy');
+  assert.equal(parsed.liveSonarKey, null);
+});
+
 test('while SonarQube is being prepared the phase is preparing', () => {
   const parsed = parsePipelineFromLog({ ...RUNNING, lines: [at('▶ index'), at('✓ index'), at('Preparing SonarQube — 1 git repository (projects + token)')] });
   assert.equal(parsed.liveStep, 'sonar');
@@ -106,4 +126,39 @@ test('resolveSonarProjectCardStatus', () => {
   assert.equal(resolveSonarProjectCardStatus(true, { key: 'a', name: 'A', status: 'pending' }, { ...opts, evalActive: false }).label, 'Ready');
   assert.equal(resolveSonarProjectCardStatus(false, undefined, opts).label, 'Missing');
   assert.equal(resolveSonarProjectCardStatus(true, { key: 'a', name: 'A', status: 'passed' }, opts).variant, 'ok');
+});
+
+test('the run-log patterns match the lines the Rust writers format', () => {
+  const runLog = readFileSync(new URL('../../../ax-ship/src/run_log.rs', import.meta.url), 'utf8');
+  const pipeline = readFileSync(new URL('../../../ax-ship/src/pipeline.rs', import.meta.url), 'utf8');
+  const values: Record<string, string> = {
+    project_key: 'org.ax-web',
+    repo_name: 'ax-web',
+    index: '1',
+    total: '2',
+    detail: 'scanner exited with 1',
+    reason: 'no sources',
+    step: 'index',
+    d: '12 files',
+  };
+  const render = (template: string) =>
+    template.replace(/\{(\w*)\}/g, (_, name: string) => (name ? values[name] ?? name : '3'));
+  const templates = [...runLog.matchAll(/format!\(\s*"([^"]+)"/g), ...pipeline.matchAll(/format!\(\s*"([^"]*SonarQube[^"]*)"/g)].map(
+    (m) => render(m[1]),
+  );
+  const find = (prefix: string) => {
+    const line = templates.find((t) => t.startsWith(prefix));
+    assert.ok(line, `no Rust log line starts with ${prefix}`);
+    return line;
+  };
+  assert.deepEqual(find('▶ sonar:').match(RUN_LOG_PATTERNS.sonarStart)?.slice(1, 3), ['org.ax-web', 'ax-web']);
+  assert.deepEqual(find('✓ sonar:').match(RUN_LOG_PATTERNS.sonarOk)?.slice(1, 3), ['org.ax-web', 'ax-web']);
+  assert.deepEqual(find('✕ sonar:').match(RUN_LOG_PATTERNS.sonarFail)?.slice(1, 3), ['org.ax-web', 'ax-web']);
+  assert.deepEqual(find('– sonar:').match(RUN_LOG_PATTERNS.sonarSkip)?.slice(1, 3), ['org.ax-web', 'ax-web']);
+  assert.match(find('Preparing SonarQube'), RUN_LOG_PATTERNS.sonarPreparing);
+  assert.match(find('SonarQube scan'), RUN_LOG_PATTERNS.sonarScan);
+  assert.match(find('Full SonarQube scan'), RUN_LOG_PATTERNS.sonarScan);
+  assert.equal(find('▶ index').match(RUN_LOG_PATTERNS.stepStart)?.[1], 'index');
+  assert.deepEqual(find('✓ index — ').match(RUN_LOG_PATTERNS.stepOk)?.slice(1, 3), ['index', '12 files']);
+  assert.deepEqual(find('✕ index — ').match(RUN_LOG_PATTERNS.stepFail)?.slice(1, 3), ['index', 'scanner exited with 1']);
 });
