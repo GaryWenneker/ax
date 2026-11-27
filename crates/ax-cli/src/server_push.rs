@@ -303,21 +303,30 @@ impl ChangeDetector {
     }
 }
 
-/// The primary listens for registrations on the same address as its HTTP
-/// listener, so a loopback-only node never opens UDP on other interfaces.
-async fn bind_primary_socket(http_ip: IpAddr, udp_port: u16) -> Result<UdpSocket, String> {
-    UdpSocket::bind((http_ip, udp_port))
+/// The UDP address the primary listens on: the same IP as its HTTP listener,
+/// so a loopback-only node never opens UDP on other interfaces.
+pub(crate) fn push_listen_addr(http_bind: SocketAddr, udp_port: u16) -> SocketAddr {
+    SocketAddr::new(http_bind.ip(), udp_port)
+}
+
+async fn bind_primary_socket(http_bind: SocketAddr, udp_port: u16) -> Result<UdpSocket, String> {
+    UdpSocket::bind(push_listen_addr(http_bind, udp_port))
         .await
         .map_err(|e| format!("cannot bind UDP push listener: {e}"))
 }
 
 /// Primary: register only authenticated replicas. Never trust a discovered
 /// primary or a claimed IP in packet JSON: use the UDP socket source address.
-pub async fn primary(config: ServerConfig, http_ip: IpAddr, udp_port: u16) -> Result<(), String> {
+/// `http_bind` is the HTTP listener's address; UDP binds the same IP.
+pub async fn primary(
+    config: ServerConfig,
+    http_bind: SocketAddr,
+    udp_port: u16,
+) -> Result<(), String> {
     if config.role != NodeRole::Primary {
         return Err("UDP primary registration requires a primary node".into());
     }
-    let socket = Arc::new(bind_primary_socket(http_ip, udp_port).await?);
+    let socket = Arc::new(bind_primary_socket(http_bind, udp_port).await?);
     let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
     let access_db_path = ax_global_db::global_db_path().map_err(|e| e.to_string())?;
     let access_db = ax_global_db::open_and_init(&access_db_path)
@@ -604,13 +613,23 @@ mod tests {
 
     #[tokio::test]
     async fn primary_listens_on_the_http_bind_address_only() {
-        let socket = bind_primary_socket(IpAddr::from([127, 0, 0, 1]), 0)
-            .await
-            .unwrap();
+        let loopback: SocketAddr = "127.0.0.1:8443".parse().unwrap();
         assert_eq!(
-            socket.local_addr().unwrap().ip(),
-            IpAddr::from([127, 0, 0, 1])
+            push_listen_addr(loopback, 9443),
+            "127.0.0.1:9443".parse::<SocketAddr>().unwrap()
         );
+        let loopback_v6: SocketAddr = "[::1]:8443".parse().unwrap();
+        assert_eq!(
+            push_listen_addr(loopback_v6, 9443),
+            "[::1]:9443".parse::<SocketAddr>().unwrap()
+        );
+        let lan: SocketAddr = "192.168.1.20:8443".parse().unwrap();
+        assert_eq!(push_listen_addr(lan, 9443).ip(), lan.ip());
+        // The socket the primary opens is bound to the HTTP IP, not a wildcard.
+        let socket = bind_primary_socket(loopback, 0).await.unwrap();
+        let local = socket.local_addr().unwrap();
+        assert!(local.ip().is_loopback(), "bound to {local}");
+        assert_eq!(local.ip(), loopback.ip());
     }
 
     #[test]
