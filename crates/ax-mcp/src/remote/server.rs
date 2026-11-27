@@ -22,6 +22,12 @@ use tokio::sync::{Mutex, Semaphore};
 
 const SESSION_TTL: Duration = Duration::from_secs(1800);
 const MAX_SESSIONS: usize = 128;
+/// Sessions one principal may hold; a new one replaces that principal's oldest.
+const MAX_SESSIONS_PER_PRINCIPAL: usize = 8;
+/// Requests served at once, across all principals.
+const MAX_REQUESTS: usize = 16;
+/// Requests one principal may have in flight, so it cannot use up the shared slots.
+const MAX_REQUESTS_PER_PRINCIPAL: usize = 4;
 const MAX_HANDLES: usize = 4096;
 const VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26"];
 const CONTEXT_TOOLS: &[&str] = &[
@@ -98,6 +104,8 @@ pub struct RemoteState {
     verifier: TokenVerifier,
     sessions: Arc<Mutex<HashMap<String, Session>>>,
     concurrency: Arc<Semaphore>,
+    /// Per principal id: its share of the request slots.
+    principal_slots: Arc<std::sync::Mutex<HashMap<String, Arc<Semaphore>>>>,
     /// Per project: tool calls share this lock, an index-changing admin call
     /// takes it alone. Sessions of one process would otherwise wait on each
     /// other's database and file locks until those time out (a read may sync
@@ -110,6 +118,9 @@ pub struct RemoteState {
     admin_running: Arc<tokio::sync::RwLock<()>>,
     control: Option<String>,
     shutdown: Option<tokio::sync::watch::Sender<bool>>,
+    /// The global database that holds `axc_` client tokens, opened on first use
+    /// and then shared, so a request never opens a pool or runs schema setup.
+    client_db: Arc<tokio::sync::OnceCell<sqlx::SqlitePool>>,
 }
 
 impl RemoteState {
@@ -118,14 +129,51 @@ impl RemoteState {
             config,
             verifier,
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            concurrency: Arc::new(Semaphore::new(16)),
+            concurrency: Arc::new(Semaphore::new(MAX_REQUESTS)),
+            principal_slots: Arc::default(),
             mutations: Arc::new(Mutex::new(HashMap::new())),
             admin_slots: Arc::new(Semaphore::new(ADMIN_MUTATION_SLOTS)),
             admin_timeout: ADMIN_TOOL_TIMEOUT,
             admin_running: Arc::new(tokio::sync::RwLock::new(())),
             control: None,
             shutdown: None,
+            client_db: Arc::new(tokio::sync::OnceCell::new()),
         }
+    }
+
+    /// Uses `pool` (the global database) to authenticate `axc_` client tokens.
+    pub fn with_client_db(self, pool: sqlx::SqlitePool) -> Self {
+        Self {
+            client_db: Arc::new(tokio::sync::OnceCell::new_with(Some(pool))),
+            ..self
+        }
+    }
+
+    /// The request slots of one principal.
+    fn principal_slots(&self, principal: &str) -> Arc<Semaphore> {
+        let mut slots = self
+            .principal_slots
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if slots.len() >= 1024 {
+            // Forget principals with no request in flight.
+            slots.retain(|_, slot| Arc::strong_count(slot) > 1);
+        }
+        slots
+            .entry(principal.to_owned())
+            .or_insert_with(|| Arc::new(Semaphore::new(MAX_REQUESTS_PER_PRINCIPAL)))
+            .clone()
+    }
+
+    async fn client_db(&self) -> Result<&sqlx::SqlitePool, String> {
+        self.client_db
+            .get_or_try_init(|| async {
+                let path = ax_global_db::global_db_path().map_err(|e| e.to_string())?;
+                ax_global_db::open_and_init(&path)
+                    .await
+                    .map_err(|e| e.to_string())
+            })
+            .await
     }
 
     /// Takes a project's lock alone, as an index run does, until the guard is
@@ -292,20 +340,14 @@ async fn authorize(
     let token = bearer_token(headers)
         .ok_or_else(|| Box::new(challenge(state, StatusCode::UNAUTHORIZED, CONTEXT_SCOPE)))?;
     let client = if token.starts_with("axc_") {
-        let db_path = ax_global_db::global_db_path().map_err(|_| {
-            Box::new(error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Access database unavailable",
-            ))
-        })?;
-        let db = ax_global_db::open_and_init(&db_path).await.map_err(|_| {
+        let db = state.client_db().await.map_err(|_| {
             Box::new(error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Access database unavailable",
             ))
         })?;
         Some(
-            ax_global_db::access::authenticate_client_token(&db, token)
+            ax_global_db::access::authenticate_client_token(db, token)
                 .await
                 .ok()
                 .flatten()
@@ -351,6 +393,25 @@ async fn authorize(
         )));
     }
     Ok((principal, project, client))
+}
+
+/// Drops expired sessions and makes room for one more session of `principal`:
+/// at its cap, its least recently used session is closed. False when the server
+/// has no room left for it.
+fn session_room(sessions: &mut HashMap<String, Session>, principal: &str) -> bool {
+    sessions.retain(|_, s| s.last_seen.elapsed() < SESSION_TTL);
+    let mut own: Vec<(Instant, String)> = sessions
+        .iter()
+        .filter(|(_, s)| s.principal == principal)
+        .map(|(id, s)| (s.last_seen, id.clone()))
+        .collect();
+    if own.len() >= MAX_SESSIONS_PER_PRINCIPAL {
+        own.sort();
+        for (_, id) in own.iter().take(own.len() + 1 - MAX_SESSIONS_PER_PRINCIPAL) {
+            sessions.remove(id);
+        }
+    }
+    sessions.len() < MAX_SESSIONS
 }
 
 pub fn tool_permitted(name: &str, args: &Value, write: bool) -> bool {
@@ -445,13 +506,20 @@ async fn post(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    // Taken before authentication, so database work for any caller is bounded too.
+    let permit = match state.concurrency.clone().try_acquire_owned() {
+        Ok(p) => p,
+        Err(_) => return error(StatusCode::TOO_MANY_REQUESTS, "Server is busy"),
+    };
     let (principal, project, client) = match authorize(&state, &headers, &project_id).await {
         Ok(v) => v,
         Err(e) => return *e,
     };
-    let permit = match state.concurrency.clone().try_acquire_owned() {
-        Ok(p) => p,
-        Err(_) => return error(StatusCode::TOO_MANY_REQUESTS, "Server is busy"),
+    let Ok(principal_permit) = state.principal_slots(&principal.id).try_acquire_owned() else {
+        return error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many requests in flight for this connection",
+        );
     };
     if headers
         .get("content-type")
@@ -498,6 +566,12 @@ async fn post(
             .filter(|v| VERSIONS.contains(v))
             .unwrap_or(VERSIONS[0])
             .to_string();
+        if !session_room(&mut *state.sessions.lock().await, &principal.id) {
+            return error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many active MCP sessions",
+            );
+        }
         let mut engine = McpEngine::for_remote(project.root.clone());
         let outcome = handle_request(&mut engine, "initialize", params).await;
         let mut result = match outcome.result {
@@ -508,8 +582,7 @@ async fn post(
         result["instructions"] = json!(format!("{}\nRemote project: {}. This server permits context tools and explicitly granted memory/policy writes only. Index, sync, ship, LSP and shell-running operations are unavailable remotely. Use the session returned by preflight; a new preflight without it starts a new chat.", result["instructions"].as_str().unwrap_or(""), project.id));
         let session_id = uuid::Uuid::new_v4().to_string();
         let mut sessions = state.sessions.lock().await;
-        sessions.retain(|_, s| s.last_seen.elapsed() < SESSION_TTL);
-        if sessions.len() >= MAX_SESSIONS {
+        if !session_room(&mut sessions, &principal.id) {
             return error(
                 StatusCode::TOO_MANY_REQUESTS,
                 "Too many active MCP sessions",
@@ -586,10 +659,22 @@ async fn post(
     let mut timeout = TOOL_TIMEOUT;
     let mut mutation = None;
     let mut shared = None;
-    let mut engine = match tokio::time::timeout(Duration::from_secs(30), engine.lock_owned()).await
-    {
-        Ok(e) => e,
-        Err(_) => return error(StatusCode::TOO_MANY_REQUESTS, "Connection is busy"),
+    let (mut engine, permit) = match engine.clone().try_lock_owned() {
+        Ok(guard) => (guard, permit),
+        Err(_) => {
+            // Waiting for this connection's own busy session must not hold a
+            // server-wide request slot that other connections need.
+            drop(permit);
+            let guard =
+                match tokio::time::timeout(Duration::from_secs(30), engine.lock_owned()).await {
+                    Ok(guard) => guard,
+                    Err(_) => return error(StatusCode::TOO_MANY_REQUESTS, "Connection is busy"),
+                };
+            let Ok(permit) = state.concurrency.clone().try_acquire_owned() else {
+                return error(StatusCode::TOO_MANY_REQUESTS, "Server is busy");
+            };
+            (guard, permit)
+        }
     };
     if request.method == "tools/call" {
         if engine.chats.len() >= MAX_HANDLES || engine.caches.len() >= MAX_HANDLES {
@@ -771,7 +856,7 @@ async fn post(
         // until it is done.
         let running = state.admin_running.clone().read_owned().await;
         let mut task = tokio::spawn(async move {
-            let _held = (permit, slot, running);
+            let _held = (permit, principal_permit, slot, running);
             let _exclusive = lock.write_owned().await;
             let outcome = handle_request(&mut engine.engine, &method, params).await;
             (outcome, engine)
@@ -814,7 +899,7 @@ async fn post(
             }
         }
     } else {
-        let _permit = permit;
+        let _permit = (permit, principal_permit);
         // A running index has the project to itself. Wait a moment for it,
         // then say so instead of holding a request slot for minutes.
         let _shared = match shared {
@@ -1075,7 +1160,7 @@ pub async fn serve_on(
         json!({"port":addr.port(),"local_url":format!("http://{addr}"),"public_url":config.public_url,"socket":socket,"projects":config.projects.iter().map(|p| json!({"id":p.id,"url":format!("{}/projects/{}/mcp",config.public_url,p.id)})).collect::<Vec<_>>() })
     );
     let (shutdown, mut receiver) = tokio::sync::watch::channel(false);
-    let mut state = RemoteState::new(config, verifier);
+    let mut state = RemoteState::new(config, verifier).with_client_db(catalogue.clone());
     let admin_running = state.admin_running.clone();
     if let Ok(control) = std::env::var("AX_REMOTE_HOST_CONTROL") {
         if control.len() < 32

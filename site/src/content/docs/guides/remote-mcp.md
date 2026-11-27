@@ -310,7 +310,7 @@ ChatGPT's documented MCP authentication flow uses Authorization Code + PKCE. It 
 
 The remote server exposes graph/context retrieval, preflight, rules/skills, scoped conversation context and memory retrieval. `ax_remember` and policy-capture save need both `ax:write` and an explicit write grant. A remote policy save writes only `.agents/rules/<id>.mdc` in the selected project: the rule id must be kebab-case, the scope must be `project`, and frontmatter that picks a location or a storage (`source`, `storage`, `rootId`) or that the rule schema does not know is refused with HTTP 403. Index, sync, policy reload, the file list, usage reports and the call log need the [admin grant](#admin-access). LSP, ship, global sharing and shell-running tools are unavailable remotely. Listing a smaller catalog does not authorize hidden tool calls: direct calls use the same permission checks. Protected tools advertise OAuth security schemes, and denied write calls return the MCP authentication challenge used by ChatGPT.
 
-Each transport session is bound to the authenticated principal and selected project. Project A's session cannot be used on project B or by another principal. Sessions are capped and expire after 30 minutes of inactivity.
+Each transport session is bound to the authenticated principal and selected project. Project A's session cannot be used on project B or by another principal. Sessions expire after 30 minutes of inactivity. One principal (an API key, a client token or a signed-in user) holds at most 8 sessions; a new one closes that principal's least recently used session. The server holds 128 sessions in all. It serves 16 requests at once, and one principal may have at most 4 of them in flight; a call that waits for its own busy session does not hold one of the 16 while it waits. `axc_` client tokens are checked against the global database the server opened at startup.
 
 Remote chat IDs are issued by the server. Pass the `session` from preflight on subsequent calls. Omit it for a new chat. Foreign chat IDs are rejected; local Cursor hooks are never used to identify a remote conversation. Keep the returned context hash only while the model still holds its snapshot.
 
@@ -355,7 +355,7 @@ Run native browser login on the laptop that will use the connection: its callbac
 | 403 | Account/project/scope, Origin or chat ownership denied. Inspect the explicit grant and requested scope. |
 | 404 for session | Unknown/expired transport session. Reconnect; do not reuse a session from another project. |
 | 400 protocol mismatch | Send the version negotiated by initialize with subsequent requests. |
-| 429 | Session/concurrency limit reached. Close unused sessions or retry after active requests finish. |
+| 429 | Session or request limit reached: the server is busy, or this principal already has 4 requests in flight. Retry after active requests finish. |
 | Credential store unavailable | Unlock/configure the OS credential store. Ax does not write plaintext credentials as a workaround. |
 | Tunnel cannot reach Ax after restart | Update a TCP upstream to the emitted actual port, or use the stable Unix socket option on macOS/Linux. |
 | OAuth works but connection fails | Check Ax's subject/project grant and that the access token targets the configured Ax resource. |
