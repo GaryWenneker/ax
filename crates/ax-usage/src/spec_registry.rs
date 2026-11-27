@@ -106,6 +106,7 @@ pub async fn capture_finished_plan(
     if !finished || body.trim().is_empty() {
         return Ok(None);
     }
+    let body = stored_body(body);
     if source == "turn" && !is_plan_request(prompt) {
         return Ok(None);
     }
@@ -348,19 +349,18 @@ pub async fn sync_markdown(
     let Ok(text) = std::fs::read_to_string(&path) else {
         return Ok(None);
     };
-    let file_hash = hash_text(text.trim_end_matches('\n'));
-    if file_hash == approved.content_hash {
+    let file_body = stored_body(&text);
+    let file_hash = hash_text(file_body);
+    // Older rows kept the trailing newline in the body; compare without it.
+    if file_hash == approved.content_hash || file_body == stored_body(&approved.body) {
         return Ok(None);
     }
-    if latest_with_body(pool, spec_id, text.trim_end_matches('\n'))
-        .await?
-        .is_none()
-    {
+    if latest_with_body(pool, spec_id, file_body).await?.is_none() {
         insert_revision(
             pool,
             spec_id,
             "draft",
-            text.trim_end_matches('\n'),
+            file_body,
             "file",
             "",
             "",
@@ -552,7 +552,7 @@ async fn latest_with_body(
     spec_id: &str,
     body: &str,
 ) -> Result<Option<i64>, String> {
-    let hash = hash_text(body);
+    let hash = hash_text(stored_body(body));
     sqlx::query_scalar(
         "SELECT version FROM spec_revisions WHERE spec_id = ?1 AND content_hash = ?2
          ORDER BY version DESC LIMIT 1",
@@ -575,6 +575,7 @@ async fn insert_revision(
     turn_id: &str,
     based_on: Option<i64>,
 ) -> Result<SpecRevision, String> {
+    let body = stored_body(body);
     let version: i64 = sqlx::query_scalar(
         "SELECT COALESCE(MAX(version), 0) + 1 FROM spec_revisions WHERE spec_id = ?1",
     )
@@ -1429,6 +1430,12 @@ fn first_line(body: &str) -> String {
         .collect()
 }
 
+/// A revision body as stored and hashed: without trailing line breaks. The
+/// Markdown copy adds one newline back, and a file read compares the same way.
+fn stored_body(body: &str) -> &str {
+    body.trim_end_matches(['\n', '\r'])
+}
+
 fn hash_text(text: &str) -> String {
     hash_bytes(text.as_bytes())
 }
@@ -1772,6 +1779,52 @@ pub(crate) mod tests {
         assert!(context.contains("delivery: conflict"));
         assert!(context.contains(&format!("approvedHash: {}", hashes.0)));
         assert!(context.contains(&format!("fileHash: {}", hashes.1)));
+    }
+
+    #[tokio::test]
+    async fn an_approved_body_ending_in_a_newline_is_not_a_conflict() {
+        let _lock = HOME_LOCK.lock().await;
+        let _home = IsolatedHome::new();
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        let plans = dir.path().join("docs/plans");
+        std::fs::create_dir_all(&plans).unwrap();
+        std::fs::write(plans.join("x.md"), "# X\n\nKeep the file plan.\n").unwrap();
+        on_turn_finished(
+            pool,
+            dir.path(),
+            "ax",
+            "s",
+            "t1",
+            "edit the plan",
+            "done",
+            &["docs/plans/x.md".to_string()],
+        )
+        .await
+        .unwrap();
+        let spec_id = markdown_spec_id("docs/plans/x.md");
+        approve_revision(pool, dir.path(), &spec_id, 1, &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            sync_markdown(pool, dir.path(), &spec_id).await.unwrap(),
+            None
+        );
+        let context = spec_context_block(pool, dir.path(), "s").await;
+        assert!(!context.contains("delivery: conflict"), "{context}");
+        assert_eq!(list_revisions(pool, &spec_id).await.unwrap().len(), 1);
+        // A body stored before newlines were trimmed is compared the same way.
+        sqlx::query("UPDATE spec_revisions SET body = body || char(10), content_hash = ?1 WHERE spec_id = ?2")
+            .bind(hash_text("# X\n\nKeep the file plan.\n"))
+            .bind(&spec_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            sync_markdown(pool, dir.path(), &spec_id).await.unwrap(),
+            None
+        );
     }
 
     #[tokio::test]
