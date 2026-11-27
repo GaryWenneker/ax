@@ -230,6 +230,9 @@ export default function SpecsPage() {
   const closeTimer = useRef<number | null>(null);
   const pane = useRef<HTMLDivElement>(null);
   const sentinel = useRef<HTMLDivElement>(null);
+  /** The open document and its unsaved state, for the popstate listener registered once. */
+  const openState = useRef({ dirty, selected, selectedPlan, bladeTab });
+  openState.current = { dirty, selected, selectedPlan, bladeTab };
 
   async function load() {
     try {
@@ -309,6 +312,10 @@ export default function SpecsPage() {
 
   function closeBlade() {
     if (!selected || closing) return;
+    if (dirty) {
+      setNotice('Discard or save unsaved changes before closing.');
+      return;
+    }
     setClosing(true);
     closeTimer.current = window.setTimeout(() => {
       closeTimer.current = null;
@@ -327,6 +334,10 @@ export default function SpecsPage() {
   }
 
   function openSpec(id: string, tab: BladeTab = 'agreement', planId: string | null = null) {
+    if (dirty) {
+      setNotice('Discard or save unsaved changes before opening another document.');
+      return;
+    }
     if (closeTimer.current != null) {
       window.clearTimeout(closeTimer.current);
       closeTimer.current = null;
@@ -357,6 +368,12 @@ export default function SpecsPage() {
       const searchParams = new URLSearchParams(window.location.search);
       const id = searchParams.get('spec');
       if (!id) return;
+      const open = openState.current;
+      if (open.dirty) {
+        setNotice('Discard or save unsaved changes before opening another document.');
+        syncRoute(open.selected, open.selectedPlan, open.bladeTab);
+        return;
+      }
       const plan = searchParams.get('plan');
       const tabParam = searchParams.get('tab');
       const tab: BladeTab =
