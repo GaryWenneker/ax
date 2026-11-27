@@ -770,7 +770,12 @@ async fn policy_index_tool(ax: &mut Ax, params: Value) -> Result<Value, String> 
         result.rules_indexed, result.skills_indexed
     );
     for skip in &result.skipped {
-        text.push_str(&format!("\nSkipped {}: {}", skip.path, skip.reason));
+        text.push_str(&format!(
+            "\nSkipped {} ({}): {}",
+            skip.path,
+            skip.outcome(),
+            skip.reason
+        ));
     }
     Ok(json!({
         "text": text,

@@ -368,6 +368,7 @@ fn skip_file_owned(
     skipped.push(crate::types::PolicySkip {
         path: path.to_string_lossy().into_owned(),
         reason,
+        kept: true,
     });
 }
 
@@ -390,7 +391,7 @@ impl LayerImport {
     /// report it, so a read-only staleness check stays quiet.
     fn skip(&mut self, what: &str, path: &Path, reason: String) {
         self.kept.push(path.to_string_lossy().into_owned());
-        self.skip_dropping_row(what, path, reason);
+        self.record_skip(what, path, reason, true);
     }
 
     /// Record a file that did not parse. The stored row is kept only when the
@@ -412,14 +413,22 @@ impl LayerImport {
     }
 
     fn skip_dropping_row(&mut self, what: &str, path: &Path, reason: String) {
-        self.notes.push(format!(
-            "[ax policy] skip {what} {}: {reason}",
-            path.display()
-        ));
-        self.skipped.push(crate::types::PolicySkip {
+        self.record_skip(what, path, reason, false);
+    }
+
+    fn record_skip(&mut self, what: &str, path: &Path, reason: String, kept: bool) {
+        let skip = crate::types::PolicySkip {
             path: path.to_string_lossy().into_owned(),
             reason,
-        });
+            kept,
+        };
+        self.notes.push(format!(
+            "[ax policy] skip {what} {} ({}): {}",
+            path.display(),
+            skip.outcome(),
+            skip.reason
+        ));
+        self.skipped.push(skip);
     }
 }
 
@@ -1907,11 +1916,11 @@ mod tests {
         assert!(result
             .skipped
             .iter()
-            .any(|s| s.path.ends_with("secrets.mdc") && !s.reason.is_empty()));
+            .any(|s| s.path.ends_with("secrets.mdc") && !s.reason.is_empty() && s.kept));
         assert!(result
             .skipped
             .iter()
-            .any(|s| s.path.ends_with("SKILL.md") && !s.reason.is_empty()));
+            .any(|s| s.path.ends_with("SKILL.md") && !s.reason.is_empty() && s.kept));
 
         // Once the broken file is deleted, its row goes as before.
         std::fs::remove_file(root.join(".agents/rules/secrets.mdc")).unwrap();
@@ -1964,7 +1973,9 @@ mod tests {
         assert!(result
             .skipped
             .iter()
-            .any(|s| s.path.ends_with("typo-status.mdc") && s.reason.contains("status")));
+            .any(|s| s.path.ends_with("typo-status.mdc")
+                && s.reason.contains("status")
+                && !s.kept));
 
         let rules = list_rules(&pool).await.unwrap();
         assert!(

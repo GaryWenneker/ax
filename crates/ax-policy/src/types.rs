@@ -390,8 +390,8 @@ pub struct MatchResult {
 pub struct PolicyIndexResult {
     pub rules_indexed: u32,
     pub skills_indexed: u32,
-    /// Policy files the import could not read or parse. A row indexed earlier from such a file
-    /// is kept as it was instead of being pruned.
+    /// Policy files the import could not use. Each entry says whether the row indexed
+    /// earlier from that file was kept or removed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skipped: Vec<PolicySkip>,
 }
@@ -401,6 +401,23 @@ pub struct PolicyIndexResult {
 pub struct PolicySkip {
     pub path: String,
     pub reason: String,
+    /// True when the row indexed earlier from this file stays as it was: the file
+    /// could not be read, its frontmatter is not YAML, or its stub source is
+    /// unusable. False when the file parsed but failed validation, so its row was
+    /// removed.
+    #[serde(default)]
+    pub kept: bool,
+}
+
+impl PolicySkip {
+    /// What happened to the row indexed earlier from this file, in words.
+    pub fn outcome(&self) -> &'static str {
+        if self.kept {
+            "previous version kept"
+        } else {
+            "its indexed row was removed"
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -448,4 +465,26 @@ pub enum GuardOp {
 pub struct ValidationError {
     pub error: String,
     pub fields: std::collections::HashMap<String, String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PolicySkip;
+
+    #[test]
+    fn a_skip_says_whether_its_row_was_kept() {
+        let mut skip = PolicySkip {
+            path: "a.mdc".into(),
+            reason: "bad".into(),
+            kept: true,
+        };
+        assert_eq!(skip.outcome(), "previous version kept");
+        skip.kept = false;
+        assert_eq!(skip.outcome(), "its indexed row was removed");
+        let json = serde_json::to_value(&skip).unwrap();
+        assert_eq!(json["kept"], false);
+        // An entry written before the flag existed reads as removed, never as kept.
+        let old: PolicySkip = serde_json::from_str(r#"{"path":"a","reason":"r"}"#).unwrap();
+        assert!(!old.kept);
+    }
 }
