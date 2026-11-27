@@ -1198,7 +1198,7 @@ ax mcp audit --session path/to/transcript.jsonl --json
 
 ### `ax cursor auth`
 
-Save and restore Cursor IDE auth sessions for fast subscription switching. Snapshots `cursorAuth/*` keys from `%APPDATA%\\Cursor\\User\\globalStorage\\state.vscdb` plus `auth.json` into `~/.ax/cursor-auth/`.
+Save and restore Cursor IDE auth sessions for fast subscription switching. Snapshots `cursorAuth/*` keys from `%APPDATA%\\Cursor\\User\\globalStorage\\state.vscdb` plus `auth.json` into `~/.ax/cursor-auth/`. The snapshots hold your Cursor access and refresh tokens, so on macOS and Linux that folder is readable only by you (0700) and each file in it is 0600.
 
 | Subcommand | Description |
 |---|---|
