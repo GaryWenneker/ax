@@ -338,10 +338,12 @@ fn cluster_verbose_lines(lines: &[VerboseLine]) -> Vec<VerboseCluster> {
         let is_inbound = line.kind == "inbound";
         // Enrich side-channel lines have no tool= — keep them on the open preflight cluster.
         let is_enrich = line.kind == "enrich" || line.body.starts_with("enrich ");
+        // `outbound preview` follows its call's `outbound` line and belongs to that call.
+        let is_preview = line.body.starts_with("outbound preview ");
         let same_tool = clusters
             .last()
             .map(|c| {
-                !c.has_outbound
+                (!c.has_outbound || is_preview)
                     && ((!line.tool.is_empty() && c.tool == line.tool)
                         || (is_enrich && c.tool == "ax_preflight"))
             })
@@ -1882,6 +1884,24 @@ mod tests {
             .find(|f| f.id == "uncorrelated-tool")
             .expect("info finding");
         assert_eq!(f.severity, "info");
+    }
+
+    #[test]
+    fn outbound_preview_stays_in_its_call_cluster() {
+        let text = "\
+2026-07-21T19:07:03.100Z [ax-mcp] inbound tool=ax_explore args={}\n\
+2026-07-21T19:07:03.200Z [ax-mcp] outbound tool=ax_explore mode=lean text_chars=10 structured=false duration_ms=1\n\
+2026-07-21T19:07:03.201Z [ax-mcp] outbound preview tool=ax_explore text=hello\n\
+2026-07-21T19:07:04.100Z [ax-mcp] inbound tool=ax_explore args={}\n\
+2026-07-21T19:07:04.200Z [ax-mcp] outbound tool=ax_explore mode=lean text_chars=10 structured=false duration_ms=1\n\
+2026-07-21T19:07:04.201Z [ax-mcp] outbound preview tool=ax_explore text=again\n";
+        let (_l, clusters) = parse_verbose_log(text, 0);
+        assert_eq!(clusters.len(), 2, "{clusters:?}");
+        assert!(clusters.iter().all(|c| c.has_inbound && c.has_outbound));
+        assert_eq!(clusters[0].lines.len(), 3);
+        let mix = tool_mix_from(&clusters, &[]);
+        assert_eq!(mix.explore, 2);
+        assert_eq!(mix.graph, 2);
     }
 
     #[test]
