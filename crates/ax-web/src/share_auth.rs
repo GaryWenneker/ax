@@ -574,19 +574,29 @@ mod tests {
             StatusCode::TOO_MANY_REQUESTS
         );
         assert_eq!(
-            share_status(&app, share_request("/notes?token=sekret", peer, None, false)).await,
+            share_status(
+                &app,
+                share_request("/notes?token=sekret", peer, None, false)
+            )
+            .await,
             StatusCode::TOO_MANY_REQUESTS
         );
         let mut bearer = share_request("/notes", peer, None, false);
         bearer
             .headers_mut()
             .insert(header::AUTHORIZATION, "Bearer sekret".parse().unwrap());
-        assert_eq!(share_status(&app, bearer).await, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            share_status(&app, bearer).await,
+            StatusCode::TOO_MANY_REQUESTS
+        );
         let mut client = share_request("/notes", peer, None, false);
         client
             .headers_mut()
             .insert(header::AUTHORIZATION, "Bearer axc_guess".parse().unwrap());
-        assert_eq!(share_status(&app, client).await, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            share_status(&app, client).await,
+            StatusCode::TOO_MANY_REQUESTS
+        );
 
         // Another peer is not affected.
         let other = "198.51.100.22:40000";
