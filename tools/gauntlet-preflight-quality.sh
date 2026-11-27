@@ -19,7 +19,8 @@ echo "== toolchain: $(rustc --version); $(python3 --version)"
 
 echo "== 1/6 tests"
 cargo test "${CRATES[@]}" --no-run
-HOME="$GAUNTLET_HOME" AX_HOME_DIR="$GAUNTLET_HOME" cargo test "${CRATES[@]}" 2>&1 | tee "$CARGO_TARGET_DIR/gauntlet-tests.log" | grep -E "^test result|FAILED|panicked" || true
+# The web UI was just built above; npm cannot run under the empty HOME.
+HOME="$GAUNTLET_HOME" AX_HOME_DIR="$GAUNTLET_HOME" AX_SKIP_WEB_BUILD=1 cargo test "${CRATES[@]}" 2>&1 | tee "$CARGO_TARGET_DIR/gauntlet-tests.log" | grep -E "^test result|FAILED|panicked" || true
 if grep -qE "test result: FAILED|^error" "$CARGO_TARGET_DIR/gauntlet-tests.log"; then echo "tests failed"; exit 1; fi
 grep -c "^test result: ok" "$CARGO_TARGET_DIR/gauntlet-tests.log" | sed 's/^/suites ok: /'
 awk '/^test result: ok/ {p+=$4} END {print "tests passed: " p}' "$CARGO_TARGET_DIR/gauntlet-tests.log"
