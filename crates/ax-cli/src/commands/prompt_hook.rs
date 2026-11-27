@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use ax_context::{
     extract_code_tokens, format_explore_text, has_structural_keyword, plan_frontload_full,
+    user_prompt_text,
 };
 use ax_policy::{detect_directive, MatchInput};
 use ax_types::ExploreOptions;
@@ -50,6 +51,14 @@ pub async fn run() -> Result<(), String> {
                         .await;
             }
         }
+    }
+
+    // Match and explore only the user's own words. A prompt that is nothing but
+    // harness text (a background-task notification) gets no context at all.
+    let had_prompt = !prompt.trim().is_empty();
+    let prompt = user_prompt_text(&prompt);
+    if had_prompt && prompt.is_empty() {
+        return Ok(());
     }
 
     let files: Vec<PathBuf> = input

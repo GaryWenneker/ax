@@ -1,0 +1,9 @@
+{
+  "src/billing.rs": "pub fn invoice_total(items: &[u32]) -> u32 {\n    items.iter().sum()\n}\n\npub fn print_invoice(items: &[u32]) {\n    println!(\"{}\", invoice_total(items));\n}\n",
+  "src/tax.rs": "use crate::billing::invoice_total;\n\npub fn add_tax(amount: u32) -> u32 {\n    amount + amount / 5\n}\n\npub fn taxed_total(items: &[u32]) -> u32 {\n    add_tax(invoice_total(items))\n}\n",
+  "src/lib.rs": "pub mod billing;\npub mod tax;\n",
+  "tests/billing_test.rs": "use e2e::billing::invoice_total;\n\n#[test]\nfn invoice_total_sums_items() {\n    let total = invoice_total(&[100, 250]);\n    assert_eq!(total, 350);\n}\n",
+  "Cargo.toml": "[package]\nname = \"e2e\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+  ".agents/rules/money-in-cents.mdc": "---\nid: money-in-cents\nlevel: CRITICAL\nalwaysApply: true\n---\n# Money in cents\n\nAmounts are integers in cents. MARKER-RULE-CENTS\n",
+  ".agents/skills/invoice-review/SKILL.md": "---\nname: invoice-review\ndescription: \"Review invoice and billing code changes\"\ntriggers: [\"invoice\"]\nenabled: true\nstatus: approved\n---\n# Invoice review\n\nMARKER-SKILL-INVOICE Step one: check every total against the cents rule.\n"
+}

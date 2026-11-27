@@ -1,0 +1,34 @@
+---
+/**
+ * Site-wide decorative backdrop from the Ax deck: breathing lime halftone, foggy violet silk ring
+ * and the deck's vignette. Drawing logic: src/scripts/deck-backdrop.ts.
+ * `hero` sits inside the homepage; `page` is fixed behind the docs below the header.
+ * Pauses with the Pause motion control and prefers-reduced-motion (one still frame).
+ */
+import '../styles/deck-backdrop.css';
+
+interface Props {
+  variant?: 'hero' | 'page';
+}
+const { variant = 'hero' } = Astro.props;
+---
+<div class={`ax-backdrop ax-backdrop-${variant}`} data-ax-backdrop-root data-ax-variant={variant} aria-hidden="true">
+  <canvas class="ax-backdrop-canvas ax-backdrop-dots" data-ax-backdrop-dots></canvas>
+  <canvas class="ax-backdrop-canvas ax-silk-fog" data-ax-silk-fog></canvas>
+  <canvas class="ax-backdrop-canvas ax-silk-lines" data-ax-silk></canvas>
+  <div class="ax-backdrop-vignette"></div>
+</div>
+
+<script>
+  import { mountDeckBackdrop } from '../scripts/deck-backdrop.ts';
+  let cleanup = () => {};
+  const mount = () => {
+    cleanup();
+    const root = document.querySelector<HTMLElement>('[data-ax-backdrop-root]');
+    cleanup = root ? mountDeckBackdrop(root) : () => {};
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, { once: true });
+  else mount();
+  document.addEventListener('astro:page-load', mount);
+  document.addEventListener('astro:before-swap', () => cleanup());
+</script>
