@@ -31,6 +31,8 @@ ax affected --base main --stdin               # compare against base branch
 | `-j, --json` | Output as JSON | `false` |
 | `-q, --quiet` | Output file paths only | `false` |
 
+Without `--filter`, a file counts as a test when it sits under a `test/`, `tests/` or `__tests__/` directory, when its name matches `*_test.*`, `*.test.*` or `*.spec.*`, or when it is a Python `test_*.py` file. The indexer uses the same rule to mark test functions.
+
 ## CI / hook example
 
 Prefer `ax ship --ci` when you want the full gate. Workflow snippets:

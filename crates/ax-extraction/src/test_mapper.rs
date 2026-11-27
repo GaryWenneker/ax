@@ -43,14 +43,7 @@ pub fn annotate_tests(result: &mut ExtractionResult, source: &[u8], tree: &Tree,
 }
 
 fn is_likely_test_file(path: &str) -> bool {
-    let lower = path.replace('\\', "/").to_lowercase();
-    lower.contains("/tests/")
-        || lower.starts_with("tests/")
-        || lower.contains("/test/")
-        || lower.contains("_test.")
-        || lower.contains(".test.")
-        || lower.ends_with("_test.rs")
-        || lower.contains("/__tests__/")
+    ax_utils::is_test_path(path)
 }
 
 /// Byte ranges of each line in a source file (without the trailing newline).

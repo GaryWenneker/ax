@@ -1,11 +1,8 @@
 //! Search query utilities.
 
+/// Whether `path` is a test file; the shared rule is [`ax_utils::is_test_path`].
 pub fn is_test_file(path: &str) -> bool {
-    let lower = path.to_lowercase();
-    lower.contains("/test/")
-        || lower.contains("_test.")
-        || lower.contains(".test.")
-        || lower.ends_with("_test.rs")
+    ax_utils::is_test_path(path)
 }
 
 pub fn extract_search_terms(query: &str) -> Vec<String> {
@@ -60,4 +57,36 @@ pub fn matches_parsed_query(node: &Node, parsed: &ParsedQuery) -> bool {
         }
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_test_file;
+
+    #[test]
+    fn test_file_detection_covers_common_layouts() {
+        for path in [
+            "crates/ax-db/tests/integrity.rs",
+            "tests/cli.rs",
+            "web/src/__tests__/App.tsx",
+            "web/src/app.spec.ts",
+            "web/src/app.test.tsx",
+            "pkg/server_test.go",
+            "python/test_parser.py",
+            "python/tests/conftest.py",
+            "src/test/java/FooTest.java",
+            "C:\\repo\\tests\\win.rs",
+        ] {
+            assert!(is_test_file(path), "{path} should be a test file");
+        }
+        for path in [
+            "src/main.rs",
+            "src/testing_utils.rs",
+            "python/contest.py",
+            "src/attest/mod.rs",
+            "docs/latest.md",
+        ] {
+            assert!(!is_test_file(path), "{path} should not be a test file");
+        }
+    }
 }
