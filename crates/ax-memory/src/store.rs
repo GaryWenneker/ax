@@ -856,7 +856,7 @@ pub(crate) async fn recall_scoped(
     let expanded = if archive {
         query.to_string()
     } else {
-        // PMI samples up to 2000 rows; skip it when the hot set is already tiny.
+        // PMI samples up to 2000 durable rows; skip it when the hot set is already tiny.
         let hot = hot_memory_count(pool).await.unwrap_or(0);
         if hot <= 64 {
             query.to_string()
@@ -957,9 +957,17 @@ pub(crate) async fn recall_scoped(
         crate::pagerank::personalized_pagerank(&seeds, &edges, 0.85, 8)
     };
     let query_terms: Vec<String> = query_terms(query);
+    let mut rows = get_many(pool, &ids).await?;
+    let access_by_id = if archive {
+        HashMap::new()
+    } else {
+        crate::access::access_times_many(pool, &ids)
+            .await
+            .unwrap_or_default()
+    };
     let mut matches = Vec::with_capacity(ids.len());
     for id in &ids {
-        if let Some(memory) = get(pool, id).await? {
+        if let Some(memory) = rows.remove(id) {
             // The archive exists for old memories, so age must not rank them down there.
             // Same-day memories share one decay bucket so insert-order milliseconds
             // cannot reshuffle otherwise-equal hybrid ranks.
@@ -978,10 +986,8 @@ pub(crate) async fn recall_scoped(
             let act = if archive {
                 0.0
             } else {
-                let access = crate::access::access_times(pool, id)
-                    .await
-                    .unwrap_or_default();
-                let act_raw = crate::act_r::base_level_activation(now, &access, 0.5);
+                let access = access_by_id.get(id).map(Vec::as_slice).unwrap_or(&[]);
+                let act_raw = crate::act_r::base_level_activation(now, access, 0.5);
                 if act_raw.is_finite() {
                     act_raw.max(0.0)
                 } else {
@@ -999,12 +1005,10 @@ pub(crate) async fn recall_scoped(
             let why = if archive {
                 None
             } else {
+                let text = format!("{} {}", memory.title, memory.body).to_lowercase();
                 let matched: Vec<String> = query_terms
                     .iter()
-                    .filter(|t| {
-                        let text = format!("{} {}", memory.title, memory.body).to_lowercase();
-                        text.contains(t.as_str())
-                    })
+                    .filter(|t| text.contains(t.as_str()))
                     .cloned()
                     .collect();
                 Some(crate::fusion::why_from_hits(
@@ -1479,6 +1483,29 @@ pub async fn get(pool: &SqlitePool, id: &str) -> Result<Option<MemoryRow>, AxErr
         .await
         .map_err(|e| db_err(pool, e))?;
     Ok(row.map(row_from_db))
+}
+
+/// Many memories by id in one query. Unknown ids are absent from the map.
+pub(crate) async fn get_many(
+    pool: &SqlitePool,
+    ids: &[String],
+) -> Result<std::collections::HashMap<String, MemoryRow>, AxError> {
+    if ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let ids = serde_json::to_string(ids).unwrap_or_else(|_| "[]".into());
+    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+        "{MEMORY_SELECT} WHERE id IN (SELECT value FROM json_each(?))"
+    ))
+    .bind(ids)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| db_err(pool, e))?;
+    Ok(rows
+        .into_iter()
+        .map(row_from_db)
+        .map(|row| (row.id.clone(), row))
+        .collect())
 }
 
 pub async fn set_enabled(pool: &SqlitePool, id: &str, enabled: bool) -> Result<bool, AxError> {

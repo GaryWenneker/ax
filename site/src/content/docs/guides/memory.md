@@ -5,7 +5,7 @@ description: Brain-style memory for ax — working notes, named long-term decisi
 
 ax keeps a brain-style memory in the same local SQLite database as the code graph.
 
-Current vault behavior (schema 44+): FTS ranks over normalized `search_text` with BM25F field weights; recall can expand with a bilingual lexicon and PMI associations and returns a `why` signal per hit. Memories auto-anchor to graph node versions; sync captures file changes and graph history. Full backups are zstd-compressed JSONL under `.ax/backups/memory/`. Prospective `--when` tags fire on guard. The Command Center Memory page has a review inbox; the Graph page has an as-of time slider. A name fetches the exact memory. The raw episode stays. Recall is bound to the live graph. MCP and the CLI call one function, so neither surface is a subset.
+Current vault behavior (schema 44+): FTS ranks over normalized `search_text` with BM25F field weights; recall can expand with a bilingual lexicon and PMI associations and returns a `why` signal per hit. PMI learns only from the newest 2,000 active long-term memories (decisions, notes, conventions; not turns, docs, or archive rows), so the same vault always expands a query the same way. Memories auto-anchor to graph node versions; sync captures file changes and graph history. Full backups are zstd-compressed JSONL under `.ax/backups/memory/`. Prospective `--when` tags fire on guard. The Command Center Memory page has a review inbox; the Graph page has an as-of time slider. A name fetches the exact memory. The raw episode stays. Recall is bound to the live graph. MCP and the CLI call one function, so neither surface is a subset.
 
 ## What ax remembers
 
