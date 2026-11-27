@@ -10,6 +10,7 @@ param(
     [int]$WaitTimeoutMinutes = 25
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'lib/release-run.ps1')
 $root = Split-Path -Parent $PSScriptRoot
 Push-Location $root
 try {
@@ -37,9 +38,7 @@ try {
         while ((Get-Date) -lt $deadline) {
             $result = & gh run list --repo $Repo --workflow release.yml --branch main --event workflow_dispatch --limit 10 --json databaseId,createdAt,status,conclusion,headSha
             if ($LASTEXITCODE -ne 0) { throw 'Cannot query release workflow.' }
-            $run = @($result | ConvertFrom-Json) | Where-Object {
-                $_.headSha -eq $headSha -and [datetime]$_.createdAt -ge $requestedAt
-            } | Select-Object -First 1
+            $run = Select-AxReleaseRun -Runs @($result | ConvertFrom-Json) -HeadSha $headSha -RequestedAt $requestedAt
             if ($run -and $run.status -eq 'completed') {
                 if ($run.conclusion -ne 'success') { throw "Release workflow failed: https://github.com/$Repo/actions/runs/$($run.databaseId)" }
                 Write-Host "Release succeeded: https://github.com/$Repo/actions/runs/$($run.databaseId)"
