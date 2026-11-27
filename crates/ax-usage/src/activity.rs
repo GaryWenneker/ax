@@ -219,13 +219,22 @@ fn mint_event_id() -> String {
     format!("evt_{}", uuid_ish())
 }
 
+/// Unique within the process (a counter) and across processes (process id,
+/// nanosecond clock and a randomly keyed hash).
 fn uuid_ish() -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut h = DefaultHasher::new();
-    now_ms().hash(&mut h);
-    std::process::id().hash(&mut h);
-    format!("{:016x}{:08x}", h.finish(), now_ms() as u32)
+    use std::hash::{BuildHasher, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let seq = NEXT.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u128(nanos);
+    h.write_u32(std::process::id());
+    h.write_u64(seq);
+    format!("{:016x}{:08x}{:x}", h.finish(), std::process::id(), seq)
 }
 
 /// Ensure the activity table exists (idempotent).
@@ -369,7 +378,12 @@ pub async fn record_activity(
     let inserted = result.rows_affected() > 0;
     let stored = load_by_idempotency(&pool, &project_id, &event.idempotency_key)
         .await?
-        .unwrap_or(event);
+        .ok_or_else(|| {
+            format!(
+                "activity event {} was not stored (event id {} already exists)",
+                event.idempotency_key, event.event_id
+            )
+        })?;
     if inserted {
         dual_write_verbose(root, &stored);
     }
@@ -714,6 +728,35 @@ mod tests {
         .unwrap();
         assert_eq!(kept.session_id.as_deref(), Some("kept"));
         assert_eq!(kept.turn_id, None);
+    }
+
+    #[test]
+    fn event_ids_minted_in_the_same_millisecond_are_unique() {
+        let ids: std::collections::HashSet<String> = (0..1_000).map(|_| mint_event_id()).collect();
+        assert_eq!(ids.len(), 1_000);
+    }
+
+    #[tokio::test]
+    async fn events_recorded_back_to_back_are_all_stored() {
+        let (root, _guard) = tmp_root().await;
+        for i in 0..20 {
+            record_activity(
+                &root,
+                ActivityRecord {
+                    idempotency_key: format!("burst-{i}"),
+                    operation: "graph.explore".into(),
+                    summary: "burst".into(),
+                    session_id: Some("burst".into()),
+                    ..ActivityRecord::default()
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let listed = list_activity(&root, None, Some("burst"), 100)
+            .await
+            .unwrap();
+        assert_eq!(listed.len(), 20);
     }
 
     #[tokio::test]
