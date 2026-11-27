@@ -136,3 +136,32 @@ async fn only_the_local_owner_changes_microsoft_sign_in() {
     assert!(config_written(dir.path()));
     std::env::remove_var("AX_MS_CLIENT_ID");
 }
+
+/// Changing the process environment while other request threads read it is a
+/// data race; the saved client id is read from the config file instead.
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // process-global env; the guard must cover the awaits
+async fn saving_the_client_id_leaves_the_process_environment_alone() {
+    let _lock = env_lock();
+    let dir = tempfile::tempdir().unwrap();
+    std::env::remove_var("AX_SHARE_TOKEN");
+    std::env::remove_var("AX_MS_CLIENT_ID");
+    let app = app(dir.path(), false).await;
+
+    assert_eq!(
+        status(
+            &app,
+            request("PUT", "/api/auth/microsoft/config", LOOPBACK, None)
+        )
+        .await,
+        StatusCode::OK
+    );
+    let leaked = std::env::var("AX_MS_CLIENT_ID");
+    std::env::remove_var("AX_MS_CLIENT_ID");
+    assert!(leaked.is_err(), "environment changed: {leaked:?}");
+    assert_eq!(
+        ax_share::auth::microsoft::ms_client_id().unwrap(),
+        "attacker-client"
+    );
+    assert!(ax_share::microsoft_auth_status().custom_client_id);
+}

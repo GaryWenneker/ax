@@ -221,7 +221,8 @@ async fn ms_set_config(
     refuse_ms_change(&hub, &headers)?;
     write_ms_client_id_to_config(&body.client_id)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiError { error: e })))?;
-    std::env::set_var("AX_MS_CLIENT_ID", body.client_id.trim());
+    // The new id is read back from the config file. The process environment
+    // is not changed: other request threads read it at the same time.
     Ok(Json(microsoft_auth_status()))
 }
 
