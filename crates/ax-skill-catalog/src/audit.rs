@@ -107,16 +107,39 @@ pub fn audit_directory_present(
     presence: &SkillPresence<'_>,
 ) -> Result<SkillAuditReport, String> {
     let skill_md_path = dir.join("SKILL.md");
-    if !skill_md_path.is_file() {
-        return Err(format!("SKILL.md is missing in {}", dir.display()));
-    }
-    let raw = fs::read_to_string(&skill_md_path).map_err(|e| e.to_string())?;
     let dir_name = dir
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("")
         .to_string();
+    // Never follow a symlink: the target's content would land in the report.
+    let missing = || format!("SKILL.md is missing in {}", dir.display());
+    let dir_meta = fs::symlink_metadata(dir).map_err(|_| missing())?;
+    let linked = if dir_meta.file_type().is_symlink() {
+        Some(dir.display().to_string())
+    } else {
+        let meta = fs::symlink_metadata(&skill_md_path).map_err(|_| missing())?;
+        if meta.file_type().is_symlink() {
+            Some(skill_md_path.display().to_string())
+        } else if !meta.is_file() {
+            return Err(missing());
+        } else {
+            None
+        }
+    };
     require_one_skill(&dir_name)?;
+    if let Some(link) = linked {
+        return Ok(rule_report(
+            dir_name,
+            dir.display().to_string(),
+            skill_md_path.display().to_string(),
+            String::new(),
+            false,
+            vec![finding("fail", "symlink", &link)],
+            Vec::new(),
+        ));
+    }
+    let raw = fs::read_to_string(&skill_md_path).map_err(|e| e.to_string())?;
 
     let mut mechanical = Vec::new();
     let (truncated, skill_md) = cap_text(&raw);
@@ -539,7 +562,7 @@ pub fn list_latest(root: &Path) -> Result<Vec<AuditSummary>, String> {
 pub fn find_skill_dir(root: &Path, name: &str) -> Result<PathBuf, String> {
     require_one_skill(name)?;
     for candidate in [root.join(name), root.join("skills").join(name)] {
-        if candidate.join("SKILL.md").is_file() {
+        if is_real_skill_dir(&candidate) {
             return Ok(candidate);
         }
     }
@@ -558,6 +581,12 @@ pub fn find_skill_dir(root: &Path, name: &str) -> Result<PathBuf, String> {
         }
     }
     Err(format!("skill not in source: {name}"))
+}
+
+/// A directory (not a symlink) holding a regular `SKILL.md` (not a symlink).
+fn is_real_skill_dir(dir: &Path) -> bool {
+    let dir_is_real = fs::symlink_metadata(dir).is_ok_and(|meta| meta.is_dir());
+    dir_is_real && fs::symlink_metadata(dir.join("SKILL.md")).is_ok_and(|meta| meta.is_file())
 }
 
 fn summarize(report: &SkillAuditReport) -> AuditSummary {
@@ -1177,6 +1206,45 @@ mod tests {
             .any(|f| f.check == "symlink" && f.evidence == "scripts"));
         assert!(!report.files.iter().any(|f| f.path.contains("hidden.sh")));
         assert!(!report.skill_md.contains("echo hi"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_skill_md_is_not_read() {
+        let root = tempfile::tempdir().unwrap();
+        let secret = root.path().join("credentials");
+        fs::write(&secret, "aws_secret_access_key = TOPSECRET\n").unwrap();
+        let dir = root.path().join("pdf");
+        fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(&secret, dir.join("SKILL.md")).unwrap();
+        let report = audit_directory(&dir).unwrap();
+        assert!(report.skill_md.is_empty(), "{}", report.skill_md);
+        assert!(report
+            .mechanical
+            .iter()
+            .any(|f| f.check == "symlink" && f.severity == "fail"));
+        assert!(!serde_json::to_string(&report).unwrap().contains("TOPSECRET"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn find_skill_dir_does_not_pick_a_symlinked_skill() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let real = outside.path().join("pdf");
+        write_skill(
+            &real,
+            "---\nname: pdf\ndescription: Use this when the user asks to extract text from a PDF file.\n---\n\nRead.\n",
+        );
+        // A symlinked SKILL.md in the first candidate, a symlinked directory in the second.
+        fs::create_dir_all(root.path().join("pdf")).unwrap();
+        std::os::unix::fs::symlink(real.join("SKILL.md"), root.path().join("pdf/SKILL.md")).unwrap();
+        fs::create_dir_all(root.path().join("skills")).unwrap();
+        std::os::unix::fs::symlink(&real, root.path().join("skills/pdf")).unwrap();
+        assert_eq!(
+            find_skill_dir(root.path(), "pdf").unwrap_err(),
+            "skill not in source: pdf"
+        );
     }
 
     #[test]
