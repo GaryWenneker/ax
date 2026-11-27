@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import RemoteMcpPublishSection from './RemoteMcpPublishSection';
 import ModalShell from './ModalShell';
 import { parseConnectionDetails } from '../connectionTransfer';
+import { signInTarget } from '../lib/safeNavigation';
 
 type Connection = { url: string; client_id: string; issuer: string; state: 'stored' | 'expired'; expires_at: number };
 /** A failed remote-mcp request; `status` is the HTTP status, or 0 when the server did not answer. */
@@ -105,8 +106,14 @@ export default function RemoteMcpSettingsSection() {
     if (popup) popup.opener = null;
     try {
       const value = await request('/login', { url: url.trim(), client_id: clientId.trim() }, csrf);
-      setAttempt(value.id); setAuthorizationUrl(value.authorization_url);
-      if (popup) popup.location.href = value.authorization_url;
+      const target = signInTarget(value.authorization_url);
+      if (!target) {
+        // Never open an unchecked address; end the sign-in the server just started.
+        request(`/login/${encodeURIComponent(value.id)}/cancel`, {}, csrf).catch(() => {});
+        throw new Error('The remote server returned a sign-in address that is not HTTPS.');
+      }
+      setAttempt(value.id); setAuthorizationUrl(target);
+      if (popup) popup.location.href = target;
     } catch (e) { popup?.close(); setBusy(false); setError(e instanceof Error ? e.message : String(e)); }
   }
   async function cancel() {
