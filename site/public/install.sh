@@ -7,7 +7,8 @@
 #
 # Always installs the latest published release (highest semver with assets).
 # Self-heals before download: stops ax, clears stuck upgrade-status/staging,
-# drops invalid AX_VERSION pins, and retries GitHub without a bad token.
+# drops invalid AX_VERSION pins, and retries GitHub without a rejected token
+# (stored GITHUB_TOKEN/GH_TOKEN values are never changed).
 # Pin a version: AX_VERSION=v2.0.14 curl -fsSL ... | sh
 # Upgrade: ax upgrade  (or re-run this script)
 # Uninstall: curl -fsSL https://getax.wenneker.io/install.sh | sh -s -- --uninstall
@@ -49,23 +50,23 @@ clear_pending_upgrade_state() {
   fi
 }
 
-disable_stale_github_tokens() {
-  clear_user="${1:-}"
+skip_github_token() {
+  # Drops the token for this install only; stored environment variables are never changed.
   for name in GITHUB_TOKEN GH_TOKEN; do
     eval "val=\${$name-}"
     if [ -n "$val" ]; then
       unset "$name"
-      echo "ax: ignoring process $name for this install (auth failed)." >&2
+      echo "ax: not using $name for the rest of this install ($1)." >&2
     fi
   done
-  if [ "$clear_user" = "user" ] && command -v powershell.exe >/dev/null 2>&1; then
-    for name in GITHUB_TOKEN GH_TOKEN; do
-      stored="$(powershell.exe -NoProfile -Command "[Environment]::GetEnvironmentVariable('$name','User')" 2>/dev/null || true)"
-      if [ -n "$stored" ]; then
-        powershell.exe -NoProfile -Command "[Environment]::SetEnvironmentVariable('$name', \$null, 'User')" 2>/dev/null || true
-        echo "ax: cleared stale $name from User environment." >&2
-      fi
-    done
+}
+
+suggest_token_cleanup() {
+  echo "ax: GitHub rejected the token in GITHUB_TOKEN/GH_TOKEN. If it is no longer valid, remove it where you set it." >&2
+  if command -v powershell.exe >/dev/null 2>&1; then
+    echo "ax: to remove a token stored in the Windows User environment, run in PowerShell:" >&2
+    echo "  [Environment]::SetEnvironmentVariable('GITHUB_TOKEN', \$null, 'User')" >&2
+    echo "  [Environment]::SetEnvironmentVariable('GH_TOKEN', \$null, 'User')" >&2
   fi
 }
 
@@ -186,16 +187,27 @@ resolve_version_from_api() {
         echo "ax: GitHub API returned releases but none include $asset." >&2
         return 1
         ;;
-      401|403)
-        echo "ax: GitHub API $attempt failed: HTTP $code" >&2
-        disable_stale_github_tokens user
+      401)
+        echo "ax: GitHub API $attempt failed: HTTP 401 (bad credentials)." >&2
+        [ "$attempt" = "with_token" ] && suggest_token_cleanup
+        skip_github_token "GitHub returned 401"
+        token=""
+        continue
+        ;;
+      403)
+        if grep -qi 'rate limit' "$tmp" 2>/dev/null; then
+          echo "ax: GitHub API rate limit reached ($attempt)." >&2
+        else
+          echo "ax: GitHub API $attempt failed: HTTP 403" >&2
+        fi
+        skip_github_token "GitHub returned 403"
         token=""
         continue
         ;;
       *)
         if [ "$attempt" = "with_token" ]; then
           echo "ax: GitHub API with token failed (HTTP $code); retrying without token." >&2
-          disable_stale_github_tokens
+          skip_github_token "GitHub returned HTTP $code"
           token=""
           continue
         fi

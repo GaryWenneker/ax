@@ -37,7 +37,7 @@ curl -fsSL https://getax.wenneker.io/install.sh | sh
 
 Open a new Terminal window afterwards. The installer adds `~/.local/bin` to your zsh startup file (`${ZDOTDIR:-$HOME}/.zshrc`). Existing settings stay, and reinstalling does not duplicate that block. An installer running through `curl | sh` cannot change the terminal that launched it. If that window still says `command not found: ax`, run the `export PATH=...` line the installer printed, or open a new window.
 
-The shell installer **self-heals** before it downloads: it stops running `ax` processes, clears stuck upgrade leftovers under `~/.ax`, drops an invalid `AX_VERSION` pin, and retries GitHub without a bad token. Re-run the same install command after a failed upgrade — no separate env cleanup.
+The shell installer **self-heals** before it downloads: it stops running `ax` processes, clears stuck upgrade leftovers under `~/.ax`, drops an invalid `AX_VERSION` pin, and retries GitHub without the token when GitHub rejects or rate-limits it. It never changes a stored `GITHUB_TOKEN` / `GH_TOKEN`; when GitHub rejects the token it prints the command to remove it yourself. Re-run the same install command after a failed upgrade — no separate env cleanup.
 
 If the website serves an older installer, use the current repository copy. It still installs a published release. It does not build source:
 
@@ -140,7 +140,7 @@ That installs the same GitHub release zips into `%LOCALAPPDATA%\ax\current` as `
 
 Maintainers package from macOS without installing Chocolatey locally: GitHub Actions workflow `chocolatey.yml` (`gh workflow run chocolatey.yml -f tag=vX.Y.Z`) runs `choco pack` / install-test on `windows-latest`, and `choco push` when `-f push=true` with the `CHOCOLATEY_API_KEY` repository secret.
 
-The Windows installer **self-heals** before it downloads: it stops running `ax` processes, clears stuck `upgrade-status.txt` / `upgrade-staging-*` leftovers, drops an invalid `AX_VERSION` pin, and retries GitHub without a bad `GITHUB_TOKEN` / `GH_TOKEN`. You do not need a separate environment cleanup script on each machine. Re-run the same `irm … | iex` command after a failed upgrade or “Access is denied” park message.
+The Windows installer **self-heals** before it downloads: it stops running `ax` processes, clears stuck `upgrade-status.txt` / `upgrade-staging-*` leftovers, drops an invalid `AX_VERSION` pin, and retries GitHub without `GITHUB_TOKEN` / `GH_TOKEN` when GitHub rejects or rate-limits the token. It never changes your User or Machine environment variables; when GitHub rejects the token it prints the command to remove it yourself. You do not need a separate environment cleanup script on each machine. Re-run the same `irm … | iex` command after a failed upgrade or “Access is denied” park message.
 
 If the website still serves an older installer, use the repository copy (still installs a published release):
 

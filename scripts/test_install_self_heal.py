@@ -36,18 +36,21 @@ class InstallSelfHealContract(unittest.TestCase):
         resolve_at = text.index("$version = Resolve-AxVersion")
         self.assertLess(clear_at, resolve_at)
 
-    def test_ps1_disables_stale_github_tokens_on_auth_failure(self) -> None:
+    def test_ps1_skips_rejected_github_tokens_without_changing_the_environment(self) -> None:
+        # The token is skipped for this install only; User and Machine variables stay as they are.
         text = _read(INSTALL_PS1)
-        self.assertIn("function Disable-AxStaleGitHubTokens", text)
-        self.assertIn("Disable-AxStaleGitHubTokens -ClearUserScope", text)
-        self.assertRegex(text, re.compile(r"401\|403\|Unauthorized\|Bad credentials"))
+        self.assertIn("function Skip-AxGitHubToken", text)
+        self.assertNotIn("ClearUserScope", text)
+        # Rate limits (HTTP 403) are recognized before the auth-failure branch.
+        self.assertLess(text.index("-match 'rate limit'"), text.index("Bad credentials'"))
 
     def test_sh_clears_pending_upgrade_before_resolve(self) -> None:
         text = _read(INSTALL_SH)
         self.assertIn("clear_pending_upgrade_state()", text)
         self.assertIn("upgrade-status.txt", text)
         self.assertIn("clear_pending_upgrade_state", text)
-        self.assertIn("disable_stale_github_tokens", text)
+        self.assertIn("skip_github_token", text)
+        self.assertNotIn("disable_stale_github_tokens", text)
         clean_at = text.index("clean_install_tree")
         # The invocation (not only the definition) must precede resolve_version assignment.
         invoke_matches = list(

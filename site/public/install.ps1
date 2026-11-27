@@ -6,7 +6,8 @@
 #
 # Always installs the latest published release (highest semver with assets).
 # Self-heals before download: stops ax, clears stuck upgrade-status/staging,
-# drops invalid AX_VERSION pins, and retries GitHub without a bad token.
+# drops invalid AX_VERSION pins, and retries GitHub without a rejected token
+# (stored GITHUB_TOKEN/GH_TOKEN values are never changed).
 # Pin a version: $env:AX_VERSION = 'v2.0.14'; irm ... | iex
 # Upgrade: ax upgrade  (or re-run this script)
 # Uninstall: remove %LOCALAPPDATA%\ax and its bin entry from user PATH.
@@ -61,27 +62,31 @@ function Clear-AxPendingUpgradeState {
   }
 }
 
-function Disable-AxStaleGitHubTokens {
-  param([switch]$ClearUserScope)
-  foreach ($name in @('GITHUB_TOKEN', 'GH_TOKEN')) {
-    if (Test-Path "Env:$name") {
-      Remove-Item "Env:$name" -ErrorAction SilentlyContinue
-      Write-Host "ax: ignoring process $name for this install (auth failed)." -ForegroundColor Yellow
-    }
-    if ($ClearUserScope) {
-      foreach ($scope in @('User', 'Machine')) {
-        $stored = [System.Environment]::GetEnvironmentVariable($name, $scope)
-        if ($stored) {
-          try {
-            [System.Environment]::SetEnvironmentVariable($name, $null, $scope)
-            Write-Host "ax: cleared stale $name from $scope environment." -ForegroundColor Yellow
-          } catch {
-            Write-Host "ax: could not clear $name from $scope (need elevation?). Process token already ignored." -ForegroundColor Yellow
-          }
-        }
-      }
-    }
+# Set when GitHub rejects or rate-limits the token: later requests in this install go
+# without it. Environment variables (process, User, Machine) are never changed.
+$script:AxSkipGitHubToken = $false
+
+function Skip-AxGitHubToken {
+  param([Parameter(Mandatory = $true)][string]$Reason)
+  if (-not $script:AxSkipGitHubToken -and ($env:GITHUB_TOKEN -or $env:GH_TOKEN)) {
+    Write-Host "ax: not using GITHUB_TOKEN/GH_TOKEN for the rest of this install ($Reason)." -ForegroundColor Yellow
   }
+  $script:AxSkipGitHubToken = $true
+}
+
+function Write-AxTokenCleanupHint {
+  Write-Host "ax: GitHub rejected the token in GITHUB_TOKEN/GH_TOKEN. If it is no longer valid, remove it yourself:" -ForegroundColor Yellow
+  Write-Host "  [Environment]::SetEnvironmentVariable('GITHUB_TOKEN', `$null, 'User')" -ForegroundColor Yellow
+  Write-Host "  [Environment]::SetEnvironmentVariable('GH_TOKEN', `$null, 'User')" -ForegroundColor Yellow
+}
+
+function Get-AxHttpStatus {
+  param($ErrorRecord)
+  try {
+    $response = $ErrorRecord.Exception.Response
+    if ($response -and $response.StatusCode) { return [int]$response.StatusCode }
+  } catch { }
+  return $null
 }
 
 function Clear-AxInstallState {
@@ -134,7 +139,7 @@ function Get-GitHubApiHeaders {
     'User-Agent' = 'ax-install'
     Accept         = 'application/vnd.github+json'
   }
-  if (-not $NoAuth) {
+  if (-not $NoAuth -and -not $script:AxSkipGitHubToken) {
     if ($env:GITHUB_TOKEN) { $h.Authorization = "Bearer $($env:GITHUB_TOKEN)" }
     elseif ($env:GH_TOKEN) { $h.Authorization = "Bearer $($env:GH_TOKEN)" }
   }
@@ -156,7 +161,7 @@ function Resolve-AxVersionFromGitHubApi {
     @{ Headers = (Get-GitHubApiHeaders -NoAuth); Label = 'without token' }
   )
   # Deduplicate when no token is set (both attempts are identical).
-  if (-not $env:GITHUB_TOKEN -and -not $env:GH_TOKEN) {
+  if ($script:AxSkipGitHubToken -or (-not $env:GITHUB_TOKEN -and -not $env:GH_TOKEN)) {
     $attempts = @($attempts[1])
   }
   $lastError = $null
@@ -188,15 +193,22 @@ function Resolve-AxVersionFromGitHubApi {
     } catch {
       $lastError = $_
       $msg = "$_"
-      if ($msg -match '401|403|Unauthorized|Bad credentials') {
-        Write-Host "ax: GitHub API $($attempt.Label) failed: $msg" -ForegroundColor Yellow
-        # Drop bad tokens automatically — no manual env cleanup required.
-        Disable-AxStaleGitHubTokens -ClearUserScope
+      $status = Get-AxHttpStatus $_
+      # A rate-limit answer is also HTTP 403, so it is recognized first.
+      if ($msg -match 'rate limit') {
+        Write-Host "ax: GitHub API rate limit reached ($($attempt.Label))." -ForegroundColor Yellow
+        Skip-AxGitHubToken -Reason 'rate limit'
         continue
       }
-      if ($msg -match 'rate limit') {
+      if ($status -eq 401 -or $msg -match '\b401\b|Unauthorized|Bad credentials') {
         Write-Host "ax: GitHub API $($attempt.Label) failed: $msg" -ForegroundColor Yellow
-        Disable-AxStaleGitHubTokens
+        if ($attempt.Label -eq 'with token') { Write-AxTokenCleanupHint }
+        Skip-AxGitHubToken -Reason 'GitHub returned 401'
+        continue
+      }
+      if ($status -eq 403 -or $msg -match '\b403\b|Forbidden') {
+        Write-Host "ax: GitHub API $($attempt.Label) failed: $msg" -ForegroundColor Yellow
+        Skip-AxGitHubToken -Reason 'GitHub returned 403'
         continue
       }
       Write-Host "ax: GitHub API unreachable ($($attempt.Label)): $msg" -ForegroundColor Yellow
@@ -387,6 +399,7 @@ function Set-UserPathFirst([string]$entry) {
   [Environment]::SetEnvironmentVariable('Path', $joined, 'User')
 }
 
+# ---- install steps ----
 # Kill stale ax and wipe previous install before resolving/downloading.
 Clear-AxInstallState
 

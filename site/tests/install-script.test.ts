@@ -24,7 +24,7 @@ for (const installer of installers) {
   }
 }
 
-function fixture(options: { os?: string; arch?: string; withoutPython?: boolean; stalePin?: boolean; loginShell?: string; binName?: string; binaryVersion?: string } = {}) {
+function fixture(options: { os?: string; arch?: string; withoutPython?: boolean; stalePin?: boolean; powershell?: boolean; tokenFailure?: 'rate' | 'auth'; loginShell?: string; binName?: string; binaryVersion?: string } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'ax-installer-test-'));
   const userHome = join(root, 'user-home');
   mkdirSync(userHome);
@@ -66,7 +66,10 @@ else if(name==='sort') {
     else console.log(text);
     if(wantCode) process.stdout.write(String(code));
   };
-  if(url?.includes('releases?')) emit([release('v7.9.0'),release('v8.1.0'),release('v50.0.0',{prerelease:true}),release('v100.0.0',{draft:true}),release('v20.0.0',{assets:[]})]);
+  const withToken=args.some(a=>String(a).startsWith('Authorization: Bearer'));
+  if(url?.includes('releases?') && withToken && env.AX_TEST_TOKEN_FAILURE==='rate') emit({message:'API rate limit exceeded for user ID 1.'},403);
+  else if(url?.includes('releases?') && withToken && env.AX_TEST_TOKEN_FAILURE==='auth') emit({message:'Bad credentials'},401);
+  else if(url?.includes('releases?')) emit([release('v7.9.0'),release('v8.1.0'),release('v50.0.0',{prerelease:true}),release('v100.0.0',{draft:true}),release('v20.0.0',{assets:[]})]);
   else if(url?.endsWith('releases/latest')) emit(release('v8.1.0'));
   else if(url?.includes('/releases/tags/')) emit(url.endsWith('v8.1.0')||url.endsWith('v7.9.0')?release('v8.1.0'):{assets:[]});
   else if(url?.endsWith('latest.txt')) emit('8.1.0');
@@ -75,7 +78,7 @@ else if(name==='sort') {
   else process.exit(22);
 } else process.exit(1);
 `, { mode: 0o755 });
-  for (const name of ['uname', 'curl', 'sort', 'pkill', 'sleep', ...(options.withoutPython ? ['python3'] : []), ...(options.stalePin ? ['powershell.exe'] : [])]) {
+  for (const name of ['uname', 'curl', 'sort', 'pkill', 'sleep', ...(options.withoutPython ? ['python3'] : []), ...(options.stalePin || options.powershell ? ['powershell.exe'] : [])]) {
     symlinkSync(mock, join(bin, name));
   }
   const binaryDir = join(root, options.binName ?? 'linked');
@@ -87,7 +90,10 @@ else if(name==='sort') {
     AX_KEEP_CARGO_BIN: '1', AX_SKIP_PROJECT_INIT: '1',
     AX_TEST_OS: options.os ?? 'Darwin', AX_TEST_ARCH: options.arch ?? 'arm64',
     AX_TEST_TRACE: trace, AX_TEST_ARCHIVE: archive, AX_TEST_SORT: realSort,
+    AX_TEST_TOKEN_FAILURE: options.tokenFailure ?? '',
   };
+  delete env.GITHUB_TOKEN;
+  delete env.GH_TOKEN;
   delete env.AX_VERSION;
   delete env.ZDOTDIR;
   if (options.stalePin) env.AX_VERSION = 'v99.0.0';
@@ -338,6 +344,21 @@ test('uninstall --purge needs confirmation and refuses unsafe directories', () =
     assert.ok(!existsSync(installDir));
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
+
+for (const tokenFailure of ['rate', 'auth'] as const) {
+  test(`a GitHub ${tokenFailure} failure never changes the stored Windows tokens`, () => {
+    const f = fixture({ tokenFailure, powershell: true });
+    try {
+      f.env.GITHUB_TOKEN = 'valid-token';
+      const result = runInstaller(installers[0], f.env);
+      assert.equal(result.status, 0, result.stderr);
+      const writes = readFileSync(f.trace, 'utf8').split('\n').filter((l) => l.includes('powershell.exe') && l.includes('SetEnvironmentVariable') && /GITHUB_TOKEN|GH_TOKEN/.test(l));
+      assert.deepEqual(writes, []);
+      if (tokenFailure === 'rate') assert.match(result.stderr, /rate limit/i);
+      else assert.match(result.stderr, /SetEnvironmentVariable\('GITHUB_TOKEN', \$null, 'User'\)/);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  });
+}
 
 for (const options of [{}, { withoutPython: true }, { stalePin: true }]) {
   test(`piped Apple Silicon installation completes with ${JSON.stringify(options)}`, () => {
