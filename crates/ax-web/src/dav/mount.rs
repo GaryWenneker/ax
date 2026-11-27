@@ -307,10 +307,39 @@ fn webclient_running() -> bool {
             .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("RUNNING"))
 }
 
+/// A mount hides what is in its folder, so the vault only mounts on a folder
+/// that is missing, empty (apart from Finder's `.DS_Store`), or already a mount.
+fn usable_mount_dir(dir: &Path) -> Result<(), String> {
+    let Ok(meta) = std::fs::symlink_metadata(dir) else {
+        return Ok(());
+    };
+    let shown = dir.display();
+    if !meta.is_dir() {
+        return Err(format!(
+            "{shown} exists and is not a folder; choose another drive name"
+        ));
+    }
+    if is_mount_root(dir) {
+        return Ok(());
+    }
+    let has_files = std::fs::read_dir(dir)
+        .map_err(|e| format!("{shown}: {e}"))?
+        .flatten()
+        .any(|entry| entry.file_name() != ".DS_Store");
+    if has_files {
+        return Err(format!(
+            "{shown} already holds files and the drive would hide them; choose another drive name"
+        ));
+    }
+    Ok(())
+}
+
 fn mount_point_for(os: Os, port: u16, name: &str) -> Result<String, MountError> {
     match os {
         Os::Mac => {
             let dir = home().join(name);
+            usable_mount_dir(&dir)
+                .map_err(|e| error(StatusCode::CONFLICT, json!({ "error": e })))?;
             std::fs::create_dir_all(&dir).map_err(|e| {
                 error(
                     StatusCode::INTERNAL_SERVER_ERROR,

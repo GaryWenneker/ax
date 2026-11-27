@@ -17,7 +17,7 @@ In the Command Center, open **Settings → Vault connection** and click **Connec
 | Windows | `net use` maps the first free drive letter (Z: downward) and labels it `ax` | for example `Y:` |
 | Linux | `gio mount` connects it and adds an `ax` bookmark in Files | Files sidebar |
 
-Change the **Drive name** before connecting to use another name. **Connect at login** reconnects when you log in, as long as `ax web` is running. **Disconnect** removes the drive, the bookmark, and the login item.
+Change the **Drive name** before connecting to use another name. On macOS the drive mounts on the folder `~/<drive name>`; a mount hides that folder's contents, so ax refuses a name whose folder already holds files (for example `Documents`). **Connect at login** reconnects when you log in, as long as `ax web` is running. **Disconnect** removes the drive, the bookmark, and the login item.
 
 On Windows the **WebClient** service must be running. If it is not, the card shows the command to start it. If a connect command fails, the card shows the exact command so you can copy it and run it yourself. The buttons work only from a browser on the same machine, and never in an `ax share` session.
 

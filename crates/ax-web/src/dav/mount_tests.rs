@@ -191,3 +191,23 @@ fn n1_origin_must_be_command_center() {
     assert!(!origin_allowed("http://localhost:3000", 7070, true));
     assert!(!origin_allowed("http://evil.example:7070", 7070, true));
 }
+
+#[test]
+fn n2_mount_dir_must_not_hide_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("ax");
+    assert!(usable_mount_dir(&missing).is_ok());
+    std::fs::create_dir(&missing).unwrap();
+    assert!(usable_mount_dir(&missing).is_ok());
+    std::fs::write(missing.join(".DS_Store"), "").unwrap();
+    assert!(usable_mount_dir(&missing).is_ok());
+    std::fs::write(missing.join("notes.md"), "x").unwrap();
+    assert!(usable_mount_dir(&missing)
+        .unwrap_err()
+        .contains("already holds files"));
+    let file = dir.path().join("plain");
+    std::fs::write(&file, "x").unwrap();
+    assert!(usable_mount_dir(&file)
+        .unwrap_err()
+        .contains("not a folder"));
+}

@@ -216,3 +216,31 @@ async fn n1_page_on_another_local_port_is_403() {
     let (status, body) = send(&app, "GET", "/api/dav/mount", &own, "").await;
     assert_eq!(status, StatusCode::OK, "{body}");
 }
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn n2_mount_never_covers_a_folder_with_files() {
+    let home = isolate_home();
+    let docs = home.join("Documents");
+    std::fs::create_dir_all(&docs).unwrap();
+    std::fs::write(docs.join("taxes.pdf"), "keep me").unwrap();
+    let (_d, app) = fixture(false).await;
+    let (status, body) = send(
+        &app,
+        "POST",
+        "/api/dav/mount",
+        &[LOCAL, JSON],
+        r#"{"name":"Documents","autostart":true}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(
+        json(&body)["error"].as_str().unwrap().contains("Documents"),
+        "{body}"
+    );
+    assert!(json(&body).get("commands").is_none(), "{body}");
+    assert_eq!(
+        std::fs::read_to_string(docs.join("taxes.pdf")).unwrap(),
+        "keep me"
+    );
+}
