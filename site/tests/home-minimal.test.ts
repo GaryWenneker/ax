@@ -378,3 +378,44 @@ test('copied install button throws sparks so the copy stays visible', () => {
   assert.match(css, /data-ax-motion='paused'\] \.ax-landing \.ax-download-primary\[data-copied="true"\]::after\{animation:none/);
   assert.doesNotMatch(css, /border-radius:50%/);
 });
+
+test('install links keep the site base path (GitHub Pages mirror at /ax)', () => {
+  // Static links in the component are prefixed with the Astro base.
+  assert.doesNotMatch(download, /href="\/(?!\/)/, 'MinimalDownload must not hard-code root-relative links');
+  assert.match(download, /data-ax-base=\{base\}/);
+  // The guide link the script rewrites keeps the base too.
+  type Node = { sel: string; dataset: Record<string, string>; hidden: boolean; textContent: string; innerHTML: string; href: string;
+    classList: { add(): void; remove(): void }; setAttribute(): void; addEventListener(t: string, fn: () => void): void;
+    on: Map<string, (() => void)[]>; contains(): boolean; querySelector(s: string): Node | null; querySelectorAll(s: string): Node[] };
+  const kids: Node[] = [];
+  const el = (sel: string, dataset: Record<string, string> = {}): Node => {
+    const n: Node = { sel, dataset, hidden: false, textContent: '', innerHTML: '', href: '', on: new Map(),
+      classList: { add() {}, remove() {} }, setAttribute() {},
+      addEventListener(t, fn) { n.on.set(t, [...(n.on.get(t) ?? []), fn]); },
+      contains: () => false,
+      querySelector: s => kids.find(k => k.sel === s) ?? null,
+      querySelectorAll: s => kids.filter(k => k.sel === s) };
+    return n;
+  };
+  const root = el('[data-ax-downloader]', { axBase: '/ax' });
+  for (const name of ['data-ax-download', 'data-ax-download-label', 'data-ax-main-icon', 'data-ax-platform-label',
+    'data-ax-platform-toggle', 'data-ax-platform-panel', 'data-ax-platform-help', 'data-ax-install-panel',
+    'data-ax-install-code', 'data-ax-install-instruction', 'data-ax-install-copy', 'data-ax-install-status',
+    'data-ax-guide']) kids.push(el(`[${name}]`));
+  const slim = el('[data-ax-product]', { axProduct: 'slim' });
+  kids.push(slim);
+  const previous = { document: globalThis.document, window: globalThis.window, navigator: globalThis.navigator };
+  const set = (name: string, value: unknown) => Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
+  set('navigator', { platform: 'MacIntel', userAgent: 'Mozilla/5.0 (Macintosh)', maxTouchPoints: 0 });
+  set('document', { documentElement: { dataset: {} }, addEventListener() {}, querySelector: (s: string) => (s === '[data-ax-downloader]' ? root : null) });
+  set('window', { setTimeout: () => 0, clearTimeout() {}, matchMedia: () => ({ matches: false }) });
+  try {
+    mountMinimalDownload();
+    const guide = kids.find(k => k.sel === '[data-ax-guide]')!;
+    assert.equal(guide.href, '/ax/getting-started/installation/');
+    (slim.on.get('click') ?? []).forEach(fn => fn());
+    assert.equal(guide.href, '/ax/guides/headless-linux/');
+  } finally {
+    for (const [k, v] of Object.entries(previous)) set(k, v);
+  }
+});
