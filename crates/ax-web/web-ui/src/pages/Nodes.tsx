@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLive, useNewKeys } from '../lib/useLive';
 import { fetchNodes, fetchStats } from '../api';
+import { applyLatest, createLatestGate } from '../lib/latestLoad';
 import NodeDetailPanel from '../components/NodeDetail';
 import Codicon from '../components/Codicon';
 import {
@@ -73,17 +74,22 @@ export default function NodesPage() {
   const fresh = useNewKeys(loading ? null : nodes.map((n) => n.id), dataScope);
   useLive('graph', () => load(offset, q, kind, lang, true));
 
+  /** Only the answer for the newest filters and page may land. */
+  const loadGate = useRef(createLatestGate());
+
   function load(newOffset: number, newQ: string, newKind: string, newLang: string, quiet = false) {
     if (!quiet) setLoading(true);
     setError(null);
-    fetchNodes({ q: newQ, kind: newKind || undefined, lang: newLang || undefined, limit: LIMIT, offset: newOffset })
-      .then((page) => {
+    const query = { q: newQ, kind: newKind || undefined, lang: newLang || undefined, limit: LIMIT, offset: newOffset };
+    void applyLatest(loadGate.current, () => fetchNodes(query), {
+      value: (page) => {
         setDataScope(`${newOffset}|${newQ}|${newKind}|${newLang}`);
         setNodes(page.nodes);
         setTotal(page.total);
-        setLoading(false);
-      })
-      .catch((e: Error) => { setError(e.message); setLoading(false); });
+      },
+      error: (e) => setError(e instanceof Error ? e.message : String(e)),
+      settled: () => setLoading(false),
+    });
   }
 
   useEffect(() => {
