@@ -1,18 +1,16 @@
-/* Site backdrop from the Ax deck (DeckBackdrop.astro): lime halftone, violet silk ring, vignette. */
-.ax-backdrop{pointer-events:none;overflow:hidden}
-.ax-backdrop-hero{position:absolute;z-index:1;inset:0}
-.ax-backdrop-page{position:fixed;z-index:0;inset:var(--sl-nav-height,4.5rem) 0 0 0}
+/* Site backdrop from the Ax deck (DeckBackdrop.astro): a fixed lime halftone grid as the page
+   background, the violet silk ring on top of it, and the deck's vignette.
+   Kept cheap on purpose: no CSS blend modes, filters or backdrop blur over the animated canvases
+   (Chrome on Windows and phones recomposite those on every frame). */
+.ax-backdrop{position:fixed;z-index:0;inset:0;pointer-events:none;overflow:hidden;contain:strict}
 .ax-backdrop-canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
-.ax-silk-fog{filter:blur(14px) saturate(1.25);mix-blend-mode:screen}
-.ax-silk-fog.ax-silk-fog-native{filter:saturate(1.25);image-rendering:auto}
-.ax-silk-lines{opacity:.6;mix-blend-mode:screen}
+.ax-silk-fog{opacity:.9}
+.ax-silk-lines{opacity:.6}
 /* The deck's vignette: calm behind the copy on the left, dark bands top and bottom. */
 .ax-backdrop-vignette{position:absolute;inset:0;background:radial-gradient(ellipse at 30% 50%,rgba(8,10,9,.66) 0%,rgba(8,10,9,.42) 45%,rgba(8,10,9,.1) 100%),linear-gradient(to bottom,rgba(8,10,9,.7),transparent 18%,transparent 82%,rgba(8,10,9,.8))}
-/* Docs: the article column already has its own dark surface; keep the field quieter. */
-.ax-backdrop-page .ax-backdrop-dots{opacity:.85}
 @media(max-width:899px){
-  .ax-backdrop-hero{opacity:.7;mask-image:linear-gradient(180deg,#000 0%,#000 35%,transparent 70%);-webkit-mask-image:linear-gradient(180deg,#000 0%,#000 35%,transparent 70%)}
-  .ax-backdrop-page{opacity:.45}
+  .ax-backdrop-hero .ax-silk-fog,.ax-backdrop-hero .ax-silk-lines{opacity:.5}
+  .ax-backdrop-page{opacity:.5}
 }
 /* The light docs theme stays plain: the glow only works on the dark ground. */
 :root[data-theme='light'] .ax-backdrop{display:none}

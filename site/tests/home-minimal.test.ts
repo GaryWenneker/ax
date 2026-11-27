@@ -47,11 +47,14 @@ test('homepage backdrop is the deck backdrop (halftone, silk ring, vignette), no
   // Motion: the visible Pause motion control and hidden tabs stop the loop on a still frame.
   assert.match(script, /html\.dataset\.axMotion === 'paused' \|\| document\.hidden/);
   assert.match(script, /attributeFilter: \['data-theme', 'data-ax-motion'\]/);
-  assert.match(script, /new ResizeObserver\(onResize\)/);
+  assert.match(script, /addEventListener\('resize', onResize\)/);
+  assert.match(script, /addEventListener\('pagehide', save\)/);
   assert.match(home, /<MotionControl\s*\/>/);
   // The deck's vignette keeps the copy readable; the light docs theme hides the glow.
   assert.match(styles, /\.ax-backdrop-vignette\{[^}]*radial-gradient\(ellipse at 30% 50%,rgba\(8,10,9,\.66\)/);
-  assert.match(styles, /\.ax-backdrop\{pointer-events:none/);
+  assert.match(styles, /\.ax-backdrop\{position:fixed;z-index:0;inset:0;pointer-events:none/);
+  // Nothing over the animated canvases forces a per-frame recomposite.
+  assert.doesNotMatch(styles, /mix-blend-mode|filter:blur|backdrop-filter/);
   assert.match(styles, /:root\[data-theme='light'\] \.ax-backdrop\{display:none\}/);
   // Deck kicker and lime chips on the hero.
   assert.match(css, /\.ax-eyebrow\{[^}]*color:var\(--ax-lime\)/);
@@ -77,6 +80,79 @@ test('backdrop layout: hero clears the copy, docs pages each get their own stabl
     assert.ok(page.fx >= 0.58 && page.fx <= 0.9, `${path} ring stays right of the article (${page.fx})`);
   }
   assert.deepEqual(makeSparks(5), makeSparks(5));
+});
+
+test('the halftone grid is a fixed page background, independent of the ring', async () => {
+  const { gridWeight, backdropLayout, pageSeed } = await import('../src/scripts/deck-backdrop.ts');
+  // Same weight field on every page: it depends on the viewport only, never on the ring layout.
+  assert.equal(gridWeight.length, 3);
+  const hero = backdropLayout('hero', 1440, 900);
+  const docs = backdropLayout('page', 1440, 900, pageSeed('/guides/memory/'));
+  assert.notDeepEqual([hero.fx, hero.fy], [docs.fx, docs.fy]);
+  assert.ok(gridWeight(0.9, 0.45, 1.6) > 0.8, 'strong at the right edge');
+  assert.ok(gridWeight(0.1, 0.45, 1.6) < 0, 'calm behind the copy on the left');
+  // Phones: the grid gathers top-right and stays out from behind the full-width copy.
+  assert.ok(gridWeight(0.95, 0.08, 0.46) > 0.9);
+  assert.ok(gridWeight(0.3, 0.45, 0.46) < -0.5, 'at most a few faint dots behind the phone copy at wave peaks');
+});
+
+test('page changes carry the ring state so the ring travels like a deck slide change', async () => {
+  const { readSavedState, RIBBONS } = await import('../src/scripts/deck-backdrop.ts');
+  const bodies = RIBBONS.map(() => ({ fx: 0.76, fy: 0.5, vx: 0, vy: 0 }));
+  const state = { at: 1_000_000, clock: 12.5, r: 0.4, k: 1, spin: 0, bodies };
+  assert.deepEqual(readSavedState(JSON.stringify(state), 1_002_000), state);
+  assert.equal(readSavedState(JSON.stringify(state), 1_000_000 + 16_000), null, 'stale state is ignored');
+  assert.equal(readSavedState(JSON.stringify({ ...state, bodies: bodies.slice(1) }), 1_001_000), null);
+  assert.equal(readSavedState(JSON.stringify({ ...state, clock: 'x' }), 1_001_000), null);
+  assert.equal(readSavedState('{broken', 1_001_000), null);
+  assert.equal(readSavedState(null, 1_001_000), null);
+  // Layers follow on their own springs: mist trails, the bright core leads.
+  const stiffness = RIBBONS.map((ribbon) => ribbon.K);
+  assert.deepEqual([...stiffness].sort((x, y) => x - y), stiffness);
+});
+
+test('phones, small screens, weak CPUs and Windows start at a lighter quality tier', async () => {
+  const { startTier, TIERS } = await import('../src/scripts/deck-backdrop.ts');
+  const mac = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)';
+  assert.equal(startTier({ ua: mac, cores: 10, memory: 8, coarse: false, width: 1440 }), 0);
+  assert.equal(startTier({ ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', cores: 12, memory: 8, coarse: false, width: 1920 }), 1);
+  assert.equal(startTier({ ua: mac, cores: 8, memory: 4, coarse: true, width: 390 }), 1);
+  assert.equal(startTier({ ua: mac, cores: 4, memory: 8, coarse: false, width: 1440 }), 2);
+  assert.equal(startTier({ ua: mac, cores: 8, memory: 2, coarse: true, width: 390 }), 3);
+  assert.equal(TIERS.at(-1)?.every, 2, 'the lowest tier paces to a steady 30 fps');
+});
+
+test('the ring stays sharp at rest: never below screen resolution, Retina-sharp when affordable', async () => {
+  const { canvasScale, TIERS } = await import('../src/scripts/deck-backdrop.ts');
+  for (let tier = 0; tier < TIERS.length; tier++) {
+    for (const [w, h, dpr] of [[1440, 900, 2], [2560, 1440, 2], [3840, 2160, 1], [390, 844, 3], [1024, 768, 1]]) {
+      assert.ok(canvasScale(tier, dpr, w, h) >= 1, `tier ${tier} ${w}x${h}@${dpr}`);
+    }
+  }
+  assert.equal(canvasScale(0, 2, 1440, 900), 2, 'full Retina on a laptop screen');
+  assert.equal(canvasScale(1, 3, 390, 844), 1.5, 'phones draw at 1.5x');
+  assert.equal(canvasScale(0, 1, 1920, 1080), 1, 'never above the device pixel ratio');
+});
+
+test('the quality monitor steps down on slow frames and back up when frames are fast', async () => {
+  const { judgeFrames } = await import('../src/scripts/deck-backdrop.ts');
+  const run = (frame: number, count: number, tier: number, tooSlow = new Set<number>()) => {
+    const m = { n: 0, sum: 0, spikes: 0 };
+    let t = tier;
+    for (let i = 0; i < count; i++) {
+      const next = judgeFrames(m, frame, t, tooSlow);
+      if (next !== t) return next;
+    }
+    return t;
+  };
+  assert.equal(run(1 / 60, 200, 0), 0, '60 fps keeps the top tier');
+  assert.equal(run(1 / 40, 30, 0), 1, 'a slow average steps down after 30 frames');
+  assert.equal(run(1 / 120, 90, 2), 1, 'fast frames step back up after 90');
+  assert.equal(run(1 / 120, 200, 2, new Set([1])), 2, 'never back into a tier that was too slow');
+  const spiky = { n: 0, sum: 0, spikes: 0 };
+  let tier = 0;
+  for (let i = 0; i < 30 && tier === 0; i++) tier = judgeFrames(spiky, i % 6 === 0 ? 0.034 : 0.012, tier, new Set());
+  assert.equal(tier, 1, 'repeated dropped frames step down even when the average looks fine');
 });
 
 test('installer offers commands with manual OS selection and keeps optional release assets', () => {
