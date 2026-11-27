@@ -7,6 +7,11 @@
 //! owner, admin or approver role and a reason, and each one stores the actor, reason and time
 //! in `context_approvals` ([`load_approval`]). `actor_kind` is supplied by the caller, so a
 //! caller that wires approval must derive it from its authenticated transport.
+//!
+//! Seals are SHA-256 over length-prefixed keys and values ([`seal`]). Rows sealed with the
+//! earlier `ax-manifest-v1` payload (NUL separators) still verify when they are unchanged;
+//! [`list_manifest_summaries`] lists them with the `legacy_seal` uncertainty instead of
+//! `integrity_failed`.
 
 use sha2::Digest;
 
@@ -204,6 +209,48 @@ pub fn seal(pairs: &[(&str, &str)]) -> String {
         }
     }
     hex::encode(sha2::Sha256::digest(&payload))
+}
+
+/// The earlier `ax-manifest-v1` payload: each key and value followed by a NUL.
+/// Used only to recognise rows sealed before [`seal`] used length prefixes.
+fn legacy_seal(pairs: &[(&str, &str)]) -> String {
+    let mut ordered: Vec<(&str, &str)> = pairs.to_vec();
+    ordered.sort_by(|left, right| left.0.cmp(right.0).then(left.1.cmp(right.1)));
+    let mut payload = Vec::from(&b"ax-manifest-v1\0"[..]);
+    for (key, value) in ordered {
+        payload.extend(key.as_bytes());
+        payload.push(0);
+        payload.extend(value.as_bytes());
+        payload.push(0);
+    }
+    hex::encode(sha2::Sha256::digest(&payload))
+}
+
+/// How a stored seal compares with the stored row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SealCheck {
+    /// Matches the current seal format.
+    Current,
+    /// Matches the legacy `ax-manifest-v1` format the row was sealed with.
+    Legacy,
+    /// Matches neither: the row changed after it was sealed.
+    Broken,
+}
+
+impl SealCheck {
+    fn of(stored: &str, current: impl FnOnce() -> String, legacy: impl FnOnce() -> String) -> Self {
+        if current() == stored {
+            Self::Current
+        } else if legacy() == stored {
+            Self::Legacy
+        } else {
+            Self::Broken
+        }
+    }
+
+    fn ok(self) -> bool {
+        !matches!(self, Self::Broken)
+    }
 }
 
 pub fn seal_matches(pairs: &[(&str, &str)], expected: &str) -> bool {
@@ -458,7 +505,12 @@ pub async fn verify_receipt(pool: &sqlx::SqlitePool, receipt_id: &str) -> Result
     .fetch_all(pool)
     .await
     .map_err(|error| error.to_string())?;
-    Ok(receipt_rows_seal(&project_id, &status, &rows) == seal)
+    Ok(SealCheck::of(
+        &seal,
+        || receipt_rows_seal(&project_id, &status, &rows),
+        || legacy_receipt_rows_seal(&project_id, &status, &rows),
+    )
+    .ok())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -640,7 +692,7 @@ pub async fn verify_manifest(pool: &sqlx::SqlitePool, manifest_id: &str) -> Resu
         tool_versions,
         commit_hash,
     };
-    Ok(manifest_seal(&manifest) == seal)
+    Ok(manifest_seal_check(&manifest, &seal).ok())
 }
 
 /// How many manifests [`list_manifest_summaries`] returns, newest first.
@@ -704,7 +756,7 @@ pub async fn list_manifest_summaries_page(
     .map_err(|error| error.to_string())?;
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
-        let integrity_ok = parse_mode(&row.mode).is_ok_and(|mode| {
+        let check = parse_mode(&row.mode).map_or(SealCheck::Broken, |mode| {
             let manifest = ContextManifest {
                 project_id: row.project_id,
                 session_id: row.session_id.clone(),
@@ -719,8 +771,9 @@ pub async fn list_manifest_summaries_page(
                 tool_versions: row.tool_versions,
                 commit_hash: row.commit_hash,
             };
-            manifest_seal(&manifest) == row.seal
+            manifest_seal_check(&manifest, &row.seal)
         });
+        let integrity_ok = check.ok();
         let replay_status = row.replay_score.unwrap_or_else(|| "not_run".into());
         let mut uncertainties = Vec::new();
         if row.approval != "approved" {
@@ -728,6 +781,8 @@ pub async fn list_manifest_summaries_page(
         }
         if !integrity_ok {
             uncertainties.push("integrity_failed".into());
+        } else if check == SealCheck::Legacy {
+            uncertainties.push("legacy_seal".into());
         }
         if replay_status == "not_tested" || replay_status == "not_run" {
             uncertainties.push(replay_status.clone());
@@ -1221,6 +1276,41 @@ fn manifest_seal(manifest: &ContextManifest) -> String {
     seal(&pairs)
 }
 
+fn manifest_seal_check(manifest: &ContextManifest, stored: &str) -> SealCheck {
+    SealCheck::of(
+        stored,
+        || manifest_seal(manifest),
+        || legacy_manifest_seal(manifest),
+    )
+}
+
+/// The manifest seal in the legacy `ax-manifest-v1` format, where an absent
+/// cutoff sealed as `0` and an absent provider or snapshot as empty text.
+fn legacy_manifest_seal(manifest: &ContextManifest) -> String {
+    let owned = [
+        ("agent", manifest.agent_id.trim().to_string()),
+        ("cutoff", manifest.cutoff_ms.unwrap_or(0).to_string()),
+        ("mode", mode_name(manifest.mode).to_string()),
+        ("project", manifest.project_id.trim().to_string()),
+        (
+            "provider",
+            manifest.provider_chat_id.clone().unwrap_or_default(),
+        ),
+        ("commit", manifest.commit_hash.trim().to_string()),
+        ("model", manifest.model.trim().to_string()),
+        ("receipt", manifest.receipt_id.clone()),
+        ("session", manifest.session_id.trim().to_string()),
+        ("tools", manifest.tool_versions.trim().to_string()),
+        ("snapshot", manifest.snapshot_id.clone().unwrap_or_default()),
+        ("turn", manifest.turn_id.trim().to_string()),
+    ];
+    let pairs: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect();
+    legacy_seal(&pairs)
+}
+
 fn mode_name(mode: ReplayMode) -> &'static str {
     match mode {
         ReplayMode::Current => "current",
@@ -1340,6 +1430,30 @@ fn receipt_rows_seal(
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
     seal(&pairs)
+}
+
+/// The receipt seal in the legacy `ax-manifest-v1` format, one `|`-joined
+/// pair per item.
+fn legacy_receipt_rows_seal(
+    project_id: &str,
+    status: &str,
+    rows: &[(String, String, String, String)],
+) -> String {
+    let mut owned = vec![
+        ("project".to_string(), project_id.to_string()),
+        ("status".to_string(), status.to_string()),
+    ];
+    for (index, (id, role, decision, reason)) in rows.iter().enumerate() {
+        owned.push((
+            format!("item.{index}"),
+            format!("{id}|{role}|{decision}|{reason}"),
+        ));
+    }
+    let pairs: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+    legacy_seal(&pairs)
 }
 
 fn status_name(status: ReceiptStatus) -> &'static str {
@@ -2854,5 +2968,75 @@ mod tests {
     #[test]
     fn seal_values_with_nul_bytes_cannot_shift_into_the_next_pair() {
         assert_ne!(seal(&[("a", "b"), ("c", "d")]), seal(&[("a", "b\0c\0d")]));
+    }
+
+    /// Seals made with the earlier `ax-manifest-v1` payload (NUL separators,
+    /// absent options as `0` / empty). The hex values were computed outside
+    /// this crate from that format.
+    const LEGACY_RECEIPT_SEAL: &str =
+        "8f84824036acc22bd78de0f8d1fe28208555e4f2b8d5171ecc42c75c62016d00";
+    const LEGACY_MANIFEST_SEAL: &str =
+        "785785d1396bc9b6f5e4e8d0cfe4d8ea644d0b2192f98b6e63668c500fec39e7";
+
+    async fn insert_legacy_rows(pool: &sqlx::SqlitePool) {
+        ensure_receipt_schema(pool).await.unwrap();
+        ensure_manifest_schema(pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO selection_receipts (id, project_id, status, seal, approval, created_at)
+             VALUES (?1, 'ax', 'ready', ?1, 'unapproved', 1)",
+        )
+        .bind(LEGACY_RECEIPT_SEAL)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO selection_receipt_items (receipt_id, position, item_id, role, decision, reason)
+             VALUES (?1, 0, 'x', 'mandatory', 'selected', 'ok')",
+        )
+        .bind(LEGACY_RECEIPT_SEAL)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO context_manifests
+             (id, project_id, session_id, turn_id, agent_id, provider_chat_id, mode, cutoff_ms,
+              snapshot_id, receipt_id, model, tool_versions, commit_hash, seal, approval, created_at)
+             VALUES (?1, 'ax', 's1', 't1', 'a1', NULL, 'current', NULL, NULL, ?2, 'm', 't=1', 'c1',
+                     ?1, 'unapproved', 1)",
+        )
+        .bind(LEGACY_MANIFEST_SEAL)
+        .bind(LEGACY_RECEIPT_SEAL)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn rows_sealed_in_the_legacy_format_verify_and_are_listed_as_legacy() {
+        let (_dir, pool) = temp_pool().await;
+        insert_legacy_rows(&pool).await;
+        assert!(verify_receipt(&pool, LEGACY_RECEIPT_SEAL).await.unwrap());
+        assert!(verify_manifest(&pool, LEGACY_MANIFEST_SEAL).await.unwrap());
+        let listed = list_manifest_summaries(&pool, "ax").await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].integrity_ok);
+        assert!(listed[0].uncertainties.contains(&"legacy_seal".into()));
+        assert!(!listed[0].uncertainties.contains(&"integrity_failed".into()));
+
+        // A legacy row that changed after sealing still fails.
+        sqlx::query("UPDATE context_manifests SET model = 'other'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE selection_receipt_items SET reason = 'changed'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(!verify_receipt(&pool, LEGACY_RECEIPT_SEAL).await.unwrap());
+        assert!(!verify_manifest(&pool, LEGACY_MANIFEST_SEAL).await.unwrap());
+        let listed = list_manifest_summaries(&pool, "ax").await.unwrap();
+        assert!(!listed[0].integrity_ok);
+        assert!(listed[0].uncertainties.contains(&"integrity_failed".into()));
+        assert!(!listed[0].uncertainties.contains(&"legacy_seal".into()));
     }
 }

@@ -252,7 +252,10 @@ pub fn parse_settings(global_json: Option<&str>, project_json: Option<&str>) -> 
 
 fn apply_json(settings: &mut BudgetSettings, label: &str, text: &str, diags: &mut Vec<String>) {
     let text = strip_bom(text);
-    if text.trim_matches(|c: char| c.is_ascii_whitespace()).is_empty() {
+    if text
+        .trim_matches(|c: char| c.is_ascii_whitespace())
+        .is_empty()
+    {
         // An empty file has no settings, as when saving into it.
         return;
     }
@@ -407,7 +410,10 @@ where
                     .map_err(|e| e.to_string())
                     .and_then(|text| {
                         let text = strip_bom(text);
-                        if text.trim_matches(|c: char| c.is_ascii_whitespace()).is_empty() {
+                        if text
+                            .trim_matches(|c: char| c.is_ascii_whitespace())
+                            .is_empty()
+                        {
                             // An empty file (made with `touch`) has no settings yet.
                             return Ok(Value::Object(Default::default()));
                         }
@@ -1120,8 +1126,7 @@ mod tests {
             let path = dir.path().join(name);
             std::fs::write(&path, body).unwrap();
             save_budget_to(&path, &patch).unwrap_or_else(|e| panic!("{name}: {e}"));
-            let v: Value =
-                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
             assert_eq!(v["budget"]["monthly"], 60.0, "{name}");
         }
         let (_, diags) = parse_settings_with_diagnostics(Some(" \n"), Some(""));

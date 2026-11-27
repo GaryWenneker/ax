@@ -567,12 +567,13 @@ mod tests {
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
-        let reopened =
-            tokio::time::timeout(std::time::Duration::from_secs(5), open_pool()).await;
+        let reopened = tokio::time::timeout(std::time::Duration::from_secs(5), open_pool()).await;
         drop(held);
         drop(held2);
         std::env::remove_var("AX_USAGE_DB");
-        let second = reopened.expect("open_pool waited for the old pool to drain").unwrap();
+        let second = reopened
+            .expect("open_pool waited for the old pool to drain")
+            .unwrap();
         assert!(sqlx::query("SELECT 1").execute(&second).await.is_ok());
     }
 

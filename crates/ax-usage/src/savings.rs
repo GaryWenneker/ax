@@ -3304,7 +3304,13 @@ mod tests {
         for (agent, id, start, end, project) in [
             ("cursor", "early", now - 8 * day, now - hour, "/p/early"),
             ("claude", "late", now - 2 * hour, now, "/p/late"),
-            ("claude", "ancient", now - 30 * day, now - 29 * day, "/p/early"),
+            (
+                "claude",
+                "ancient",
+                now - 30 * day,
+                now - 29 * day,
+                "/p/early",
+            ),
         ] {
             sqlx::query("INSERT INTO agent_session_log(agent,session_id,source_mtime,started_at,ended_at,model) VALUES (?,?,?,?,?,'m')")
                 .bind(agent).bind(id).bind(end).bind(start).bind(end)
@@ -3337,6 +3343,9 @@ mod tests {
             .map(|s| (s.mcp_calls_in_window, s.tokens_saved_in_window))
             .unwrap();
         assert_eq!(late, (1, 7));
-        assert!(summary.agent_sessions.iter().all(|s| s.session_id == "late"));
+        assert!(summary
+            .agent_sessions
+            .iter()
+            .all(|s| s.session_id == "late"));
     }
 }
