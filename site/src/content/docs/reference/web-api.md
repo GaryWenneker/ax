@@ -134,7 +134,7 @@ See [Obsidian Vault](/guides/obsidian-vault/).
 | GET | `/api/ship/events` | Pipeline events (SSE) |
 | GET | `/api/ship/status` | Branch, last report, running step |
 | GET | `/api/ship/impact` | Changed files and impacted tests |
-| POST | `/api/ship/command` | Run evaluate / draft PR |
+| POST | `/api/ship/command` | Run evaluate / draft PR. Both are refused in read-only mode |
 | GET, PUT | `/api/ship/config` | Read or save `.ax/ship.toml` |
 | GET, PUT | `/api/ship/review-language` | Review comment language |
 
@@ -280,7 +280,7 @@ These are host operations, not passive documentation examples. Streaming variant
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/ship/sonar/discover` | Inspect runtimes, containers and reachability |
+| GET | `/api/ship/sonar/discover` | Inspect runtimes, containers and reachability. Outside read-only mode it also starts project provisioning when SonarQube is enabled and reachable |
 | POST | `/api/ship/sonar/install` | Install the configured service |
 | POST | `/api/ship/sonar/install/stream` | Install with progress |
 | POST | `/api/ship/sonar/start` | Start the service |
@@ -289,7 +289,7 @@ These are host operations, not passive documentation examples. Streaming variant
 | POST | `/api/ship/sonar/stop/stream` | Stop with progress |
 | POST | `/api/ship/sonar/bootstrap` | Bootstrap project setup |
 | GET | `/api/ship/sonar/setup` | Read project, scanner and token setup status |
-| POST | `/api/ship/sonar/validate-login` | Validate configured login |
+| POST | `/api/ship/sonar/validate-login` | Check a SonarQube login. `host` must be the configured SonarQube host or a loopback address (other hosts get 400); refused in read-only mode |
 | GET | `/api/ship/sonar/validate-token` | Validate the current token |
 | POST | `/api/ship/sonar/regenerate-token` | Replace the scanner token |
 | POST | `/api/ship/sonar/scan` | Run a scan |

@@ -242,6 +242,9 @@ async fn handle_ship_command(
             .into_response()
         }
         "draft" => {
+            if hub.readonly {
+                return readonly_err().into_response();
+            }
             let cfg = ctx.daemon.config().await;
             let pipeline = ax_ship::ShipPipeline::new(
                 ctx.daemon.project_root.clone(),
@@ -362,7 +365,8 @@ async fn handle_sonar_discover(State(hub): State<WebHub>) -> impl IntoResponse {
     ctx.daemon.reload_config().await;
     let config = ctx.daemon.config().await;
     let discovery = sonar_discovery(&config).await;
-    if config.sonar.enabled && discovery.reachable {
+    // Provisioning writes to SonarQube and the project; never for a read-only viewer.
+    if config.sonar.enabled && discovery.reachable && !hub.readonly {
         ctx.daemon.spawn_sonar_auto_provision();
     }
     let setup = sonar_setup_status(&config, &ctx.daemon.project_root, discovery.reachable).await;
@@ -391,9 +395,46 @@ struct SonarValidateLoginBody {
     admin_password: String,
 }
 
+/// The login check makes this server connect to `host` with the given
+/// credentials. Allow only the configured SonarQube or a loopback address, so
+/// the route cannot be used to probe other hosts on the owner's network.
+fn sonar_login_host_allowed(host: &str, configured: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(host) else {
+        return false;
+    };
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+    if host.trim_end_matches('/') == configured.trim_end_matches('/') {
+        return true;
+    }
+    url.host_str().is_some_and(|name| {
+        name.eq_ignore_ascii_case("localhost")
+            || name
+                .trim_matches(['[', ']'])
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    })
+}
+
 async fn handle_sonar_validate_login(
+    State(hub): State<WebHub>,
     Json(body): Json<SonarValidateLoginBody>,
 ) -> impl IntoResponse {
+    if hub.readonly {
+        return readonly_err().into_response();
+    }
+    let configured = ship_ctx(&hub).await.daemon.config().await.sonar.host;
+    if !sonar_login_host_allowed(&body.host, &configured) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "Use the configured SonarQube host or a loopback address",
+            })),
+        )
+            .into_response();
+    }
     match validate_sonar_login(&body.host, &body.admin_user, &body.admin_password).await {
         Ok(valid) => Json(serde_json::json!({
             "ok": true,
