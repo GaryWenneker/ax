@@ -11,7 +11,9 @@ use crate::liveness_watchdog::install_main_thread_watchdog;
 use crate::ppid_watchdog::spawn_ppid_watchdog;
 use crate::proxy::attach_or_spawn;
 use crate::tools::{server_instructions, ToolHandler};
-use crate::transport::{is_notification, StdioTransport, METHOD_NOT_FOUND, PARSE_ERROR};
+use crate::transport::{
+    is_notification, StdioTransport, INTERNAL_ERROR, METHOD_NOT_FOUND, PARSE_ERROR,
+};
 use crate::verbose::{
     deliver_local, format_mcp_log_notification, push_error, push_inbound, push_internal, push_line,
     push_outbound, verbose_enabled, with_trace_buffer,
@@ -23,20 +25,29 @@ use ax_usage::{estimate_savings, spawn_record_mcp_call, McpCallRecord};
 pub struct RequestOutcome {
     pub result: Result<Value, String>,
     pub verbose_lines: Vec<String>,
+    /// The JSON-RPC error code to answer with when `result` is an error.
+    pub error_code: i32,
 }
 
 impl RequestOutcome {
     fn ok(value: Value) -> Self {
+        Self::with_lines(Ok(value), Vec::new())
+    }
+
+    /// A request that reached its handler: a failure is an internal error.
+    fn with_lines(result: Result<Value, String>, verbose_lines: Vec<String>) -> Self {
         Self {
-            result: Ok(value),
-            verbose_lines: Vec::new(),
+            result,
+            verbose_lines,
+            error_code: INTERNAL_ERROR,
         }
     }
 
-    fn err(msg: String) -> Self {
+    fn method_not_found(method: &str) -> Self {
         Self {
-            result: Err(msg),
+            result: Err(format!("method not found: {method}")),
             verbose_lines: Vec::new(),
+            error_code: METHOD_NOT_FOUND,
         }
     }
 }
@@ -93,7 +104,7 @@ pub async fn run_stdio_server(
                 let id = req.id.clone().unwrap_or(Value::Null);
                 match outcome.result {
                     Ok(value) => StdioTransport::send_result(id, value)?,
-                    Err(msg) => StdioTransport::send_error(Some(id), METHOD_NOT_FOUND, &msg)?,
+                    Err(msg) => StdioTransport::send_error(Some(id), outcome.error_code, &msg)?,
                 }
                 // Embedded stdio path (no daemon proxy): stderr + log file +
                 // MCP logging notifications on stdout for Cursor Output.
@@ -184,21 +195,15 @@ pub async fn handle_request(engine: &mut McpEngine, method: &str, params: Value)
                     call_tool_and_wrap(engine, &name, args, project_root.as_deref(), true).await
                 })
                 .await;
-                RequestOutcome {
-                    result,
-                    verbose_lines,
-                }
+                RequestOutcome::with_lines(result, verbose_lines)
             } else {
                 let result =
                     call_tool_and_wrap(engine, &name, args, project_root.as_deref(), false).await;
-                RequestOutcome {
-                    result,
-                    verbose_lines: Vec::new(),
-                }
+                RequestOutcome::with_lines(result, Vec::new())
             }
         }
         "notifications/initialized" => RequestOutcome::ok(Value::Null),
-        _ => RequestOutcome::err(format!("method not found: {}", method)),
+        _ => RequestOutcome::method_not_found(method),
     }
 }
 

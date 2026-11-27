@@ -834,7 +834,7 @@ async fn serve_requests(
                 id: Some(id),
                 result: None,
                 error: Some(crate::transport::JsonRpcError {
-                    code: crate::transport::METHOD_NOT_FOUND,
+                    code: outcome.error_code,
                     message: msg,
                     data: None,
                 }),
@@ -1146,6 +1146,46 @@ mod tests {
         let mut line = String::new();
         session.read_line(&mut line).await.unwrap();
         serde_json::from_str(line.trim()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_failed_call_is_an_internal_error_and_an_unknown_method_is_not_found() {
+        let _env = crate::test_env::shared().await;
+        let dir = tempfile::tempdir().unwrap();
+        let (client, server) = tokio::io::duplex(1024 * 1024);
+        let root = dir.path().to_path_buf();
+        let engine = Arc::new(Mutex::new(McpEngine::with_project_root(root.clone())));
+        let lifecycle = DaemonLifecycle::new(root.clone(), None);
+        tokio::spawn(async move {
+            let session = DaemonSession::from_io(server);
+            let _ = serve_session(session, engine, &root, 0, None, None, lifecycle).await;
+        });
+        let mut client = DaemonSession::from_io(client);
+        assert_eq!(read_json_line(&mut client).await["type"], "hello");
+        // The project was never indexed, so the call fails inside the tool.
+        client
+            .write_bytes(
+                b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\
+                  \"params\":{\"name\":\"ax_search\",\"arguments\":{\"query\":\"x\"}}}\n",
+            )
+            .await
+            .unwrap();
+        let failed = read_json_line(&mut client).await;
+        assert_eq!(
+            failed["error"]["code"],
+            crate::transport::INTERNAL_ERROR,
+            "{failed}"
+        );
+        client
+            .write_bytes(b"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"no/such\"}\n")
+            .await
+            .unwrap();
+        let unknown = read_json_line(&mut client).await;
+        assert_eq!(
+            unknown["error"]["code"],
+            crate::transport::METHOD_NOT_FOUND,
+            "{unknown}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
