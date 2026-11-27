@@ -167,10 +167,13 @@ impl ReferenceResolver {
             }
         }
 
-        // A reference resolved to its own source (a compiler macro such as
-        // `defineProps`, a Svelte rune, a virtual module) is handled: its row
-        // goes, but it stands for no edge, so no self-loop is stored.
-        result.resolved.retain(|r| !is_self_resolution(r));
+        // A framework resolver that resolves a reference to its own source (a
+        // compiler macro such as `defineProps`, a Svelte rune, a virtual
+        // module) has handled it: its row goes, but it stands for no edge.
+        // Any other self-resolution is real recursion and keeps its edge.
+        result
+            .resolved
+            .retain(|r| !(r.resolved_by == ResolvedBy::Framework && is_self_resolution(r)));
         // One transaction for all edges instead of one commit per reference.
         // Only drop the unresolved rows once their edges are stored.
         let edges: Vec<Edge> = result.resolved.iter().map(resolved_edge).collect();

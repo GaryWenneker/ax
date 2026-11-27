@@ -84,16 +84,33 @@ async fn flask_resolver_does_not_claim_rust_calls() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("Cargo.toml"), "[package]\nname = \"a\"\n").unwrap();
     std::fs::create_dir_all(root.path().join("src")).unwrap();
-    std::fs::write(root.path().join("src/main.rs"), "fn main() {\n\n    get_user();\n}\n")
-        .unwrap();
+    std::fs::write(
+        root.path().join("src/main.rs"),
+        "fn main() {\n\n    get_user();\n}\n",
+    )
+    .unwrap();
     let q = open(root.path()).await;
-    q.upsert_file(&file("src/main.rs", Language::Rust)).await.unwrap();
+    q.upsert_file(&file("src/main.rs", Language::Rust))
+        .await
+        .unwrap();
     q.upsert_file(&file("tools/helpers.py", Language::Python))
         .await
         .unwrap();
     q.upsert_nodes(&[
-        node("caller", NodeKind::Function, "main", "src/main.rs", Language::Rust),
-        node("py-get-user", NodeKind::Function, "get_user", "tools/helpers.py", Language::Python),
+        node(
+            "caller",
+            NodeKind::Function,
+            "main",
+            "src/main.rs",
+            Language::Rust,
+        ),
+        node(
+            "py-get-user",
+            NodeKind::Function,
+            "get_user",
+            "tools/helpers.py",
+            Language::Python,
+        ),
     ])
     .await
     .unwrap();
@@ -120,14 +137,23 @@ async fn django_resolver_needs_a_django_project() {
         q.upsert_file(&file(p, Language::Java)).await.unwrap();
     }
     q.upsert_nodes(&[
-        node("caller", NodeKind::Function, "main", files[0], Language::Java),
+        node(
+            "caller",
+            NodeKind::Function,
+            "main",
+            files[0],
+            Language::Java,
+        ),
         node("user-a", NodeKind::Class, "User", files[1], Language::Java),
         node("user-b", NodeKind::Class, "User", files[2], Language::Java),
     ])
     .await
     .unwrap();
     let targets = framework_targets(root.path(), &q, "User", files[0], Language::Java).await;
-    assert!(targets.is_empty(), "a framework resolver claimed User: {targets:?}");
+    assert!(
+        targets.is_empty(),
+        "a framework resolver claimed User: {targets:?}"
+    );
 }
 
 #[tokio::test]
@@ -135,16 +161,51 @@ async fn django_model_resolves_only_when_one_candidate_is_in_a_model_dir() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("manage.py"), "").unwrap();
     let q = open(root.path()).await;
-    let files = ["shop/views.py", "shop/models.py", "billing/models.py", "shop/admin.py"];
+    let files = [
+        "shop/views.py",
+        "shop/models.py",
+        "billing/models.py",
+        "shop/admin.py",
+    ];
     for p in files {
         q.upsert_file(&file(p, Language::Python)).await.unwrap();
     }
     q.upsert_nodes(&[
-        node("caller", NodeKind::Function, "index", files[0], Language::Python),
-        node("order", NodeKind::Class, "Order", files[1], Language::Python),
-        node("invoice-a", NodeKind::Class, "Invoice", files[1], Language::Python),
-        node("invoice-b", NodeKind::Class, "Invoice", files[2], Language::Python),
-        node("audit", NodeKind::Class, "Audit", files[3], Language::Python),
+        node(
+            "caller",
+            NodeKind::Function,
+            "index",
+            files[0],
+            Language::Python,
+        ),
+        node(
+            "order",
+            NodeKind::Class,
+            "Order",
+            files[1],
+            Language::Python,
+        ),
+        node(
+            "invoice-a",
+            NodeKind::Class,
+            "Invoice",
+            files[1],
+            Language::Python,
+        ),
+        node(
+            "invoice-b",
+            NodeKind::Class,
+            "Invoice",
+            files[2],
+            Language::Python,
+        ),
+        node(
+            "audit",
+            NodeKind::Class,
+            "Audit",
+            files[3],
+            Language::Python,
+        ),
     ])
     .await
     .unwrap();
@@ -167,12 +228,30 @@ async fn flask_dependency_still_resolves_in_a_flask_project() {
         q.upsert_file(&file(p, Language::Python)).await.unwrap();
     }
     q.upsert_nodes(&[
-        node("caller", NodeKind::Function, "index", "app/routes.py", Language::Python),
-        node("dep", NodeKind::Function, "get_user", "app/deps/users.py", Language::Python),
+        node(
+            "caller",
+            NodeKind::Function,
+            "index",
+            "app/routes.py",
+            Language::Python,
+        ),
+        node(
+            "dep",
+            NodeKind::Function,
+            "get_user",
+            "app/deps/users.py",
+            Language::Python,
+        ),
     ])
     .await
     .unwrap();
-    let targets =
-        framework_targets(root.path(), &q, "get_user", "app/routes.py", Language::Python).await;
+    let targets = framework_targets(
+        root.path(),
+        &q,
+        "get_user",
+        "app/routes.py",
+        Language::Python,
+    )
+    .await;
     assert_eq!(targets, vec!["dep".to_string()]);
 }

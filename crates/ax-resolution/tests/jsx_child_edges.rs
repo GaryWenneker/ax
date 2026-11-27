@@ -69,16 +69,44 @@ async fn setup_with(
         q.upsert_file(&file(p)).await.unwrap();
     }
     let mut nodes = vec![
-        node("btn-admin", NodeKind::Component, "Button", "admin/Button.tsx", 1, 3),
-        node("btn-ui", NodeKind::Component, "Button", "ui/Button.tsx", 1, 3),
-        node("file-page", NodeKind::File, "Page.tsx", "app/Page.tsx", 1, 3),
+        node(
+            "btn-admin",
+            NodeKind::Component,
+            "Button",
+            "admin/Button.tsx",
+            1,
+            3,
+        ),
+        node(
+            "btn-ui",
+            NodeKind::Component,
+            "Button",
+            "ui/Button.tsx",
+            1,
+            3,
+        ),
+        node(
+            "file-page",
+            NodeKind::File,
+            "Page.tsx",
+            "app/Page.tsx",
+            1,
+            3,
+        ),
         node("page", NodeKind::Function, "Page", "app/Page.tsx", 1, 3),
     ];
     if !with_admin_button {
         nodes.remove(0);
     }
     if page_defines_button {
-        nodes.push(node("btn-local", NodeKind::Function, "Button", "app/Page.tsx", 4, 6));
+        nodes.push(node(
+            "btn-local",
+            NodeKind::Function,
+            "Button",
+            "app/Page.tsx",
+            4,
+            6,
+        ));
     }
     q.upsert_nodes(&nodes).await.unwrap();
     q
@@ -161,7 +189,9 @@ async fn jsx_source_comes_from_the_source_store() {
     let root = tempfile::tempdir().unwrap();
     let q = setup_with(root.path(), false, false).await;
     // The stored copy renders <Button/>; the file on disk no longer exists.
-    q.upsert_file_content("app/Page.tsx", "h", PAGE).await.unwrap();
+    q.upsert_file_content("app/Page.tsx", "h", PAGE)
+        .await
+        .unwrap();
     std::fs::remove_file(root.path().join("app/Page.tsx")).unwrap();
     CallbackSynthesizer::new()
         .synthesize(root.path(), &q, None)

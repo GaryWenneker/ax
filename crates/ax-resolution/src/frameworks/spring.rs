@@ -584,7 +584,11 @@ mod tests {
     fn get_and_post_on_one_path_are_two_routes() {
         let src = "@RestController\n@RequestMapping(\"/users\")\nclass UserController {\n  @GetMapping(\"/all\")\n  List<User> list() { return null; }\n  @PostMapping(\"/all\")\n  User create() { return null; }\n}\n";
         let out = extract_file("src/main/java/UserController.java", src);
-        let routes: Vec<_> = out.nodes.iter().filter(|n| n.kind == NodeKind::Route).collect();
+        let routes: Vec<_> = out
+            .nodes
+            .iter()
+            .filter(|n| n.kind == NodeKind::Route)
+            .collect();
         let ids: std::collections::HashSet<_> = routes.iter().map(|n| n.id.clone()).collect();
         assert_eq!(routes.len(), 2);
         assert_eq!(ids.len(), 2, "GET and POST /users share a node id");

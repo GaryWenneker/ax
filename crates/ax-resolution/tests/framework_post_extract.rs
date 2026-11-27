@@ -228,7 +228,10 @@ async fn scoped_runs_reuse_framework_detection() {
     add(&q, root.path(), b, "class B {}\n", Language::Java).await;
 
     let registry = FrameworkRegistry::new();
-    let gates = registry.run_post_extract(root.path(), &q, None).await.unwrap();
+    let gates = registry
+        .run_post_extract(root.path(), &q, None)
+        .await
+        .unwrap();
     assert!(!gates.spring);
 
     // B changes on disk, but a sync of A alone must not rescan every file.
@@ -238,7 +241,10 @@ async fn scoped_runs_reuse_framework_detection() {
         .run_post_extract(root.path(), &q, Some(&only_a))
         .await
         .unwrap();
-    assert!(!gates.spring, "a scoped run re-read files outside its scope");
+    assert!(
+        !gates.spring,
+        "a scoped run re-read files outside its scope"
+    );
 
     // A sync of B itself does see the new annotation.
     let only_b = vec![b.to_string()];
@@ -254,4 +260,37 @@ async fn scoped_runs_reuse_framework_detection() {
         .await
         .unwrap();
     assert!(gates.spring);
+}
+
+#[tokio::test]
+async fn real_recursion_keeps_its_self_edge() {
+    let root = tempfile::tempdir().unwrap();
+    let q = open(root.path()).await;
+    let py = "src/walk.py";
+    add(
+        &q,
+        root.path(),
+        py,
+        "class Node:\n    def visit(self, n):\n        n.visit(n)\n",
+        Language::Python,
+    )
+    .await;
+    q.upsert_nodes(&[node(
+        "visit",
+        NodeKind::Method,
+        "visit",
+        py,
+        Language::Python,
+    )])
+    .await
+    .unwrap();
+    call(&q, "visit", "visit", py, Language::Python).await;
+
+    ReferenceResolver::new(root.path())
+        .resolve_all(&q, None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(self_loops(&q).await, vec!["visit Calls".to_string()]);
+    assert_eq!(open_refs(&q).await, Vec::<String>::new());
 }

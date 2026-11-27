@@ -213,22 +213,39 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
 }
 
 /// A string literal whose text starts like an SQL statement: the statement
-/// keyword plus the keyword that must follow it, so prose such as
+/// keyword plus the shape that must follow it, so prose such as
 /// "update the counter" or "select a file" does not count.
+///
+/// `SELECT` must be followed by `*`, `DISTINCT`/`ALL`/`CASE`, a format
+/// placeholder (`{cols}`), a qualified star (`n.*`), a function call
+/// (`MAX(`, `EXISTS(`), or one column followed by `,`, `AS`, `FROM` or an
+/// operator. `INSERT` and `UPDATE` take an optional `OR <action>` conflict
+/// clause; `WITH` takes an optional `RECURSIVE` and column list before `AS (`.
 fn sql_statement_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(
-            r"(?is)^\s*(?:SELECT\s+(?:\*|DISTINCT\b|COUNT\s*\(|[\w.]+\s*(?:,|\bAS\b|\bFROM\b))|INSERT\s+INTO\s|UPDATE\s+\w+\s+SET\s|DELETE\s+FROM\s|WITH\s+\w+\s+AS\s*\(|(?:REPLACE|MERGE)\s+INTO\s)",
-        )
+        Regex::new(concat!(
+            r"(?is)^\s*(?:",
+            r"SELECT\s+(?:\*|(?:DISTINCT|ALL|CASE)\b|\{|\w+(?:\.\w+)*\.\*|\w+\s*\(",
+            r"|[\w.]+\s*(?:,|\bAS\b|\bFROM\b|\|\||[+*/=<>]))",
+            r"|INSERT\s+(?:OR\s+\w+\s+)?INTO\s",
+            r"|UPDATE\s+(?:OR\s+\w+\s+)?\w+\s+SET\s",
+            r"|DELETE\s+FROM\s",
+            r"|WITH\s+(?:RECURSIVE\s+)?\w+\s*(?:\([^)]*\)\s*)?AS\s*\(",
+            r"|(?:REPLACE|MERGE)\s+INTO\s",
+            r")",
+        ))
         .expect("sql statement")
     })
 }
 
+/// The table after `FROM`, `INTO`, `JOIN` or `UPDATE`; an `UPDATE OR <action>`
+/// conflict clause is skipped so the action word is not taken as the table.
 fn sql_table_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"(?i)\b(?:FROM|INTO|UPDATE|JOIN)\s+([a-z_][a-z0-9_]*)\b").expect("sql table")
+        Regex::new(r"(?i)\b(?:FROM|INTO|UPDATE(?:\s+OR\s+[a-z]+)?|JOIN)\s+([a-z_][a-z0-9_]*)\b")
+            .expect("sql table")
     })
 }
 
@@ -620,6 +637,52 @@ mod tests {
         let mut got = tables(src);
         got.sort();
         assert_eq!(got, vec!["accounts", "audit_log", "orders", "users"]);
+    }
+
+    #[test]
+    fn wider_sql_statement_forms_give_tables() {
+        let src = r##"fn f() {
+    sqlx::query("SELECT n.* FROM nodes n");
+    sqlx::query("SELECT MAX(id) FROM edges");
+    sqlx::query("SELECT COALESCE(MAX(community_id),0)+1 FROM node_communities");
+    sqlx::query("SELECT EXISTS(SELECT 1 FROM sqlite_master)");
+    let q = format!("SELECT {cols} FROM files");
+    sqlx::query("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT x FROM walk");
+    sqlx::query("INSERT OR IGNORE INTO schema_versions (v) VALUES (?1)");
+    sqlx::query("UPDATE OR REPLACE settings SET v = ?1");
+    sqlx::query("select id || name from people");
+}
+"##;
+        let mut got = tables(src);
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "c",
+                "edges",
+                "files",
+                "node_communities",
+                "nodes",
+                "people",
+                "schema_versions",
+                "settings",
+                "sqlite_master",
+                "walk"
+            ]
+        );
+    }
+
+    #[test]
+    fn prose_with_sql_words_still_gives_no_tables() {
+        let src = r#"fn f() {
+    let a = "select a file from the list";
+    let b = "with the counter from disk";
+    let c = "insert or skip the row into place";
+    let d = "update or keep the cache from memory";
+    let e = "select one or more from the menu";
+}
+"#;
+        assert_eq!(tables(src), Vec::<String>::new());
     }
 
     #[test]
