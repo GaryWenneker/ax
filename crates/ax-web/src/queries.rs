@@ -63,16 +63,14 @@ pub async fn get_graph_for_ids(pool: &SqlitePool, ids: &[String]) -> anyhow::Res
             systems: Vec::new(),
         });
     }
-    let placeholders = vec!["?"; ids.len()].join(",");
-    let sql = format!(
+    // One JSON parameter instead of one per id: no SQLite variable limit.
+    let ids_json = serde_json::to_string(ids)?;
+    let query = sqlx::query_as::<_, (String, String, String, String, Option<i64>, Option<String>)>(
         "SELECT n.id, n.name, n.kind, n.file_path, nc.community_id, nc.community_label \
-         FROM nodes n LEFT JOIN node_communities nc ON nc.node_id = n.id WHERE n.id IN ({placeholders})"
-    );
-    let mut query =
-        sqlx::query_as::<_, (String, String, String, String, Option<i64>, Option<String>)>(&sql);
-    for id in ids {
-        query = query.bind(id);
-    }
+         FROM nodes n LEFT JOIN node_communities nc ON nc.node_id = n.id \
+         WHERE n.id IN (SELECT value FROM json_each(?1))",
+    )
+    .bind(&ids_json);
     let mut node_rows = query.fetch_all(pool).await?;
     let order: std::collections::HashMap<&str, usize> = ids
         .iter()
@@ -108,15 +106,22 @@ pub async fn get_graph_for_ids(pool: &SqlitePool, ids: &[String]) -> anyhow::Res
         });
     }
 
-    let id_set: std::collections::HashSet<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
+    let found = node_ids_json(&nodes)?;
+    // Edges that touch a selected node: those leaving it, then those entering
+    // it from outside the set (so an edge inside the set is listed once).
     let edge_rows = sqlx::query_as::<_, (String, String, String, Option<String>)>(
-        "SELECT source, target, kind, confidence FROM edges WHERE kind != 'contains'",
+        "SELECT source, target, kind, confidence FROM edges \
+         WHERE kind != 'contains' AND source IN (SELECT value FROM json_each(?1)) \
+         UNION ALL \
+         SELECT source, target, kind, confidence FROM edges \
+         WHERE kind != 'contains' AND target IN (SELECT value FROM json_each(?1)) \
+         AND source NOT IN (SELECT value FROM json_each(?1))",
     )
+    .bind(&found)
     .fetch_all(pool)
     .await?;
     let edges: Vec<GraphEdge> = edge_rows
         .into_iter()
-        .filter(|(s, t, _, _)| id_set.contains(s.as_str()) || id_set.contains(t.as_str()))
         .map(|(source, target, kind, confidence)| GraphEdge {
             source,
             target,
@@ -133,6 +138,12 @@ pub async fn get_graph_for_ids(pool: &SqlitePool, ids: &[String]) -> anyhow::Res
         palette: None,
         systems: Vec::new(),
     })
+}
+
+/// The ids of `nodes` as one JSON array, for `json_each(?)`.
+fn node_ids_json(nodes: &[GraphNode]) -> anyhow::Result<String> {
+    let ids: Vec<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
+    Ok(serde_json::to_string(&ids)?)
 }
 
 fn graph_scope(origin: &str) -> anyhow::Result<(&'static str, String)> {
@@ -258,20 +269,22 @@ pub async fn get_graph(
         });
     }
 
-    let id_set: std::collections::HashSet<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
-
-    // Fetch candidate edges, then keep only those whose endpoints are both in
-    // the selected node set. Binding thousands of ids is awkward, so we filter
-    // in Rust over the (already capped) semantic edge set.
+    // Only edges with both ends in the selected node set, filtered in SQL.
+    // The edges of each selected source come from the source index; the unary
+    // `+` keeps SQLite from probing every source × target pair instead.
+    let selected = node_ids_json(&nodes)?;
     let edge_rows = sqlx::query_as::<_, (String, String, String, Option<String>)>(
-        "SELECT source, target, kind, confidence FROM edges WHERE kind != 'contains'",
+        "SELECT source, target, kind, confidence FROM edges \
+         WHERE kind != 'contains' \
+         AND source IN (SELECT value FROM json_each(?1)) \
+         AND +target IN (SELECT value FROM json_each(?1))",
     )
+    .bind(&selected)
     .fetch_all(pool)
     .await?;
 
     let edges: Vec<GraphEdge> = edge_rows
         .into_iter()
-        .filter(|(s, t, _, _)| id_set.contains(s.as_str()) && id_set.contains(t.as_str()))
         .map(|(source, target, kind, confidence)| GraphEdge {
             source,
             target,
@@ -1181,5 +1194,96 @@ mod fts_tests {
             .await
             .unwrap();
         assert!(get_nodes(db.pool(), filter("foo")).await.is_err());
+    }
+}
+
+#[cfg(test)]
+mod graph_edge_tests {
+    use super::*;
+
+    /// Nodes a..e; edges a→b (calls), b→c (calls), a→c (contains), d→e (calls).
+    async fn small_graph(dir: &std::path::Path) -> ax_db::Database {
+        let db = ax_db::Database::open(&dir.join("ax.db")).await.unwrap();
+        for id in ["a", "b", "c", "d", "e"] {
+            insert_node(db.pool(), id).await;
+        }
+        for (s, t, k) in [
+            ("a", "b", "calls"),
+            ("b", "c", "calls"),
+            ("a", "c", "contains"),
+            ("d", "e", "calls"),
+        ] {
+            sqlx::query("INSERT INTO edges (source, target, kind) VALUES (?, ?, ?)")
+                .bind(s)
+                .bind(t)
+                .bind(k)
+                .execute(db.pool())
+                .await
+                .unwrap();
+        }
+        db
+    }
+
+    async fn insert_node(pool: &SqlitePool, id: &str) {
+        sqlx::query(
+            "INSERT INTO nodes (id, kind, name, qualified_name, file_path, language,
+             start_line, end_line, start_column, end_column, updated_at)
+             VALUES (?, 'function', ?, ?, 'a.rs', 'rust', 1, 2, 0, 0, 0)",
+        )
+        .bind(id)
+        .bind(id)
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    fn pairs(payload: &GraphPayload) -> Vec<(String, String)> {
+        let mut out: Vec<_> = payload
+            .edges
+            .iter()
+            .map(|e| (e.source.clone(), e.target.clone()))
+            .collect();
+        out.sort();
+        out
+    }
+
+    #[tokio::test]
+    async fn the_graph_keeps_edges_between_its_nodes_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = small_graph(dir.path()).await;
+        let all = get_graph(db.pool(), 100, "").await.unwrap();
+        assert_eq!(
+            pairs(&all),
+            vec![
+                ("a".into(), "b".into()),
+                ("b".into(), "c".into()),
+                ("d".into(), "e".into())
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn recent_nodes_bring_every_non_contains_edge_that_touches_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = small_graph(dir.path()).await;
+        let ids = vec!["b".to_string()];
+        let payload = get_graph_for_ids(db.pool(), &ids).await.unwrap();
+        assert_eq!(payload.nodes.len(), 1);
+        assert_eq!(
+            pairs(&payload),
+            vec![("a".into(), "b".into()), ("b".into(), "c".into())]
+        );
+    }
+
+    #[tokio::test]
+    async fn any_number_of_ids_can_be_asked_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = small_graph(dir.path()).await;
+        let mut ids: Vec<String> = (0..40_000).map(|i| format!("missing-{i}")).collect();
+        ids.push("d".into());
+        let payload = get_graph_for_ids(db.pool(), &ids).await.unwrap();
+        assert_eq!(payload.nodes.len(), 1);
+        assert_eq!(pairs(&payload), vec![("d".into(), "e".into())]);
     }
 }
