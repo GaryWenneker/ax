@@ -179,15 +179,7 @@ pub async fn on_turn_finished(
             if let Ok(body) = std::fs::read_to_string(root.join(file)) {
                 let spec_id = keep_legacy_spec_id(pool, markdown_spec_id(file), file).await?;
                 let _ = capture_finished_plan(
-                    pool,
-                    project_id,
-                    &spec_id,
-                    file,
-                    file,
-                    &body,
-                    session_id,
-                    turn_id,
-                    "file",
+                    pool, project_id, &spec_id, file, file, &body, session_id, turn_id, "file",
                     true,
                 )
                 .await?;
@@ -2176,15 +2168,33 @@ pub(crate) mod tests {
         std::fs::create_dir_all(&plans).unwrap();
         // A draft stored the way earlier builds named it: the cut slug of the path.
         capture_finished_plan(
-            pool, "ax", &legacy, file, file, "# Plan\n\nFirst.\n", "s", "t1", "file", true,
+            pool,
+            "ax",
+            &legacy,
+            file,
+            file,
+            "# Plan\n\nFirst.\n",
+            "s",
+            "t1",
+            "file",
+            true,
         )
         .await
         .unwrap()
         .unwrap();
         std::fs::write(dir.path().join(file), "# Plan\n\nSecond.\n").unwrap();
-        on_turn_finished(pool, dir.path(), "ax", "s", "t2", "edit", "done", &[file.to_string()])
-            .await
-            .unwrap();
+        on_turn_finished(
+            pool,
+            dir.path(),
+            "ax",
+            "s",
+            "t2",
+            "edit",
+            "done",
+            &[file.to_string()],
+        )
+        .await
+        .unwrap();
         let revisions = list_revisions(pool, &legacy).await.unwrap();
         assert_eq!(revisions.len(), 2, "{revisions:?}");
         assert!(list_revisions(pool, &markdown_spec_id(file))
@@ -2195,11 +2205,23 @@ pub(crate) mod tests {
         // A new long file uses the distinct id.
         let other = "docs/plans/2026-11-27-another-feature-name-with-a-long-title.md";
         std::fs::write(dir.path().join(other), "# Other\n").unwrap();
-        on_turn_finished(pool, dir.path(), "ax", "s2", "t1", "edit", "done", &[other.to_string()])
-            .await
-            .unwrap();
+        on_turn_finished(
+            pool,
+            dir.path(),
+            "ax",
+            "s2",
+            "t1",
+            "edit",
+            "done",
+            &[other.to_string()],
+        )
+        .await
+        .unwrap();
         assert_eq!(
-            list_revisions(pool, &markdown_spec_id(other)).await.unwrap().len(),
+            list_revisions(pool, &markdown_spec_id(other))
+                .await
+                .unwrap()
+                .len(),
             1
         );
     }

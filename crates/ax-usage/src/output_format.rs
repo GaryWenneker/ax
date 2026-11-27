@@ -311,7 +311,11 @@ mod tests {
         let root: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(root["budget"]["monthly"], 50);
         // The reader accepts a BOM too.
-        fs::write(&path, "\u{feff}{\"mcp\": {\"outputFormat\": \"plaintext\"}}").unwrap();
+        fs::write(
+            &path,
+            "\u{feff}{\"mcp\": {\"outputFormat\": \"plaintext\"}}",
+        )
+        .unwrap();
         assert_eq!(
             load_output_format_from(&path),
             Some(McpOutputFormat::Plaintext)

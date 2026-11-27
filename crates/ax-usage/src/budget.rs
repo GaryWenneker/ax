@@ -442,17 +442,15 @@ where
     let result = ax_utils::update_locked(path, |current| {
         let mut root = match current {
             None => Value::Object(Default::default()),
-            Some(bytes) => {
-                match parse_config_json(&bytes) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        failure = Some(format!(
+            Some(bytes) => match parse_config_json(&bytes) {
+                Ok(v) => v,
+                Err(e) => {
+                    failure = Some(format!(
                             "{shown} is not valid JSON ({e}); fix or remove it first, it was left unchanged"
                         ));
-                        return Ok(None);
-                    }
+                    return Ok(None);
                 }
-            }
+            },
         };
         let Some(obj) = root.as_object_mut() else {
             failure = Some(format!(

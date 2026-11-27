@@ -578,10 +578,14 @@ pub async fn turn_finish(
     let outcome = clip(&crate::redact::redact_text(&input.outcome), 20_000);
     snap.outcome = Some(outcome.clone());
 
-    let memory_id = save_cli_turn_memory(pool, &snap, &commits, &outcome).await?;
+    // Written before the turn is marked finished, so a finished turn always has
+    // its memory. Its id comes from the session and turn, so racing finishes
+    // share one row; the winner rewrites it below.
+    let memory_id = save_cli_turn_memory(pool, &snap, &commits, &outcome, false).await?;
     snap.memory_id = memory_id.clone();
 
     let mut semantic_ids = Vec::new();
+    let mut inserted_ids = Vec::new();
     for mem in &input.semantic_memories {
         if mem.body.trim().is_empty() {
             continue;
@@ -589,7 +593,12 @@ pub async fn turn_finish(
         // Classification is deterministic from explicit kind; uncertain kinds become notes.
         let kind = normalize_kind(&mem.kind);
         match save_semantic_memory(pool, mem, kind, session_id, turn_id).await {
-            Ok(id) => semantic_ids.push(id),
+            Ok((id, inserted)) => {
+                if inserted {
+                    inserted_ids.push(id.clone());
+                }
+                semantic_ids.push(id);
+            }
             Err(e) => {
                 // Surface but do not abort the turn finish after the turn memory exists.
                 tracing::warn!("semantic memory skipped: {e}");
@@ -655,8 +664,25 @@ pub async fn turn_finish(
             },
         };
         parsed.idempotent = true;
+        // Another finish won: drop the semantic memories only this one added.
+        for id in inserted_ids
+            .iter()
+            .filter(|id| !parsed.semantic_memory_ids.contains(id))
+        {
+            if let Err(error) = sqlx::query("DELETE FROM memories WHERE id = ?1")
+                .bind(id)
+                .execute(pool)
+                .await
+            {
+                tracing::warn!("stray semantic memory {id} not removed: {error}");
+            }
+        }
         return Ok(parsed);
     };
+    // A losing finish may have written the shared turn memory first; store this one's.
+    if let Err(error) = save_cli_turn_memory(pool, &snap, &commits, &outcome, true).await {
+        tracing::warn!("turn memory not rewritten: {error}");
+    }
 
     let activity_summary = match &memory_id {
         Some(mid) => format!("{} memory={mid}", clip(&outcome, 160)),
@@ -698,9 +724,23 @@ pub async fn turn_finish(
     let mut receipt = receipt;
     if let Err(error) = note_working_context(root, pool, session_id, &input).await {
         tracing::warn!("working context not updated: {error}");
-        receipt
-            .warnings
-            .push(format!("working context not updated: {error}"));
+        let warning = format!("working context not updated: {error}");
+        receipt.warnings.push(warning.clone());
+        // Keep the warning in the stored receipt, so a retried finish reports it too.
+        let stored = modify_snapshot(root, session_id, turn_id, |current| {
+            if let Some(value) = current.finish_receipt.as_mut() {
+                let mut parsed: TurnFinishReceipt =
+                    serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+                if !parsed.warnings.contains(&warning) {
+                    parsed.warnings.push(warning.clone());
+                }
+                *value = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        });
+        if let Err(error) = stored {
+            tracing::warn!("finish receipt warning not stored: {error}");
+        }
     }
 
     Ok(receipt)
@@ -753,6 +793,7 @@ async fn save_cli_turn_memory(
     snap: &TurnSnapshot,
     commits: &[String],
     outcome: &str,
+    overwrite: bool,
 ) -> Result<Option<String>, String> {
     let title = snap
         .prompt
@@ -805,22 +846,28 @@ async fn save_cli_turn_memory(
     );
     let files_json = serde_json::to_string(&snap.files).unwrap_or_else(|_| "[]".into());
     let now = now_ms();
-    sqlx::query(
+    let sql = if overwrite {
+        r#"INSERT INTO memories (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, embedding, enabled)
+           VALUES (?, 'turn', ?, ?, '[]', ?, 1.0, ?, ?, ?, NULL, 1)
+           ON CONFLICT(id) DO UPDATE SET title = excluded.title, body = excluded.body,
+               files = excluded.files, updated_at = excluded.updated_at"#
+    } else {
         r#"INSERT OR IGNORE INTO memories (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, embedding, enabled)
-           VALUES (?, 'turn', ?, ?, '[]', ?, 1.0, ?, ?, ?, NULL, 1)"#,
-    )
-    .bind(&id)
-    .bind(&title)
-    .bind(&body)
-    .bind(&files_json)
-    .bind(TURN_SOURCE_CLI)
-    .bind(now)
-    .bind(now)
-    .execute(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+           VALUES (?, 'turn', ?, ?, '[]', ?, 1.0, ?, ?, ?, NULL, 1)"#
+    };
+    sqlx::query(sql)
+        .bind(&id)
+        .bind(&title)
+        .bind(&body)
+        .bind(&files_json)
+        .bind(TURN_SOURCE_CLI)
+        .bind(now)
+        .bind(now)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
-    // INSERT OR IGNORE — return id whether inserted or already present.
+    // The id is returned whether the row was inserted or already present.
     Ok(Some(id))
 }
 
@@ -830,7 +877,7 @@ async fn save_semantic_memory(
     kind: &str,
     session_id: &str,
     turn_id: &str,
-) -> Result<String, String> {
+) -> Result<(String, bool), String> {
     let title = if mem.title.trim().is_empty() {
         clip(&mem.body, 80)
     } else {
@@ -860,11 +907,8 @@ async fn save_semantic_memory(
     .execute(pool)
     .await
     .map_err(|e| e.to_string())?;
-    if result.rows_affected() == 0 {
-        // Duplicate content — report existing id without rewriting.
-        return Ok(id);
-    }
-    Ok(id)
+    // Duplicate content reports the existing id without rewriting it.
+    Ok((id, result.rows_affected() > 0))
 }
 
 /// Mark a turn failed without writing a successful memory.
@@ -1139,6 +1183,77 @@ mod tests {
             "{:?}",
             receipt.warnings
         );
+        // A retried finish is told the same.
+        let again = turn_finish(
+            &root,
+            &pool,
+            "sess-wc2",
+            &begin.turn_id,
+            TurnFinishInput::default(),
+        )
+        .await
+        .unwrap();
+        assert!(again.idempotent);
+        assert_eq!(again.warnings, receipt.warnings);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn concurrent_finishes_leave_one_turn_memory_and_no_stray_rows() {
+        let (root, pool, _guard) = fixture().await;
+        let begin = turn_begin(&root, "sess-race", "race", None).await.unwrap();
+        let mut tasks = Vec::new();
+        for worker in 0..6 {
+            let (root, pool, turn) = (root.clone(), pool.clone(), begin.turn_id.clone());
+            tasks.push(tokio::spawn(async move {
+                turn_finish(
+                    &root,
+                    &pool,
+                    "sess-race",
+                    &turn,
+                    TurnFinishInput {
+                        outcome: format!("outcome {worker}"),
+                        semantic_memories: vec![SemanticMemoryInput {
+                            kind: "note".into(),
+                            title: format!("note {worker}"),
+                            body: format!("body {worker}"),
+                            ..SemanticMemoryInput::default()
+                        }],
+                        ..TurnFinishInput::default()
+                    },
+                )
+                .await
+                .unwrap()
+            }));
+        }
+        let mut receipts = Vec::new();
+        for task in tasks {
+            receipts.push(task.await.unwrap());
+        }
+        let winners: Vec<_> = receipts.iter().filter(|r| !r.idempotent).collect();
+        assert_eq!(winners.len(), 1, "{receipts:?}");
+        let winner = winners[0];
+        let turn_rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, body FROM memories WHERE kind = 'turn'")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(turn_rows.len(), 1, "{turn_rows:?}");
+        assert_eq!(Some(&turn_rows[0].0), winner.memory_id.as_ref());
+        let snap = read_snapshot(&root, "sess-race", &begin.turn_id).unwrap();
+        let outcome = snap.outcome.unwrap();
+        assert!(
+            turn_rows[0].1.contains(&outcome),
+            "{} / {outcome}",
+            turn_rows[0].1
+        );
+        let semantic: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM memories WHERE kind != 'turn' ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let mut expected = winner.semantic_memory_ids.clone();
+        expected.sort();
+        assert_eq!(semantic, expected);
     }
 
     fn run_git(root: &Path, args: &[&str]) {
