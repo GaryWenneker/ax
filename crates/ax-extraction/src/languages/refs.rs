@@ -17,9 +17,14 @@ pub struct RefCtx<'a> {
 }
 
 /// Append unresolved call/import references for JS/TS family grammars.
+///
+/// Calls whose target is a function of this file also get a Calls edge, unless
+/// the call goes through another object (`JSON.parse()`, `v.len()`).
 pub fn append_ts_js_refs(result: &mut ax_types::ExtractionResult, tree: &Tree, ctx: &RefCtx) {
     let root = tree.root_node();
-    walk_for_calls(root, ctx, result);
+    let mut local = Vec::new();
+    walk_for_calls(root, ctx, result, &mut local);
+    link_local_calls(result, ctx.file_path, &local);
     walk_for_imports(
         root,
         ctx.source,
@@ -33,6 +38,9 @@ pub fn append_ts_js_refs(result: &mut ax_types::ExtractionResult, tree: &Tree, c
 }
 
 /// Append call references for Rust / Python / Go / Java tree-sitter grammars.
+///
+/// Calls whose target is a function of this file also get a Calls edge, unless
+/// the call goes through another object.
 pub fn append_lang_call_refs(
     result: &mut ax_types::ExtractionResult,
     tree: &Tree,
@@ -40,20 +48,33 @@ pub fn append_lang_call_refs(
     call_kinds: &[&str],
 ) {
     let root = tree.root_node();
+    let mut local = Vec::new();
     for kind in call_kinds {
-        walk_call_nodes(root, ctx, kind, result);
+        walk_call_nodes(root, ctx, kind, result, &mut local);
     }
+    link_local_calls(result, ctx.file_path, &local);
 }
 
-fn walk_for_calls(node: TsNode, ctx: &RefCtx, result: &mut ax_types::ExtractionResult) {
+/// Indices into `unresolved_references` of calls made without a foreign
+/// receiver: only these may name a function of the same file.
+type LocalCalls = Vec<usize>;
+
+fn walk_for_calls(
+    node: TsNode,
+    ctx: &RefCtx,
+    result: &mut ax_types::ExtractionResult,
+    local: &mut LocalCalls,
+) {
     if node.kind() == "call_expression" {
         if let Some(callee) = extract_ts_js_callee(node, ctx.source) {
-            push_call_ref(node, ctx, &callee, result);
+            // extract_ts_js_callee keeps `receiver.` unless the receiver is this/self.
+            let via_receiver = callee.contains('.');
+            push_call_ref(node, ctx, &callee, via_receiver, result, local);
         }
     }
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            walk_for_calls(child, ctx, result);
+            walk_for_calls(child, ctx, result, local);
         }
     }
 }
@@ -63,6 +84,7 @@ fn walk_call_nodes(
     ctx: &RefCtx,
     call_kind: &str,
     result: &mut ax_types::ExtractionResult,
+    local: &mut LocalCalls,
 ) {
     if node.kind() == call_kind {
         let callee = if call_kind == "method_invocation" {
@@ -72,14 +94,48 @@ fn walk_call_nodes(
         };
         if let Some(callee) = callee {
             if !callee.is_empty() {
-                push_call_ref(node, ctx, &callee, result);
+                let via_receiver = call_has_foreign_receiver(node, ctx.source);
+                push_call_ref(node, ctx, &callee, via_receiver, result, local);
             }
         }
     }
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            walk_call_nodes(child, ctx, call_kind, result);
+            walk_call_nodes(child, ctx, call_kind, result, local);
         }
+    }
+}
+
+/// Whether a call goes through an object other than this/self
+/// (`JSON.parse()`, `v.len()`, `Registry.lookup()`).
+fn call_has_foreign_receiver(call: TsNode, source: &[u8]) -> bool {
+    let receiver = if let Some(func) = call.child_by_field_name("function") {
+        receiver_of(func)
+    } else if let Some(obj) = call
+        .child_by_field_name("object")
+        .or_else(|| call.child_by_field_name("receiver"))
+    {
+        Some(obj)
+    } else if call.kind() == "call_expression" {
+        call.named_child(0).and_then(receiver_of)
+    } else {
+        None
+    };
+    receiver.is_some_and(|r| {
+        let text = node_text(r, source);
+        !text.is_empty() && !is_skip_receiver(&text)
+    })
+}
+
+/// The object part of a member access expression, for the grammars ax parses.
+fn receiver_of(func: TsNode) -> Option<TsNode> {
+    match func.kind() {
+        "member_access_expression" => func.child_by_field_name("expression"),
+        "field_expression" => func.child_by_field_name("value"),
+        "selector_expression" => func.child_by_field_name("operand"),
+        "member_expression" | "attribute" => func.child_by_field_name("object"),
+        "navigation_expression" if func.named_child_count() > 1 => func.named_child(0),
+        _ => None,
     }
 }
 
@@ -87,7 +143,9 @@ fn push_call_ref(
     node: TsNode,
     ctx: &RefCtx,
     callee: &str,
+    via_receiver: bool,
     result: &mut ax_types::ExtractionResult,
+    local: &mut LocalCalls,
 ) {
     if is_noise_callee(callee) || is_external_callee(callee) {
         return;
@@ -95,6 +153,9 @@ fn push_call_ref(
     let callee = normalize_callee_name(callee);
     if callee.is_empty() || is_external_callee(&callee) {
         return;
+    }
+    if !via_receiver {
+        local.push(result.unresolved_references.len());
     }
     let line = node.start_position().row as i32 + 1;
     let column = node.start_position().column as i32;
@@ -630,33 +691,33 @@ fn extract_fn_ref_name(node: TsNode, source: &[u8]) -> Option<String> {
     }
 }
 
-/// Same-file call edges for refs that match a local symbol by name.
-pub fn emit_same_file_call_edges(result: &mut ax_types::ExtractionResult, file_path: &str) {
-    let local_names: std::collections::HashMap<String, String> = result
+/// Same-file Calls edges for the `local` call refs that name a function or
+/// method of this file. The refs stay unresolved for cross-file resolution.
+fn link_local_calls(result: &mut ax_types::ExtractionResult, file_path: &str, local: &[usize]) {
+    if local.is_empty() {
+        return;
+    }
+    let local_names: std::collections::HashMap<&str, &str> = result
         .nodes
         .iter()
         .filter(|n| {
             n.file_path == file_path
-                && (matches!(
+                && matches!(
                     n.kind,
                     ax_types::NodeKind::Function | ax_types::NodeKind::Method
-                ))
+                )
         })
-        .map(|n| (n.name.clone(), n.id.clone()))
+        .map(|n| (n.name.as_str(), n.id.as_str()))
         .collect();
-
-    let mut resolved_indices = Vec::new();
-    for (idx, ref_) in result.unresolved_references.iter().enumerate() {
-        if ref_.reference_kind != ReferenceKind::Calls {
+    let mut edges = Vec::new();
+    for &idx in local {
+        let Some(ref_) = result.unresolved_references.get(idx) else {
             continue;
-        }
-        if ref_.reference_name.contains('.') {
-            continue;
-        }
-        if let Some(target_id) = local_names.get(&ref_.reference_name) {
-            result.edges.push(ax_types::Edge {
+        };
+        if let Some(target_id) = local_names.get(ref_.reference_name.as_str()) {
+            edges.push(ax_types::Edge {
                 source: ref_.from_node_id.clone(),
-                target: target_id.clone(),
+                target: target_id.to_string(),
                 kind: ax_types::EdgeKind::Calls,
                 metadata: None,
                 line: Some(ref_.line),
@@ -664,10 +725,9 @@ pub fn emit_same_file_call_edges(result: &mut ax_types::ExtractionResult, file_p
                 provenance: Some(ax_types::Provenance::TreeSitter),
                 confidence: Some(ax_types::EdgeConfidence::Extracted),
             });
-            resolved_indices.push(idx);
         }
     }
-    // Keep unresolved for cross-file; same-file still in DB for resolution stats
+    result.edges.extend(edges);
 }
 #[cfg(test)]
 mod tests {
@@ -742,5 +802,63 @@ export function setup() {
             .filter(|r| r.reference_kind == ReferenceKind::FunctionRef)
             .count();
         assert!(fn_refs >= 1, "expected function-ref candidate for handler");
+    }
+
+    fn ts_extract(path: &str, source: &str) -> ax_types::ExtractionResult {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
+            .expect("grammar");
+        let tree = parser.parse(source, None).expect("parse");
+        TypescriptExtractor.extract(source.as_bytes(), &tree, path)
+    }
+
+    fn call_edges_into(result: &ax_types::ExtractionResult, name: &str) -> Vec<i32> {
+        let id = &result.nodes.iter().find(|n| n.name == name).unwrap().id;
+        result
+            .edges
+            .iter()
+            .filter(|e| e.kind == ax_types::EdgeKind::Calls && &e.target == id)
+            .filter_map(|e| e.line)
+            .collect()
+    }
+
+    #[test]
+    fn member_call_on_another_object_is_not_a_same_file_edge() {
+        let source = "function parse(t: string) { return t; }\n\
+                      function load(t: string) { return JSON.parse(t); }\n\
+                      function run(t: string) { return parse(t); }\n";
+        let result = ts_extract("load.ts", source);
+        assert_eq!(
+            call_edges_into(&result, "parse"),
+            vec![3],
+            "only the bare parse() on line 3 calls the local function"
+        );
+    }
+
+    #[test]
+    fn this_call_still_links_to_the_local_method() {
+        let source = "class A {\n  helper() { return 1; }\n  run() { return this.helper(); }\n}\n";
+        let result = ts_extract("a.ts", source);
+        assert_eq!(call_edges_into(&result, "helper"), vec![3]);
+    }
+
+    #[test]
+    fn rust_receiver_call_is_not_a_same_file_edge() {
+        let source = "fn len() -> usize { 0 }\nfn f(v: Vec<u8>) -> usize { v.len() + len() }\n";
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .expect("grammar");
+        let tree = parser.parse(source, None).expect("parse");
+        let result =
+            crate::languages::rust::RustExtractor.extract(source.as_bytes(), &tree, "f.rs");
+        let len_id = &result.nodes.iter().find(|n| n.name == "len").unwrap().id;
+        let edges = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == ax_types::EdgeKind::Calls && &e.target == len_id)
+            .count();
+        assert_eq!(edges, 1, "v.len() must not link to the local fn len");
     }
 }

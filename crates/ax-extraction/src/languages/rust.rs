@@ -2,7 +2,7 @@ use ax_types::{ExtractionResult, Language, NodeKind};
 use tree_sitter::Tree;
 
 use crate::languages::common::{extract_symbols_with, file_node_id, symbol_spans_from_result};
-use crate::languages::refs::{append_lang_call_refs, emit_same_file_call_edges, RefCtx};
+use crate::languages::refs::{append_lang_call_refs, RefCtx};
 use crate::LanguageExtractor;
 
 pub struct RustExtractor;
@@ -43,7 +43,6 @@ impl LanguageExtractor for RustExtractor {
             },
             &["call_expression"],
         );
-        emit_same_file_call_edges(&mut result, path);
         crate::test_mapper::annotate_tests(&mut result, source, tree, path);
         result
     }
