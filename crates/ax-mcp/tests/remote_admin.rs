@@ -120,6 +120,7 @@ fn base_config(projects: Vec<Project>, api_keys: Vec<ApiKey>) -> RemoteConfig {
             built_in: false,
             issuer: "https://issuer.example.com/".into(),
             jwks_uri: "https://issuer.example.com/jwks".into(),
+            clock_skew_seconds: ax_mcp::remote::config::DEFAULT_CLOCK_SKEW_SECONDS,
         },
         projects,
         api_keys,

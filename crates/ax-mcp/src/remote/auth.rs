@@ -184,7 +184,7 @@ impl TokenVerifier {
             DecodingKey::from_jwk(jwk).map_err(|_| "Invalid signing key")?
         };
         let mut validation = Validation::new(Algorithm::RS256);
-        validation.leeway = 0;
+        validation.leeway = self.config.oauth.clock_skew_seconds;
         validation.validate_nbf = true;
         validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
         validation.set_issuer(&[&self.config.oauth.issuer]);
@@ -405,12 +405,20 @@ mod key_refresh {
     }
 
     fn token(key: &SigningKey) -> String {
+        token_with(key, serde_json::json!({}))
+    }
+
+    /// A token with `extra` claims set over the defaults.
+    fn token_with(key: &SigningKey, extra: serde_json::Value) -> String {
         let mut header = Header::new(Algorithm::RS256);
         header.kid = Some(key.kid.into());
-        let claims = serde_json::json!({
+        let mut claims = serde_json::json!({
             "sub": "ann", "iss": "https://issuer.example.com/", "aud": "https://ax.example.com",
             "exp": crate::remote::credentials::now() + 3600, "scope": CONTEXT_SCOPE
         });
+        for (name, value) in extra.as_object().unwrap() {
+            claims[name] = value.clone();
+        }
         encode(
             &header,
             &claims,
@@ -462,6 +470,7 @@ mod key_refresh {
                 built_in: false,
                 issuer: "https://issuer.example.com/".into(),
                 jwks_uri,
+                clock_skew_seconds: crate::remote::config::DEFAULT_CLOCK_SKEW_SECONDS,
             },
             projects: vec![],
             api_keys: vec![],
@@ -542,5 +551,34 @@ mod key_refresh {
             1,
             "unknown key ids fetched the key set again within the back-off"
         );
+    }
+
+    #[tokio::test]
+    async fn a_few_seconds_of_clock_difference_with_the_provider_are_allowed() {
+        let key = signing_key("k1");
+        let verifier = verifier("http://127.0.0.1:9/jwks".into(), &key, Duration::ZERO);
+        let now = crate::remote::credentials::now();
+        // The provider's clock runs ahead: the token is not valid yet by ours.
+        let early = token_with(&key, serde_json::json!({"nbf": now + 5, "iat": now + 5}));
+        assert!(verifier.verify(&early).await.is_ok());
+        // It ran out a moment ago by our clock.
+        let just_expired = token_with(&key, serde_json::json!({"exp": now - 5}));
+        assert!(verifier.verify(&just_expired).await.is_ok());
+        let long_expired = token_with(&key, serde_json::json!({"exp": now - 600}));
+        assert!(verifier.verify(&long_expired).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_clock_skew_of_zero_checks_token_times_exactly() {
+        let key = signing_key("k1");
+        let mut verifier = verifier("http://127.0.0.1:9/jwks".into(), &key, Duration::ZERO);
+        let mut config = (*verifier.config).clone();
+        config.oauth.clock_skew_seconds = 0;
+        verifier.config = Arc::new(config);
+        let now = crate::remote::credentials::now();
+        let early = token_with(&key, serde_json::json!({"nbf": now + 30}));
+        assert!(verifier.verify(&early).await.is_err());
+        let just_expired = token_with(&key, serde_json::json!({"exp": now - 5}));
+        assert!(verifier.verify(&just_expired).await.is_err());
     }
 }

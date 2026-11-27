@@ -457,6 +457,7 @@ mod tests {
                     built_in: true,
                     issuer: "https://ax.example.com/oauth".into(),
                     jwks_uri: "https://ax.example.com/oauth/jwks".into(),
+                    clock_skew_seconds: super::super::config::DEFAULT_CLOCK_SKEW_SECONDS,
                 },
                 projects: vec![super::super::config::Project {
                     id: "project".into(),

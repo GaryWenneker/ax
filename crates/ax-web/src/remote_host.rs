@@ -232,6 +232,7 @@ pub(crate) async fn setup(
                 built_in: true,
                 issuer: format!("{origin}/oauth"),
                 jwks_uri: format!("{origin}/oauth/jwks"),
+                clock_skew_seconds: ax_mcp::remote::config::DEFAULT_CLOCK_SKEW_SECONDS,
             },
             projects: vec![Project {
                 id: format!("project_{}", &workspace[..24]),
