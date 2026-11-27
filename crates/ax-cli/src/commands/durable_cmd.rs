@@ -164,3 +164,297 @@ fn chrono_stamp() -> i64 {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
 }
+
+/// Command-line form of `ax durable`, mapped onto [`DurableArgs`].
+#[derive(clap::Subcommand)]
+pub enum DurableCliAction {
+    Append {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "body-stdin", action = clap::ArgAction::SetTrue)]
+        body_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Read {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    Search {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        query: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    Compact {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "summary-stdin", action = clap::ArgAction::SetTrue)]
+        summary_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(name = "task-start")]
+    TaskStart {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
+        input_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(name = "task-checkpoint")]
+    TaskCheckpoint {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
+        input_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(name = "task-resume")]
+    TaskResume {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(name = "task-finish")]
+    TaskFinish {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
+        input_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Fork {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
+        input_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Handoff {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
+        input_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(name = "doc-put")]
+    DocPut {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "body-stdin", action = clap::ArgAction::SetTrue)]
+        body_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(name = "doc-get")]
+    DocGet {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+impl From<DurableCliAction> for DurableArgs {
+    fn from(action: DurableCliAction) -> Self {
+        match action {
+            DurableCliAction::Append {
+                session,
+                kind,
+                path,
+                body_stdin,
+                json,
+            } => DurableArgs {
+                action: DurableAction::Append { kind },
+                session,
+                path,
+                body_stdin,
+                input_stdin: false,
+                json,
+            },
+            DurableCliAction::Read {
+                session,
+                path,
+                json,
+            } => DurableArgs {
+                action: DurableAction::Read,
+                session,
+                path,
+                body_stdin: false,
+                input_stdin: false,
+                json,
+            },
+            DurableCliAction::Search {
+                session,
+                query,
+                path,
+                json,
+            } => DurableArgs {
+                action: DurableAction::Search { query },
+                session,
+                path,
+                body_stdin: false,
+                input_stdin: false,
+                json,
+            },
+            DurableCliAction::Compact {
+                session,
+                path,
+                summary_stdin,
+                json,
+            } => DurableArgs {
+                action: DurableAction::Compact,
+                session,
+                path,
+                body_stdin: summary_stdin,
+                input_stdin: false,
+                json,
+            },
+            DurableCliAction::TaskStart {
+                session,
+                path,
+                input_stdin,
+                json,
+            } => DurableArgs {
+                action: DurableAction::TaskStart,
+                session,
+                path,
+                body_stdin: false,
+                input_stdin,
+                json,
+            },
+            DurableCliAction::TaskCheckpoint {
+                session,
+                path,
+                input_stdin,
+                json,
+            } => DurableArgs {
+                action: DurableAction::TaskCheckpoint,
+                session,
+                path,
+                body_stdin: false,
+                input_stdin,
+                json,
+            },
+            DurableCliAction::TaskResume {
+                session,
+                path,
+                json,
+            } => DurableArgs {
+                action: DurableAction::TaskResume,
+                session,
+                path,
+                body_stdin: false,
+                input_stdin: false,
+                json,
+            },
+            DurableCliAction::TaskFinish {
+                session,
+                path,
+                input_stdin,
+                json,
+            } => DurableArgs {
+                action: DurableAction::TaskFinish,
+                session,
+                path,
+                body_stdin: false,
+                input_stdin,
+                json,
+            },
+            DurableCliAction::Fork {
+                session,
+                path,
+                input_stdin,
+                json,
+            } => DurableArgs {
+                action: DurableAction::Fork,
+                session,
+                path,
+                body_stdin: false,
+                input_stdin,
+                json,
+            },
+            DurableCliAction::Handoff {
+                session,
+                path,
+                input_stdin,
+                json,
+            } => DurableArgs {
+                action: DurableAction::Handoff,
+                session,
+                path,
+                body_stdin: false,
+                input_stdin,
+                json,
+            },
+            DurableCliAction::DocPut {
+                session,
+                kind,
+                path,
+                body_stdin,
+                json,
+            } => DurableArgs {
+                action: DurableAction::DocPut { kind },
+                session,
+                path,
+                body_stdin,
+                input_stdin: false,
+                json,
+            },
+            DurableCliAction::DocGet {
+                session,
+                kind,
+                path,
+                json,
+            } => DurableArgs {
+                action: DurableAction::DocGet { kind },
+                session,
+                path,
+                body_stdin: false,
+                input_stdin: false,
+                json,
+            },
+        }
+    }
+}

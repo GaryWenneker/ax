@@ -378,22 +378,22 @@ enum Commands {
     /// Working context session (same engine as ax_session MCP)
     Session {
         #[command(subcommand)]
-        action: SessionCliAction,
+        action: commands::session_cmd::SessionCliAction,
     },
     /// Durable transcript and tasks (same engine as ax_durable MCP)
     Durable {
         #[command(subcommand)]
-        action: DurableCliAction,
+        action: commands::durable_cmd::DurableCliAction,
     },
     /// Explicit agent turn lifecycle (no IDE hooks required)
     Turn {
         #[command(subcommand)]
-        action: TurnCliAction,
+        action: commands::turn_cmd::TurnCliAction,
     },
     /// Context cache stash / expand / status
     Cache {
         #[command(subcommand)]
-        action: CacheCliAction,
+        action: commands::cache_cmd::CacheCliAction,
     },
     /// Diagnostics for CLI-only and full installs
     Doctor {
@@ -811,335 +811,6 @@ enum Commands {
         daemon: bool,
         #[arg(long, hide = true)]
         path: Option<String>,
-    },
-}
-
-#[derive(Subcommand)]
-enum SessionCliAction {
-    /// Create or print a session id
-    Start {
-        #[arg(long)]
-        session: Option<String>,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-    Get {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-    Add {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Update {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Compact {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Fork {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-    Handoff {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Resume {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-    End {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum DurableCliAction {
-    Append {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        kind: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "body-stdin", action = clap::ArgAction::SetTrue)]
-        body_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Read {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-    Search {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        query: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-    Compact {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "summary-stdin", action = clap::ArgAction::SetTrue)]
-        summary_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(name = "task-start")]
-    TaskStart {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(name = "task-checkpoint")]
-    TaskCheckpoint {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(name = "task-resume")]
-    TaskResume {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(name = "task-finish")]
-    TaskFinish {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Fork {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Handoff {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(name = "doc-put")]
-    DocPut {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        kind: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "body-stdin", action = clap::ArgAction::SetTrue)]
-        body_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(name = "doc-get")]
-    DocGet {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        kind: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum TurnCliAction {
-    Begin {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "prompt-stdin", action = clap::ArgAction::SetTrue)]
-        prompt_stdin: bool,
-        #[arg(long)]
-        agent: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-    Event {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        turn: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Checkpoint {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        turn: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Finish {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        turn: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "outcome-stdin", action = clap::ArgAction::SetTrue)]
-        outcome_stdin: bool,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Fail {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        turn: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "reason-stdin", action = clap::ArgAction::SetTrue)]
-        reason_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Status {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        turn: Option<String>,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum CacheCliAction {
-    Stash {
-        #[arg(long)]
-        session: Option<String>,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        label: Option<String>,
-        #[arg(long = "text-stdin", action = clap::ArgAction::SetTrue)]
-        text_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Expand {
-        #[arg(long)]
-        session: Option<String>,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        id: String,
-        #[arg(long, default_value_t = 0)]
-        offset: usize,
-        #[arg(long)]
-        limit: Option<usize>,
-        #[arg(long)]
-        json: bool,
-    },
-    Status {
-        #[arg(long)]
-        session: Option<String>,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
     },
 }
 
@@ -2652,415 +2323,10 @@ async fn async_main() {
             })
             .await
         }
-        Some(Commands::Session { action }) => {
-            use commands::session_cmd::{SessionAction, SessionArgs};
-            let mapped = match action {
-                SessionCliAction::Start { session, path, json } => SessionArgs {
-                    action: SessionAction::Start,
-                    session,
-                    path,
-                    input_stdin: false,
-                    json,
-                },
-                SessionCliAction::Get { session, path, json } => SessionArgs {
-                    action: SessionAction::Get,
-                    session: Some(session),
-                    path,
-                    input_stdin: false,
-                    json,
-                },
-                SessionCliAction::Add {
-                    session,
-                    path,
-                    input_stdin,
-                    json,
-                } => SessionArgs {
-                    action: SessionAction::Add,
-                    session: Some(session),
-                    path,
-                    input_stdin,
-                    json,
-                },
-                SessionCliAction::Update {
-                    session,
-                    path,
-                    input_stdin,
-                    json,
-                } => SessionArgs {
-                    action: SessionAction::Update,
-                    session: Some(session),
-                    path,
-                    input_stdin,
-                    json,
-                },
-                SessionCliAction::Compact {
-                    session,
-                    path,
-                    input_stdin,
-                    json,
-                } => SessionArgs {
-                    action: SessionAction::Compact,
-                    session: Some(session),
-                    path,
-                    input_stdin,
-                    json,
-                },
-                SessionCliAction::Fork { session, path, json } => SessionArgs {
-                    action: SessionAction::Fork,
-                    session: Some(session),
-                    path,
-                    input_stdin: false,
-                    json,
-                },
-                SessionCliAction::Handoff {
-                    session,
-                    path,
-                    input_stdin,
-                    json,
-                } => SessionArgs {
-                    action: SessionAction::Handoff,
-                    session: Some(session),
-                    path,
-                    input_stdin,
-                    json,
-                },
-                SessionCliAction::Resume { session, path, json } => SessionArgs {
-                    action: SessionAction::Resume,
-                    session: Some(session),
-                    path,
-                    input_stdin: false,
-                    json,
-                },
-                SessionCliAction::End { session, path, json } => SessionArgs {
-                    action: SessionAction::End,
-                    session: Some(session),
-                    path,
-                    input_stdin: false,
-                    json,
-                },
-            };
-            commands::session_cmd::run(mapped).await
-        }
-        Some(Commands::Durable { action }) => {
-            use commands::durable_cmd::{DurableAction, DurableArgs};
-            let mapped = match action {
-                DurableCliAction::Append {
-                    session,
-                    kind,
-                    path,
-                    body_stdin,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::Append { kind },
-                    session,
-                    path,
-                    body_stdin,
-                    input_stdin: false,
-                    json,
-                },
-                DurableCliAction::Read {
-                    session,
-                    path,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::Read,
-                    session,
-                    path,
-                    body_stdin: false,
-                    input_stdin: false,
-                    json,
-                },
-                DurableCliAction::Search {
-                    session,
-                    query,
-                    path,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::Search { query },
-                    session,
-                    path,
-                    body_stdin: false,
-                    input_stdin: false,
-                    json,
-                },
-                DurableCliAction::Compact {
-                    session,
-                    path,
-                    summary_stdin,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::Compact,
-                    session,
-                    path,
-                    body_stdin: summary_stdin,
-                    input_stdin: false,
-                    json,
-                },
-                DurableCliAction::TaskStart {
-                    session,
-                    path,
-                    input_stdin,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::TaskStart,
-                    session,
-                    path,
-                    body_stdin: false,
-                    input_stdin,
-                    json,
-                },
-                DurableCliAction::TaskCheckpoint {
-                    session,
-                    path,
-                    input_stdin,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::TaskCheckpoint,
-                    session,
-                    path,
-                    body_stdin: false,
-                    input_stdin,
-                    json,
-                },
-                DurableCliAction::TaskResume {
-                    session,
-                    path,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::TaskResume,
-                    session,
-                    path,
-                    body_stdin: false,
-                    input_stdin: false,
-                    json,
-                },
-                DurableCliAction::TaskFinish {
-                    session,
-                    path,
-                    input_stdin,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::TaskFinish,
-                    session,
-                    path,
-                    body_stdin: false,
-                    input_stdin,
-                    json,
-                },
-                DurableCliAction::Fork {
-                    session,
-                    path,
-                    input_stdin,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::Fork,
-                    session,
-                    path,
-                    body_stdin: false,
-                    input_stdin,
-                    json,
-                },
-                DurableCliAction::Handoff {
-                    session,
-                    path,
-                    input_stdin,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::Handoff,
-                    session,
-                    path,
-                    body_stdin: false,
-                    input_stdin,
-                    json,
-                },
-                DurableCliAction::DocPut {
-                    session,
-                    kind,
-                    path,
-                    body_stdin,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::DocPut { kind },
-                    session,
-                    path,
-                    body_stdin,
-                    input_stdin: false,
-                    json,
-                },
-                DurableCliAction::DocGet {
-                    session,
-                    kind,
-                    path,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::DocGet { kind },
-                    session,
-                    path,
-                    body_stdin: false,
-                    input_stdin: false,
-                    json,
-                },
-            };
-            commands::durable_cmd::run(mapped).await
-        }
-        Some(Commands::Turn { action }) => {
-            use commands::turn_cmd::{TurnAction, TurnArgs};
-            let mapped = match action {
-                TurnCliAction::Begin {
-                    session,
-                    path,
-                    prompt_stdin,
-                    agent,
-                    json,
-                } => TurnArgs {
-                    action: TurnAction::Begin,
-                    session,
-                    turn: None,
-                    path,
-                    prompt_stdin,
-                    input_stdin: false,
-                    outcome_stdin: false,
-                    reason_stdin: false,
-                    agent,
-                    json,
-                },
-                TurnCliAction::Event {
-                    session,
-                    turn,
-                    path,
-                    input_stdin,
-                    json,
-                } => TurnArgs {
-                    action: TurnAction::Event,
-                    session,
-                    turn: Some(turn),
-                    path,
-                    prompt_stdin: false,
-                    input_stdin,
-                    outcome_stdin: false,
-                    reason_stdin: false,
-                    agent: None,
-                    json,
-                },
-                TurnCliAction::Checkpoint {
-                    session,
-                    turn,
-                    path,
-                    input_stdin,
-                    json,
-                } => TurnArgs {
-                    action: TurnAction::Checkpoint,
-                    session,
-                    turn: Some(turn),
-                    path,
-                    prompt_stdin: false,
-                    input_stdin,
-                    outcome_stdin: false,
-                    reason_stdin: false,
-                    agent: None,
-                    json,
-                },
-                TurnCliAction::Finish {
-                    session,
-                    turn,
-                    path,
-                    outcome_stdin,
-                    input_stdin,
-                    json,
-                } => TurnArgs {
-                    action: TurnAction::Finish,
-                    session,
-                    turn: Some(turn),
-                    path,
-                    prompt_stdin: false,
-                    input_stdin,
-                    outcome_stdin,
-                    reason_stdin: false,
-                    agent: None,
-                    json,
-                },
-                TurnCliAction::Fail {
-                    session,
-                    turn,
-                    path,
-                    reason_stdin,
-                    json,
-                } => TurnArgs {
-                    action: TurnAction::Fail,
-                    session,
-                    turn: Some(turn),
-                    path,
-                    prompt_stdin: false,
-                    input_stdin: false,
-                    outcome_stdin: false,
-                    reason_stdin,
-                    agent: None,
-                    json,
-                },
-                TurnCliAction::Status {
-                    session,
-                    turn,
-                    path,
-                    json,
-                } => TurnArgs {
-                    action: TurnAction::Status,
-                    session,
-                    turn,
-                    path,
-                    prompt_stdin: false,
-                    input_stdin: false,
-                    outcome_stdin: false,
-                    reason_stdin: false,
-                    agent: None,
-                    json,
-                },
-            };
-            commands::turn_cmd::run(mapped).await
-        }
-        Some(Commands::Cache { action }) => {
-            use commands::cache_cmd::{CacheAction, CacheArgs};
-            let mapped = match action {
-                CacheCliAction::Stash {
-                    session,
-                    path,
-                    label,
-                    text_stdin,
-                    json,
-                } => CacheArgs {
-                    action: CacheAction::Stash { label },
-                    session,
-                    path,
-                    text_stdin,
-                    json,
-                },
-                CacheCliAction::Expand {
-                    session,
-                    path,
-                    id,
-                    offset,
-                    limit,
-                    json,
-                } => CacheArgs {
-                    action: CacheAction::Expand { id, offset, limit },
-                    session,
-                    path,
-                    text_stdin: false,
-                    json,
-                },
-                CacheCliAction::Status {
-                    session,
-                    path,
-                    json,
-                } => CacheArgs {
-                    action: CacheAction::Status,
-                    session,
-                    path,
-                    text_stdin: false,
-                    json,
-                },
-            };
-            commands::cache_cmd::run(mapped).await
-        }
+        Some(Commands::Session { action }) => commands::session_cmd::run(action.into()).await,
+        Some(Commands::Durable { action }) => commands::durable_cmd::run(action.into()).await,
+        Some(Commands::Turn { action }) => commands::turn_cmd::run(action.into()).await,
+        Some(Commands::Cache { action }) => commands::cache_cmd::run(action.into()).await,
         Some(Commands::Doctor { mode, path, json }) => {
             commands::doctor::run(mode, path, json).await
         },
@@ -3792,42 +3058,37 @@ async fn start_replication(root: &std::path::Path) {
 /// current project. Hidden hook and helper commands run on every agent tool
 /// call and stay side-effect free; uninstall and uninit remove those files.
 fn should_refresh_ide_files(cmd: &Option<Commands>) -> bool {
-    !matches!(
-        cmd,
-        Some(Commands::PromptHook)
-            | Some(Commands::SessionHook)
-            | Some(Commands::StopHook)
-            | Some(Commands::TurnHook { .. })
-            | Some(Commands::ReadGuard { .. })
-            | Some(Commands::WatchdogChild { .. })
-            | Some(Commands::UpgradeApply { .. })
-            | Some(Commands::Version)
-            | Some(Commands::Uninstall)
-            | Some(Commands::Uninit { .. })
-    )
+    !is_hidden_helper(cmd)
+        && !matches!(
+            cmd,
+            Some(Commands::Version) | Some(Commands::Uninstall) | Some(Commands::Uninit { .. })
+        )
 }
 
 fn should_notify_update(cmd: &Option<Commands>) -> bool {
-    !matches!(
-        cmd,
-        Some(Commands::Serve { .. })
-            | Some(Commands::Web { .. })
-            | Some(Commands::Desktop { .. })
-            | Some(Commands::PromptHook)
-            | Some(Commands::SessionHook)
-            | Some(Commands::StopHook)
-            | Some(Commands::TurnHook { .. })
-            | Some(Commands::ReadGuard { .. })
-            | Some(Commands::WatchdogChild { .. })
-            | Some(Commands::UpgradeApply { .. })
-            | Some(Commands::Upgrade { .. })
-            | Some(Commands::Version)
-            | Some(Commands::Index { quiet: true, .. })
-            | Some(Commands::Sync { quiet: true, .. })
-            | Some(Commands::Watch { quiet: true, .. })
-    )
+    !is_hidden_helper(cmd)
+        && !matches!(
+            cmd,
+            Some(Commands::Serve { .. })
+                | Some(Commands::Web { .. })
+                | Some(Commands::Desktop { .. })
+                | Some(Commands::Upgrade { .. })
+                | Some(Commands::Version)
+                | Some(Commands::Index { quiet: true, .. })
+                | Some(Commands::Sync { quiet: true, .. })
+                | Some(Commands::Watch { quiet: true, .. })
+        )
 }
 
+/// A hidden hook or helper command (`cli_command_name` gives it no name).
+/// These run on every agent tool call or as child processes, so they get no
+/// telemetry name, no update notice and no IDE file refresh.
+fn is_hidden_helper(cmd: &Option<Commands>) -> bool {
+    cmd.is_some() && cli_command_name(cmd).is_none()
+}
+
+/// Telemetry name of a command, or `None` for a hidden hook or helper. The
+/// match is exhaustive, so every new command must decide here.
 fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
     match cmd {
         None => Some("install".into()),
@@ -3968,6 +3229,32 @@ mod refresh_ide_files_tests {
             &["ax", "version"],
         ] {
             assert!(!refreshes(argv), "{argv:?} must not refresh IDE files");
+        }
+    }
+
+    #[test]
+    fn hidden_helpers_print_no_update_notice() {
+        for argv in [
+            &["ax", "read-guard", "--ide", "claude"][..],
+            &["ax", "prompt-hook"],
+            &["ax", "session-hook"],
+            &["ax", "stop-hook"],
+            &["ax", "turn-hook", "end"],
+            &["ax", "watchdog-child", "1", "10"],
+        ] {
+            let notifies = std::thread::Builder::new()
+                .stack_size(16 * 1024 * 1024)
+                .spawn(move || {
+                    let cli = Cli::try_parse_from(argv).unwrap();
+                    (
+                        super::is_hidden_helper(&cli.command),
+                        super::should_notify_update(&cli.command),
+                    )
+                })
+                .unwrap()
+                .join()
+                .unwrap();
+            assert_eq!(notifies, (true, false), "{argv:?}");
         }
     }
 
