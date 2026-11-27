@@ -163,6 +163,9 @@ impl FrameworkRegistry {
             if vue_active {
                 merge_extract(&mut extracted, vue::extract_file(&file.path, &content));
             }
+            if svelte_active {
+                merge_extract(&mut extracted, svelte::extract_file(&file.path, &content));
+            }
 
             if spring_active
                 && (file.path.ends_with(".java")
