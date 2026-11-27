@@ -251,7 +251,12 @@ pub fn parse_settings(global_json: Option<&str>, project_json: Option<&str>) -> 
 }
 
 fn apply_json(settings: &mut BudgetSettings, label: &str, text: &str, diags: &mut Vec<String>) {
-    let file: Value = match serde_json::from_str(strip_bom(text)) {
+    let text = strip_bom(text);
+    if text.trim_matches(|c: char| c.is_ascii_whitespace()).is_empty() {
+        // An empty file has no settings, as when saving into it.
+        return;
+    }
+    let file: Value = match serde_json::from_str(text) {
         Ok(v) => v,
         Err(e) => {
             diags.push(format!(
@@ -386,7 +391,7 @@ fn save_budget_to(
 }
 
 /// Read-modify-write of a JSON config file under a lock, written atomically.
-/// A missing file starts as `{}`. A file that cannot be read or parsed is an
+/// A missing or empty file starts as `{}`. A file that cannot be read or parsed is an
 /// error and stays untouched, so other settings in it are never lost.
 fn edit_json_file<F>(path: &std::path::Path, edit: F) -> Result<(), String>
 where
@@ -401,7 +406,12 @@ where
                 let parsed = std::str::from_utf8(&bytes)
                     .map_err(|e| e.to_string())
                     .and_then(|text| {
-                        serde_json::from_str::<Value>(strip_bom(text)).map_err(|e| e.to_string())
+                        let text = strip_bom(text);
+                        if text.trim_matches(|c: char| c.is_ascii_whitespace()).is_empty() {
+                            // An empty file (made with `touch`) has no settings yet.
+                            return Ok(Value::Object(Default::default()));
+                        }
+                        serde_json::from_str::<Value>(text).map_err(|e| e.to_string())
                     });
                 match parsed {
                     Ok(v) => v,
@@ -1093,6 +1103,29 @@ mod tests {
         save_budget_to(&missing, &patch).unwrap();
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&missing).unwrap()).unwrap();
         assert_eq!(v["budget"]["monthly"], 60.0);
+    }
+
+    #[test]
+    fn saving_budget_into_an_empty_config_file_writes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let patch = BudgetSectionPatch {
+            monthly: Some(60.0),
+            ..BudgetSectionPatch::default()
+        };
+        for (name, body) in [
+            ("empty.json", "".as_bytes()),
+            ("blank.json", " \n\t".as_bytes()),
+            ("bom.json", "\u{feff}\n".as_bytes()),
+        ] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, body).unwrap();
+            save_budget_to(&path, &patch).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let v: Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            assert_eq!(v["budget"]["monthly"], 60.0, "{name}");
+        }
+        let (_, diags) = parse_settings_with_diagnostics(Some(" \n"), Some(""));
+        assert!(diags.is_empty(), "{diags:?}");
     }
 
     #[test]
