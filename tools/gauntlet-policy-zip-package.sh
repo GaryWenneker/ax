@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 source "$ROOT/scripts/lib/restore-on-exit.sh"
+source "$ROOT/scripts/lib/negative-control.sh"
 
 export CARGO_TARGET_DIR="/tmp/ax-policy-zip-gauntlet"
 
@@ -123,11 +124,10 @@ grep -q 'ax policy restore' site/src/content/docs/reference/cli.md \
 grep -q 'Portable zip packages' site/src/content/docs/guides/policy-engine.md \
   || { echo "FAIL: policy-engine.md missing zip section" >&2; exit 1; }
 
-echo "== negative control =="
-if grep -q 'ax-policy-package-does-not-exist' crates/ax-policy/src/zip_package.rs; then
-  echo "FAIL: negative control passed (vacuous grep)" >&2
-  exit 1
-fi
+echo "== negative control: the wiring checks fail on a broken copy =="
+negative_control hunk-take-both crates/ax-policy/src/zip_package.rs 'HunkTake::Both' 'HunkTake::Either' \
+  grep -q 'HunkTake::Both'
+negative_control package-route crates/ax-web/src/policy.rs 'route("/package"' 'route("/bundle"' grep -q 'route("/package"'
 
 echo "== tsc =="
 (cd crates/ax-web/web-ui && npx tsc --noEmit)

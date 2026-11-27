@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 source "$ROOT/scripts/lib/restore-on-exit.sh"
+source "$ROOT/scripts/lib/negative-control.sh"
 
 echo "== isGitShared unit tests =="
 (cd crates/ax-web/web-ui && node --experimental-strip-types --test src/gitShare.test.ts)
@@ -21,11 +22,11 @@ grep -q 'git-share-dot' crates/ax-web/web-ui/src/index.css \
 echo "== tsc =="
 (cd crates/ax-web/web-ui && npx tsc --noEmit)
 
-echo "== negative control (grep gate must fail closed) =="
-if grep -q 'GitShareDot_NOT_A_REAL_MARKER' crates/ax-web/web-ui/src/pages/PolicyRules.tsx; then
-  echo "FAIL: negative control passed (vacuous grep)" >&2
-  exit 1
-fi
+echo "== negative control: the wiring checks fail on a broken copy =="
+negative_control git-share-css crates/ax-web/web-ui/src/index.css 'git-share-dot' 'git-share-mark' \
+  grep -q 'git-share-dot'
+negative_control meta-status crates/ax-web/web-ui/src/components/PolicyMetaView.tsx 'GitShareStatus' 'GitShareState' \
+  grep -q 'GitShareStatus'
 
 echo "== manual mutation of isGitShared =="
 UTIL="$ROOT/crates/ax-web/web-ui/src/components/ui/policyListUtils.ts"

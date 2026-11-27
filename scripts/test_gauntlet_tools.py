@@ -4,6 +4,9 @@ Each test drives the real script with fakes for the slow parts (cargo, npx, ax w
 so it runs in seconds without a build.
 """
 import importlib.util
+import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -84,7 +87,7 @@ class TestBaselineTest(unittest.TestCase):
 
     def test_the_gauntlet_uses_the_checker(self):
         text = (TOOLS / "gauntlet-ax-admin.sh").read_text()
-        self.assertIn("tools/check-test-baseline.sh", text)
+        self.assertTrue("tools/check-test-baseline.sh" in text, "L4 does not call the checker")
 
 
 def gauntlet_block(script, start, end):
@@ -132,6 +135,99 @@ class EncodingLayerTest(unittest.TestCase):
         run = self.run_layer("docs/*.md", b"\xef\xbb\xbfhello\n")
         self.assertNotEqual(run.returncode, 0, run.stdout)
         self.assertIn("BOM in docs/*.md", run.stdout)
+
+
+NEGATIVE_CONTROL = ROOT / "scripts" / "lib" / "negative-control.sh"
+CONTROLLED_GAUNTLETS = [
+    "gauntlet-content-width.sh",
+    "gauntlet-macos-theme.sh",
+    "gauntlet-policy-git-share-indicator.sh",
+    "gauntlet-policy-revisions.sh",
+    "gauntlet-policy-storage.sh",
+    "gauntlet-policy-table-oneline.sh",
+    "gauntlet-policy-zip-package.sh",
+]
+
+
+def control_calls(text):
+    """Every `negative_control ...` command in a script, with its continuation lines."""
+    calls, current = [], None
+    for line in text.splitlines():
+        if current is None and line.lstrip().startswith("negative_control "):
+            current = []
+        if current is not None:
+            current.append(line)
+            if not line.rstrip().endswith("\\"):
+                calls.append("\n".join(current))
+                current = None
+    return calls
+
+
+class NegativeControlTest(unittest.TestCase):
+    """scripts/lib/negative-control.sh and the gauntlets that use it."""
+
+    def control(self, content, *args):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "index.css"
+            target.write_text(content)
+            script = f'source "{NEGATIVE_CONTROL}"\nnegative_control "$@"\necho after'
+            run = subprocess.run(["bash", "-c", script, "bash", "label", str(target), *args],
+                                 capture_output=True, text=True, timeout=30, env=dict(os.environ, TMPDIR=tmp))
+            leftovers = [p.name for p in Path(tmp).iterdir() if p.name != "index.css"]
+            return run, leftovers
+
+    def test_a_real_check_passes_its_control(self):
+        run, leftovers = self.control("--layout-max: 1100px;\n", "1100px", "1000px",
+                                      "grep", "-q", "--", "--layout-max: 1100px")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("after", run.stdout)
+        self.assertEqual(leftovers, [])
+
+    def test_a_check_that_always_passes_fails_its_control(self):
+        run, leftovers = self.control("--layout-max: 1100px;\n", "1100px", "1000px", "grep", "-q", "layout")
+        self.assertEqual(run.returncode, 1)
+        self.assertIn("still passes", run.stderr)
+        self.assertNotIn("after", run.stdout)
+        self.assertEqual(leftovers, [])
+
+    def test_a_check_that_never_passes_fails_its_control(self):
+        run, _ = self.control("--layout-max: 1100px;\n", "1100px", "1000px", "grep", "-q", "no-such-text")
+        self.assertEqual(run.returncode, 1)
+        self.assertIn("does not pass", run.stderr)
+
+    def test_a_missing_anchor_fails_the_control(self):
+        run, _ = self.control("--layout-max: 1100px;\n", "1320px", "1000px", "grep", "-q", "1100px")
+        self.assertEqual(run.returncode, 1)
+        self.assertIn("is not in", run.stderr)
+
+    def test_no_gauntlet_keeps_a_vacuous_control(self):
+        vacuous = re.compile(r"does-not-exist|NOT_A_REAL_MARKER|never-valid|echo 'Mach-O")
+        for name in CONTROLLED_GAUNTLETS + ["gauntlet-macos-dev-ax-path.sh"]:
+            with self.subTest(name):
+                self.assertIsNone(vacuous.search((TOOLS / name).read_text()))
+
+    def test_every_gauntlet_control_holds_on_the_current_tree(self):
+        for name in CONTROLLED_GAUNTLETS:
+            text = (TOOLS / name).read_text()
+            calls = control_calls(text)
+            with self.subTest(name):
+                self.assertTrue("scripts/lib/negative-control.sh" in text, "the helper is not sourced")
+                self.assertTrue(calls, "no negative_control call")
+                if "rg -q" in "\n".join(calls) and shutil.which("rg") is None:
+                    self.skipTest("rg is not installed")
+                css = re.search(r'^CSS="\$ROOT/(.*)"$', text, re.M)
+                prelude = f'set -euo pipefail\nROOT="{ROOT}"\ncd "$ROOT"\nsource "{NEGATIVE_CONTROL}"\n'
+                if css:
+                    prelude += f'CSS="$ROOT/{css.group(1)}"\n'
+                run = subprocess.run(["bash", "-c", prelude + "\n".join(calls)], capture_output=True,
+                                     text=True, timeout=60)
+                self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+                self.assertEqual(run.stdout.count("fails on a broken copy"), len(calls), run.stdout)
+
+    def test_the_mach_o_check_is_run_against_a_real_binary(self):
+        text = (TOOLS / "gauntlet-macos-dev-ax-path.sh").read_text()
+        self.assertTrue(re.search(r'is_macho "\$bin"', text), "the control does not check $bin")
+        self.assertTrue(re.search(r'is_macho "\$shim"', text), "the shim is not checked with is_macho")
 
 
 if __name__ == "__main__":

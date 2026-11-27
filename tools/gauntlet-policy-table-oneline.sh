@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 source "$ROOT/scripts/lib/restore-on-exit.sh"
+source "$ROOT/scripts/lib/negative-control.sh"
 CSS="$ROOT/crates/ax-web/web-ui/src/index.css"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -27,10 +28,8 @@ grep -q 'table.policy-table' "$CSS" || fail "missing table.policy-table crush fi
 grep -q 'width: max-content' "$CSS" || fail "policy-table must size to content"
 grep -q 'flex-flow: row nowrap' "$CSS" || fail "missing flex-flow nowrap on table tags"
 
-echo "== negative control =="
-if grep -q 'flex-wrap: wrap-never-valid' "$CSS"; then
-  fail "negative control passed (vacuous grep)"
-fi
+echo "== negative control: the wiring checks fail on a broken copy =="
+negative_control row-nowrap "$CSS" 'flex-flow: row nowrap' 'flex-flow: row wrap' grep -q 'flex-flow: row nowrap'
 
 echo "== tsc =="
 (cd crates/ax-web/web-ui && npx tsc --noEmit)

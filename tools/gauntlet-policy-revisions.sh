@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 source "$ROOT/scripts/lib/restore-on-exit.sh"
+source "$ROOT/scripts/lib/negative-control.sh"
 unset CARGO_TARGET_DIR
 
 echo "== rust =="
@@ -35,11 +36,9 @@ grep -q 'Local revision history' site/src/content/docs/guides/policy-engine.md \
 grep -q 'History' site/src/content/docs/guides/command-center.md \
   || { echo "FAIL: command-center.md missing History" >&2; exit 1; }
 
-echo "== negative control =="
-if grep -q 'policy-revisions-table-does-not-exist' crates/ax-db/src/migrations.rs; then
-  echo "FAIL: negative control passed (vacuous grep)" >&2
-  exit 1
-fi
+echo "== negative control: the wiring checks fail on a broken copy =="
+negative_control save-revision crates/ax-policy/src/store.rs 'record_save_revision' 'record_revision' \
+  grep -q 'record_save_revision'
 
 echo "== tsc =="
 (cd crates/ax-web/web-ui && npx tsc --noEmit)

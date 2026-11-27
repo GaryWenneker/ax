@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 source "$ROOT/scripts/lib/restore-on-exit.sh"
+source "$ROOT/scripts/lib/negative-control.sh"
 
 echo "== theme unit tests =="
 (cd crates/ax-web/web-ui && node --experimental-strip-types --test src/lib/themes.test.ts)
@@ -28,11 +29,11 @@ grep -q 'statusbarInk(fill)' crates/ax-web/web-ui/src/lib/themes.ts \
 grep -q 'id: wcag-contrast' .agents/rules/wcag-contrast.mdc \
   || { echo "FAIL: missing CRITICAL wcag-contrast rule" >&2; exit 1; }
 
-echo "== negative control (grep gate) =="
-if grep -q 'data-ax-theme="macos-does-not-exist"' crates/ax-web/web-ui/src/index.css; then
-  echo "FAIL: negative control passed (vacuous grep)" >&2
-  exit 1
-fi
+echo "== negative control: the wiring checks fail on a broken copy =="
+negative_control statusbar-ink crates/ax-web/web-ui/src/lib/themes.ts 'statusbarInk(fill)' 'statusbarInk(bg)' \
+  grep -q 'statusbarInk(fill)'
+negative_control accent-on-fill crates/ax-web/web-ui/src/index.css 'var(--accent-on-fill' 'var(--accent-fill' \
+  grep -q 'var(--accent-on-fill'
 
 echo "== tsc =="
 (cd crates/ax-web/web-ui && npx tsc --noEmit)
