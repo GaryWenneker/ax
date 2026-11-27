@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { mockApi } from './fixtures';
+import { mockApi, routeTraceStream } from './fixtures';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -106,15 +106,11 @@ test.describe('Command Center mobile logging (fixture API)', () => {
   ];
 
   test('logging rows fit the phone width without sideways scrolling', async ({ page }) => {
-    let sent = false;
     await mockApi(page, {
-      '/api/usage/mcp-trace/events': (route) => {
-        const body = sent ? ': heartbeat\n\n' : `event: batch\ndata: ${JSON.stringify(lines)}\n\n`;
-        sent = true;
-        return route.fulfill({ contentType: 'text/event-stream', body });
-      },
       '/api/usage/mcp-trace/path': { projectLabel: 'Fixture', projectRoot: '/fixtures', logDay: '2026-10-12', logExists: true },
     });
+    // Registered after mockApi so it answers the trace stream; every connection gets the snapshot.
+    await routeTraceStream(page, lines);
     await page.goto('/logging');
     const rows = page.locator('.mcp-trace-row');
     await expect(rows).toHaveCount(lines.length);
