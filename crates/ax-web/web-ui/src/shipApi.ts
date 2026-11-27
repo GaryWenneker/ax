@@ -1,5 +1,5 @@
 import { apiFetch } from './api.ts';
-import { readSseJson } from './lib/sse.ts';
+import { postSse } from './lib/sse.ts';
 
 const SHIP = '/api/ship';
 
@@ -271,82 +271,33 @@ export type SonarStreamEvent =
       logs?: string[];
     };
 
-export async function streamSonarInstall(
+export function streamSonarInstall(
   onEvent: (ev: SonarStreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const res = await fetch(`${SHIP}/sonar/install/stream`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: '{}',
-    signal,
-  });
-  if (!res.ok || !res.body) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  await readSseJson<SonarStreamEvent>(res.body, onEvent);
+  return postSse(`${SHIP}/sonar/install/stream`, {}, onEvent, signal);
 }
 
-export async function streamSonarStart(
+export function streamSonarStart(
   onEvent: (ev: SonarStreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const res = await fetch(`${SHIP}/sonar/start/stream`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: '{}',
-    signal,
-  });
-  if (!res.ok || !res.body) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  await readSseJson<SonarStreamEvent>(res.body, onEvent);
+  return postSse(`${SHIP}/sonar/start/stream`, {}, onEvent, signal);
 }
 
-export async function streamSonarStop(
+export function streamSonarStop(
   onEvent: (ev: SonarStreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const res = await fetch(`${SHIP}/sonar/stop/stream`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: '{}',
-    signal,
-  });
-  if (!res.ok || !res.body) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  await readSseJson<SonarStreamEvent>(res.body, onEvent);
+  return postSse(`${SHIP}/sonar/stop/stream`, {}, onEvent, signal);
 }
 
-export async function streamSonarScanProject(
+export function streamSonarScanProject(
   projectKey: string,
   onEvent: (ev: SonarStreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  return streamSonarScan(onEvent, signal, projectKey);
-}
-
-async function streamSonarScan(
-  onEvent: (ev: SonarStreamEvent) => void,
-  signal?: AbortSignal,
-  projectKey?: string,
-): Promise<void> {
-  const body = projectKey ? JSON.stringify({ project_key: projectKey }) : '{}';
-  const res = await fetch(`${SHIP}/sonar/scan/stream`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body,
-    signal,
-  });
-  if (!res.ok || !res.body) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  await readSseJson<SonarStreamEvent>(res.body, onEvent);
+  return postSse(`${SHIP}/sonar/scan/stream`, { project_key: projectKey }, onEvent, signal);
 }
 
 export function toggleSonarExclude(

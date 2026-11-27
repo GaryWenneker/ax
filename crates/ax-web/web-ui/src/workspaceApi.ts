@@ -1,4 +1,5 @@
-import { readSseJson } from './lib/sse.ts';
+import { ApiError } from './lib/apiError.ts';
+import { openSse, readSseJson } from './lib/sse.ts';
 
 const BASE = '/api/workspace';
 
@@ -171,19 +172,16 @@ export async function streamWorkspaceInit(
     if (ev.type === 'done') sawDone = true;
     onEvent(ev);
   };
-  let res: Response;
+  let stream: ReadableStream<Uint8Array>;
   try {
-    res = await fetch(`${BASE}/init/stream`, { ...postJson({ path }), signal });
-  } catch {
-    if (!signal?.aborted) emit({ type: 'done', ok: false, error: UNREACHABLE });
-    return;
-  }
-  if (!res.ok || !res.body) {
-    emit({ type: 'done', ok: false, error: `HTTP ${res.status}` });
+    stream = await openSse(`${BASE}/init/stream`, { path }, signal);
+  } catch (err) {
+    if (err instanceof ApiError) emit({ type: 'done', ok: false, error: err.message });
+    else if (!signal?.aborted) emit({ type: 'done', ok: false, error: UNREACHABLE });
     return;
   }
   try {
-    await readSseJson<WorkspaceStreamEvent>(res.body, emit, () => !sawDone);
+    await readSseJson<WorkspaceStreamEvent>(stream, emit, () => !sawDone);
   } catch {
     if (signal?.aborted) return;
     emit({ type: 'done', ok: false, error: 'The connection to the server was lost before ax init finished.' });

@@ -1,3 +1,5 @@
+import { ApiError, ensureOk } from './apiError.ts';
+
 /**
  * Read a Server-Sent Events body and hand each event's data to `onData`.
  *
@@ -85,4 +87,31 @@ export async function readSseJson<T>(
     },
     live,
   );
+}
+
+/**
+ * POST `body` as JSON to an event-stream endpoint and return the open stream.
+ * A non-2xx reply throws an {@link ApiError} with the status and the server's
+ * message; a reply without a body throws one too.
+ */
+export async function openSse(url: string, body: unknown, signal?: AbortSignal): Promise<ReadableStream<Uint8Array>> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+    signal,
+  });
+  await ensureOk(res);
+  if (!res.body) throw new ApiError(`The server sent no event stream (HTTP ${res.status})`, res.status);
+  return res.body;
+}
+
+/** {@link openSse} and then {@link readSseJson}: errors reject, events go to `onEvent`. */
+export async function postSse<T>(
+  url: string,
+  body: unknown,
+  onEvent: (event: T) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  await readSseJson<T>(await openSse(url, body, signal), onEvent);
 }
