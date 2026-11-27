@@ -113,7 +113,7 @@ async fn collect_rows(
     let mut after: Option<(i64, String)> = None;
     loop {
         let cursor = after.as_ref().map(|(at, id)| (*at, id.as_str()));
-        let rows = backup_page(&mut *tx, cursor, since, page).await?;
+        let rows = backup_page(&mut tx, cursor, since, page).await?;
         for row in &rows {
             body.push_str(&serde_json::to_string(row).map_err(other)?);
             body.push('\n');
@@ -349,7 +349,7 @@ mod tests {
     async fn a_row_updated_between_pages_does_not_shift_later_pages() {
         let (_dir, db) = vault_with_tied_rows(5).await;
         let mut conn = db.pool().acquire().await.unwrap();
-        let first = backup_page(&mut *conn, None, None, 2).await.unwrap();
+        let first = backup_page(&mut conn, None, None, 2).await.unwrap();
         // A hook updates a row the backup already read: it moves to the top.
         sqlx::query("UPDATE memories SET updated_at = 500 WHERE id = ?")
             .bind(&first[0].id)
@@ -360,7 +360,7 @@ mod tests {
         let mut after = first.last().map(|r| (r.updated_at, r.id.clone()));
         loop {
             let cursor = after.as_ref().map(|(at, id)| (*at, id.as_str()));
-            let rows = backup_page(&mut *conn, cursor, None, 2).await.unwrap();
+            let rows = backup_page(&mut conn, cursor, None, 2).await.unwrap();
             seen.extend(rows.iter().map(|r| r.id.clone()));
             if rows.len() < 2 {
                 break;
