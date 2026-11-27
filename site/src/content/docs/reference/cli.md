@@ -1586,7 +1586,7 @@ ax policy storage files --global
 
 #### `ax policy storage set-item <id> <files|database> [path]`
 
-Set a **per-item** storage override for one rule id or skill name (hybrid mode).
+Set a **per-item** storage override for one rule id or skill name (hybrid mode). When a rule and a skill share the name, the command refuses and asks for `rule:<id>` or `skill:<name>`.
 
 | Flag | Description |
 |---|---|
@@ -1601,7 +1601,7 @@ ax policy storage set-item mobile-first database --keep-file --json
 
 ### `ax policy enable <id> [path]`
 
-Enable a rule or skill so matcher/preflight include it again.
+Enable a rule or skill so matcher/preflight include it again. When a rule and a skill share the name, pass `rule:<id>` or `skill:<name>`; a bare name that matches both is refused.
 
 ```bash
 ax policy enable mobile-first
@@ -1609,7 +1609,7 @@ ax policy enable mobile-first
 
 ### `ax policy disable <id> [path]`
 
-Disable a rule or skill without deleting it (frontmatter `enabled: false` + DB column).
+Disable a rule or skill without deleting it (frontmatter `enabled: false` + DB column). As with `enable`, use `rule:<id>` or `skill:<name>` when both kinds share the name.
 
 ```bash
 ax policy disable mobile-first
@@ -1773,7 +1773,7 @@ ax policy review reject mobile-first
 | Subcommand | Description |
 |---|---|
 | `list [path]` | List pending rules and skills (`--json`). A pending file that cannot be parsed is reported on stderr with its path and the failing fields; the other items are still listed |
-| `show <id> [path]` | Show a pending item and its diff against the local copy (`--json`) |
+| `show <id> [path]` | Show a pending item and its diff against the active item, wherever it is stored (`.agents/`, another scope folder or the database) (`--json`). Use `skill:<name>` to pick the skill when a pending rule has the same id |
 | `approve <id> [path]` | Move a pending item into active policy |
 | `reject <id> [path]` | Drop a pending item |
 

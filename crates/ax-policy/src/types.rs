@@ -121,6 +121,35 @@ impl PolicyItemStatus {
     }
 }
 
+/// Which kind of policy item an id names. A rule and a skill may share a
+/// name, so callers that know the kind pass it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PolicyItemKind {
+    Rule,
+    Skill,
+}
+
+impl PolicyItemKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Rule => "rule",
+            Self::Skill => "skill",
+        }
+    }
+
+    /// Split an optional `rule:` / `skill:` prefix off an id.
+    pub fn split_prefixed(id: &str) -> (Option<Self>, &str) {
+        if let Some(rest) = id.strip_prefix("rule:") {
+            (Some(Self::Rule), rest)
+        } else if let Some(rest) = id.strip_prefix("skill:") {
+            (Some(Self::Skill), rest)
+        } else {
+            (None, id)
+        }
+    }
+}
+
 fn default_priority() -> i32 {
     50
 }

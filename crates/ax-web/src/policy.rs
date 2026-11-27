@@ -129,7 +129,12 @@ async fn set_rule_enabled(
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
     let ws = hub.read().await;
-    match ws.policy.store.set_enabled(&id, payload.enabled).await {
+    match ws
+        .policy
+        .store
+        .set_enabled(Some(ax_policy::PolicyItemKind::Rule), &id, payload.enabled)
+        .await
+    {
         Ok(true) => (
             StatusCode::OK,
             Json(serde_json::json!({ "ok": true, "id": id, "enabled": payload.enabled })),
@@ -149,7 +154,16 @@ async fn set_skill_enabled(
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
     let ws = hub.read().await;
-    match ws.policy.store.set_enabled(&name, payload.enabled).await {
+    match ws
+        .policy
+        .store
+        .set_enabled(
+            Some(ax_policy::PolicyItemKind::Skill),
+            &name,
+            payload.enabled,
+        )
+        .await
+    {
         Ok(true) => (
             StatusCode::OK,
             Json(serde_json::json!({ "ok": true, "name": name, "enabled": payload.enabled })),
@@ -183,7 +197,12 @@ async fn set_rule_storage(
     match ws
         .policy
         .store
-        .set_item_storage(&id, target, payload.keep_file)
+        .set_item_storage(
+            Some(ax_policy::PolicyItemKind::Rule),
+            &id,
+            target,
+            payload.keep_file,
+        )
         .await
     {
         Ok(v) => (StatusCode::OK, Json(v)).into_response(),
@@ -207,7 +226,12 @@ async fn set_skill_storage(
     match ws
         .policy
         .store
-        .set_item_storage(&name, target, payload.keep_file)
+        .set_item_storage(
+            Some(ax_policy::PolicyItemKind::Skill),
+            &name,
+            target,
+            payload.keep_file,
+        )
         .await
     {
         Ok(v) => (StatusCode::OK, Json(v)).into_response(),

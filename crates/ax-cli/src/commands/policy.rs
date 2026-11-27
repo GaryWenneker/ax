@@ -982,8 +982,9 @@ pub async fn run_storage_set_item(
         .ok_or_else(|| "storage must be files or database".to_string())?;
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let store = ax_policy::PolicyStore::new(ax.db_pool().clone(), root);
+    let (kind, bare_id) = ax_policy::PolicyItemKind::split_prefixed(&id);
     let result = store
-        .set_item_storage(&id, target, keep_file)
+        .set_item_storage(kind, bare_id, target, keep_file)
         .await
         .map_err(|e| e.to_string())?;
     if json {
@@ -1278,8 +1279,9 @@ async fn set_enabled(path: Option<String>, id: &str, enabled: bool) -> Result<()
     let root = resolve_path(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let store = ax_policy::PolicyStore::new(ax.db_pool().clone(), root.clone());
+    let (kind, bare_id) = ax_policy::PolicyItemKind::split_prefixed(id);
     let found = store
-        .set_enabled(id, enabled)
+        .set_enabled(kind, bare_id, enabled)
         .await
         .map_err(|e| e.to_string())?;
     if !found {
@@ -1480,7 +1482,8 @@ pub async fn run_review_show(path: Option<String>, id: String, json: bool) -> Re
     let root = resolve_path(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let store = ax_policy::PolicyStore::new(ax.db_pool().clone(), root.clone());
-    let diff = ax_policy::pending_diff(&store, &id, None)
+    let (kind, bare_id) = ax_policy::PolicyItemKind::split_prefixed(&id);
+    let diff = ax_policy::pending_diff(&store, bare_id, kind.map(|k| k.as_str()))
         .await
         .map_err(|e| e.to_string())?;
     if json {
