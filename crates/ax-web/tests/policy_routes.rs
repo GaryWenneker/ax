@@ -183,3 +183,67 @@ async fn export_refuses_folders_outside_the_project() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(root.join(".ax/policy/export").is_dir());
 }
+
+async fn global_copy(root: &Path, kind: ax_global_db::policy::PolicyKind, id: &str) -> bool {
+    let gpool = ax_global_db::open_and_init(&ax_global_db::global_db_path().unwrap())
+        .await
+        .unwrap();
+    let pid = ax_global_db::policy::resolve_project_id(&gpool, root, None)
+        .await
+        .unwrap();
+    let found = ax_global_db::policy::load_policy_item(&gpool, pid, kind, id)
+        .await
+        .unwrap()
+        .is_some();
+    gpool.close().await;
+    found
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // process-global env; the guard must cover the awaits
+async fn relocate_to_global_rolls_back_when_the_local_delete_fails() {
+    use std::os::unix::fs::PermissionsExt;
+    let _lock = env_lock();
+    let home = tempfile::tempdir().unwrap();
+    let (app, root) = app(home.path()).await;
+    let rules = root.join(".agents/rules");
+
+    std::fs::set_permissions(&rules, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let (status, body) = send(
+        &app,
+        "POST",
+        "/api/policy/relocate",
+        r#"{"kind":"rule","id":"solo","to":"global"}"#,
+    )
+    .await;
+    std::fs::set_permissions(&rules, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert!(rules.join("solo.mdc").is_file());
+    assert!(
+        !global_copy(&root, ax_global_db::policy::PolicyKind::Rules, "solo").await,
+        "a failed relocate left a copy in global.db"
+    );
+
+    // The same move succeeds once the folder is writable, and moves back.
+    let (status, body) = send(
+        &app,
+        "POST",
+        "/api/policy/relocate",
+        r#"{"kind":"rule","id":"solo","to":"global"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(global_copy(&root, ax_global_db::policy::PolicyKind::Rules, "solo").await);
+    let (status, body) = send(
+        &app,
+        "POST",
+        "/api/policy/relocate",
+        r#"{"kind":"rule","id":"solo","to":"project"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(!global_copy(&root, ax_global_db::policy::PolicyKind::Rules, "solo").await);
+    let (status, _) = send(&app, "GET", "/api/policy/rules/solo", "").await;
+    assert_eq!(status, StatusCode::OK);
+}

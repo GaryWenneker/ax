@@ -777,10 +777,48 @@ pub(crate) fn rule_doc_from_parts(
     }
 }
 
+/// The project's own copy of a rule or skill as JSON, or `None` when the
+/// project has no such item.
+async fn local_policy_value(
+    store: &ax_policy::PolicyStore,
+    kind: ax_global_db::policy::PolicyKind,
+    id: &str,
+) -> Result<Option<serde_json::Value>, String> {
+    let value = match kind {
+        ax_global_db::policy::PolicyKind::Rules => store
+            .get_rule_doc(id)
+            .await
+            .map_err(|e| e.to_string())?
+            .map(|doc| serde_json::to_value(&doc)),
+        ax_global_db::policy::PolicyKind::Skills => store
+            .get_skill_doc(id)
+            .await
+            .map_err(|e| e.to_string())?
+            .map(|doc| serde_json::to_value(&doc)),
+    };
+    value.transpose().map_err(|e| e.to_string())
+}
+
+async fn delete_local_policy(
+    store: &ax_policy::PolicyStore,
+    kind: ax_global_db::policy::PolicyKind,
+    id: &str,
+) -> Result<bool, String> {
+    match kind {
+        ax_global_db::policy::PolicyKind::Rules => store.delete_rule(id).await,
+        ax_global_db::policy::PolicyKind::Skills => store.delete_skill(id).await,
+    }
+    .map_err(|e| e.to_string())
+}
+
+/// Moves one rule or skill between the project and global.db. The copy is
+/// written first and the original removed second; when the second step
+/// fails, the first is undone, so the item never ends up in both places.
 async fn relocate_policy(
     State(hub): State<WebHub>,
     Json(payload): Json<RelocatePayload>,
 ) -> impl IntoResponse {
+    use ax_global_db::policy as gp;
     if hub.readonly {
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
@@ -791,167 +829,98 @@ async fn relocate_policy(
         return err(StatusCode::BAD_REQUEST, "id is required");
     }
     let ws = hub.read().await;
-    let root = ws.policy.store.project_root().to_path_buf();
-    let gpath = match ax_global_db::global_db_path() {
-        Ok(p) => p,
-        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    let store = &ws.policy.store;
+    let (gpool, pid) = match open_global_pool(store.project_root(), payload.project_id).await {
+        Ok(v) => v,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e),
     };
-    let gpool = match ax_global_db::open_and_init(&gpath).await {
-        Ok(p) => p,
-        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    };
-    let pid =
-        match ax_global_db::policy::resolve_project_id(&gpool, &root, payload.project_id).await {
-            Ok(id) => id,
-            Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-        };
+    let id = payload.id.as_str();
+    let internal =
+        |e: &dyn std::fmt::Display| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
 
     match payload.to.as_str() {
         "global" => {
-            let exists = match kind {
-                ax_global_db::policy::PolicyKind::Rules => ws
-                    .policy
-                    .store
-                    .get_rule_doc(&payload.id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .is_some(),
-                ax_global_db::policy::PolicyKind::Skills => ws
-                    .policy
-                    .store
-                    .get_skill_doc(&payload.id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .is_some(),
+            let local = match local_policy_value(store, kind, id).await {
+                Ok(v) => v,
+                Err(e) => return internal(&e),
             };
-            if !exists {
-                let parked = ax_global_db::policy::load_policy_item(&gpool, pid, kind, &payload.id)
-                    .await
-                    .ok()
-                    .flatten();
-                if let Some(parked) = parked {
-                    let flat = ax_global_db::policy::flatten_list_item(parked, kind, &payload.id);
-                    if let Err(e) = ax_global_db::policy::upsert_policy_item(
-                        &gpool,
-                        pid,
-                        kind,
-                        &payload.id,
-                        &flat,
-                    )
-                    .await
-                    {
-                        return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
-                    }
-                    return (
-                        StatusCode::OK,
-                        Json(serde_json::json!({ "ok": true, "already": true })),
-                    )
-                        .into_response();
-                }
-                return err(StatusCode::NOT_FOUND, "not found in this project");
-            }
-            let copy = match kind {
-                ax_global_db::policy::PolicyKind::Rules => {
-                    let doc = ws
-                        .policy
-                        .store
-                        .get_rule_doc(&payload.id)
-                        .await
-                        .ok()
-                        .flatten()
-                        .unwrap();
-                    ax_global_db::policy::flatten_list_item(
-                        serde_json::to_value(&doc).unwrap_or(serde_json::json!({})),
-                        kind,
-                        &payload.id,
-                    )
-                }
-                ax_global_db::policy::PolicyKind::Skills => {
-                    let doc = ws
-                        .policy
-                        .store
-                        .get_skill_doc(&payload.id)
-                        .await
-                        .ok()
-                        .flatten()
-                        .unwrap();
-                    ax_global_db::policy::flatten_list_item(
-                        serde_json::to_value(&doc).unwrap_or(serde_json::json!({})),
-                        kind,
-                        &payload.id,
-                    )
-                }
+            let previous = match gp::load_policy_item(&gpool, pid, kind, id).await {
+                Ok(v) => v,
+                Err(e) => return internal(&e),
             };
-            if let Err(e) =
-                ax_global_db::policy::upsert_policy_item(&gpool, pid, kind, &payload.id, &copy)
-                    .await
-            {
-                return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
-            }
-            let deleted = match kind {
-                ax_global_db::policy::PolicyKind::Rules => {
-                    ws.policy.store.delete_rule(&payload.id).await
+            let Some(local) = local else {
+                // Already parked in global.db: rewrite it in the flat shape.
+                let Some(parked) = previous else {
+                    return err(StatusCode::NOT_FOUND, "not found in this project");
+                };
+                let flat = gp::flatten_list_item(parked, kind, id);
+                if let Err(e) = gp::upsert_policy_item(&gpool, pid, kind, id, &flat).await {
+                    return internal(&e);
                 }
-                ax_global_db::policy::PolicyKind::Skills => {
-                    ws.policy.store.delete_skill(&payload.id).await
-                }
-            };
-            match deleted {
-                Ok(_) => (
+                return (
                     StatusCode::OK,
-                    Json(serde_json::json!({ "ok": true, "to": "global" })),
+                    Json(serde_json::json!({ "ok": true, "already": true })),
                 )
-                    .into_response(),
-                Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                    .into_response();
+            };
+            let copy = gp::flatten_list_item(local, kind, id);
+            if let Err(e) = gp::upsert_policy_item(&gpool, pid, kind, id, &copy).await {
+                return internal(&e);
             }
+            if let Err(e) = delete_local_policy(store, kind, id).await {
+                let undo = match previous {
+                    Some(prev) => gp::upsert_policy_item(&gpool, pid, kind, id, &prev).await,
+                    None => gp::delete_policy_item(&gpool, pid, kind, id)
+                        .await
+                        .map(|_| ()),
+                };
+                let msg = match undo {
+                    Ok(()) => format!("could not remove the project copy: {e}"),
+                    Err(u) => format!(
+                        "could not remove the project copy: {e}; undoing the global copy also failed: {u}"
+                    ),
+                };
+                return err(StatusCode::INTERNAL_SERVER_ERROR, &msg);
+            }
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "ok": true, "to": "global" })),
+            )
+                .into_response()
         }
         "project" => {
-            let already = match kind {
-                ax_global_db::policy::PolicyKind::Rules => ws
-                    .policy
-                    .store
-                    .get_rule_doc(&payload.id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .is_some(),
-                ax_global_db::policy::PolicyKind::Skills => ws
-                    .policy
-                    .store
-                    .get_skill_doc(&payload.id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .is_some(),
-            };
-            if already {
-                return err(StatusCode::CONFLICT, "already exists in this project");
+            match local_policy_value(store, kind, id).await {
+                Ok(Some(_)) => return err(StatusCode::CONFLICT, "already exists in this project"),
+                Ok(None) => {}
+                Err(e) => return internal(&e),
             }
-            let Some(copy) =
-                (match ax_global_db::policy::load_policy_item(&gpool, pid, kind, &payload.id).await
-                {
-                    Ok(v) => v,
-                    Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-                })
-            else {
-                return err(StatusCode::NOT_FOUND, "not found in global.db");
+            let copy = match gp::load_policy_item(&gpool, pid, kind, id).await {
+                Ok(Some(v)) => v,
+                Ok(None) => return err(StatusCode::NOT_FOUND, "not found in global.db"),
+                Err(e) => return internal(&e),
             };
             let saved = match kind {
-                ax_global_db::policy::PolicyKind::Rules => match payload_to_rule(&copy) {
-                    Ok((fm, body)) => ws.policy.store.save_rule(fm, body).await.map(|_| ()),
+                gp::PolicyKind::Rules => match payload_to_rule(&copy) {
+                    Ok((fm, body)) => store.save_rule(fm, body).await.map(|_| ()),
                     Err(e) => return err(StatusCode::BAD_REQUEST, &e),
                 },
-                ax_global_db::policy::PolicyKind::Skills => match payload_to_skill(&copy) {
-                    Ok((fm, body)) => ws.policy.store.save_skill(fm, body).await.map(|_| ()),
+                gp::PolicyKind::Skills => match payload_to_skill(&copy) {
+                    Ok((fm, body)) => store.save_skill(fm, body).await.map(|_| ()),
                     Err(e) => return err(StatusCode::BAD_REQUEST, &e),
                 },
             };
             if let Err(v) = saved {
                 return validation_err(v);
             }
-            let _ = ax_global_db::policy::delete_policy_item(&gpool, pid, kind, &payload.id).await;
+            if let Err(e) = gp::delete_policy_item(&gpool, pid, kind, id).await {
+                let msg = match delete_local_policy(store, kind, id).await {
+                    Ok(_) => format!("could not remove the global copy: {e}"),
+                    Err(u) => format!(
+                        "could not remove the global copy: {e}; undoing the project copy also failed: {u}"
+                    ),
+                };
+                return err(StatusCode::INTERNAL_SERVER_ERROR, &msg);
+            }
             (
                 StatusCode::OK,
                 Json(serde_json::json!({ "ok": true, "to": "project" })),
