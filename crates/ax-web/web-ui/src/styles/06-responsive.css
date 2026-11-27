@@ -296,12 +296,6 @@
     -webkit-overflow-scrolling: touch;
   }
 
-  .mcp-trace-table {
-    width: max-content;
-    min-width: 720px;
-    table-layout: fixed;
-  }
-
   .mcp-col-time {
     width: 9.5rem;
     min-width: 11.5rem;

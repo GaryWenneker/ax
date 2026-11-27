@@ -1,4 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
+
+import { mockApi } from './fixtures';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -84,26 +86,6 @@ test.describe('Command Center mobile smoke', () => {
     await shot(page, '07-project-browser');
   });
 
-  test('logging table allows horizontal scroll', async ({ page }) => {
-    await page.goto('/logging');
-    const scroller = page.locator('.mcp-trace-scroller');
-    await expect(scroller).toBeVisible({ timeout: 15_000 });
-    const table = page.locator('.mcp-trace-table');
-    // When rows exist, table is wider than the phone viewport.
-    if ((await table.count()) > 0) {
-      const widths = await page.evaluate(() => {
-        const sc = document.querySelector('.mcp-trace-scroller') as HTMLElement | null;
-        const tb = document.querySelector('.mcp-trace-table') as HTMLElement | null;
-        return {
-          scroll: sc?.clientWidth ?? 0,
-          table: tb?.scrollWidth ?? 0,
-        };
-      });
-      expect(widths.table).toBeGreaterThan(widths.scroll);
-    }
-    await shot(page, '08-logging-hscroll');
-  });
-
   test('logging dock button opens control sheet', async ({ page }) => {
     await page.goto('/logging');
     await expect(page.locator('.status-logging')).toBeVisible();
@@ -111,5 +93,42 @@ test.describe('Command Center mobile smoke', () => {
     await expect(page.getByRole('region', { name: /Logging/i })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Scroll to newest' })).toBeVisible();
     await shot(page, '09-logging-dock');
+  });
+});
+
+test.describe('Command Center mobile logging (fixture API)', () => {
+  test.skip(({ isMobile }) => !isMobile, 'phone layout');
+
+  const lines = [
+    '2026-10-12T20:00:00Z [ax-mcp] inbound tool=ax_search args={"query":"A long prompt that would push a fixed-width table past the edge of a phone screen"}',
+    '2026-10-12T20:00:01Z [ax-mcp] outbound tool=ax_search result={"count":3}',
+    '2026-10-12T20:00:02Z [ax] 🪓 workspace sync ok files=19 duration_ms=162 tool=workspace',
+  ];
+
+  test('logging rows fit the phone width without sideways scrolling', async ({ page }) => {
+    let sent = false;
+    await mockApi(page, {
+      '/api/usage/mcp-trace/events': (route) => {
+        const body = sent ? ': heartbeat\n\n' : `event: batch\ndata: ${JSON.stringify(lines)}\n\n`;
+        sent = true;
+        return route.fulfill({ contentType: 'text/event-stream', body });
+      },
+      '/api/usage/mcp-trace/path': { projectLabel: 'Fixture', projectRoot: '/fixtures', logDay: '2026-10-12', logExists: true },
+    });
+    await page.goto('/logging');
+    const rows = page.locator('.mcp-trace-row');
+    await expect(rows).toHaveCount(lines.length);
+    const layout = await page.evaluate(() => {
+      const scroller = document.querySelector('.mcp-trace-scroller') as HTMLElement;
+      return {
+        rows: [...document.querySelectorAll<HTMLElement>('.mcp-trace-row')].map((row) => row.scrollWidth - row.clientWidth),
+        scroller: scroller.scrollWidth - scroller.clientWidth,
+        page: document.documentElement.scrollWidth - window.innerWidth,
+      };
+    });
+    for (const overflow of layout.rows) expect(overflow).toBeLessThanOrEqual(1);
+    expect(layout.scroller).toBeLessThanOrEqual(1);
+    expect(layout.page).toBeLessThanOrEqual(1);
+    await shot(page, '08-logging-fit');
   });
 });
