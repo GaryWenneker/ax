@@ -471,3 +471,56 @@ pub async fn run_reindex(json: bool) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Remove `file_change` memories whose every path the index excludes.
+pub async fn run_prune_file_changes(apply: bool, json: bool) -> Result<(), String> {
+    let root = resolve_path(None);
+    ax_usage::log_memory(
+        Some(&root),
+        format!("prune-file-changes start apply={apply}"),
+    );
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let mut filter = ax_extraction::IndexPathFilter::new(&root, &ax.config().exclude);
+    let mut excluded = |path: &str| filter.excludes(path);
+    let mut progress = |done: usize, total: usize| {
+        if !json {
+            eprint!("\rpurged {done}/{total}");
+            if done == total {
+                eprintln!();
+            }
+        }
+    };
+    let report =
+        ax_memory::prune_excluded_file_changes(ax.db_pool(), &mut excluded, apply, &mut progress)
+            .await
+            .map_err(|e| e.to_string())?;
+    ax_usage::log_memory(
+        Some(&root),
+        format!(
+            "prune-file-changes ok apply={apply} matched={} purged={}",
+            report.matched, report.purged
+        ),
+    );
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string(&report).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    println!(
+        "{} file_change memories, {} name only paths the index excludes, {} keep.",
+        report.scanned, report.matched, report.kept
+    );
+    for area in &report.areas {
+        println!("  {:>8}  {}", area.count, area.area);
+    }
+    if report.dry_run {
+        if report.matched > 0 {
+            println!("Dry run: nothing deleted. Run `ax memory prune-file-changes --apply` to remove them.");
+        }
+    } else {
+        println!("Removed {} memories.", report.purged);
+    }
+    Ok(())
+}

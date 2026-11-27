@@ -1611,6 +1611,90 @@ pub async fn purge_memory(pool: &SqlitePool, id: &str) -> Result<bool, AxError> 
     Ok(true)
 }
 
+/// Ids purged per transaction by [`purge_memories`].
+pub const PURGE_BATCH: usize = 500;
+
+/// [`purge_memory`] for many ids: the same rows go and the same tombstones are
+/// written, one transaction per [`PURGE_BATCH`] ids. `memory_cues` has no index
+/// on `memory_id`, so a per-id delete scans the whole cue table once per id; a
+/// batch scans it once. Each batch takes the write lock up front
+/// (`BEGIN IMMEDIATE`) and is retried while another ax process holds it, so it
+/// runs next to a live MCP server or watcher. Returns how many memories were
+/// removed. `on_batch(done, total)` runs after each committed batch.
+pub async fn purge_memories(
+    pool: &SqlitePool,
+    ids: &[String],
+    on_batch: &mut dyn FnMut(usize, usize),
+) -> Result<usize, AxError> {
+    let ids: Vec<&str> = ids
+        .iter()
+        .map(|id| id.trim())
+        .filter(|id| !id.is_empty())
+        .collect();
+    let total = ids.len();
+    let mut purged = 0usize;
+    let mut done = 0usize;
+    for chunk in ids.chunks(PURGE_BATCH) {
+        let json = serde_json::to_string(chunk).map_err(|e| AxError::Other(e.to_string()))?;
+        purged += ax_db::with_busy_retry(|| purge_batch(pool, &json))
+            .await
+            .map_err(|e| db_err(pool, e))?;
+        done += chunk.len();
+        on_batch(done, total);
+    }
+    Ok(purged)
+}
+
+/// One [`purge_memories`] batch; `ids_json` is a JSON array of ids.
+async fn purge_batch(pool: &SqlitePool, ids_json: &str) -> Result<usize, sqlx::Error> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let existing: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM memories WHERE id IN (SELECT value FROM json_each(?))")
+            .bind(ids_json)
+            .fetch_all(&mut *tx)
+            .await?;
+    if existing.is_empty() {
+        tx.commit().await?;
+        return Ok(0);
+    }
+    let json = serde_json::to_string(&existing).unwrap_or_else(|_| "[]".into());
+    // The vector tables are optional (no such table on some builds), as in purge_memory.
+    let _ = sqlx::query(
+        "DELETE FROM memory_vec WHERE rowid IN
+         (SELECT rowid FROM memory_vec_map WHERE memory_id IN (SELECT value FROM json_each(?)))",
+    )
+    .bind(&json)
+    .execute(&mut *tx)
+    .await;
+    let _ = sqlx::query(
+        "DELETE FROM memory_vec_map WHERE memory_id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(&json)
+    .execute(&mut *tx)
+    .await;
+    for sql in [
+        "DELETE FROM memory_cues WHERE memory_id IN (SELECT value FROM json_each(?1))",
+        "DELETE FROM memory_links WHERE from_id IN (SELECT value FROM json_each(?1))
+            OR to_id IN (SELECT value FROM json_each(?1))",
+    ] {
+        sqlx::query(sql).bind(&json).execute(&mut *tx).await?;
+    }
+    let deleted = sqlx::query("DELETE FROM memories WHERE id IN (SELECT value FROM json_each(?))")
+        .bind(&json)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO memory_tombstones (memory_id, purged_at)
+         SELECT value, ? FROM json_each(?)",
+    )
+    .bind(now_ms())
+    .bind(&json)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(deleted.rows_affected() as usize)
+}
+
 /// Backfill empty `search_text` and rebuild `memories_fts` from the memories table.
 pub async fn reindex_memory_fts(pool: &SqlitePool) -> Result<u64, AxError> {
     let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(
