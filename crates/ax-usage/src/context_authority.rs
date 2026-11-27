@@ -190,15 +190,18 @@ fn status_of<'a>(
     }
 }
 
+/// SHA-256 over the pairs sorted by key, then value. Every key and value is
+/// written with its byte length first, so no text inside a value can be read
+/// as a separator or as the start of the next pair.
 pub fn seal(pairs: &[(&str, &str)]) -> String {
     let mut ordered: Vec<(&str, &str)> = pairs.to_vec();
     ordered.sort_by(|left, right| left.0.cmp(right.0).then(left.1.cmp(right.1)));
-    let mut payload = Vec::from(&b"ax-manifest-v1\0"[..]);
+    let mut payload = Vec::from(&b"ax-seal-v2\0"[..]);
     for (key, value) in ordered {
-        payload.extend(key.as_bytes());
-        payload.push(0);
-        payload.extend(value.as_bytes());
-        payload.push(0);
+        for field in [key, value] {
+            payload.extend((field.len() as u64).to_le_bytes());
+            payload.extend(field.as_bytes());
+        }
     }
     hex::encode(sha2::Sha256::digest(&payload))
 }
@@ -520,6 +523,7 @@ pub async fn store_manifest(
         return Err("unauthorized".into());
     }
     ensure_manifest_schema(pool).await?;
+    let manifest = &normalized_manifest(manifest);
     let seal = manifest_seal(manifest);
     let created_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -532,17 +536,17 @@ pub async fn store_manifest(
     )
     .bind(&seal)
     .bind(&manifest.project_id)
-    .bind(manifest.session_id.trim())
-    .bind(manifest.turn_id.trim())
-    .bind(manifest.agent_id.trim())
-    .bind(manifest.provider_chat_id.as_deref().map(str::trim).filter(|value| !value.is_empty()))
+    .bind(&manifest.session_id)
+    .bind(&manifest.turn_id)
+    .bind(&manifest.agent_id)
+    .bind(&manifest.provider_chat_id)
     .bind(mode_name(manifest.mode))
     .bind(manifest.cutoff_ms)
-    .bind(manifest.snapshot_id.as_deref().map(str::trim).filter(|value| !value.is_empty()))
+    .bind(&manifest.snapshot_id)
     .bind(&manifest.receipt_id)
-    .bind(manifest.model.trim())
-    .bind(manifest.tool_versions.trim())
-    .bind(manifest.commit_hash.trim())
+    .bind(&manifest.model)
+    .bind(&manifest.tool_versions)
+    .bind(&manifest.commit_hash)
     .bind(created_at)
     .execute(pool)
     .await
@@ -1155,23 +1159,60 @@ async fn ensure_manifest_schema(pool: &sqlx::SqlitePool) -> Result<(), String> {
     Ok(())
 }
 
+/// The manifest as it is stored: text fields trimmed, and an optional id that
+/// is empty after trimming becomes `None`. Sealing and storing both use this
+/// form, so a manifest read back from its row seals to the same value.
+fn normalized_manifest(manifest: &ContextManifest) -> ContextManifest {
+    let optional = |value: &Option<String>| {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    ContextManifest {
+        project_id: manifest.project_id.clone(),
+        session_id: manifest.session_id.trim().to_string(),
+        turn_id: manifest.turn_id.trim().to_string(),
+        agent_id: manifest.agent_id.trim().to_string(),
+        provider_chat_id: optional(&manifest.provider_chat_id),
+        mode: manifest.mode,
+        cutoff_ms: manifest.cutoff_ms,
+        snapshot_id: optional(&manifest.snapshot_id),
+        receipt_id: manifest.receipt_id.clone(),
+        model: manifest.model.trim().to_string(),
+        tool_versions: manifest.tool_versions.trim().to_string(),
+        commit_hash: manifest.commit_hash.trim().to_string(),
+    }
+}
+
+/// An optional field in a seal: `-` when absent, `=` and the value when present,
+/// so `None` never seals like `Some(0)` or `Some("")`.
+fn sealed_option(value: Option<String>) -> String {
+    match value {
+        Some(value) => format!("={value}"),
+        None => "-".to_string(),
+    }
+}
+
 fn manifest_seal(manifest: &ContextManifest) -> String {
-    let cutoff = manifest.cutoff_ms.unwrap_or(0).to_string();
-    let provider = manifest.provider_chat_id.clone().unwrap_or_default();
-    let snapshot = manifest.snapshot_id.clone().unwrap_or_default();
+    let manifest = normalized_manifest(manifest);
     let owned = [
-        ("agent", manifest.agent_id.trim().to_string()),
-        ("cutoff", cutoff),
+        ("agent", manifest.agent_id),
+        (
+            "cutoff",
+            sealed_option(manifest.cutoff_ms.map(|value| value.to_string())),
+        ),
         ("mode", mode_name(manifest.mode).to_string()),
-        ("project", manifest.project_id.trim().to_string()),
-        ("provider", provider),
-        ("commit", manifest.commit_hash.trim().to_string()),
-        ("model", manifest.model.trim().to_string()),
-        ("receipt", manifest.receipt_id.clone()),
-        ("session", manifest.session_id.trim().to_string()),
-        ("tools", manifest.tool_versions.trim().to_string()),
-        ("snapshot", snapshot),
-        ("turn", manifest.turn_id.trim().to_string()),
+        ("project", manifest.project_id),
+        ("provider", sealed_option(manifest.provider_chat_id)),
+        ("commit", manifest.commit_hash),
+        ("model", manifest.model),
+        ("receipt", manifest.receipt_id),
+        ("session", manifest.session_id),
+        ("tools", manifest.tool_versions),
+        ("snapshot", sealed_option(manifest.snapshot_id)),
+        ("turn", manifest.turn_id),
     ];
     let pairs: Vec<(&str, &str)> = owned
         .iter()
@@ -1289,10 +1330,10 @@ fn receipt_rows_seal(
         ("status".to_string(), status.to_string()),
     ];
     for (index, (id, role, decision, reason)) in rows.iter().enumerate() {
-        owned.push((
-            format!("item.{index}"),
-            format!("{id}|{role}|{decision}|{reason}"),
-        ));
+        owned.push((format!("item.{index}.id"), id.clone()));
+        owned.push((format!("item.{index}.role"), role.clone()));
+        owned.push((format!("item.{index}.decision"), decision.clone()));
+        owned.push((format!("item.{index}.reason"), reason.clone()));
     }
     let pairs: Vec<(&str, &str)> = owned
         .iter()
@@ -2981,5 +3022,85 @@ mod tests {
             };
             assert_eq!(state.blocks_authority(), expected, "{}", state.as_str());
         }
+    }
+
+    fn base_manifest(receipt_id: &str) -> ContextManifest {
+        ContextManifest {
+            project_id: "ax".into(),
+            session_id: "session-1".into(),
+            turn_id: "turn-1".into(),
+            agent_id: "agent-ax".into(),
+            provider_chat_id: None,
+            mode: ReplayMode::Current,
+            cutoff_ms: None,
+            snapshot_id: None,
+            receipt_id: receipt_id.into(),
+            model: "test-model".into(),
+            tool_versions: "ax_explore=1".into(),
+            commit_hash: "abc123".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_manifest_with_padded_optional_ids_still_verifies() {
+        let (_dir, pool) = temp_pool().await;
+        let receipt = resolve_context(ReplayMode::Current, None, &[], 100, &[]);
+        let receipt_id = store_receipt(&pool, "ax", &receipt).await.unwrap();
+        for (provider, snapshot) in [(Some("chat-1 "), Some(" snap-1 ")), (Some("  "), Some(""))] {
+            let manifest = ContextManifest {
+                provider_chat_id: provider.map(str::to_string),
+                snapshot_id: snapshot.map(str::to_string),
+                ..base_manifest(&receipt_id)
+            };
+            let id = store_manifest(&pool, &manifest).await.unwrap();
+            assert!(
+                verify_manifest(&pool, &id).await.unwrap(),
+                "{provider:?} {snapshot:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_manifest_seal_tells_absent_fields_from_empty_or_zero_ones() {
+        let absent = base_manifest("receipt");
+        let zero = ContextManifest {
+            cutoff_ms: Some(0),
+            ..base_manifest("receipt")
+        };
+        assert_ne!(manifest_seal(&absent), manifest_seal(&zero));
+        let padded = ContextManifest {
+            provider_chat_id: Some(" chat ".into()),
+            ..base_manifest("receipt")
+        };
+        let trimmed = ContextManifest {
+            provider_chat_id: Some("chat".into()),
+            ..base_manifest("receipt")
+        };
+        assert_eq!(manifest_seal(&padded), manifest_seal(&trimmed));
+    }
+
+    #[test]
+    fn receipt_items_with_shifted_separators_seal_differently() {
+        let left = [(
+            "x|mandatory|selected|ok".to_string(),
+            "advisory".to_string(),
+            "rejected".to_string(),
+            "r".to_string(),
+        )];
+        let right = [(
+            "x".to_string(),
+            "mandatory".to_string(),
+            "selected".to_string(),
+            "ok|advisory|rejected|r".to_string(),
+        )];
+        assert_ne!(
+            receipt_rows_seal("ax", "ready", &left),
+            receipt_rows_seal("ax", "ready", &right)
+        );
+    }
+
+    #[test]
+    fn seal_values_with_nul_bytes_cannot_shift_into_the_next_pair() {
+        assert_ne!(seal(&[("a", "b"), ("c", "d")]), seal(&[("a", "b\0c\0d")]));
     }
 }
