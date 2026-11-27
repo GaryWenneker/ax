@@ -211,32 +211,45 @@ fn string_field(section: &Value, key: &str, path: &str, diags: &mut Vec<String>)
     }
 }
 
+/// Which percent thresholds a config file set explicitly.
+#[derive(Debug, Default, Clone, Copy)]
+struct ExplicitThresholds {
+    warning: bool,
+    critical: bool,
+}
+
 /// Parses budget settings. Each field is read on its own, so one wrong value
 /// keeps the rest of the file; every ignored value is named in the returned
-/// diagnostics. Percent thresholds that are not
-/// `0 < warning <= critical <= hardLimit` fall back to the defaults.
+/// diagnostics. Thresholds must hold `warning <= critical <= hardLimit`: a
+/// value above a higher threshold is lowered to it, so the hard limit is never
+/// raised. Lowering a default under a threshold the user set is silent;
+/// lowering a value the user set is named in the diagnostics.
 pub fn parse_settings_with_diagnostics(
     global_json: Option<&str>,
     project_json: Option<&str>,
 ) -> (BudgetSettings, Vec<String>) {
     let mut settings = BudgetSettings::default();
     let mut diags = Vec::new();
+    let mut explicit = ExplicitThresholds::default();
     for (label, text) in [("global config", global_json), ("ax.json", project_json)] {
         if let Some(text) = text {
-            apply_json(&mut settings, label, text, &mut diags);
+            apply_json(&mut settings, &mut explicit, label, text, &mut diags);
         }
     }
-    let ordered = settings.warning_percent <= settings.critical_percent
-        && settings.critical_percent <= settings.hard_limit_percent;
-    if !ordered {
+    let (warning, critical, hard) = (
+        settings.warning_percent,
+        settings.critical_percent,
+        settings.hard_limit_percent,
+    );
+    settings.critical_percent = critical.min(hard);
+    settings.warning_percent = warning.min(settings.critical_percent);
+    let lowered_explicit = (explicit.critical && settings.critical_percent != critical)
+        || (explicit.warning && settings.warning_percent != warning);
+    if lowered_explicit {
         diags.push(format!(
-            "budget thresholds are out of order (warning {} <= critical {} <= hardLimit {} is required); defaults used",
-            settings.warning_percent, settings.critical_percent, settings.hard_limit_percent
+            "budget thresholds are out of order (warning {warning} <= critical {critical} <= hardLimit {hard} is required); lowered to warning {} critical {} hardLimit {hard}",
+            settings.warning_percent, settings.critical_percent
         ));
-        let defaults = BudgetSettings::default();
-        settings.warning_percent = defaults.warning_percent;
-        settings.critical_percent = defaults.critical_percent;
-        settings.hard_limit_percent = defaults.hard_limit_percent;
     }
     (settings, diags)
 }
@@ -250,7 +263,13 @@ pub fn parse_settings(global_json: Option<&str>, project_json: Option<&str>) -> 
     settings
 }
 
-fn apply_json(settings: &mut BudgetSettings, label: &str, text: &str, diags: &mut Vec<String>) {
+fn apply_json(
+    settings: &mut BudgetSettings,
+    explicit: &mut ExplicitThresholds,
+    label: &str,
+    text: &str,
+    diags: &mut Vec<String>,
+) {
     let text = strip_bom(text);
     if text
         .trim_matches(|c: char| c.is_ascii_whitespace())
@@ -296,9 +315,11 @@ fn apply_json(settings: &mut BudgetSettings, label: &str, text: &str, diags: &mu
         }
         if let Some(v) = ranged_field(budget, "warningPercent", p, PERCENT, diags) {
             settings.warning_percent = v;
+            explicit.warning = true;
         }
         if let Some(v) = ranged_field(budget, "criticalPercent", p, PERCENT, diags) {
             settings.critical_percent = v;
+            explicit.critical = true;
         }
         if let Some(v) = ranged_field(budget, "hardLimitPercent", p, PERCENT, diags) {
             settings.hard_limit_percent = v;
@@ -486,6 +507,7 @@ fn apply_budget_patch(
             budget.insert("hardLimitPercent".into(), serde_json::json!(v));
         }
         budget.insert("enabled".into(), Value::Bool(true));
+        check_threshold_order(budget)?;
     }
     if let Some(v) = patch.mode.clone() {
         let agent = obj
@@ -504,6 +526,26 @@ fn apply_budget_patch(
             .as_object_mut()
             .ok_or_else(|| "context is not an object".to_string())?;
         context.insert("budgetTokens".into(), serde_json::json!(v));
+    }
+    Ok(())
+}
+
+/// Refuses a budget section whose explicitly set thresholds are not
+/// `warning <= critical <= hardLimit`. Unset thresholds are not checked: the
+/// reader lowers a default to fit under a set one.
+fn check_threshold_order(budget: &serde_json::Map<String, Value>) -> Result<(), String> {
+    let keys = ["warningPercent", "criticalPercent", "hardLimitPercent"];
+    let set: Vec<(&str, f64)> = keys
+        .iter()
+        .filter_map(|k| budget.get(*k).and_then(Value::as_f64).map(|v| (*k, v)))
+        .collect();
+    for pair in set.windows(2) {
+        let ((low_key, low), (high_key, high)) = (pair[0], pair[1]);
+        if low > high {
+            return Err(format!(
+                "budget thresholds would be out of order ({low_key} {low} > {high_key} {high}); warning <= critical <= hardLimit is required"
+            ));
+        }
     }
     Ok(())
 }
@@ -1023,7 +1065,7 @@ mod tests {
     }
 
     #[test]
-    fn thresholds_out_of_order_or_range_fall_back_to_defaults() {
+    fn thresholds_out_of_range_are_ignored_and_out_of_order_ones_are_lowered() {
         let zero = r#"{"budget":{"enabled":true,"monthly":100,"hardLimitPercent":0}}"#;
         let (settings, diagnostics) = parse_settings_with_diagnostics(None, Some(zero));
         assert_eq!(settings.hard_limit_percent, 100.0);
@@ -1044,7 +1086,7 @@ mod tests {
                 settings.critical_percent,
                 settings.hard_limit_percent
             ),
-            (75.0, 90.0, 100.0)
+            (80.0, 80.0, 90.0)
         );
         assert!(
             diagnostics.iter().any(|d| d.contains("order")),
@@ -1056,6 +1098,75 @@ mod tests {
         assert_eq!(settings.hours_per_day, 8.0);
         assert_eq!(settings.working_days, 22);
         assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+    }
+
+    #[test]
+    fn a_lower_hard_limit_alone_is_kept_and_lowers_the_defaults_under_it() {
+        let text = r#"{"budget":{"enabled":true,"monthly":100,"hardLimitPercent":80}}"#;
+        let (settings, diagnostics) = parse_settings_with_diagnostics(None, Some(text));
+        assert_eq!(
+            (
+                settings.warning_percent,
+                settings.critical_percent,
+                settings.hard_limit_percent
+            ),
+            (75.0, 80.0, 80.0)
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(
+            level_for(Some(85.0), &settings),
+            (BudgetLevel::HardLimit, BudgetDecision::Deny)
+        );
+
+        let low = r#"{"budget":{"hardLimitPercent":50}}"#;
+        let (settings, diagnostics) = parse_settings_with_diagnostics(None, Some(low));
+        assert_eq!(
+            (
+                settings.warning_percent,
+                settings.critical_percent,
+                settings.hard_limit_percent
+            ),
+            (50.0, 50.0, 50.0)
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+
+        // A global hard limit stays when the project only sets a warning.
+        let global = r#"{"budget":{"hardLimitPercent":80}}"#;
+        let project = r#"{"budget":{"warningPercent":60}}"#;
+        let (settings, _) = parse_settings_with_diagnostics(Some(global), Some(project));
+        assert_eq!(
+            (
+                settings.warning_percent,
+                settings.critical_percent,
+                settings.hard_limit_percent
+            ),
+            (60.0, 80.0, 80.0)
+        );
+    }
+
+    #[test]
+    fn saving_out_of_order_thresholds_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, r#"{"budget":{"criticalPercent":70}}"#).unwrap();
+        let patch = BudgetSectionPatch {
+            hard_limit_percent: Some(60.0),
+            ..BudgetSectionPatch::default()
+        };
+        let err = save_budget_to(&path, &patch).unwrap_err();
+        assert!(err.contains("order"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            r#"{"budget":{"criticalPercent":70}}"#
+        );
+        let ok = BudgetSectionPatch {
+            hard_limit_percent: Some(80.0),
+            ..BudgetSectionPatch::default()
+        };
+        save_budget_to(&path, &ok).unwrap();
+        // Setting only a hard limit under the default critical is allowed.
+        let fresh = dir.path().join("fresh.json");
+        save_budget_to(&fresh, &patch).unwrap();
     }
 
     #[test]

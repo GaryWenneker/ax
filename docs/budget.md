@@ -42,7 +42,7 @@ A missing model price stays unknown. Ax does not fill it with the savings refere
 }
 ```
 
-Each key is read on its own: numeric strings are accepted, and a wrongly typed or out-of-range value is ignored with a warning that names it. Thresholds must be above 0 and ordered `warning <= critical <= hardLimit`, otherwise all three use the defaults. `workingDays` is 0 to 31, `hoursPerDay` is above 0 and at most 24. `ax budget set` refuses to rewrite a config file that is not valid JSON and writes atomically.
+Each key is read on its own: numeric strings are accepted, and a wrongly typed or out-of-range value is ignored with a warning that names it. Thresholds must be above 0 and ordered `warning <= critical <= hardLimit`. A threshold above a higher one is lowered to it, so the hard limit is never raised: setting only `hardLimitPercent: 80` also lowers the default critical threshold to 80. `ax budget set` refuses values that would leave the set thresholds out of order. `workingDays` is 0 to 31, `hoursPerDay` is above 0 and at most 24. `ax budget set` refuses to rewrite a config file that is not valid JSON and writes atomically.
 
 EUR is compared only when `usdPerEur` is set (USD for 1 EUR). Without it, Ax prints the EUR budget and does not convert. Catalog math stays in USD.
 

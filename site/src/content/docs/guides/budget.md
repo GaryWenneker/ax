@@ -24,7 +24,7 @@ Warning, critical, and hard thresholds default to 75, 90, and 100 percent. Cross
 
 Each setting is read on its own. A number written as a string (`"monthly": "60"`) is accepted. A value of the wrong type or out of range is ignored and the rest of the file still applies; `ax budget plan` prints a warning that names the key. The limits are:
 
-- Percent thresholds must be above 0 and in order: `warningPercent <= criticalPercent <= hardLimitPercent`. When they are not, all three fall back to 75, 90, and 100.
+- Percent thresholds must be above 0 and in order: `warningPercent <= criticalPercent <= hardLimitPercent`. A threshold above a higher one is lowered to it, so the hard limit is never raised. Setting only `hardLimitPercent: 80` also lowers the default critical threshold (90) to 80. `ax budget set` refuses values that would leave the set thresholds out of order.
 - `workingDays` is a whole number from 0 to 31. `hoursPerDay` is above 0 and at most 24.
 - `monthly` is 0 or more. `usdPerEur` is above 0.
 
