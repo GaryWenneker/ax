@@ -462,9 +462,14 @@ fn read_shareable_skill(dir: &Path, name: &str) -> Result<Vec<(String, Vec<u8>)>
     Ok(out)
 }
 
+/// A zip member name is accepted only when every segment is a plain name: no
+/// leading `/`, no empty, `.` or `..` segment, and no `:` (drive letters, streams).
 fn zip_entry_ok(name: &str) -> bool {
     let n = name.replace('\\', "/");
-    if n.contains("..") || n.starts_with('/') || n.starts_with("./") {
+    if n.contains(':')
+        || n.split('/')
+            .any(|seg| seg.is_empty() || seg == "." || seg == "..")
+    {
         return false;
     }
     n == "ax-package.json" || n.starts_with("rules/") || n.starts_with("skills/")
@@ -1056,10 +1061,15 @@ pub fn restore_policy_zip(
                         continue;
                     }
                     let rel = &path[prefix.len()..];
-                    if rel.is_empty() || rel.contains("..") {
+                    if rel.is_empty() {
                         continue;
                     }
-                    let dest = dest_root.join(rel);
+                    let Ok(dest) = ax_utils::contained_join(&dest_root, rel) else {
+                        result
+                            .errors
+                            .push(format!("{key}: refused zip path {path}"));
+                        continue;
+                    };
                     if let Some(p) = dest.parent() {
                         std::fs::create_dir_all(p)?;
                     }
@@ -1335,6 +1345,64 @@ mod tests {
             zw.finish().unwrap();
         }
         assert!(preview_policy_zip(dir.path(), &cursor.into_inner()).is_err());
+    }
+
+    fn repack_with_extra(zip: &[u8], extra_name: &str, extra: &[u8]) -> Vec<u8> {
+        let mut archive = ZipArchive::new(Cursor::new(zip)).unwrap();
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut zw = ZipWriter::new(&mut cursor);
+            for i in 0..archive.len() {
+                let mut f = archive.by_index(i).unwrap();
+                let name = f.name().unwrap().to_string();
+                let mut buf = Vec::new();
+                f.read_to_end(&mut buf).unwrap();
+                zw.start_file(name, zip_opts()).unwrap();
+                zw.write_all(&buf).unwrap();
+            }
+            zw.start_file(extra_name, zip_opts()).unwrap();
+            zw.write_all(extra).unwrap();
+            zw.finish().unwrap();
+        }
+        cursor.into_inner()
+    }
+
+    #[test]
+    fn restore_never_writes_a_double_slash_member_outside_agents() {
+        let src = tempfile::tempdir().unwrap();
+        write_skill_file(src.path(), "x", true, "project", None);
+        let zip = build_policy_zip(src.path(), &spec(&[], &["x"])).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let victim = outside.path().join("victim.txt");
+        std::fs::write(&victim, "keep me").unwrap();
+        let abs = victim.display().to_string().replace('\\', "/");
+        let evil = repack_with_extra(&zip, &format!("skills/x/{abs}"), b"pwned");
+        let dest = tempfile::tempdir().unwrap();
+        let _ = restore_policy_zip(dest.path(), &evil, &HashMap::new());
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep me");
+        assert!(preview_policy_zip(dest.path(), &evil).is_err());
+    }
+
+    #[test]
+    fn zip_entry_names_with_odd_segments_are_refused() {
+        for name in [
+            "skills/x//etc/passwd",
+            "skills/x/./a.md",
+            "skills/x/C:/a.md",
+            "skills/x/a:b.md",
+            "rules//a.mdc",
+            "skills/x/../../a",
+        ] {
+            assert!(!zip_entry_ok(name), "{name}");
+        }
+        for name in [
+            "ax-package.json",
+            "rules/a.mdc",
+            "skills/x/SKILL.md",
+            "skills/x/ref/a.md",
+        ] {
+            assert!(zip_entry_ok(name), "{name}");
+        }
     }
 
     #[test]
