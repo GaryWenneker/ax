@@ -43,6 +43,7 @@ import { buildNeighbors, highlightFor, selectionPulse, type Highlight, type Neig
 import { forceParams, seedCluster } from '../lib/graphForces';
 import { labelAlpha, labelPx, placeLabels, type LabelBox } from '../lib/graphLabels';
 import SettingsSelect from '../components/ui/SettingsSelect';
+import { AS_OF_COMMIT_MS, acceptsLiveMerge, asOfFromSlider, graphSource, sliderFromAsOf } from '../lib/graphAsOf';
 
 interface SimNode extends GraphNode {
   x: number;
@@ -226,48 +227,14 @@ export default function GraphPage() {
   );
   const limit = GRAPH_NODE_STEPS[stepIndex];
   const [asOfMs, setAsOfMs] = useState<number | null>(null);
+  /** The slider's position while it moves; the snapshot loads once it rests. */
+  const [asOfDraft, setAsOfDraft] = useState<number | null>(null);
   useEffect(() => {
-    if (asOfMs == null) return;
-    let cancelled = false;
-    if (abortRef.current) abortRef.current();
-    abortRef.current = null;
-    resetGraphState();
-    setMeta(null);
-    setLegendNodes([]);
-    setLoadedNodes(0);
-    setEdgeCount(0);
-    setLoadDone(false);
-    setLoading(true);
-    setError(null);
-    fetchGraphAsOf(asOfMs, limit)
-      .then((payload) => {
-        if (cancelled) return;
-        addNodes(payload.nodes);
-        addEdges(payload.edges);
-        setLoadedNodes(simNodesRef.current.length);
-        setEdgeCount(simEdgesRef.current.length);
-        setLegendNodes(payload.nodes);
-        setSystems(payload.systems ?? []);
-        setMeta({
-          total_nodes: payload.total_nodes,
-          truncated: payload.truncated,
-          node_count: payload.nodes.length,
-          edge_count: payload.edges.length,
-          systems: payload.systems,
-        });
-        ensureSimulation();
-        setLoadDone(true);
-        setLoading(false);
-      })
-      .catch((e: Error) => {
-        if (!cancelled) {
-          setError(e.message);
-          setLoading(false);
-          setLoadDone(true);
-        }
-      });
-    return () => { cancelled = true; };
-  }, [asOfMs, limit]);
+    if (asOfDraft === asOfMs) return;
+    const t = setTimeout(() => setAsOfMs(asOfDraft), AS_OF_COMMIT_MS);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only a slider move commits
+  }, [asOfDraft]);
 
 
   const [meta, setMeta] = useState<GraphStreamMeta | null>(null);
@@ -293,6 +260,7 @@ export default function GraphPage() {
   const [exportCopied, setExportCopied] = useState(false);
   const isMobile = useNarrowViewport();
   const [viewMode, setViewMode] = useState<'structure' | 'domain'>('structure');
+  const asOfSupported = viewMode !== 'domain' && system === '';
   const [insights, setInsights] = useState<GraphInsights | null>(null);
   const [tourIndex, setTourIndex] = useState(0);
   const [domainOverlay, setDomainOverlay] = useState<DomainOverlay | null>(null);
@@ -450,8 +418,53 @@ export default function GraphPage() {
     }
   }
 
+  /** Load the local graph as it was at `at` (graph history). */
+  function loadAsOf(at: number) {
+    let cancelled = false;
+    if (abortRef.current) abortRef.current();
+    abortRef.current = null;
+    resetGraphState();
+    setMeta(null);
+    setLegendNodes([]);
+    setLoadedNodes(0);
+    setEdgeCount(0);
+    setLoadDone(false);
+    setLoading(true);
+    setError(null);
+    fetchGraphAsOf(at, limit)
+      .then((payload) => {
+        if (cancelled) return;
+        addNodes(payload.nodes);
+        addEdges(payload.edges);
+        setLoadedNodes(simNodesRef.current.length);
+        setEdgeCount(simEdgesRef.current.length);
+        setLegendNodes(payload.nodes);
+        if (payload.systems) setSystems(payload.systems);
+        setMeta({
+          total_nodes: payload.total_nodes,
+          truncated: payload.truncated,
+          node_count: payload.nodes.length,
+          edge_count: payload.edges.length,
+          systems: payload.systems,
+        });
+        ensureSimulation();
+        setLoadDone(true);
+        setLoading(false);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) {
+          setError(e.message);
+          setLoading(false);
+          setLoadDone(true);
+        }
+      });
+    abortRef.current = () => {
+      cancelled = true;
+    };
+  }
+
   function load(recompute = false) {
-    if (asOfMs != null) return;
+    if (graphSource({ asOfMs, viewMode, system }) !== 'live') return;
     liveSinceRef.current = Date.now() - LIVE_SINCE_SLACK_MS;
     if (abortRef.current) abortRef.current();
     resetGraphState();
@@ -499,7 +512,7 @@ export default function GraphPage() {
 
   /** Add nodes and edges that appeared on the server without resetting layout or camera. */
   async function mergeLive() {
-    if (viewModeRef.current === 'domain' || loading) return;
+    if (!acceptsLiveMerge({ asOfMs, viewMode: viewModeRef.current, system }) || loading) return;
     const requestedAt = Date.now();
     let payload;
     try {
@@ -678,17 +691,19 @@ export default function GraphPage() {
   }
 
   useEffect(() => {
-    if (viewMode === 'domain') {
+    const source = graphSource({ asOfMs, viewMode, system });
+    if (source === 'domain') {
       void loadDomain();
     } else {
       setSelectedDomain(null);
-      load();
+      if (source === 'as-of' && asOfMs != null) loadAsOf(asOfMs);
+      else load();
     }
     return () => {
       if (abortRef.current) abortRef.current();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [limit, viewMode, system]);
+  }, [limit, viewMode, system, asOfMs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1475,7 +1490,14 @@ export default function GraphPage() {
             />
             <span className="graph-density-value">{limit} nodes</span>
           </label>
-          <label className="graph-density" title="Show graph versions valid at this time (from graph history)">
+          <label
+            className="graph-density"
+            title={
+              asOfSupported
+                ? 'Show graph versions valid at this time (from graph history)'
+                : 'Graph history covers this project only, in the structure view'
+            }
+          >
             <span className="graph-density-label">As of</span>
             <input
               type="range"
@@ -1483,18 +1505,13 @@ export default function GraphPage() {
               min={0}
               max={100}
               step={1}
-              value={asOfMs == null ? 100 : Math.round(((asOfMs - (Date.now() - 90 * 86400000)) / (90 * 86400000)) * 100)}
-              onChange={(e) => {
-                const pct = Number(e.target.value);
-                if (pct >= 100) {
-                  setAsOfMs(null);
-                  return;
-                }
-                const start = Date.now() - 90 * 86400000;
-                setAsOfMs(Math.floor(start + (pct / 100) * (Date.now() - start)));
-              }}
+              disabled={!asOfSupported}
+              value={sliderFromAsOf(asOfSupported ? asOfDraft : null, Date.now())}
+              onChange={(e) => setAsOfDraft(asOfFromSlider(Number(e.target.value), Date.now()))}
             />
-            <span className="graph-density-value">{asOfMs == null ? 'now' : new Date(asOfMs).toLocaleDateString()}</span>
+            <span className="graph-density-value">
+              {!asOfSupported || asOfDraft == null ? 'now' : new Date(asOfDraft).toLocaleDateString()}
+            </span>
           </label>
           {stepIndex >= 5 && (
             <span className="graph-meta graph-density-hint">High density — browser may lag</span>
