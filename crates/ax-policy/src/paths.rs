@@ -96,9 +96,14 @@ pub fn is_stub_body(body: &str) -> bool {
 /// Resolve a `source:` frontmatter value.
 ///
 /// Accepts:
-/// - absolute paths (`D:/shared/rules/foo.mdc`)
+/// - absolute paths (`D:/shared/rules/foo.mdc`) inside the project or a policy root
 /// - `root:<id>/rules/foo.mdc` (relative to a configured policy root)
 /// - project-relative paths (must stay under project or a configured root)
+///
+/// The result is both read (index) and written (save), so it is confined: it must
+/// be a policy file (`.mdc` or `.md`), must not sit inside a `.git` folder, and must
+/// resolve (following links) inside the project, a configured policy root or a
+/// policy scope folder. A folder outside those is allowed by adding it as a root.
 pub fn resolve_source_path(project_root: &Path, source: &str) -> Result<PathBuf, String> {
     let src = source.trim().replace('\\', "/");
     if src.is_empty() {
@@ -111,34 +116,105 @@ pub fn resolve_source_path(project_root: &Path, source: &str) -> Result<PathBuf,
             .ok_or_else(|| "root: source must be root:<id>/<relative-path>".to_string())?;
         let root = crate::config::find_policy_root(project_root, id)
             .ok_or_else(|| format!("unknown policy root id '{id}'"))?;
-        let rel = rel.trim_start_matches('/');
-        if rel.contains("..") {
-            return Err("invalid path".into());
-        }
-        let full = root.path.join(rel);
-        return Ok(full.canonicalize().unwrap_or(full));
+        let full = ax_utils::contained_join(&root.path, rel.trim_start_matches('/'))
+            .map_err(|e| e.to_string())?;
+        return confine_source(project_root, source, full);
     }
 
     let path = PathBuf::from(&src);
     if path.is_absolute() {
-        return Ok(path.canonicalize().unwrap_or(path));
+        return confine_source(project_root, source, path);
     }
 
     // Relative: allow under project root or any configured root.
-    if src.contains("..") {
-        return Err("invalid path".into());
-    }
-    let under_project = project_root.join(&src);
+    let rel = ax_utils::safe_relative(&src).map_err(|e| e.to_string())?;
+    let under_project = project_root.join(&rel);
     if under_project.exists() {
-        return Ok(under_project.canonicalize().unwrap_or(under_project));
+        return confine_source(project_root, source, under_project);
     }
     for root in crate::config::load_policy_roots(project_root) {
-        let candidate = root.path.join(&src);
+        let candidate = root.path.join(&rel);
         if candidate.exists() {
-            return Ok(candidate.canonicalize().unwrap_or(candidate));
+            return confine_source(project_root, source, candidate);
         }
     }
-    Ok(under_project)
+    confine_source(project_root, source, under_project)
+}
+
+/// Folders a `source:` may point into.
+fn source_roots(project_root: &Path) -> Vec<PathBuf> {
+    let mut roots = vec![project_root.to_path_buf()];
+    roots.extend(
+        crate::config::load_policy_roots(project_root)
+            .into_iter()
+            .map(|r| r.path),
+    );
+    roots.extend(crate::hierarchy::policy_layer_dirs(project_root));
+    roots
+}
+
+fn confine_source(project_root: &Path, source: &str, path: PathBuf) -> Result<PathBuf, String> {
+    let refused = || {
+        format!(
+            "source '{source}' must be a .mdc or .md policy file inside the project or a configured policy root"
+        )
+    };
+    let is_policy_file = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("mdc") || e.eq_ignore_ascii_case("md"));
+    let in_git_dir = path
+        .components()
+        .any(|c| c.as_os_str().eq_ignore_ascii_case(".git"));
+    if !is_policy_file || in_git_dir {
+        return Err(refused());
+    }
+    // Resolve links on the deepest existing part, so a link out of a root is caught.
+    let Some(resolved) = real_path(&path) else {
+        return Err(refused());
+    };
+    let inside = source_roots(project_root).iter().any(|root| {
+        let real_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+        resolved.starts_with(&real_root)
+    });
+    let resolved_in_git = resolved
+        .components()
+        .any(|c| c.as_os_str().eq_ignore_ascii_case(".git"));
+    if !inside || resolved_in_git {
+        return Err(refused());
+    }
+    Ok(resolved)
+}
+
+/// `path` with links resolved on its deepest existing ancestor; the missing tail
+/// is appended as is. `None` for a dangling link or a `..` in the tail.
+fn real_path(path: &Path) -> Option<PathBuf> {
+    let mut probe = path.to_path_buf();
+    let mut tail = Vec::new();
+    loop {
+        match probe.canonicalize() {
+            Ok(real) => {
+                let mut out = real;
+                for part in tail.iter().rev() {
+                    out.push(part);
+                }
+                return Some(out);
+            }
+            Err(_) => {
+                if std::fs::symlink_metadata(&probe).is_ok() {
+                    return None;
+                }
+                let name = probe.file_name()?.to_os_string();
+                if name == ".." {
+                    return None;
+                }
+                tail.push(name);
+                if !probe.pop() {
+                    return None;
+                }
+            }
+        }
+    }
 }
 
 /// Resolve the on-disk write target for a file-backed item.
@@ -183,5 +259,80 @@ mod tests {
         .unwrap();
         let resolved = resolve_source_path(dir.path(), "root:shared/rules/foo.mdc").unwrap();
         assert!(resolved.ends_with("foo.mdc"));
+    }
+    #[test]
+    fn an_absolute_source_outside_project_and_roots_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("config.mdc");
+        std::fs::write(&target, "x").unwrap();
+        let abs = target.display().to_string();
+        assert!(resolve_source_path(dir.path(), &abs).is_err());
+    }
+
+    #[test]
+    fn an_absolute_source_inside_a_configured_root_is_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(external.path().join("rules")).unwrap();
+        let target = external.path().join("rules/foo.mdc");
+        std::fs::write(&target, "x").unwrap();
+        let root = external.path().display().to_string().replace('\\', "/");
+        std::fs::write(
+            dir.path().join("ax.json"),
+            format!(r#"{{"policy":{{"roots":[{{"id":"shared","path":"{root}"}}]}}}}"#),
+        )
+        .unwrap();
+        let abs = target.display().to_string();
+        assert!(resolve_source_path(dir.path(), &abs).is_ok());
+    }
+
+    #[test]
+    fn a_source_that_is_not_a_policy_file_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".git/hooks")).unwrap();
+        std::fs::write(dir.path().join(".git/hooks/post-merge"), "#!/bin/sh\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(dir.path().join(".git/hooks/x.mdc"), "x").unwrap();
+        assert!(resolve_source_path(dir.path(), ".git/hooks/post-merge").is_err());
+        assert!(resolve_source_path(dir.path(), "src/main.rs").is_err());
+        assert!(resolve_source_path(dir.path(), ".git/hooks/x.mdc").is_err());
+    }
+
+    #[test]
+    fn a_project_source_that_is_a_policy_file_is_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("shared/rules")).unwrap();
+        std::fs::write(dir.path().join("shared/rules/foo.mdc"), "x").unwrap();
+        std::fs::create_dir_all(dir.path().join("shared/skills/bar")).unwrap();
+        std::fs::write(dir.path().join("shared/skills/bar/SKILL.md"), "x").unwrap();
+        assert!(resolve_source_path(dir.path(), "shared/rules/foo.mdc").is_ok());
+        assert!(resolve_source_path(dir.path(), "shared/skills/bar/SKILL.md").is_ok());
+        assert!(resolve_source_path(dir.path(), "shared/rules/new.mdc").is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_project_source_linked_outside_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.mdc"), "x").unwrap();
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("link")).unwrap();
+        assert!(resolve_source_path(dir.path(), "link/secret.mdc").is_err());
+    }
+
+    #[test]
+    fn a_root_source_with_an_absolute_rest_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let external = dir.path().join("ext");
+        std::fs::create_dir_all(&external).unwrap();
+        let abs = external.display().to_string().replace('\\', "/");
+        std::fs::write(
+            dir.path().join("ax.json"),
+            format!(r#"{{"policy":{{"roots":[{{"id":"shared","path":"{abs}"}}]}}}}"#),
+        )
+        .unwrap();
+        assert!(resolve_source_path(dir.path(), "root:shared/C:/x.mdc").is_err());
     }
 }

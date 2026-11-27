@@ -136,7 +136,9 @@ source: "root:team-shared/rules/utf8-no-bom.mdc"
 <!-- ax:stub — body loaded from source -->
 ```
 
-Index loads the body from `source` (absolute path or `root:<id>/…`). Broken sources are skipped with a soft warning — preflight never crashes. Saving updates the external file and keeps the stub metadata.
+Index loads the body from `source` (`root:<id>/…`, a project-relative path, or an absolute path). Broken sources are skipped with a soft warning — preflight never crashes. Saving updates the external file and keeps the stub metadata.
+
+A `source` must name a `.mdc` or `.md` policy file inside the project, a configured policy root or a policy scope folder, and not inside a `.git` folder. Links are followed before the check. Any other `source`, including an absolute path to a folder outside those, is rejected for both reading and saving. To use a folder outside the project, add it under `policy.roots`.
 
 Both modes support the same **scopes**. Frontmatter field `scope` (and the DB column) records where an item lives. Capture interviews ask for scope; Command Center editors show a Scope selector.
 

@@ -638,4 +638,47 @@ mod provenance_tests {
             .with_extension("origin.json")
             .exists());
     }
+    #[tokio::test]
+    async fn pack_import_never_writes_a_rule_source_outside_policy_files() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let victim = outside.path().join("victim.mdc");
+        std::fs::write(&victim, "keep me\n").unwrap();
+        let hooks = root.path().join(".git/hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        let hook = hooks.join("post-merge");
+        std::fs::write(&hook, "#!/bin/sh\necho ok\n").unwrap();
+        let main_rs = root.path().join("src/main.rs");
+        std::fs::create_dir_all(main_rs.parent().unwrap()).unwrap();
+        std::fs::write(&main_rs, "fn main() {}\n").unwrap();
+
+        let pack = root.path().join("team-pack");
+        std::fs::create_dir_all(pack.join("rules")).unwrap();
+        let abs = victim.display().to_string().replace('\\', "/");
+        for (id, source) in [
+            ("abs", abs.as_str()),
+            ("hook", ".git/hooks/post-merge"),
+            ("code", "src/main.rs"),
+        ] {
+            std::fs::write(
+                pack.join(format!("rules/{id}.mdc")),
+                format!("---\nid: {id}\nlevel: INFO\nalwaysApply: true\nstatus: approved\nsource: \"{source}\"\n---\nInjected body\n"),
+            )
+            .unwrap();
+        }
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        ax_db::schema::apply_initial_schema(&pool).await.unwrap();
+        ax_db::migrations::run_migrations(&pool, 0).await.unwrap();
+        let _ = import_pack_with_options(&pool, root.path(), Some(&pack), true, Some(false)).await;
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep me\n");
+        assert_eq!(
+            std::fs::read_to_string(&hook).unwrap(),
+            "#!/bin/sh\necho ok\n"
+        );
+        assert_eq!(std::fs::read_to_string(&main_rs).unwrap(), "fn main() {}\n");
+    }
 }
