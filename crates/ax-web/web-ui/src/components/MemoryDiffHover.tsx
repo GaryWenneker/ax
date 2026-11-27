@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { fetchMemoryDiff } from '../api';
 import { LruCache } from '../lib/lruCache';
-import { centerDiffPopup, shouldDismissDiffPopup, type DiffLineKind, type MemoryDiff } from '../memoryDetail';
+import { anchorOwnsEvent, centerDiffPopup, shouldDismissDiffPopup, type DiffLineKind, type MemoryDiff } from '../memoryDetail';
 
 /** How many diffs stay cached for the page. */
 const DIFF_CACHE_MAX = 30;
@@ -149,8 +149,11 @@ export function MemoryDiffHover({
       onMouseEnter={clickToOpen ? undefined : show}
       onMouseLeave={clickToOpen ? undefined : leaveAnchor}
       onFocus={clickToOpen ? undefined : show}
-      onClick={pin}
+      onClick={(event) => {
+        if (anchorOwnsEvent(event.target, popupRef.current)) pin();
+      }}
       onKeyDown={(event) => {
+        if (!anchorOwnsEvent(event.target, popupRef.current)) return;
         if (event.key === 'Escape') dismiss();
         if (clickToOpen && (event.key === 'Enter' || event.key === ' ')) {
           event.preventDefault();
