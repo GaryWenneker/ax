@@ -954,9 +954,17 @@ mod tests {
             "arms": arms_json,
         });
         let text = serde_json::to_string_pretty(&report).unwrap();
-        let destination = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/specs/ax-neural/GRAPH-DISCOVERY-RESULTS.json");
-        std::fs::write(&destination, text.as_bytes()).unwrap();
+        std::fs::write(
+            crate::measurement_output("graph-discovery-results.json"),
+            text.as_bytes(),
+        )
+        .unwrap();
+        // The checked-in record changes only when asked for explicitly.
+        if std::env::var_os("AX_BENCH_RECORD").is_some() {
+            let destination = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../docs/specs/ax-neural/GRAPH-DISCOVERY-RESULTS.json");
+            std::fs::write(&destination, text.as_bytes()).unwrap();
+        }
         println!("{text}");
     }
 }

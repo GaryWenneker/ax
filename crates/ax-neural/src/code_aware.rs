@@ -582,7 +582,11 @@ mod tests {
         report.insert("promoted".to_string(), serde_json::json!(false));
         report.insert("arms".to_string(), serde_json::Value::Object(arms_json));
         let text = serde_json::to_string_pretty(&report).unwrap();
-        std::fs::write("/tmp/code-aware-retrieval-results.json", &text).unwrap();
+        std::fs::write(
+            crate::measurement_output("code-aware-retrieval-results.json"),
+            &text,
+        )
+        .unwrap();
         println!("{text}");
     }
 }

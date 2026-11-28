@@ -15,6 +15,19 @@ async fn bench_env() -> MutexGuard<'static, ()> {
     BENCH_ENV.lock().await
 }
 
+/// Where a measurement writes its report: `AX_BENCH_OUT_DIR` when set,
+/// otherwise an `ax-bench` folder in the system temporary directory. Never a
+/// fixed `/tmp` path and never a checked-in file.
+fn measurement_output(name: &str) -> std::path::PathBuf {
+    let dir = std::env::var_os("AX_BENCH_OUT_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("ax-bench"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    println!("measurement report: {}", path.display());
+    path
+}
+
 #[tokio::test]
 async fn raw_bench_flag_ablates_the_term_coverage_drop() {
     let _env = bench_env().await;
@@ -733,8 +746,7 @@ async fn locomo_recall_affix_against_production() {
         "mrrDown": mrr_down,
         "elapsedMillis": started.elapsed().as_millis(),
     });
-    let out = std::path::Path::new("/tmp/locomo-affix.json");
-    std::fs::write(out, report.to_string()).unwrap();
+    std::fs::write(measurement_output("locomo-affix.json"), report.to_string()).unwrap();
     assert_eq!(questions, 1982);
     assert_eq!(by_sample.len(), 10);
     assert_eq!(lists_changed, 0);
@@ -780,9 +792,8 @@ async fn doc_comment_affix_against_production() {
     ] {
         std::env::remove_var(name);
     }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let pairs = documented_functions(&root);
-    assert_eq!(pairs.len(), 617, "extracted {}", pairs.len());
+    let pairs = frozen_documented_functions();
+    assert_eq!(pairs.len(), 617, "frozen pairs {}", pairs.len());
     let dir = tempfile::tempdir().unwrap();
     let database = ax_db::Database::open(&dir.path().join("docfn.db"))
         .await
@@ -902,9 +913,9 @@ async fn doc_comment_affix_against_production() {
         },
         "elapsedMillis": started.elapsed().as_millis(),
     });
-    std::fs::write("/tmp/docfn-affix.json", report.to_string()).unwrap();
+    std::fs::write(measurement_output("docfn-affix.json"), report.to_string()).unwrap();
     std::fs::write(
-        "/tmp/doc-comment-mrr-changes.json",
+        measurement_output("doc-comment-mrr-changes.json"),
         serde_json::to_string_pretty(&mrr_changes).unwrap(),
     )
     .unwrap();
@@ -931,65 +942,24 @@ async fn doc_comment_affix_against_production() {
     assert!((affix_ndcg / n - 0.23293687541000846).abs() < 1e-12);
 }
 
-fn documented_functions(root: &std::path::Path) -> Vec<(String, String, String)> {
-    let mut out = Vec::new();
-    let crates_dir = root.join("crates");
-    let mut stack = vec![crates_dir.clone()];
-    while let Some(dir) = stack.pop() {
-        let name = dir.file_name().and_then(|item| item.to_str()).unwrap_or("");
-        if dir.parent() == Some(crates_dir.as_path())
-            && (name == "ax-memory" || name == "ax-neural")
-        {
-            continue;
-        }
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(_) => continue,
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            let mut doc: Vec<String> = Vec::new();
-            for (index, line) in text.lines().enumerate() {
-                let trimmed = line.trim();
-                if let Some(stripped) = trimmed.strip_prefix("///") {
-                    doc.push(stripped.trim().to_string());
-                    continue;
-                }
-                if trimmed.starts_with('#') || trimmed.starts_with("//") || trimmed.is_empty() {
-                    if trimmed.starts_with("//") && !trimmed.starts_with("///") {
-                        doc.clear();
-                    }
-                    continue;
-                }
-                if !doc.is_empty()
-                    && (trimmed.starts_with("pub fn ") || trimmed.starts_with("pub async fn "))
-                {
-                    let query = doc.join(" ");
-                    if query.chars().count() >= 40 {
-                        let rel = path
-                            .strip_prefix(root)
-                            .unwrap_or(&path)
-                            .to_string_lossy()
-                            .replace('\\', "/");
-                        out.push((format!("{rel}:{}", index + 1), query, trimmed.to_string()));
-                    }
-                }
-                doc.clear();
-            }
-        }
-    }
-    out.sort_by(|left, right| left.0.cmp(&right.0));
-    out
+/// The doc-comment pairs frozen from one snapshot by
+/// `benchmarks/memory/freeze-doc-comments.py`, so the measurement does not
+/// move when someone edits a doc comment in the live tree.
+fn frozen_documented_functions() -> Vec<(String, String, String)> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../benchmarks/memory/doc-comment-frozen.json");
+    let value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(value["protocol"], "doc-comment-affix-1");
+    value["pairs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|pair| {
+            let field = |name: &str| pair[name].as_str().unwrap().to_string();
+            (field("id"), field("query"), field("signature"))
+        })
+        .collect()
 }
 
 struct ClearBoundaryEnv;

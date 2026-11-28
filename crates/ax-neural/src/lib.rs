@@ -36,6 +36,19 @@ pub mod store;
 #[cfg(test)]
 pub(crate) static BENCH_ENV: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// Where an ignored measurement test writes its report: `AX_BENCH_OUT_DIR`
+/// when set, otherwise an `ax-bench` folder in the system temporary directory.
+#[cfg(test)]
+pub(crate) fn measurement_output(name: &str) -> std::path::PathBuf {
+    let dir = std::env::var_os("AX_BENCH_OUT_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("ax-bench"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    println!("measurement report: {}", path.display());
+    path
+}
+
 pub use config::{load, NeuralConfig};
 pub use rank::{plan as plan_blocks, RankClass, RankItem, RankNote};
 
