@@ -79,6 +79,42 @@ pub fn cosine_rank(
     scored.into_iter().map(|(_, key)| key).collect()
 }
 
+/// A fallible text embedder.
+pub(crate) type Embed<'a> = &'a dyn Fn(&str) -> Result<Vec<f32>, String>;
+
+/// Vectors for every inserted fixture memory, computed once (validation-only).
+pub(crate) fn doc_vectors(
+    fixture: &CodingFixture,
+    embed: Embed<'_>,
+) -> Result<Vec<(String, Vec<f32>)>, String> {
+    fixture
+        .memories
+        .iter()
+        .filter(|m| m.insert)
+        .map(|m| Ok((m.key.clone(), embed(&doc_text(m))?)))
+        .collect()
+}
+
+/// Same ranking as `cosine_rank`, but against precomputed document vectors. Only the
+/// query is embedded; an embedding error is returned, never scored as an empty vector.
+pub(crate) fn rank_with_doc_vectors(
+    prompt: &str,
+    embed: Embed<'_>,
+    doc_vectors: &[(String, Vec<f32>)],
+) -> Result<Vec<String>, String> {
+    let q = embed(prompt)?;
+    let mut scored: Vec<(f32, String)> = doc_vectors
+        .iter()
+        .map(|(key, v)| (cosine(&q, v), key.clone()))
+        .collect();
+    scored.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.1.cmp(&b.1))
+    });
+    Ok(scored.into_iter().map(|(_, k)| k).collect())
+}
+
 /// Locked-family questions as (id, family, prompt, relevant) for
 /// `lexical::score_locked_families`.
 pub fn locked_questions(fixture: &CodingFixture) -> Vec<(String, String, String, Vec<String>)> {

@@ -71,7 +71,9 @@ pub fn validate_feedback(input: &FeedbackInput) -> Result<FeedbackRow, String> {
         ("taskCategory", &input.task_category),
     ] {
         if value.len() > MAX_FEEDBACK_FIELD_BYTES {
-            return Err(format!("{name} is at most {MAX_FEEDBACK_FIELD_BYTES} bytes"));
+            return Err(format!(
+                "{name} is at most {MAX_FEEDBACK_FIELD_BYTES} bytes"
+            ));
         }
     }
     let blob = format!(

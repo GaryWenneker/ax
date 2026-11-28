@@ -620,6 +620,12 @@ mod tests {
     }
 
     fn bakeoff_report_without_timing(mut value: Value) -> Value {
+        // Process RSS changes between runs; keep only whether it was measured.
+        if let Some(memory) = value.get_mut("memory") {
+            if let Some(kind) = memory.get("kind").cloned() {
+                *memory = json!({ "kind": kind });
+            }
+        }
         if let Some(candidates) = value.get_mut("candidates").and_then(|v| v.as_array_mut()) {
             for candidate in candidates {
                 if let Some(latency) = candidate.get_mut("latency") {

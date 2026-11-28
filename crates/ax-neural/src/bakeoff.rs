@@ -116,12 +116,8 @@ pub async fn baseline_report(text: &str) -> Result<Value, String> {
             "families": without_ax
         },
         "runtimeFeature": crate::runtime_built(),
-        "binarySizeDeltaBytes": 0,
         "queryLatency": query_latency(&fixture, score_millis),
-        "ram": {
-            "kind": "not_measured",
-            "reason": "the standard library has no portable resident-memory reading; a challenger must record it before admission"
-        },
+        "ram": crate::rss::memory_report(),
         "families": families,
         "database": "temporary",
         "openedLiveDatabase": false
@@ -351,8 +347,12 @@ mod tests {
         assert_eq!(latency["samples"], 19);
         assert!(latency["embedMicrosMedian"].as_f64().unwrap() > 0.0);
         assert!(latency["scoreMillis"].as_f64().unwrap() >= 0.0);
-        assert_eq!(report["ram"]["kind"], "not_measured");
-        assert!(!report["ram"]["reason"].as_str().unwrap().is_empty());
+        // No constant is presented as a measurement.
+        assert!(report.get("binarySizeDeltaBytes").is_none());
+        if cfg!(any(target_os = "macos", target_os = "linux")) {
+            assert_eq!(report["ram"]["kind"], "measured", "{}", report["ram"]);
+            assert!(report["ram"]["rssBytes"].as_u64().unwrap() > 0);
+        }
     }
 
     #[tokio::test]
