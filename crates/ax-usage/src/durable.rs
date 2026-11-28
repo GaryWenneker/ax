@@ -1502,6 +1502,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_entry_alone_over_the_byte_cap_is_still_kept() {
+        let pool = pool().await;
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join(".ax")).unwrap();
+        std::fs::write(
+            root.path().join(".ax/ship.toml"),
+            "[retention]\ndurable_max_bytes = 10\n",
+        )
+        .unwrap();
+        let conversation = project_conversation(&pool, root.path(), "s").await.unwrap();
+        ensure_conversation(&pool, &conversation, None, None)
+            .await
+            .unwrap();
+        insert_old_entry(&pool, &conversation, "ANCIENT").await;
+        let body = "B".repeat(200);
+        let written = project_apply_with(
+            &pool,
+            root.path(),
+            "s",
+            &json!({"action":"append","body":body}),
+        )
+        .await
+        .unwrap();
+        let id: i64 = written
+            .split("id=")
+            .nth(1)
+            .and_then(|s| s.split(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| panic!("no id in {written}"));
+        let exists: Option<i64> =
+            sqlx::query_scalar("SELECT id FROM ax_durable_entry WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert_eq!(exists, Some(id), "the entry just written was pruned");
+        let read = project_apply_with(&pool, root.path(), "s", &json!({"action":"read"}))
+            .await
+            .unwrap();
+        assert!(read.contains(&body), "{read}");
+        assert!(!read.contains("ANCIENT"), "{read}");
+    }
+
+    #[tokio::test]
     async fn a_read_only_durable_call_does_not_prune() {
         let pool = pool().await;
         let root = tempfile::tempdir().unwrap();

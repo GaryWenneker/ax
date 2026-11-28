@@ -128,37 +128,51 @@ const ACTIVITY_ROW_BYTES: &str = "length(CAST(summary AS BLOB)) + length(CAST(op
      + length(CAST(commit_ids_json AS BLOB)) + COALESCE(length(CAST(error AS BLOB)), 0)";
 
 /// Delete this project's activity events past `limit`. Returns rows deleted.
+///
+/// The newest event, and the event `keep` (the one just written), are never
+/// deleted, even when one alone is over the byte cap: a write must not remove
+/// what it just stored.
 pub(crate) async fn prune_activity(
     pool: &SqlitePool,
     project_id: &str,
     limit: RetentionLimit,
     now_ms: i64,
+    keep: Option<&str>,
 ) -> Result<u64, String> {
+    // An empty string never matches a minted event id.
+    let keep = keep.unwrap_or("");
     let mut deleted = 0;
     if let Some(days) = limit.days {
-        deleted +=
-            sqlx::query("DELETE FROM ax_activity_event WHERE project_id = ? AND timestamp_ms < ?")
-                .bind(project_id)
-                .bind(now_ms - i64::from(days) * DAY_SECS * 1000)
-                .execute(pool)
-                .await
-                .map_err(|e| e.to_string())?
-                .rows_affected();
+        deleted += sqlx::query(
+            "DELETE FROM ax_activity_event
+             WHERE project_id = ? AND timestamp_ms < ? AND event_id <> ?",
+        )
+        .bind(project_id)
+        .bind(now_ms - i64::from(days) * DAY_SECS * 1000)
+        .bind(keep)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?
+        .rows_affected();
     }
     if let Some(max_bytes) = limit.max_bytes {
         let sql = format!(
             "DELETE FROM ax_activity_event WHERE event_id IN (
                SELECT event_id FROM (
-                 SELECT event_id, SUM({ACTIVITY_ROW_BYTES}) OVER (
-                   ORDER BY timestamp_ms DESC, event_id DESC ROWS UNBOUNDED PRECEDING
-                 ) AS running
+                 SELECT event_id,
+                   SUM({ACTIVITY_ROW_BYTES}) OVER newest AS running,
+                   ROW_NUMBER() OVER newest AS position
                  FROM ax_activity_event WHERE project_id = ?
-               ) WHERE running > ?
+                 WINDOW newest AS (
+                   ORDER BY timestamp_ms DESC, event_id DESC ROWS UNBOUNDED PRECEDING
+                 )
+               ) WHERE running > ? AND position > 1 AND event_id <> ?
              )"
         );
         deleted += sqlx::query(&sql)
             .bind(project_id)
             .bind(i64::try_from(max_bytes).unwrap_or(i64::MAX))
+            .bind(keep)
             .execute(pool)
             .await
             .map_err(|e| e.to_string())?
@@ -169,6 +183,10 @@ pub(crate) async fn prune_activity(
 
 /// Delete durable conversation entries of this project's conversations past
 /// `limit`. Legacy conversations without a project scope are never touched.
+///
+/// The newest entry (the one a write just appended) is never deleted by the
+/// byte cap, even when it alone is over the cap, so the id a write returns
+/// stays valid.
 pub(crate) async fn prune_durable(
     pool: &SqlitePool,
     project: &str,
@@ -193,11 +211,12 @@ pub(crate) async fn prune_durable(
         deleted += sqlx::query(&format!(
             "DELETE FROM ax_durable_entry WHERE id IN (
                SELECT id FROM (
-                 SELECT id, SUM(length(CAST(body AS BLOB))) OVER (
-                   ORDER BY id DESC ROWS UNBOUNDED PRECEDING
-                 ) AS running
+                 SELECT id,
+                   SUM(length(CAST(body AS BLOB))) OVER newest AS running,
+                   ROW_NUMBER() OVER newest AS position
                  FROM ax_durable_entry WHERE {SCOPED}
-               ) WHERE running > ?
+                 WINDOW newest AS (ORDER BY id DESC ROWS UNBOUNDED PRECEDING)
+               ) WHERE running > ? AND position > 1
              )"
         ))
         .bind(project)
@@ -211,7 +230,13 @@ pub(crate) async fn prune_durable(
 }
 
 /// Apply the project's activity retention, at most once per interval.
-pub(crate) async fn maybe_prune_activity(pool: &SqlitePool, root: &Path, project_id: &str) {
+/// `keep` is the event that was just written; it is never deleted.
+pub(crate) async fn maybe_prune_activity(
+    pool: &SqlitePool,
+    root: &Path,
+    project_id: &str,
+    keep: &str,
+) {
     let now_ms = chrono::Utc::now().timestamp_millis();
     if !db_prune_due("activity", project_id, now_ms / 1000) {
         return;
@@ -220,7 +245,7 @@ pub(crate) async fn maybe_prune_activity(pool: &SqlitePool, root: &Path, project
     if limit.is_unlimited() {
         return;
     }
-    if let Err(err) = prune_activity(pool, project_id, limit, now_ms).await {
+    if let Err(err) = prune_activity(pool, project_id, limit, now_ms, Some(keep)).await {
         tracing::warn!("activity retention failed: {err}");
     }
 }
@@ -379,9 +404,15 @@ mod tests {
     async fn activity_unlimited_deletes_nothing() {
         let (_dir, pool) = pool().await;
         insert_activity(&pool, "p", "a", 0, "ancient").await;
-        let n = prune_activity(&pool, "p", RetentionLimit::default(), 10 * DAY_SECS * 1000)
-            .await
-            .unwrap();
+        let n = prune_activity(
+            &pool,
+            "p",
+            RetentionLimit::default(),
+            10 * DAY_SECS * 1000,
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(n, 0);
         assert_eq!(activity_ids(&pool).await, ["a"]);
     }
@@ -393,7 +424,7 @@ mod tests {
         insert_activity(&pool, "p", "old", now - 31 * DAY_SECS * 1000, "x").await;
         insert_activity(&pool, "p", "new", now - 29 * DAY_SECS * 1000, "x").await;
         insert_activity(&pool, "other", "other-old", now - 31 * DAY_SECS * 1000, "x").await;
-        let n = prune_activity(&pool, "p", RetentionLimit::new(Some(30), None), now)
+        let n = prune_activity(&pool, "p", RetentionLimit::new(Some(30), None), now, None)
             .await
             .unwrap();
         assert_eq!(n, 1);
@@ -408,9 +439,15 @@ mod tests {
         for (i, id) in ["e1", "e2", "e3", "e4"].iter().enumerate() {
             insert_activity(&pool, "p", id, i as i64 * 1000, &body).await;
         }
-        let n = prune_activity(&pool, "p", RetentionLimit::new(None, Some(250)), 10_000)
-            .await
-            .unwrap();
+        let n = prune_activity(
+            &pool,
+            "p",
+            RetentionLimit::new(None, Some(250)),
+            10_000,
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(n, 2);
         assert_eq!(activity_ids(&pool).await, ["e3", "e4"]);
     }
@@ -479,6 +516,31 @@ mod tests {
             .unwrap();
         assert_eq!(n, 1);
         assert_eq!(entry_bodies(&pool).await, ["bbbb", "cccc"]);
+    }
+
+    #[tokio::test]
+    async fn durable_byte_cap_keeps_the_newest_entry_even_when_it_alone_is_over() {
+        let (_dir, pool) = pool().await;
+        scope(&pool, "p", "c1").await;
+        insert_entry(&pool, "c1", "old", 1).await;
+        insert_entry(&pool, "c1", &"n".repeat(50), 1).await;
+        let n = prune_durable(&pool, "p", RetentionLimit::new(None, Some(8)), 2)
+            .await
+            .unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(entry_bodies(&pool).await, ["n".repeat(50)]);
+    }
+
+    #[tokio::test]
+    async fn activity_byte_cap_keeps_the_newest_row_even_when_it_alone_is_over() {
+        let (_dir, pool) = pool().await;
+        insert_activity(&pool, "p", "old", 0, "x").await;
+        insert_activity(&pool, "p", "big", 1000, &"s".repeat(500)).await;
+        let n = prune_activity(&pool, "p", RetentionLimit::new(None, Some(50)), 2000, None)
+            .await
+            .unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(activity_ids(&pool).await, ["big"]);
     }
 
     fn day(s: &str) -> NaiveDate {

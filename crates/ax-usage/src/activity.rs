@@ -299,7 +299,7 @@ pub async fn record_activity(
 
     let inserted = result.rows_affected() > 0;
     if inserted {
-        crate::retention::maybe_prune_activity(&pool, root, &project_id).await;
+        crate::retention::maybe_prune_activity(&pool, root, &project_id, &event.event_id).await;
     }
     let stored = load_by_idempotency(&pool, &project_id, &event.idempotency_key)
         .await?
@@ -863,5 +863,29 @@ mod tests {
         let listed = list_activity(&root, None, None, 10).await.unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].idempotency_key, "fresh");
+    }
+
+    #[tokio::test]
+    async fn an_event_alone_over_the_byte_cap_is_still_stored() {
+        let (root, _guard) = tmp_root().await;
+        std::fs::create_dir_all(root.join(".ax")).unwrap();
+        std::fs::write(
+            root.join(".ax/ship.toml"),
+            "[retention]\nactivity_max_bytes = 50\n",
+        )
+        .unwrap();
+        insert_old_event(&root, "ancient").await;
+        let mut big = record("big");
+        big.summary = "word ".repeat(60);
+        let stored = record_activity(&root, big).await.unwrap();
+        assert_eq!(stored.idempotency_key, "big");
+        let listed = list_activity(&root, None, None, 10).await.unwrap();
+        let keys: Vec<_> = listed.iter().map(|e| e.idempotency_key.as_str()).collect();
+        assert_eq!(keys, ["big"]);
+        // A retry finds the stored row instead of inserting a second one.
+        let mut again = record("big");
+        again.summary = "word ".repeat(60);
+        let retried = record_activity(&root, again).await.unwrap();
+        assert_eq!(retried.event_id, stored.event_id);
     }
 }
