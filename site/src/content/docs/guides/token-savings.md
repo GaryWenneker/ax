@@ -364,7 +364,7 @@ ax savings import --claude          # Claude Code only
 
 Each transcript's usage is stored under its project. The agent's project folder name (for example `-Users-me-app` or `users-me-app`) is mapped back to the one project path ax has logged calls for with that folder name; without a single match the folder name is kept. Only rows stored under a project path are included in that project's history export. One API response counts once, even when the transcript repeats its usage on every content-block line.
 
-A transcript whose modification time is not newer than at its last import is skipped without being read, so running the import again only processes new or changed sessions. To re-import an unchanged file, touch it first.
+A transcript whose modification time is not newer than at its last import is skipped without being read, so running the import again only processes new or changed sessions. To re-import an unchanged file, touch it first. A skipped transcript still moves to its project path when ax has learned that path since the last import, so a session first stored under its folder name ends up under the right project. A file whose modification time cannot be read is always imported. The session and its per-turn usage are written together: when that write fails, nothing is stored and the next import tries the file again.
 
 ---
 

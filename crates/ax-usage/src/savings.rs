@@ -1954,15 +1954,16 @@ fn parse_iso_ms(s: &str) -> Option<i64> {
         .map(|dt| dt.timestamp_millis())
 }
 
-fn file_mtime_ms(path: &Path) -> i64 {
+/// The file's modification time in ms, or `None` when it cannot be read.
+fn file_mtime_ms(path: &Path) -> Option<i64> {
     std::fs::metadata(path)
         .and_then(|m| m.modified())
         .ok()
         .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
 }
 
+#[cfg(test)]
 async fn upsert_agent_session(
     agent: &str,
     session_id: &str,
@@ -1970,6 +1971,20 @@ async fn upsert_agent_session(
     source_mtime: i64,
 ) -> Result<bool, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
+    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+    upsert_agent_session_in(&mut conn, agent, session_id, acc, Some(source_mtime)).await
+}
+
+/// Write one session row. A row is replaced when the transcript is at least as
+/// new as the stored one, so a re-import after a failed write redoes it. An
+/// unknown mtime (`None`) always writes and keeps the stored mtime.
+async fn upsert_agent_session_in(
+    conn: &mut sqlx::SqliteConnection,
+    agent: &str,
+    session_id: &str,
+    acc: &SessionAccum,
+    source_mtime: Option<i64>,
+) -> Result<bool, String> {
     let input = if acc.session_input_tokens > 0 {
         Some(acc.session_input_tokens)
     } else {
@@ -1994,10 +2009,10 @@ async fn upsert_agent_session(
            cache_read_tokens = COALESCE(excluded.cache_read_tokens, agent_session_log.cache_read_tokens),
            cache_write_tokens = COALESCE(excluded.cache_write_tokens, agent_session_log.cache_write_tokens),
            model = COALESCE(excluded.model, agent_session_log.model),
-           source_mtime = excluded.source_mtime,
+           source_mtime = MAX(excluded.source_mtime, COALESCE(agent_session_log.source_mtime, 0)),
            started_at = COALESCE(excluded.started_at, agent_session_log.started_at),
            ended_at = COALESCE(excluded.ended_at, agent_session_log.ended_at)
-         WHERE excluded.source_mtime > agent_session_log.source_mtime",
+         WHERE ?14 OR excluded.source_mtime >= COALESCE(agent_session_log.source_mtime, 0)",
     )
     .bind(agent)
     .bind(session_id)
@@ -2009,10 +2024,11 @@ async fn upsert_agent_session(
     .bind(if acc.saw_usage { Some(acc.cache_read_tokens) } else { None })
     .bind(if acc.saw_usage { Some(acc.cache_write_tokens) } else { None })
     .bind(&acc.model)
-    .bind(source_mtime)
+    .bind(source_mtime.unwrap_or(0))
     .bind(acc.started_at)
     .bind(acc.ended_at)
-    .execute(&pool)
+    .bind(source_mtime.is_none())
+    .execute(&mut *conn)
     .await
     .map_err(|e| e.to_string())?;
     Ok(result.rows_affected() > 0)
@@ -2194,11 +2210,19 @@ fn process_cursor_line(line: &str, acc: &mut SessionAccum) {
     }
 }
 
-/// False when the stored session was imported from a file at least as new as
-/// `mtime`, so an unchanged transcript is not read or rewritten again.
-async fn transcript_is_newer(agent: &str, session_id: &str, mtime: i64) -> Result<bool, String> {
+/// True when a transcript must be read: it was never imported, its mtime or
+/// the stored one is unknown, or the file changed since the last import.
+fn transcript_needs_import(stored: Option<i64>, mtime: Option<i64>) -> bool {
+    match (stored, mtime) {
+        (Some(stored), Some(mtime)) => mtime > stored,
+        _ => true,
+    }
+}
+
+/// The mtime stored at the last import of this session, if any.
+async fn stored_source_mtime(agent: &str, session_id: &str) -> Result<Option<i64>, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
-    let stored: Option<i64> = sqlx::query_scalar(
+    let stored: Option<Option<i64>> = sqlx::query_scalar(
         "SELECT source_mtime FROM agent_session_log WHERE agent = ? AND session_id = ?",
     )
     .bind(agent)
@@ -2206,7 +2230,30 @@ async fn transcript_is_newer(agent: &str, session_id: &str, mtime: i64) -> Resul
     .fetch_optional(&pool)
     .await
     .map_err(|e| e.to_string())?;
-    Ok(stored.is_none_or(|stored| mtime > stored))
+    Ok(stored.flatten())
+}
+
+/// Move the usage events of an unchanged transcript to the project it maps to
+/// now. A session imported before its project path was known keeps the folder
+/// name until a later import finds the path.
+async fn remap_usage_event_project(
+    agent: &str,
+    session_id: &str,
+    project: Option<&str>,
+) -> Result<(), String> {
+    let pool = open_pool().await.map_err(|e| e.to_string())?;
+    sqlx::query(
+        "UPDATE agent_usage_event SET project = ?
+         WHERE agent = ? AND session_id = ? AND project IS NOT ?",
+    )
+    .bind(project)
+    .bind(agent)
+    .bind(session_id)
+    .bind(project)
+    .execute(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Read and parse one JSONL transcript off the async worker.
@@ -2238,27 +2285,7 @@ async fn import_claude_file(path: &Path, roots: &[String]) -> Result<bool, Strin
         .and_then(|s| s.to_str())
         .unwrap_or("unknown")
         .to_string();
-    let mtime = file_mtime_ms(path);
-    if !transcript_is_newer("claude", &session_id, mtime).await? {
-        return Ok(false);
-    }
-    let acc = parse_transcript(path, process_claude_line).await?;
-    if acc.read_calls == 0
-        && acc.grep_calls == 0
-        && acc.ax_calls == 0
-        && acc.session_input_tokens == 0
-        && acc.session_output_tokens == 0
-        && acc.cache_read_tokens == 0
-        && acc.cache_write_tokens == 0
-    {
-        return Ok(false);
-    }
-    let wrote = upsert_agent_session("claude", &session_id, &acc, mtime).await?;
-    if wrote {
-        let project = transcript_project("claude", path, roots);
-        persist_usage_events("claude", &session_id, project.as_deref(), &acc.events).await?;
-    }
-    Ok(wrote)
+    import_transcript("claude", &session_id, path, roots, process_claude_line).await
 }
 
 async fn import_cursor_file(path: &Path, roots: &[String]) -> Result<bool, String> {
@@ -2269,11 +2296,28 @@ async fn import_cursor_file(path: &Path, roots: &[String]) -> Result<bool, Strin
         .and_then(|s| s.to_str())
         .unwrap_or("unknown")
         .to_string();
+    import_transcript("cursor", &session_id, path, roots, process_cursor_line).await
+}
+
+/// Import one transcript. The session row and its per-turn usage events are
+/// written in one transaction, so a failed write leaves nothing behind and the
+/// next import redoes both. An unchanged file is not read again; only its
+/// project is updated when the known project paths now map it elsewhere.
+async fn import_transcript(
+    agent: &str,
+    session_id: &str,
+    path: &Path,
+    roots: &[String],
+    process_line: fn(&str, &mut SessionAccum),
+) -> Result<bool, String> {
     let mtime = file_mtime_ms(path);
-    if !transcript_is_newer("cursor", &session_id, mtime).await? {
+    let project = transcript_project(agent, path, roots);
+    let stored = stored_source_mtime(agent, session_id).await?;
+    if !transcript_needs_import(stored, mtime) {
+        remap_usage_event_project(agent, session_id, project.as_deref()).await?;
         return Ok(false);
     }
-    let acc = parse_transcript(path, process_cursor_line).await?;
+    let acc = parse_transcript(path, process_line).await?;
     if acc.read_calls == 0
         && acc.grep_calls == 0
         && acc.ax_calls == 0
@@ -2284,26 +2328,26 @@ async fn import_cursor_file(path: &Path, roots: &[String]) -> Result<bool, Strin
     {
         return Ok(false);
     }
-    let wrote = upsert_agent_session("cursor", &session_id, &acc, mtime).await?;
+    let pool = open_pool().await.map_err(|e| e.to_string())?;
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    let wrote = upsert_agent_session_in(&mut tx, agent, session_id, &acc, mtime).await?;
     if wrote {
-        let project = transcript_project("cursor", path, roots);
-        persist_usage_events("cursor", &session_id, project.as_deref(), &acc.events).await?;
+        persist_usage_events_in(&mut tx, agent, session_id, project.as_deref(), &acc.events)
+            .await?;
     }
+    tx.commit().await.map_err(|e| e.to_string())?;
     Ok(wrote)
 }
 
-async fn persist_usage_events(
+/// Write a session's per-turn usage events on the caller's connection, which
+/// holds the import transaction.
+async fn persist_usage_events_in(
+    conn: &mut sqlx::SqliteConnection,
     agent: &str,
     session_id: &str,
     project: Option<&str>,
     events: &[crate::cost::CostUsage],
 ) -> Result<(), String> {
-    if events.is_empty() {
-        return Ok(());
-    }
-    let pool = open_pool().await.map_err(|e| e.to_string())?;
-    // One transaction per session: one commit instead of one per event.
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     for event in events {
         let turn_id = event.turn_id.clone().unwrap_or_default();
         sqlx::query(
@@ -2339,11 +2383,10 @@ async fn persist_usage_events(
             crate::cost::CostConfidence::Unknown => "unknown",
         })
         .bind(event.timestamp_ms.unwrap_or(0))
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await
         .map_err(|e| e.to_string())?;
     }
-    tx.commit().await.map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -3199,6 +3242,73 @@ mod tests {
         let result = record_mcp_call(sample_record()).await;
         let err = result.expect_err("a file is not a directory for the usage database");
         assert!(!err.is_empty(), "{err}");
+    }
+
+    const IMPORT_LINE: &str = r#"{"timestamp":"2026-10-03T12:00:00Z","role":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"tool_use","name":"Read","input":{}}],"usage":{"input_tokens":10,"output_tokens":1}}}"#;
+
+    async fn usage_event_projects(pool: &sqlx::SqlitePool) -> Vec<Option<String>> {
+        sqlx::query_scalar("SELECT project FROM agent_usage_event ORDER BY session_id")
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_failed_event_write_is_retried_on_the_next_import() {
+        let _env = UsageDbEnv::new().await;
+        let pool = open_pool().await.expect("pool");
+        let tmp = tempfile::tempdir().unwrap();
+        let claude = tmp.path().join("claude/-p-app/sess-1.jsonl");
+        std::fs::create_dir_all(claude.parent().unwrap()).unwrap();
+        std::fs::write(&claude, format!("{IMPORT_LINE}\n")).unwrap();
+        // The per-turn event write fails, as on a busy database or a full disk.
+        sqlx::query(
+            "CREATE TRIGGER fail_usage_event BEFORE INSERT ON agent_usage_event
+             BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(import_claude_file(&claude, &[]).await.is_err());
+        sqlx::query("DROP TRIGGER fail_usage_event")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // The unchanged file is imported again, events included.
+        assert!(import_claude_file(&claude, &[]).await.unwrap());
+        assert_eq!(usage_event_projects(&pool).await.len(), 1);
+    }
+
+    #[test]
+    fn a_transcript_without_a_readable_mtime_is_never_skipped() {
+        assert!(transcript_needs_import(None, None));
+        assert!(transcript_needs_import(Some(5), None));
+        assert!(transcript_needs_import(None, Some(5)));
+        assert!(transcript_needs_import(Some(5), Some(6)));
+        assert!(!transcript_needs_import(Some(5), Some(5)));
+        assert!(!transcript_needs_import(Some(5), Some(4)));
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_transcript_moves_to_a_project_found_later() {
+        let _env = UsageDbEnv::new().await;
+        let pool = open_pool().await.expect("pool");
+        let tmp = tempfile::tempdir().unwrap();
+        let claude = tmp.path().join("claude/-Users-me-later/sess-1.jsonl");
+        std::fs::create_dir_all(claude.parent().unwrap()).unwrap();
+        std::fs::write(&claude, format!("{IMPORT_LINE}\n")).unwrap();
+        assert!(import_claude_file(&claude, &[]).await.unwrap());
+        assert_eq!(
+            usage_event_projects(&pool).await,
+            vec![Some("-Users-me-later".to_string())]
+        );
+        // The project path becomes known after the first import.
+        let roots = vec!["/Users/me/later".to_string()];
+        import_claude_file(&claude, &roots).await.unwrap();
+        assert_eq!(
+            usage_event_projects(&pool).await,
+            vec![Some("/Users/me/later".to_string())]
+        );
     }
 
     #[tokio::test]
