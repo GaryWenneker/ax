@@ -240,7 +240,7 @@ async fn install_one(
             &name,
             dest,
             replace,
-            |file| http_bytes(&well_known_file_url(&base, &name, file)?),
+            |file| http_bytes_same_origin(&well_known_file_url(&base, &name, file)?),
         )?]
     } else {
         let tree = only_path(source, &fetched.tree);
@@ -576,7 +576,7 @@ fn audit_candidate(source_text: &str, name: &str) -> Result<SkillAuditReport, St
         let dest = temp.path().join("skills");
         let base = fetched.file_base.clone();
         materialize_well_known(&index, name, &dest, true, |file| {
-            http_bytes(&well_known_file_url(&base, name, file)?)
+            http_bytes_same_origin(&well_known_file_url(&base, name, file)?)
         })?;
         let mut report = audit_directory(&dest.join(name))?;
         report.candidate = true;
@@ -836,8 +836,49 @@ const MAX_DOWNLOAD: u64 = 25 * 1024 * 1024;
 
 /// GET `url`, reading at most [`MAX_DOWNLOAD`] bytes of body.
 fn http_bytes(url: &str) -> Result<Vec<u8>, String> {
-    let fetch = |url: &str| {
-        let response = reqwest::blocking::get(url).map_err(|e| e.to_string())?;
+    fetch_bounded(url, reqwest::redirect::Policy::default())
+}
+
+/// GET a file listed in a well-known skill index. Redirects are followed only
+/// while they stay on the origin (scheme, host and port) of the request, so a
+/// same-origin entry cannot hand the download to another server or to http.
+fn http_bytes_same_origin(url: &str) -> Result<Vec<u8>, String> {
+    let policy = reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 10 {
+            return attempt.error("too many redirects");
+        }
+        let same = attempt
+            .previous()
+            .first()
+            .is_some_and(|first| first.origin() == attempt.url().origin());
+        if same {
+            attempt.follow()
+        } else {
+            let to = attempt.url().origin().ascii_serialization();
+            attempt.error(format!("redirect to {to} leaves the index origin"))
+        }
+    });
+    fetch_bounded(url, policy)
+}
+
+/// GET `url` with `policy` for redirects, reading at most [`MAX_DOWNLOAD`]
+/// bytes of body.
+fn fetch_bounded(url: &str, policy: reqwest::redirect::Policy) -> Result<Vec<u8>, String> {
+    let fetch = move |url: &str| {
+        let client = reqwest::blocking::Client::builder()
+            .redirect(policy)
+            .build()
+            .map_err(|e| e.to_string())?;
+        let response = client.get(url).send().map_err(|e| {
+            let mut msg = e.to_string();
+            let mut source = std::error::Error::source(&e);
+            while let Some(inner) = source {
+                msg.push_str(": ");
+                msg.push_str(&inner.to_string());
+                source = inner.source();
+            }
+            msg
+        })?;
         if !response.status().is_success() {
             return Err(format!("GET {url} returned {}", response.status()));
         }
@@ -925,6 +966,54 @@ mod tests {
         let err = http_bytes(&url).unwrap_err();
         assert!(err.contains("25 MiB"), "{err}");
         assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    }
+
+    /// Answer one request with `response`, return the server's base URL.
+    fn one_shot_server(response: String) -> String {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[test]
+    fn well_known_file_fetch_refuses_a_redirect_to_another_origin() {
+        let other = one_shot_server(
+            "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nevil!".to_string(),
+        );
+        let start = one_shot_server(format!(
+            "HTTP/1.1 302 Found\r\nLocation: {other}/SKILL.md\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        ));
+        let err = http_bytes_same_origin(&format!("{start}/x/SKILL.md")).unwrap_err();
+        assert!(err.contains("origin"), "{err}");
+    }
+
+    #[test]
+    fn well_known_file_fetch_follows_a_same_origin_redirect() {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let replies = [
+                "HTTP/1.1 302 Found\r\nLocation: /moved/SKILL.md\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+            ];
+            for reply in replies {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+        let got = http_bytes_same_origin(&format!("http://{addr}/x/SKILL.md")).unwrap();
+        assert_eq!(got, b"ok");
     }
 
     #[test]
