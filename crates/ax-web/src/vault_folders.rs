@@ -95,13 +95,16 @@ pub fn validate(list: Vec<VaultFolder>) -> Result<Vec<VaultFolder>, String> {
     Ok(out)
 }
 
+/// Serializes read-modify-write of the folder list (PUT and DELETE).
+static CONFIG_WRITE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 fn save(project_root: &Path, list: &[VaultFolder]) -> std::io::Result<()> {
     let path = config_path(project_root);
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let text = serde_json::to_string_pretty(list).map_err(std::io::Error::other)?;
-    std::fs::write(path, text)
+    ax_utils::atomic_write(&path, text.as_bytes())
 }
 
 fn now_ms() -> i64 {
@@ -115,16 +118,28 @@ async fn project_root(hub: &WebHub) -> PathBuf {
     hub.read().await.policy.store.project_root().to_path_buf()
 }
 
+/// The served project's root and graph pool, read under one guard so they
+/// always belong to the same project.
+async fn project(hub: &WebHub) -> (PathBuf, sqlx::SqlitePool) {
+    let ws = hub.read().await;
+    (
+        ws.policy.store.project_root().to_path_buf(),
+        ws.graph_pool.clone(),
+    )
+}
+
 /// Import one folder into memory and remember the result for the Settings list.
-pub async fn sync_one(hub: &WebHub, folder: &VaultFolder) -> Result<FolderSyncReport, String> {
-    let root = project_root(hub).await;
-    let pool = hub.read().await.graph_pool.clone();
-    let report = ax_memory::sync_folder(&pool, &folder.name, &folder.path)
+async fn sync_into(
+    root: &Path,
+    pool: &sqlx::SqlitePool,
+    folder: &VaultFolder,
+) -> Result<FolderSyncReport, String> {
+    let report = ax_memory::sync_folder(pool, &folder.name, &folder.path)
         .await
         .map_err(|e| e.to_string())?;
     if let Ok(mut map) = LAST_SYNC.lock() {
         map.insert(
-            (root, folder.name.clone()),
+            (root.to_path_buf(), folder.name.clone()),
             LastSync {
                 at_ms: now_ms(),
                 report,
@@ -136,9 +151,9 @@ pub async fn sync_one(hub: &WebHub, folder: &VaultFolder) -> Result<FolderSyncRe
 
 /// Sync every folder with indexing on. Used when `ax web` starts.
 pub async fn sync_indexed(hub: &WebHub) {
-    let root = project_root(hub).await;
+    let (root, pool) = project(hub).await;
     for folder in load(&root).into_iter().filter(|f| f.index) {
-        if let Err(e) = sync_one(hub, &folder).await {
+        if let Err(e) = sync_into(&root, &pool, &folder).await {
             tracing::warn!("vault folder {} sync failed: {e}", folder.name);
         }
     }
@@ -162,8 +177,14 @@ pub fn schedule_resync(hub: WebHub, root: PathBuf, name: String) {
                 set.remove(&key);
             }
         }
+        // The hub may serve another project by now; its database is not
+        // the one this folder belongs to.
+        let (current, pool) = project(&hub).await;
+        if current != root {
+            return;
+        }
         if let Some(folder) = find(&root, &name).filter(|f| f.index) {
-            if let Err(e) = sync_one(&hub, &folder).await {
+            if let Err(e) = sync_into(&root, &pool, &folder).await {
                 tracing::warn!(folder = %folder.name, "vault folder resync failed: {e}");
             }
         }
@@ -219,12 +240,12 @@ async fn put_folders(
         Ok(l) => l,
         Err(e) => return error(StatusCode::BAD_REQUEST, &e),
     };
-    let root = project_root(&hub).await;
+    let _write = CONFIG_WRITE.lock().await;
+    let (root, pool) = project(&hub).await;
     let before = load(&root);
     if let Err(e) = save(&root, &list) {
         return error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
     }
-    let pool = hub.read().await.graph_pool.clone();
     for old in before.iter().filter(|f| f.index) {
         if !list.iter().any(|f| f.name == old.name && f.index) {
             if let Err(e) = ax_memory::remove_folder_memories(&pool, &old.name).await {
@@ -238,7 +259,7 @@ async fn put_folders(
             .any(|o| o.index && o.name == f.name && o.path == f.path)
     };
     for folder in list.iter().filter(|f| f.index && !unchanged(f)) {
-        if let Err(e) = sync_one(&hub, folder).await {
+        if let Err(e) = sync_into(&root, &pool, folder).await {
             return error(StatusCode::INTERNAL_SERVER_ERROR, &e);
         }
     }
@@ -253,11 +274,17 @@ async fn post_sync(
     if let Some(r) = refuse(&hub, &headers, true) {
         return r;
     }
-    let root = project_root(&hub).await;
+    let (root, pool) = project(&hub).await;
     let Some(folder) = find(&root, &name) else {
         return error(StatusCode::NOT_FOUND, "no such folder");
     };
-    match sync_one(&hub, &folder).await {
+    if !folder.index {
+        return error(
+            StatusCode::CONFLICT,
+            "indexing is off for this folder; turn it on to sync it",
+        );
+    }
+    match sync_into(&root, &pool, &folder).await {
         Ok(report) => Json(json!({ "report": report })).into_response(),
         Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
@@ -271,7 +298,8 @@ async fn delete_folder(
     if let Some(r) = refuse(&hub, &headers, true) {
         return r;
     }
-    let root = project_root(&hub).await;
+    let _write = CONFIG_WRITE.lock().await;
+    let (root, pool) = project(&hub).await;
     let mut list = load(&root);
     let before = list.len();
     list.retain(|f| f.name != name);
@@ -281,7 +309,6 @@ async fn delete_folder(
     if let Err(e) = save(&root, &list) {
         return error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
     }
-    let pool = hub.read().await.graph_pool.clone();
     if let Err(e) = ax_memory::remove_folder_memories(&pool, &name).await {
         return error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
     }

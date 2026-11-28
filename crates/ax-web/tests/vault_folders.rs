@@ -615,3 +615,33 @@ async fn d10_overwriting_a_large_folder_file_with_put_works() {
     assert!(status.is_success(), "{status}");
     assert_eq!(std::fs::read_to_string(&big).unwrap(), "small");
 }
+
+#[tokio::test]
+async fn c5_sync_of_a_folder_with_indexing_off_is_refused() {
+    let fx = fixture(false).await;
+    configure(&fx, false).await;
+    let (status, body) = send(&fx.app, "POST", "/api/vault/folders/notes/sync", &[], "").await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(doc_count(&fx).await, 0);
+}
+
+#[tokio::test]
+async fn d11_a_resync_after_a_project_switch_leaves_the_new_project_alone() {
+    let fx = fixture(false).await;
+    configure(&fx, true).await;
+    let other = fx.dir.path().join("other");
+    std::fs::create_dir_all(other.join(".ax")).unwrap();
+    ax_db::Database::open(&other.join(".ax").join("ax.db"))
+        .await
+        .unwrap();
+    let (status, _) = send(&fx.app, "PUT", "/dav/folders/notes/c.md", &[], "charlie").await;
+    assert!(status.is_success(), "{status}");
+    // The resync waits for writes to settle; switch before it runs.
+    fx.hub.switch(other.clone()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(
+        doc_count(&fx).await,
+        0,
+        "the old project's folder synced into the new one"
+    );
+}

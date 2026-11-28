@@ -134,7 +134,7 @@ The list imports finished plans from the plan folders on disk at most once every
 | GET, POST, DELETE | `/api/dav/mount` | Mount status / mount / unmount the vault drive |
 | POST | `/api/dav/mount/open` | Open the mounted drive in the file manager |
 | GET, PUT | `/api/vault/folders` | Extra folders shown under `folders/` |
-| POST | `/api/vault/folders/{name}/sync` | Sync one folder |
+| POST | `/api/vault/folders/{name}/sync` | Sync one folder (`409` when indexing is off for it) |
 | DELETE | `/api/vault/folders/{name}` | Remove a folder |
 | POST | `/api/vault/folder-picker` | Native folder picker |
 
