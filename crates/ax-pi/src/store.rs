@@ -149,6 +149,9 @@ pub struct CacheRow {
 pub async fn flush(path: &Path, snapshot: &PersistedSnapshot) -> Result<(), String> {
     let pool = open(path).await?;
     ensure_schema(&pool).await?;
+    // One transaction: one commit for the whole snapshot, and a failure part
+    // way leaves the database as it was.
+    let mut tx = pool.begin().await.map_err(|err| err.to_string())?;
     for session in &snapshot.sessions {
         sqlx::query(
             "INSERT INTO agent_sessions (id, project_id, created_at, updated_at, repository_root, active_branch, cache_namespace)
@@ -162,7 +165,7 @@ pub async fn flush(path: &Path, snapshot: &PersistedSnapshot) -> Result<(), Stri
         .bind(&session.repository_root)
         .bind(&session.active_branch)
         .bind(&session.cache_namespace)
-        .execute(&pool)
+        .execute(&mut *tx)
         .await
         .map_err(|err| err.to_string())?;
     }
@@ -180,7 +183,7 @@ pub async fn flush(path: &Path, snapshot: &PersistedSnapshot) -> Result<(), Stri
         .bind(turn.input_tokens as i64)
         .bind(turn.output_tokens as i64)
         .bind(turn.estimated_cost)
-        .execute(&pool)
+        .execute(&mut *tx)
         .await
         .map_err(|err| err.to_string())?;
     }
@@ -200,7 +203,7 @@ pub async fn flush(path: &Path, snapshot: &PersistedSnapshot) -> Result<(), Stri
         .bind(tool.cache_hit as i64)
         .bind(tool.repeated as i64)
         .bind(tool.context_cost_usd)
-        .execute(&pool)
+        .execute(&mut *tx)
         .await
         .map_err(|err| err.to_string())?;
     }
@@ -220,7 +223,7 @@ pub async fn flush(path: &Path, snapshot: &PersistedSnapshot) -> Result<(), Stri
         .bind(model.cached_input_tokens.map(|n| n as i64))
         .bind(model.estimated_cost)
         .bind(model.created_at as i64)
-        .execute(&pool)
+        .execute(&mut *tx)
         .await
         .map_err(|err| err.to_string())?;
     }
@@ -239,7 +242,7 @@ pub async fn flush(path: &Path, snapshot: &PersistedSnapshot) -> Result<(), Stri
         .bind(optimization.alternative.confidence.as_str())
         .bind(&optimization.alternative.reason)
         .bind(optimization.accepted as i64)
-        .execute(&pool)
+        .execute(&mut *tx)
         .await
         .map_err(|err| err.to_string())?;
     }
@@ -259,10 +262,11 @@ pub async fn flush(path: &Path, snapshot: &PersistedSnapshot) -> Result<(), Stri
         .bind(&entry.policy_version)
         .bind(&entry.skill_version)
         .bind(&entry.graph_version)
-        .execute(&pool)
+        .execute(&mut *tx)
         .await
         .map_err(|err| err.to_string())?;
     }
+    tx.commit().await.map_err(|err| err.to_string())?;
     Ok(())
 }
 
@@ -681,5 +685,28 @@ mod tests {
         assert_eq!(advice.alternative.confidence, Confidence::Low);
         // The first run's rows are still there.
         assert!(loaded.optimizations.iter().any(|o| o.id == "o1"));
+    }
+
+    #[tokio::test]
+    async fn a_flush_that_fails_part_way_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("ax.db");
+        let pool = open(&db).await.unwrap();
+        ensure_schema(&pool).await.unwrap();
+        sqlx::query(
+            "CREATE TRIGGER refuse_optimizations BEFORE INSERT ON agent_optimizations
+             BEGIN SELECT RAISE(ABORT, 'refused'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let err = flush(&db, &snapshot()).await.unwrap_err();
+        assert!(err.contains("refused"), "{err}");
+        let loaded = load(&db).await.unwrap();
+        assert!(loaded.sessions.is_empty(), "sessions were committed");
+        assert!(loaded.turns.is_empty() && loaded.tools.is_empty());
+        assert!(loaded.models.is_empty());
     }
 }
