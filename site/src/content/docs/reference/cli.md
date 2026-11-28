@@ -212,6 +212,22 @@ ax watch
 ax watch --quiet
 ```
 
+### `ax plugins`
+
+Lists the project's extractor plugins (`.ax/plugins/<name>/plugin.toml`) and controls which ones may run. A plugin can run any command, so `ax index`, `ax sync` and the MCP server skip every plugin until you trust it. Trust is stored in `~/.ax/plugin-trust.json` per plugin folder and is bound to a hash of every file in that folder (`plugin.toml`, the scripts or wasm module it runs, and anything else there); changing, adding or removing any of them needs a new `ax plugins trust`. See [Extractor plugins](/guides/plugins/).
+
+| Subcommand | Description |
+|---|---|
+| `list [path] [--json]` | Each plugin, its extensions, the command it runs, and whether it is trusted |
+| `trust [--path <p>] [names…]` | Trust all plugins of the project, or only the named ones |
+| `untrust [--path <p>] [names…]` | Remove the trust again |
+
+```bash
+ax plugins list
+ax plugins trust terraform
+ax plugins untrust
+```
+
 ### `ax status [path]`
 
 Index statistics: node/edge/file counts, **document inventory by extension** (markdown, office, PDF, other opaque types), unresolved refs, pending sync, and last indexed time. When `.ax/integrity.json` records a database incident, the text and `--json` include it and name `ax db repair`. The project daemon runs a quick check once a day, and again after a crash. A broken full-text index, cue index, or vector map is rebuilt then. Stored rows, including a dangling edge, wait for `ax db repair`. The incident file is written when something remains. A recorded incident also skips the background file watcher until a later check passes.
@@ -674,6 +690,10 @@ Configure it in `ax.json` under `docsCatalog`. Every key is optional, and there 
 | `skill` | none | Skill name mentioned in the refresh instructions |
 | `jsonl_path` | `.ax/memory/documentation-catalog.jsonl` | Output file |
 | `docs_root` / `skills_root` / `scripts_root` | `.docs` / `.agents/skills` / `.scripts` | Workspace sources |
+
+Every path key must stay inside the project: absolute paths, `..` and symbolic links that lead out of the project are refused, and the sync stops with an error naming the key. `wiki_apps_subdir`, `wiki_integrations_dir` and `wiki_products_page` must be relative paths inside the wiki. A `wiki_remote` that starts with `-` is refused, because git would read it as an option.
+
+The wiki `git clone` and `git pull` never prompt: they run without a terminal or credential prompt and stop with an error after 10 minutes. A private wiki therefore needs credentials git can use on its own (a credential helper, an SSH key or a token in the URL).
 
 ```json
 {
@@ -1225,7 +1245,7 @@ ax mcp audit --session path/to/transcript.jsonl --json
 
 ### `ax cursor auth`
 
-Save and restore Cursor IDE auth sessions for fast subscription switching. Snapshots `cursorAuth/*` keys from `%APPDATA%\\Cursor\\User\\globalStorage\\state.vscdb` plus `auth.json` into `~/.ax/cursor-auth/`.
+Save and restore Cursor IDE auth sessions for fast subscription switching. Snapshots `cursorAuth/*` keys from `%APPDATA%\\Cursor\\User\\globalStorage\\state.vscdb` plus `auth.json` into `~/.ax/cursor-auth/`. The snapshots hold your Cursor access and refresh tokens, so on macOS and Linux that folder is readable only by you (0700) and each file in it is 0600.
 
 | Subcommand | Description |
 |---|---|
