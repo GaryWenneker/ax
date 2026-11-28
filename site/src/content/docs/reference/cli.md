@@ -572,7 +572,7 @@ When did I change X: dated agent turns (prompt, outcome, files, commits) and git
 | `--since` | `YYYY-MM-DD` | — | Only entries on or after this date |
 | `--limit` | number | `20` | Max entries (1–50) |
 | `--id` | string | — | Show one turn memory with its full outcome |
-| `--depth` | `hot` \| `archive` | `hot` | `archive` includes demoted turns, graph diffs, and activity. Same as `ax_history` `depth` |
+| `--depth` | `hot` \| `archive` \| `backup` | `hot` | `archive` includes demoted turns, graph diffs, and activity; `backup` searches like `hot`. Same as `ax_history` `depth` |
 | `--json` | flag | — | JSON output (`entries`, `count`) |
 
 ```bash

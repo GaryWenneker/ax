@@ -256,8 +256,8 @@ enum Commands {
         #[arg(
             long,
             default_value = "hot",
-            value_parser = ["hot", "archive"],
-            help = "hot or archive. Same as ax_history depth."
+            value_parser = ["hot", "archive", "backup"],
+            help = "hot, archive or backup (backup searches like hot). Same as ax_history depth."
         )]
         depth: String,
         #[arg(long)]
@@ -3299,12 +3299,12 @@ mod option_value_tests {
     }
 
     #[test]
-    fn recall_and_history_reject_unknown_depths() {
+    fn recall_and_history_accept_the_mcp_depths_only() {
         assert!(parses(&["ax", "recall", "x", "--depth", "archive"]));
         assert!(parses(&["ax", "history", "--depth", "hot"]));
         assert!(!parses(&["ax", "recall", "x", "--depth", "deep"]));
         assert!(!parses(&["ax", "history", "--depth", "deep"]));
-        assert!(!parses(&["ax", "history", "--depth", "backup"]));
+        assert!(parses(&["ax", "history", "--depth", "backup"]));
     }
 }
 

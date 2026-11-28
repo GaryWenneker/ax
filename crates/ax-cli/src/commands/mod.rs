@@ -80,7 +80,7 @@ pub fn unavailable_in_headless_build(command: &str) -> String {
 
 /// The directory a command that creates, indexes or removes a project acts on: `path` as
 /// given, else the current directory. `ax init`, `install`, `uninit`, `index`, `sync`,
-/// `ship`, `bootstrap` and the daemon use it, so they never reach up into a parent project.
+/// `ship` and `bootstrap` use it, so they never reach up into a parent project.
 pub fn resolve_target_dir(path: Option<String>) -> PathBuf {
     path.map(PathBuf::from).unwrap_or_else(current_dir)
 }
