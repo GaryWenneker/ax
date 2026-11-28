@@ -104,9 +104,24 @@ pub fn cursor_state_vscdb_path() -> Option<PathBuf> {
     }
 }
 
-/// Path to the active Cursor session marker written by `ax session-hook`.
+/// Path to the plain-text marker that holds the latest Cursor chat id (`<id>\n`).
+/// It feeds the `session=` tag on MCP verbose lines. Window bindings live in
+/// [`bound_cursor_session_path`] instead, so writing this marker never erases one.
 pub fn active_cursor_session_path() -> Option<PathBuf> {
     ax_utils::paths::home_dir().map(|h| h.join(".ax").join("active-cursor-session"))
+}
+
+/// Path to the binding record of one Cursor window: `~/.ax/cursor-sessions/<hash>.json`.
+/// The file name is a hash of the window id, so any id makes a safe name.
+pub fn bound_cursor_session_path(window: &str) -> Option<PathBuf> {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(window.trim().as_bytes());
+    let name: String = digest[..16].iter().map(|b| format!("{b:02x}")).collect();
+    ax_utils::paths::home_dir().map(|h| {
+        h.join(".ax")
+            .join("cursor-sessions")
+            .join(format!("{name}.json"))
+    })
 }
 
 /// Persist the latest Cursor `session_id` so MCP verbose lines can tag `session=`.
@@ -116,25 +131,23 @@ pub fn write_active_cursor_session(session_id: &str) -> Result<(), String> {
         return Err("session_id required".into());
     }
     let path = active_cursor_session_path().ok_or("home directory not found")?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&path, format!("{session_id}\n")).map_err(|e| e.to_string())
+    ax_utils::atomic_write(&path, format!("{session_id}\n").as_bytes()).map_err(|e| e.to_string())
 }
 
 /// Read the active Cursor session id from `~/.ax/active-cursor-session`, if present.
 pub fn read_active_cursor_session() -> Option<String> {
     let path = active_cursor_session_path()?;
     let text = std::fs::read_to_string(path).ok()?;
-    if let Ok(record) = serde_json::from_str::<CursorSessionRecord>(&text) {
+    marker_session(&text)
+}
+
+/// The chat id in a marker: the plain `<id>` line, or the `session_id` of a JSON
+/// record that an older hook wrote to the same file.
+fn marker_session(text: &str) -> Option<String> {
+    if let Ok(record) = serde_json::from_str::<CursorSessionRecord>(text) {
         return crate::reuse_cache::usable_session(&record.session_id);
     }
-    let id = text.lines().next()?.trim();
-    if id.is_empty() {
-        None
-    } else {
-        Some(id.to_string())
-    }
+    crate::reuse_cache::usable_session(text.lines().next()?)
 }
 
 /// The active session id, only when the hook wrote it within `max_age`.
@@ -157,7 +170,7 @@ pub fn session_if_recent(
     if age? > max_age {
         return None;
     }
-    crate::reuse_cache::usable_session(text.lines().next()?)
+    marker_session(text)
 }
 
 /// A versioned hook record binds a conversation to its project and IDE window.
@@ -170,9 +183,13 @@ pub struct CursorSessionRecord {
     pub timestamp_ms: u64,
 }
 
+/// Bind `session` to the Cursor window `window` in `root`, and update the plain marker.
+/// Each window has its own record file, written atomically, so windows never overwrite
+/// one another and the turn hook's marker write leaves the binding in place.
 pub fn write_bound_cursor_session(root: &Path, window: &str, session: &str) -> Result<(), String> {
     let session_id = crate::reuse_cache::usable_session(session).ok_or("invalid session_id")?;
     let window_id = crate::reuse_cache::usable_session(window).ok_or("invalid window_id")?;
+    let path = bound_cursor_session_path(&window_id).ok_or("home directory not found")?;
     let record = CursorSessionRecord {
         version: 1,
         project: crate::project_scope(root),
@@ -183,15 +200,12 @@ pub fn write_bound_cursor_session(root: &Path, window: &str, session: &str) -> R
             .map_err(|e| e.to_string())?
             .as_millis() as u64,
     };
-    let path = active_cursor_session_path().ok_or("home directory not found")?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(
-        path,
-        serde_json::to_vec(&record).map_err(|e| e.to_string())?,
+    ax_utils::atomic_write(
+        &path,
+        &serde_json::to_vec(&record).map_err(|e| e.to_string())?,
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    write_active_cursor_session(&record.session_id)
 }
 
 pub fn read_bound_cursor_session(
@@ -199,7 +213,7 @@ pub fn read_bound_cursor_session(
     window: &str,
     max_age: std::time::Duration,
 ) -> Option<String> {
-    let text = std::fs::read_to_string(active_cursor_session_path()?).ok()?;
+    let text = std::fs::read_to_string(bound_cursor_session_path(window)?).ok()?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()?
@@ -229,6 +243,64 @@ pub fn bound_session(
 #[cfg(test)]
 mod binding_tests {
     use super::*;
+
+    const HOUR: std::time::Duration = std::time::Duration::from_secs(3600);
+
+    #[test]
+    fn turn_start_marker_does_not_erase_the_window_binding() {
+        let _lock = crate::spec_registry::tests::HOME_LOCK.blocking_lock();
+        let _home = crate::spec_registry::tests::IsolatedHome::new();
+        let root = tempfile::tempdir().unwrap();
+        write_bound_cursor_session(root.path(), "win-1", "chat-a").unwrap();
+        write_active_cursor_session("chat-a").unwrap();
+        assert_eq!(
+            read_bound_cursor_session(root.path(), "win-1", HOUR),
+            Some("chat-a".into())
+        );
+    }
+
+    #[test]
+    fn two_windows_keep_their_own_binding() {
+        let _lock = crate::spec_registry::tests::HOME_LOCK.blocking_lock();
+        let _home = crate::spec_registry::tests::IsolatedHome::new();
+        let root = tempfile::tempdir().unwrap();
+        write_bound_cursor_session(root.path(), "win-1", "chat-a").unwrap();
+        write_bound_cursor_session(root.path(), "win:2", "chat-b").unwrap();
+        assert_eq!(
+            read_bound_cursor_session(root.path(), "win-1", HOUR),
+            Some("chat-a".into())
+        );
+        assert_eq!(
+            read_bound_cursor_session(root.path(), "win:2", HOUR),
+            Some("chat-b".into())
+        );
+    }
+
+    #[test]
+    fn bound_write_keeps_the_plain_marker_readable() {
+        let _lock = crate::spec_registry::tests::HOME_LOCK.blocking_lock();
+        let _home = crate::spec_registry::tests::IsolatedHome::new();
+        let root = tempfile::tempdir().unwrap();
+        write_bound_cursor_session(root.path(), "win-1", "chat-a").unwrap();
+        assert_eq!(read_recent_cursor_session(HOUR), Some("chat-a".into()));
+        assert_eq!(read_active_cursor_session(), Some("chat-a".into()));
+    }
+
+    #[test]
+    fn recent_marker_accepts_a_json_record_left_by_an_older_hook() {
+        let text = serde_json::to_string(&CursorSessionRecord {
+            version: 1,
+            project: "a".into(),
+            window_id: "one".into(),
+            session_id: "chat".into(),
+            timestamp_ms: 100,
+        })
+        .unwrap();
+        assert_eq!(
+            session_if_recent(&text, Some(std::time::Duration::ZERO), HOUR),
+            Some("chat".into())
+        );
+    }
     #[test]
     fn hook_requires_matching_project_window_age_and_version() {
         let text = serde_json::to_string(&CursorSessionRecord {
@@ -301,15 +373,17 @@ pub fn parse_composer_model_config(value: &Value) -> Option<String> {
         for entry in models {
             if let Some(arr) = entry.get("parameters").and_then(|v| v.as_array()) {
                 for param in arr {
-                    let id = param.get("id").and_then(|v| v.as_str())?.trim();
+                    let Some(id) = param.get("id").and_then(|v| v.as_str()).map(str::trim) else {
+                        continue;
+                    };
                     if id.is_empty() {
                         continue;
                     }
-                    let val = param
-                        .get("value")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
+                    let val = match param.get("value") {
+                        Some(Value::String(s)) => s.clone(),
+                        Some(Value::Bool(b)) => b.to_string(),
+                        _ => String::new(),
+                    };
                     params.push((id.to_string(), val));
                 }
             }
@@ -413,33 +487,61 @@ async fn open_cursor_vscdb_readonly(path: &Path) -> Result<SqlitePool, String> {
     }
 }
 
+/// `composerData` blobs hold whole conversations, so they are read a page at a time.
+const COMPOSER_PAGE_ROWS: i64 = 32;
+
 /// Load all `composerData:*` rows from Cursor `state.vscdb`.
+///
+/// Blobs are read in pages of [`COMPOSER_PAGE_ROWS`] keys and parsed one by one, so only
+/// one page of raw conversation text is in memory at a time.
 pub async fn load_composer_state_rows(path: &Path) -> Result<Vec<ComposerStateRow>, String> {
     let pool = open_cursor_vscdb_readonly(path).await?;
-    let keys: Vec<(String, String)> =
-        sqlx::query_as("SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'")
-            .fetch_all(&pool)
-            .await
-            .map_err(|e| format!("cursor state query: {e}"))?;
-
-    let mut rows = Vec::with_capacity(keys.len());
-    for (key, raw) in keys {
-        let Some(session_id) = key.strip_prefix(COMPOSER_KEY_PREFIX) else {
-            continue;
+    let mut rows = Vec::new();
+    let mut after = COMPOSER_KEY_PREFIX.to_string();
+    loop {
+        let page: Vec<(String, String)> = sqlx::query_as(
+            "SELECT key, value FROM cursorDiskKV
+             WHERE key > ? AND key LIKE 'composerData:%'
+             ORDER BY key LIMIT ?",
+        )
+        .bind(&after)
+        .bind(COMPOSER_PAGE_ROWS)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| format!("cursor state query: {e}"))?;
+        let Some((last, _)) = page.last() else {
+            break;
         };
-        let Ok(value) = serde_json::from_str::<Value>(&raw) else {
-            continue;
-        };
-        if let Some(row) = parse_composer_data(session_id, &value) {
-            rows.push(row);
+        after = last.clone();
+        let full = page.len() as i64 == COMPOSER_PAGE_ROWS;
+        for (key, raw) in page {
+            let Some(session_id) = key.strip_prefix(COMPOSER_KEY_PREFIX) else {
+                continue;
+            };
+            let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+                continue;
+            };
+            if let Some(row) = parse_composer_data(session_id, &value) {
+                rows.push(row);
+            }
+        }
+        if !full {
+            break;
         }
     }
+    pool.close().await;
     Ok(rows)
 }
 
 /// Merge Composer state into `agent_session_log` without clobbering tool-call counts.
-pub async fn upsert_composer_state_row(row: &ComposerStateRow) -> Result<bool, String> {
-    let pool = open_pool().await.map_err(|e| e.to_string())?;
+/// Returns true when the row was inserted or at least one stored value changed.
+pub(crate) async fn upsert_composer_state_row<'e, E>(
+    executor: E,
+    row: &ComposerStateRow,
+) -> Result<bool, String>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let input = row.input_tokens.filter(|n| *n > 0);
     let result = sqlx::query(
         "INSERT INTO agent_session_log
@@ -472,20 +574,33 @@ pub async fn upsert_composer_state_row(row: &ComposerStateRow) -> Result<bool, S
              WHEN agent_session_log.ended_at IS NULL THEN excluded.ended_at
              WHEN excluded.ended_at IS NULL THEN agent_session_log.ended_at
              ELSE MAX(agent_session_log.ended_at, excluded.ended_at)
-           END",
+           END
+         WHERE (excluded.model IS NOT NULL AND excluded.model != '' AND (
+                  agent_session_log.model IS NULL OR agent_session_log.model = ''
+                  OR length(excluded.model) > length(agent_session_log.model)))
+            OR (excluded.session_input_tokens IS NOT NULL AND (
+                  agent_session_log.session_input_tokens IS NULL
+                  OR excluded.session_input_tokens > agent_session_log.session_input_tokens))
+            OR (excluded.started_at IS NOT NULL AND (
+                  agent_session_log.started_at IS NULL
+                  OR excluded.started_at < agent_session_log.started_at))
+            OR (excluded.ended_at IS NOT NULL AND (
+                  agent_session_log.ended_at IS NULL
+                  OR excluded.ended_at > agent_session_log.ended_at))",
     )
     .bind(&row.session_id)
     .bind(input)
     .bind(&row.model)
     .bind(row.started_at)
     .bind(row.ended_at)
-    .execute(&pool)
+    .execute(executor)
     .await
     .map_err(|e| e.to_string())?;
     Ok(result.rows_affected() > 0)
 }
 
-/// Import Composer metadata from Cursor `state.vscdb`.
+/// Import Composer metadata from Cursor `state.vscdb` in one transaction.
+/// Returns `(changed, unchanged)` session counts.
 pub async fn import_cursor_composer_state() -> Result<(usize, usize), String> {
     let Some(path) = cursor_state_vscdb_path() else {
         return Ok((0, 0));
@@ -502,10 +617,12 @@ pub async fn import_cursor_composer_state() -> Result<(usize, usize), String> {
         }
     };
 
+    let pool = open_pool().await.map_err(|e| e.to_string())?;
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     let mut enriched = 0usize;
     let mut skipped = 0usize;
     for row in &rows {
-        match upsert_composer_state_row(row).await {
+        match upsert_composer_state_row(&mut *tx, row).await {
             Ok(true) => enriched += 1,
             Ok(false) => skipped += 1,
             Err(e) => eprintln!(
@@ -514,6 +631,7 @@ pub async fn import_cursor_composer_state() -> Result<(usize, usize), String> {
             ),
         }
     }
+    tx.commit().await.map_err(|e| e.to_string())?;
     Ok((enriched, skipped))
 }
 
@@ -521,6 +639,26 @@ pub async fn import_cursor_composer_state() -> Result<(usize, usize), String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn model_config_skips_param_without_id_and_reads_bool_values() {
+        let value = json!({
+            "modelConfig": {
+                "modelName": "composer-2.5",
+                "selectedModels": [{
+                    "parameters": [
+                        {"value": "true"},
+                        {"id": "fast", "value": true},
+                        {"id": "thinking", "value": false}
+                    ]
+                }]
+            }
+        });
+        assert_eq!(
+            parse_composer_model_config(&value).as_deref(),
+            Some("composer-2.5-fast")
+        );
+    }
 
     #[test]
     fn normalize_cursor_model_skips_duplicate_suffix() {
@@ -590,6 +728,59 @@ mod tests {
             "promptTokenBreakdown": { "totalUsedTokens": 126877 }
         });
         assert_eq!(parse_composer_input_tokens(&value), Some(126877));
+    }
+
+    async fn write_state_db(path: &Path, sessions: usize) {
+        let options = SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE cursorDiskKV (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        for n in 0..sessions {
+            let value = json!({
+                "modelConfig": { "modelName": "composer-2.5" },
+                "promptTokenBreakdown": { "totalUsedTokens": 1000 + n },
+                "createdAt": 1_700_000_000_000i64 + n as i64
+            });
+            sqlx::query("INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)")
+                .bind(format!("composerData:sess-{n:03}"))
+                .bind(value.to_string())
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query("INSERT INTO cursorDiskKV (key, value) VALUES ('other:key', '{}')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn import_counts_only_sessions_it_changed() {
+        let _guard = crate::store::USAGE_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state.vscdb");
+        write_state_db(&state, 70).await;
+        std::env::set_var("AX_CURSOR_STATE_VSCDB", &state);
+        std::env::set_var("AX_USAGE_DB", dir.path().join("usage.db"));
+        let first = import_cursor_composer_state().await;
+        let second = import_cursor_composer_state().await;
+        let loaded = load_composer_state_rows(&state)
+            .await
+            .map(|rows| rows.len());
+        std::env::remove_var("AX_CURSOR_STATE_VSCDB");
+        std::env::remove_var("AX_USAGE_DB");
+        assert_eq!(first, Ok((70, 0)));
+        assert_eq!(second, Ok((0, 70)));
+        assert_eq!(loaded, Ok(70));
     }
 
     #[test]

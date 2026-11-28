@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RankClass {
@@ -25,18 +26,19 @@ pub struct RankNote {
 
 /// Reorder optional and high-value blocks by lexical overlap with the task.
 /// Hard-required items are always kept and never reordered past each other.
+/// A later block is a duplicate only when its text equals an earlier one after
+/// whitespace is collapsed; blank blocks are never duplicates.
 pub fn plan(items: &[RankItem], query: &str) -> Vec<RankNote> {
-    let mut seen: Vec<String> = Vec::new();
+    let mut seen: HashSet<blake3::Hash> = HashSet::new();
     let mut notes = Vec::with_capacity(items.len());
     let measured = !query.trim().is_empty();
     let query_tokens = tokens(query);
     for item in items {
         let item_tokens = tokens(&item.text);
-        let key = item_tokens.join(" ");
-        let duplicate = !key.is_empty() && seen.iter().any(|prior| prior == &key);
-        if !duplicate && !key.is_empty() {
-            seen.push(key);
-        }
+        let duplicate = match duplicate_key(&item.text) {
+            Some(key) => !seen.insert(key),
+            None => false,
+        };
         let relevance = token_overlap(&query_tokens, &item_tokens);
         if item.class == RankClass::HardRequired {
             notes.push(RankNote {
@@ -120,6 +122,18 @@ fn token_overlap(left: &[String], right: &[String]) -> f64 {
     shared as f64 / left.len() as f64
 }
 
+/// Hash of the whitespace-normalized text, or `None` for a blank block.
+fn duplicate_key(text: &str) -> Option<blake3::Hash> {
+    let mut hasher = blake3::Hasher::new();
+    let mut words = text.split_whitespace();
+    hasher.update(words.next()?.as_bytes());
+    for word in words {
+        hasher.update(b" ");
+        hasher.update(word.as_bytes());
+    }
+    Some(hasher.finalize())
+}
+
 fn tokens(text: &str) -> Vec<String> {
     text.split(|ch: char| !ch.is_ascii_alphanumeric())
         .filter(|part| part.len() > 2)
@@ -166,6 +180,36 @@ mod tests {
         );
         let order = keep_order(&items, &notes);
         assert_eq!(order, vec!["c".to_string(), "a".to_string()]);
+    }
+
+    #[test]
+    fn blocks_that_differ_in_short_tokens_or_punctuation_are_not_duplicates() {
+        for (first, second) in [
+            ("retry limit: 5", "retry limit: 9"),
+            ("if a < b return left", "if a > b return left"),
+            ("größe über", "größe unter"),
+        ] {
+            let items = vec![
+                item("first", RankClass::Optional, first),
+                item("second", RankClass::Optional, second),
+            ];
+            let notes = plan(&items, "retry");
+            assert!(notes.iter().all(|note| note.keep), "{first} / {second}");
+        }
+    }
+
+    #[test]
+    fn duplicates_ignore_only_whitespace_differences() {
+        let items = vec![
+            item("first", RankClass::Optional, "retry limit: 5"),
+            item("second", RankClass::Optional, "  retry\tlimit:\n5 "),
+            item("short", RankClass::Optional, "io db"),
+            item("short-copy", RankClass::Optional, "io db"),
+        ];
+        let notes = plan(&items, "retry");
+        let keep = |id: &str| notes.iter().find(|note| note.id == id).unwrap().keep;
+        assert!(keep("first") && keep("short"));
+        assert!(!keep("second") && !keep("short-copy"));
     }
 
     #[test]

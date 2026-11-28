@@ -236,3 +236,74 @@ async fn s6_doc_memories_are_recall_only() {
         "preflight skips them"
     );
 }
+
+#[tokio::test]
+async fn s7_missing_root_is_an_error_and_keeps_existing_memories() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = open_db(tmp.path()).await;
+    let root = tmp.path().join("notes");
+    write(&root, "plan.md", "plan");
+    sync_folder(db.pool(), "notes", &root).await.unwrap();
+
+    std::fs::rename(&root, tmp.path().join("unmounted")).unwrap();
+    assert!(sync_folder(db.pool(), "notes", &root).await.is_err());
+    assert_eq!(doc_ids(&db).await, vec![doc_memory_id("notes", "plan.md")]);
+}
+
+#[tokio::test]
+async fn s7_a_file_that_grows_past_the_limit_keeps_its_memory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = open_db(tmp.path()).await;
+    let root = tmp.path().join("notes");
+    write(&root, "big.md", "small for now");
+    sync_folder(db.pool(), "notes", &root).await.unwrap();
+
+    write(
+        &root,
+        "big.md",
+        &"x".repeat(MAX_FOLDER_FILE_BYTES as usize + 1),
+    );
+    assert_eq!(
+        sync_folder(db.pool(), "notes", &root).await.unwrap(),
+        report(0, 0, 0, 1)
+    );
+    assert_eq!(doc_ids(&db).await, vec![doc_memory_id("notes", "big.md")]);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn s7_unreadable_files_and_folders_keep_their_memories() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let db = open_db(tmp.path()).await;
+    let root = tmp.path().join("notes");
+    write(&root, "locked.md", "locked");
+    write(&root, "sub/inner.md", "inner");
+    write(&root, "gone.md", "gone");
+    sync_folder(db.pool(), "notes", &root).await.unwrap();
+
+    std::fs::set_permissions(
+        root.join("locked.md"),
+        std::fs::Permissions::from_mode(0o000),
+    )
+    .unwrap();
+    std::fs::set_permissions(root.join("sub"), std::fs::Permissions::from_mode(0o000)).unwrap();
+    std::fs::remove_file(root.join("gone.md")).unwrap();
+    let got = sync_folder(db.pool(), "notes", &root).await;
+    std::fs::set_permissions(
+        root.join("locked.md"),
+        std::fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    std::fs::set_permissions(root.join("sub"), std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let got = got.unwrap();
+    assert_eq!(got.removed, 0, "{got:?}");
+    let mut want = vec![
+        doc_memory_id("notes", "locked.md"),
+        doc_memory_id("notes", "sub/inner.md"),
+        doc_memory_id("notes", "gone.md"),
+    ];
+    want.sort();
+    assert_eq!(doc_ids(&db).await, want);
+}

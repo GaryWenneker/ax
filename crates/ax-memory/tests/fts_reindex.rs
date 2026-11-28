@@ -2,8 +2,8 @@ use ax_memory::{recall, reindex_memory_fts, remember, RememberInput};
 
 #[tokio::test]
 async fn reindex_restores_a_memory_missing_from_fts() {
-    let root = std::env::temp_dir().join(format!("ax-fts-reindex-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
@@ -87,7 +87,6 @@ async fn reindex_restores_a_memory_missing_from_fts() {
 
     let after = recall(db.pool(), "Blossom Suno", 5).await.unwrap();
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
     assert!(
         after.iter().any(|hit| hit.memory.id == row.id),
         "reindex must restore FTS for the memory"

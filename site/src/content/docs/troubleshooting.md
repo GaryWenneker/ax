@@ -18,6 +18,7 @@ Cursor reports **DEGRADED** when the `user-ax` MCP stdio process fails tool disc
 ax hardens this by default:
 
 - WAL mode + **180s** SQLite `busy_timeout` (override with `AX_DB_BUSY_TIMEOUT_SECS`)
+- The shared usage database (`~/.ax/usage.db`) waits at most **10s** for a busy writer or a free connection, so a contended file fails the usage write fast instead of stalling a tool call (override with `AX_USAGE_DB_BUSY_TIMEOUT_SECS`, 1 to 600)
 - Writers **wait up to 180s** for `.ax/ax.lock` instead of failing immediately
 - Stale `ax.lock` / dead daemon PIDs are cleared on open and on `ax daemon restart`
 - Maintenance uses `wal_checkpoint(PASSIVE)` so optimize does not starve readers
