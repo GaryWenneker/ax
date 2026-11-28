@@ -184,24 +184,33 @@ pub(crate) async fn prune_activity(
 /// Delete durable conversation entries of this project's conversations past
 /// `limit`. Legacy conversations without a project scope are never touched.
 ///
-/// The newest entry (the one a write just appended) is never deleted by the
-/// byte cap, even when it alone is over the cap, so the id a write returns
-/// stays valid.
+/// The newest entry is never deleted by the byte cap, even when it alone is
+/// over the cap. `keep` names what the write just stored: every entry of that
+/// conversation with an id above the given watermark (the written entry plus
+/// any hook entries it fired). Neither cap deletes those, so the id a write
+/// returns stays valid.
 pub(crate) async fn prune_durable(
     pool: &SqlitePool,
     project: &str,
     limit: RetentionLimit,
     now_secs: i64,
+    keep: Option<DurableKeep<'_>>,
 ) -> Result<u64, String> {
     const SCOPED: &str =
         "conversation_id IN (SELECT conversation FROM ax_durable_scope WHERE project = ?)";
+    // An empty conversation id never matches a real conversation.
+    let (keep_conversation, keep_after) =
+        keep.map_or(("", i64::MAX), |k| (k.conversation, k.after_id));
     let mut deleted = 0;
     if let Some(days) = limit.days {
         deleted += sqlx::query(&format!(
-            "DELETE FROM ax_durable_entry WHERE {SCOPED} AND created_at < ?"
+            "DELETE FROM ax_durable_entry WHERE {SCOPED} AND created_at < ?
+               AND NOT (conversation_id = ? AND id > ?)"
         ))
         .bind(project)
         .bind(now_secs - i64::from(days) * DAY_SECS)
+        .bind(keep_conversation)
+        .bind(keep_after)
         .execute(pool)
         .await
         .map_err(|e| e.to_string())?
@@ -211,16 +220,19 @@ pub(crate) async fn prune_durable(
         deleted += sqlx::query(&format!(
             "DELETE FROM ax_durable_entry WHERE id IN (
                SELECT id FROM (
-                 SELECT id,
+                 SELECT id, conversation_id,
                    SUM(length(CAST(body AS BLOB))) OVER newest AS running,
                    ROW_NUMBER() OVER newest AS position
                  FROM ax_durable_entry WHERE {SCOPED}
                  WINDOW newest AS (ORDER BY id DESC ROWS UNBOUNDED PRECEDING)
                ) WHERE running > ? AND position > 1
+                   AND NOT (conversation_id = ? AND id > ?)
              )"
         ))
         .bind(project)
         .bind(i64::try_from(max_bytes).unwrap_or(i64::MAX))
+        .bind(keep_conversation)
+        .bind(keep_after)
         .execute(pool)
         .await
         .map_err(|e| e.to_string())?
@@ -250,8 +262,17 @@ pub(crate) async fn maybe_prune_activity(
     }
 }
 
+/// What a durable write just stored: the entries of `conversation` with an
+/// id above `after_id`. Retention never deletes them.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DurableKeep<'a> {
+    pub conversation: &'a str,
+    pub after_id: i64,
+}
+
 /// Apply the project's durable-entry retention, at most once per interval.
-pub(crate) async fn maybe_prune_durable(pool: &SqlitePool, root: &Path) {
+/// `keep` is what the write just stored; it is never deleted.
+pub(crate) async fn maybe_prune_durable(pool: &SqlitePool, root: &Path, keep: DurableKeep<'_>) {
     let project = crate::context_cache::project_scope(root);
     let now_secs = chrono::Utc::now().timestamp();
     if !db_prune_due("durable", &project, now_secs) {
@@ -261,7 +282,7 @@ pub(crate) async fn maybe_prune_durable(pool: &SqlitePool, root: &Path) {
     if limit.is_unlimited() {
         return;
     }
-    if let Err(err) = prune_durable(pool, &project, limit, now_secs).await {
+    if let Err(err) = prune_durable(pool, &project, limit, now_secs, Some(keep)).await {
         tracing::warn!("durable retention failed: {err}");
     }
 }
@@ -494,7 +515,7 @@ mod tests {
         insert_entry(&pool, "c1", "p-new", now - DAY_SECS).await;
         insert_entry(&pool, "c2", "other-old", now - 10 * DAY_SECS).await;
         insert_entry(&pool, "legacy", "legacy-old", now - 10 * DAY_SECS).await;
-        let n = prune_durable(&pool, "p", RetentionLimit::new(Some(7), None), now)
+        let n = prune_durable(&pool, "p", RetentionLimit::new(Some(7), None), now, None)
             .await
             .unwrap();
         assert_eq!(n, 1);
@@ -511,7 +532,7 @@ mod tests {
         for body in ["aaaa", "bbbb", "cccc"] {
             insert_entry(&pool, "c1", body, 1).await;
         }
-        let n = prune_durable(&pool, "p", RetentionLimit::new(None, Some(8)), 2)
+        let n = prune_durable(&pool, "p", RetentionLimit::new(None, Some(8)), 2, None)
             .await
             .unwrap();
         assert_eq!(n, 1);
@@ -524,11 +545,36 @@ mod tests {
         scope(&pool, "p", "c1").await;
         insert_entry(&pool, "c1", "old", 1).await;
         insert_entry(&pool, "c1", &"n".repeat(50), 1).await;
-        let n = prune_durable(&pool, "p", RetentionLimit::new(None, Some(8)), 2)
+        let n = prune_durable(&pool, "p", RetentionLimit::new(None, Some(8)), 2, None)
             .await
             .unwrap();
         assert_eq!(n, 1);
         assert_eq!(entry_bodies(&pool).await, ["n".repeat(50)]);
+    }
+
+    #[tokio::test]
+    async fn durable_caps_never_delete_the_entries_a_write_stored() {
+        let (_dir, pool) = pool().await;
+        scope(&pool, "p", "c1").await;
+        insert_entry(&pool, "c1", "old", 1).await;
+        // The write stored a large entry (id 2) and then a hook entry (id 3).
+        insert_entry(&pool, "c1", &"w".repeat(50), 1).await;
+        insert_entry(&pool, "c1", "hook", 1).await;
+        let keep = DurableKeep {
+            conversation: "c1",
+            after_id: 1,
+        };
+        let n = prune_durable(
+            &pool,
+            "p",
+            RetentionLimit::new(Some(1), Some(8)),
+            10 * DAY_SECS,
+            Some(keep),
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(entry_bodies(&pool).await, ["w".repeat(50), "hook".into()]);
     }
 
     #[tokio::test]

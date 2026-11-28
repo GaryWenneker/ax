@@ -104,9 +104,14 @@ async fn project_apply_with(
             return Err("task not found in this project and session".into());
         }
     }
+    let watermark = last_entry_id(pool, &conversation).await?;
     let text = apply_with(pool, &conversation, request).await?;
     if durable_action_writes(action) {
-        crate::retention::maybe_prune_durable(pool, root).await;
+        let keep = crate::retention::DurableKeep {
+            conversation: &conversation,
+            after_id: watermark,
+        };
+        crate::retention::maybe_prune_durable(pool, root, keep).await;
     }
     if matches!(action, "fork" | "handoff") {
         if let Some(child) = text
@@ -139,6 +144,7 @@ pub async fn note_project_tool_if_open(
     .map_err(|e| e.to_string())?;
     if let Some(conversation) = conversation {
         if conversation_exists(&pool, &conversation).await? {
+            let watermark = last_entry_id(&pool, &conversation).await?;
             append_entry(
                 &pool,
                 &conversation,
@@ -148,7 +154,11 @@ pub async fn note_project_tool_if_open(
             )
             .await?;
             fire_hooks(&pool, &conversation, "tool").await?;
-            crate::retention::maybe_prune_durable(&pool, root).await;
+            let keep = crate::retention::DurableKeep {
+                conversation: &conversation,
+                after_id: watermark,
+            };
+            crate::retention::maybe_prune_durable(&pool, root, keep).await;
         }
     }
     Ok(())
@@ -553,6 +563,18 @@ async fn append_entry(
     .await
     .map_err(|e| e.to_string())?;
     Ok(result.last_insert_rowid())
+}
+
+/// Highest entry id in `conversation` (0 when it has none). Taken before a
+/// write, every entry above it is what that write stored.
+async fn last_entry_id(pool: &SqlitePool, conversation: &str) -> Result<i64, String> {
+    sqlx::query_scalar(
+        "SELECT COALESCE(MAX(id), 0) FROM ax_durable_entry WHERE conversation_id = ?",
+    )
+    .bind(conversation)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| e.to_string())
 }
 
 async fn latest_entry(pool: &SqlitePool, conversation: &str) -> Result<Option<i64>, String> {
@@ -1542,6 +1564,60 @@ mod tests {
             .await
             .unwrap();
         assert!(read.contains(&body), "{read}");
+        assert!(!read.contains("ANCIENT"), "{read}");
+    }
+
+    #[tokio::test]
+    async fn a_hook_entry_does_not_push_the_written_entry_out_of_the_byte_cap() {
+        let pool = pool().await;
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join(".ax")).unwrap();
+        std::fs::write(
+            root.path().join(".ax/ship.toml"),
+            "[retention]\ndurable_max_bytes = 10\n",
+        )
+        .unwrap();
+        let conversation = project_conversation(&pool, root.path(), "s").await.unwrap();
+        ensure_conversation(&pool, &conversation, None, None)
+            .await
+            .unwrap();
+        // Register the hook without going through the pruning wrapper, so the
+        // append below is the first write that prunes.
+        apply_with(
+            &pool,
+            &conversation,
+            &json!({"action":"hook","event":"append","name":"audit"}),
+        )
+        .await
+        .unwrap();
+        insert_old_entry(&pool, &conversation, "ANCIENT").await;
+        let body = "B".repeat(200);
+        let written = project_apply_with(
+            &pool,
+            root.path(),
+            "s",
+            &json!({"action":"append","body":body}),
+        )
+        .await
+        .unwrap();
+        let id: i64 = written
+            .split("id=")
+            .nth(1)
+            .and_then(|s| s.split(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| panic!("no id in {written}"));
+        let exists: Option<i64> =
+            sqlx::query_scalar("SELECT id FROM ax_durable_entry WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert_eq!(exists, Some(id), "the appended entry was pruned");
+        let read = project_apply_with(&pool, root.path(), "s", &json!({"action":"read"}))
+            .await
+            .unwrap();
+        assert!(read.contains(&body), "{read}");
+        assert!(read.contains("append audit"), "{read}");
         assert!(!read.contains("ANCIENT"), "{read}");
     }
 
