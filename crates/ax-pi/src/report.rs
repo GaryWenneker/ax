@@ -3,7 +3,7 @@
 use crate::economics::display_amount;
 use crate::store::{ModelRow, OptimizationRow, PersistedSnapshot, TurnRow};
 use crate::types::{BudgetSnapshot, ToolEconomicsRecord};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct EconomicsReport {
@@ -119,29 +119,47 @@ pub fn optimization_from(snapshot: &PersistedSnapshot) -> OptimizationReport {
 }
 
 pub(crate) fn optimization_of(optimizations: &[OptimizationRow]) -> OptimizationReport {
-    let mut groups: BTreeMap<String, OptimizationGroup> = BTreeMap::new();
+    // Per group: the group itself and its saved tokens.
+    let mut groups: BTreeMap<String, (OptimizationGroup, u64)> = BTreeMap::new();
     let mut total = 0u64;
     for row in optimizations {
-        let saved = row
-            .alternative
-            .estimated_current_tokens
-            .saturating_sub(row.alternative.estimated_alternative_tokens);
-        total += u64::from(saved);
-        let entry = groups
+        let saved = u64::from(
+            row.alternative
+                .estimated_current_tokens
+                .saturating_sub(row.alternative.estimated_alternative_tokens),
+        );
+        total += saved;
+        let (entry, group_saved) = groups
             .entry(row.alternative.tool_name.clone())
-            .or_insert(OptimizationGroup {
-                label: row.alternative.tool_name.clone(),
-                calls: 0,
-                tokens: 0,
-                alternative: row.alternative.tool_name.clone(),
-                estimated_reduction_percent: 0.0,
+            .or_insert_with(|| {
+                (
+                    OptimizationGroup {
+                        label: row.alternative.tool_name.clone(),
+                        calls: 0,
+                        tokens: 0,
+                        alternative: row.alternative.tool_name.clone(),
+                        estimated_reduction_percent: 0.0,
+                    },
+                    0,
+                )
             });
         entry.calls += 1;
         entry.tokens += u64::from(row.alternative.estimated_current_tokens);
-        entry.estimated_reduction_percent = row.alternative.estimated_reduction_percent;
+        *group_saved += saved;
     }
+    let items = groups
+        .into_values()
+        .map(|(mut group, saved)| {
+            group.estimated_reduction_percent = if group.tokens == 0 {
+                0.0
+            } else {
+                saved as f64 * 100.0 / group.tokens as f64
+            };
+            group
+        })
+        .collect();
     OptimizationReport {
-        items: groups.into_values().collect(),
+        items,
         total_estimated_avoidable_tokens: total,
     }
 }
@@ -296,7 +314,8 @@ fn filter_models<'a>(models: &'a [ModelRow], session: Option<&str>) -> Vec<&'a M
 }
 
 fn potential_cost(rows: &[OptimizationRow], tools: &[&ToolEconomicsRecord]) -> Option<f64> {
-    let _ = tools;
+    let by_id: HashMap<&str, &ToolEconomicsRecord> =
+        tools.iter().map(|tool| (tool.id.as_str(), *tool)).collect();
     let mut total = 0.0;
     let mut any = false;
     for row in rows {
@@ -304,7 +323,7 @@ fn potential_cost(rows: &[OptimizationRow], tools: &[&ToolEconomicsRecord]) -> O
             .alternative
             .estimated_current_tokens
             .saturating_sub(row.alternative.estimated_alternative_tokens);
-        if let Some(tool) = tools.iter().find(|tool| tool.id == row.tool_call_id) {
+        if let Some(tool) = by_id.get(row.tool_call_id.as_str()) {
             if let Some(cost) = tool.context_cost_usd {
                 if tool.output_tokens > 0 {
                     total += cost * (f64::from(saved) / f64::from(tool.output_tokens));
