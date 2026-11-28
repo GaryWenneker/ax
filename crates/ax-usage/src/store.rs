@@ -472,9 +472,83 @@ pub(crate) async fn open_pool_at(path: &std::path::Path) -> Result<SqlitePool, A
 #[cfg(test)]
 pub(crate) static USAGE_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// Points `AX_USAGE_DB` at a database for one test, under [`USAGE_ENV_LOCK`].
+///
+/// Dropping it, also when the test panics, puts back the variable's previous
+/// value and removes the temporary folder, so one failed assertion cannot
+/// leave later tests pointed at a removed database.
+#[cfg(test)]
+pub(crate) struct UsageDbEnv {
+    db: std::path::PathBuf,
+    previous: Option<std::ffi::OsString>,
+    _dir: Option<tempfile::TempDir>,
+    _lock: tokio::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl UsageDbEnv {
+    /// A fresh database in a new temporary folder.
+    pub(crate) async fn new() -> Self {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db = dir.path().join("usage.db");
+        Self::set(db, Some(dir)).await
+    }
+
+    /// `AX_USAGE_DB` set to `db` as given; the caller owns that path.
+    pub(crate) async fn at(db: std::path::PathBuf) -> Self {
+        Self::set(db, None).await
+    }
+
+    async fn set(db: std::path::PathBuf, dir: Option<tempfile::TempDir>) -> Self {
+        let lock = USAGE_ENV_LOCK.lock().await;
+        let previous = std::env::var_os("AX_USAGE_DB");
+        std::env::set_var("AX_USAGE_DB", &db);
+        Self {
+            db,
+            previous,
+            _dir: dir,
+            _lock: lock,
+        }
+    }
+
+    pub(crate) fn db(&self) -> &std::path::Path {
+        &self.db
+    }
+}
+
+#[cfg(test)]
+impl Drop for UsageDbEnv {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(value) => std::env::set_var("AX_USAGE_DB", value),
+            None => std::env::remove_var("AX_USAGE_DB"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn usage_db_env_restores_the_variable_when_a_test_panics() {
+        let before = {
+            let _probe = USAGE_ENV_LOCK.lock().await;
+            std::env::var_os("AX_USAGE_DB")
+        };
+        let failed = tokio::spawn(async {
+            let env = UsageDbEnv::new().await;
+            assert_eq!(
+                std::env::var_os("AX_USAGE_DB").as_deref(),
+                Some(env.db().as_os_str())
+            );
+            panic!("simulated failing assertion");
+        })
+        .await;
+        assert!(failed.is_err());
+        let _probe = USAGE_ENV_LOCK.lock().await;
+        assert_eq!(std::env::var_os("AX_USAGE_DB"), before);
+    }
 
     async fn index_exists(pool: &SqlitePool, name: &str) -> bool {
         let row: Option<(String,)> =
@@ -555,8 +629,16 @@ mod tests {
         drop(first);
         #[cfg(not(unix))]
         first.close().await;
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        // After `close` the SQLite worker thread can hold the file a moment
+        // longer, and Windows refuses to remove an open file: retry briefly.
+        for _ in 0..100 {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+            if !path.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
         assert!(!path.exists(), "the database file was not removed");
         let second = open_pool().await.unwrap();

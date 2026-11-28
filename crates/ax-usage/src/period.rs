@@ -66,6 +66,15 @@ pub fn resolve_period(
         to_date
     };
 
+    if end_date < from_date {
+        // Without --to the range ends today; do not name a flag the user did not pass.
+        return Err(if period == UsagePeriod::Custom && custom_to.is_none() {
+            format!("invalid period: --from {from_date} is after today ({end_date})")
+        } else {
+            format!("invalid period: --to {end_date} is before --from {from_date}")
+        });
+    }
+
     let from_ms = local_start_ms(from_date)?;
     let to_ms = if period == UsagePeriod::Custom && custom_to.is_some() {
         local_end_ms(end_date)?
@@ -88,23 +97,37 @@ fn parse_date(s: &str) -> Result<NaiveDate, String> {
 }
 
 fn local_start_ms(date: NaiveDate) -> Result<i64, String> {
-    Local
-        .from_local_datetime(&date.and_hms_opt(0, 0, 0).ok_or("invalid start time")?)
-        .single()
-        .ok_or_else(|| "ambiguous local midnight".into())
-        .map(|dt| dt.timestamp_millis())
+    start_of_day_ms(&Local, date)
 }
 
 fn local_end_ms(date: NaiveDate) -> Result<i64, String> {
-    Local
-        .from_local_datetime(
-            &(date + chrono::Duration::days(1))
-                .and_hms_opt(0, 0, 0)
-                .ok_or("invalid end time")?,
-        )
-        .single()
-        .ok_or_else(|| "ambiguous local end".into())
-        .map(|dt| dt.timestamp_millis() - 1)
+    end_of_day_ms(&Local, date)
+}
+
+/// First instant of `date` in `tz`, in Unix ms.
+///
+/// An ambiguous midnight (clocks fall back across it) takes the earlier
+/// instant. A midnight that does not exist (clocks jump forward at 00:00, as
+/// in America/Santiago) moves to the first valid local time that day.
+fn start_of_day_ms<Z: TimeZone>(tz: &Z, date: NaiveDate) -> Result<i64, String> {
+    let midnight = date.and_hms_opt(0, 0, 0).ok_or("invalid start time")?;
+    // Gaps are at most a few hours; step a minute at a time for odd offsets.
+    for minutes in 0..=(24 * 60) {
+        let local = midnight + chrono::Duration::minutes(minutes);
+        if local.date() != date {
+            break;
+        }
+        if let Some(dt) = tz.from_local_datetime(&local).earliest() {
+            return Ok(dt.timestamp_millis());
+        }
+    }
+    Err(format!("no valid local time on {date}"))
+}
+
+/// Last millisecond of `date` in `tz`: one before the next day's start.
+fn end_of_day_ms<Z: TimeZone>(tz: &Z, date: NaiveDate) -> Result<i64, String> {
+    let next = date.succ_opt().ok_or("invalid end time")?;
+    Ok(start_of_day_ms(tz, next)? - 1)
 }
 
 #[cfg(test)]
@@ -119,5 +142,62 @@ mod tests {
         );
         assert_eq!(UsagePeriod::parse("mtd"), Some(UsagePeriod::MonthToDate));
         assert_eq!(UsagePeriod::parse("week"), Some(UsagePeriod::Week));
+    }
+
+    fn day(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    fn utc_ms(s: &str) -> i64 {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .unwrap()
+            .timestamp_millis()
+    }
+
+    #[test]
+    fn a_day_whose_midnight_does_not_exist_starts_at_the_first_valid_time() {
+        // Chile moved clocks from 00:00 to 01:00 on 2022-09-11 (-04 -> -03).
+        let tz = chrono_tz::America::Santiago;
+        assert_eq!(
+            start_of_day_ms(&tz, day("2022-09-11")).unwrap(),
+            utc_ms("2022-09-11T04:00:00Z")
+        );
+        // The day before ends one millisecond before that first instant.
+        assert_eq!(
+            end_of_day_ms(&tz, day("2022-09-10")).unwrap(),
+            utc_ms("2022-09-11T04:00:00Z") - 1
+        );
+    }
+
+    #[test]
+    fn an_ambiguous_midnight_takes_the_earliest_instant() {
+        // Cuba moved clocks from 01:00 back to 00:00 on 2022-11-06, so
+        // 00:00-01:00 happened twice; the day starts at the first one (-04).
+        let tz = chrono_tz::America::Havana;
+        assert_eq!(
+            start_of_day_ms(&tz, day("2022-11-06")).unwrap(),
+            utc_ms("2022-11-06T04:00:00Z")
+        );
+        assert_eq!(
+            end_of_day_ms(&tz, day("2022-11-05")).unwrap(),
+            utc_ms("2022-11-06T04:00:00Z") - 1
+        );
+    }
+
+    #[test]
+    fn a_custom_range_that_ends_before_it_starts_is_rejected() {
+        let err = resolve_period(UsagePeriod::Custom, Some("2026-03-10"), Some("2026-03-01"))
+            .unwrap_err();
+        assert!(err.contains("before"), "{err}");
+        assert!(
+            resolve_period(UsagePeriod::Custom, Some("2026-03-01"), Some("2026-03-01")).is_ok()
+        );
+    }
+
+    #[test]
+    fn a_future_from_without_to_does_not_name_a_to_flag() {
+        let err = resolve_period(UsagePeriod::Custom, Some("2999-01-01"), None).unwrap_err();
+        assert!(!err.contains("--to"), "{err}");
+        assert!(err.contains("--from 2999-01-01 is after today"), "{err}");
     }
 }

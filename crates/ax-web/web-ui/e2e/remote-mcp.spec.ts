@@ -6,6 +6,10 @@ if (process.env.AX_CHROME_EXECUTABLE) {
 }
 
 test.beforeEach(async ({ page }) => {
+  // No backend runs behind the dev server: answer every API call the test does not
+  // mock with a quick 404, like the other Settings tests, instead of letting it hang.
+  await page.route('**/api/**', route => route.fulfill({ status: 404, json: { error: 'Fixture endpoint not provided' } }));
+  await page.route('**/api/share/status', route => route.fulfill({ json: { readonly: false, sharing: false, port: 7070 } }));
   await page.route('**/api/web-auth/status', route => route.fulfill({
     json: { enabled: false, passkeys: true },
   }));

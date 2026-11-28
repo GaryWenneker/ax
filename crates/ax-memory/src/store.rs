@@ -35,7 +35,7 @@ fn now_ms() -> i64 {
 
 /// Retry a locked database, and the one-shot SQLITE_SCHEMA error SQLite
 /// returns after an FTS rebuild. The next statement on that connection works.
-async fn retry_locked<T, F, Fut>(mut op: F) -> Result<T, sqlx::Error>
+pub(crate) async fn retry_locked<T, F, Fut>(mut op: F) -> Result<T, sqlx::Error>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, sqlx::Error>>,
@@ -499,7 +499,9 @@ pub(crate) async fn remember_with_id(
     })
     .await
     .map_err(|e| db_err(pool, e))?;
-    write_derived_columns(pool, &row)
+    // The follow-up UPDATE touches memories_fts through its triggers, so it
+    // can hit the same transient lock or code 17 as the INSERT above.
+    retry_locked(|| write_derived_columns(pool, &row))
         .await
         .map_err(|e| db_err(pool, e))?;
     stamp_current_turn(pool, &row.id).await?;
