@@ -43,7 +43,7 @@ pub fn project_root(path: Option<String>) -> Result<PathBuf, String> {
         Some(path) => PathBuf::from(path),
         None => std::env::current_dir().map_err(|error| error.to_string())?,
     };
-    if let Some(root) = ax_context::directory::find_nearest_ax_root(&start) {
+    if let Some(root) = super::find_project_root(&start) {
         return Ok(root);
     }
     start

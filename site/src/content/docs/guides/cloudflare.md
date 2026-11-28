@@ -21,11 +21,19 @@ Cloudflare should send:
 - `X-Forwarded-Proto: https`
 - the browser `Origin`, for example `https://admin.example.com`
 
-Ax accepts that public host when the origin names the same host. A cross-site request is rejected.
+Ax answers only for host names it knows. Add the public hostname to `~/.ax/config.json`, or start Ax with `AX_WEB_AUTH_ORIGIN=https://admin.example.com`:
+
+```json
+{ "web": { "allowed_hosts": ["admin.example.com"] } }
+```
+
+Restart Command Center after changing the list. A request for any other host gets `403`. A cross-site request is rejected.
 
 ## Sign-in
 
-Sign-in is off until you turn it on in **Settings → Security**. With sign-in off, the public address works without a password. Turn **Require sign-in** on when the hostname is reachable beyond this computer.
+Sign-in is off until you turn it on in **Settings → Security**. With sign-in off, the public address shows project data without a password. Turn **Require sign-in** on when the hostname is reachable beyond this computer.
+
+Ax treats a request as the local owner only when its network connection comes from this computer and no proxy header (`X-Forwarded-For`, `Forwarded`, `X-Forwarded-Proto` and similar) is present. Requests through the tunnel never count as the local owner, whatever their `Host` or `Origin`. Owner-only actions without a session (team and client access, Remote MCP setup, the vault drive, IDE installs, the agent terminal and the first password) work only from `http://127.0.0.1:7070` on this computer.
 
 Passkeys are tied to the address you register them on. Open the public `https://` origin in the browser and register the passkey there. A passkey created on `http://localhost:7070` does not work on the public name.
 

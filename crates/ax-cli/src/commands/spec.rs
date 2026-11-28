@@ -104,7 +104,61 @@ pub async fn flag_from_value(value: Option<String>) -> Result<(), String> {
     finish_json(result)
 }
 
+const NOT_INTERACTIVE: &str =
+    "`ax spec-approve` records the approval in the project owner's name, \
+so a person must run it in an interactive terminal; agents and scripts cannot approve. \
+Approve in the Command Center, or run the command yourself in a terminal.";
+
+/// Refuses unless stdin is a terminal: an agent running the command through
+/// its shell tool must not be able to sign an approval as the owner.
+fn require_interactive(stdin_is_terminal: bool) -> Result<(), String> {
+    if stdin_is_terminal {
+        Ok(())
+    } else {
+        Err(NOT_INTERACTIVE.into())
+    }
+}
+
+/// Asks the person at the terminal to confirm, by typing `approve`, that
+/// they are the owner the approval will be recorded for.
+fn confirm_approval(
+    input: &mut impl std::io::BufRead,
+    output: &mut impl std::io::Write,
+    owner: &str,
+    value: &serde_json::Value,
+) -> Result<(), String> {
+    let field = |name: &str| {
+        value
+            .get(name)
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| v.to_string())
+            })
+            .unwrap_or_else(|| "?".into())
+    };
+    write!(
+        output,
+        "Approve {} {} version {} as {owner}? Type 'approve' to confirm: ",
+        field("artifactKind"),
+        field("artifactId"),
+        field("version"),
+    )
+    .and_then(|_| output.flush())
+    .map_err(|error| error.to_string())?;
+    let mut line = String::new();
+    input
+        .read_line(&mut line)
+        .map_err(|error| error.to_string())?;
+    if line.trim() == "approve" {
+        Ok(())
+    } else {
+        Err("approval cancelled".into())
+    }
+}
+
 pub async fn approve_from_json(body: String) -> Result<(), String> {
+    require_interactive(std::io::IsTerminal::is_terminal(&std::io::stdin()))?;
     let value: serde_json::Value =
         serde_json::from_str(&body).map_err(|error| error.to_string())?;
     let root = project_root()?;
@@ -124,6 +178,12 @@ pub async fn approve_from_json(body: String) -> Result<(), String> {
             member.role == ax_global_db::access::MemberRole::Owner && member.status == "active"
         })
         .ok_or_else(|| "no active owner".to_string())?;
+    confirm_approval(
+        &mut std::io::stdin().lock(),
+        &mut std::io::stderr(),
+        &owner.display_name,
+        &value,
+    )?;
     let value = ax_usage::bind_approval_actor(value, &owner.id)?;
     let result = ax_usage::approve_from_json(database.pool(), &membership, value).await;
     finish_json(result)
@@ -179,13 +239,31 @@ fn finish_json(result: serde_json::Value) -> Result<(), String> {
 }
 
 fn project_root() -> Result<PathBuf, String> {
-    let mut dir = std::env::current_dir().map_err(|error| error.to_string())?;
-    loop {
-        if dir.join(".ax").join("ax.db").is_file() {
-            return Ok(dir);
-        }
-        if !dir.pop() {
-            return Err("no ax project database found".into());
+    let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+    super::find_project_root(&cwd).ok_or_else(|| "no ax project database found".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_terminal_stdin_is_refused() {
+        let err = require_interactive(false).unwrap_err();
+        assert!(err.contains("interactive terminal"));
+        assert!(require_interactive(true).is_ok());
+    }
+
+    #[test]
+    fn confirmation_needs_the_exact_word() {
+        let body = serde_json::json!({"artifactKind":"plan","artifactId":"ledger","version":3});
+        let mut out = Vec::new();
+        assert!(confirm_approval(&mut "approve\n".as_bytes(), &mut out, "Ada", &body).is_ok());
+        let prompt = String::from_utf8(out).unwrap();
+        assert!(prompt.contains("plan ledger version 3 as Ada"), "{prompt}");
+        for answer in ["", "\n", "y\n", "yes\n", "approved\n"] {
+            let err = confirm_approval(&mut answer.as_bytes(), &mut Vec::new(), "Ada", &body);
+            assert_eq!(err, Err("approval cancelled".into()), "answer {answer:?}");
         }
     }
 }

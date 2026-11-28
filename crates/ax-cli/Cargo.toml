@@ -52,8 +52,10 @@ ax-pi = { workspace = true }
 ax-lsp = { workspace = true }
 ax-docs-catalog = { workspace = true }
 ax-global-db = { workspace = true }
+if-addrs = "0.15"
 uuid = { workspace = true }
 tokio = { workspace = true }
+sysinfo = "0.40"
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -69,6 +71,7 @@ windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
 dirs = { workspace = true }
 reqwest = { workspace = true }
 axum = "0.8"
+sha2 = "0.10"
 subtle = "2"
 tempfile = "3"
 zip = { workspace = true }

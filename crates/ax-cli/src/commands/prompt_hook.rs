@@ -5,13 +5,28 @@ use std::path::PathBuf;
 
 use ax_context::{
     extract_code_tokens, format_explore_text, has_structural_keyword, plan_frontload_full,
+    user_prompt_text,
 };
 use ax_policy::{detect_directive, MatchInput};
 use ax_types::ExploreOptions;
 
-use crate::commands::resolve_path;
+use crate::commands::{find_project_root, resolve_project_root};
 
-const MAX_INJECT_CHARS: usize = 16000;
+/// Byte budget for the explore text the hook injects.
+const MAX_INJECT_BYTES: usize = 16000;
+
+/// Cut explore text to at most [`MAX_INJECT_BYTES`] on a char boundary and
+/// note where it was cut.
+fn cap_inject(text: String) -> String {
+    if text.len() > MAX_INJECT_BYTES {
+        format!(
+            "{}\n...(truncated; call ax_explore for the rest)",
+            ax_utils::prefix_bytes(&text, MAX_INJECT_BYTES)
+        )
+    } else {
+        text
+    }
+}
 
 pub async fn run() -> Result<(), String> {
     if std::env::var("AX_NO_PROMPT_HOOK").ok().as_deref() == Some("1")
@@ -38,10 +53,11 @@ pub async fn run() -> Result<(), String> {
         .get("cwd")
         .and_then(|v| v.as_str())
         .map(PathBuf::from)
-        .unwrap_or_else(|| resolve_path(None));
+        .unwrap_or_else(|| resolve_project_root(None));
+    let project = find_project_root(&cwd);
     if !prompt.is_empty() {
         if let (Some(root), Some(session)) = (
-            ax_context::directory::find_nearest_ax_root(&cwd),
+            project.clone(),
             ax_usage::parse_cursor_hook_session_id(&input),
         ) {
             if ax_usage::session_from_args(&serde_json::json!({"session":session})).is_some() {
@@ -50,6 +66,14 @@ pub async fn run() -> Result<(), String> {
                         .await;
             }
         }
+    }
+
+    // Match and explore only the user's own words. A prompt that is nothing but
+    // harness text (a background-task notification) gets no context at all.
+    let had_prompt = !prompt.trim().is_empty();
+    let prompt = user_prompt_text(&prompt);
+    if had_prompt && prompt.is_empty() {
+        return Ok(());
     }
 
     let files: Vec<PathBuf> = input
@@ -65,7 +89,8 @@ pub async fn run() -> Result<(), String> {
     let mut out = String::new();
 
     if std::env::var("AX_NO_POLICY").ok().as_deref() != Some("1") {
-        if let Ok(ax) = ax_core::Ax::open(&cwd).await {
+        let root = project.clone().unwrap_or_else(|| cwd.clone());
+        if let Ok(ax) = ax_core::Ax::open(&root).await {
             if ax.policy_exists() {
                 let match_input = MatchInput {
                     prompt: prompt.clone(),
@@ -131,14 +156,7 @@ pub async fn run() -> Result<(), String> {
                         if let Ok(result) = ax.explore(&prompt, ExploreOptions::default()).await {
                             let text = format_explore_text(&result);
                             if !text.trim().is_empty() {
-                                let body = if text.len() > MAX_INJECT_CHARS {
-                                    format!(
-                                        "{}\n...(truncated; call ax_explore for the rest)",
-                                        &text[..MAX_INJECT_CHARS]
-                                    )
-                                } else {
-                                    text
-                                };
+                                let body = cap_inject(text);
                                 let more = if plan.via_sub_scan {
                                     format!(
                                         "call ax_explore with projectPath: \"{}\" for more",
@@ -177,4 +195,29 @@ pub async fn run() -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cap_inject_cuts_on_a_char_boundary() {
+        // Byte 16000 falls inside the 3-byte em dash.
+        let text = format!(
+            "{}\u{2014}{}",
+            "a".repeat(MAX_INJECT_BYTES - 1),
+            "b".repeat(100)
+        );
+        let out = cap_inject(text);
+        assert!(out.starts_with(&"a".repeat(MAX_INJECT_BYTES - 1)));
+        assert!(out.ends_with("...(truncated; call ax_explore for the rest)"));
+        assert!(!out.contains('\u{2014}'));
+    }
+
+    #[test]
+    fn cap_inject_keeps_short_text() {
+        let text = "\u{2014}".repeat(10);
+        assert_eq!(cap_inject(text.clone()), text);
+    }
 }

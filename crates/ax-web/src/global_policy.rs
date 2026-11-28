@@ -74,8 +74,36 @@ pub async fn leaders(kind: Kind) -> Result<Vec<GlobalItem>, String> {
     Ok(out)
 }
 
+/// The leading global item named `name`. Loads only that item's payload.
 pub async fn leader(kind: Kind, name: &str) -> Result<Option<GlobalItem>, String> {
-    Ok(leaders(kind).await?.into_iter().find(|i| i.name == name))
+    let path = ax_global_db::global_db_path().map_err(|e| e.to_string())?;
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let pool = ax_global_db::open_pool(&path, false)
+        .await
+        .map_err(|e| e.to_string())?;
+    let result = async {
+        let level = global_level::load_from_pool(&pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        let Some(lead) = level.leader(kind, name) else {
+            return Ok(None);
+        };
+        let payload =
+            ax_global_db::policy::load_policy_item(&pool, lead.project_id, policy_kind(kind), name)
+                .await
+                .map_err(|e| e.to_string())?;
+        Ok(payload.map(|payload| GlobalItem {
+            name: name.to_string(),
+            project_id: lead.project_id,
+            changed_ms: lead.changed_ms,
+            payload,
+        }))
+    }
+    .await;
+    pool.close().await;
+    result
 }
 
 /// Write one item the way the Command Center does. `project_id` is the row to update;
@@ -88,16 +116,11 @@ async fn save(
     doc: impl FnOnce(String) -> serde_json::Result<Value>,
 ) -> Result<(), String> {
     let (pool, pid) = crate::policy::open_global_pool(root, project_id).await?;
-    let result = async {
-        let value = doc(format!("global.db:{pid}:{name}")).map_err(|e| e.to_string())?;
-        let flat = ax_global_db::policy::flatten_list_item(value, policy_kind(kind), name);
-        ax_global_db::policy::upsert_policy_item(&pool, pid, policy_kind(kind), name, &flat)
-            .await
-            .map_err(|e| e.to_string())
-    }
-    .await;
-    pool.close().await;
-    result
+    let value = doc(format!("global.db:{pid}:{name}")).map_err(|e| e.to_string())?;
+    let flat = ax_global_db::policy::flatten_list_item(value, policy_kind(kind), name);
+    ax_global_db::policy::upsert_policy_item(&pool, pid, policy_kind(kind), name, &flat)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 pub async fn save_rule(

@@ -1,4 +1,4 @@
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 use crate::ui::SpinnerGuard;
 
 pub async fn run(
@@ -8,7 +8,7 @@ pub async fn run(
     surprising_limit: usize,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     ax_usage::log_cli(Some(&root), "cmd=insights start");
     let resolution = if resolution > 0.0 { resolution } else { 1.0 };
     let insights = {

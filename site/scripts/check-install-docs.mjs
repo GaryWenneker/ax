@@ -25,10 +25,12 @@ try {
     await page.locator('[data-ax-install-copy]').click();
     await page.waitForFunction(()=>document.querySelector('[data-ax-install-status]').textContent.includes('Select and copy'));
     await page.goto(url+'/getting-started/introduction/',{waitUntil:'networkidle0'});
-    await page.waitForSelector('.ax-doc-moire .ax-halftone-screen-two');
-    const motion=()=>page.$eval('.ax-doc-moire .ax-halftone-screen-two',el=>getComputedStyle(el).transform);
-    const first=await motion();
-    await page.waitForFunction(first=>getComputedStyle(document.querySelector('.ax-doc-moire .ax-halftone-screen-two')).transform!==first,{},first);
+    // The deck backdrop is fixed behind every docs page and its dot field keeps moving.
+    await page.waitForSelector('[data-ax-backdrop-root][data-ax-variant="page"] [data-ax-backdrop-dots]');
+    assert.equal(await page.$eval('[data-ax-backdrop-root]',el=>getComputedStyle(el).position),'fixed');
+    assert.equal(await page.$('.ax-doc-moire, .ax-halftone'),null);
+    const first=await page.$eval('[data-ax-backdrop-dots]',canvas=>canvas.toDataURL());
+    await page.waitForFunction(first=>document.querySelector('[data-ax-backdrop-dots]').toDataURL()!==first,{},first);
     for(const theme of ['dark','light']) {
       await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;},theme);
       const bg=await page.$eval('.main-pane .content-panel',el=>getComputedStyle(el).backgroundColor);

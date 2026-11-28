@@ -57,7 +57,8 @@ The window title is **ax — Command Center (desktop)**. Closing it stops the em
 |-----------------|---------|-------------|
 | `[path]` | current directory | Project root containing `.ax/ax.db` |
 | `--port` | `7070` | Listen port for the embedded `ax-web` server |
-| `--bind` | `127.0.0.1` | Bind address |
+| `--bind` | `127.0.0.1` | Bind address. Anything other than loopback needs Command Center sign-in, or the server refuses to start |
+| `--allow-anonymous-lan` | off | Start on a non-loopback `--bind` without sign-in (also `AX_WEB_ALLOW_ANONYMOUS_LAN=1`). Anyone who can reach the address can read and change the project |
 
 ## Pages
 

@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 
 pub async fn run(
     path: Option<String>,
@@ -9,7 +9,7 @@ pub async fn run(
     open: bool,
     token: Option<String>,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let share_token = token.unwrap_or_else(|| Uuid::new_v4().to_string().replace('-', ""));
     #[cfg(not(feature = "web"))]
     {
@@ -27,6 +27,7 @@ pub async fn run(
             open,
             bind,
             share_token: Some(share_token),
+            allow_anonymous_lan: false,
         })
         .await
     }
