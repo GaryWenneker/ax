@@ -78,7 +78,8 @@ Examples:
   ax init --all            Refresh existing ax projects under the home directory
   ax index --force         Rebuild the index from scratch";
 
-pub const UNINIT_LONG: &str = "Remove ax from a project: the git sync hooks, then the .ax/ directory.
+pub const UNINIT_LONG: &str =
+    "Remove ax from a project: the git sync hooks, then the .ax/ directory.
 
 Permanently deletes everything in .ax/: the index and stored memories (ax.db),
 project rules and skills (policy/), shared memories (memory/) and backups.

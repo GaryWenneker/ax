@@ -883,7 +883,10 @@ fn fetch_bounded(url: &str, policy: reqwest::redirect::Policy) -> Result<Vec<u8>
             return Err(format!("GET {url} returned {}", response.status()));
         }
         let too_large = || "download is larger than 25 MiB".to_string();
-        if response.content_length().is_some_and(|len| len > MAX_DOWNLOAD) {
+        if response
+            .content_length()
+            .is_some_and(|len| len > MAX_DOWNLOAD)
+        {
             return Err(too_large());
         }
         ax_utils::read_to_end_bounded(response, MAX_DOWNLOAD).map_err(|e| {
@@ -946,10 +949,7 @@ mod tests {
 
     #[test]
     fn http_bytes_rejects_a_declared_oversize_body_without_reading_it() {
-        let url = stalling_server(
-            "HTTP/1.1 200 OK\r\nContent-Length: 104857600\r\n\r\n",
-            1024,
-        );
+        let url = stalling_server("HTTP/1.1 200 OK\r\nContent-Length: 104857600\r\n\r\n", 1024);
         let started = std::time::Instant::now();
         let err = http_bytes(&url).unwrap_err();
         assert!(err.contains("25 MiB"), "{err}");

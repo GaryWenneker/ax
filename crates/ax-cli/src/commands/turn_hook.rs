@@ -272,7 +272,6 @@ fn build_record(
     now_dirty: &BTreeMap<String, String>,
     commits: &[Commit],
 ) -> Option<TurnRecord> {
-
     let mut files: Vec<String> = snapshot
         .dirty
         .keys()
@@ -695,12 +694,7 @@ mod tests {
     }
 
     fn dirty_passes(root: &Path) -> usize {
-        DIRTY_PASSES
-            .lock()
-            .unwrap()
-            .get(root)
-            .copied()
-            .unwrap_or(0)
+        DIRTY_PASSES.lock().unwrap().get(root).copied().unwrap_or(0)
     }
 
     #[tokio::test]

@@ -77,7 +77,10 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("memory")).unwrap();
         std::fs::write(dir.path().join("ax.db"), "").unwrap();
         let text = describe(dir.path());
-        assert!(text.contains("policy/ (project rules and skills)"), "{text}");
+        assert!(
+            text.contains("policy/ (project rules and skills)"),
+            "{text}"
+        );
         assert!(text.contains("memory/ (shared memories)"), "{text}");
         assert!(text.contains("ax.db (index and stored memories)"), "{text}");
     }

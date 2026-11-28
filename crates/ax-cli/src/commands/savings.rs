@@ -368,11 +368,17 @@ mod hook_install_tests {
         install_cursor_hook(&dir).unwrap();
 
         assert!(
-            fs::symlink_metadata(&link).unwrap().file_type().is_symlink(),
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
             "hooks.json is still a symlink"
         );
         let merged: Value = serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
-        assert_eq!(merged["hooks"]["preToolUse"][0]["command"], "./hooks/mine.sh");
+        assert_eq!(
+            merged["hooks"]["preToolUse"][0]["command"],
+            "./hooks/mine.sh"
+        );
         assert_eq!(
             merged["hooks"]["sessionStart"][0]["command"],
             "./hooks/ax-session-model.sh"
