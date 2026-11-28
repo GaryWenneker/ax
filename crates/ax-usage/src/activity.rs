@@ -576,7 +576,10 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let db = dir.join("usage.db");
         std::env::set_var("AX_USAGE_DB", db.display().to_string());
-        let _ = open_pool_at(&db).await.unwrap();
+        // Close the pool instead of dropping it: a dropped pool closes its
+        // connections in the background, and Windows cannot remove a folder
+        // while one of them still holds the database file open.
+        open_pool_at(&db).await.unwrap().close().await;
         (TempRoot(dir), guard)
     }
 

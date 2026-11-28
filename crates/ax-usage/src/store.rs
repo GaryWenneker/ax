@@ -540,10 +540,18 @@ mod tests {
             .execute(&first)
             .await
             .unwrap();
+        // On Unix the file is removed while the cached pool still has it open,
+        // which is the case the file identity check catches. Windows cannot
+        // delete a file that has an open handle, so there the pool is closed
+        // first; the file is still removed and a fresh one must come back.
+        #[cfg(unix)]
         drop(first);
+        #[cfg(not(unix))]
+        first.close().await;
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
+        assert!(!path.exists(), "the database file was not removed");
         let second = open_pool().await.unwrap();
         let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mcp_call_log")
             .fetch_one(&second)
