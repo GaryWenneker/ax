@@ -201,11 +201,15 @@ fn guard_targets(cwd: &Path, root: &Path) -> Option<Vec<GuardTarget>> {
             .filter(|entry| !entry.is_deleted())
             .filter_map(|entry| {
                 let abs_path = top.join(&entry.path);
+                // Shown with '/' on every platform, like the porcelain input
+                // and the project-relative paths ax stores elsewhere.
                 let rel_path = abs_path
                     .strip_prefix(&root)
                     .ok()?
-                    .to_string_lossy()
-                    .into_owned();
+                    .components()
+                    .map(|part| part.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
                 abs_path
                     .is_file()
                     .then_some(GuardTarget { rel_path, abs_path })

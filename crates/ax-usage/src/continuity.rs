@@ -527,7 +527,7 @@ fn ids(items: &[KnowledgeItem], kind: ItemKind) -> Vec<String> {
 fn hash_body(body: &CheckpointBody) -> Result<String, String> {
     let bytes = serde_json::to_vec(body).map_err(|error| error.to_string())?;
     let digest = Sha256::digest(bytes);
-    Ok(format!("{digest:x}"))
+    Ok(hex::encode(digest))
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
