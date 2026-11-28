@@ -122,7 +122,13 @@ pub struct OptimizationRow {
 
 pub async fn flush(path: &Path, snapshot: &PersistedSnapshot) -> Result<(), String> {
     let pool = open(path).await?;
-    ensure_schema(&pool).await?;
+    let result = flush_into(&pool, snapshot).await;
+    pool.close().await;
+    result
+}
+
+async fn flush_into(pool: &SqlitePool, snapshot: &PersistedSnapshot) -> Result<(), String> {
+    ensure_schema(pool).await?;
     // One transaction: one commit for the whole snapshot, and a failure part
     // way leaves the database as it was.
     let mut tx = pool.begin().await.map_err(|err| err.to_string())?;
@@ -225,21 +231,64 @@ pub async fn flush(path: &Path, snapshot: &PersistedSnapshot) -> Result<(), Stri
 }
 
 pub async fn load(path: &Path) -> Result<PersistedSnapshot, String> {
-    if !path.exists() {
-        return Ok(PersistedSnapshot {
-            sessions: Vec::new(),
-            turns: Vec::new(),
-            tools: Vec::new(),
-            models: Vec::new(),
-            optimizations: Vec::new(),
-        });
+    // A report only reads: a missing database stays missing, and an existing
+    // one is opened read-only and gets no tables added.
+    if !tokio::fs::try_exists(path).await.unwrap_or(false) {
+        return Ok(empty_snapshot());
     }
-    let pool = open(path).await?;
-    ensure_schema(&pool).await?;
-    let session_rows = sqlx::query("SELECT id, project_id, created_at, updated_at, repository_root, active_branch, cache_namespace FROM agent_sessions")
-        .fetch_all(&pool)
+    let pool = open_read_only(path).await?;
+    let result = load_from(&pool).await;
+    pool.close().await;
+    result
+}
+
+fn empty_snapshot() -> PersistedSnapshot {
+    PersistedSnapshot {
+        sessions: Vec::new(),
+        turns: Vec::new(),
+        tools: Vec::new(),
+        models: Vec::new(),
+        optimizations: Vec::new(),
+    }
+}
+
+/// The agent tables that exist in the database behind `pool`.
+async fn existing_tables(pool: &SqlitePool) -> Result<Vec<String>, String> {
+    let rows = sqlx::query(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN \
+         ('agent_sessions', 'agent_turns', 'agent_tool_calls', 'agent_model_calls', 'agent_optimizations')",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|err| err.to_string())?;
+    Ok(rows.iter().map(|row| row.get::<String, _>(0)).collect())
+}
+
+/// Run `sql` when `table` exists; a table that was never created has no rows.
+async fn rows_of(
+    pool: &SqlitePool,
+    tables: &[String],
+    table: &str,
+    sql: &str,
+) -> Result<Vec<sqlx::sqlite::SqliteRow>, String> {
+    if !tables.iter().any(|name| name == table) {
+        return Ok(Vec::new());
+    }
+    sqlx::query(sql)
+        .fetch_all(pool)
         .await
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| err.to_string())
+}
+
+async fn load_from(pool: &SqlitePool) -> Result<PersistedSnapshot, String> {
+    let tables = existing_tables(pool).await?;
+    let session_rows = rows_of(
+        pool,
+        &tables,
+        "agent_sessions",
+        "SELECT id, project_id, created_at, updated_at, repository_root, active_branch, cache_namespace FROM agent_sessions",
+    )
+    .await?;
     let sessions = session_rows
         .iter()
         .map(|row| SessionRow {
@@ -252,10 +301,13 @@ pub async fn load(path: &Path) -> Result<PersistedSnapshot, String> {
             cache_namespace: row.get("cache_namespace"),
         })
         .collect();
-    let turn_rows = sqlx::query("SELECT id, session_id, sequence, started_at, ended_at, input_tokens, output_tokens, estimated_cost FROM agent_turns")
-        .fetch_all(&pool)
-        .await
-        .map_err(|err| err.to_string())?;
+    let turn_rows = rows_of(
+        pool,
+        &tables,
+        "agent_turns",
+        "SELECT id, session_id, sequence, started_at, ended_at, input_tokens, output_tokens, estimated_cost FROM agent_turns",
+    )
+    .await?;
     let turns = turn_rows
         .iter()
         .map(|row| TurnRow {
@@ -269,12 +321,13 @@ pub async fn load(path: &Path) -> Result<PersistedSnapshot, String> {
             estimated_cost: row.get("estimated_cost"),
         })
         .collect();
-    let tool_rows = sqlx::query(
+    let tool_rows = rows_of(
+        pool,
+        &tables,
+        "agent_tool_calls",
         "SELECT id, session_id, turn_id, tool_name, input_hash, output_tokens, duration_ms, cache_hit, repeated, estimated_cost FROM agent_tool_calls",
     )
-    .fetch_all(&pool)
-    .await
-    .map_err(|err| err.to_string())?;
+    .await?;
     let tools = tool_rows
         .iter()
         .map(|row| ToolEconomicsRecord {
@@ -295,12 +348,13 @@ pub async fn load(path: &Path) -> Result<PersistedSnapshot, String> {
             alternative: None,
         })
         .collect();
-    let model_rows = sqlx::query(
+    let model_rows = rows_of(
+        pool,
+        &tables,
+        "agent_model_calls",
         "SELECT id, session_id, turn_id, provider, model, input_tokens, output_tokens, cached_input_tokens, estimated_cost, created_at FROM agent_model_calls",
     )
-    .fetch_all(&pool)
-    .await
-    .map_err(|err| err.to_string())?;
+    .await?;
     let models = model_rows
         .iter()
         .map(|row| ModelRow {
@@ -318,12 +372,13 @@ pub async fn load(path: &Path) -> Result<PersistedSnapshot, String> {
             created_at: row.get::<i64, _>("created_at") as u64,
         })
         .collect();
-    let optimization_rows = sqlx::query(
+    let optimization_rows = rows_of(
+        pool,
+        &tables,
+        "agent_optimizations",
         "SELECT id, tool_call_id, alternative_tool, current_tokens, alternative_tokens, reduction_percent, confidence, reason, accepted FROM agent_optimizations",
     )
-    .fetch_all(&pool)
-    .await
-    .map_err(|err| err.to_string())?;
+    .await?;
     let optimizations = optimization_rows
         .iter()
         .map(|row| {
@@ -362,11 +417,25 @@ pub async fn record_advice(
     observation: &crate::types::ToolCallObservation,
     alternative: &ToolAlternative,
 ) -> Result<(), String> {
-    if !path.is_file() {
+    let is_file = tokio::fs::metadata(path)
+        .await
+        .map(|meta| meta.is_file())
+        .unwrap_or(false);
+    if !is_file {
         return Ok(());
     }
     let pool = open(path).await?;
-    ensure_schema(&pool).await?;
+    let result = record_advice_into(&pool, observation, alternative).await;
+    pool.close().await;
+    result
+}
+
+async fn record_advice_into(
+    pool: &SqlitePool,
+    observation: &crate::types::ToolCallObservation,
+    alternative: &ToolAlternative,
+) -> Result<(), String> {
+    ensure_schema(pool).await?;
     // The three rows are written together or not at all.
     let mut tx = pool.begin().await.map_err(|err| err.to_string())?;
     let now = std::time::SystemTime::now()
@@ -416,19 +485,39 @@ pub async fn record_advice(
     Ok(())
 }
 
+/// Each store call runs one transaction, so one connection is enough; the
+/// caller closes the pool when the call ends.
 async fn open(path: &Path) -> Result<SqlitePool, String> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|err| err.to_string())?;
     }
     let options = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(true);
-    SqlitePool::connect_with(options)
+    single_connection(options).await
+}
+
+async fn open_read_only(path: &Path) -> Result<SqlitePool, String> {
+    let options = SqliteConnectOptions::new().filename(path).read_only(true);
+    single_connection(options).await
+}
+
+async fn single_connection(options: SqliteConnectOptions) -> Result<SqlitePool, String> {
+    sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
         .await
         .map_err(|err| err.to_string())
 }
 
+/// Create the agent tables that are missing. When all of them exist this is
+/// one read of `sqlite_master` and no DDL.
 async fn ensure_schema(pool: &SqlitePool) -> Result<(), String> {
+    if existing_tables(pool).await?.len() == SCHEMA.matches("CREATE TABLE").count() {
+        return Ok(());
+    }
     for statement in SCHEMA.split(';') {
         let trimmed = statement.trim();
         if trimmed.is_empty() {
@@ -705,5 +794,93 @@ mod tests {
         assert!(err.contains("refused"), "{err}");
         let loaded = load(&db).await.unwrap();
         assert!(loaded.sessions.is_empty() && loaded.tools.is_empty());
+    }
+
+    async fn raw_pool(db: &Path) -> SqlitePool {
+        SqlitePool::connect_with(
+            SqliteConnectOptions::new()
+                .filename(db)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn table_names(db: &Path) -> Vec<String> {
+        let pool = raw_pool(db).await;
+        let names =
+            sqlx::query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+                .iter()
+                .map(|row| row.get::<String, _>(0))
+                .collect();
+        pool.close().await;
+        names
+    }
+
+    #[tokio::test]
+    async fn load_reads_without_adding_tables_to_a_database_that_has_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("ax.db");
+        let pool = raw_pool(&db).await;
+        sqlx::query("CREATE TABLE other (x INTEGER)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+
+        let loaded = load(&db).await.unwrap();
+        assert!(loaded.sessions.is_empty() && loaded.optimizations.is_empty());
+        assert_eq!(table_names(&db).await, vec!["other".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn load_and_the_schema_check_do_not_wait_on_another_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("ax.db");
+        flush(&db, &snapshot()).await.unwrap();
+
+        // Another process holds the write lock for the whole check.
+        let holder = raw_pool(&db).await;
+        let mut writer = holder.acquire().await.unwrap();
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut *writer)
+            .await
+            .unwrap();
+
+        let loaded = tokio::time::timeout(std::time::Duration::from_secs(2), load(&db))
+            .await
+            .expect("load waited on the writer")
+            .unwrap();
+        assert_eq!(loaded.sessions.len(), 1);
+        let pool = open(&db).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), ensure_schema(&pool))
+            .await
+            .expect("ensure_schema waited on the writer")
+            .unwrap();
+        pool.close().await;
+
+        sqlx::query("ROLLBACK").execute(&mut *writer).await.unwrap();
+        drop(writer);
+        holder.close().await;
+    }
+
+    #[tokio::test]
+    async fn flush_adds_the_tables_a_partial_database_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("ax.db");
+        let pool = raw_pool(&db).await;
+        sqlx::query("CREATE TABLE agent_sessions (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, repository_root TEXT, active_branch TEXT, cache_namespace TEXT NOT NULL DEFAULT '')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+
+        flush(&db, &snapshot()).await.unwrap();
+        let loaded = load(&db).await.unwrap();
+        assert_eq!(loaded.sessions.len(), 1);
+        assert_eq!(loaded.optimizations.len(), 2);
     }
 }
