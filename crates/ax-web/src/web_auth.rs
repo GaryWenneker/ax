@@ -60,9 +60,11 @@ fn local_request(headers: &HeaderMap, peer: SocketAddr, port: u16) -> bool {
 }
 
 async fn db() -> Result<SqlitePool, ErrorResponse> {
-    crate::global_pool::global_pool()
-        .await
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Database unavailable"))
+    crate::global_pool::global_pool().await.map_err(|e| {
+        // The cause stays in the log; the response names no path or SQL.
+        tracing::error!("global database unavailable: {e}");
+        err(StatusCode::INTERNAL_SERVER_ERROR, "Database unavailable")
+    })
 }
 async fn enabled(pool: &SqlitePool) -> Result<bool, ErrorResponse> {
     sqlx::query_scalar::<_, i64>("SELECT enabled FROM web_auth_settings WHERE singleton=1")
