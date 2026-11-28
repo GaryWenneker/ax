@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import AxMark from './components/AxMark';
 import StatsPage from './pages/Stats';
 import NodesPage from './pages/Nodes';
 import GraphPage from './pages/Graph';
@@ -335,7 +336,7 @@ function AppShell() {
                 <i className="codicon codicon-menu" aria-hidden="true" />
               </button>
               <span className="titlebar-brand" title={AX_FULL_NAME}>
-                <a href="/" className="ax-app-wordmark" aria-label="Ax home">Ax<span aria-hidden="true">_</span></a>
+                <a href="/" className="ax-app-wordmark" aria-label="Ax home"><AxMark /></a>
                 <span>{portalLayout ? '| Command Center' : '/ graph + policy'}</span>
               </span>
             </div>
@@ -420,7 +421,7 @@ function AppShell() {
             </div>
           ))}
           <div className="sidebar-logo">
-            <a href="/" className="ax-app-wordmark ax-app-wordmark--sidebar" aria-label="Ax home">Ax<span aria-hidden="true">_</span></a>
+            <a href="/" className="ax-app-wordmark ax-app-wordmark--sidebar" aria-label="Ax home"><AxMark /></a>
           </div>
         </nav>
 
