@@ -375,4 +375,53 @@ mod tests {
         assert_eq!(report.currency, "USD");
         assert!((report.estimated_model_cost.unwrap() - 2.0).abs() < 0.001);
     }
+
+    fn report_with_budget(currency: &str) -> EconomicsReport {
+        EconomicsReport {
+            session_id: None,
+            turns: 0,
+            models: Vec::new(),
+            input_tokens: 0,
+            output_tokens: 0,
+            cached_input_tokens: 0,
+            tool_output_tokens: BTreeMap::new(),
+            repeated_output_tokens: 0,
+            estimated_model_cost: None,
+            potential_optimization_cost: None,
+            largest_tool: None,
+            currency: currency.into(),
+            budget: Some(BudgetSnapshot {
+                spent: 10.8,
+                remaining: 54.0,
+                projected: 21.6,
+                currency: "USD".into(),
+                days_elapsed: 10,
+                days_remaining: 20,
+            }),
+        }
+    }
+
+    #[test]
+    fn eur_display_converts_every_budget_figure_and_labels_it() {
+        let mut report = report_with_budget("USD");
+        apply_display_currency(&mut report, "EUR", Some(1.08));
+        assert_eq!(report.currency, "EUR");
+        let budget = report.budget.expect("budget");
+        assert_eq!(budget.currency, "EUR");
+        assert!((budget.spent - 10.0).abs() < 1e-9, "{budget:?}");
+        assert!((budget.remaining - 50.0).abs() < 1e-9, "{budget:?}");
+        assert!((budget.projected - 20.0).abs() < 1e-9, "{budget:?}");
+        assert_eq!((budget.days_elapsed, budget.days_remaining), (10, 20));
+    }
+
+    #[test]
+    fn eur_display_without_a_rate_leaves_the_budget_in_usd() {
+        let mut report = report_with_budget("EUR");
+        apply_display_currency(&mut report, "EUR", None);
+        assert_eq!(report.currency, "USD");
+        let budget = report.budget.expect("budget");
+        assert_eq!(budget.currency, "USD");
+        assert!((budget.spent - 10.8).abs() < 1e-9, "{budget:?}");
+        assert!((budget.remaining - 54.0).abs() < 1e-9, "{budget:?}");
+    }
 }

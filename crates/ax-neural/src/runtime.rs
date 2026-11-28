@@ -119,12 +119,10 @@ mod tests {
 
     #[test]
     fn runtime_cpu_embeds_without_network() {
-        let Some(backend) = active() else {
-            // Default build: feature off — still compile the test, skip body.
-            assert!(!crate::runtime_built());
-            return;
-        };
-        assert!(crate::runtime_built());
+        // The CPU backend is plain Rust and is tested in every build; `active`
+        // hands it out only when the runtime feature is on.
+        assert_eq!(active().is_some(), crate::runtime_built());
+        let backend = CpuBackend;
         assert!(backend.healthy());
         let a = backend.embed("parser").unwrap();
         let b = backend.embed("parser").unwrap();

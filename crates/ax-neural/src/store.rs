@@ -638,7 +638,7 @@ pub async fn promoted_checksum(
 
 pub async fn list_models(pool: &SqlitePool) -> Result<Vec<SqliteRow>, String> {
     sqlx::query(
-        "SELECT model_id, version, checksum, platforms, promoted FROM neural_model ORDER BY created_at ASC",
+        "SELECT model_id, version, checksum, platforms, promoted FROM neural_model ORDER BY created_at ASC, rowid ASC",
     )
     .fetch_all(pool)
     .await
@@ -1200,12 +1200,11 @@ mod tests {
         assert_eq!(ids(&filtered), vec!["m-near", "m-far"]);
     }
 
+    // Runs only where the runtime backend exists, so a default build lists it as not run.
+    #[cfg(feature = "neural-runtime")]
     #[tokio::test]
     async fn a_hash_backend_never_ranks_semantic_search_even_when_the_lexical_challenger_is_admitted(
     ) {
-        if !crate::runtime_built() {
-            return;
-        }
         let (_dir, database) = db().await;
         let pool = database.pool();
         let backend = crate::runtime::active().expect("runtime");
@@ -1258,6 +1257,41 @@ mod tests {
             (before..=after).contains(&at),
             "{before} <= {at} <= {after}"
         );
+    }
+
+    #[tokio::test]
+    async fn list_models_breaks_created_at_ties_by_registration_order_whatever_the_plan() {
+        let (_dir, database) = db().await;
+        let pool = database.pool();
+        // An index whose tie order differs from insertion order: a plain
+        // `ORDER BY created_at` may walk it and return ties in version order.
+        sqlx::query("CREATE INDEX test_model_created ON neural_model (created_at, version DESC)")
+            .execute(pool)
+            .await
+            .unwrap();
+        for version in ["1", "2", "10"] {
+            let model = ModelRecord {
+                model_id: "m",
+                version,
+                model_type: "embedding",
+                dataset_version: "ds",
+                checksum: "c",
+                platforms: "macos-arm64",
+                metrics_json: "{}",
+            };
+            register(pool, &model).await.unwrap();
+        }
+        sqlx::query("UPDATE neural_model SET created_at = 1")
+            .execute(pool)
+            .await
+            .unwrap();
+        let listed: Vec<String> = list_models(pool)
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| row.get("version"))
+            .collect();
+        assert_eq!(listed, ["1", "2", "10"]);
     }
 
     #[tokio::test]

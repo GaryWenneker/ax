@@ -481,3 +481,205 @@ async fn ensure_schema(pool: &SqlitePool) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::ToolCallObservation;
+
+    fn alternative(confidence: Confidence) -> ToolAlternative {
+        ToolAlternative {
+            tool_name: "ax_explore".into(),
+            estimated_current_tokens: 4000,
+            estimated_alternative_tokens: 600,
+            estimated_reduction_percent: 85.0,
+            confidence,
+            reason: "graph answer".into(),
+            rule: "rg-symbol".into(),
+        }
+    }
+
+    fn snapshot() -> PersistedSnapshot {
+        PersistedSnapshot {
+            sessions: vec![SessionRow {
+                id: "s1".into(),
+                project_id: "p".into(),
+                created_at: 10,
+                updated_at: 20,
+                repository_root: Some("/repo".into()),
+                active_branch: Some("main".into()),
+                cache_namespace: "ns".into(),
+            }],
+            turns: vec![TurnRow {
+                id: "t1".into(),
+                session_id: "s1".into(),
+                sequence: 1,
+                started_at: Some(11),
+                ended_at: Some(19),
+                input_tokens: 300,
+                output_tokens: 40,
+                estimated_cost: Some(0.5),
+            }],
+            tools: vec![ToolEconomicsRecord {
+                id: "c1".into(),
+                session_id: "s1".into(),
+                turn_id: "t1".into(),
+                tool_name: "rg".into(),
+                input_hash: "h".into(),
+                input_bytes: None,
+                output_bytes: None,
+                output_tokens: 4000,
+                token_confidence: "estimated".into(),
+                duration_ms: 7,
+                execution_cost_usd: 0.0,
+                context_cost_usd: Some(0.01),
+                cache_hit: false,
+                repeated: true,
+                alternative: None,
+            }],
+            models: vec![ModelRow {
+                id: "m1".into(),
+                session_id: "s1".into(),
+                turn_id: Some("t1".into()),
+                provider: Some("anthropic".into()),
+                model: Some("claude".into()),
+                input_tokens: Some(300),
+                output_tokens: Some(40),
+                cached_input_tokens: Some(5),
+                estimated_cost: Some(0.5),
+                created_at: 12,
+            }],
+            optimizations: vec![
+                OptimizationRow {
+                    id: "o1".into(),
+                    tool_call_id: "c1".into(),
+                    alternative: alternative(Confidence::High),
+                    accepted: true,
+                },
+                OptimizationRow {
+                    id: "o2".into(),
+                    tool_call_id: "c1".into(),
+                    alternative: alternative(Confidence::Medium),
+                    accepted: false,
+                },
+            ],
+            cache_entries: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn flush_then_load_round_trips_every_row_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("ax.db");
+        flush(&db, &snapshot()).await.unwrap();
+        let loaded = load(&db).await.unwrap();
+
+        assert_eq!(loaded.sessions.len(), 1);
+        let session = &loaded.sessions[0];
+        assert_eq!(
+            (
+                session.created_at,
+                session.updated_at,
+                session.cache_namespace.as_str()
+            ),
+            (10, 20, "ns")
+        );
+        assert_eq!(session.repository_root.as_deref(), Some("/repo"));
+        let turn = &loaded.turns[0];
+        assert_eq!(
+            (
+                turn.sequence,
+                turn.ended_at,
+                turn.input_tokens,
+                turn.output_tokens
+            ),
+            (1, Some(19), 300, 40)
+        );
+        let tool = &loaded.tools[0];
+        assert_eq!((tool.output_tokens, tool.duration_ms), (4000, 7));
+        assert!(tool.repeated && !tool.cache_hit);
+        assert_eq!(tool.context_cost_usd, Some(0.01));
+        let model = &loaded.models[0];
+        assert_eq!(model.cached_input_tokens, Some(5));
+        assert_eq!(model.model.as_deref(), Some("claude"));
+
+        let mut optimizations = loaded.optimizations.clone();
+        optimizations.sort_by(|a, b| a.id.cmp(&b.id));
+        assert_eq!(optimizations.len(), 2);
+        let first = &optimizations[0];
+        assert_eq!(first.tool_call_id, "c1");
+        assert!(first.accepted);
+        assert_eq!(first.alternative.confidence, Confidence::High);
+        assert_eq!(first.alternative.tool_name, "ax_explore");
+        assert_eq!(first.alternative.estimated_current_tokens, 4000);
+        assert_eq!(first.alternative.estimated_alternative_tokens, 600);
+        assert_eq!(first.alternative.estimated_reduction_percent, 85.0);
+        assert_eq!(first.alternative.reason, "graph answer");
+        assert!(!optimizations[1].accepted);
+        assert_eq!(optimizations[1].alternative.confidence, Confidence::Medium);
+    }
+
+    #[tokio::test]
+    async fn load_of_a_missing_database_is_empty_and_creates_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("absent.db");
+        let loaded = load(&db).await.unwrap();
+        assert!(loaded.sessions.is_empty() && loaded.optimizations.is_empty());
+        assert!(!db.exists());
+    }
+
+    fn observation(call_id: &str) -> ToolCallObservation {
+        ToolCallObservation {
+            session_id: "conv-1".into(),
+            turn_id: "gen-1".into(),
+            call_id: call_id.into(),
+            tool_name: "Read".into(),
+            arguments: serde_json::json!({}),
+            repository_state: String::new(),
+            known_graph_entities: Vec::new(),
+            indexed_paths: Vec::new(),
+            output_text_for_estimate: None,
+            output_token_estimate: None,
+            output_bytes: None,
+            duration_ms: 0,
+            success: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn record_advice_writes_session_call_and_optimization_into_an_existing_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("ax.db");
+        record_advice(&db, &observation("g1"), &alternative(Confidence::Low))
+            .await
+            .unwrap();
+        assert!(!db.exists(), "a missing database is not created");
+
+        flush(&db, &snapshot()).await.unwrap();
+        record_advice(&db, &observation("g1"), &alternative(Confidence::Low))
+            .await
+            .unwrap();
+        let loaded = load(&db).await.unwrap();
+        assert!(loaded.sessions.iter().any(|s| s.id == "conv-1"));
+        let call = loaded
+            .tools
+            .iter()
+            .find(|t| t.id == "g1")
+            .expect("call row");
+        assert_eq!(
+            (call.session_id.as_str(), call.turn_id.as_str()),
+            ("conv-1", "gen-1")
+        );
+        assert_eq!(call.tool_name, "Read");
+        let advice = loaded
+            .optimizations
+            .iter()
+            .find(|o| o.tool_call_id == "g1")
+            .expect("optimization row");
+        assert_eq!(advice.id, "opt-g1");
+        assert!(!advice.accepted);
+        assert_eq!(advice.alternative.confidence, Confidence::Low);
+        // The first run's rows are still there.
+        assert!(loaded.optimizations.iter().any(|o| o.id == "o1"));
+    }
+}
