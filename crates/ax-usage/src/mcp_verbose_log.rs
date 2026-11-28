@@ -693,18 +693,23 @@ mod tests {
         assert!(nearest_dated_log_before(&dir, before3).is_none());
     }
 
-    fn tempfile_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("ax-vlog-{}", uuid_simple()));
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    /// A temporary project folder, removed when the test ends (also on panic).
+    struct TestDir {
+        _tmp: tempfile::TempDir,
+        path: PathBuf,
     }
 
-    fn uuid_simple() -> u64 {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0)
+    impl std::ops::Deref for TestDir {
+        type Target = PathBuf;
+        fn deref(&self) -> &PathBuf {
+            &self.path
+        }
+    }
+
+    fn tempfile_dir() -> TestDir {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_path_buf();
+        TestDir { _tmp: tmp, path }
     }
 
     #[test]

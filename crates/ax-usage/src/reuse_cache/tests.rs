@@ -330,7 +330,11 @@ fn conversation_key_prefers_active_session() {
 
 #[test]
 fn cap_defaults_to_two_megabytes() {
-    assert_eq!(reuse_cap_bytes(), 2 * 1024 * 1024);
+    // Parsed from a value, so a developer's own AX_REUSE_CACHE_BYTES does not
+    // change the result.
+    assert_eq!(reuse_cap_from(None), 2 * 1024 * 1024);
+    assert_eq!(reuse_cap_from(Some("not a number")), 2 * 1024 * 1024);
+    assert_eq!(reuse_cap_from(Some(" 4096 ")), 4096);
 }
 
 // ---------- L2: store ----------

@@ -354,9 +354,12 @@ pub fn conversation_key(active: Option<String>) -> String {
 }
 
 pub fn reuse_cap_bytes() -> i64 {
-    std::env::var("AX_REUSE_CACHE_BYTES")
-        .ok()
-        .and_then(|raw| raw.trim().parse::<i64>().ok())
+    reuse_cap_from(std::env::var("AX_REUSE_CACHE_BYTES").ok().as_deref())
+}
+
+/// The cap for a raw `AX_REUSE_CACHE_BYTES` value.
+fn reuse_cap_from(raw: Option<&str>) -> i64 {
+    raw.and_then(|raw| raw.trim().parse::<i64>().ok())
         .unwrap_or(DEFAULT_CAP_BYTES)
 }
 

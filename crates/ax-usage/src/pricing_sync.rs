@@ -718,20 +718,11 @@ mod tests {
     };
     use serde_json::json;
 
-    use crate::store::USAGE_ENV_LOCK;
-
-    fn temp_db(name: &str) -> std::path::PathBuf {
-        let mut p = std::env::temp_dir();
-        p.push(format!("ax-pricing-test-{name}-{}.db", std::process::id()));
-        p
-    }
+    use crate::store::UsageDbEnv;
 
     #[tokio::test]
     async fn lookup_price_as_of_prefers_exact_id_over_superstring() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_db("exact");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
 
         let pool = open_pool().await.expect("pool");
         let rows = parse_openrouter_models(&json!({
@@ -755,8 +746,6 @@ mod tests {
             .await
             .unwrap()
             .expect("price");
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(&db);
         assert!(
             (found.0.input_per_mtok - 2.5).abs() < 1e-9,
             "gpt-4o priced at {}",
@@ -766,10 +755,7 @@ mod tests {
 
     #[tokio::test]
     async fn failed_sync_is_recorded_as_error() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_db("syncfail");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
         let pool = open_pool().await.expect("pool");
         // A previous good run.
         record_meta(&pool, SOURCE_OPENROUTER, "ok", None, 10, Some("2026-01-01"))
@@ -781,8 +767,6 @@ mod tests {
         })
         .await;
         let status = pricing_status().await.unwrap();
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(&db);
 
         assert!(result.is_err());
         let or = status
@@ -797,10 +781,7 @@ mod tests {
 
     #[tokio::test]
     async fn successful_sync_is_recorded_as_ok() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_db("syncok");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
         let _ = open_pool().await.expect("pool");
         let result = sync_pricing_with(true, || async {
             Ok(crate::pricing_fetch::FetchBundle {
@@ -816,8 +797,6 @@ mod tests {
         })
         .await;
         let status = pricing_status().await.unwrap();
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(&db);
 
         let report = result.expect("sync ok");
         assert_eq!(report.status, "ok");
@@ -840,10 +819,7 @@ mod tests {
 
     #[tokio::test]
     async fn price_history_is_one_model_over_calendar_days() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_db("histone");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
         let pool = open_pool().await.expect("pool");
         let rows = parse_openrouter_models(&json!({
             "data": [
@@ -866,8 +842,6 @@ mod tests {
         }
         let exact = price_history("claude-sonnet-4", None, 3).await.unwrap();
         let wildcard = price_history("%", None, 30).await.unwrap();
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(&db);
 
         // Three calendar days of one model, oldest first.
         assert_eq!(exact.len(), 3, "{exact:?}");
@@ -880,10 +854,7 @@ mod tests {
 
     #[tokio::test]
     async fn upsert_and_history() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_db("hist");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
 
         let pool = open_pool().await.expect("pool");
         let (yesterday, today) = (days_ago(1), days_ago(0));
@@ -930,8 +901,5 @@ mod tests {
         // OpenRouter wins when both sources have a row for the same day.
         assert_eq!(found.1, SOURCE_OPENROUTER);
         assert!((found.0.input_per_mtok - 3.0).abs() < 1e-9);
-
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(db);
     }
 }

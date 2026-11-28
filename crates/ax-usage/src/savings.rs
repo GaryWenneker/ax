@@ -234,6 +234,7 @@ fn counterfactual_tokens_for_file(
     span: &FileSpan,
     tpl: i64,
     fallback: i64,
+    mode: CounterfactualMode,
 ) -> (i64, bool) {
     let full = count_file_tokens(resolved);
     let range = if span.has_line_span() {
@@ -259,7 +260,7 @@ fn counterfactual_tokens_for_file(
         (heuristic, false)
     };
 
-    match counterfactual_mode() {
+    match mode {
         CounterfactualMode::Full => pick(false),
         CounterfactualMode::Range => pick(true),
         CounterfactualMode::Max => {
@@ -374,6 +375,24 @@ pub fn estimate_savings(
     response_text: &str,
     project_root: Option<&Path>,
 ) -> SavingsEstimate {
+    estimate_savings_in_mode(
+        tool,
+        structured,
+        response_text,
+        project_root,
+        counterfactual_mode(),
+    )
+}
+
+/// `estimate_savings` with an explicit counterfactual mode instead of the
+/// `AX_SAVINGS_CF_MODE` environment variable.
+fn estimate_savings_in_mode(
+    tool: &str,
+    structured: &Value,
+    response_text: &str,
+    project_root: Option<&Path>,
+    mode: CounterfactualMode,
+) -> SavingsEstimate {
     let response_tokens_est = count_tokens(response_text) as i64;
     let savings_eligible = is_savings_eligible_tool(tool);
     let response_preview = if response_text.is_empty() {
@@ -400,7 +419,7 @@ pub fn estimate_savings(
     let mut counterfactual_exact_files: i64 = 0;
     for (file, span) in &files {
         let resolved = resolve_file_path(file, project_root);
-        let (tokens, exact) = counterfactual_tokens_for_file(&resolved, span, tpl, fallback);
+        let (tokens, exact) = counterfactual_tokens_for_file(&resolved, span, tpl, fallback, mode);
         counterfactual_tokens_est += tokens;
         if exact {
             counterfactual_exact_files += 1;
@@ -2479,7 +2498,7 @@ mod tests {
     use crate::tokenizer::count_file_tokens;
     use serde_json::json;
 
-    use crate::store::USAGE_ENV_LOCK;
+    use crate::store::UsageDbEnv;
 
     fn long_response(chars: usize) -> String {
         "response text ".repeat(chars / 14 + 1)
@@ -2631,8 +2650,8 @@ mod tests {
 
     #[test]
     fn readable_file_counterfactual_is_measured_exactly() {
-        let dir = std::env::temp_dir().join("ax-usage-savings-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let file = dir.join("measured.rs");
         std::fs::write(&file, "fn alpha() {}\nfn beta() {}\nfn gamma() {}\n").unwrap();
 
@@ -2673,9 +2692,8 @@ mod tests {
 
     #[test]
     fn range_mode_uses_line_span_when_set() {
-        let dir = std::env::temp_dir().join("ax-usage-savings-range-mode");
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("span.rs");
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("span.rs");
         std::fs::write(
             &file,
             (1..=50)
@@ -2685,14 +2703,18 @@ mod tests {
         )
         .unwrap();
 
-        std::env::set_var("AX_SAVINGS_CF_MODE", "range");
+        // The mode is passed in, not set in the shared process environment,
+        // so parallel tests that expect the default `full` mode are unaffected.
         let structured = json!({ "node": { "filePath": "span.rs", "startLine": 2, "endLine": 4 } });
-        let est = estimate_savings("ax_node", &structured, "", Some(&dir));
+        let est = estimate_savings_in_mode(
+            "ax_node",
+            &structured,
+            "",
+            Some(dir.path()),
+            CounterfactualMode::Range,
+        );
         let full_only = count_file_tokens(&file).unwrap();
         assert!(est.counterfactual_tokens_est < full_only);
-        std::env::remove_var("AX_SAVINGS_CF_MODE");
-
-        let _ = std::fs::remove_file(&file);
     }
 
     #[test]
@@ -2852,10 +2874,7 @@ mod tests {
 
     #[tokio::test]
     async fn savings_summary_reads_the_price_catalog_once_for_all_days() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_usage_db_path("daily-prices");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
         let pool = open_pool().await.expect("pool");
         let day = |n: i64| {
             (chrono::Local::now().date_naive() - chrono::Duration::days(n))
@@ -2896,20 +2915,11 @@ mod tests {
                 crate::pricing::price_as_of(None, &d.date).await.0,
             ));
         }
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(&db);
 
         assert!(summary.daily.len() >= 4, "{:?}", summary.daily);
         let got: Vec<f64> = summary.daily.iter().map(|d| d.cost_saved_usd_est).collect();
         assert_eq!(got, expected);
         assert!(scans <= 1, "{scans} catalog reads for {} days", got.len());
-    }
-
-    fn temp_usage_db_path(label: &str) -> PathBuf {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static SEQ: AtomicU64 = AtomicU64::new(0);
-        let n = SEQ.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("ax-usage-{label}-{n}.db"))
     }
 
     async fn session_counts(session_id: &str) -> (Option<String>, i64, i64, i64) {
@@ -2926,10 +2936,7 @@ mod tests {
 
     #[tokio::test]
     async fn tag_session_model_merge() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_usage_db_path("merge");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
 
         record_session_model_tag("cursor", "sess-1", "composer-2.5-fast")
             .await
@@ -2962,17 +2969,11 @@ mod tests {
         let (model2, read2, grep2, ax2) = session_counts("sess-2").await;
         assert_eq!(model2.as_deref(), Some("composer-2.5-fast"));
         assert_eq!((read2, grep2, ax2), (7, 4, 3));
-
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(db);
     }
 
     #[tokio::test]
     async fn transcript_import_does_not_wipe_state_tokens() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_usage_db_path("vscdb-merge");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
 
         let state_row = crate::cursor_state::ComposerStateRow {
             session_id: "sess-vscdb".to_string(),
@@ -3008,17 +3009,11 @@ mod tests {
         assert_eq!(model.as_deref(), Some("composer-2.5-fast"));
         assert_eq!(input, Some(126_877));
         assert_eq!(read, 5);
-
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(db);
     }
 
     #[tokio::test]
     async fn cli_flush_records_graph_savings_and_skips_install() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_usage_db_path("cli-flush");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
         let _ = take_cli_stash();
 
         stash_cli_result(
@@ -3113,17 +3108,11 @@ mod tests {
             summary.cli_tokens_saved_est + 9,
             "combined total includes the CLI explore row and the MCP row"
         );
-
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(db);
     }
 
     #[tokio::test]
     async fn cli_flush_measures_a_markdown_file_exactly() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_usage_db_path("cli-md");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
         let _ = take_cli_stash();
 
         let dir = std::env::temp_dir().join(format!("ax-md-savings-{}", std::process::id()));
@@ -3172,8 +3161,6 @@ mod tests {
             "file tokens {file_tokens}, response {response_tokens}"
         );
 
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(&db);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -3205,25 +3192,18 @@ mod tests {
 
     #[tokio::test]
     async fn savings_insert_reports_a_database_that_cannot_be_opened() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let parent =
-            std::env::temp_dir().join(format!("ax-usage-not-a-dir-{}", std::process::id()));
+        let tmp = tempfile::tempdir().unwrap();
+        let parent = tmp.path().join("not-a-dir");
         std::fs::write(&parent, b"not a directory").unwrap();
-        let db = parent.join("usage.db");
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::at(parent.join("usage.db")).await;
         let result = record_mcp_call(sample_record()).await;
-        std::env::remove_var("AX_USAGE_DB");
-        std::fs::remove_file(&parent).ok();
         let err = result.expect_err("a file is not a directory for the usage database");
         assert!(!err.is_empty(), "{err}");
     }
 
     #[tokio::test]
     async fn imported_transcripts_store_the_project_path() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_usage_db_path("transcript-project");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
         let pool = open_pool().await.expect("pool");
         let project = "/Users/me/work/my_app";
         sqlx::query("INSERT INTO mcp_call_log(tool,project,response_chars,response_tokens_est,ok,created_at) VALUES ('ax_node',?,1,1,1,1)")
@@ -3265,8 +3245,6 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(&db);
         assert_eq!(
             rows,
             vec![
@@ -3279,10 +3257,7 @@ mod tests {
 
     #[tokio::test]
     async fn overlapping_sessions_do_not_share_mcp_calls() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_usage_db_path("overlap");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
         let pool = open_pool().await.expect("pool");
         let now = chrono::Utc::now().timestamp_millis();
         let hour = 3_600_000;
@@ -3316,8 +3291,6 @@ mod tests {
         })
         .await
         .expect("summary");
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(&db);
         let by_id = |id: &str| {
             summary
                 .agent_sessions
@@ -3335,10 +3308,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_session_that_started_before_the_period_still_owns_its_calls() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_usage_db_path("overlap-early");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
         let pool = open_pool().await.expect("pool");
         let now = chrono::Utc::now().timestamp_millis();
         let hour = 3_600_000;
@@ -3378,8 +3348,6 @@ mod tests {
         })
         .await
         .expect("summary");
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(&db);
         let late = summary
             .agent_sessions
             .iter()

@@ -406,13 +406,21 @@ mod tests {
         assert!(user_override_in(&config, "claude-sonnet-4-5").is_none());
     }
 
+    /// Built-in defaults only: never the developer's own ~/.ax/pricing.toml.
+    fn defaults_only() -> PricingConfig {
+        let dir = tempfile::tempdir().unwrap();
+        load_config_from(&dir.path().join(PRICING_FILENAME))
+    }
+
     #[test]
     fn model_substring_match_prefers_longest_key() {
-        let p = price_for_model("claude-sonnet-4-5-20250929");
-        assert!(p.input_per_mtok > 0.0);
+        let config = defaults_only();
+        assert_eq!(config.source, "default");
+        let p = match_in_map("claude-sonnet-4-5-20250929", &config.models).expect("sonnet");
+        assert_eq!(p.input_per_mtok, 3.0);
         // gemini-2.5-pro should match the specific key, not the generic "gemini"
-        let pro = price_for_model("models/gemini-2.5-pro-latest");
-        assert!(pro.input_per_mtok >= 1.0);
+        let pro = match_in_map("models/gemini-2.5-pro-latest", &config.models).expect("pro");
+        assert_eq!(pro.input_per_mtok, 1.25);
     }
 
     fn db_entry(model_id: &str, input: f64) -> DbPriceEntry {
@@ -468,6 +476,8 @@ mod tests {
 
     #[test]
     fn unknown_model_uses_reference() {
+        // Uses the process-wide config, whatever it holds: an unknown model
+        // must price the same as the configured reference model.
         let p = price_for_model("some-unknown-model-xyz");
         let r = reference_pricing();
         assert_eq!(p.input_per_mtok, r.input_per_mtok);
