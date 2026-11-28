@@ -4,17 +4,22 @@ use anyhow::{Context, Result};
 use sqlx::{Acquire, SqlitePool};
 
 use ax_db::schema::split_statements;
+use ax_db::with_busy_retry;
 
 const SCHEMA_SQL: &str = include_str!("../../../../database/schema/global.db.schema.sql");
 
 pub async fn initialize_schema(pool: &SqlitePool) -> Result<()> {
+    // Every statement is idempotent, so one that lost a race for the write
+    // lock with another process opening the same file is simply run again.
     for stmt in split_statements(SCHEMA_SQL) {
-        sqlx::query(&stmt).execute(pool).await.with_context(|| {
-            format!(
-                "schema statement failed: {}",
-                stmt.chars().take(80).collect::<String>()
-            )
-        })?;
+        with_busy_retry(|| sqlx::query(&stmt).execute(pool))
+            .await
+            .with_context(|| {
+                format!(
+                    "schema statement failed: {}",
+                    stmt.chars().take(80).collect::<String>()
+                )
+            })?;
     }
     // One-time backfill for existing single-role installs; never re-add a
     // deliberately removed role when init runs again.

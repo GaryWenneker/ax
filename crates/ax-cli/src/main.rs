@@ -25,6 +25,8 @@ mod server_snapshot;
 use ax_web::server_discovery;
 #[cfg(feature = "web")]
 mod server_push;
+#[cfg(test)]
+mod test_env;
 mod ui;
 mod version_check;
 
@@ -71,9 +73,11 @@ enum Commands {
         #[arg(
             long,
             value_name = "MODE",
+            value_enum,
+            ignore_case = true,
             help = "Install mode: full (default) or cli-only (no MCP/plugin/hooks)"
         )]
-        mode: Option<String>,
+        mode: Option<commands::install::InstallMode>,
         #[arg(
             long,
             value_name = "DIR",
@@ -98,7 +102,12 @@ enum Commands {
     },
     /// Remove .ax directory
     #[command(long_about = help_text::UNINIT_LONG)]
-    Uninit { path: Option<String> },
+    Uninit {
+        path: Option<String>,
+        /// Delete without asking (required when there is no terminal)
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
     /// Full re-index
     #[command(long_about = help_text::INDEX_LONG)]
     Index {
@@ -203,7 +212,8 @@ enum Commands {
         #[arg(
             long,
             default_value = "hot",
-            help = "hot or archive. Same as ax_recall depth."
+            value_parser = ["hot", "archive", "backup"],
+            help = "hot, archive or backup. Same as ax_recall depth."
         )]
         depth: String,
         #[arg(long)]
@@ -246,7 +256,8 @@ enum Commands {
         #[arg(
             long,
             default_value = "hot",
-            help = "hot or archive. Same as ax_history depth."
+            value_parser = ["hot", "archive", "backup"],
+            help = "hot, archive or backup (backup searches like hot). Same as ax_history depth."
         )]
         depth: String,
         #[arg(long)]
@@ -304,7 +315,7 @@ enum Commands {
     /// Read the origin of one plan revision. JSON body of POST /api/specs/provenance.
     #[command(name = "spec-provenance")]
     SpecProvenance { body: String },
-    /// Approve a spec or plan revision. The role is read from membership, not from this JSON. Body of POST /api/specs/member-approval.
+    /// Approve a spec or plan revision as the project owner. Needs an interactive terminal and a typed confirmation. The role is read from membership, not from this JSON. Body of POST /api/specs/member-approval.
     #[command(name = "spec-approve")]
     SpecApprove { body: String },
     /// Read or set hierarchy_v2. Pass on, off, or {"enabled":true}. Omit the value to print the current flag. POST /api/specs/flag.
@@ -369,27 +380,27 @@ enum Commands {
     /// Working context session (same engine as ax_session MCP)
     Session {
         #[command(subcommand)]
-        action: SessionCliAction,
+        action: commands::session_cmd::SessionCliAction,
     },
     /// Durable transcript and tasks (same engine as ax_durable MCP)
     Durable {
         #[command(subcommand)]
-        action: DurableCliAction,
+        action: commands::durable_cmd::DurableCliAction,
     },
     /// Explicit agent turn lifecycle (no IDE hooks required)
     Turn {
         #[command(subcommand)]
-        action: TurnCliAction,
+        action: commands::turn_cmd::TurnCliAction,
     },
     /// Context cache stash / expand / status
     Cache {
         #[command(subcommand)]
-        action: CacheCliAction,
+        action: commands::cache_cmd::CacheCliAction,
     },
     /// Diagnostics for CLI-only and full installs
     Doctor {
-        #[arg(long, value_name = "MODE", default_value = "cli", help = "cli | all")]
-        mode: String,
+        #[arg(long, value_name = "MODE", value_enum, default_value_t = commands::doctor::DoctorMode::Cli)]
+        mode: commands::doctor::DoctorMode,
         #[arg(long)]
         path: Option<String>,
         #[arg(long)]
@@ -570,7 +581,7 @@ enum Commands {
     /// Print version
     #[command(long_about = help_text::VERSION_LONG)]
     Version,
-    /// Self-update from getax CDN (GitHub fallback)
+    /// Self-update from GitHub Releases (getax fallback)
     #[command(long_about = help_text::UPGRADE_LONG)]
     Upgrade {
         #[arg(help = "Optional release tag (e.g. v0.1.0)")]
@@ -702,6 +713,11 @@ enum Commands {
             help = "Bind address for the embedded server"
         )]
         bind: String,
+        #[arg(
+            long,
+            help = "Serve a non-loopback bind without sign-in (anyone who can reach it can change the project)"
+        )]
+        allow_anonymous_lan: bool,
     },
     /// Share Command Center on the LAN with a token (read-only)
     Share {
@@ -807,335 +823,6 @@ enum Commands {
         daemon: bool,
         #[arg(long, hide = true)]
         path: Option<String>,
-    },
-}
-
-#[derive(Subcommand)]
-enum SessionCliAction {
-    /// Create or print a session id
-    Start {
-        #[arg(long)]
-        session: Option<String>,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-    Get {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-    Add {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Update {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Compact {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Fork {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-    Handoff {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Resume {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-    End {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum DurableCliAction {
-    Append {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        kind: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "body-stdin", action = clap::ArgAction::SetTrue)]
-        body_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Read {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-    Search {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        query: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-    Compact {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "summary-stdin", action = clap::ArgAction::SetTrue)]
-        summary_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(name = "task-start")]
-    TaskStart {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(name = "task-checkpoint")]
-    TaskCheckpoint {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(name = "task-resume")]
-    TaskResume {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(name = "task-finish")]
-    TaskFinish {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Fork {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Handoff {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(name = "doc-put")]
-    DocPut {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        kind: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "body-stdin", action = clap::ArgAction::SetTrue)]
-        body_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(name = "doc-get")]
-    DocGet {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        kind: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum TurnCliAction {
-    Begin {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "prompt-stdin", action = clap::ArgAction::SetTrue)]
-        prompt_stdin: bool,
-        #[arg(long)]
-        agent: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-    Event {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        turn: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Checkpoint {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        turn: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Finish {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        turn: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "outcome-stdin", action = clap::ArgAction::SetTrue)]
-        outcome_stdin: bool,
-        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
-        input_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Fail {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        turn: String,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long = "reason-stdin", action = clap::ArgAction::SetTrue)]
-        reason_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Status {
-        #[arg(long)]
-        session: String,
-        #[arg(long)]
-        turn: Option<String>,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum CacheCliAction {
-    Stash {
-        #[arg(long)]
-        session: Option<String>,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        label: Option<String>,
-        #[arg(long = "text-stdin", action = clap::ArgAction::SetTrue)]
-        text_stdin: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    Expand {
-        #[arg(long)]
-        session: Option<String>,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        id: String,
-        #[arg(long, default_value_t = 0)]
-        offset: usize,
-        #[arg(long)]
-        limit: Option<usize>,
-        #[arg(long)]
-        json: bool,
-    },
-    Status {
-        #[arg(long)]
-        session: Option<String>,
-        #[arg(long)]
-        path: Option<String>,
-        #[arg(long)]
-        json: bool,
     },
 }
 
@@ -1372,7 +1059,8 @@ enum AgentAction {
     /// Estimated avoidable context from recorded tool calls
     Optimize {
         path: Option<String>,
-        #[arg(long, help = "Print the optimization report")]
+        /// Accepted for older scripts; the report always prints.
+        #[arg(long, hide = true)]
         report: bool,
         #[arg(long, help = "JSON output")]
         json: bool,
@@ -1786,16 +1474,13 @@ enum NeuralCommands {
         #[arg(long, help = "File to write")]
         out: std::path::PathBuf,
     },
-    /// Promote a registered model. Requires an explicit flag and a bake-off win.
+    /// Promote a registered model. Requires --explicit and bake-off evidence
+    /// registered with the version (metrics.bakeoff.families) that beats hash-v1.
     Promote {
         model_id: String,
         version: String,
         #[arg(long)]
         explicit: bool,
-        #[arg(long)]
-        beats_baseline: bool,
-        #[arg(long)]
-        regressions_clear: bool,
     },
     /// Select the previous promoted checksum.
     Rollback { model_id: String },
@@ -1888,16 +1573,12 @@ fn neural_request(
             model_id,
             version,
             explicit,
-            beats_baseline,
-            regressions_clear,
         }) => Ok((
             "promote",
             json!({
                 "modelId": model_id,
                 "version": version,
-                "explicit": explicit,
-                "beatsBaseline": beats_baseline,
-                "regressionsClear": regressions_clear
+                "explicit": explicit
             }),
         )),
         Some(NeuralCommands::Rollback { model_id }) => {
@@ -2005,6 +1686,11 @@ enum PolicyCommands {
         path: Option<String>,
         #[arg(long, help = "Vendor subdirectory name under .ax/policy/vendored/")]
         name: Option<String>,
+        #[arg(
+            long,
+            help = "Replace local rules and skills that differ from the remote copy"
+        )]
+        force: bool,
     },
     /// Export database policy to .mdc / SKILL.md files
     Export {
@@ -2060,11 +1746,14 @@ enum PolicyCommands {
         #[arg(long)]
         json: bool,
     },
-    /// Run policy smoke tests (match, guard, bootstrap, subagents)
+    /// Run policy health checks (index, match, inject, guard, bootstrap)
     Test {
         path: Option<String>,
         #[arg(long)]
         json: bool,
+        /// Also run the checks that only hold inside the ax repository
+        #[arg(long = "self", hide = true)]
+        self_check: bool,
     },
     /// Verify ax preflight instruction and IDE bootstrap files (Recall instruction-sync parity)
     Sync {
@@ -2342,7 +2031,8 @@ enum PolicyStorageCommands {
         path: Option<String>,
         #[arg(long, help = "Write to ~/.ax/config.json instead of project ax.json")]
         global: bool,
-        #[arg(long, help = "Scan repo and import rules/skills into database")]
+        /// No effect: the scan preview runs without --yes, the import with --yes
+        #[arg(long, hide = true)]
         migrate: bool,
         #[arg(
             long,
@@ -2359,10 +2049,8 @@ enum PolicyStorageCommands {
         path: Option<String>,
         #[arg(long, help = "Write to ~/.ax/config.json instead of project ax.json")]
         global: bool,
-        #[arg(
-            long,
-            help = "Preview or (with --yes) export database policy to .agents/"
-        )]
+        /// No effect: the preview runs without --yes, the export with --yes
+        #[arg(long, hide = true)]
         migrate: bool,
         #[arg(long, help = "Apply exclusive switch: export ax.db to .agents/")]
         yes: bool,
@@ -2443,9 +2131,20 @@ fn run_desktop_on_os_main_thread() {
     ui::configure_clap(&mut cmd);
     let matches = cmd.get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    if should_refresh_ide_files(&cli.command) {
+        commands::upgrade::refresh_cwd_ide_files();
+    }
 
     let result = match cli.command {
-        Some(Commands::Desktop { path, port, bind }) => {
+        Some(Commands::Desktop {
+            path,
+            port,
+            bind,
+            allow_anonymous_lan,
+        }) => {
+            if allow_anonymous_lan {
+                std::env::set_var("AX_WEB_ALLOW_ANONYMOUS_LAN", "1");
+            }
             if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -2482,6 +2181,9 @@ async fn async_main() {
     ui::configure_clap(&mut cmd);
     let matches = cmd.get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    if should_refresh_ide_files(&cli.command) {
+        commands::upgrade::refresh_cwd_ide_files();
+    }
     let cmd_name = cli_command_name(&cli.command);
     let should_check_update = should_notify_update(&cli.command);
     let started = std::time::Instant::now();
@@ -2494,7 +2196,7 @@ async fn async_main() {
                     target,
                     mode,
                     path,
-                }) => (*yes, *all, target.clone(), mode.clone(), path.clone()),
+                }) => (*yes, *all, target.clone(), *mode, path.clone()),
                 _ => (false, false, Vec::new(), None, None),
             };
             commands::install::run(yes, all, targets, mode, path)
@@ -2505,7 +2207,7 @@ async fn async_main() {
             workspace,
             all,
         }) => commands::init::run(path, workspace, all).await,
-        Some(Commands::Uninit { path }) => commands::uninit::run(path).await,
+        Some(Commands::Uninit { path, yes }) => commands::uninit::run(path, yes).await,
         Some(Commands::Index {
             path,
             force,
@@ -2669,420 +2371,11 @@ async fn async_main() {
             })
             .await
         }
-        Some(Commands::Session { action }) => {
-            use commands::session_cmd::{SessionAction, SessionArgs};
-            let mapped = match action {
-                SessionCliAction::Start { session, path, json } => SessionArgs {
-                    action: SessionAction::Start,
-                    session,
-                    path,
-                    input_stdin: false,
-                    json,
-                },
-                SessionCliAction::Get { session, path, json } => SessionArgs {
-                    action: SessionAction::Get,
-                    session: Some(session),
-                    path,
-                    input_stdin: false,
-                    json,
-                },
-                SessionCliAction::Add {
-                    session,
-                    path,
-                    input_stdin,
-                    json,
-                } => SessionArgs {
-                    action: SessionAction::Add,
-                    session: Some(session),
-                    path,
-                    input_stdin,
-                    json,
-                },
-                SessionCliAction::Update {
-                    session,
-                    path,
-                    input_stdin,
-                    json,
-                } => SessionArgs {
-                    action: SessionAction::Update,
-                    session: Some(session),
-                    path,
-                    input_stdin,
-                    json,
-                },
-                SessionCliAction::Compact {
-                    session,
-                    path,
-                    input_stdin,
-                    json,
-                } => SessionArgs {
-                    action: SessionAction::Compact,
-                    session: Some(session),
-                    path,
-                    input_stdin,
-                    json,
-                },
-                SessionCliAction::Fork { session, path, json } => SessionArgs {
-                    action: SessionAction::Fork,
-                    session: Some(session),
-                    path,
-                    input_stdin: false,
-                    json,
-                },
-                SessionCliAction::Handoff {
-                    session,
-                    path,
-                    input_stdin,
-                    json,
-                } => SessionArgs {
-                    action: SessionAction::Handoff,
-                    session: Some(session),
-                    path,
-                    input_stdin,
-                    json,
-                },
-                SessionCliAction::Resume { session, path, json } => SessionArgs {
-                    action: SessionAction::Resume,
-                    session: Some(session),
-                    path,
-                    input_stdin: false,
-                    json,
-                },
-                SessionCliAction::End { session, path, json } => SessionArgs {
-                    action: SessionAction::End,
-                    session: Some(session),
-                    path,
-                    input_stdin: false,
-                    json,
-                },
-            };
-            commands::session_cmd::run(mapped).await
-        }
-        Some(Commands::Durable { action }) => {
-            use commands::durable_cmd::{DurableAction, DurableArgs};
-            let mapped = match action {
-                DurableCliAction::Append {
-                    session,
-                    kind,
-                    path,
-                    body_stdin,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::Append { kind },
-                    session,
-                    path,
-                    body_stdin,
-                    input_stdin: false,
-                    json,
-                },
-                DurableCliAction::Read {
-                    session,
-                    path,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::Read,
-                    session,
-                    path,
-                    body_stdin: false,
-                    input_stdin: false,
-                    json,
-                },
-                DurableCliAction::Search {
-                    session,
-                    query,
-                    path,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::Search { query },
-                    session,
-                    path,
-                    body_stdin: false,
-                    input_stdin: false,
-                    json,
-                },
-                DurableCliAction::Compact {
-                    session,
-                    path,
-                    summary_stdin,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::Compact,
-                    session,
-                    path,
-                    body_stdin: summary_stdin,
-                    input_stdin: false,
-                    json,
-                },
-                DurableCliAction::TaskStart {
-                    session,
-                    path,
-                    input_stdin,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::TaskStart,
-                    session,
-                    path,
-                    body_stdin: false,
-                    input_stdin,
-                    json,
-                },
-                DurableCliAction::TaskCheckpoint {
-                    session,
-                    path,
-                    input_stdin,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::TaskCheckpoint,
-                    session,
-                    path,
-                    body_stdin: false,
-                    input_stdin,
-                    json,
-                },
-                DurableCliAction::TaskResume {
-                    session,
-                    path,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::TaskResume,
-                    session,
-                    path,
-                    body_stdin: false,
-                    input_stdin: false,
-                    json,
-                },
-                DurableCliAction::TaskFinish {
-                    session,
-                    path,
-                    input_stdin,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::TaskFinish,
-                    session,
-                    path,
-                    body_stdin: false,
-                    input_stdin,
-                    json,
-                },
-                DurableCliAction::Fork {
-                    session,
-                    path,
-                    input_stdin,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::Fork,
-                    session,
-                    path,
-                    body_stdin: false,
-                    input_stdin,
-                    json,
-                },
-                DurableCliAction::Handoff {
-                    session,
-                    path,
-                    input_stdin,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::Handoff,
-                    session,
-                    path,
-                    body_stdin: false,
-                    input_stdin,
-                    json,
-                },
-                DurableCliAction::DocPut {
-                    session,
-                    kind,
-                    path,
-                    body_stdin,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::DocPut { kind },
-                    session,
-                    path,
-                    body_stdin,
-                    input_stdin: false,
-                    json,
-                },
-                DurableCliAction::DocGet {
-                    session,
-                    kind,
-                    path,
-                    json,
-                } => DurableArgs {
-                    action: DurableAction::DocGet { kind },
-                    session,
-                    path,
-                    body_stdin: false,
-                    input_stdin: false,
-                    json,
-                },
-            };
-            commands::durable_cmd::run(mapped).await
-        }
-        Some(Commands::Turn { action }) => {
-            use commands::turn_cmd::{TurnAction, TurnArgs};
-            let mapped = match action {
-                TurnCliAction::Begin {
-                    session,
-                    path,
-                    prompt_stdin,
-                    agent,
-                    json,
-                } => TurnArgs {
-                    action: TurnAction::Begin,
-                    session,
-                    turn: None,
-                    path,
-                    prompt_stdin,
-                    input_stdin: false,
-                    outcome_stdin: false,
-                    reason_stdin: false,
-                    agent,
-                    json,
-                },
-                TurnCliAction::Event {
-                    session,
-                    turn,
-                    path,
-                    input_stdin,
-                    json,
-                } => TurnArgs {
-                    action: TurnAction::Event,
-                    session,
-                    turn: Some(turn),
-                    path,
-                    prompt_stdin: false,
-                    input_stdin,
-                    outcome_stdin: false,
-                    reason_stdin: false,
-                    agent: None,
-                    json,
-                },
-                TurnCliAction::Checkpoint {
-                    session,
-                    turn,
-                    path,
-                    input_stdin,
-                    json,
-                } => TurnArgs {
-                    action: TurnAction::Checkpoint,
-                    session,
-                    turn: Some(turn),
-                    path,
-                    prompt_stdin: false,
-                    input_stdin,
-                    outcome_stdin: false,
-                    reason_stdin: false,
-                    agent: None,
-                    json,
-                },
-                TurnCliAction::Finish {
-                    session,
-                    turn,
-                    path,
-                    outcome_stdin,
-                    input_stdin,
-                    json,
-                } => TurnArgs {
-                    action: TurnAction::Finish,
-                    session,
-                    turn: Some(turn),
-                    path,
-                    prompt_stdin: false,
-                    input_stdin,
-                    outcome_stdin,
-                    reason_stdin: false,
-                    agent: None,
-                    json,
-                },
-                TurnCliAction::Fail {
-                    session,
-                    turn,
-                    path,
-                    reason_stdin,
-                    json,
-                } => TurnArgs {
-                    action: TurnAction::Fail,
-                    session,
-                    turn: Some(turn),
-                    path,
-                    prompt_stdin: false,
-                    input_stdin: false,
-                    outcome_stdin: false,
-                    reason_stdin,
-                    agent: None,
-                    json,
-                },
-                TurnCliAction::Status {
-                    session,
-                    turn,
-                    path,
-                    json,
-                } => TurnArgs {
-                    action: TurnAction::Status,
-                    session,
-                    turn,
-                    path,
-                    prompt_stdin: false,
-                    input_stdin: false,
-                    outcome_stdin: false,
-                    reason_stdin: false,
-                    agent: None,
-                    json,
-                },
-            };
-            commands::turn_cmd::run(mapped).await
-        }
-        Some(Commands::Cache { action }) => {
-            use commands::cache_cmd::{CacheAction, CacheArgs};
-            let mapped = match action {
-                CacheCliAction::Stash {
-                    session,
-                    path,
-                    label,
-                    text_stdin,
-                    json,
-                } => CacheArgs {
-                    action: CacheAction::Stash { label },
-                    session,
-                    path,
-                    text_stdin,
-                    json,
-                },
-                CacheCliAction::Expand {
-                    session,
-                    path,
-                    id,
-                    offset,
-                    limit,
-                    json,
-                } => CacheArgs {
-                    action: CacheAction::Expand { id, offset, limit },
-                    session,
-                    path,
-                    text_stdin: false,
-                    json,
-                },
-                CacheCliAction::Status {
-                    session,
-                    path,
-                    json,
-                } => CacheArgs {
-                    action: CacheAction::Status,
-                    session,
-                    path,
-                    text_stdin: false,
-                    json,
-                },
-            };
-            commands::cache_cmd::run(mapped).await
-        }
+        Some(Commands::Session { action }) => commands::session_cmd::run(action.into()).await,
+        Some(Commands::Durable { action }) => commands::durable_cmd::run(action.into()).await,
+        Some(Commands::Turn { action }) => commands::turn_cmd::run(action.into()).await,
+        Some(Commands::Cache { action }) => commands::cache_cmd::run(action.into()).await,
         Some(Commands::Doctor { mode, path, json }) => {
-            let mode = match mode.as_str() {
-                "all" => commands::doctor::DoctorMode::All,
-                _ => commands::doctor::DoctorMode::Cli,
-            };
             commands::doctor::run(mode, path, json).await
         },
         Some(Commands::Db { action }) => match action {
@@ -3231,7 +2524,17 @@ async fn async_main() {
             Err("internal: `ax desktop` must run on the OS main thread (handled in main())".into())
         }
         #[cfg(not(feature = "desktop"))]
-        Some(Commands::Desktop { path, port, bind }) => commands::desktop::run(path, port, bind),
+        Some(Commands::Desktop {
+            path,
+            port,
+            bind,
+            allow_anonymous_lan,
+        }) => {
+            if allow_anonymous_lan {
+                std::env::set_var("AX_WEB_ALLOW_ANONYMOUS_LAN", "1");
+            }
+            commands::desktop::run(path, port, bind)
+        }
         Some(Commands::Share {
             path,
             port,
@@ -3276,8 +2579,13 @@ async fn async_main() {
         Some(Commands::Policy { action }) => match action {
             PolicyCommands::Index { path, force } => commands::policy::run_index(path, force).await,
             PolicyCommands::Import { path } => commands::policy::run_import(path).await,
-            PolicyCommands::Pull { url, path, name } => {
-                commands::policy::run_pull(url, path, name).await
+            PolicyCommands::Pull {
+                url,
+                path,
+                name,
+                force,
+            } => {
+                commands::policy::run_pull(url, path, name, force).await
             }
             PolicyCommands::Export { path, out } => commands::policy::run_export(path, out).await,
             PolicyCommands::Match {
@@ -3308,7 +2616,11 @@ async fn async_main() {
                 json,
             } => commands::policy::run_guard(path, file, delete, json).await,
             PolicyCommands::Sync { path, fix, force } => commands::policy::run_sync(path, fix, force).await,
-            PolicyCommands::Test { path, json } => commands::policy::run_test(path, json).await,
+            PolicyCommands::Test {
+                path,
+                json,
+                self_check,
+            } => commands::policy::run_test(path, json, self_check).await,
             PolicyCommands::Capture {
                 prompt,
                 path,
@@ -3326,7 +2638,7 @@ async fn async_main() {
                 PolicyStorageCommands::Database {
                     path,
                     global,
-                    migrate,
+                    migrate: _,
                     yes,
                     keep_files,
                     json,
@@ -3335,7 +2647,6 @@ async fn async_main() {
                         path,
                         PolicyStorage::Database,
                         global,
-                        migrate,
                         yes,
                         keep_files,
                         json,
@@ -3345,7 +2656,7 @@ async fn async_main() {
                 PolicyStorageCommands::Files {
                     path,
                     global,
-                    migrate,
+                    migrate: _,
                     yes,
                     json,
                 } => {
@@ -3353,7 +2664,6 @@ async fn async_main() {
                         path,
                         PolicyStorage::Files,
                         global,
-                        migrate,
                         yes,
                         false,
                         json,
@@ -3734,7 +3044,7 @@ async fn async_main() {
             },
         },
         Some(Commands::Serve { mcp, daemon, path }) if mcp && daemon => {
-            let root = commands::resolve_path(path);
+            let root = commands::resolve_target_dir(path);
             start_replication(&root).await;
             ax_mcp::run_daemon(root).await.map_err(|e| e.to_string())
         }
@@ -3763,7 +3073,7 @@ async fn async_main() {
             ax_telemetry::flush_global(ax_telemetry::DEFAULT_FLUSH_TIMEOUT_MS).await;
             // Transport-agnostic activity: one central recorder for every CLI command.
             // Skips hooks (cmd_name is None for those). Session from AX_SESSION when set.
-            let root = commands::resolve_path(None);
+            let root = commands::resolve_project_root(None);
             let session = std::env::var("AX_SESSION")
                 .ok()
                 .filter(|s| !s.trim().is_empty());
@@ -3811,27 +3121,41 @@ async fn start_replication(root: &std::path::Path) {
     let _ = root;
 }
 
-fn should_notify_update(cmd: &Option<Commands>) -> bool {
-    !matches!(
-        cmd,
-        Some(Commands::Serve { .. })
-            | Some(Commands::Web { .. })
-            | Some(Commands::Desktop { .. })
-            | Some(Commands::PromptHook)
-            | Some(Commands::SessionHook)
-            | Some(Commands::StopHook)
-            | Some(Commands::TurnHook { .. })
-            | Some(Commands::ReadGuard { .. })
-            | Some(Commands::WatchdogChild { .. })
-            | Some(Commands::UpgradeApply { .. })
-            | Some(Commands::Upgrade { .. })
-            | Some(Commands::Version)
-            | Some(Commands::Index { quiet: true, .. })
-            | Some(Commands::Sync { quiet: true, .. })
-            | Some(Commands::Watch { quiet: true, .. })
-    )
+/// Whether this command may refresh the managed IDE instruction files in the
+/// current project. Hidden hook and helper commands run on every agent tool
+/// call and stay side-effect free; uninstall and uninit remove those files.
+fn should_refresh_ide_files(cmd: &Option<Commands>) -> bool {
+    !is_hidden_helper(cmd)
+        && !matches!(
+            cmd,
+            Some(Commands::Version) | Some(Commands::Uninstall) | Some(Commands::Uninit { .. })
+        )
 }
 
+fn should_notify_update(cmd: &Option<Commands>) -> bool {
+    !is_hidden_helper(cmd)
+        && !matches!(
+            cmd,
+            Some(Commands::Serve { .. })
+                | Some(Commands::Web { .. })
+                | Some(Commands::Desktop { .. })
+                | Some(Commands::Upgrade { .. })
+                | Some(Commands::Version)
+                | Some(Commands::Index { quiet: true, .. })
+                | Some(Commands::Sync { quiet: true, .. })
+                | Some(Commands::Watch { quiet: true, .. })
+        )
+}
+
+/// A hidden hook or helper command (`cli_command_name` gives it no name).
+/// These run on every agent tool call or as child processes, so they get no
+/// telemetry name, no update notice and no IDE file refresh.
+fn is_hidden_helper(cmd: &Option<Commands>) -> bool {
+    cmd.is_some() && cli_command_name(cmd).is_none()
+}
+
+/// Telemetry name of a command, or `None` for a hidden hook or helper. The
+/// match is exhaustive, so every new command must decide here.
 fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
     match cmd {
         None => Some("install".into()),
@@ -3942,6 +3266,111 @@ fn log_directive(args: &[String]) -> &'static str {
         "ax=warn"
     } else {
         "ax=info"
+    }
+}
+
+#[cfg(test)]
+mod refresh_ide_files_tests {
+    use super::{should_refresh_ide_files, Cli};
+    use clap::Parser;
+
+    fn refreshes(argv: &'static [&'static str]) -> bool {
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || should_refresh_ide_files(&Cli::try_parse_from(argv).unwrap().command))
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    #[test]
+    fn hooks_helpers_and_removal_commands_skip_the_refresh() {
+        for argv in [
+            &["ax", "read-guard", "--ide", "claude"][..],
+            &["ax", "prompt-hook"],
+            &["ax", "session-hook"],
+            &["ax", "stop-hook"],
+            &["ax", "turn-hook", "end"],
+            &["ax", "watchdog-child", "1", "10"],
+            &["ax", "uninstall"],
+            &["ax", "uninit"],
+            &["ax", "version"],
+        ] {
+            assert!(!refreshes(argv), "{argv:?} must not refresh IDE files");
+        }
+    }
+
+    #[test]
+    fn hidden_helpers_print_no_update_notice() {
+        for argv in [
+            &["ax", "read-guard", "--ide", "claude"][..],
+            &["ax", "prompt-hook"],
+            &["ax", "session-hook"],
+            &["ax", "stop-hook"],
+            &["ax", "turn-hook", "end"],
+            &["ax", "watchdog-child", "1", "10"],
+        ] {
+            let notifies = std::thread::Builder::new()
+                .stack_size(16 * 1024 * 1024)
+                .spawn(move || {
+                    let cli = Cli::try_parse_from(argv).unwrap();
+                    (
+                        super::is_hidden_helper(&cli.command),
+                        super::should_notify_update(&cli.command),
+                    )
+                })
+                .unwrap()
+                .join()
+                .unwrap();
+            assert_eq!(notifies, (true, false), "{argv:?}");
+        }
+    }
+
+    #[test]
+    fn regular_commands_refresh() {
+        assert!(refreshes(&["ax", "status"]));
+        assert!(refreshes(&["ax", "sync"]));
+    }
+}
+
+#[cfg(test)]
+mod option_value_tests {
+    use super::Cli;
+    use clap::Parser;
+
+    fn parses(argv: &'static [&'static str]) -> bool {
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || Cli::try_parse_from(argv).is_ok())
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    #[test]
+    fn doctor_rejects_unknown_modes() {
+        assert!(parses(&["ax", "doctor", "--mode", "cli"]));
+        assert!(parses(&["ax", "doctor", "--mode", "all"]));
+        assert!(!parses(&["ax", "doctor", "--mode", "full"]));
+        assert!(!parses(&["ax", "doctor", "--mode", "al"]));
+    }
+
+    #[test]
+    fn install_rejects_unknown_modes() {
+        assert!(parses(&["ax", "install", "--mode", "full"]));
+        assert!(parses(&["ax", "install", "--mode", "cli-only"]));
+        assert!(parses(&["ax", "install", "--mode", "cli_only"]));
+        assert!(parses(&["ax", "install", "--mode", "CLI-ONLY"]));
+        assert!(!parses(&["ax", "install", "--mode", "clionly"]));
+    }
+
+    #[test]
+    fn recall_and_history_accept_the_mcp_depths_only() {
+        assert!(parses(&["ax", "recall", "x", "--depth", "archive"]));
+        assert!(parses(&["ax", "history", "--depth", "hot"]));
+        assert!(!parses(&["ax", "recall", "x", "--depth", "deep"]));
+        assert!(!parses(&["ax", "history", "--depth", "deep"]));
+        assert!(parses(&["ax", "history", "--depth", "backup"]));
     }
 }
 
@@ -4083,21 +3512,12 @@ mod neural_request_tests {
             (&["evaluate"], "evaluate", json!({})),
             (&["share"], "share", json!({})),
             (
-                &[
-                    "promote",
-                    "m",
-                    "2",
-                    "--explicit",
-                    "--beats-baseline",
-                    "--regressions-clear",
-                ],
+                &["promote", "m", "2", "--explicit"],
                 "promote",
                 json!({
                     "modelId": "m",
                     "version": "2",
-                    "explicit": true,
-                    "beatsBaseline": true,
-                    "regressionsClear": true
+                    "explicit": true
                 }),
             ),
             (&["rollback", "m"], "rollback", json!({ "modelId": "m" })),
@@ -4129,15 +3549,12 @@ mod neural_request_tests {
         let db = ax_db::Database::open(&root.join("neural-test.db"))
             .await
             .unwrap();
-        let metrics = r#"{"precision":0.8}"#;
-        let flags = ["--explicit", "--beats-baseline", "--regressions-clear"];
-        send(
-            root,
-            &db,
-            &["register", "m", "1", "aaa", "--metrics", metrics],
-        )
-        .await;
-        send(root, &db, &["register", "m", "2", "bbb"]).await;
+        let metrics = r#"{"precision":0.8,"bakeoff":{"families":{"named_trigger":{"scored":1,"hits":1},"paraphrase":{"scored":1,"hits":1},"abstention":{"scored":1,"hits":1},"delivery_budget":{"scored":1,"hits":1}}}}"#;
+        let flags = ["--explicit"];
+        for (version, checksum) in [("1", "aaa"), ("2", "bbb")] {
+            let words = ["register", "m", version, checksum, "--metrics", metrics];
+            send(root, &db, &words).await;
+        }
         send(root, &db, &[&["promote", "m", "1"][..], &flags].concat()).await;
         send(root, &db, &[&["promote", "m", "2"][..], &flags].concat()).await;
         let status = send(root, &db, &["model-status", "m"]).await;

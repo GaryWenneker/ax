@@ -87,23 +87,16 @@ pub fn load(root: &std::path::Path) -> NeuralConfig {
     };
     let value: Value = match serde_json::from_str(&text) {
         Ok(value) => value,
-        Err(_) => {
+        Err(error) => {
             let mut cfg = NeuralConfig::required();
-            cfg.config_error = Some("ax.json is not valid JSON".into());
+            cfg.config_error = Some(format!("ax.json is not valid JSON: {error}"));
             return cfg;
         }
     };
     let Some(neural) = value.get("neural") else {
         return NeuralConfig::required();
     };
-    match parse_neural(neural) {
-        Ok(cfg) => lock_required(cfg),
-        Err(error) => {
-            let mut cfg = NeuralConfig::required();
-            cfg.config_error = Some(error);
-            cfg
-        }
-    }
+    lock_required(parse_neural(neural))
 }
 
 fn lock_required(mut cfg: NeuralConfig) -> NeuralConfig {
@@ -121,103 +114,179 @@ fn lock_required(mut cfg: NeuralConfig) -> NeuralConfig {
     cfg
 }
 
-fn parse_neural(value: &Value) -> Result<NeuralConfig, String> {
-    let obj = value
-        .as_object()
-        .ok_or_else(|| "neural must be an object".to_string())?;
+const TOP_KEYS: &[&str] = &[
+    "enabled",
+    "mode",
+    "learning_enabled",
+    "runtime",
+    "semantic",
+    "graph",
+    "ranking",
+    "prediction",
+    "optimizer",
+    "learning",
+    "distribution",
+];
+
+/// Collects every problem in the section. An invalid field keeps its default
+/// and every valid field is still applied.
+#[derive(Default)]
+struct Problems(Vec<String>);
+
+impl Problems {
+    fn take<T>(&mut self, result: Result<Option<T>, String>) -> Option<T> {
+        result.unwrap_or_else(|error| {
+            self.0.push(error);
+            None
+        })
+    }
+
+    fn section<'a>(
+        &mut self,
+        obj: &'a Map<String, Value>,
+        name: &str,
+        known: &[&str],
+    ) -> Option<&'a Map<String, Value>> {
+        let value = obj.get(name)?;
+        let Some(section) = value.as_object() else {
+            self.0.push(format!("neural.{name} must be an object"));
+            return None;
+        };
+        self.unknown(section, &format!("neural.{name}."), known);
+        Some(section)
+    }
+
+    fn unknown(&mut self, obj: &Map<String, Value>, prefix: &str, known: &[&str]) {
+        for key in obj.keys().filter(|key| !known.contains(&key.as_str())) {
+            self.0.push(format!("{prefix}{key} is not a known setting"));
+        }
+    }
+
+    fn bool(&mut self, obj: &Map<String, Value>, key: &str) -> Option<bool> {
+        self.take(bool_field(obj, key))
+    }
+
+    fn str(&mut self, obj: &Map<String, Value>, key: &str) -> Option<String> {
+        self.take(str_field(obj, key))
+    }
+
+    fn unit(&mut self, obj: &Map<String, Value>, key: &str, path: &str) -> Option<f64> {
+        let value = self.take(f64_field(obj, key))?;
+        if (0.0..=1.0).contains(&value) {
+            Some(value)
+        } else {
+            self.0.push(format!("{path} must be between 0 and 1"));
+            None
+        }
+    }
+}
+
+fn parse_neural(value: &Value) -> NeuralConfig {
     let mut cfg = NeuralConfig::required();
-    cfg.enabled = bool_field(obj, "enabled")?.unwrap_or(true);
-    if let Some(mode) = str_field(obj, "mode")? {
-        if !matches!(mode.as_str(), "local" | "central" | "hybrid") {
-            return Err(format!(
+    let Some(obj) = value.as_object() else {
+        cfg.config_error = Some("neural must be an object".into());
+        return cfg;
+    };
+    let mut p = Problems::default();
+    p.unknown(obj, "neural.", TOP_KEYS);
+    if let Some(enabled) = p.bool(obj, "enabled") {
+        cfg.enabled = enabled;
+    }
+    if let Some(mode) = p.str(obj, "mode") {
+        if matches!(mode.as_str(), "local" | "central" | "hybrid") {
+            cfg.mode = mode;
+        } else {
+            p.0.push(format!(
                 "neural.mode {mode} is not local, central, or hybrid"
             ));
         }
-        cfg.mode = mode;
     }
-    cfg.learning_enabled = bool_field(obj, "learning_enabled")?.unwrap_or(false);
-    if let Some(runtime) = obj.get("runtime") {
-        let runtime = runtime
-            .as_object()
-            .ok_or_else(|| "neural.runtime must be an object".to_string())?;
-        if let Some(value) = str_field(runtime, "preferred_backend")? {
+    if let Some(value) = p.bool(obj, "learning_enabled") {
+        cfg.learning_enabled = value;
+    }
+    if let Some(runtime) = p.section(obj, "runtime", &["preferred_backend", "fallback_backend"]) {
+        if let Some(value) = p.str(runtime, "preferred_backend") {
             cfg.preferred_backend = value;
         }
-        if let Some(value) = str_field(runtime, "fallback_backend")? {
+        if let Some(value) = p.str(runtime, "fallback_backend") {
             if value != "cpu" && value != "hash" {
-                return Err("neural.runtime.fallback_backend must be cpu".into());
+                p.0.push("neural.runtime.fallback_backend must be cpu or hash".into());
             }
             cfg.fallback_backend = "cpu".into();
         }
     }
-    if let Some(semantic) = obj.get("semantic") {
-        let semantic = semantic
-            .as_object()
-            .ok_or_else(|| "neural.semantic must be an object".to_string())?;
-        cfg.semantic_enabled = bool_field(semantic, "enabled")?.unwrap_or(true);
-        if let Some(threshold) = f64_field(semantic, "similarity_threshold")? {
-            if !(0.0..=1.0).contains(&threshold) {
-                return Err("neural.semantic.similarity_threshold must be between 0 and 1".into());
-            }
-            cfg.similarity_threshold = threshold;
+    if let Some(semantic) = p.section(obj, "semantic", &["enabled", "similarity_threshold"]) {
+        if let Some(value) = p.bool(semantic, "enabled") {
+            cfg.semantic_enabled = value;
+        }
+        let path = "neural.semantic.similarity_threshold";
+        if let Some(value) = p.unit(semantic, "similarity_threshold", path) {
+            cfg.similarity_threshold = value;
         }
     }
-    if let Some(graph) = obj.get("graph") {
-        let graph = graph
-            .as_object()
-            .ok_or_else(|| "neural.graph must be an object".to_string())?;
-        cfg.graph_enabled = bool_field(graph, "enabled")?.unwrap_or(false);
-        cfg.graph_learning_enabled = bool_field(graph, "learning_enabled")?.unwrap_or(false);
-    }
-    if let Some(ranking) = obj.get("ranking") {
-        let ranking = ranking
-            .as_object()
-            .ok_or_else(|| "neural.ranking must be an object".to_string())?;
-        cfg.ranking_enabled = bool_field(ranking, "enabled")?.unwrap_or(true);
-        cfg.reranking_enabled = bool_field(ranking, "reranking_enabled")?.unwrap_or(false);
-    }
-    if let Some(prediction) = obj.get("prediction") {
-        let prediction = prediction
-            .as_object()
-            .ok_or_else(|| "neural.prediction must be an object".to_string())?;
-        cfg.prediction_enabled = bool_field(prediction, "enabled")?.unwrap_or(false);
-        if let Some(confidence) = f64_field(prediction, "minimum_confidence")? {
-            if !(0.0..=1.0).contains(&confidence) {
-                return Err("neural.prediction.minimum_confidence must be between 0 and 1".into());
-            }
-            cfg.minimum_confidence = confidence;
+    if let Some(graph) = p.section(obj, "graph", &["enabled", "learning_enabled"]) {
+        if let Some(value) = p.bool(graph, "enabled") {
+            cfg.graph_enabled = value;
+        }
+        if let Some(value) = p.bool(graph, "learning_enabled") {
+            cfg.graph_learning_enabled = value;
         }
     }
-    if let Some(optimizer) = obj.get("optimizer") {
-        let optimizer = optimizer
-            .as_object()
-            .ok_or_else(|| "neural.optimizer must be an object".to_string())?;
-        cfg.optimizer_enabled = bool_field(optimizer, "enabled")?.unwrap_or(true);
-        cfg.respect_token_budget = bool_field(optimizer, "respect_token_budget")?.unwrap_or(true);
-    }
-    if let Some(learning) = obj.get("learning") {
-        let learning = learning
-            .as_object()
-            .ok_or_else(|| "neural.learning must be an object".to_string())?;
-        cfg.feedback_collection = bool_field(learning, "feedback_collection")?.unwrap_or(false);
-        cfg.automatic_training = bool_field(learning, "automatic_training")?.unwrap_or(false);
-        cfg.automatic_model_promotion =
-            bool_field(learning, "automatic_model_promotion")?.unwrap_or(false);
-        if cfg.automatic_training || cfg.automatic_model_promotion {
-            cfg.automatic_training = false;
-            cfg.automatic_model_promotion = false;
-            cfg.config_error =
-                Some("automatic_training and automatic_model_promotion must stay false".into());
+    if let Some(ranking) = p.section(obj, "ranking", &["enabled", "reranking_enabled"]) {
+        if let Some(value) = p.bool(ranking, "enabled") {
+            cfg.ranking_enabled = value;
+        }
+        if let Some(value) = p.bool(ranking, "reranking_enabled") {
+            cfg.reranking_enabled = value;
         }
     }
-    if let Some(distribution) = obj.get("distribution") {
-        let distribution = distribution
-            .as_object()
-            .ok_or_else(|| "neural.distribution must be an object".to_string())?;
-        cfg.distribution_enabled = bool_field(distribution, "enabled")?.unwrap_or(false);
-        cfg.share_learning_data = bool_field(distribution, "share_learning_data")?.unwrap_or(false);
+    if let Some(prediction) = p.section(obj, "prediction", &["enabled", "minimum_confidence"]) {
+        if let Some(value) = p.bool(prediction, "enabled") {
+            cfg.prediction_enabled = value;
+        }
+        let path = "neural.prediction.minimum_confidence";
+        if let Some(value) = p.unit(prediction, "minimum_confidence", path) {
+            cfg.minimum_confidence = value;
+        }
     }
-    Ok(cfg)
+    if let Some(optimizer) = p.section(obj, "optimizer", &["enabled", "respect_token_budget"]) {
+        if let Some(value) = p.bool(optimizer, "enabled") {
+            cfg.optimizer_enabled = value;
+        }
+        if let Some(value) = p.bool(optimizer, "respect_token_budget") {
+            cfg.respect_token_budget = value;
+        }
+    }
+    let learning_keys = [
+        "feedback_collection",
+        "automatic_training",
+        "automatic_model_promotion",
+    ];
+    if let Some(learning) = p.section(obj, "learning", &learning_keys) {
+        if let Some(value) = p.bool(learning, "feedback_collection") {
+            cfg.feedback_collection = value;
+        }
+        let training = p.bool(learning, "automatic_training").unwrap_or(false);
+        let promotion = p
+            .bool(learning, "automatic_model_promotion")
+            .unwrap_or(false);
+        if training || promotion {
+            p.0.push("automatic_training and automatic_model_promotion must stay false".into());
+        }
+    }
+    if let Some(distribution) = p.section(obj, "distribution", &["enabled", "share_learning_data"])
+    {
+        if let Some(value) = p.bool(distribution, "enabled") {
+            cfg.distribution_enabled = value;
+        }
+        if let Some(value) = p.bool(distribution, "share_learning_data") {
+            cfg.share_learning_data = value;
+        }
+    }
+    if !p.0.is_empty() {
+        cfg.config_error = Some(p.0.join("; "));
+    }
+    cfg
 }
 
 fn bool_field(obj: &Map<String, Value>, key: &str) -> Result<Option<bool>, String> {
@@ -286,7 +355,7 @@ mod tests {
         assert!(cfg.ranking_active());
         assert_eq!(
             cfg.config_error.as_deref(),
-            Some("neural cannot be disabled")
+            Some("neural cannot be disabled; neural.extra is not a known setting")
         );
         assert!(std::fs::read_to_string(path)
             .unwrap()
@@ -384,7 +453,10 @@ mod tests {
         for (backend, error) in [
             ("cpu", None),
             ("hash", None),
-            ("gpu", Some("neural.runtime.fallback_backend must be cpu")),
+            (
+                "gpu",
+                Some("neural.runtime.fallback_backend must be cpu or hash"),
+            ),
         ] {
             let cfg =
                 load_neural(serde_json::json!({ "runtime": { "fallback_backend": backend } }));
@@ -465,6 +537,53 @@ mod tests {
         assert_eq!(cfg.similarity_threshold, 0.8);
         assert!(!cfg.optimizer_enabled);
         assert!(!cfg.respect_token_budget);
+    }
+
+    #[test]
+    fn one_invalid_field_keeps_the_other_valid_fields() {
+        let cfg = load_neural(serde_json::json!({
+            "learning": { "feedback_collection": true },
+            "semantic": { "similarity_threshold": 1.5 },
+            "prediction": { "enabled": true, "minimum_confidence": "high" }
+        }));
+        assert!(cfg.feedback_active());
+        assert!(cfg.prediction_active());
+        assert_eq!(cfg.similarity_threshold, 0.70);
+        assert_eq!(cfg.minimum_confidence, 0.75);
+        let error = cfg.config_error.expect("both problems are reported");
+        assert!(error.contains("similarity_threshold"), "{error}");
+        assert!(error.contains("minimum_confidence"), "{error}");
+    }
+
+    #[test]
+    fn unknown_keys_are_reported_with_their_path() {
+        let cfg = load_neural(serde_json::json!({
+            "prediciton": { "enabled": true },
+            "learning": { "feedback_colection": true }
+        }));
+        let error = cfg.config_error.clone().expect("unknown keys are reported");
+        assert!(
+            error.contains("neural.prediciton is not a known setting"),
+            "{error}"
+        );
+        assert!(
+            error.contains("neural.learning.feedback_colection is not a known setting"),
+            "{error}"
+        );
+        assert!(!cfg.prediction_active());
+        assert!(!cfg.feedback_active());
+    }
+
+    #[test]
+    fn invalid_json_names_the_line_and_column() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("ax.json"), "{\n  \"neural\": ,\n}").unwrap();
+        let error = load(dir.path())
+            .config_error
+            .expect("parse error is reported");
+        assert!(error.starts_with("ax.json is not valid JSON"), "{error}");
+        assert!(error.contains("line 2"), "{error}");
+        assert!(error.contains("column"), "{error}");
     }
 
     #[test]

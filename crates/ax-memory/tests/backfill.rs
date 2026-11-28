@@ -2,8 +2,8 @@ use ax_memory::{backfill_session_ids, remember, RememberInput};
 
 #[tokio::test]
 async fn backfill_links_conversation_lines_and_marks_the_rest_unlinked() {
-    let root = std::env::temp_dir().join(format!("ax-backfill-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
@@ -59,7 +59,6 @@ async fn backfill_links_conversation_lines_and_marks_the_rest_unlinked() {
             .unwrap();
     let again = backfill_session_ids(db.pool()).await.unwrap();
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
 
     assert_eq!(linked_session, "deadbeef0012");
     assert_eq!(bare_ids.0, "Unlinked");

@@ -18,6 +18,7 @@ Cursor reports **DEGRADED** when the `user-ax` MCP stdio process fails tool disc
 ax hardens this by default:
 
 - WAL mode + **180s** SQLite `busy_timeout` (override with `AX_DB_BUSY_TIMEOUT_SECS`)
+- The shared usage database (`~/.ax/usage.db`) waits at most **10s** for a busy writer or a free connection, so a contended file fails the usage write fast instead of stalling a tool call (override with `AX_USAGE_DB_BUSY_TIMEOUT_SECS`, 1 to 600)
 - Writers **wait up to 180s** for `.ax/ax.lock` instead of failing immediately
 - Stale `ax.lock` / dead daemon PIDs are cleared on open and on `ax daemon restart`
 - Maintenance uses `wal_checkpoint(PASSIVE)` so optimize does not starve readers
@@ -33,7 +34,7 @@ ax daemon restart
 ```
 
 2. Proxies reconnect on their own within 15 seconds. If the IDE still shows DEGRADED after that, run **MCP: Restart Servers** (or reload the window).
-3. **Stale lock after a crash** — `ax unlock` (kills orphaned `ax.exe`; heavier than `daemon restart`).
+3. **Stale lock after a crash** — `ax unlock` clears the lock. When a live process still holds it, only that process is stopped, and only if it is an ax process (SIGTERM first, SIGKILL after 5 seconds). Other ax processes keep running.
 4. Avoid starting a second long `ax index` / `ax init` while one is already running (the second will wait, then proceed).
 5. **Network filesystem** — WAL may not work reliably on SMB/NFS or WSL2 `/mnt`. Keep the project (with `.ax/`) on a local disk.
 6. Prefer **one primary IDE MCP client** for a workspace when the daemon keeps failing; use Command Center Logging to confirm `attached to ax daemon`.

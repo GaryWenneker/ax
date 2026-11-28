@@ -35,7 +35,10 @@ pub const HUNK_CAP_BYTES: usize = 64 * 1024;
 pub fn compress_hunk(text: &str) -> String {
     let redacted = redact_secrets(text);
     let capped = if redacted.len() > HUNK_CAP_BYTES {
-        format!("{}\n…truncated…", &redacted[..HUNK_CAP_BYTES])
+        format!(
+            "{}\n…truncated…",
+            ax_utils::prefix_bytes(&redacted, HUNK_CAP_BYTES)
+        )
     } else {
         redacted
     };
@@ -46,9 +49,73 @@ pub fn compress_hunk(text: &str) -> String {
 
 pub const FILE_CHANGE_KIND: &str = "file_change";
 
+/// Whether `path` already has a file_change memory (any content version) for
+/// this session and turn. Sync capture and the turn-end hook report the same
+/// edit; the hook skips a path sync already recorded, and sync skips a path
+/// the hook already recorded.
+async fn file_change_recorded(
+    pool: &SqlitePool,
+    path: &str,
+    session_id: &str,
+    turn_id: &str,
+) -> Result<bool, AxError> {
+    let files = serde_json::to_string(&vec![path]).map_err(|e| AxError::Other(e.to_string()))?;
+    let found: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM memories
+         WHERE kind = ? AND session_id = ? AND turn_id = ? AND files = ? LIMIT 1",
+    )
+    .bind(FILE_CHANGE_KIND)
+    .bind(session_id)
+    .bind(turn_id)
+    .bind(&files)
+    .fetch_optional(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(found.is_some())
+}
+
+fn file_change_id(source: &str) -> String {
+    format!(
+        "filechange-{}",
+        &blake3::hash(source.as_bytes()).to_hex()[..16]
+    )
+}
+
+/// Id of the file_change memory the turn-end hook writes (no content version).
+fn hook_file_change_id(session_id: &str, turn_id: &str, path: &str) -> String {
+    file_change_id(&format!("{session_id}\n{turn_id}\n{path}"))
+}
+
+async fn memory_exists(pool: &SqlitePool, id: &str) -> Result<bool, AxError> {
+    let found: Option<i64> = sqlx::query_scalar("SELECT 1 FROM memories WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(db_err)?;
+    Ok(found.is_some())
+}
+
 pub async fn save_file_changes(
     pool: &SqlitePool,
     paths: &[String],
+    session_id: &str,
+    turn_id: &str,
+    now_ms: i64,
+) -> Result<usize, AxError> {
+    save_file_change_versions(pool, paths, "", session_id, turn_id, now_ms).await
+}
+
+/// One file_change memory per path, per turn and per `content_version`
+/// (usually the file's content hash). The same content in the same turn is
+/// stored once; a new version of the file is a new memory. With an empty
+/// `content_version` (the turn-end hook) a path that already has a
+/// file_change memory in this turn is skipped; with a `content_version`
+/// (sync capture) a path the hook already recorded in this turn is skipped,
+/// so either order leaves one memory per edit.
+pub(crate) async fn save_file_change_versions(
+    pool: &SqlitePool,
+    paths: &[String],
+    content_version: &str,
     session_id: &str,
     turn_id: &str,
     now_ms: i64,
@@ -59,11 +126,21 @@ pub async fn save_file_changes(
         if path.is_empty() {
             continue;
         }
-        let id_source = format!("{session_id}\n{turn_id}\n{path}");
-        let id = format!(
-            "filechange-{}",
-            &blake3::hash(id_source.as_bytes()).to_hex()[..16]
-        );
+        if content_version.is_empty() {
+            if file_change_recorded(pool, path, session_id, turn_id).await? {
+                continue;
+            }
+        } else if memory_exists(pool, &hook_file_change_id(session_id, turn_id, path)).await? {
+            // The turn-end hook already recorded this path for this turn.
+            continue;
+        }
+        let id = if content_version.is_empty() {
+            hook_file_change_id(session_id, turn_id, path)
+        } else {
+            file_change_id(&format!(
+                "{session_id}\n{turn_id}\n{path}\n{content_version}"
+            ))
+        };
         let title = redact_secrets(&format!("changed {path}"));
         let files =
             serde_json::to_string(&vec![path]).map_err(|e| AxError::Other(e.to_string()))?;
@@ -90,6 +167,9 @@ pub async fn save_file_changes(
         if result.rows_affected() > 0 {
             crate::brain::stamp_memory(pool, &id, FILE_CHANGE_KIND, model).await?;
             if let Some(row) = crate::store::get(pool, &id).await? {
+                crate::store::write_derived_columns(pool, &row)
+                    .await
+                    .map_err(db_err)?;
                 crate::brain::register_cues(pool, &row, &[]).await?;
             }
             written += 1;
@@ -99,6 +179,7 @@ pub async fn save_file_changes(
 }
 
 /// Like `save_file_changes`, and stores a redacted capped zstd hunk in the body when provided.
+/// A path that already has a file_change memory in this turn is skipped.
 #[allow(clippy::too_many_arguments)]
 pub async fn save_file_change_with_hunk(
     pool: &SqlitePool,
@@ -111,14 +192,10 @@ pub async fn save_file_change_with_hunk(
     now_ms: i64,
 ) -> Result<usize, AxError> {
     let path = path.trim();
-    if path.is_empty() {
+    if path.is_empty() || file_change_recorded(pool, path, session_id, turn_id).await? {
         return Ok(0);
     }
-    let id_source = format!("{session_id}\n{turn_id}\n{path}");
-    let id = format!(
-        "filechange-{}",
-        &blake3::hash(id_source.as_bytes()).to_hex()[..16]
-    );
+    let id = hook_file_change_id(session_id, turn_id, path);
     let title = redact_secrets(&format!("changed {path}"));
     let mut body = title.clone();
     if let Some(h) = hunk {
@@ -153,6 +230,9 @@ pub async fn save_file_change_with_hunk(
     if result.rows_affected() > 0 {
         crate::brain::stamp_memory(pool, &id, FILE_CHANGE_KIND, model).await?;
         if let Some(row) = crate::store::get(pool, &id).await? {
+            crate::store::write_derived_columns(pool, &row)
+                .await
+                .map_err(db_err)?;
             crate::brain::register_cues(pool, &row, &[]).await?;
         }
         return Ok(1);
@@ -190,6 +270,9 @@ pub async fn save_turn(
         crate::store::link_follows_in_session(pool, &record.id).await?;
         crate::brain::stamp_memory(pool, &record.id, TURN_KIND, model).await?;
         if let Some(row) = crate::store::get(pool, &record.id).await? {
+            crate::store::write_derived_columns(pool, &row)
+                .await
+                .map_err(db_err)?;
             crate::brain::register_cues(pool, &row, &[]).await?;
         }
     }
@@ -696,7 +779,8 @@ fn encode_component(value: &str) -> String {
     out
 }
 
-/// Move `turn` memories older than `max_age_days` into the permanent archive.
+/// Move `turn` and `file_change` memories older than `max_age_days` into the
+/// permanent archive.
 /// They stay fetchable by id and by cue. A JSONL copy is written first; nothing
 /// changes when that write fails.
 pub async fn prune_turns(
@@ -712,23 +796,24 @@ pub async fn prune_turns(
     }
     write_backup(backup_dir, "turn-memories", now_ms, &expired)?;
     let mut tx = pool.begin().await.map_err(db_err)?;
-    let mut deleted = 0;
+    let mut archived = 0;
     for row in &expired {
         let result = sqlx::query(
-            "UPDATE memories SET tier = 't3' WHERE id = ? AND kind = ? AND COALESCE(tier, 't1') != 't3'",
+            "UPDATE memories SET tier = 't3' WHERE id = ? AND kind IN (?, ?) AND COALESCE(tier, 't1') != 't3'",
         )
         .bind(&row.id)
         .bind(TURN_KIND)
+        .bind(FILE_CHANGE_KIND)
         .execute(&mut *tx)
         .await
         .map_err(db_err)?;
-        deleted += result.rows_affected();
+        archived += result.rows_affected();
     }
     tx.commit().await.map_err(db_err)?;
     for row in &expired {
         crate::brain::index_archive_vector(pool, &row.id).await?;
     }
-    Ok(deleted)
+    Ok(archived)
 }
 
 fn write_backup(dir: &Path, stem: &str, now_ms: i64, rows: &[MemoryRow]) -> Result<(), AxError> {
@@ -739,7 +824,8 @@ fn write_backup(dir: &Path, stem: &str, now_ms: i64, rows: &[MemoryRow]) -> Resu
         lines.push('\n');
     }
     std::fs::create_dir_all(dir).map_err(io_err)?;
-    let day = &crate::history::format_when(now_ms)[..10];
+    let when = crate::history::format_when(now_ms);
+    let day = when.get(..10).unwrap_or("undated");
     let path = dir.join(format!("{stem}-{day}.jsonl"));
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -751,11 +837,54 @@ fn write_backup(dir: &Path, stem: &str, now_ms: i64, rows: &[MemoryRow]) -> Resu
 }
 
 const REDACTED: &str = "[redacted]";
-const PASSWORD_KEYS: [&str; 3] = ["password", "passwd", "pwd"];
 const TOKEN_PREFIXES: [&str; 6] = ["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"];
+/// Vendor token prefixes (Slack, Stripe, GitLab, npm, Google) whose tokens may
+/// be shorter than the generic 40-character rule.
+const VENDOR_PREFIXES: [&str; 12] = [
+    "xoxb-", "xoxp-", "xoxa-", "xoxr-", "xoxs-", "xapp-", "sk_live_", "sk_test_", "rk_live_",
+    "glpat-", "npm_", "AIza",
+];
+/// A key that names a secret: equal to or ending with one of these
+/// (case-insensitive), so `db_password`, `client_secret` and `API_KEY` match
+/// while `max_tokens` and `author` do not.
+const SECRET_KEY_SUFFIXES: [&str; 13] = [
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "api-key",
+    "access_key",
+    "private_key",
+    "auth",
+    "authorization",
+    "credentials",
+];
+/// Authorization schemes: the value after them is the secret.
+const AUTH_SCHEMES: [&str; 3] = ["Bearer", "Basic", "Token"];
 
 fn is_token_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '+' | '/' | '=' | '.')
+}
+
+fn is_secret_key(key: &str) -> bool {
+    let key = key.trim_start_matches('-').to_ascii_lowercase();
+    !key.is_empty() && SECRET_KEY_SUFFIXES.iter().any(|s| key.ends_with(s))
+}
+
+fn is_jwt(token: &str) -> bool {
+    let parts: Vec<&str> = token.split('.').collect();
+    token.starts_with("eyJ")
+        && token.len() >= 20
+        && parts.len() == 3
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '='))
+        })
 }
 
 fn looks_like_secret(token: &str) -> bool {
@@ -764,6 +893,12 @@ fn looks_like_secret(token: &str) -> bool {
         return true;
     }
     if TOKEN_PREFIXES.iter().any(|p| token.starts_with(p)) && len >= 24 {
+        return true;
+    }
+    if VENDOR_PREFIXES.iter().any(|p| token.starts_with(p)) && len >= 20 {
+        return true;
+    }
+    if is_jwt(token) {
         return true;
     }
     if token.starts_with("AKIA")
@@ -791,36 +926,122 @@ fn looks_like_secret(token: &str) -> bool {
 /// `password=value` → `password=[redacted]`; `None` when `token` is not such an assignment.
 fn redact_assignment(token: &str) -> Option<String> {
     let (key, value) = token.split_once('=')?;
-    (PASSWORD_KEYS.contains(&key.to_ascii_lowercase().as_str()) && !value.is_empty())
-        .then(|| format!("{key}={REDACTED}"))
+    (is_secret_key(key) && !value.is_empty()).then(|| format!("{key}={REDACTED}"))
 }
 
-/// Replace likely secrets (API keys, tokens, `password=` values, long hex/base64 runs) with `[redacted]`.
-pub fn redact_secrets(text: &str) -> String {
+/// The separator between a key and its value: `:` or `=`, with optional
+/// spaces and quotes around it (`password: x`, `"password": "x"`, `key='x'`).
+fn is_key_value_separator(separator: &str) -> bool {
+    let core: String = separator
+        .chars()
+        .filter(|c| !c.is_whitespace() && !matches!(c, '"' | '\''))
+        .collect();
+    core == ":" || core == "="
+}
+
+/// `scheme://user:password@host` → `scheme://user:[redacted]@host`.
+fn redact_url_credentials(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    let mut previous_token = String::new();
     let mut rest = text;
+    while let Some(at) = rest.find("://") {
+        let (head, tail) = rest.split_at(at + 3);
+        out.push_str(head);
+        let authority_end = tail
+            .find(|c: char| {
+                c == '/'
+                    || c == '?'
+                    || c == '#'
+                    || c.is_whitespace()
+                    || matches!(c, '"' | '\'' | '<' | '>')
+            })
+            .unwrap_or(tail.len());
+        let authority = &tail[..authority_end];
+        match authority.rfind('@') {
+            Some(at_sign) => {
+                let userinfo = &authority[..at_sign];
+                match userinfo.split_once(':') {
+                    Some((user, password)) if !password.is_empty() => {
+                        out.push_str(user);
+                        out.push(':');
+                        out.push_str(REDACTED);
+                        out.push_str(&authority[at_sign..]);
+                    }
+                    _ => out.push_str(authority),
+                }
+            }
+            None => out.push_str(authority),
+        }
+        rest = &tail[authority_end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Replace likely secrets with `[redacted]`: API keys and vendor tokens, JWTs,
+/// long hex/base64 runs, values of secret-named keys (`password=`,
+/// `"api_key": "…"`, `client_secret: …`, `token = …`), `Authorization:
+/// Bearer …` values and the password in `scheme://user:password@host`.
+pub fn redact_secrets(text: &str) -> String {
+    /// What the previous tokens said about the next one.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Expect {
+        Nothing,
+        /// A secret-named key: a value follows after `:` or `=`.
+        Key,
+        /// A value follows after whitespace (`password = x`, `Bearer x`).
+        Value,
+        /// Like `Value`, after an authorization scheme was already seen.
+        SchemeValue,
+    }
+    let text = redact_url_credentials(text);
+    let mut out = String::with_capacity(text.len());
+    let mut expect = Expect::Nothing;
+    let mut rest = text.as_str();
     while let Some(start) = rest.find(is_token_char) {
         let separator = &rest[..start];
         out.push_str(separator);
-        let after_password_colon = separator.trim() == ":"
-            && PASSWORD_KEYS.contains(&previous_token.to_ascii_lowercase().as_str());
         let tail = &rest[start..];
         let end = tail.find(|c: char| !is_token_char(c)).unwrap_or(tail.len());
         let run = &tail[..end];
         let token = run.trim_end_matches('.');
         let dots = &run[token.len()..];
-        if after_password_colon && !token.is_empty() {
+        let quiet_separator = separator
+            .chars()
+            .all(|c| c.is_whitespace() || matches!(c, '"' | '\''));
+        let is_value = !token.is_empty()
+            && match expect {
+                Expect::Nothing => false,
+                Expect::Key => is_key_value_separator(separator),
+                Expect::Value | Expect::SchemeValue => quiet_separator,
+            };
+        expect = if expect == Expect::Key && token == "=" && quiet_separator {
+            // `password = value`: the value comes next.
+            out.push_str(token);
+            Expect::Value
+        } else if is_value && expect != Expect::SchemeValue && AUTH_SCHEMES.contains(&token) {
+            out.push_str(token);
+            Expect::SchemeValue
+        } else if is_value {
             out.push_str(REDACTED);
+            Expect::Nothing
+        } else if token == "Bearer" {
+            out.push_str(token);
+            Expect::SchemeValue
         } else if let Some(redacted) = redact_assignment(token) {
             out.push_str(&redacted);
+            Expect::Nothing
         } else if looks_like_secret(token) {
             out.push_str(REDACTED);
+            Expect::Nothing
         } else {
             out.push_str(token);
-        }
+            if is_secret_key(token) {
+                Expect::Key
+            } else {
+                Expect::Nothing
+            }
+        };
         out.push_str(dots);
-        previous_token = token.to_string();
         rest = &tail[end..];
     }
     out.push_str(rest);
@@ -994,5 +1215,37 @@ diff --git a/b.rs b/b.rs
         );
         assert!(git_web_file_url("git@github.com:org/repo.git", "not-a-rev", "a.rs").is_none());
         assert!(git_web_file_url("git@github.com:org/repo.git", "abc1234", "../x").is_none());
+    }
+}
+
+#[cfg(test)]
+mod hunk_tests {
+    use super::{compress_hunk, write_backup, HUNK_CAP_BYTES};
+
+    fn decompress(hex: &str) -> String {
+        let bytes: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        String::from_utf8(zstd::decode_all(bytes.as_slice()).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_large_hunk_is_cut_on_a_char_boundary() {
+        // Two ASCII bytes shift the 3-byte chars so the cap lands mid-char.
+        let text = format!("xx{}", "€".repeat(HUNK_CAP_BYTES));
+        assert!(!text.is_char_boundary(HUNK_CAP_BYTES));
+        let out = decompress(&compress_hunk(&text));
+        assert!(out.ends_with("\n…truncated…"));
+        let kept = out.trim_end_matches("\n…truncated…");
+        assert!(kept.len() <= HUNK_CAP_BYTES);
+        assert!(kept.len() > HUNK_CAP_BYTES - 4);
+    }
+
+    #[test]
+    fn a_backup_with_an_unformattable_time_does_not_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        write_backup(dir.path(), "turns", i64::MAX, &[]).unwrap();
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 }

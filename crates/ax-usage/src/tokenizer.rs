@@ -167,6 +167,19 @@ pub fn count_file_line_range_tokens(path: &Path, start_line: u32, end_line: u32)
 /// Exact token count of a file's current contents, cached by (mtime, size).
 /// Returns `None` when the file cannot be read or the tokenizer is unavailable.
 pub fn count_file_tokens(path: &Path) -> Option<i64> {
+    count_file_tokens_observed(path).map(|(tokens, _)| tokens)
+}
+
+/// Whether one [`count_file_tokens`] call was answered from the cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CacheOutcome {
+    Hit,
+    Miss,
+}
+
+/// [`count_file_tokens`], plus whether this call was a cache hit or miss. The
+/// process-wide counters add up every caller; this is what one call did.
+fn count_file_tokens_observed(path: &Path) -> Option<(i64, CacheOutcome)> {
     bpe()?;
     let meta = std::fs::metadata(path).ok()?;
     if !meta.is_file() {
@@ -179,7 +192,7 @@ pub fn count_file_tokens(path: &Path) -> Option<i64> {
         if let Some(hit) = cache.get(path) {
             if hit.mtime_ms == key_mtime && hit.size == key_size {
                 TOKEN_CACHE_HITS.fetch_add(1, Ordering::Relaxed);
-                return Some(hit.tokens);
+                return Some((hit.tokens, CacheOutcome::Hit));
             }
         }
     }
@@ -204,7 +217,7 @@ pub fn count_file_tokens(path: &Path) -> Option<i64> {
         }
         TOKEN_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
     }
-    Some(tokens)
+    Some((tokens, CacheOutcome::Miss))
 }
 
 fn admit_file_cache(
@@ -268,61 +281,88 @@ mod tests {
 
     #[test]
     fn file_tokens_cached_by_mtime_and_size() {
-        let dir = std::env::temp_dir().join("ax-usage-tokenizer-test");
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("sample.rs");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sample.rs");
         std::fs::write(&path, "fn a() {}\nfn b() {}\n").unwrap();
 
-        let first = count_file_tokens(&path).unwrap();
-        let second = count_file_tokens(&path).unwrap();
-        assert_eq!(first, second);
-        assert!(first > 0);
+        let first = count_file_tokens_observed(&path).unwrap();
+        let second = count_file_tokens_observed(&path).unwrap();
+        assert_eq!(first.0, second.0);
+        assert!(first.0 > 0);
+        assert_eq!(second.1, CacheOutcome::Hit);
 
-        let _ = std::fs::remove_file(&path);
+        // A different size is a new key: counted again.
+        std::fs::write(&path, "fn a() {}\nfn b() {}\nfn c() {}\n").unwrap();
+        let changed = count_file_tokens_observed(&path).unwrap();
+        assert_eq!(changed.1, CacheOutcome::Miss);
+        assert!(changed.0 > first.0);
     }
 
     #[test]
     fn line_range_tokens_subset_of_full_file() {
-        let dir = std::env::temp_dir().join("ax-usage-tokenizer-range-test");
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("range.rs");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("range.rs");
         std::fs::write(&path, "line1\nline2\nline3\nline4\nline5\nline6\nline7\n").unwrap();
 
         let full = count_file_tokens(&path).unwrap();
         let slice = count_file_line_range_tokens(&path, 2, 4).unwrap();
         assert!(slice > 0);
         assert!(slice < full);
-
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
     fn missing_file_returns_none() {
-        let before = token_cache_status();
-        assert!(count_file_tokens(Path::new("Z:/definitely/not/here.rs")).is_none());
-        let after = token_cache_status();
-        assert_eq!(after.hits, before.hits);
-        assert_eq!(after.misses, before.misses);
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("not-here.rs");
+        // No observation means the call counted neither a hit nor a miss.
+        assert!(count_file_tokens_observed(&missing).is_none());
+        assert!(count_file_tokens(&missing).is_none());
     }
 
     #[test]
     fn file_token_cache_counts_one_miss_then_one_hit() {
-        let dir =
-            std::env::temp_dir().join(format!("ax-usage-tokenizer-status-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("status.rs");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("status.rs");
         std::fs::write(&path, "fn cached() {}\n").unwrap();
         let before = token_cache_status();
-        let first = count_file_tokens(&path).unwrap();
-        let second = count_file_tokens(&path).unwrap();
+        let first = count_file_tokens_observed(&path).unwrap();
+        let second = count_file_tokens_observed(&path).unwrap();
         let after = token_cache_status();
-        assert_eq!(first, second);
-        assert_eq!(after.misses - before.misses, 1);
-        assert_eq!(after.hits - before.hits, 1);
+        assert_eq!(first.0, second.0);
+        assert_eq!(first.1, CacheOutcome::Miss);
+        assert_eq!(second.1, CacheOutcome::Hit);
+        // The counters are process-wide: other tests may add to them meanwhile.
+        assert!(after.misses > before.misses);
+        assert!(after.hits > before.hits);
         assert_eq!(after.capacity, FILE_TOKEN_CACHE_CAPACITY);
         assert!(after.tokenizer);
         assert!(after.lock_ok);
-        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn one_miss_then_one_hit_while_other_threads_count_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let other = dir.path().join("other.rs");
+        std::fs::write(&other, "fn other() {}\n").unwrap();
+        let path = dir.path().join("mine.rs");
+        std::fs::write(&path, "fn mine() {}\n").unwrap();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let busy = {
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    count_file_tokens(&other);
+                }
+            })
+        };
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let first = count_file_tokens_observed(&path).unwrap();
+        let second = count_file_tokens_observed(&path).unwrap();
+        stop.store(true, Ordering::Relaxed);
+        busy.join().unwrap();
+        assert_eq!(first.0, second.0);
+        assert_eq!(first.1, CacheOutcome::Miss);
+        assert_eq!(second.1, CacheOutcome::Hit);
     }
 
     #[test]

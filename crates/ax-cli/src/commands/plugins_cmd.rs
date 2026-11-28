@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 
 fn selected<'a>(
     plugins: &'a [ax_plugins::LoadedPlugin],
@@ -40,7 +40,7 @@ fn describe(p: &ax_plugins::LoadedPlugin) -> String {
 }
 
 pub fn run_list(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let plugins = ax_plugins::discover_plugins(&root);
     if json {
         let rows: Vec<_> = plugins
@@ -86,7 +86,7 @@ fn plugins_dir(root: &Path) -> std::path::PathBuf {
 }
 
 pub fn run_trust(path: Option<String>, names: Vec<String>, untrust: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let plugins = ax_plugins::discover_plugins(&root);
     if plugins.is_empty() {
         return Err(format!("no plugins under {}", plugins_dir(&root).display()));
