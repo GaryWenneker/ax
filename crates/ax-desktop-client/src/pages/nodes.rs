@@ -22,6 +22,9 @@ pub struct NodesPage {
     pending: Option<Receiver<NodeLoad>>,
     detail_pending: Option<Receiver<Result<NodeDetail, String>>>,
     dirty: bool,
+    /// Set once a load finished (with rows, with none, or with an error), so an
+    /// empty result does not trigger a new request on every frame.
+    loaded: bool,
 }
 
 impl NodesPage {
@@ -72,11 +75,11 @@ impl NodesPage {
             self.reload(ctx);
             self.dirty = false;
         }
-        if self.nodes.is_empty() && self.pending.is_none() && self.err.is_none() {
+        if self.needs_initial_load() {
             self.reload(ctx);
         }
 
-        self.poll(ctx);
+        self.poll();
         err_label(ui, &self.err);
 
         ui.label(format!("{} shown · {} total", self.nodes.len(), self.total));
@@ -158,6 +161,10 @@ impl NodesPage {
         });
     }
 
+    fn needs_initial_load(&self) -> bool {
+        !self.loaded && self.pending.is_none()
+    }
+
     fn reload(&mut self, ctx: &PageCtx<'_>) {
         let c = ctx.client.clone();
         let q = self.q.clone();
@@ -170,7 +177,7 @@ impl NodesPage {
         }));
     }
 
-    fn poll(&mut self, _ctx: &mut PageCtx<'_>) {
+    fn poll(&mut self) {
         if let Some(rx) = &self.pending {
             match rx.try_recv() {
                 Ok(Ok((nodes, total))) => {
@@ -178,10 +185,12 @@ impl NodesPage {
                     self.total = total;
                     self.err = None;
                     self.pending = None;
+                    self.loaded = true;
                 }
                 Ok(Err(e)) => {
                     self.err = Some(e);
                     self.pending = None;
+                    self.loaded = true;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(_) => self.pending = None,
@@ -201,5 +210,36 @@ impl NodesPage {
                 Err(_) => self.detail_pending = None,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn finished(load: NodeLoad) -> Receiver<NodeLoad> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(load).unwrap();
+        rx
+    }
+
+    #[test]
+    fn empty_result_does_not_start_another_load() {
+        let mut page = NodesPage::default();
+        assert!(page.needs_initial_load());
+        page.pending = Some(finished(Ok((Vec::new(), 0))));
+        page.poll();
+        assert!(page.pending.is_none());
+        assert!(!page.needs_initial_load(), "empty page reloads every frame");
+    }
+
+    #[test]
+    fn failed_load_does_not_start_another_load() {
+        let mut page = NodesPage {
+            pending: Some(finished(Err("boom".into()))),
+            ..NodesPage::default()
+        };
+        page.poll();
+        assert!(!page.needs_initial_load());
     }
 }

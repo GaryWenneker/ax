@@ -346,9 +346,13 @@ impl SonarProxyCache {
         self.ready = true;
     }
 
+    /// Remember a fallback host that answered. Only a ready cache takes it:
+    /// after [`Self::invalidate`] the credentials are gone, so the next
+    /// request must rebuild host and credentials together.
     fn set_host(&mut self, host: String) {
-        self.host = host;
-        self.ready = true;
+        if self.ready {
+            self.host = host;
+        }
     }
 }
 
@@ -387,6 +391,9 @@ pub async fn handle_sonar_ui_proxy(
     State(hub): State<WebHub>,
     req: Request<Body>,
 ) -> impl IntoResponse {
+    if let Err(reason) = proxy_write_allowed(req.method(), req.headers(), hub.readonly) {
+        return (StatusCode::FORBIDDEN, reason).into_response();
+    }
     let (mut sonar_host, auth_header) = proxy_credentials(&hub).await;
 
     let method = req.method().clone();
@@ -496,12 +503,24 @@ pub async fn handle_sonar_ui_proxy(
         || content_type.contains("text/xml");
 
     let body_out: Bytes = if needs_rewrite {
-        let text = String::from_utf8_lossy(&resp_bytes);
-        let mut bytes = rewrite_proxy_text(&text, inject_theme);
-        if content_type.contains("json") {
-            bytes = patch_sonar_theme_json(&bytes, &upstream_path);
+        // Bundles can be megabytes: rewrite off the async workers.
+        let json = content_type.contains("json");
+        let path = upstream_path.clone();
+        let rewritten = tokio::task::spawn_blocking(move || {
+            let text = String::from_utf8_lossy(&resp_bytes);
+            let mut bytes = rewrite_proxy_text(&text, inject_theme);
+            if json {
+                bytes = patch_sonar_theme_json(&bytes, &path);
+            }
+            Bytes::from(bytes)
+        })
+        .await;
+        match rewritten {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return (StatusCode::BAD_GATEWAY, "SonarQube proxy rewrite failed").into_response()
+            }
         }
-        Bytes::from(bytes)
     } else {
         resp_bytes
     };
@@ -567,6 +586,49 @@ async fn proxy_credentials(hub: &WebHub) -> (String, String) {
     let mut cache = hub.sonar_proxy.lock().await;
     cache.ensure(&config);
     (cache.host.clone(), cache.auth_header.clone())
+}
+
+/// The proxy sends every request with the configured SonarQube admin
+/// credentials, so a request that can change SonarQube must come from a page
+/// this Command Center served: never in read-only mode, never cross-site, and
+/// with an `Origin` that names the same host as the request. Reads pass.
+pub(crate) fn proxy_write_allowed(
+    method: &Method,
+    headers: &HeaderMap,
+    readonly: bool,
+) -> Result<(), &'static str> {
+    if method == Method::GET || method == Method::HEAD {
+        return Ok(());
+    }
+    if readonly {
+        return Err("read-only mode (AX_WEB_READONLY=1)");
+    }
+    if headers
+        .get("sec-fetch-site")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|site| site != "same-origin")
+    {
+        return Err("Cross-site SonarQube changes are refused");
+    }
+    let origin = headers
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<axum::http::Uri>().ok());
+    let host = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let same = origin.as_ref().is_some_and(|uri| {
+        uri.scheme().is_some()
+            && uri
+                .authority()
+                .is_some_and(|a| !host.is_empty() && a.as_str().eq_ignore_ascii_case(host))
+    });
+    if same {
+        Ok(())
+    } else {
+        Err("SonarQube changes must come from the Command Center page")
+    }
 }
 
 async fn send_upstream(
@@ -727,20 +789,18 @@ fn rewrite_sonar_asset_helpers(text: &str, prefix: &str) -> String {
     )
 }
 
-fn slash_starts_route_path(chars: &[char], slash_i: usize) -> bool {
-    if slash_i + 1 >= chars.len() {
-        return false;
-    }
-    let next = chars[slash_i + 1];
-    if next == '/' {
-        return false;
-    }
+/// `slash_i` is the byte index of an ASCII `/` in `text`, so the byte after
+/// it starts a char. Tests the prefixes on the remaining slice; nothing is copied.
+fn slash_starts_route_path(text: &str, slash_i: usize) -> bool {
     // Only rewrite static asset paths in JS — API and app routes use J()/baseUrl + relative path.
-    if !next.is_ascii_alphabetic() {
+    if !text
+        .as_bytes()
+        .get(slash_i + 1)
+        .is_some_and(u8::is_ascii_alphabetic)
+    {
         return false;
     }
-    let rest: String = chars[slash_i + 1..].iter().collect();
-    should_rewrite_js_asset_path(&rest)
+    should_rewrite_js_asset_path(&text[slash_i + 1..])
 }
 
 /// Paths safe to prefix in minified JS / HTML.
@@ -767,90 +827,65 @@ fn should_rewrite_js_asset_path(path: &str) -> bool {
 }
 
 /// Prefix root-relative URLs (`"/…`, `'/…`, `url(/…`) so SonarQube assets and API calls stay on the proxy path.
+///
+/// Works on bytes in one pass: every byte it matches is ASCII, and ASCII bytes
+/// never occur inside a multi-byte UTF-8 char, so each match index is a char
+/// boundary and untouched text is copied in whole slices.
 fn rewrite_quoted_root_paths(text: &str, prefix: &str) -> String {
-    let prefix_chars: Vec<char> = prefix.chars().collect();
-    let chars: Vec<char> = text.chars().collect();
-    let n = chars.len();
-    let mut out = String::with_capacity(text.len() + n / 8);
-
+    let bytes = text.as_bytes();
+    let n = bytes.len();
+    let has_prefix = |at: usize| bytes[at..].starts_with(prefix.as_bytes());
+    let mut out = String::with_capacity(text.len() + text.len() / 8);
+    // Start of the input not yet copied to `out`.
+    let mut copied = 0;
     let mut i = 0;
     while i < n {
+        let b = bytes[i];
         // ("/path or ('/path — common in fetch("/api/…")
-        if i + 2 < n
-            && chars[i] == '('
-            && (chars[i + 1] == '"' || chars[i + 1] == '\'')
+        if b == b'('
             && i + 2 < n
-            && chars[i + 2] == '/'
-            && slash_starts_route_path(&chars, i + 2)
+            && (bytes[i + 1] == b'"' || bytes[i + 1] == b'\'')
+            && bytes[i + 2] == b'/'
+            && slash_starts_route_path(text, i + 2)
         {
-            let quote = chars[i + 1];
-            // Skip ("/") — URL join fragment, not a route.
-            if i + 3 < n && chars[i + 3] == quote {
-                out.push(chars[i]);
-                i += 1;
-                continue;
-            }
-            let path_start = i + 2;
-            let already = path_start + prefix_chars.len() <= n
-                && chars[path_start..path_start + prefix_chars.len()]
-                    .iter()
-                    .eq(prefix_chars.iter());
-            out.push('(');
-            out.push(quote);
-            if !already {
+            // ("/") — a URL join fragment, not a route — is left alone; the
+            // route check above already requires a letter after the slash.
+            out.push_str(&text[copied..i + 2]);
+            if !has_prefix(i + 2) {
                 out.push_str(prefix);
             }
             i += 2;
+            copied = i;
             continue;
         }
-
-        if (chars[i] == '"' || chars[i] == '\'')
+        if (b == b'"' || b == b'\'')
             && i + 1 < n
-            && chars[i + 1] == '/'
-            && slash_starts_route_path(&chars, i + 1)
+            && bytes[i + 1] == b'/'
+            && slash_starts_route_path(text, i + 1)
         {
-            let quote = chars[i];
-            // Skip "/" and '/' — join segments (`+"/"+path`) and cookie paths, not routes.
-            if i + 2 < n && chars[i + 2] == quote {
-                out.push(chars[i]);
-                i += 1;
-                continue;
-            }
-            let already = i + 1 + prefix_chars.len() <= n
-                && chars[i + 1..i + 1 + prefix_chars.len()]
-                    .iter()
-                    .eq(prefix_chars.iter());
-            out.push(chars[i]);
-            if !already {
+            out.push_str(&text[copied..i + 1]);
+            if !has_prefix(i + 1) {
                 out.push_str(prefix);
             }
             i += 1;
+            copied = i;
             continue;
         }
-
-        if i + 4 <= n && chars[i..i + 4].iter().collect::<String>() == "url(" {
-            out.push_str("url(");
+        if bytes[i..].starts_with(b"url(") {
             i += 4;
-            while i < n && chars[i].is_whitespace() {
-                out.push(chars[i]);
+            while i < n && bytes[i].is_ascii_whitespace() {
                 i += 1;
             }
-            if i < n && chars[i] == '/' && slash_starts_route_path(&chars, i) {
-                let already = i + prefix_chars.len() <= n
-                    && chars[i..i + prefix_chars.len()]
-                        .iter()
-                        .eq(prefix_chars.iter());
-                if !already {
-                    out.push_str(prefix);
-                }
+            if i < n && bytes[i] == b'/' && slash_starts_route_path(text, i) && !has_prefix(i) {
+                out.push_str(&text[copied..i]);
+                out.push_str(prefix);
+                copied = i;
             }
             continue;
         }
-
-        out.push(chars[i]);
         i += 1;
     }
-
+    out.push_str(&text[copied..]);
     dedupe_proxy_prefix(&out, prefix)
 }
 
@@ -972,6 +1007,37 @@ fn rewrite_location(location: &str, sonar_host: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_host_fallback_after_invalidate_does_not_mark_the_cache_ready() {
+        let mut config = ShipConfig::default();
+        config.sonar.host = "http://127.0.0.1:9000/".into();
+        config.sonar.admin_user = "admin".into();
+        config.sonar.admin_password = "secret".into();
+        let mut cache = SonarProxyCache::default();
+        cache.ensure(&config);
+        assert!(cache.ready);
+        let auth = cache.auth_header.clone();
+        assert!(!auth.is_empty());
+
+        // Request B gave up and invalidated; request A then found a working host.
+        cache.invalidate();
+        cache.set_host("http://localhost:9000".into());
+        assert!(
+            !cache.ready,
+            "a cache without credentials must not be ready"
+        );
+
+        // The next request rebuilds host and credentials together.
+        cache.ensure(&config);
+        assert!(cache.ready);
+        assert_eq!(cache.auth_header, auth);
+
+        // While ready, the fallback host replaces the configured one.
+        cache.set_host("http://localhost:9000".into());
+        assert_eq!(cache.host, "http://localhost:9000");
+        assert_eq!(cache.auth_header, auth);
+    }
 
     #[test]
     fn upstream_path_strips_route_prefix() {
@@ -1154,6 +1220,35 @@ mod tests {
         assert_eq!(
             rewrite_location("/sessions/new", "http://localhost:9000"),
             Some("/api/ship/sonar/ui/sessions/new".into())
+        );
+    }
+
+    #[test]
+    fn rewriting_a_large_bundle_is_linear_in_its_size() {
+        // About 600 KB with 2000 quoted root paths, like a minified SonarQube chunk.
+        let mut js = String::new();
+        for i in 0..2000 {
+            js.push_str(&format!("var a{i}=\"/js/chunk-{i}.js\";"));
+            js.push_str(&"x".repeat(280));
+        }
+        let started = std::time::Instant::now();
+        let out = rewrite_quoted_root_paths(&js, SONAR_UI_PUBLIC_PREFIX);
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(500),
+            "took {:?}",
+            started.elapsed()
+        );
+        assert_eq!(out.matches("\"/api/ship/sonar/ui/js/chunk-").count(), 2000);
+    }
+
+    #[test]
+    fn rewriting_keeps_non_ascii_text_intact() {
+        let js = "t=\"é€😀\";u='/js/a.js';v=(\"/api/x\");w=url(/css/é.css);z=\"/ñ\";";
+        let out = rewrite_quoted_root_paths(js, SONAR_UI_PUBLIC_PREFIX);
+        assert_eq!(
+            out,
+            "t=\"é€😀\";u='/api/ship/sonar/ui/js/a.js';v=(\"/api/ship/sonar/ui/api/x\");\
+             w=url(/api/ship/sonar/ui/css/é.css);z=\"/ñ\";"
         );
     }
 }

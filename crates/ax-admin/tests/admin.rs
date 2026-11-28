@@ -70,7 +70,11 @@ impl Upstream {
         for id in ["alpha", "beta"] {
             let root = dir.path().join(id);
             std::fs::create_dir_all(&root).unwrap();
-            std::fs::write(root.join("lib.rs"), "pub fn remote_fixture() -> u32 { 1 }\n").unwrap();
+            std::fs::write(
+                root.join("lib.rs"),
+                "pub fn remote_fixture() -> u32 { 1 }\n",
+            )
+            .unwrap();
             let mut ax = ax_core::Ax::init(&root).await.unwrap();
             ax.index_all(
                 ax_extraction::orchestrator::IndexOptions {
@@ -122,7 +126,9 @@ impl Upstream {
 }
 
 async fn serve(app: Router) -> String {
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     format!("http://127.0.0.1:{port}")
@@ -145,12 +151,21 @@ struct FakeLogins {
 impl FakeLogins {
     /// The browser's answer for the attempt that was started last.
     fn set(&self, state: LoginState) {
-        self.states.lock().unwrap().last_mut().expect("a started sign-in").1 = state;
+        self.states
+            .lock()
+            .unwrap()
+            .last_mut()
+            .expect("a started sign-in")
+            .1 = state;
     }
     /// The browser's answer for one attempt.
     fn set_for(&self, id: &str, state: LoginState) {
         let mut states = self.states.lock().unwrap();
-        states.iter_mut().find(|(attempt, _)| attempt == id).expect("a started sign-in").1 = state;
+        states
+            .iter_mut()
+            .find(|(attempt, _)| attempt == id)
+            .expect("a started sign-in")
+            .1 = state;
     }
     fn logged_out(&self) -> Vec<String> {
         self.logged_out.lock().unwrap().clone()
@@ -169,7 +184,10 @@ impl LoginBackend for FakeLogins {
             let mut started = self.started.lock().unwrap();
             started.push((url.clone(), client_id, write, admin));
             let id = format!("attempt-{}", started.len());
-            self.states.lock().unwrap().push((id.clone(), LoginState::Pending));
+            self.states
+                .lock()
+                .unwrap()
+                .push((id.clone(), LoginState::Pending));
             Ok(LoginStarted {
                 id,
                 authorization_url: format!("https://issuer.example.com/authorize?resource={url}"),
@@ -179,7 +197,10 @@ impl LoginBackend for FakeLogins {
     fn status<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Option<LoginState>> {
         Box::pin(async move {
             let states = self.states.lock().unwrap();
-            states.iter().find(|(attempt, _)| attempt == id).map(|(_, state)| state.clone())
+            states
+                .iter()
+                .find(|(attempt, _)| attempt == id)
+                .map(|(_, state)| state.clone())
         })
     }
     fn cancel<'a>(&'a self, _id: &'a str) -> BoxFuture<'a, Result<(), String>> {
@@ -246,7 +267,8 @@ impl Admin {
         grace: Duration,
     ) -> Self {
         let app =
-            App::with_sign_in_grace(home.clone(), secrets.clone(), logins.clone(), PORT, grace).unwrap();
+            App::with_sign_in_grace(home.clone(), secrets.clone(), logins.clone(), PORT, grace)
+                .unwrap();
         let mut admin = Self {
             home,
             _home_guard: guard,
@@ -277,12 +299,18 @@ impl Admin {
         let response = self.router.clone().oneshot(request).await.unwrap();
         let status = response.status();
         let headers = response.headers().clone();
-        let bytes = to_bytes(response.into_body(), 16 * 1024 * 1024).await.unwrap();
+        let bytes = to_bytes(response.into_body(), 16 * 1024 * 1024)
+            .await
+            .unwrap();
         self.seen
             .lock()
             .unwrap()
             .push_str(&String::from_utf8_lossy(&bytes));
-        (status, headers, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+        (
+            status,
+            headers,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
     }
 
     fn request(&self, method: &str, path: &str) -> axum::http::request::Builder {
@@ -368,7 +396,11 @@ async fn a1_without_a_connection_the_remote_api_is_closed() {
     assert_eq!(body["code"], "no_active_connection");
     // A call must say which connection it is for.
     let (status, _) = admin
-        .call("POST", "/api/remote/tools/ax_status", json!({"arguments": {}}))
+        .call(
+            "POST",
+            "/api/remote/tools/ax_status",
+            json!({"arguments": {}}),
+        )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
@@ -438,14 +470,20 @@ async fn a3_a_valid_address_and_key_are_saved_activated_and_usable() {
     let names = admin.tool_names().await;
     assert!(names.contains(&"ax_status".to_string()));
 
-    let (status, result) = admin.tool("ax_status", json!({}))
-        .await;
+    let (status, result) = admin.tool("ax_status", json!({})).await;
     assert_eq!(status, StatusCode::OK, "{result}");
     assert_eq!(result["isError"], false);
-    assert!(result["text"].as_str().unwrap().contains("files"), "{result}");
-    let (_, found) = admin.tool("ax_search", json!({"query": "remote_fixture"}))
+    assert!(
+        result["text"].as_str().unwrap().contains("files"),
+        "{result}"
+    );
+    let (_, found) = admin
+        .tool("ax_search", json!({"query": "remote_fixture"}))
         .await;
-    assert!(found["text"].as_str().unwrap().contains("remote_fixture"), "{found}");
+    assert!(
+        found["text"].as_str().unwrap().contains("remote_fixture"),
+        "{found}"
+    );
 }
 
 #[tokio::test]
@@ -521,7 +559,9 @@ async fn a5_unreachable_non_mcp_and_redirecting_addresses_are_distinct_errors() 
 
     // Nothing listens on this port.
     let closed = {
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
         listener.local_addr().unwrap().port()
     };
     assert_eq!(
@@ -530,13 +570,23 @@ async fn a5_unreachable_non_mcp_and_redirecting_addresses_are_distinct_errors() 
     );
 
     let html = serve(Router::new().fallback(|| async {
-        ([("content-type", "text/html")], "<html><body>Sign in</body></html>")
+        (
+            [("content-type", "text/html")],
+            "<html><body>Sign in</body></html>",
+        )
     }))
     .await;
-    assert_eq!(attempt(format!("{html}/projects/alpha/mcp")).await, "not_mcp");
+    assert_eq!(
+        attempt(format!("{html}/projects/alpha/mcp")).await,
+        "not_mcp"
+    );
 
-    let gateway = serve(Router::new().fallback(|| async { (StatusCode::BAD_GATEWAY, "Bad gateway") })).await;
-    assert_eq!(attempt(format!("{gateway}/projects/alpha/mcp")).await, "not_mcp");
+    let gateway =
+        serve(Router::new().fallback(|| async { (StatusCode::BAD_GATEWAY, "Bad gateway") })).await;
+    assert_eq!(
+        attempt(format!("{gateway}/projects/alpha/mcp")).await,
+        "not_mcp"
+    );
 
     // A redirect is reported, never followed, and the key is not sent on.
     let target_hits = Arc::new(Hits::default());
@@ -555,7 +605,10 @@ async fn a5_unreachable_non_mcp_and_redirecting_addresses_are_distinct_errors() 
         async move { (StatusCode::TEMPORARY_REDIRECT, [("location", location)]) }
     }))
     .await;
-    assert_eq!(attempt(format!("{redirecting}/projects/alpha/mcp")).await, "redirect");
+    assert_eq!(
+        attempt(format!("{redirecting}/projects/alpha/mcp")).await,
+        "redirect"
+    );
     assert_eq!(target_hits.count.load(Ordering::SeqCst), 0);
     assert!(target_hits.authorization.lock().unwrap().is_empty());
 
@@ -567,7 +620,9 @@ async fn a5_unreachable_non_mcp_and_redirecting_addresses_are_distinct_errors() 
 async fn a6_switching_changes_which_server_answers() {
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
-    let alpha = admin.add("Alpha admin", &upstream.url("alpha"), ADMIN_KEY).await;
+    let alpha = admin
+        .add("Alpha admin", &upstream.url("alpha"), ADMIN_KEY)
+        .await;
     let beta = admin.add("Beta", &upstream.url("beta"), BETA_KEY).await;
 
     // The connection added last is active.
@@ -579,7 +634,11 @@ async fn a6_switching_changes_which_server_answers() {
     assert!(!beta_tools.contains(&"ax_remember".to_string()));
 
     let (status, _) = admin
-        .call("POST", &format!("/api/connections/{alpha}/activate"), json!({}))
+        .call(
+            "POST",
+            &format!("/api/connections/{alpha}/activate"),
+            json!({}),
+        )
         .await;
     assert_eq!(status, StatusCode::OK);
     let (_, info) = admin.get("/api/remote/info").await;
@@ -595,27 +654,39 @@ async fn a6_switching_changes_which_server_answers() {
         "pub fn added_through_admin() -> u32 { 4 }\n",
     )
     .unwrap();
-    let (status, synced) = admin.tool("ax_sync", json!({}))
-        .await;
+    let (status, synced) = admin.tool("ax_sync", json!({})).await;
     assert_eq!(status, StatusCode::OK, "{synced}");
     assert_eq!(synced["isError"], false, "{synced}");
     let search = json!({"query": "added_through_admin"});
     let (_, found) = admin.tool("ax_search", search.clone()).await;
-    assert!(found["text"].as_str().unwrap().contains("added.rs"), "{found}");
+    assert!(
+        found["text"].as_str().unwrap().contains("added.rs"),
+        "{found}"
+    );
 
     // Back on beta: no admin tools, and alpha's symbol is not there.
     admin
-        .call("POST", &format!("/api/connections/{beta}/activate"), json!({}))
+        .call(
+            "POST",
+            &format!("/api/connections/{beta}/activate"),
+            json!({}),
+        )
         .await;
-    let (status, denied) = admin.tool("ax_sync", json!({}))
-        .await;
+    let (status, denied) = admin.tool("ax_sync", json!({})).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(denied["code"], "unknown_tool");
     let (_, found) = admin.tool("ax_search", search).await;
-    assert!(!found["text"].as_str().unwrap().contains("added.rs"), "{found}");
+    assert!(
+        !found["text"].as_str().unwrap().contains("added.rs"),
+        "{found}"
+    );
 
     let (status, body) = admin
-        .call("POST", "/api/connections/does-not-exist/activate", json!({}))
+        .call(
+            "POST",
+            "/api/connections/does-not-exist/activate",
+            json!({}),
+        )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["code"], "unknown_connection");
@@ -625,7 +696,9 @@ async fn a6_switching_changes_which_server_answers() {
 async fn a7_removing_deletes_the_entry_and_its_key() {
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
-    let alpha = admin.add("Alpha", &upstream.url("alpha"), CONTEXT_KEY).await;
+    let alpha = admin
+        .add("Alpha", &upstream.url("alpha"), CONTEXT_KEY)
+        .await;
     let beta = admin.add("Beta", &upstream.url("beta"), BETA_KEY).await;
     assert_eq!(admin.secrets.len(), 2);
 
@@ -661,10 +734,16 @@ async fn a7_removing_deletes_the_entry_and_its_key() {
 async fn a8_a_restart_restores_connections_and_the_active_one() {
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
-    let alpha = admin.add("Alpha", &upstream.url("alpha"), CONTEXT_KEY).await;
+    let alpha = admin
+        .add("Alpha", &upstream.url("alpha"), CONTEXT_KEY)
+        .await;
     admin.add("Beta", &upstream.url("beta"), BETA_KEY).await;
     admin
-        .call("POST", &format!("/api/connections/{alpha}/activate"), json!({}))
+        .call(
+            "POST",
+            &format!("/api/connections/{alpha}/activate"),
+            json!({}),
+        )
         .await;
 
     let admin = admin.restart().await;
@@ -680,24 +759,42 @@ async fn a8_a_restart_restores_connections_and_the_active_one() {
 async fn a8_editing_keeps_the_key_unless_a_new_one_is_given() {
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
-    let id = admin.add("Alpha", &upstream.url("alpha"), CONTEXT_KEY).await;
+    let id = admin
+        .add("Alpha", &upstream.url("alpha"), CONTEXT_KEY)
+        .await;
     let path = format!("/api/connections/{id}");
 
-    let (status, body) = admin.call("PUT", &path, json!({"name": "Production"})).await;
+    let (status, body) = admin
+        .call("PUT", &path, json!({"name": "Production"}))
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["connection"]["name"], "Production");
-    assert_eq!(admin.secrets.get(&id).unwrap().as_deref(), Some(CONTEXT_KEY));
+    assert_eq!(
+        admin.secrets.get(&id).unwrap().as_deref(),
+        Some(CONTEXT_KEY)
+    );
 
     // A new key is checked before it replaces the stored one.
     let (status, body) = admin
-        .call("PUT", &path, json!({"auth": {"type": "api_key", "key": "wrong-key"}}))
+        .call(
+            "PUT",
+            &path,
+            json!({"auth": {"type": "api_key", "key": "wrong-key"}}),
+        )
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["code"], "credentials_rejected");
-    assert_eq!(admin.secrets.get(&id).unwrap().as_deref(), Some(CONTEXT_KEY));
+    assert_eq!(
+        admin.secrets.get(&id).unwrap().as_deref(),
+        Some(CONTEXT_KEY)
+    );
 
     let (status, _) = admin
-        .call("PUT", &path, json!({"auth": {"type": "api_key", "key": ADMIN_KEY}}))
+        .call(
+            "PUT",
+            &path,
+            json!({"auth": {"type": "api_key", "key": ADMIN_KEY}}),
+        )
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(admin.secrets.get(&id).unwrap().as_deref(), Some(ADMIN_KEY));
@@ -761,12 +858,23 @@ async fn a_saved_key_is_never_sent_to_another_address() {
         assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
     }
     let (status, response) = admin
-        .call("PUT", &format!("/api/connections/{id}"), json!({"url": elsewhere}))
+        .call(
+            "PUT",
+            &format!("/api/connections/{id}"),
+            json!({"url": elsewhere}),
+        )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(response["error"], "Enter the key again to use another address");
+    assert_eq!(
+        response["error"],
+        "Enter the key again to use another address"
+    );
 
-    assert_eq!(hits.count.load(Ordering::SeqCst), 0, "nothing was sent there");
+    assert_eq!(
+        hits.count.load(Ordering::SeqCst),
+        0,
+        "nothing was sent there"
+    );
     assert!(hits.authorization.lock().unwrap().is_empty());
     let (_, list) = admin.get("/api/connections").await;
     assert_eq!(list["connections"][0]["url"], upstream.url("alpha"));
@@ -779,13 +887,15 @@ async fn a_failed_save_leaves_keys_and_connections_as_they_were() {
     use std::os::unix::fs::PermissionsExt;
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
-    let id = admin.add("Alpha", &upstream.url("alpha"), CONTEXT_KEY).await;
+    let id = admin
+        .add("Alpha", &upstream.url("alpha"), CONTEXT_KEY)
+        .await;
     let lock = |mode: u32| {
         std::fs::set_permissions(&admin.home, std::fs::Permissions::from_mode(mode)).unwrap()
     };
 
     lock(0o500); // connections.json can no longer be replaced
-    // Editing: the new key is accepted by the server but the entry cannot be saved.
+                 // Editing: the new key is accepted by the server but the entry cannot be saved.
     let (status, body) = admin
         .call(
             "PUT",
@@ -794,7 +904,11 @@ async fn a_failed_save_leaves_keys_and_connections_as_they_were() {
         )
         .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
-    assert_eq!(admin.secrets.get(&id).unwrap().as_deref(), Some(CONTEXT_KEY), "old key restored");
+    assert_eq!(
+        admin.secrets.get(&id).unwrap().as_deref(),
+        Some(CONTEXT_KEY),
+        "old key restored"
+    );
     // Adding: no key is left without an entry.
     let (status, _) = admin
         .call(
@@ -822,14 +936,19 @@ async fn a_failed_save_leaves_keys_and_connections_as_they_were() {
         .await;
     assert_eq!(status, StatusCode::OK);
     assert!(admin.secrets.is_empty());
-    assert_eq!(admin.restart().await.get("/api/connections").await.1["connections"], json!([]));
+    assert_eq!(
+        admin.restart().await.get("/api/connections").await.1["connections"],
+        json!([])
+    );
 }
 
 #[tokio::test]
 async fn a_call_for_a_connection_that_is_no_longer_active_is_refused() {
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
-    let alpha = admin.add("Alpha admin", &upstream.url("alpha"), ADMIN_KEY).await;
+    let alpha = admin
+        .add("Alpha admin", &upstream.url("alpha"), ADMIN_KEY)
+        .await;
     let beta = admin.add("Beta", &upstream.url("beta"), BETA_KEY).await;
     // This page still shows alpha, but another window made beta active.
     for name in ["ax_status", "ax_index"] {
@@ -842,7 +961,10 @@ async fn a_call_for_a_connection_that_is_no_longer_active_is_refused() {
             .await;
         assert_eq!(status, StatusCode::CONFLICT, "{name}");
         assert_eq!(body["code"], "connection_changed");
-        assert_eq!(body["error"], "Beta is the active environment now. Reload to continue.");
+        assert_eq!(
+            body["error"],
+            "Beta is the active environment now. Reload to continue."
+        );
     }
     let (status, _) = admin
         .call(
@@ -886,15 +1008,18 @@ async fn a9_no_key_reaches_the_configuration_file_or_any_response() {
             json!({"url": upstream.url("beta"), "auth": {"type": "api_key", "key": "wrong-secret-key"}}),
         )
         .await;
-    admin.tool("ax_status", json!({}))
-        .await;
+    admin.tool("ax_status", json!({})).await;
     admin
         .call("DELETE", &format!("/api/connections/{id}"), json!({}))
         .await;
     // A browser sign-in: its token is a secret too.
     *admin.logins.token.lock().unwrap() = CONTEXT_KEY.to_owned();
     let (_, started) = admin
-        .call("POST", "/api/login", json!({"url": upstream.url("alpha"), "clientId": "native-client"}))
+        .call(
+            "POST",
+            "/api/login",
+            json!({"url": upstream.url("alpha"), "clientId": "native-client"}),
+        )
         .await;
     admin.logins.set(LoginState::Connected);
     let complete = format!("/api/login/{}/complete", started["id"].as_str().unwrap());
@@ -906,7 +1031,10 @@ async fn a9_no_key_reaches_the_configuration_file_or_any_response() {
 
     let file = std::fs::read_to_string(admin.config_file()).unwrap();
     let responses = admin.seen.lock().unwrap().clone();
-    assert!(responses.len() > 1000, "the check must look at real traffic");
+    assert!(
+        responses.len() > 1000,
+        "the check must look at real traffic"
+    );
     for secret in [ADMIN_KEY, BETA_KEY, CONTEXT_KEY, "wrong-secret-key"] {
         assert!(!file.contains(secret), "{secret} in connections.json");
         assert!(!responses.contains(secret), "{secret} in an API response");
@@ -939,7 +1067,11 @@ async fn a10_browser_sign_in_saves_only_after_it_succeeds() {
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, _) = admin
-        .call("POST", "/api/login", json!({"url": "https://ax.example.com/", "clientId": "native"}))
+        .call(
+            "POST",
+            "/api/login",
+            json!({"url": "https://ax.example.com/", "clientId": "native"}),
+        )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(admin.logins.started.lock().unwrap().is_empty());
@@ -949,38 +1081,58 @@ async fn a10_browser_sign_in_saves_only_after_it_succeeds() {
     let (status, started) = admin.call("POST", "/api/login", start.clone()).await;
     assert_eq!(status, StatusCode::OK, "{started}");
     assert_eq!(started["id"], "attempt-1");
-    assert!(started["authorizationUrl"].as_str().unwrap().starts_with("https://issuer.example.com/authorize"));
+    assert!(started["authorizationUrl"]
+        .as_str()
+        .unwrap()
+        .starts_with("https://issuer.example.com/authorize"));
     assert_eq!(
         admin.logins.started.lock().unwrap()[0],
         (url.clone(), "native-client".to_string(), true, false)
     );
     let (_, pending) = admin.get("/api/login/attempt-1").await;
     assert_eq!(pending["state"], "pending");
-    let (status, body) = admin.call("POST", "/api/login/attempt-1/complete", json!({})).await;
+    let (status, body) = admin
+        .call("POST", "/api/login/attempt-1/complete", json!({}))
+        .await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["code"], "sign_in_pending");
-    let (status, _) = admin.call("DELETE", "/api/login/attempt-1", json!({})).await;
+    let (status, _) = admin
+        .call("DELETE", "/api/login/attempt-1", json!({}))
+        .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(admin.logins.cancelled.load(Ordering::SeqCst), 1);
     let (status, _) = admin.get("/api/login/attempt-1").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _) = admin.call("POST", "/api/login/attempt-1/complete", json!({})).await;
+    let (status, _) = admin
+        .call("POST", "/api/login/attempt-1/complete", json!({}))
+        .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(!admin.config_file().exists());
 
     // Failed in the browser: nothing is saved.
     admin.call("POST", "/api/login", start.clone()).await;
-    admin.logins.set(LoginState::Failed("Access was denied".into()));
+    admin
+        .logins
+        .set(LoginState::Failed("Access was denied".into()));
     let (_, failed) = admin.get("/api/login/attempt-2").await;
-    assert_eq!((failed["state"].as_str(), failed["message"].as_str()), (Some("failed"), Some("Access was denied")));
-    let (_, failed) = admin.call("POST", "/api/login/attempt-2/complete", json!({})).await;
+    assert_eq!(
+        (failed["state"].as_str(), failed["message"].as_str()),
+        (Some("failed"), Some("Access was denied"))
+    );
+    let (_, failed) = admin
+        .call("POST", "/api/login/attempt-2/complete", json!({}))
+        .await;
     assert_eq!(failed["state"], "failed");
     assert!(!admin.config_file().exists());
 
     // Neither the cancelled nor the denied attempt stored anything, so neither
     // may sign anything out: `ax mcp remote login` may be using this address.
     tokio::time::sleep(Duration::from_millis(700)).await;
-    assert!(admin.logins.logged_out().is_empty(), "{:?}", admin.logins.logged_out());
+    assert!(
+        admin.logins.logged_out().is_empty(),
+        "{:?}",
+        admin.logins.logged_out()
+    );
 
     // Signed in, but the server refuses the token: nothing saved, tokens dropped.
     *admin.logins.token.lock().unwrap() = "a-token-the-server-refuses".to_owned();
@@ -992,7 +1144,9 @@ async fn a10_browser_sign_in_saves_only_after_it_succeeds() {
         assert_eq!(ready["state"], "ready");
     }
     assert!(!admin.config_file().exists());
-    let (_, refused) = admin.call("POST", "/api/login/attempt-3/complete", json!({})).await;
+    let (_, refused) = admin
+        .call("POST", "/api/login/attempt-3/complete", json!({}))
+        .await;
     assert_eq!(refused["state"], "failed", "{refused}");
     assert_eq!(refused["message"], "The server rejected these credentials.");
     assert!(!admin.config_file().exists());
@@ -1024,7 +1178,12 @@ async fn a10_a_finished_sign_in_is_saved_once_and_removed_with_its_tokens() {
     let complete = format!("/api/login/{}/complete", started["id"].as_str().unwrap());
     // Completing needs the request token like every other change.
     let (status, _, _) = admin
-        .send(admin.request("POST", &complete).body(Body::empty()).unwrap())
+        .send(
+            admin
+                .request("POST", &complete)
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(!admin.config_file().exists());
@@ -1057,7 +1216,9 @@ async fn a10_a_finished_sign_in_is_saved_once_and_removed_with_its_tokens() {
         let (status, response) = admin.call("PUT", &path, body).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
     }
-    let (status, renamed) = admin.call("PUT", &path, json!({"name": "Production"})).await;
+    let (status, renamed) = admin
+        .call("PUT", &path, json!({"name": "Production"}))
+        .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(renamed["connection"]["name"], "Production");
 
@@ -1071,17 +1232,28 @@ async fn a10_a_finished_sign_in_is_saved_once_and_removed_with_its_tokens() {
 
     // A second connection on the same sign-in keeps the tokens alive.
     let (_, second) = admin
-        .call("POST", "/api/login", json!({"name": "Same sign-in", "url": url, "clientId": "native-client"}))
+        .call(
+            "POST",
+            "/api/login",
+            json!({"name": "Same sign-in", "url": url, "clientId": "native-client"}),
+        )
         .await;
     admin.logins.set(LoginState::Connected);
     let second_complete = format!("/api/login/{}/complete", second["id"].as_str().unwrap());
     let (_, second) = admin.call("POST", &second_complete, json!({})).await;
     let second_id = second["connection"]["id"].as_str().unwrap().to_owned();
     admin.call("DELETE", &path, json!({})).await;
-    assert!(admin.logins.logged_out().is_empty(), "still used by the other connection");
+    assert!(
+        admin.logins.logged_out().is_empty(),
+        "still used by the other connection"
+    );
     // Removing the last one signs out.
     let (status, _) = admin
-        .call("DELETE", &format!("/api/connections/{second_id}"), json!({}))
+        .call(
+            "DELETE",
+            &format!("/api/connections/{second_id}"),
+            json!({}),
+        )
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(admin.logins.logged_out(), [url]);
@@ -1103,7 +1275,11 @@ async fn a10_a_sign_in_the_page_never_saved_is_dropped_with_its_tokens() {
     let url = upstream.url("alpha");
     // The page starts a sign-in and then goes away (closed, reloaded).
     let (_, started) = admin
-        .call("POST", "/api/login", json!({"url": url, "clientId": "native-client"}))
+        .call(
+            "POST",
+            "/api/login",
+            json!({"url": url, "clientId": "native-client"}),
+        )
         .await;
     let id = started["id"].as_str().unwrap().to_owned();
     // The user finishes in the browser anyway: tokens are stored.
@@ -1124,16 +1300,33 @@ async fn a10_a_sign_in_the_page_never_saved_is_dropped_with_its_tokens() {
     // before the browser answers: that is the moment they are removed.
     admin.logins.logged_out.lock().unwrap().clear();
     let (_, first) = admin
-        .call("POST", "/api/login", json!({"url": url, "clientId": "native-client"}))
+        .call(
+            "POST",
+            "/api/login",
+            json!({"url": url, "clientId": "native-client"}),
+        )
         .await;
     let (_, second) = admin
-        .call("POST", "/api/login", json!({"url": url, "clientId": "native-client"}))
+        .call(
+            "POST",
+            "/api/login",
+            json!({"url": url, "clientId": "native-client"}),
+        )
         .await;
-    admin.logins.set_for(first["id"].as_str().unwrap(), LoginState::Connected);
+    admin
+        .logins
+        .set_for(first["id"].as_str().unwrap(), LoginState::Connected);
     tokio::time::sleep(Duration::from_millis(1200)).await;
-    assert!(admin.logins.logged_out().is_empty(), "kept while the second attempt is open");
+    assert!(
+        admin.logins.logged_out().is_empty(),
+        "kept while the second attempt is open"
+    );
     let (status, _) = admin
-        .call("DELETE", &format!("/api/login/{}", second["id"].as_str().unwrap()), json!({}))
+        .call(
+            "DELETE",
+            &format!("/api/login/{}", second["id"].as_str().unwrap()),
+            json!({}),
+        )
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(admin.logins.logged_out(), std::slice::from_ref(&url));
@@ -1144,12 +1337,22 @@ async fn a10_a_sign_in_the_page_never_saved_is_dropped_with_its_tokens() {
     // (`ax mcp remote login`) in the meantime.
     admin.logins.logged_out.lock().unwrap().clear();
     let (_, first) = admin
-        .call("POST", "/api/login", json!({"url": url, "clientId": "native-client"}))
+        .call(
+            "POST",
+            "/api/login",
+            json!({"url": url, "clientId": "native-client"}),
+        )
         .await;
     admin
-        .call("POST", "/api/login", json!({"url": url, "clientId": "native-client"}))
+        .call(
+            "POST",
+            "/api/login",
+            json!({"url": url, "clientId": "native-client"}),
+        )
         .await;
-    admin.logins.set_for(first["id"].as_str().unwrap(), LoginState::Connected);
+    admin
+        .logins
+        .set_for(first["id"].as_str().unwrap(), LoginState::Connected);
     tokio::time::sleep(Duration::from_millis(900)).await;
     admin.logins.set(LoginState::Connected);
     for _ in 0..40 {
@@ -1161,22 +1364,41 @@ async fn a10_a_sign_in_the_page_never_saved_is_dropped_with_its_tokens() {
     assert_eq!(admin.logins.logged_out(), std::slice::from_ref(&url));
     admin.logins.logged_out.lock().unwrap().clear();
     let (_, later) = admin
-        .call("POST", "/api/login", json!({"url": url, "clientId": "native-client"}))
+        .call(
+            "POST",
+            "/api/login",
+            json!({"url": url, "clientId": "native-client"}),
+        )
         .await;
     admin
-        .call("DELETE", &format!("/api/login/{}", later["id"].as_str().unwrap()), json!({}))
+        .call(
+            "DELETE",
+            &format!("/api/login/{}", later["id"].as_str().unwrap()),
+            json!({}),
+        )
         .await;
     tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(admin.logins.logged_out().is_empty(), "a later cancelled attempt signs nothing out");
+    assert!(
+        admin.logins.logged_out().is_empty(),
+        "a later cancelled attempt signs nothing out"
+    );
 
     // A page that does save in time keeps its tokens.
     admin.logins.logged_out.lock().unwrap().clear();
     let (_, started) = admin
-        .call("POST", "/api/login", json!({"url": url, "clientId": "native-client"}))
+        .call(
+            "POST",
+            "/api/login",
+            json!({"url": url, "clientId": "native-client"}),
+        )
         .await;
     admin.logins.set(LoginState::Connected);
     let (_, done) = admin
-        .call("POST", &format!("/api/login/{}/complete", started["id"].as_str().unwrap()), json!({}))
+        .call(
+            "POST",
+            &format!("/api/login/{}/complete", started["id"].as_str().unwrap()),
+            json!({}),
+        )
         .await;
     assert_eq!(done["state"], "connected");
     tokio::time::sleep(Duration::from_millis(1200)).await;
@@ -1188,7 +1410,9 @@ async fn a_slow_environment_does_not_hold_up_the_others() {
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
     let other = admin.add("Beta", &upstream.url("beta"), BETA_KEY).await;
-    admin.add("Alpha", &upstream.url("alpha"), CONTEXT_KEY).await;
+    admin
+        .add("Alpha", &upstream.url("alpha"), CONTEXT_KEY)
+        .await;
     // An address that takes seconds to say no.
     let slow = serve(Router::new().fallback(|| async {
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -1211,9 +1435,15 @@ async fn a_slow_environment_does_not_hold_up_the_others() {
     let ((edit_status, edit_body), (status, info_status, took)) = tokio::join!(edit, work);
     assert_eq!(edit_status, StatusCode::UNPROCESSABLE_ENTITY, "{edit_body}");
     assert_eq!((status, info_status), (StatusCode::OK, StatusCode::OK));
-    assert!(took < Duration::from_millis(1500), "the active environment answered in {took:?}");
+    assert!(
+        took < Duration::from_millis(1500),
+        "the active environment answered in {took:?}"
+    );
     // The refused edit changed nothing.
-    assert_eq!(admin.secrets.get(&other).unwrap().as_deref(), Some(BETA_KEY));
+    assert_eq!(
+        admin.secrets.get(&other).unwrap().as_deref(),
+        Some(BETA_KEY)
+    );
 }
 
 #[tokio::test]
@@ -1229,7 +1459,9 @@ async fn a10_tokens_of_a_sign_in_nobody_keeps_are_removed() {
     admin.logins.cancel_too_late.store(true, Ordering::SeqCst);
     let (_, started) = admin.call("POST", "/api/login", start.clone()).await;
     let id = started["id"].as_str().unwrap().to_owned();
-    let (status, _) = admin.call("DELETE", &format!("/api/login/{id}"), json!({})).await;
+    let (status, _) = admin
+        .call("DELETE", &format!("/api/login/{id}"), json!({}))
+        .await;
     assert_eq!(status, StatusCode::OK);
     assert!(admin.logins.logged_out().is_empty());
     admin.logins.set(LoginState::Connected);
@@ -1247,20 +1479,40 @@ async fn a10_tokens_of_a_sign_in_nobody_keeps_are_removed() {
     admin.logins.logged_out.lock().unwrap().clear();
     let (_, first) = admin.call("POST", "/api/login", start.clone()).await;
     admin
-        .call("DELETE", &format!("/api/login/{}", first["id"].as_str().unwrap()), json!({}))
+        .call(
+            "DELETE",
+            &format!("/api/login/{}", first["id"].as_str().unwrap()),
+            json!({}),
+        )
         .await;
     admin.logins.cancel_too_late.store(false, Ordering::SeqCst);
     let (_, second) = admin.call("POST", "/api/login", start.clone()).await;
-    admin.logins.set_for(first["id"].as_str().unwrap(), LoginState::Connected);
+    admin
+        .logins
+        .set_for(first["id"].as_str().unwrap(), LoginState::Connected);
     admin.logins.set(LoginState::Connected);
     tokio::time::sleep(Duration::from_millis(1200)).await;
-    assert!(admin.logins.logged_out().is_empty(), "the newer attempt keeps its tokens");
+    assert!(
+        admin.logins.logged_out().is_empty(),
+        "the newer attempt keeps its tokens"
+    );
     let (_, saved) = admin
-        .call("POST", &format!("/api/login/{}/complete", second["id"].as_str().unwrap()), json!({}))
+        .call(
+            "POST",
+            &format!("/api/login/{}/complete", second["id"].as_str().unwrap()),
+            json!({}),
+        )
         .await;
     assert_eq!(saved["state"], "connected");
     admin
-        .call("DELETE", &format!("/api/connections/{}", saved["connection"]["id"].as_str().unwrap()), json!({}))
+        .call(
+            "DELETE",
+            &format!(
+                "/api/connections/{}",
+                saved["connection"]["id"].as_str().unwrap()
+            ),
+            json!({}),
+        )
         .await;
     admin.logins.logged_out.lock().unwrap().clear();
 
@@ -1271,7 +1523,11 @@ async fn a10_tokens_of_a_sign_in_nobody_keeps_are_removed() {
     let (_, kept) = admin.call("POST", "/api/login", start.clone()).await;
     admin.logins.set(LoginState::Connected);
     let (_, kept) = admin
-        .call("POST", &format!("/api/login/{}/complete", kept["id"].as_str().unwrap()), json!({}))
+        .call(
+            "POST",
+            &format!("/api/login/{}/complete", kept["id"].as_str().unwrap()),
+            json!({}),
+        )
         .await;
     assert_eq!(kept["state"], "connected");
     // The next attempt signs in, but the server now refuses the token.
@@ -1279,7 +1535,11 @@ async fn a10_tokens_of_a_sign_in_nobody_keeps_are_removed() {
     *admin.logins.token.lock().unwrap() = "a-token-the-server-refuses".to_owned();
     admin.logins.set(LoginState::Connected);
     let (_, refused) = admin
-        .call("POST", &format!("/api/login/{}/complete", again["id"].as_str().unwrap()), json!({}))
+        .call(
+            "POST",
+            &format!("/api/login/{}/complete", again["id"].as_str().unwrap()),
+            json!({}),
+        )
         .await;
     assert_eq!(refused["state"], "failed");
     // And one that is cancelled too late.
@@ -1287,10 +1547,17 @@ async fn a10_tokens_of_a_sign_in_nobody_keeps_are_removed() {
     let (_, late) = admin.call("POST", "/api/login", start).await;
     admin.logins.set(LoginState::Connected);
     admin
-        .call("DELETE", &format!("/api/login/{}", late["id"].as_str().unwrap()), json!({}))
+        .call(
+            "DELETE",
+            &format!("/api/login/{}", late["id"].as_str().unwrap()),
+            json!({}),
+        )
         .await;
     tokio::time::sleep(Duration::from_millis(1200)).await;
-    assert!(admin.logins.logged_out().is_empty(), "the saved connection keeps its tokens");
+    assert!(
+        admin.logins.logged_out().is_empty(),
+        "the saved connection keeps its tokens"
+    );
     let (_, list) = admin.get("/api/connections").await;
     assert_eq!(list["connections"].as_array().unwrap().len(), 1);
 }
@@ -1308,7 +1575,12 @@ struct Script {
 
 impl Script {
     fn count(&self, method: &str) -> usize {
-        self.calls.lock().unwrap().iter().filter(|(m, _)| m == method).count()
+        self.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(m, _)| m == method)
+            .count()
     }
     fn headers(&self, method: &str) -> Vec<HeaderMap> {
         self.calls
@@ -1338,7 +1610,9 @@ fn initialized(version: &str, session: &str) -> Response {
 }
 
 fn tool_list(names: &[&str]) -> Response {
-    rpc_ok(json!({"tools": names.iter().map(|n| json!({"name": n, "inputSchema": {"type": "object", "properties": {}}})).collect::<Vec<_>>()}))
+    rpc_ok(
+        json!({"tools": names.iter().map(|n| json!({"name": n, "inputSchema": {"type": "object", "properties": {}}})).collect::<Vec<_>>()}),
+    )
 }
 
 async fn scripted(
@@ -1354,7 +1628,11 @@ async fn scripted(
                 let request: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
                 let method = request["method"].as_str().unwrap_or("").to_owned();
                 let nth = script.count(&method);
-                script.calls.lock().unwrap().push((method.clone(), headers.clone()));
+                script
+                    .calls
+                    .lock()
+                    .unwrap()
+                    .push((method.clone(), headers.clone()));
                 if method == "notifications/initialized" {
                     return StatusCode::ACCEPTED.into_response();
                 }
@@ -1363,7 +1641,10 @@ async fn scripted(
         )
         .with_state(script.clone());
     let base = serve(app).await;
-    (script, format!("{base}/projects/alpha/mcp").parse().unwrap())
+    (
+        script,
+        format!("{base}/projects/alpha/mcp").parse().unwrap(),
+    )
 }
 
 fn remote(url: url::Url) -> Remote {
@@ -1385,7 +1666,10 @@ async fn b1_the_negotiated_protocol_version_and_session_are_sent_on_later_calls(
         assert!(init.get("mcp-session-id").is_none());
         assert_eq!(init["authorization"], "Bearer scripted-key");
         assert_eq!(init["accept"], "application/json, text/event-stream");
-        assert!(init.get("origin").is_none(), "a native client sends no Origin");
+        assert!(
+            init.get("origin").is_none(),
+            "a native client sends no Origin"
+        );
         for method in ["notifications/initialized", "tools/list"] {
             let headers = &script.headers(method)[0];
             assert_eq!(headers["mcp-protocol-version"], version, "{method}");
@@ -1398,7 +1682,10 @@ async fn b1_the_negotiated_protocol_version_and_session_are_sent_on_later_calls(
         _ => tool_list(&[]),
     })
     .await;
-    assert!(matches!(remote(url).info().await, Err(McpError::Protocol(_))));
+    assert!(matches!(
+        remote(url).info().await,
+        Err(McpError::Protocol(_))
+    ));
 }
 
 fn expired() -> Response {
@@ -1429,7 +1716,10 @@ async fn b2_an_expired_session_is_reopened_once() {
         _ => expired(),
     })
     .await;
-    assert_eq!(remote(url).info().await.unwrap_err(), McpError::UnknownProject);
+    assert_eq!(
+        remote(url).info().await.unwrap_err(),
+        McpError::UnknownProject
+    );
     assert_eq!(script.count("initialize"), 2);
     assert_eq!(script.count("tools/list"), 2);
 }
@@ -1465,7 +1755,11 @@ async fn b3_a_rejected_oauth_token_is_refreshed_once_and_an_api_key_is_not() {
         asked: AtomicUsize::new(0),
         refreshable: true,
     });
-    let info = Remote::new(url, tokens.clone()).unwrap().info().await.unwrap();
+    let info = Remote::new(url, tokens.clone())
+        .unwrap()
+        .info()
+        .await
+        .unwrap();
     assert_eq!(info.tools.len(), 1);
     assert_eq!(tokens.asked.load(Ordering::SeqCst), 2);
     assert_eq!(script.count("initialize"), 2);
@@ -1476,7 +1770,11 @@ async fn b3_a_rejected_oauth_token_is_refreshed_once_and_an_api_key_is_not() {
         asked: AtomicUsize::new(0),
         refreshable: false,
     });
-    let error = Remote::new(url, tokens.clone()).unwrap().info().await.unwrap_err();
+    let error = Remote::new(url, tokens.clone())
+        .unwrap()
+        .info()
+        .await
+        .unwrap_err();
     assert_eq!(error, McpError::Rejected);
     assert_eq!(tokens.asked.load(Ordering::SeqCst), 1);
     assert_eq!(script.count("initialize"), 1);
@@ -1487,7 +1785,11 @@ async fn b3_a_rejected_oauth_token_is_refreshed_once_and_an_api_key_is_not() {
         asked: AtomicUsize::new(0),
         refreshable: true,
     });
-    let error = Remote::new(url, tokens.clone()).unwrap().info().await.unwrap_err();
+    let error = Remote::new(url, tokens.clone())
+        .unwrap()
+        .info()
+        .await
+        .unwrap_err();
     assert_eq!(error, McpError::Rejected);
     assert_eq!(script.count("initialize"), 2);
 }
@@ -1504,18 +1806,32 @@ async fn the_servers_timeouts_and_busy_answers_are_told_apart() {
             },
         })
         .await;
-        remote(url).call_tool("ax_index", json!({})).await.unwrap_err()
+        remote(url)
+            .call_tool("ax_index", json!({}))
+            .await
+            .unwrap_err()
     }
     let gateway_timeout = StatusCode::GATEWAY_TIMEOUT;
     // Only this answer means the work goes on.
     assert_eq!(
-        outcome(gateway_timeout, Some(json!({"error": "The operation is still running on the server", "running": true}))).await,
+        outcome(
+            gateway_timeout,
+            Some(json!({"error": "The operation is still running on the server", "running": true}))
+        )
+        .await,
         McpError::StillRunning
     );
     // Ax gave up on the call itself.
-    assert_eq!(outcome(gateway_timeout, Some(json!({"error": "Ax tool timed out"}))).await, McpError::Timeout);
     assert_eq!(
-        outcome(gateway_timeout, Some(json!({"error": "x", "running": false}))).await,
+        outcome(gateway_timeout, Some(json!({"error": "Ax tool timed out"}))).await,
+        McpError::Timeout
+    );
+    assert_eq!(
+        outcome(
+            gateway_timeout,
+            Some(json!({"error": "x", "running": false}))
+        )
+        .await,
         McpError::Timeout
     );
     // A gateway's own page is not an answer from Ax.
@@ -1526,11 +1842,21 @@ async fn the_servers_timeouts_and_busy_answers_are_told_apart() {
     );
     // A platform's own "service unavailable", even as JSON, is not that.
     assert_eq!(
-        outcome(StatusCode::SERVICE_UNAVAILABLE, Some(json!({"error": "no healthy upstream"}))).await,
+        outcome(
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some(json!({"error": "no healthy upstream"}))
+        )
+        .await,
         McpError::NotMcp(503)
     );
-    assert_eq!(outcome(StatusCode::SERVICE_UNAVAILABLE, None).await, McpError::NotMcp(503));
-    assert_eq!(outcome(StatusCode::TOO_MANY_REQUESTS, None).await, McpError::Busy);
+    assert_eq!(
+        outcome(StatusCode::SERVICE_UNAVAILABLE, None).await,
+        McpError::NotMcp(503)
+    );
+    assert_eq!(
+        outcome(StatusCode::TOO_MANY_REQUESTS, None).await,
+        McpError::Busy
+    );
 }
 
 #[tokio::test]
@@ -1546,7 +1872,11 @@ async fn b4_b5_only_listed_tools_are_called_and_unknown_listed_tools_work() {
     .await;
     let remote = remote(url);
     let info = remote.info().await.unwrap();
-    let names: Vec<_> = info.tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+    let names: Vec<_> = info
+        .tools
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
     assert_eq!(names, ["ax_status", "ax_future_tool"]);
     assert!(!names.contains(&"ax_remember"));
 
@@ -1557,12 +1887,22 @@ async fn b4_b5_only_listed_tools_are_called_and_unknown_listed_tools_work() {
             McpError::UnknownTool(hidden.into())
         );
     }
-    assert_eq!(script.calls.lock().unwrap().len(), before, "no request was sent");
+    assert_eq!(
+        script.calls.lock().unwrap().len(),
+        before,
+        "no request was sent"
+    );
 
     // A tool this version of ax-admin has never heard of is still callable.
-    let result = remote.call_tool("ax_future_tool", json!({"depth": 2})).await.unwrap();
+    let result = remote
+        .call_tool("ax_future_tool", json!({"depth": 2}))
+        .await
+        .unwrap();
     assert_eq!(result["content"][0]["text"], "called ax_future_tool");
-    assert_eq!(result["structuredContent"]["arguments"], json!({"depth": 2}));
+    assert_eq!(
+        result["structuredContent"]["arguments"],
+        json!({"depth": 2})
+    );
     assert_eq!(script.count("tools/call"), 1);
 }
 
@@ -1584,7 +1924,11 @@ async fn b6_slow_and_oversized_answers_are_errors() {
     .await;
     let url: url::Url = format!("{silent}/projects/alpha/mcp").parse().unwrap();
     let started = std::time::Instant::now();
-    let error = Remote::with_limits(url, tokens(), limits).unwrap().info().await.unwrap_err();
+    let error = Remote::with_limits(url, tokens(), limits)
+        .unwrap()
+        .info()
+        .await
+        .unwrap_err();
     assert_eq!(error, McpError::Timeout);
     assert!(started.elapsed() < Duration::from_secs(5));
 
@@ -1600,7 +1944,10 @@ async fn b6_slow_and_oversized_answers_are_errors() {
     })
     .await;
     let remote = Remote::with_limits(url, tokens(), limits).unwrap();
-    assert_eq!(remote.call_tool("ax_status", json!({})).await.unwrap_err(), McpError::Timeout);
+    assert_eq!(
+        remote.call_tool("ax_status", json!({})).await.unwrap_err(),
+        McpError::Timeout
+    );
     assert!(remote.call_tool("ax_index", json!({})).await.is_ok());
     assert!(remote.call_tool("ax_files", json!({})).await.is_ok());
 
@@ -1610,7 +1957,11 @@ async fn b6_slow_and_oversized_answers_are_errors() {
         _ => rpc_ok(json!({"tools": [], "padding": "x".repeat(200 * 1024)})),
     })
     .await;
-    let error = Remote::with_limits(url, tokens(), limits).unwrap().info().await.unwrap_err();
+    let error = Remote::with_limits(url, tokens(), limits)
+        .unwrap()
+        .info()
+        .await
+        .unwrap_err();
     assert_eq!(error, McpError::TooLarge);
     let (_, url) = scripted(|method, _, _, _| match method {
         "initialize" => initialized("2025-11-25", "s"),
@@ -1620,7 +1971,11 @@ async fn b6_slow_and_oversized_answers_are_errors() {
         }
     })
     .await;
-    let error = Remote::with_limits(url, tokens(), limits).unwrap().info().await.unwrap_err();
+    let error = Remote::with_limits(url, tokens(), limits)
+        .unwrap()
+        .info()
+        .await
+        .unwrap_err();
     assert_eq!(error, McpError::TooLarge);
 }
 
@@ -1677,8 +2032,14 @@ async fn c2_other_hosts_and_origins_are_refused() {
         assert_eq!(headers["cache-control"], "no-store");
         assert!(body.get("csrf").is_none());
     }
-    assert_eq!(get(Some(&ok), Some("http://127.0.0.1:7080")).await.0, StatusCode::OK);
-    assert_eq!(get(Some(&ok), Some("http://localhost:7080")).await.0, StatusCode::OK);
+    assert_eq!(
+        get(Some(&ok), Some("http://127.0.0.1:7080")).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get(Some(&ok), Some("http://localhost:7080")).await.0,
+        StatusCode::OK
+    );
     for origin in [
         "https://evil.example.com",
         "http://127.0.0.1:9999",
@@ -1707,7 +2068,9 @@ async fn c2_other_hosts_and_origins_are_refused() {
 async fn c3_changes_need_the_request_token() {
     let upstream = Upstream::start().await;
     let admin = Admin::start().await;
-    let id = admin.add("Alpha", &upstream.url("alpha"), CONTEXT_KEY).await;
+    let id = admin
+        .add("Alpha", &upstream.url("alpha"), CONTEXT_KEY)
+        .await;
     let body = json!({"url": upstream.url("beta"), "auth": {"type": "api_key", "key": BETA_KEY}});
     let routes = [
         ("POST", "/api/connections".to_string()),
@@ -1749,15 +2112,29 @@ async fn c4_responses_are_never_cached() {
     let check = |headers: &HeaderMap, what: &str| {
         assert_eq!(headers["cache-control"], "no-store", "{what}");
     };
-    for path in ["/api/connections", "/api/remote/info", "/api/login/none", "/api/nope", "/", "/some/page"] {
+    for path in [
+        "/api/connections",
+        "/api/remote/info",
+        "/api/login/none",
+        "/api/nope",
+        "/",
+        "/some/page",
+    ] {
         let (_, headers, _) = admin
             .send(admin.request("GET", path).body(Body::empty()).unwrap())
             .await;
         check(&headers, path);
     }
-    let id = admin.add("Alpha", &upstream.url("alpha"), CONTEXT_KEY).await;
+    let id = admin
+        .add("Alpha", &upstream.url("alpha"), CONTEXT_KEY)
+        .await;
     let (_, headers, _) = admin
-        .send(admin.request("GET", "/api/remote/info").body(Body::empty()).unwrap())
+        .send(
+            admin
+                .request("GET", "/api/remote/info")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await;
     check(&headers, "info with a connection");
     let (status, headers, _) = admin
@@ -1766,7 +2143,9 @@ async fn c4_responses_are_never_cached() {
                 .request("POST", "/api/remote/tools/ax_status")
                 .header(CSRF_HEADER, &admin.csrf)
                 .header("content-type", "application/json")
-                .body(Body::from(json!({"connection": id, "arguments": {}}).to_string()))
+                .body(Body::from(
+                    json!({"connection": id, "arguments": {}}).to_string(),
+                ))
                 .unwrap(),
         )
         .await;
@@ -1785,8 +2164,13 @@ async fn the_interface_is_served_with_a_restrictive_content_policy() {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK, "{path}");
-        assert_eq!(response.headers()["content-type"], "text/html; charset=utf-8");
-        let policy = response.headers()["content-security-policy"].to_str().unwrap();
+        assert_eq!(
+            response.headers()["content-type"],
+            "text/html; charset=utf-8"
+        );
+        let policy = response.headers()["content-security-policy"]
+            .to_str()
+            .unwrap();
         assert!(policy.contains("default-src 'self'") && policy.contains("frame-ancestors 'none'"));
         let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
         assert!(String::from_utf8_lossy(&bytes).contains("<meta charset=\"UTF-8\""));

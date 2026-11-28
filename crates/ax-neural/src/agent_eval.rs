@@ -2,8 +2,9 @@
 //! Measures context retrieval quality across Ax / Neural arms on the coding fixture.
 //! Live LLM task-success / token counts stay `not_measured` until an identical-model run is executed.
 
-use ax_memory::bench::{load_coding_fixture, score_coding};
+use crate::fixture::{lexical_rank, LOCKED};
 use crate::metrics::{Acc, SummaryStyle, AGENT_EVAL};
+use ax_memory::bench::{load_coding_fixture, score_coding};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -35,28 +36,6 @@ impl ArmId {
             Self::D => "D_ax_neural_prediction",
             Self::E => "E_ax_neural_learning",
         }
-    }
-}
-
-const LOCKED: &[&str] = &[
-    "named_trigger",
-    "paraphrase",
-    "abstention",
-    "delivery_budget",
-];
-
-fn lexical_rank(fixture: &ax_memory::bench::CodingFixture, prompt: &str) -> Vec<String> {
-    let docs: Vec<crate::lexical::LexicalDoc> = fixture
-        .memories
-        .iter()
-        .filter(|m| m.insert)
-        .map(|m| crate::lexical::LexicalDoc::new(m.key.clone(), &m.title, &m.body, &m.triggers))
-        .collect();
-    let (ranked, abstained) = crate::lexical::rank(&docs, prompt);
-    if abstained {
-        Vec::new()
-    } else {
-        ranked.into_iter().map(|h| h.key).collect()
     }
 }
 
@@ -113,12 +92,15 @@ pub async fn run_agent_eval(fixture_text: &str) -> Result<Value, String> {
     let mut arm_predict = Acc::default(); // D: prediction leave-one-out memories as ranked list
     let mut arm_learn = Acc::default(); // E: ranking-prior after leave-one-out feedback
 
-    let lexical_on = crate::bakeoff::challenger_admitted();
-    let pred_report =
-        crate::predict::evaluate_fixture(fixture_text, 0.75).unwrap_or_else(|_| json!({}));
+    let lexical_on = crate::bakeoff::challenger_admitted_async().await;
+    let pred_report = crate::predict::evaluate_fixture(fixture_text, 0.75)?;
     let mut learn_train_reports = Vec::new();
 
-    for question in fixture.questions.iter().filter(|q| LOCKED.contains(&q.family.as_str())) {
+    for question in fixture
+        .questions
+        .iter()
+        .filter(|q| LOCKED.contains(&q.family.as_str()))
+    {
         let score = scored
             .questions
             .iter()
@@ -142,11 +124,7 @@ pub async fn run_agent_eval(fixture_text: &str) -> Result<Value, String> {
                 task_category: q.family.clone(),
                 skills: Vec::new(),
                 rules: Vec::new(),
-                context_ids: q
-                    .relevant
-                    .iter()
-                    .map(|id| format!("memory:{id}"))
-                    .collect(),
+                context_ids: q.relevant.iter().map(|id| format!("memory:{id}")).collect(),
             })
             .collect();
         let predicted = crate::predict::predict(&rows, &question.family, 0.5);

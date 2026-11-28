@@ -1263,7 +1263,11 @@ mod tests {
         )
         .unwrap();
         let claude_rule = dir.path().join(".claude/rules/ax.md");
-        std::fs::write(&claude_rule, b"# ax\n\nCall ax_preflight exactly once per turn.\n").unwrap();
+        std::fs::write(
+            &claude_rule,
+            b"# ax\n\nCall ax_preflight exactly once per turn.\n",
+        )
+        .unwrap();
         let result = seed_ide_agent_workflow(dir.path()).unwrap();
         assert!(result.updated.iter().any(|path| path == "AGENTS.md"));
         assert!(result.updated.iter().any(|path| path.contains("ax.mdc")));

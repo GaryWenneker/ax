@@ -10,10 +10,14 @@ default = []
 neural-runtime = []
 ## Optional ONNX Runtime + HuggingFace tokenizer for local MiniLM (offline; model under ~/.ax/models).
 neural-ort = ["dep:ort", "dep:tokenizers", "neural-runtime"]
+## Retrieval experiments (query prior, code-aware discovery, recovery, learn validation).
+## Nothing in dispatch reaches them; they build for tests and with this feature only.
+neural-lab = []
 
 [dependencies]
 ax-db = { workspace = true }
 ax-memory = { workspace = true }
+ax-utils = { workspace = true }
 blake3 = { workspace = true }
 petgraph = { workspace = true }
 serde = { workspace = true }
@@ -23,8 +27,11 @@ sqlx = { workspace = true }
 tempfile = "3"
 uuid = { workspace = true }
 futures-util = { workspace = true }
-ort = { version = "2.0.0-rc.10", optional = true, default-features = false, features = ["download-binaries", "ndarray", "std", "tls-rustls"] }
-tokenizers = { version = "0.21", optional = true, default-features = false, features = ["onig"] }
-
-[dev-dependencies]
+## Graph, prediction and fixture harness work runs on the blocking pool.
 tokio = { workspace = true }
+ort = { version = "2.0.0-rc.10", optional = true, default-features = false, features = ["download-binaries", "ndarray", "std", "tls-rustls"] }
+tokenizers = { version = "0.23", optional = true, default-features = false, features = ["onig"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+## Reads process RSS with proc_pidinfo instead of spawning `ps`.
+libc = "0.2"

@@ -22,7 +22,7 @@ See also [Policy Engine](/guides/policy-engine/) for rules, skills, and review g
 | **Git** (GitHub, GitLab, Azure DevOps, on-prem) | Yes (shallow clone) | Yes (commit + push) | Ambient `git` credentials — SSH key or Git Credential Manager, same as any `git clone`/`git push` you already run against that repo |
 | **Git via REST API** (GitLab-compatible `/api/v4`) | Yes | Yes | Personal/project access token in `github.token` — used automatically instead of raw git when set |
 
-The REST API transport exists for instances where SSH and git's smart-HTTP endpoint are forced through an interactive SSO login and can't authenticate headlessly, but a scoped `/api/v4` surface is still reachable. Set `github.token` and ax uses GitLab's Repository Files/Commits API (`GET .../repository/tree`, `GET .../repository/files/:path/raw`, `POST .../repository/commits`) instead of `git clone`/`push`. If that API is *also* gated behind the same SSO redirect, sync fails fast with a clear error instead of silently following the redirect (which would leak the token to the redirect target) — at that point the fix is on the GitLab/infra side (exempt `/api/v4`, or issue a durable service token / non-purged deploy key), not something ax can work around.
+The REST API transport exists for instances where SSH and git's smart-HTTP endpoint are forced through an interactive SSO login and can't authenticate headlessly, but a scoped `/api/v4` surface is still reachable. Set `github.token` and ax uses GitLab's Repository Files/Commits API (`GET .../repository/tree`, `GET .../repository/files/:path/raw`, `POST .../repository/commits`) instead of `git clone`/`push`. Pull writes each remote file only inside its pull folder: a tree path with `..` or one that resolves outside that folder stops the pull with an error. Push only creates, updates or deletes the content types it exports: with `content.memory` off it never touches the remote `memory/shared.jsonl`, and with both `content.rules` and `content.skills` off it never touches the remote `policy/shared/` pack. If that API is *also* gated behind the same SSO redirect, sync fails fast with a clear error instead of silently following the redirect (which would leak the token to the redirect target) — at that point the fix is on the GitLab/infra side (exempt `/api/v4`, or issue a durable service token / non-purged deploy key), not something ax can work around.
 
 Remote folder layout (same as local pack export):
 
@@ -85,7 +85,7 @@ ax policy share sync          # pull
 ax policy share sync --push   # push
 ```
 
-Git must be on `PATH`. ax shallow-clones the repo, copies `policy/shared/` and `memory/shared.jsonl` if present, then imports into the local policy store. Push does a full clone, writes the pack under `subpath`, commits, and pushes (retrying once with `pull --rebase` on a non-fast-forward).
+Git must be on `PATH`. ax shallow-clones the repo, copies `policy/shared/` and `memory/shared.jsonl` if present, then imports into the local policy store. Push does a full clone, writes the pack under `subpath`, commits, and pushes (retrying once with `pull --rebase` on a non-fast-forward). `repoUrl` must be an `https`, `http`, `ssh`, `git` or `file` URL, an scp-like `user@host:path`, or an absolute local path; a value starting with `-` or using another transport is refused. `subpath` must be a relative path inside the repository (no leading `/`, no `..`, no link that points outside the clone), and `branch` must be a plain branch name.
 
 #### GitLab behind Bridge-managed SSH keys (e.g. `gitlab.hosted-tools.com`)
 
@@ -98,21 +98,9 @@ Some managed/SSO-fronted GitLab instances (e.g. `gitlab.hosted-tools.com`) don't
 
 #### GitLab behind an SSO gate (no Bridge-style portal, no working git/SSH)
 
-If your GitLab instance forces SSH and git-HTTP through a browser SSO login (so a plain `git clone`/`push` can never authenticate headlessly) and has no separate SSH key portal like the above, add a personal or project access token instead:
+If your GitLab instance forces SSH and git-HTTP through a browser SSO login (so a plain `git clone`/`push` can never authenticate headlessly) and has no separate SSH key portal like the above, add a personal or project access token instead: enter it in Command Center **Settings → Remote policy share → API token**. The token is stored on your machine in `~/.ax/auth/git-share.json` (readable by you only), keyed by `repoUrl`. It is never written to `ax.json`, which is usually committed, and the settings API never returns it: it only reports `hasToken: true`. Saving with an empty token keeps the stored one; **Remove token** (API: `"clearToken": true`) deletes it.
 
-```json
-{
-  "share": {
-    "provider": "github",
-    "github": {
-      "repoUrl": "https://gitlab.example.com/team/ax-policy",
-      "branch": "main",
-      "subpath": ".ax",
-      "token": "glpat-xxxxxxxxxxxxxxxxxxxx"
-    }
-  }
-}
-```
+A `token` left in an older `ax.json` still works; the next save from Command Center moves it to `~/.ax/auth/git-share.json` and removes it from `ax.json`.
 
 When `token` is set (and `repoUrl` is http/https), ax uses GitLab's `/api/v4` REST API instead of raw git — no SSH key or git credential needed.
 
@@ -141,8 +129,7 @@ Manage in Command Center **Settings → Remote policy share** (auto-saves to `ax
     "github": {
       "repoUrl": "",
       "branch": "main",
-      "subpath": ".ax",
-      "token": ""
+      "subpath": ".ax"
     }
   }
 }
@@ -155,7 +142,7 @@ Manage in Command Center **Settings → Remote policy share** (auto-saves to `ax
 | `importMode` | `review` (stage pending), `merge` (apply without review), or `force` (overwrite conflicts) |
 | `autoSyncMinutes` | Hint for Command Center auto-sync interval (default `15`) |
 | `content.rules` / `skills` / `memory` | Which remote artifacts to import |
-| `github.token` | Optional. GitLab personal/project access token. When set on an http(s) `repoUrl`, sync uses that host's `/api/v4` REST API instead of raw `git` — for instances where SSH/git-HTTP is forced through SSO **and there's no separate SSH key/identity portal**. Leave blank to use normal `git` credentials. Command Center hides this field when `repoUrl` matches `gitlab.hosted-tools.com`, since that instance requires Bridge-managed SSH instead. |
+| `github.token` | Optional, write-only. GitLab personal/project access token, stored in `~/.ax/auth/git-share.json` and never in `ax.json`. When set on an http(s) `repoUrl`, sync uses that host's `/api/v4` REST API instead of raw `git` — for instances where SSH/git-HTTP is forced through SSO **and there's no separate SSH key/identity portal**. Leave blank to use normal `git` credentials. Command Center hides this field when `repoUrl` matches `gitlab.hosted-tools.com`, since that instance requires Bridge-managed SSH instead. |
 
 Show this project's config:
 
@@ -249,8 +236,10 @@ Set the client ID for every teammate:
 export AX_MS_CLIENT_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 ```
 
-Add to shell profile or CI secret store. ax reads only `AX_MS_CLIENT_ID` — never
-commit client secrets (public client apps do not use one).
+Add to shell profile or CI secret store. Command Center can also save the client ID
+to `share.microsoftClientId` in `~/.ax/config.json`; when `AX_MS_CLIENT_ID` is set, it
+takes precedence over the saved value. Never commit client secrets (public client apps
+do not use one).
 
 ### 2. SharePoint / OneDrive folder
 
@@ -271,6 +260,8 @@ commit client secrets (public client apps do not use one).
 ```
 
 Commit `ax.json` with the project so teammates get the same defaults when they clone the repo.
+
+Pull and push both work in the drive that holds the shared folder, so a teammate with write access can push to a folder that lives in someone else's OneDrive or in a SharePoint library. Folders with more than 200 entries are read page by page.
 
 ### 3. Initial pack seed
 

@@ -16,39 +16,6 @@ use crate::store::open_pool;
 
 pub const ACTIVITY_SCHEMA_VERSION: i32 = 1;
 
-const ACTIVITY_SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS ax_activity_event (
-  event_id TEXT PRIMARY KEY,
-  idempotency_key TEXT NOT NULL,
-  schema_version INTEGER NOT NULL DEFAULT 1,
-  timestamp_ms INTEGER NOT NULL,
-  source TEXT NOT NULL,
-  agent TEXT,
-  project_id TEXT NOT NULL,
-  session_id TEXT,
-  turn_id TEXT,
-  parent_event_id TEXT,
-  operation TEXT NOT NULL,
-  status TEXT NOT NULL,
-  duration_ms INTEGER,
-  summary TEXT NOT NULL,
-  files_json TEXT NOT NULL DEFAULT '[]',
-  symbols_json TEXT NOT NULL DEFAULT '[]',
-  commit_ids_json TEXT NOT NULL DEFAULT '[]',
-  token_input INTEGER,
-  token_output INTEGER,
-  token_provenance TEXT NOT NULL DEFAULT 'unknown',
-  error TEXT,
-  UNIQUE(project_id, idempotency_key)
-);
-CREATE INDEX IF NOT EXISTS idx_ax_activity_project_ts
-  ON ax_activity_event(project_id, timestamp_ms DESC);
-CREATE INDEX IF NOT EXISTS idx_ax_activity_session
-  ON ax_activity_event(session_id, timestamp_ms DESC);
-CREATE INDEX IF NOT EXISTS idx_ax_activity_source
-  ON ax_activity_event(source, timestamp_ms DESC);
-";
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ActivitySource {
@@ -219,28 +186,22 @@ fn mint_event_id() -> String {
     format!("evt_{}", uuid_ish())
 }
 
+/// Unique within the process (a counter) and across processes (process id,
+/// nanosecond clock and a randomly keyed hash).
 fn uuid_ish() -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut h = DefaultHasher::new();
-    now_ms().hash(&mut h);
-    std::process::id().hash(&mut h);
-    format!("{:016x}{:08x}", h.finish(), now_ms() as u32)
-}
-
-/// Ensure the activity table exists (idempotent).
-pub async fn ensure_activity_schema(pool: &SqlitePool) -> Result<(), String> {
-    for stmt in ACTIVITY_SCHEMA
-        .split(';')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        sqlx::query(stmt)
-            .execute(pool)
-            .await
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    use std::hash::{BuildHasher, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let seq = NEXT.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u128(nanos);
+    h.write_u32(std::process::id());
+    h.write_u64(seq);
+    format!("{:016x}{:08x}{:x}", h.finish(), std::process::id(), seq)
 }
 
 fn to_json_array(items: &[String]) -> String {
@@ -251,41 +212,12 @@ fn from_json_array(raw: &str) -> Vec<String> {
     serde_json::from_str(raw).unwrap_or_default()
 }
 
-fn looks_like_secret(token: &str) -> bool {
-    let lower = token.to_ascii_lowercase();
-    if lower.contains("password=") || lower.contains("token=") || lower.contains("api_key=") {
-        return true;
-    }
-    if token.starts_with("sk-") && token.len() > 20 {
-        return true;
-    }
-    token.len() >= 32
-        && token
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-
 fn redact_summary(summary: &str) -> String {
-    let mut out = String::new();
-    for token in summary.split_whitespace() {
-        if !out.is_empty() {
-            out.push(' ');
-        }
-        if let Some((k, _)) = token.split_once('=') {
-            let key = k.to_ascii_lowercase();
-            if key.contains("password") || key.contains("token") || key.contains("secret") {
-                out.push_str(k);
-                out.push_str("=[redacted]");
-                continue;
-            }
-        }
-        if looks_like_secret(token) {
-            out.push_str("[redacted]");
-        } else {
-            out.push_str(token);
-        }
-    }
-    out.chars().take(500).collect()
+    let single_line = summary.split_whitespace().collect::<Vec<_>>().join(" ");
+    crate::redact::redact_text(&single_line)
+        .chars()
+        .take(500)
+        .collect()
 }
 
 /// Record one activity event. Idempotent on `(project_id, idempotency_key)`.
@@ -331,7 +263,6 @@ pub async fn record_activity(
     };
 
     let pool = open_pool().await.map_err(|e| e.to_string())?;
-    ensure_activity_schema(&pool).await?;
 
     let result = sqlx::query(
         "INSERT OR IGNORE INTO ax_activity_event (
@@ -369,7 +300,12 @@ pub async fn record_activity(
     let inserted = result.rows_affected() > 0;
     let stored = load_by_idempotency(&pool, &project_id, &event.idempotency_key)
         .await?
-        .unwrap_or(event);
+        .ok_or_else(|| {
+            format!(
+                "activity event {} was not stored (event id {} already exists)",
+                event.idempotency_key, event.event_id
+            )
+        })?;
     if inserted {
         dual_write_verbose(root, &stored);
     }
@@ -466,7 +402,6 @@ pub async fn list_activity(
     limit: i64,
 ) -> Result<Vec<ActivityEvent>, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
-    ensure_activity_schema(&pool).await?;
     let project_id = project_scope(root);
     let limit = limit.clamp(1, 500);
 
@@ -614,7 +549,26 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static SEQ: AtomicUsize = AtomicUsize::new(0);
-    async fn tmp_root() -> (std::path::PathBuf, tokio::sync::MutexGuard<'static, ()>) {
+
+    /// A temporary project root whose usage database is `AX_USAGE_DB`. Dropping it removes the
+    /// folder. The variable is left pointing at the removed folder, so a later test that forgets
+    /// to set it fails instead of writing to the real usage database.
+    struct TempRoot(std::path::PathBuf);
+
+    impl std::ops::Deref for TempRoot {
+        type Target = Path;
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    async fn tmp_root() -> (TempRoot, tokio::sync::MutexGuard<'static, ()>) {
         let guard = crate::store::USAGE_ENV_LOCK.lock().await;
         let n = SEQ.fetch_add(1, Ordering::SeqCst);
         let dir = std::env::temp_dir().join(format!("ax-activity-{}-{n}", std::process::id()));
@@ -622,8 +576,11 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let db = dir.join("usage.db");
         std::env::set_var("AX_USAGE_DB", db.display().to_string());
-        let _ = open_pool_at(&db).await.unwrap();
-        (dir, guard)
+        // Close the pool instead of dropping it: a dropped pool closes its
+        // connections in the background, and Windows cannot remove a folder
+        // while one of them still holds the database file open.
+        open_pool_at(&db).await.unwrap().close().await;
+        (TempRoot(dir), guard)
     }
 
     #[tokio::test]
@@ -716,6 +673,35 @@ mod tests {
         assert_eq!(kept.turn_id, None);
     }
 
+    #[test]
+    fn event_ids_minted_in_the_same_millisecond_are_unique() {
+        let ids: std::collections::HashSet<String> = (0..1_000).map(|_| mint_event_id()).collect();
+        assert_eq!(ids.len(), 1_000);
+    }
+
+    #[tokio::test]
+    async fn events_recorded_back_to_back_are_all_stored() {
+        let (root, _guard) = tmp_root().await;
+        for i in 0..20 {
+            record_activity(
+                &root,
+                ActivityRecord {
+                    idempotency_key: format!("burst-{i}"),
+                    operation: "graph.explore".into(),
+                    summary: "burst".into(),
+                    session_id: Some("burst".into()),
+                    ..ActivityRecord::default()
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let listed = list_activity(&root, None, Some("burst"), 100)
+            .await
+            .unwrap();
+        assert_eq!(listed.len(), 20);
+    }
+
     #[tokio::test]
     async fn redacts_secrets_in_summary() {
         let (root, _guard) = tmp_root().await;
@@ -731,10 +717,98 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(
-            event.summary.contains("[redacted]") || !event.summary.contains("sk-abcdef"),
-            "summary={}",
-            event.summary
-        );
+        assert_eq!(event.summary, "token=[redacted]");
+        let stored = list_activity(&root, Some(ActivitySource::Agent), None, 10)
+            .await
+            .unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].summary, "token=[redacted]");
+    }
+
+    #[tokio::test]
+    async fn failed_and_incomplete_events_keep_their_status_and_a_redacted_error() {
+        let (root, _guard) = tmp_root().await;
+        for (key, status) in [
+            ("st-failed", ActivityStatus::Failed),
+            ("st-incomplete", ActivityStatus::Incomplete),
+        ] {
+            record_activity(
+                &root,
+                ActivityRecord {
+                    idempotency_key: key.into(),
+                    operation: "turn.failed".into(),
+                    summary: key.into(),
+                    status: Some(status),
+                    session_id: Some("st".into()),
+                    error: Some("login failed\nwith password=hunter2".into()),
+                    ..ActivityRecord::default()
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let listed = list_activity(&root, None, Some("st"), 10).await.unwrap();
+        let by_key = |key: &str| listed.iter().find(|e| e.idempotency_key == key).unwrap();
+        assert_eq!(by_key("st-failed").status, ActivityStatus::Failed);
+        assert_eq!(by_key("st-incomplete").status, ActivityStatus::Incomplete);
+        for event in &listed {
+            assert_eq!(
+                event.error.as_deref(),
+                Some("login failed with password=[redacted]")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn list_filters_by_source_session_both_and_neither() {
+        let (root, _guard) = tmp_root().await;
+        let rows = [
+            ("f1", ActivitySource::Cli, "s1"),
+            ("f2", ActivitySource::Agent, "s1"),
+            ("f3", ActivitySource::Agent, "s2"),
+        ];
+        for (key, source, session) in rows {
+            record_activity(
+                &root,
+                ActivityRecord {
+                    idempotency_key: key.into(),
+                    operation: "graph.explore".into(),
+                    summary: key.into(),
+                    source: Some(source),
+                    session_id: Some(session.into()),
+                    ..ActivityRecord::default()
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let keys = |events: Vec<ActivityEvent>| {
+            let mut keys: Vec<String> = events.into_iter().map(|e| e.idempotency_key).collect();
+            keys.sort();
+            keys
+        };
+        let all = list_activity(&root, None, None, 10).await.unwrap();
+        assert_eq!(keys(all), ["f1", "f2", "f3"]);
+        let agent = list_activity(&root, Some(ActivitySource::Agent), None, 10)
+            .await
+            .unwrap();
+        assert_eq!(keys(agent), ["f2", "f3"]);
+        let s1 = list_activity(&root, None, Some("s1"), 10).await.unwrap();
+        assert_eq!(keys(s1), ["f1", "f2"]);
+        let both = list_activity(&root, Some(ActivitySource::Agent), Some("s1"), 10)
+            .await
+            .unwrap();
+        assert_eq!(keys(both), ["f2"]);
+        let limited = list_activity(&root, None, None, 2).await.unwrap();
+        assert_eq!(limited.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn the_temporary_root_is_removed_when_dropped() {
+        let (root, _guard) = tmp_root().await;
+        let path = root.to_path_buf();
+        assert!(path.is_dir());
+        drop(root);
+        assert!(!path.exists());
     }
 }

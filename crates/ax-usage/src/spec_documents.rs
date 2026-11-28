@@ -303,7 +303,12 @@ mod tests {
         assert_eq!(
             spec.plans
                 .iter()
-                .map(|plan| (plan.id.as_str(), plan.title.as_str(), plan.latest_version, plan.latest_status.as_str()))
+                .map(|plan| (
+                    plan.id.as_str(),
+                    plan.title.as_str(),
+                    plan.latest_version,
+                    plan.latest_status.as_str()
+                ))
                 .collect::<Vec<_>>(),
             vec![
                 ("plan-ledger", "Ledger plan", 1, "draft"),
@@ -319,7 +324,10 @@ mod tests {
         plan_mode_document(&pool, "old-plan").await;
         plan_mode_document(&pool, "other-plan").await;
         let before = listed(&pool, "old-plan").await;
-        assert_eq!((before.kind.as_str(), before.detected_kind.as_str()), ("plan", "plan"));
+        assert_eq!(
+            (before.kind.as_str(), before.detected_kind.as_str()),
+            ("plan", "plan")
+        );
 
         let one = classify_documents_from_json(
             &pool,
@@ -328,7 +336,10 @@ mod tests {
         .await;
         assert_eq!(one, json!({ "ok": true, "classified": 1 }));
         let after = listed(&pool, "old-plan").await;
-        assert_eq!((after.kind.as_str(), after.detected_kind.as_str()), ("spec", "plan"));
+        assert_eq!(
+            (after.kind.as_str(), after.detected_kind.as_str()),
+            ("spec", "plan")
+        );
         assert_eq!(listed(&pool, "other-plan").await.kind, "plan");
 
         let all = classify_documents_from_json(
@@ -338,7 +349,11 @@ mod tests {
         .await;
         assert_eq!(all, json!({ "ok": true, "classified": 2 }));
         assert_eq!(listed(&pool, "other-plan").await.kind, "spec");
-        assert_eq!(type_rows(&pool).await, 3, "earlier classifications stay as history");
+        assert_eq!(
+            type_rows(&pool).await,
+            3,
+            "earlier classifications stay as history"
+        );
     }
 
     #[tokio::test]
@@ -354,17 +369,35 @@ mod tests {
         let (_dir, pool) = open().await;
         plan_mode_document(&pool, "old-plan").await;
         let cases = [
-            (json!({ "ids": ["old-plan"], "docType": "folder", "actor": "owner", "reason": "x" }), "docType"),
-            (json!({ "ids": ["old-plan"], "docType": "spec", "actor": "owner", "reason": " " }), "reason"),
-            (json!({ "ids": ["old-plan"], "allPlanMode": true, "docType": "spec", "actor": "owner", "reason": "x" }), "either"),
-            (json!({ "docType": "spec", "actor": "owner", "reason": "x" }), "either"),
-            (json!({ "ids": ["missing"], "docType": "spec", "actor": "owner", "reason": "x" }), "unknown document missing"),
+            (
+                json!({ "ids": ["old-plan"], "docType": "folder", "actor": "owner", "reason": "x" }),
+                "docType",
+            ),
+            (
+                json!({ "ids": ["old-plan"], "docType": "spec", "actor": "owner", "reason": " " }),
+                "reason",
+            ),
+            (
+                json!({ "ids": ["old-plan"], "allPlanMode": true, "docType": "spec", "actor": "owner", "reason": "x" }),
+                "either",
+            ),
+            (
+                json!({ "docType": "spec", "actor": "owner", "reason": "x" }),
+                "either",
+            ),
+            (
+                json!({ "ids": ["missing"], "docType": "spec", "actor": "owner", "reason": "x" }),
+                "unknown document missing",
+            ),
         ];
         for (body, expected) in cases {
             let result = classify_documents_from_json(&pool, body).await;
             assert_eq!(result["ok"], json!(false));
             let error = result["error"].as_str().unwrap();
-            assert!(error.contains(expected), "{error} should mention {expected}");
+            assert!(
+                error.contains(expected),
+                "{error} should mention {expected}"
+            );
         }
         assert_eq!(type_rows(&pool).await, -1);
     }
@@ -384,14 +417,21 @@ mod tests {
             }),
         )
         .await;
-        assert_eq!(result, json!({ "ok": true, "specId": "specs-hierarchy-ui", "specVersion": 1 }));
+        assert_eq!(
+            result,
+            json!({ "ok": true, "specId": "specs-hierarchy-ui", "specVersion": 1 })
+        );
         let spec = listed(&pool, "specs-hierarchy-ui").await;
-        assert_eq!((spec.kind.as_str(), spec.latest_source.as_str()), ("spec", "import"));
+        assert_eq!(
+            (spec.kind.as_str(), spec.latest_source.as_str()),
+            ("spec", "import")
+        );
         assert!(spec.plans.is_empty());
-        let needs_plan: i64 = sqlx::query_scalar("SELECT needs_plan FROM specs WHERE id = 'specs-hierarchy-ui'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let needs_plan: i64 =
+            sqlx::query_scalar("SELECT needs_plan FROM specs WHERE id = 'specs-hierarchy-ui'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(needs_plan, 1);
         let again = import_spec_from_json(
             &pool,

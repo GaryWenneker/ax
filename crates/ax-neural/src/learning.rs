@@ -31,6 +31,11 @@ pub struct FeedbackRow {
     pub output_tokens: i64,
 }
 
+/// Most ids accepted in each of the context, skill and rule lists of one feedback call.
+pub const MAX_FEEDBACK_IDS: usize = 256;
+/// Most bytes accepted in the execution id, the task category, and each single id.
+pub const MAX_FEEDBACK_FIELD_BYTES: usize = 512;
+
 pub fn validate_feedback(input: &FeedbackInput) -> Result<FeedbackRow, String> {
     if input.execution_id.trim().is_empty() {
         return Err("execution id is required".into());
@@ -47,15 +52,42 @@ pub fn validate_feedback(input: &FeedbackInput) -> Result<FeedbackRow, String> {
     if input.retry_count < 0 || input.input_tokens < 0 || input.output_tokens < 0 {
         return Err("counts must be zero or greater".into());
     }
-    let blob = format!(
-        "{} {} {} {} {}",
-        input.task_category,
-        input.context_ids.join(" "),
-        input.skill_ids.join(" "),
-        input.rule_ids.join(" "),
-        input.source_text
-    );
-    if secret_shaped(&blob) {
+    for (name, list) in [
+        ("contextIds", &input.context_ids),
+        ("skillIds", &input.skill_ids),
+        ("ruleIds", &input.rule_ids),
+    ] {
+        if list.len() > MAX_FEEDBACK_IDS {
+            return Err(format!("{name} holds at most {MAX_FEEDBACK_IDS} ids"));
+        }
+        if list.iter().any(|id| id.len() > MAX_FEEDBACK_FIELD_BYTES) {
+            return Err(format!(
+                "each id in {name} is at most {MAX_FEEDBACK_FIELD_BYTES} bytes"
+            ));
+        }
+    }
+    for (name, value) in [
+        ("executionId", &input.execution_id),
+        ("taskCategory", &input.task_category),
+    ] {
+        if value.len() > MAX_FEEDBACK_FIELD_BYTES {
+            return Err(format!(
+                "{name} is at most {MAX_FEEDBACK_FIELD_BYTES} bytes"
+            ));
+        }
+    }
+    // Each field and each id is screened on its own, so a pattern never
+    // matches across the boundary between two ids.
+    let fields = [
+        &input.execution_id,
+        &input.task_category,
+        &input.source_text,
+    ]
+    .into_iter()
+    .chain(&input.context_ids)
+    .chain(&input.skill_ids)
+    .chain(&input.rule_ids);
+    if any_secret_shaped(fields) {
         return Err("secret-shaped text is excluded from feedback".into());
     }
     if !input.source_text.is_empty() {
@@ -77,38 +109,113 @@ pub fn validate_feedback(input: &FeedbackInput) -> Result<FeedbackRow, String> {
     })
 }
 
+/// True when any of `fields` is [`secret_shaped`] on its own.
+pub fn any_secret_shaped<'a>(fields: impl IntoIterator<Item = &'a String>) -> bool {
+    fields.into_iter().any(|field| secret_shaped(field))
+}
+
+/// True when `text` holds `bearer` followed by a token: at least 12 token
+/// characters with a digit among them. "bearer auth" is a word, not a header.
+fn bearer_token(compact: &str) -> bool {
+    compact.match_indices("bearer ").any(|(at, word)| {
+        let token: String = compact[at + word.len()..]
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || "-._~+/=".contains(*c))
+            .collect();
+        token.len() >= 12 && token.chars().any(|c| c.is_ascii_digit())
+    })
+}
+
+/// True when `text` looks like it holds a credential: a `key=value` or `key: value` pair for a
+/// password, secret, token or API key (spaces around the separator allowed), a bearer header
+/// with a token, a private key block, or a token ax's shared redaction would mask (`sk-…`,
+/// GitHub and AWS keys, long hex or base64 runs). Screen one field at a time.
 pub fn secret_shaped(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    [
+    let compact = text
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace(" =", "=")
+        .replace("= ", "=")
+        .replace(" :", ":")
+        .replace(": ", ":");
+    let pattern_hit = [
         "api_key=",
         "api_key:",
         "api-key=",
         "api-key:",
+        "apikey",
         "password=",
         "password:",
+        "passwd=",
+        "pwd=",
         "secret=",
         "secret:",
+        "aws_secret",
+        "client_secret",
+        "token=",
+        "access_token",
+        "refresh_token",
+        "auth_token",
         "begin private key",
         "begin rsa private key",
         "begin openssh private key",
     ]
     .iter()
-    .any(|pattern| lower.contains(pattern))
+    .any(|pattern| compact.contains(pattern));
+    pattern_hit || bearer_token(&compact) || ax_memory::redact_secrets(text) != text
 }
 
-/// Gate promotion on an explicit command and a **measured** bake-off.
-/// Caller `beats_baseline` / `regressions_clear` flags are ignored (API compatibility only).
-pub async fn promotion_allowed(
-    explicit: bool,
-    _claimed_beats_baseline: bool,
-    _claimed_regressions_clear: bool,
-) -> Result<(), String> {
+/// Registered metrics that clear the promotion gate on the built-in fixture.
+#[cfg(test)]
+pub(crate) const PASSING_EVIDENCE: &str = r#"{"bakeoff":{"families":{"named_trigger":{"scored":1,"hits":1},"paraphrase":{"scored":1,"hits":1},"abstention":{"scored":1,"hits":1},"delivery_budget":{"scored":1,"hits":1}}}}"#;
+
+/// Gates promotion of one registered model version on an explicit command and
+/// on that version's own bake-off evidence: the `bakeoff.families` object in
+/// the metrics it was registered with (`{family: {scored, hits}}`).
+///
+/// The evidence must score the same questions per family as the built-in
+/// coding fixture, keep every locked family fully hit, and beat hash-v1 on
+/// paraphrase. hash-v1 is scored on the fixture in this call, not read from a
+/// stored constant, on the blocking pool so the call never holds an async
+/// runtime thread.
+pub async fn promotion_allowed(explicit: bool, metrics_json: &str) -> Result<(), String> {
     if !explicit {
         return Err("promotion requires an explicit command".into());
     }
-    let report = crate::bakeoff::baseline_report(crate::CODING_FIXTURE).await?;
-    if !locked_families_clear(&report) {
-        return Err("promotion blocked: bake-off regressions on locked families".into());
+    let metrics: serde_json::Value = serde_json::from_str(metrics_json).unwrap_or(Value::Null);
+    let Some(candidate) = metrics["bakeoff"]["families"].as_object() else {
+        return Err(
+            "promotion refused: the model version has no bake-off evidence; register it with metrics.bakeoff.families".into(),
+        );
+    };
+    let report = crate::bakeoff::baseline_report_off_runtime().await?;
+    let baseline = &report["families"];
+    for (family, _) in crate::bakeoff::FAMILIES {
+        let expected = baseline[family]["scored"].as_u64().unwrap_or(0);
+        let scored = candidate
+            .get(family)
+            .and_then(|value| value["scored"].as_u64());
+        if scored != Some(expected) {
+            return Err(format!(
+                "promotion refused: the bake-off evidence does not score the built-in fixture ({family} scored {scored:?}, expected {expected})"
+            ));
+        }
+    }
+    if !locked_families_clear(&json!({ "families": candidate })) {
+        return Err(
+            "promotion refused: the candidate misses questions in the locked families".into(),
+        );
+    }
+    let candidate: std::collections::HashMap<String, Value> = candidate
+        .iter()
+        .map(|(family, value)| (family.clone(), value.clone()))
+        .collect();
+    if !crate::lexical::beats_baseline(baseline, &candidate) {
+        return Err(
+            "promotion refused: the candidate does not beat hash-v1 on the built-in fixture".into(),
+        );
     }
     Ok(())
 }
@@ -125,10 +232,12 @@ pub fn locked_families_clear(report: &serde_json::Value) -> bool {
     true
 }
 
-
-
 /// Deterministic train/validation split. `validation_ratio` in (0,1); seed makes it reproducible.
-pub fn split_dataset(rows: &[Value], validation_ratio: f64, seed: u64) -> Result<(Vec<Value>, Vec<Value>), String> {
+pub fn split_dataset(
+    rows: &[Value],
+    validation_ratio: f64,
+    seed: u64,
+) -> Result<(Vec<Value>, Vec<Value>), String> {
     if !(0.0..1.0).contains(&validation_ratio) {
         return Err("validation_ratio must be in [0,1)".into());
     }
@@ -192,7 +301,10 @@ pub fn train_ranking_prior(
     let (train, validation) = split_dataset(rows, validation_ratio, seed)?;
     let mut weights: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
     for row in &train {
-        let outcome = row.get("outcome").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let outcome = row
+            .get("outcome")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         let w = outcome_weight(outcome);
         if w == 0.0 {
             continue;
@@ -234,10 +346,17 @@ pub fn train_ranking_prior(
 pub fn project_scoped_weights(rows: &[Value]) -> std::collections::BTreeMap<String, f64> {
     let mut weights = std::collections::BTreeMap::new();
     for row in rows {
-        let Some(project) = row.get("projectId").and_then(|v| v.as_str()).filter(|id| !id.is_empty()) else {
+        let Some(project) = row
+            .get("projectId")
+            .and_then(|v| v.as_str())
+            .filter(|id| !id.is_empty())
+        else {
             continue;
         };
-        let outcome = row.get("outcome").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let outcome = row
+            .get("outcome")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         let weight = outcome_weight(outcome);
         if weight == 0.0 {
             continue;
@@ -248,7 +367,9 @@ pub fn project_scoped_weights(rows: &[Value]) -> std::collections::BTreeMap<Stri
                     if id.is_empty() {
                         continue;
                     }
-                    *weights.entry(format!("{project}\t{key}:{id}")).or_insert(0.0) += weight;
+                    *weights
+                        .entry(format!("{project}\t{key}:{id}"))
+                        .or_insert(0.0) += weight;
                 }
             }
         }
@@ -269,7 +390,10 @@ fn evaluate_prior(
     let mut scored = 0u64;
     let mut agree = 0u64;
     for row in validation {
-        let outcome = row.get("outcome").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let outcome = row
+            .get("outcome")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         let target = outcome_weight(outcome);
         if target == 0.0 {
             continue;
@@ -339,6 +463,70 @@ mod tests {
     }
 
     #[test]
+    fn a_secret_in_the_execution_id_is_rejected() {
+        let mut secret = sample();
+        secret.execution_id = "password=hunter2".into();
+        assert!(validate_feedback(&secret)
+            .unwrap_err()
+            .contains("secret-shaped"));
+    }
+
+    #[test]
+    fn wider_secret_shapes_are_rejected() {
+        for text in [
+            "password = hunter2",
+            "token=abc123",
+            "Bearer eyJhbGciOiJIUzI1NiJ9",
+            "apikey abc",
+            "aws_secret_access_key",
+            "sk-abcdefghijklmnopqrstuvwxyz",
+            "ghp_abcdefghijklmnopqrstuvwxyz12",
+        ] {
+            let mut secret = sample();
+            secret.context_ids = vec![text.into()];
+            assert!(validate_feedback(&secret).is_err(), "accepted {text:?}");
+        }
+        // Ordinary ids and categories still pass.
+        let mut plain = sample();
+        plain.context_ids = vec!["mem:token-budget".into(), "rule:no-secrets".into()];
+        plain.task_category = "parser".into();
+        assert!(validate_feedback(&plain).is_ok());
+    }
+
+    #[test]
+    fn a_bearer_word_without_a_token_in_the_same_field_passes() {
+        let mut ids = sample();
+        ids.skill_ids = vec!["oauth-bearer".into(), "rule:x".into()];
+        assert!(validate_feedback(&ids).is_ok(), "ids across fields");
+        for category in ["bearer auth", "bearer authentication"] {
+            let mut named = sample();
+            named.task_category = category.into();
+            assert!(validate_feedback(&named).is_ok(), "{category}");
+        }
+        let mut token = sample();
+        token.skill_ids = vec!["Authorization: Bearer abc123def456ghi".into()];
+        assert!(validate_feedback(&token).is_err());
+    }
+
+    #[test]
+    fn oversized_feedback_is_rejected() {
+        let mut many = sample();
+        many.context_ids = (0..=MAX_FEEDBACK_IDS).map(|i| format!("m{i}")).collect();
+        assert!(validate_feedback(&many).unwrap_err().contains("at most"));
+        let mut long_id = sample();
+        long_id.rule_ids = vec!["r".repeat(MAX_FEEDBACK_FIELD_BYTES + 1)];
+        assert!(validate_feedback(&long_id).unwrap_err().contains("bytes"));
+        let mut long_exec = sample();
+        long_exec.execution_id = "e".repeat(MAX_FEEDBACK_FIELD_BYTES + 1);
+        assert!(validate_feedback(&long_exec).unwrap_err().contains("bytes"));
+        let mut at_limit = sample();
+        at_limit.context_ids = (0..MAX_FEEDBACK_IDS).map(|i| format!("m{i}")).collect();
+        // Not a hex digit: a long hex run is secret-shaped.
+        at_limit.task_category = "x".repeat(MAX_FEEDBACK_FIELD_BYTES);
+        assert!(validate_feedback(&at_limit).is_ok());
+    }
+
+    #[test]
     fn counts_may_be_zero_but_not_negative() {
         let with = |retry_count, input_tokens, output_tokens| FeedbackInput {
             retry_count,
@@ -358,22 +546,44 @@ mod tests {
 
     #[tokio::test]
     async fn automatic_promotion_flag_is_not_enough() {
-        assert!(promotion_allowed(false, true, true).await.is_err());
-        // Caller bake-off claims are ignored; a measured clear bake-off is enough.
-        assert!(promotion_allowed(true, false, false).await.is_ok());
-        assert!(promotion_allowed(true, true, true).await.is_ok());
+        assert_eq!(
+            promotion_allowed(false, PASSING_EVIDENCE)
+                .await
+                .unwrap_err(),
+            "promotion requires an explicit command"
+        );
+        assert!(promotion_allowed(true, PASSING_EVIDENCE).await.is_ok());
     }
 
     #[tokio::test]
-    async fn promotion_ignores_caller_bakeoff_claims() {
-        assert!(
-            promotion_allowed(true, true, false).await.is_ok(),
-            "false regressionsClear from the caller must not block a clear measured bake-off"
+    async fn a_candidate_without_its_own_bakeoff_evidence_is_refused() {
+        for metrics in ["{}", "not json", r#"{"bakeoff":{}}"#] {
+            let error = promotion_allowed(true, metrics).await.unwrap_err();
+            assert!(error.contains("no bake-off evidence"), "{metrics}: {error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_candidate_must_beat_the_measured_baseline_and_keep_the_locked_families() {
+        let tie = PASSING_EVIDENCE.replace(
+            r#""paraphrase":{"scored":1,"hits":1}"#,
+            r#""paraphrase":{"scored":1,"hits":0}"#,
         );
-        assert!(
-            promotion_allowed(true, false, true).await.is_ok(),
-            "false beatsBaseline from the caller must not block a clear measured bake-off"
+        assert_ne!(tie, PASSING_EVIDENCE);
+        let error = promotion_allowed(true, &tie).await.unwrap_err();
+        assert!(error.contains("does not beat"), "{error}");
+        let regressed = PASSING_EVIDENCE.replace(
+            r#""abstention":{"scored":1,"hits":1}"#,
+            r#""abstention":{"scored":1,"hits":0}"#,
         );
+        let error = promotion_allowed(true, &regressed).await.unwrap_err();
+        assert!(error.contains("locked families"), "{error}");
+        let other_fixture = PASSING_EVIDENCE.replace(
+            r#""named_trigger":{"scored":1,"hits":1}"#,
+            r#""named_trigger":{"scored":7,"hits":7}"#,
+        );
+        let error = promotion_allowed(true, &other_fixture).await.unwrap_err();
+        assert!(error.contains("built-in fixture"), "{error}");
     }
 
     #[test]
@@ -427,7 +637,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod phase5_tests {
     use super::*;
@@ -443,8 +652,14 @@ mod phase5_tests {
         assert_eq!(a_train, b_train);
         assert_eq!(a_val, b_val);
         assert_eq!(a_train.len() + a_val.len(), 10);
-        let train_cats: std::collections::BTreeSet<_> = a_train.iter().map(|r| r["taskCategory"].as_str().unwrap()).collect();
-        let val_cats: std::collections::BTreeSet<_> = a_val.iter().map(|r| r["taskCategory"].as_str().unwrap()).collect();
+        let train_cats: std::collections::BTreeSet<_> = a_train
+            .iter()
+            .map(|r| r["taskCategory"].as_str().unwrap())
+            .collect();
+        let val_cats: std::collections::BTreeSet<_> = a_val
+            .iter()
+            .map(|r| r["taskCategory"].as_str().unwrap())
+            .collect();
         assert!(train_cats.is_disjoint(&val_cats));
     }
 
@@ -458,7 +673,9 @@ mod phase5_tests {
         let weights = project_scoped_weights(&rows);
         assert_eq!(weights.get("a\tcontextIds:memory:m1").copied(), Some(1.0));
         assert_eq!(weights.get("b\tcontextIds:memory:m1").copied(), Some(-0.5));
-        assert!(weights.keys().all(|key| key.starts_with("a\t") || key.starts_with("b\t")));
+        assert!(weights
+            .keys()
+            .all(|key| key.starts_with("a\t") || key.starts_with("b\t")));
     }
 
     #[test]

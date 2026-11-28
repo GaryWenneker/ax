@@ -134,9 +134,22 @@ fn is_loopback_host(host: &str) -> bool {
     matches!(bare, "127.0.0.1" | "localhost" | "::1")
 }
 
-/// Only the local user's own browser may mount: no share sessions, LAN clients, or foreign pages.
-pub fn allowed(headers: &HeaderMap, readonly: bool) -> bool {
-    if readonly {
+/// Port of the web UI's Vite dev server, which forwards `/api` to Command Center.
+const VITE_DEV_PORT: u16 = 5173;
+
+/// A page origin that belongs to Command Center: a loopback host on its own
+/// `port`. `dev` (debug builds) also accepts the Vite dev server's port.
+fn origin_allowed(origin: &str, port: u16, dev: bool) -> bool {
+    crate::browser_origin::browser_origin_allowed(Some(origin), port)
+        || (dev && crate::browser_origin::browser_origin_allowed(Some(origin), VITE_DEV_PORT))
+}
+
+/// Only the local user's own browser may mount: a loopback socket peer with no
+/// proxy in between, a loopback `Host`, and, when the browser names the page's
+/// origin, a Command Center page on `port`. Share sessions, LAN clients and
+/// pages from other sites or other local servers are refused.
+pub fn allowed(headers: &HeaderMap, readonly: bool, port: u16) -> bool {
+    if readonly || !crate::local_owner::local_peer(headers) {
         return false;
     }
     let header = |k: &str| headers.get(k).and_then(|v| v.to_str().ok());
@@ -148,10 +161,7 @@ pub fn allowed(headers: &HeaderMap, readonly: bool) -> bool {
     }
     match header("origin") {
         None => true,
-        Some(origin) => origin
-            .strip_prefix("http://")
-            .or_else(|| origin.strip_prefix("https://"))
-            .is_some_and(is_loopback_host),
+        Some(origin) => origin_allowed(origin, port, cfg!(debug_assertions)),
     }
 }
 
@@ -297,10 +307,39 @@ fn webclient_running() -> bool {
             .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("RUNNING"))
 }
 
+/// A mount hides what is in its folder, so the vault only mounts on a folder
+/// that is missing, empty (apart from Finder's `.DS_Store`), or already a mount.
+fn usable_mount_dir(dir: &Path) -> Result<(), String> {
+    let Ok(meta) = std::fs::symlink_metadata(dir) else {
+        return Ok(());
+    };
+    let shown = dir.display();
+    if !meta.is_dir() {
+        return Err(format!(
+            "{shown} exists and is not a folder; choose another drive name"
+        ));
+    }
+    if is_mount_root(dir) {
+        return Ok(());
+    }
+    let has_files = std::fs::read_dir(dir)
+        .map_err(|e| format!("{shown}: {e}"))?
+        .flatten()
+        .any(|entry| entry.file_name() != ".DS_Store");
+    if has_files {
+        return Err(format!(
+            "{shown} already holds files and the drive would hide them; choose another drive name"
+        ));
+    }
+    Ok(())
+}
+
 fn mount_point_for(os: Os, port: u16, name: &str) -> Result<String, MountError> {
     match os {
         Os::Mac => {
             let dir = home().join(name);
+            usable_mount_dir(&dir)
+                .map_err(|e| error(StatusCode::CONFLICT, json!({ "error": e })))?;
             std::fs::create_dir_all(&dir).map_err(|e| {
                 error(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -470,7 +509,7 @@ async fn blocking(
     headers: &HeaderMap,
     f: impl FnOnce(u16) -> Result<Status, MountError> + Send + 'static,
 ) -> Response {
-    if !allowed(headers, hub.readonly) {
+    if !allowed(headers, hub.readonly, hub.port) {
         return StatusCode::FORBIDDEN.into_response();
     }
     let port = hub.port;

@@ -6,29 +6,55 @@
 pub mod agent_eval;
 pub mod bakeoff;
 pub mod benchmark_abc;
+#[cfg(any(test, feature = "neural-lab"))]
 pub mod code_aware;
+#[cfg(any(test, feature = "neural-lab"))]
 pub mod code_discovery;
-pub mod speed;
-pub mod embed_bakeoff;
-#[cfg(feature = "neural-ort")]
-pub mod onnx_embed;
 pub mod config;
 pub mod dispatch;
-pub mod learn_validate;
-mod metrics;
-pub mod path_validate;
+pub mod embed_bakeoff;
+pub mod fixture;
 pub mod graph;
+#[cfg(any(test, feature = "neural-lab"))]
+pub mod learn_validate;
 pub mod learning;
 pub mod lexical;
+mod metrics;
+#[cfg(feature = "neural-ort")]
+pub mod onnx_embed;
+pub mod path_validate;
 pub mod predict;
+#[cfg(any(test, feature = "neural-lab"))]
 pub mod query_prior;
 pub mod rank;
+#[cfg(any(test, feature = "neural-lab"))]
 pub mod recovery;
 pub mod rss;
 pub mod runtime;
 pub mod share;
+#[cfg(test)]
+mod speed;
 pub mod status;
 pub mod store;
+
+/// The `AX_MEMORY_BENCH_*` flags are process environment that `ax_memory`
+/// reads at call time. The ignored measurement tests that switch them hold
+/// this lock so they never overlap with each other.
+#[cfg(test)]
+pub(crate) static BENCH_ENV: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Where an ignored measurement test writes its report: `AX_BENCH_OUT_DIR`
+/// when set, otherwise an `ax-bench` folder in the system temporary directory.
+#[cfg(test)]
+pub(crate) fn measurement_output(name: &str) -> std::path::PathBuf {
+    let dir = std::env::var_os("AX_BENCH_OUT_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("ax-bench"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    println!("measurement report: {}", path.display());
+    path
+}
 
 pub use config::{load, NeuralConfig};
 pub use rank::{plan as plan_blocks, RankClass, RankItem, RankNote};

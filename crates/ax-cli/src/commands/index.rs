@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ax_extraction::orchestrator::IndexOptions;
 
-use crate::commands::{check_unsafe_root, resolve_path};
+use crate::commands::{check_unsafe_root, resolve_target_dir};
 use crate::ui::{
     finish_progress_bar, format_duration_ms, index_progress_bar, index_progress_callback,
     info_line, ok_line,
@@ -15,7 +15,7 @@ pub async fn run(
     _verbose: bool,
     all_members: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_target_dir(path);
 
     if all_members {
         let members = ax_core::member_roots(&root);

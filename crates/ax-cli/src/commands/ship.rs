@@ -1,4 +1,4 @@
-use crate::commands::{quiet_and_uninitialized, resolve_path};
+use crate::commands::{quiet_and_uninitialized, resolve_target_dir};
 
 pub struct ShipArgs {
     pub path: Option<String>,
@@ -28,7 +28,7 @@ pub async fn run(args: ShipArgs) -> Result<(), String> {
         revert_on_fail,
         quiet,
     } = args;
-    let root = resolve_path(path);
+    let root = resolve_target_dir(path);
     if evaluate && quiet_and_uninitialized(&root, quiet) {
         return Ok(());
     }

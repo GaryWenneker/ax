@@ -542,7 +542,8 @@ async fn post(
     let mut timeout = TOOL_TIMEOUT;
     let mut mutation = None;
     let mut shared = None;
-    let mut engine = match tokio::time::timeout(Duration::from_secs(30), engine.lock_owned()).await {
+    let mut engine = match tokio::time::timeout(Duration::from_secs(30), engine.lock_owned()).await
+    {
         Ok(e) => e,
         Err(_) => return error(StatusCode::TOO_MANY_REQUESTS, "Connection is busy"),
     };
@@ -751,13 +752,19 @@ async fn post(
                     match task.await {
                         Ok((outcome, _session)) => {
                             if !outcome.verbose_lines.is_empty() {
-                                crate::verbose::append_verbose_log_file(&outcome.verbose_lines, Some(&root));
+                                crate::verbose::append_verbose_log_file(
+                                    &outcome.verbose_lines,
+                                    Some(&root),
+                                );
                             }
                             if outcome.result.is_err() {
                                 ax_usage::log_workspace(Some(&root), "index operation failed after its request timed out via=remote-mcp");
                             }
                         }
-                        Err(_) => ax_usage::log_workspace(Some(&root), "index operation stopped unexpectedly via=remote-mcp"),
+                        Err(_) => ax_usage::log_workspace(
+                            Some(&root),
+                            "index operation stopped unexpectedly via=remote-mcp",
+                        ),
                     }
                 });
                 return no_store(
@@ -792,11 +799,8 @@ async fn post(
             },
             None => None,
         };
-        match tokio::time::timeout(
-            timeout,
-            handle_request(&mut engine.engine, &method, params),
-        )
-        .await
+        match tokio::time::timeout(timeout, handle_request(&mut engine.engine, &method, params))
+            .await
         {
             Ok(outcome) => outcome,
             Err(_) => return error(StatusCode::GATEWAY_TIMEOUT, "Ax tool timed out"),
@@ -915,6 +919,9 @@ async fn post(
                 }
             }
         }
+    }
+    if request.method == "tools/call" {
+        crate::server::strip_for_text_only_client(&mut engine.engine, &mut value);
     }
     rpc(request.id, Ok(value))
 }

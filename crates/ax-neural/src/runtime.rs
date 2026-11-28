@@ -7,6 +7,9 @@ pub const CPU_DIM: usize = 64;
 pub trait Backend: Send + Sync {
     fn name(&self) -> &'static str;
     fn healthy(&self) -> bool;
+    /// True only for a backend whose vectors carry meaning, so cosine
+    /// similarity between two texts says how related they are.
+    fn semantic(&self) -> bool;
     fn embed(&self, text: &str) -> Result<Vec<f32>, String>;
 }
 
@@ -23,6 +26,12 @@ impl Backend for CpuBackend {
         true
     }
 
+    /// A hash of the whole text: one changed character gives an unrelated
+    /// vector, so it must never rank search results.
+    fn semantic(&self) -> bool {
+        false
+    }
+
     fn embed(&self, text: &str) -> Result<Vec<f32>, String> {
         let digest = blake3::hash(text.as_bytes());
         let bytes = digest.as_bytes();
@@ -35,8 +44,8 @@ impl Backend for CpuBackend {
     }
 }
 
-/// Model id for semantic search responses: runtime backend when the query was
-/// embedded there, otherwise the hash-v1 fallback label operators expect.
+/// Model id for semantic search responses: the runtime backend when the query
+/// was embedded and ranked there, otherwise the hash-v1 fallback label.
 pub fn semantic_search_model(query_embedded_with_runtime: bool) -> &'static str {
     if query_embedded_with_runtime {
         active()
@@ -101,10 +110,7 @@ mod tests {
 
     #[test]
     fn semantic_search_model_reflects_query_embedding_not_lexical_challenger() {
-        assert_eq!(
-            semantic_search_model(false),
-            ax_memory::embed::ACTIVE_MODEL,
-        );
+        assert_eq!(semantic_search_model(false), ax_memory::embed::ACTIVE_MODEL,);
         if crate::runtime_built() {
             assert_eq!(semantic_search_model(true), "cpu-blake3");
             assert_ne!(semantic_search_model(true), crate::lexical::CHALLENGER_ID);
@@ -113,12 +119,10 @@ mod tests {
 
     #[test]
     fn runtime_cpu_embeds_without_network() {
-        let Some(backend) = active() else {
-            // Default build: feature off — still compile the test, skip body.
-            assert!(!crate::runtime_built());
-            return;
-        };
-        assert!(crate::runtime_built());
+        // The CPU backend is plain Rust and is tested in every build; `active`
+        // hands it out only when the runtime feature is on.
+        assert_eq!(active().is_some(), crate::runtime_built());
+        let backend = CpuBackend;
         assert!(backend.healthy());
         let a = backend.embed("parser").unwrap();
         let b = backend.embed("parser").unwrap();

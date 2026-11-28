@@ -4,7 +4,7 @@ use std::sync::mpsc::Receiver;
 
 use egui::Ui;
 
-use crate::api::client::{spawn_fetch, SharedClient};
+use crate::api::client::spawn_fetch;
 use crate::api::ShipStatus;
 use crate::pages::{err_label, heading, ok_label, PageCtx};
 use crate::theme;
@@ -22,8 +22,16 @@ pub struct ShipPage {
     loaded: bool,
 }
 
+impl Default for ShipPage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ShipPage {
-    pub fn new(client: SharedClient) -> Self {
+    /// Builds the page without touching the network. The live event stream
+    /// starts the first time the page is shown.
+    pub fn new() -> Self {
         Self {
             status: None,
             err: None,
@@ -33,7 +41,7 @@ impl ShipPage {
             connected: false,
             pending: None,
             action_pending: None,
-            events: Some(client.stream_ship_events()),
+            events: None,
             loaded: false,
         }
     }
@@ -45,6 +53,9 @@ impl ShipPage {
             "Git-aware quality gate with live pipeline updates.",
         );
 
+        if self.events.is_none() {
+            self.events = Some(ctx.client.stream_ship_events());
+        }
         self.poll_events();
 
         ui.horizontal(|ui| {

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use ax_usage::{audit_project, format_markdown_report, AuditOptions, DEFAULT_WINDOW_MINUTES};
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 
 pub fn run(
     path: Option<String>,
@@ -12,7 +12,7 @@ pub fn run(
     window_minutes: Option<u64>,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let mut opts = AuditOptions {
         window_minutes: Some(window_minutes.unwrap_or(DEFAULT_WINDOW_MINUTES)),
         persist: true,

@@ -214,7 +214,12 @@ mod admin_grant {
         }
     }
 
-    fn principal(subject: Option<&str>, scopes: &[&str], key_write: bool, key_admin: bool) -> Principal {
+    fn principal(
+        subject: Option<&str>,
+        scopes: &[&str],
+        key_write: bool,
+        key_admin: bool,
+    ) -> Principal {
         Principal {
             id: "test".into(),
             subject: subject.map(str::to_owned),
@@ -252,7 +257,10 @@ mod admin_grant {
         assert!(principal(Some("bob"), ALL, false, false).can_write(&project));
         assert!(!principal(Some("bob"), ALL, false, false).can_admin(&project));
         // ann without the admin scope in her token.
-        assert!(!principal(Some("ann"), &[CONTEXT_SCOPE, WRITE_SCOPE], false, false).can_admin(&project));
+        assert!(
+            !principal(Some("ann"), &[CONTEXT_SCOPE, WRITE_SCOPE], false, false)
+                .can_admin(&project)
+        );
         // The key flag means nothing for a subject.
         assert!(!principal(Some("bob"), ALL, true, true).can_admin(&project));
         // An unknown subject.

@@ -419,7 +419,8 @@ impl Remote {
                 .map_err(McpError::Credential)?;
             let outcome = match self.session(&token).await {
                 Ok(session) => {
-                    let body = json!({"jsonrpc": "2.0", "id": 2, "method": method, "params": params});
+                    let body =
+                        json!({"jsonrpc": "2.0", "id": 2, "method": method, "params": params});
                     self.post(&token, Some(&session), &body, timeout)
                         .await
                         .and_then(Self::result)
@@ -506,7 +507,13 @@ mod tests {
         for tool in ADMIN_TOOLS {
             assert_eq!(limits.call_timeout(tool), ADMIN_CALL_TIMEOUT, "{tool}");
         }
-        for tool in ["ax_status", "ax_explore", "ax_remember", "ax_future_tool", ""] {
+        for tool in [
+            "ax_status",
+            "ax_explore",
+            "ax_remember",
+            "ax_future_tool",
+            "",
+        ] {
             assert_eq!(limits.call_timeout(tool), CALL_TIMEOUT, "{tool}");
         }
         assert!(CALL_TIMEOUT < ADMIN_CALL_TIMEOUT);
@@ -534,6 +541,9 @@ mod tests {
         let codes: std::collections::HashSet<_> = errors.iter().map(McpError::code).collect();
         assert_eq!(codes.len(), errors.len());
         assert!(errors.iter().all(|e| !e.message().is_empty()));
-        assert_eq!(McpError::Rejected.message(), "The server rejected these credentials.");
+        assert_eq!(
+            McpError::Rejected.message(),
+            "The server rejected these credentials."
+        );
     }
 }

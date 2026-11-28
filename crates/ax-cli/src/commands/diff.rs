@@ -1,8 +1,8 @@
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 use crate::ui::SpinnerGuard;
 
 pub async fn run(base: String, json: bool) -> Result<(), String> {
-    let root = resolve_path(None);
+    let root = resolve_project_root(None);
     let _spinner = SpinnerGuard::new("Computing git diff...", false);
     let diff = ax_git::diff_vs_base(&root, &base).map_err(|e| e.to_string())?;
 

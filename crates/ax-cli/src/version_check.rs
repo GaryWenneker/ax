@@ -3,6 +3,7 @@
 //! Primary source: GitHub Releases API / redirect (`GaryWenneker/ax`).
 //! Fallback:       `getax.wenneker.io/releases/latest.txt` and legacy CDN redirects.
 
+use std::cmp::Ordering;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -15,17 +16,121 @@ const DEFAULT_REPO: &str = "GaryWenneker/ax";
 const DEFAULT_CACHE_HOURS: u64 = 24;
 const REQUEST_TIMEOUT_SECS: u64 = 8;
 
+/// Base URLs the release resolver talks to (overridable so tests can use a local server).
+#[derive(Debug, Clone)]
+struct Endpoints {
+    /// `https://github.com` — `/{repo}/releases/latest` redirects to the newest tag.
+    web: String,
+    /// `https://api.github.com`.
+    api: String,
+    /// Full URL of the legacy `latest.txt` pointer.
+    cdn_latest: String,
+}
+
+impl Endpoints {
+    fn public() -> Self {
+        Self {
+            web: "https://github.com".to_string(),
+            api: "https://api.github.com".to_string(),
+            cdn_latest: CDN_LATEST_URL.to_string(),
+        }
+    }
+}
+
+/// Why the newest release could not be resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolveError {
+    /// The GitHub API answered 404 with a token: the repository has no published release.
+    NoReleases,
+    /// The GitHub API answered 404 without a token: the releases may be private.
+    NotVisible,
+    /// Network, HTTP or parse failure.
+    Failed(String),
+}
+
+impl std::fmt::Display for ResolveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoReleases => f.write_str("no published GitHub releases yet"),
+            Self::NotVisible => f.write_str(
+                "releases not visible (private repo?) — set GITHUB_TOKEN or run `gh auth login`",
+            ),
+            Self::Failed(e) => f.write_str(e),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UpdateCheckCache {
     checked_at: i64,
     latest: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// `major.minor.patch`; the derived order compares the fields in that order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VersionTriple {
     pub major: u32,
     pub minor: u32,
     pub patch: u32,
+}
+
+/// A release version: the numeric triple plus an optional pre-release suffix
+/// (`2.1.0-rc.1`). Build metadata (`+...`) is ignored, as in semver.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseVersion {
+    pub triple: VersionTriple,
+    pub pre: Option<String>,
+}
+
+impl Ord for ReleaseVersion {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.triple
+            .cmp(&other.triple)
+            .then_with(|| match (&self.pre, &other.pre) {
+                (None, None) => Ordering::Equal,
+                // A pre-release sorts below the final release of the same triple.
+                (None, Some(_)) => Ordering::Greater,
+                (Some(_), None) => Ordering::Less,
+                (Some(a), Some(b)) => compare_prerelease(a, b),
+            })
+    }
+}
+
+impl PartialOrd for ReleaseVersion {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Semver pre-release precedence: dot-separated identifiers compared left to right,
+/// numeric ones numerically and below alphanumeric ones, a shorter list lower.
+fn compare_prerelease(a: &str, b: &str) -> Ordering {
+    fn numeric(id: &str) -> Option<&str> {
+        id.bytes()
+            .all(|c| c.is_ascii_digit())
+            .then(|| id.trim_start_matches('0'))
+    }
+    let mut ia = a.split('.');
+    let mut ib = b.split('.');
+    loop {
+        match (ia.next(), ib.next()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(x), Some(y)) => {
+                let ord = match (numeric(x), numeric(y)) {
+                    // Compare digit strings by length first, so any size works.
+                    (Some(nx), Some(ny)) => nx.len().cmp(&ny.len()).then_with(|| nx.cmp(ny)),
+                    (Some(_), None) => Ordering::Less,
+                    (None, Some(_)) => Ordering::Greater,
+                    (None, None) => x.cmp(y),
+                };
+                if ord != Ordering::Equal {
+                    return ord;
+                }
+            }
+        }
+    }
 }
 
 pub fn current_version() -> &'static str {
@@ -36,28 +141,86 @@ pub fn github_repo() -> String {
     std::env::var("AX_GITHUB_REPO").unwrap_or_else(|_| DEFAULT_REPO.to_string())
 }
 
+/// How long `gh auth token` may take before the token lookup gives up.
+const GH_TOKEN_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// Token for private repos or higher API rate limits (`AX_GITHUB_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, then `gh auth token`).
+///
+/// The `gh` lookup runs with stdin closed and gives up after a few seconds, so a
+/// `gh` that prompts or hangs cannot stall the command.
 pub fn github_token() -> Option<String> {
-    for key in ["AX_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"] {
-        if let Ok(v) = std::env::var(key) {
-            let t = v.trim();
-            if !t.is_empty() {
-                return Some(t.to_string());
-            }
-        }
-    }
-    github_token_from_gh_cli()
+    github_token_from_env().or_else(|| gh_auth_token("gh", GH_TOKEN_TIMEOUT))
 }
 
-fn github_token_from_gh_cli() -> Option<String> {
-    let output = std::process::Command::new("gh")
-        .args(["auth", "token"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
+/// [`github_token`] for async callers: the `gh` lookup runs on a blocking thread,
+/// and only when `use_gh_cli` is set (the passive update notice skips it).
+async fn github_token_async(use_gh_cli: bool) -> Option<String> {
+    if let Some(t) = github_token_from_env() {
+        return Some(t);
+    }
+    if !use_gh_cli {
         return None;
     }
-    let t = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    tokio::task::spawn_blocking(|| gh_auth_token("gh", GH_TOKEN_TIMEOUT))
+        .await
+        .ok()
+        .flatten()
+}
+
+fn github_token_from_env() -> Option<String> {
+    ["AX_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"]
+        .iter()
+        .filter_map(|key| std::env::var(key).ok())
+        .map(|v| v.trim().to_string())
+        .find(|t| !t.is_empty())
+}
+
+/// Run `<program> auth token` with stdin closed; `None` on failure or after `timeout`.
+fn gh_auth_token(program: &str, timeout: Duration) -> Option<String> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::time::Instant;
+
+    let deadline = Instant::now() + timeout;
+    let mut child = Command::new(program)
+        .args(["auth", "token"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let Some(mut stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
+    };
+    // Read on a thread: a process that keeps stdout open must not block us past the deadline.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = (&mut stdout).take(64 * 1024).read_to_end(&mut buf);
+        let _ = tx.send(buf);
+    });
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    if !status.success() {
+        return None;
+    }
+    let out = rx
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .ok()?;
+    let t = String::from_utf8_lossy(&out).trim().to_string();
     if t.is_empty() {
         None
     } else {
@@ -76,40 +239,40 @@ fn http_client() -> Result<reqwest::Client, String> {
 
 async fn fetch_latest_via_api(
     client: &reqwest::Client,
+    ep: &Endpoints,
     repo: &str,
     token: Option<&str>,
-) -> Result<String, String> {
-    let api = format!("https://api.github.com/repos/{repo}/releases/latest");
-    let mut req = client
-        .get(&api)
-        .header("Accept", "application/vnd.github+json");
-    if let Some(t) = token {
-        req = req.header("Authorization", format!("Bearer {t}"));
-    }
-    let resp = req
+) -> Result<String, ResolveError> {
+    let api = format!("{}/repos/{repo}/releases/latest", ep.api);
+    let resp = github_get(client, &api, token)
+        .header("Accept", "application/vnd.github+json")
         .send()
         .await
-        .map_err(|e| format!("could not reach GitHub API: {e}"))?;
+        .map_err(|e| ResolveError::Failed(format!("could not reach GitHub API: {e}")))?;
 
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        if token.is_none() {
-            return Err(
-                "releases not visible (private repo?) — set GITHUB_TOKEN or run `gh auth login`"
-                    .to_string(),
-            );
-        }
-        return Err("no published GitHub releases yet".to_string());
+        return Err(if token.is_none() {
+            ResolveError::NotVisible
+        } else {
+            ResolveError::NoReleases
+        });
     }
     if !resp.status().is_success() {
-        return Err(format!("GitHub API returned HTTP {}", resp.status()));
+        return Err(ResolveError::Failed(format!(
+            "GitHub API returned HTTP {}",
+            resp.status()
+        )));
     }
 
-    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| ResolveError::Failed(e.to_string()))?;
     body.get("tag_name")
         .and_then(|v| v.as_str())
         .map(normalize_version)
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| "GitHub did not return a release tag".to_string())
+        .ok_or_else(|| ResolveError::Failed("GitHub did not return a release tag".to_string()))
 }
 
 /// Parse release tag from `https://github.com/owner/repo/releases/tag/v1.2.3`.
@@ -141,35 +304,54 @@ pub fn strip_v(v: &str) -> String {
     }
 }
 
-pub fn parse_version_triple(v: &str) -> Option<VersionTriple> {
+/// Parse `v1.2.3`, `1.2.3-rc.1` or `1.2.3+build`; anything else is `None`.
+pub fn parse_version(v: &str) -> Option<ReleaseVersion> {
     let core = strip_v(v);
-    let core = core.split('-').next()?.trim();
-    let mut parts = core.split('.');
-    Some(VersionTriple {
-        major: parts.next()?.parse().ok()?,
-        minor: parts.next()?.parse().ok()?,
-        patch: parts.next()?.parse().ok()?,
-    })
+    let core = core.trim();
+    let core = core.split_once('+').map_or(core, |(head, _)| head);
+    let (nums, pre) = match core.split_once('-') {
+        Some((nums, pre)) => (nums, Some(pre)),
+        None => (core, None),
+    };
+    let mut parts = nums.split('.');
+    let mut next = || -> Option<u32> {
+        let p = parts.next()?;
+        if p.is_empty() || !p.bytes().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        p.parse().ok()
+    };
+    let triple = VersionTriple {
+        major: next()?,
+        minor: next()?,
+        patch: next()?,
+    };
+    if parts.next().is_some() {
+        return None;
+    }
+    let pre = match pre {
+        None => None,
+        Some(p) => {
+            let valid = p.split('.').all(|id| {
+                !id.is_empty() && id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
+            });
+            if !valid {
+                return None;
+            }
+            Some(p.to_string())
+        }
+    };
+    Some(ReleaseVersion { triple, pre })
 }
 
-pub fn compare_versions(a: &str, b: &str) -> Option<i32> {
-    let va = parse_version_triple(a)?;
-    let vb = parse_version_triple(b)?;
-    if va.major != vb.major {
-        return Some((va.major as i32) - (vb.major as i32));
-    }
-    if va.minor != vb.minor {
-        return Some((va.minor as i32) - (vb.minor as i32));
-    }
-    Some((va.patch as i32) - (vb.patch as i32))
+/// Order of `a` relative to `b`, or `None` when either is not a release version.
+pub fn compare_versions(a: &str, b: &str) -> Option<Ordering> {
+    Some(parse_version(a)?.cmp(&parse_version(b)?))
 }
 
+/// True only when `latest` is a valid release version above `current`.
 pub fn is_update_available(current: &str, latest: &str) -> bool {
-    match compare_versions(latest, current) {
-        Some(cmp) if cmp > 0 => true,
-        Some(_) => false,
-        None => normalize_version(current) != normalize_version(latest),
-    }
+    compare_versions(latest, current) == Some(Ordering::Greater)
 }
 
 fn cache_path() -> PathBuf {
@@ -194,12 +376,19 @@ fn now_secs() -> i64 {
 }
 
 fn load_cache() -> Option<UpdateCheckCache> {
-    let raw = std::fs::read_to_string(cache_path()).ok()?;
+    load_cache_from(&cache_path())
+}
+
+fn load_cache_from(path: &std::path::Path) -> Option<UpdateCheckCache> {
+    let raw = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&raw).ok()
 }
 
 fn save_cache(latest: &str) {
-    let path = cache_path();
+    save_cache_to(&cache_path(), latest);
+}
+
+fn save_cache_to(path: &std::path::Path, latest: &str) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -213,8 +402,14 @@ fn save_cache(latest: &str) {
 }
 
 fn cache_is_fresh(cache: &UpdateCheckCache) -> bool {
-    let age = now_secs().saturating_sub(cache.checked_at);
-    age >= 0 && Duration::from_secs(age as u64) < cache_interval()
+    cache_is_fresh_at(cache, now_secs(), cache_interval())
+}
+
+/// Fresh when checked within `interval` before `now`; a `checked_at` in the
+/// future (clock moved back) is stale.
+fn cache_is_fresh_at(cache: &UpdateCheckCache, now: i64, interval: Duration) -> bool {
+    let age = now.saturating_sub(cache.checked_at);
+    age >= 0 && Duration::from_secs(age as u64) < interval
 }
 
 pub fn update_check_disabled() -> bool {
@@ -227,9 +422,9 @@ pub fn update_check_disabled() -> bool {
 }
 
 /// Fetch latest version from getax latest.txt (legacy fallback when GitHub is unreachable).
-async fn fetch_latest_from_cdn(client: &reqwest::Client) -> Result<String, String> {
+async fn fetch_latest_from_cdn(client: &reqwest::Client, ep: &Endpoints) -> Result<String, String> {
     let resp = client
-        .get(CDN_LATEST_URL)
+        .get(&ep.cdn_latest)
         .send()
         .await
         .map_err(|e| format!("could not reach CDN: {e}"))?;
@@ -237,22 +432,50 @@ async fn fetch_latest_from_cdn(client: &reqwest::Client) -> Result<String, Strin
         return Err(format!("CDN returned HTTP {}", resp.status()));
     }
     let text = resp.text().await.map_err(|e| e.to_string())?;
+    parse_cdn_latest(&text)
+}
+
+/// Accept a `latest.txt` body only when it is a release version.
+fn parse_cdn_latest(text: &str) -> Result<String, String> {
     let v = text.trim();
     if v.is_empty() {
         return Err("CDN returned empty version".to_string());
     }
-    Ok(normalize_version(v))
+    let v = normalize_version(v);
+    if parse_version(&v).is_none() {
+        let preview = ax_utils::truncate_chars(text.trim(), 40, "…");
+        return Err(format!(
+            "CDN returned something that is not a version: {preview:?}"
+        ));
+    }
+    Ok(v)
 }
 
-pub async fn resolve_latest_version(repo: &str) -> Result<String, String> {
-    let client = http_client()?;
-    collect_latest_candidates(&client, repo)
-        .await
-        .into_iter()
-        .next()
-        .ok_or_else(|| {
-            "could not resolve latest release (no GitHub releases or CDN latest.txt)".to_string()
+/// Highest release version. `use_gh_cli` allows the `gh auth token` lookup
+/// (explicit checks); the passive notice after commands passes `false`.
+pub async fn resolve_latest_version(repo: &str, use_gh_cli: bool) -> Result<String, ResolveError> {
+    let client = http_client().map_err(ResolveError::Failed)?;
+    let token = github_token_async(use_gh_cli).await;
+    resolve_latest_at(&client, &Endpoints::public(), repo, token.as_deref()).await
+}
+
+/// The newest candidate; when there is none, the GitHub API's own error
+/// (so a private repository is reported as such).
+async fn resolve_latest_at(
+    client: &reqwest::Client,
+    ep: &Endpoints,
+    repo: &str,
+    token: Option<&str>,
+) -> Result<String, ResolveError> {
+    let (candidates, api_error) = collect_latest_candidates(client, ep, repo, token, None).await;
+    candidates.into_iter().next().ok_or_else(|| {
+        api_error.unwrap_or_else(|| {
+            ResolveError::Failed(
+                "could not resolve latest release (no GitHub releases or CDN latest.txt)"
+                    .to_string(),
+            )
         })
+    })
 }
 
 /// Highest semver release tag that has a downloadable bundle for this platform (matches install.ps1).
@@ -262,17 +485,22 @@ pub async fn resolve_latest_installable_version(
     ext: &str,
 ) -> Result<String, String> {
     let client = http_client()?;
-    let token = github_token();
+    let token = github_token_async(true).await;
     let token_ref = token.as_deref();
     let asset_name = format!("ax-{bundle}.{ext}");
+    let ep = Endpoints::public();
 
-    if let Ok(tag) =
-        resolve_installable_from_github_api(&client, repo, &asset_name, token_ref).await
-    {
-        return Ok(tag);
+    let releases = fetch_releases_with_assets(&client, &ep, repo, token_ref).await;
+    if let Ok(list) = &releases {
+        if let Some(tag) = newest_release_with_asset(list, &asset_name) {
+            return Ok(tag);
+        }
     }
 
-    let candidates = collect_latest_candidates(&client, repo).await;
+    // The release list was already fetched (or failed): do not request it again.
+    let listed = releases.map(release_tags).unwrap_or_default();
+    let (candidates, _) =
+        collect_latest_candidates(&client, &ep, repo, token_ref, Some(listed)).await;
 
     for tag in &candidates {
         if release_asset_exists(&client, repo, tag, bundle, ext, token_ref).await {
@@ -285,42 +513,45 @@ pub async fn resolve_latest_installable_version(
     ))
 }
 
-async fn resolve_installable_from_github_api(
-    client: &reqwest::Client,
-    repo: &str,
-    asset_name: &str,
-    token: Option<&str>,
-) -> Result<String, String> {
-    let releases = fetch_releases_with_assets(client, repo, token).await?;
-    let mut tags: Vec<String> = releases
-        .into_iter()
+/// Newest release that ships `asset_name`.
+fn newest_release_with_asset(releases: &[ReleaseAssets], asset_name: &str) -> Option<String> {
+    let tags = releases
+        .iter()
         .filter(|r| r.assets.iter().any(|a| a == asset_name))
-        .map(|r| r.tag)
+        .map(|r| r.tag.clone())
         .collect();
-    tags = unique_tags_desc(tags);
-    tags.into_iter()
-        .next()
-        .ok_or_else(|| format!("no GitHub release ships {asset_name}"))
+    unique_tags_desc(tags).into_iter().next()
 }
 
+fn release_tags(releases: Vec<ReleaseAssets>) -> Vec<String> {
+    releases.into_iter().map(|r| r.tag).collect()
+}
+
+#[derive(Debug, PartialEq)]
 struct ReleaseAssets {
     tag: String,
     assets: Vec<String>,
 }
 
+/// GET with the optional GitHub token as a bearer `Authorization` header.
+fn github_get(client: &reqwest::Client, url: &str, token: Option<&str>) -> reqwest::RequestBuilder {
+    let req = client.get(url);
+    match token {
+        Some(t) => req.header("Authorization", format!("Bearer {t}")),
+        None => req,
+    }
+}
+
+/// The single fetch of the repository's release list (newest 30).
 async fn fetch_releases_with_assets(
     client: &reqwest::Client,
+    ep: &Endpoints,
     repo: &str,
     token: Option<&str>,
 ) -> Result<Vec<ReleaseAssets>, String> {
-    let api = format!("https://api.github.com/repos/{repo}/releases?per_page=30");
-    let mut req = client
-        .get(&api)
-        .header("Accept", "application/vnd.github+json");
-    if let Some(t) = token {
-        req = req.header("Authorization", format!("Bearer {t}"));
-    }
-    let resp = req
+    let api = format!("{}/repos/{repo}/releases?per_page=30", ep.api);
+    let resp = github_get(client, &api, token)
+        .header("Accept", "application/vnd.github+json")
         .send()
         .await
         .map_err(|e| format!("could not reach GitHub API: {e}"))?;
@@ -329,37 +560,47 @@ async fn fetch_releases_with_assets(
     }
 
     let body: Vec<serde_json::Value> = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(body
-        .iter()
-        .filter(|r| !r.get("draft").and_then(|v| v.as_bool()).unwrap_or(false))
-        .filter(|r| {
-            !r.get("prerelease")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-        })
-        .filter_map(|r| {
-            let tag = r.get("tag_name")?.as_str()?;
-            let assets = r
-                .get("assets")?
-                .as_array()?
-                .iter()
-                .filter_map(|a| a.get("name").and_then(|n| n.as_str()))
-                .map(String::from)
-                .collect();
-            Some(ReleaseAssets {
-                tag: normalize_version(tag),
-                assets,
-            })
-        })
-        .collect())
+    Ok(parse_releases(&body))
 }
 
-async fn collect_latest_candidates(client: &reqwest::Client, repo: &str) -> Vec<String> {
-    let token = github_token();
-    let token_ref = token.as_deref();
+/// Published releases from a `/releases` body: drafts and pre-releases are skipped.
+fn parse_releases(body: &[serde_json::Value]) -> Vec<ReleaseAssets> {
+    let flag =
+        |r: &serde_json::Value, key: &str| r.get(key).and_then(|v| v.as_bool()) == Some(true);
+    body.iter()
+        .filter(|r| !flag(r, "draft") && !flag(r, "prerelease"))
+        .filter_map(|r| {
+            let tag = normalize_version(r.get("tag_name")?.as_str()?);
+            if tag.is_empty() {
+                return None;
+            }
+            let assets = r
+                .get("assets")
+                .and_then(|a| a.as_array())
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|a| a.get("name").and_then(|n| n.as_str()))
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(ReleaseAssets { tag, assets })
+        })
+        .collect()
+}
+
+/// Release tags from every source, highest first, plus the error from the
+/// GitHub `releases/latest` API call when that call failed.
+async fn collect_latest_candidates(
+    client: &reqwest::Client,
+    ep: &Endpoints,
+    repo: &str,
+    token_ref: Option<&str>,
+    listed: Option<Vec<String>>,
+) -> (Vec<String>, Option<ResolveError>) {
     let mut candidates = Vec::new();
 
-    let url = format!("https://github.com/{repo}/releases/latest");
+    let url = format!("{}/{repo}/releases/latest", ep.web);
     if let Ok(resp) = client.get(&url).send().await {
         if resp.status().is_success() {
             if let Some(tag) = parse_latest_tag_from_url(resp.url().as_str()) {
@@ -368,76 +609,49 @@ async fn collect_latest_candidates(client: &reqwest::Client, repo: &str) -> Vec<
         }
     }
 
-    if let Ok(v) = fetch_latest_via_api(client, repo, token_ref).await {
-        candidates.push(v);
-    }
+    let api_error = match fetch_latest_via_api(client, ep, repo, token_ref).await {
+        Ok(v) => {
+            candidates.push(v);
+            None
+        }
+        Err(e) => Some(e),
+    };
 
-    if let Ok(list) = fetch_release_tags(client, repo, token_ref).await {
-        candidates.extend(list);
+    match listed {
+        Some(list) => candidates.extend(list),
+        None => {
+            if let Ok(list) = fetch_releases_with_assets(client, ep, repo, token_ref).await {
+                candidates.extend(release_tags(list));
+            }
+        }
     }
 
     // Legacy CDN pointer — only when GitHub did not return anything.
     if candidates.is_empty() {
-        if let Ok(v) = fetch_latest_from_cdn(client).await {
+        if let Ok(v) = fetch_latest_from_cdn(client, ep).await {
             candidates.push(v);
         }
     }
 
-    unique_tags_desc(candidates)
+    (unique_tags_desc(candidates), api_error)
 }
 
-async fn fetch_release_tags(
-    client: &reqwest::Client,
-    repo: &str,
-    token: Option<&str>,
-) -> Result<Vec<String>, String> {
-    let api = format!("https://api.github.com/repos/{repo}/releases?per_page=30");
-    let mut req = client
-        .get(&api)
-        .header("Accept", "application/vnd.github+json");
-    if let Some(t) = token {
-        req = req.header("Authorization", format!("Bearer {t}"));
-    }
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| format!("could not reach GitHub API: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("GitHub API returned HTTP {}", resp.status()));
-    }
-
-    let body: Vec<serde_json::Value> = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(body
-        .iter()
-        .filter(|r| !r.get("draft").and_then(|v| v.as_bool()).unwrap_or(false))
-        .filter(|r| {
-            !r.get("prerelease")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-        })
-        .filter_map(|r| r.get("tag_name").and_then(|v| v.as_str()))
-        .map(normalize_version)
-        .filter(|s| !s.is_empty())
-        .collect())
-}
-
+/// Distinct release tags, highest version first. Tags that are not release
+/// versions (`nightly`, an HTML error page) are dropped.
 fn unique_tags_desc(tags: Vec<String>) -> Vec<String> {
-    use std::cmp::Ordering;
-
-    let mut out: Vec<String> = Vec::new();
+    let mut out: Vec<(ReleaseVersion, String)> = Vec::new();
     for tag in tags {
         let norm = normalize_version(&tag);
-        if norm.is_empty() || out.iter().any(|t| t == &norm) {
+        let Some(parsed) = parse_version(&norm) else {
+            continue;
+        };
+        if out.iter().any(|(_, t)| t == &norm) {
             continue;
         }
-        out.push(norm);
+        out.push((parsed, norm));
     }
-    out.sort_by(|a, b| match compare_versions(a, b) {
-        Some(c) if c > 0 => Ordering::Less,
-        Some(c) if c < 0 => Ordering::Greater,
-        _ => Ordering::Equal,
-    });
-    out
+    out.sort_by(|(a, _), (b, _)| b.cmp(a));
+    out.into_iter().map(|(_, tag)| tag).collect()
 }
 
 async fn release_asset_exists(
@@ -459,11 +673,11 @@ async fn release_asset_exists(
 
 async fn head_ok(client: &reqwest::Client, url: &str, token: Option<&str>) -> bool {
     // GitHub release URLs redirect to S3 signed URLs that often reject HEAD — use a 1-byte GET.
-    let mut req = client.get(url).header("Range", "bytes=0-0");
-    if let Some(t) = token {
-        req = req.header("Authorization", format!("Bearer {t}"));
-    }
-    match req.send().await {
+    match github_get(client, url, token)
+        .header("Range", "bytes=0-0")
+        .send()
+        .await
+    {
         Ok(resp) => {
             resp.status().is_success() || resp.status() == reqwest::StatusCode::PARTIAL_CONTENT
         }
@@ -476,13 +690,17 @@ pub(crate) fn use_cached_latest(force_refresh: bool, cache_fresh: bool) -> bool 
     !force_refresh && cache_fresh
 }
 
-async fn latest_with_cache_opts(repo: &str, force_refresh: bool) -> Option<String> {
+async fn latest_with_cache_opts(
+    repo: &str,
+    force_refresh: bool,
+    use_gh_cli: bool,
+) -> Option<String> {
     if let Some(cache) = load_cache() {
         if use_cached_latest(force_refresh, cache_is_fresh(&cache)) {
             return Some(cache.latest);
         }
     }
-    match resolve_latest_version(repo).await {
+    match resolve_latest_version(repo, use_gh_cli).await {
         Ok(latest) => {
             save_cache(&latest);
             Some(latest)
@@ -495,7 +713,7 @@ async fn latest_with_cache_opts(repo: &str, force_refresh: bool) -> Option<Strin
 }
 
 async fn latest_with_cache(repo: &str) -> Option<String> {
-    latest_with_cache_opts(repo, false).await
+    latest_with_cache_opts(repo, false, true).await
 }
 
 pub fn print_update_notice(current: &str, latest: &str) {
@@ -517,7 +735,7 @@ pub async fn maybe_notify_update_with(force_refresh: bool) {
     }
     let current = current_version();
     let repo = github_repo();
-    let Some(latest) = latest_with_cache_opts(&repo, force_refresh).await else {
+    let Some(latest) = latest_with_cache_opts(&repo, force_refresh, false).await else {
         return;
     };
     if is_update_available(current, &latest) {
@@ -525,17 +743,19 @@ pub async fn maybe_notify_update_with(force_refresh: bool) {
     }
 }
 
-/// Explicit `ax upgrade --check` (always hits network unless cache is fresh and shows result).
+/// Explicit `ax upgrade --check`. With `force_refresh` the latest release is
+/// resolved over the network and the cache is refreshed; without it a fresh
+/// cache answers.
 pub async fn run_check(force_refresh: bool) -> Result<(), String> {
     let current = current_version();
     let repo = github_repo();
     let latest = if force_refresh {
-        match resolve_latest_version(&repo).await {
+        match resolve_latest_version(&repo, true).await {
             Ok(latest) => {
                 save_cache(&latest);
                 latest
             }
-            Err(e) if e.contains("no published GitHub releases") => {
+            Err(ResolveError::NoReleases) => {
                 eprintln!(
                     "{}",
                     ok_line(format!(
@@ -545,8 +765,8 @@ pub async fn run_check(force_refresh: bool) -> Result<(), String> {
                 );
                 return Ok(());
             }
-            Err(e) if e.contains("private repo") => {
-                eprintln!("{}", warn_line(e));
+            Err(e @ ResolveError::NotVisible) => {
+                eprintln!("{}", warn_line(e.to_string()));
                 eprintln!(
                     "  Set GITHUB_TOKEN or run `gh auth login`, then retry `ax upgrade --check`."
                 );
@@ -612,11 +832,356 @@ mod tests {
         assert_eq!(sorted, vec!["v2.0.7", "v2.0.6", "v2.0.5"]);
     }
 
+    /// A local stand-in for github.com, api.github.com and the CDN.
+    mod mock {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        use axum::http::StatusCode;
+        use axum::response::{IntoResponse, Redirect, Response};
+        use axum::routing::get;
+        use axum::Router;
+
+        use super::super::Endpoints;
+
+        pub const REPO: &str = "o/r";
+
+        /// What each endpoint answers: `(status, body)`; `web_tag` is the
+        /// tag `/releases/latest` redirects to (`None` answers 404).
+        #[derive(Clone)]
+        pub struct Script {
+            pub web_tag: Option<&'static str>,
+            pub api_latest: (u16, &'static str),
+            pub api_list: (u16, &'static str),
+            pub cdn: (u16, &'static str),
+        }
+
+        impl Default for Script {
+            fn default() -> Self {
+                Self {
+                    web_tag: None,
+                    api_latest: (404, "{}"),
+                    api_list: (404, "[]"),
+                    cdn: (404, ""),
+                }
+            }
+        }
+
+        pub struct Server {
+            pub ep: Endpoints,
+            pub cdn_hits: Arc<AtomicUsize>,
+        }
+
+        impl Server {
+            pub fn cdn_hits(&self) -> usize {
+                self.cdn_hits.load(Ordering::SeqCst)
+            }
+        }
+
+        fn reply((status, body): (u16, &'static str)) -> Response {
+            (StatusCode::from_u16(status).unwrap(), body).into_response()
+        }
+
+        pub async fn start(script: Script) -> Server {
+            let cdn_hits = Arc::new(AtomicUsize::new(0));
+            let hits = cdn_hits.clone();
+            let s = script.clone();
+            let router = Router::new()
+                .route(
+                    "/web/o/r/releases/latest",
+                    get(move || async move {
+                        match s.web_tag {
+                            Some(tag) => Redirect::to(&format!("/web/o/r/releases/tag/{tag}"))
+                                .into_response(),
+                            None => StatusCode::NOT_FOUND.into_response(),
+                        }
+                    }),
+                )
+                .route(
+                    "/web/o/r/releases/tag/{tag}",
+                    get(|| async { "release page" }),
+                )
+                .route(
+                    "/api/repos/o/r/releases/latest",
+                    get(move || async move { reply(script.api_latest) }),
+                )
+                .route(
+                    "/api/repos/o/r/releases",
+                    get(move || async move { reply(script.api_list) }),
+                )
+                .route(
+                    "/cdn/latest.txt",
+                    get(move || async move {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                        reply(script.cdn)
+                    }),
+                );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            tokio::spawn(async move {
+                axum::serve(listener, router).await.unwrap();
+            });
+            Server {
+                ep: Endpoints {
+                    web: format!("{base}/web"),
+                    api: format!("{base}/api"),
+                    cdn_latest: format!("{base}/cdn/latest.txt"),
+                },
+                cdn_hits,
+            }
+        }
+
+        pub fn client() -> reqwest::Client {
+            reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::limited(5))
+                .build()
+                .unwrap()
+        }
+    }
+
+    #[tokio::test]
+    async fn resolver_takes_the_highest_github_version_and_skips_the_cdn() {
+        let server = mock::start(mock::Script {
+            web_tag: Some("v2.0.5"),
+            api_latest: (200, r#"{"tag_name": "v2.1.0"}"#),
+            api_list: (
+                200,
+                r#"[{"tag_name": "v2.2.0-rc.1", "prerelease": true},
+                    {"tag_name": "nightly"},
+                    {"tag_name": "v2.0.9"}]"#,
+            ),
+            cdn: (200, "v9.9.9"),
+        })
+        .await;
+        let got = resolve_latest_at(&mock::client(), &server.ep, mock::REPO, None).await;
+        assert_eq!(got.as_deref(), Ok("v2.1.0"));
+        assert_eq!(server.cdn_hits(), 0, "the CDN is only a fallback");
+    }
+
+    #[tokio::test]
+    async fn resolver_ignores_a_non_version_api_tag() {
+        let server = mock::start(mock::Script {
+            api_latest: (200, r#"{"tag_name": "nightly"}"#),
+            api_list: (200, r#"[{"tag_name": "nightly"}, {"tag_name": "v1.4.0"}]"#),
+            ..Default::default()
+        })
+        .await;
+        let got = resolve_latest_at(&mock::client(), &server.ep, mock::REPO, None).await;
+        assert_eq!(got.as_deref(), Ok("v1.4.0"));
+    }
+
+    #[tokio::test]
+    async fn resolver_falls_back_to_the_cdn_when_github_has_nothing() {
+        let server = mock::start(mock::Script {
+            api_latest: (500, "oops"),
+            api_list: (500, "oops"),
+            cdn: (200, "2.3.4\n"),
+            ..Default::default()
+        })
+        .await;
+        let got = resolve_latest_at(&mock::client(), &server.ep, mock::REPO, None).await;
+        assert_eq!(got.as_deref(), Ok("v2.3.4"));
+        assert_eq!(server.cdn_hits(), 1);
+    }
+
+    #[tokio::test]
+    async fn resolver_rejects_an_html_cdn_body() {
+        let server = mock::start(mock::Script {
+            cdn: (200, "<!doctype html><html>Sign in</html>"),
+            api_latest: (500, "oops"),
+            ..Default::default()
+        })
+        .await;
+        let got = resolve_latest_at(&mock::client(), &server.ep, mock::REPO, None).await;
+        assert!(got.is_err(), "{got:?}");
+    }
+
+    #[tokio::test]
+    async fn resolver_reports_hidden_releases_without_a_token() {
+        let server = mock::start(mock::Script::default()).await;
+        let err = resolve_latest_at(&mock::client(), &server.ep, mock::REPO, None)
+            .await
+            .unwrap_err();
+        assert_eq!(err, ResolveError::NotVisible);
+        assert!(err.to_string().contains("private repo"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn resolver_reports_no_releases_with_a_token() {
+        let server = mock::start(mock::Script::default()).await;
+        let err = resolve_latest_at(&mock::client(), &server.ep, mock::REPO, Some("t"))
+            .await
+            .unwrap_err();
+        assert_eq!(err, ResolveError::NoReleases);
+    }
+
     #[test]
-    fn collect_latest_candidates_prefers_github_over_stale_cdn() {
-        // When GitHub tags are present, stale CDN latest.txt must not appear alone.
-        let sorted = unique_tags_desc(vec!["v2.0.12".into(), "v2.0.5".into()]);
-        assert_eq!(sorted.first().map(String::as_str), Some("v2.0.12"));
+    fn huge_version_components_compare_without_wrapping() {
+        assert!(is_update_available("1.0.0", "4000000000.0.0"));
+        assert!(!is_update_available("4000000000.0.0", "1.0.0"));
+        assert!(is_update_available("1.4000000000.0", "1.4000000001.0"));
+    }
+
+    #[test]
+    fn prerelease_is_lower_than_its_final_release() {
+        assert!(is_update_available("2.1.0-rc.1", "2.1.0"));
+        assert!(!is_update_available("2.1.0", "2.1.0-rc.1"));
+        assert!(is_update_available("v2.1.0-rc.1", "v2.1.0-rc.2"));
+        assert!(is_update_available("2.1.0-rc.9", "2.1.0-rc.10"));
+        assert!(is_update_available("2.1.0-alpha", "2.1.0-beta"));
+        assert!(!is_update_available("2.1.0-rc.1", "2.1.0-rc.1"));
+        assert!(!is_update_available("2.1.0", "2.1.0+build.5"));
+    }
+
+    #[test]
+    fn unparseable_latest_is_not_an_update() {
+        assert!(!is_update_available("2.0.0", "<!doctype html><html>"));
+        assert!(!is_update_available("2.0.0", "vnightly"));
+        assert!(!is_update_available("2.0.0", ""));
+    }
+
+    #[test]
+    fn cdn_latest_must_be_a_release_version() {
+        assert_eq!(parse_cdn_latest("v2.3.4\n").as_deref(), Ok("v2.3.4"));
+        assert_eq!(parse_cdn_latest("2.3.4").as_deref(), Ok("v2.3.4"));
+        assert!(parse_cdn_latest("").is_err());
+        assert!(parse_cdn_latest("<!doctype html><html><body>Sign in</body></html>").is_err());
+        assert!(parse_cdn_latest("not found").is_err());
+    }
+
+    #[test]
+    fn unique_tags_desc_drops_non_semver_tags() {
+        let sorted = unique_tags_desc(vec!["v2.0.5".into(), "nightly".into(), "v2.0.7".into()]);
+        assert_eq!(sorted, vec!["v2.0.7", "v2.0.5"]);
+    }
+
+    #[test]
+    fn unique_tags_desc_orders_many_mixed_tags() {
+        let mut tags: Vec<String> = (0..40).map(|i| format!("v1.{}.{}", i % 7, i)).collect();
+        tags.extend(["nightly", "latest", "v1.x"].iter().map(|s| s.to_string()));
+        tags.push("v1.6.99-rc.1".into());
+        let sorted = unique_tags_desc(tags);
+        assert_eq!(sorted.len(), 41);
+        assert_eq!(sorted[0], "v1.6.99-rc.1");
+        assert!(sorted
+            .windows(2)
+            .all(|w| { compare_versions(&w[0], &w[1]).is_some_and(|c| c != Ordering::Less) }));
+    }
+
+    #[cfg(unix)]
+    fn fake_gh(dir: &std::path::Path, name: &str, body: &str) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gh_auth_token_gives_up_on_a_hanging_gh() {
+        let dir = tempfile::tempdir().unwrap();
+        let gh = fake_gh(dir.path(), "gh-hang", "sleep 10\necho late-token");
+        let started = std::time::Instant::now();
+        let token = gh_auth_token(&gh, Duration::from_millis(300));
+        assert_eq!(token, None);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "waited {:?} for a hanging gh",
+            started.elapsed()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gh_auth_token_reads_the_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let gh = fake_gh(dir.path(), "gh-ok", "echo ' gho_example '");
+        assert_eq!(
+            gh_auth_token(&gh, Duration::from_secs(5)).as_deref(),
+            Some("gho_example")
+        );
+        let failing = fake_gh(dir.path(), "gh-fail", "echo nope; exit 1");
+        assert_eq!(gh_auth_token(&failing, Duration::from_secs(5)), None);
+        assert_eq!(
+            gh_auth_token("/nonexistent/gh", Duration::from_secs(5)),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_releases_skips_drafts_and_prereleases_and_keeps_assetless_releases() {
+        let body: Vec<serde_json::Value> = serde_json::from_str(
+            r#"[
+                {"tag_name": "v3.0.0", "draft": true, "assets": [{"name": "ax-linux-x64.tar.gz"}]},
+                {"tag_name": "v2.9.0-rc.1", "prerelease": true, "assets": []},
+                {"tag_name": "2.8.0", "assets": [{"name": "ax-linux-x64.tar.gz"}, {"name": "SHA256SUMS"}]},
+                {"tag_name": "v2.8.1"},
+                {"tag_name": ""},
+                {"name": "no tag"}
+            ]"#,
+        )
+        .unwrap();
+        let releases = parse_releases(&body);
+        assert_eq!(
+            releases,
+            vec![
+                ReleaseAssets {
+                    tag: "v2.8.0".into(),
+                    assets: vec!["ax-linux-x64.tar.gz".into(), "SHA256SUMS".into()],
+                },
+                ReleaseAssets {
+                    tag: "v2.8.1".into(),
+                    assets: vec![],
+                },
+            ]
+        );
+        assert_eq!(
+            newest_release_with_asset(&releases, "ax-linux-x64.tar.gz").as_deref(),
+            Some("v2.8.0")
+        );
+        assert_eq!(
+            newest_release_with_asset(&releases, "ax-win32-x64.zip"),
+            None
+        );
+        assert_eq!(release_tags(releases), vec!["v2.8.0", "v2.8.1"]);
+    }
+
+    #[test]
+    fn cache_freshness_handles_stale_and_future_timestamps() {
+        let day = Duration::from_secs(24 * 3600);
+        let at = |checked_at| UpdateCheckCache {
+            checked_at,
+            latest: "v1.0.0".into(),
+        };
+        let now = 1_000_000;
+        assert!(cache_is_fresh_at(&at(now), now, day));
+        assert!(cache_is_fresh_at(&at(now - 3600), now, day));
+        assert!(
+            !cache_is_fresh_at(&at(now - 24 * 3600), now, day),
+            "exactly one interval old"
+        );
+        assert!(!cache_is_fresh_at(&at(now - 48 * 3600), now, day));
+        assert!(
+            !cache_is_fresh_at(&at(now + 60), now, day),
+            "future checked_at"
+        );
+        assert!(!cache_is_fresh_at(&at(i64::MIN), i64::MAX, day));
+        assert!(!cache_is_fresh_at(&at(now), now, Duration::ZERO));
+    }
+
+    #[test]
+    fn cache_round_trips_and_ignores_a_corrupt_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("update-check.json");
+        assert!(load_cache_from(&path).is_none());
+        save_cache_to(&path, "2.4.0");
+        let cache = load_cache_from(&path).expect("saved cache");
+        assert_eq!(cache.latest, "v2.4.0");
+        assert!((now_secs() - cache.checked_at).abs() < 60);
+        std::fs::write(&path, "{not json").unwrap();
+        assert!(load_cache_from(&path).is_none());
     }
 
     #[test]

@@ -78,7 +78,11 @@ pub fn project_url(value: &str) -> Result<Url, String> {
     match url.scheme() {
         "https" => {}
         "http" if is_loopback(&url) => {}
-        _ => return Err("Use an https:// address (http:// is accepted for this computer only)".into()),
+        _ => {
+            return Err(
+                "Use an https:// address (http:// is accepted for this computer only)".into(),
+            )
+        }
     }
     let mut parts = url.path().split('/');
     let valid = parts.next() == Some("")
@@ -183,7 +187,8 @@ impl Store {
     /// application shows is always what a restart would load.
     fn commit(&mut self, data: Data) -> Result<(), String> {
         let parent = self.path.parent().ok_or("Invalid configuration path")?;
-        std::fs::create_dir_all(parent).map_err(|e| format!("Cannot create {}: {e}", parent.display()))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {e}", parent.display()))?;
         let temp = parent.join(format!("connections-{}.tmp", uuid::Uuid::new_v4()));
         let bytes = serde_json::to_vec_pretty(&data).map_err(|e| e.to_string())?;
         let written = (|| {
@@ -195,7 +200,8 @@ impl Store {
                     .map_err(|e| format!("Cannot protect configuration: {e}"))?;
             }
             // Replaces an existing file atomically, on Windows too.
-            std::fs::rename(&temp, &self.path).map_err(|e| format!("Cannot update configuration: {e}"))
+            std::fs::rename(&temp, &self.path)
+                .map_err(|e| format!("Cannot update configuration: {e}"))
         })();
         if written.is_err() {
             let _ = std::fs::remove_file(&temp); // may never have been created
@@ -302,7 +308,15 @@ mod tests {
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
         assert!(store.upsert(connection("two"), true).is_err());
         assert!(store.remove("one").is_err());
-        assert!(store.upsert(SavedConnection { name: "renamed".into(), ..connection("one") }, false).is_err());
+        assert!(store
+            .upsert(
+                SavedConnection {
+                    name: "renamed".into(),
+                    ..connection("one")
+                },
+                false
+            )
+            .is_err());
         assert_eq!(store.list().len(), 1);
         assert_eq!(store.list()[0].name, "one");
         assert_eq!(store.active_id(), Some("one"));

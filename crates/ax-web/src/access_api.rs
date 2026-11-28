@@ -1,4 +1,4 @@
-use ax_global_db::{access, global_db_path, open_and_init};
+use ax_global_db::access;
 use axum::{
     extract::{Path, Request, State},
     http::{header, HeaderValue, StatusCode},
@@ -47,14 +47,7 @@ async fn authorize(State(hub): State<WebHub>, mut req: Request, next: Next) -> R
             Ok(Some(p)) => p,
             _ => return failure(StatusCode::UNAUTHORIZED, "Invalid client credential"),
         };
-        let path = req.uri().path();
-        let scope = if path.contains("/team") {
-            "admin:team"
-        } else if path.contains("/nodes") {
-            "admin:nodes"
-        } else {
-            "admin:clients"
-        };
+        let scope = required_scope(req.uri().path());
         if !principal.allows(scope) {
             let _ = access::audit(
                 &db,
@@ -87,13 +80,7 @@ async fn authorize(State(hub): State<WebHub>, mut req: Request, next: Next) -> R
         {
             return failure(StatusCode::FORBIDDEN, "Missing CSRF token");
         }
-        let required_scope = if req.uri().path().contains("/team") {
-            "admin:team"
-        } else if req.uri().path().contains("/nodes") {
-            "admin:nodes"
-        } else {
-            "admin:clients"
-        };
+        let required_scope = required_scope(req.uri().path());
         if !role.permits(required_scope) {
             return failure(StatusCode::FORBIDDEN, "Insufficient member permissions");
         }
@@ -138,6 +125,42 @@ async fn authorize(State(hub): State<WebHub>, mut req: Request, next: Next) -> R
     response
 }
 
+/// The admin scope an access route needs, decided by the route's first
+/// segment (after `/api/access` when present), never by an id further on.
+fn required_scope(path: &str) -> &'static str {
+    let route = path.strip_prefix("/api/access").unwrap_or(path);
+    match route.trim_start_matches('/').split('/').next() {
+        Some("team") => "admin:team",
+        Some("nodes") => "admin:nodes",
+        _ => "admin:clients",
+    }
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::required_scope;
+
+    #[test]
+    fn the_route_decides_the_scope_not_an_id_inside_it() {
+        for (path, scope) in [
+            ("/team", "admin:team"),
+            ("/team/abc", "admin:team"),
+            ("/api/access/team/abc", "admin:team"),
+            ("/nodes", "admin:nodes"),
+            ("/nodes/local/stop", "admin:nodes"),
+            ("/api/access/nodes", "admin:nodes"),
+            ("/clients", "admin:clients"),
+            ("/session", "admin:clients"),
+            ("/nodes/team-node/revoke", "admin:nodes"),
+            ("/clients/team-cli/revoke", "admin:clients"),
+            ("/clients/nodes-cli/token", "admin:clients"),
+            ("/credentials/teamx/revoke", "admin:clients"),
+        ] {
+            assert_eq!(required_scope(path), scope, "{path}");
+        }
+    }
+}
+
 fn failure(status: StatusCode, message: &str) -> Response {
     (status, Json(serde_json::json!({"error":message}))).into_response()
 }
@@ -161,12 +184,58 @@ struct CreateClient {
 }
 
 pub(crate) async fn pool() -> Result<sqlx::SqlitePool, String> {
-    let path = global_db_path().map_err(|e| e.to_string())?;
-    let pool = open_and_init(&path).await.map_err(|e| e.to_string())?;
-    let _ = access::bootstrap_owner(&pool, "local-owner", "Local owner", None)
+    let pool = crate::global_pool::global_pool().await?;
+    ensure_owner(&pool).await?;
+    Ok(pool)
+}
+
+/// Create the local owner when the team is empty. The team is checked with a
+/// read first, so the usual request (team already set up) does not write.
+async fn ensure_owner(pool: &sqlx::SqlitePool) -> Result<(), String> {
+    let has_members: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM team_members)")
+        .fetch_one(pool)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(pool)
+    if has_members {
+        return Ok(());
+    }
+    access::bootstrap_owner(pool, "local-owner", "Local owner", None)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod pool_tests {
+    use super::ensure_owner;
+    use sqlx::Connection;
+    use std::time::Duration;
+
+    /// Every access request checks for the owner; once one exists, that check
+    /// must not need the global.db write lock that the CLI and MCP also use.
+    #[tokio::test]
+    async fn an_existing_owner_is_checked_without_the_write_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("global.db");
+        let pool = crate::global_pool::pool_at(&path).await.unwrap();
+        ensure_owner(&pool).await.unwrap();
+
+        // Another process holds the write lock.
+        let mut writer = sqlx::SqliteConnection::connect(&format!("sqlite://{}", path.display()))
+            .await
+            .unwrap();
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut writer)
+            .await
+            .unwrap();
+
+        let checked = tokio::time::timeout(Duration::from_secs(2), ensure_owner(&pool)).await;
+        sqlx::query("ROLLBACK").execute(&mut writer).await.unwrap();
+        assert!(
+            matches!(checked, Ok(Ok(()))),
+            "owner check waited for the write lock: {checked:?}"
+        );
+    }
 }
 
 fn role(value: &str) -> Result<access::MemberRole, String> {
@@ -188,6 +257,59 @@ fn writable(hub: &WebHub) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
         ))
     } else {
         Ok(())
+    }
+}
+
+type JsonError = (StatusCode, Json<serde_json::Value>);
+
+/// A client credential authenticates with the role of the member it belongs
+/// to. Only an Owner may create, issue, rotate or widen one for an Owner;
+/// anyone else doing so would gain Owner rights.
+async fn may_manage_credentials_of(
+    db: &sqlx::SqlitePool,
+    actor: &Actor,
+    member_id: &str,
+) -> Result<(), JsonError> {
+    if actor.role == access::MemberRole::Owner {
+        return Ok(());
+    }
+    let members = access::list_members(db).await.map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error":"Members unavailable"})),
+        )
+    })?;
+    if members.iter().any(|m| {
+        m.id == member_id
+            && (m.role == access::MemberRole::Owner || m.roles.contains(&access::MemberRole::Owner))
+    }) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error":"Only an owner can manage an owner's credentials"})),
+        ));
+    }
+    Ok(())
+}
+
+/// [`may_manage_credentials_of`] for the member that owns client `client_id`.
+/// An unknown client passes, so the caller reports it as not found.
+async fn may_manage_client(
+    db: &sqlx::SqlitePool,
+    actor: &Actor,
+    client_id: &str,
+) -> Result<(), JsonError> {
+    if actor.role == access::MemberRole::Owner {
+        return Ok(());
+    }
+    let clients = access::list_clients(db).await.map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error":"Clients unavailable"})),
+        )
+    })?;
+    match clients.into_iter().find(|c| c.id == client_id) {
+        Some(client) => may_manage_credentials_of(db, actor, &client.member_id).await,
+        None => Ok(()),
     }
 }
 
@@ -331,6 +453,9 @@ async fn create_client(
             )
         }
     };
+    if let Err(resp) = may_manage_credentials_of(&pool, &actor, &body.member_id).await {
+        return resp;
+    }
     let id = Uuid::new_v4().to_string();
     match access::create_client(
         &pool,
@@ -379,6 +504,9 @@ async fn issue_client_token(
             )
         }
     };
+    if let Err(resp) = may_manage_client(&pool, &actor, &id).await {
+        return resp;
+    }
     match access::issue_client_credential(&pool, &id, None).await {
         Ok(credential) => {
             let _ = access::audit(
@@ -672,6 +800,9 @@ async fn update_scopes(
             )
         }
     };
+    if let Err(resp) = may_manage_client(&db, &actor, &id).await {
+        return resp.into_response();
+    }
     match access::update_client_scopes(&db, &id, &body.scopes).await {
         Ok(()) => {
             let _ = access::audit(
@@ -703,6 +834,9 @@ async fn rotate_token(Extension(actor): Extension<Actor>, Path(id): Path<String>
             )
         }
     };
+    if let Err(resp) = may_manage_client(&db, &actor, &id).await {
+        return resp.into_response();
+    }
     match access::rotate_client_credential(&db, &id).await {
         Ok(credential) => {
             let _ = access::audit(

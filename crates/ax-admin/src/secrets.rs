@@ -53,7 +53,12 @@ impl MemoryStore {
 
 impl SecretStore for MemoryStore {
     fn get(&self, id: &str) -> Result<Option<String>, String> {
-        Ok(self.0.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned())
+        Ok(self
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)
+            .cloned())
     }
     fn set(&self, id: &str, secret: &str) -> Result<(), String> {
         self.0

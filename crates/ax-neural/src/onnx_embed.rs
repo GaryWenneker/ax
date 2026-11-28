@@ -2,34 +2,53 @@
 //! Loads `~/.ax/models/all-MiniLM-L6-v2.onnx` + `tokenizer.json`. Offline; no download on open.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 const MODEL_FILE: &str = "all-MiniLM-L6-v2.onnx";
 const TOKENIZER_FILE: &str = "tokenizer.json";
 const MODEL_ID: &str = "onnx-minilm-l6-v2";
 
-static LOADED: OnceLock<Mutex<Result<OnnxMiniLm, String>>> = OnceLock::new();
+/// Only a successful load is cached; a failed load is retried on the next call.
+static LOADED: OnceLock<Mutex<Option<OnnxMiniLm>>> = OnceLock::new();
 
-pub fn model_dir() -> PathBuf {
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    home.join(".ax").join("models")
+/// `<home>/.ax/models`, using the same home resolver as the rest of ax. An error when no
+/// home directory is known, so a model is never loaded from the current directory.
+pub fn model_dir() -> Result<PathBuf, String> {
+    model_dir_from(ax_utils::paths::home_dir())
 }
 
-pub fn model_paths() -> (PathBuf, PathBuf) {
-    let dir = model_dir();
-    (dir.join(MODEL_FILE), dir.join(TOKENIZER_FILE))
+fn model_dir_from(home: Option<PathBuf>) -> Result<PathBuf, String> {
+    home.map(|h| h.join(".ax").join("models"))
+        .ok_or_else(|| "no home directory known; set HOME (or AX_HOME_DIR)".to_string())
 }
 
+pub fn model_paths() -> Result<(PathBuf, PathBuf), String> {
+    let dir = model_dir()?;
+    Ok((dir.join(MODEL_FILE), dir.join(TOKENIZER_FILE)))
+}
+
+/// BLAKE3 of the model file, read in chunks rather than all at once.
 pub fn model_checksum(path: &Path) -> Result<String, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("read model: {e}"))?;
-    Ok(format!("blake3:{}", blake3::hash(&bytes).to_hex()))
+    let file = std::fs::File::open(path).map_err(|e| format!("read model: {e}"))?;
+    let mut hasher = blake3::Hasher::new();
+    hasher
+        .update_reader(file)
+        .map_err(|e| format!("read model: {e}"))?;
+    Ok(format!("blake3:{}", hasher.finalize().to_hex()))
+}
+
+/// Path and checksum of the loaded model, loading it when needed.
+pub fn loaded_model() -> Result<(PathBuf, String), String> {
+    let guard = try_backend()?;
+    let backend = guard.as_ref().ok_or("onnx backend not loaded")?;
+    Ok((backend.model_path.clone(), backend.checksum.clone()))
 }
 
 pub fn capability_status() -> (&'static str, &'static str, String) {
-    let (model, tok) = model_paths();
+    let (model, tok) = match model_paths() {
+        Ok(paths) => paths,
+        Err(e) => return ("not_configured", "onnx-runtime-cpu", e),
+    };
     if !model.is_file() || !tok.is_file() {
         return (
             "not_configured",
@@ -37,27 +56,37 @@ pub fn capability_status() -> (&'static str, &'static str, String) {
             format!("expected {MODEL_FILE} and {TOKENIZER_FILE} under ~/.ax/models"),
         );
     }
-    match try_backend() {
-        Ok(guard) => match &*guard {
-            Ok(backend) => (
-                "implemented",
-                "onnx-runtime-cpu",
-                format!(
-                    "local {MODEL_ID} loaded; not production-active until admitted; checksum {}",
-                    backend.checksum
-                ),
+    match loaded_model() {
+        Ok((_, checksum)) => (
+            "implemented",
+            "onnx-runtime-cpu",
+            format!(
+                "local {MODEL_ID} loaded; not production-active until admitted; checksum {checksum}"
             ),
-            Err(e) => ("not_configured", "onnx-runtime-cpu", e.clone()),
-        },
+        ),
         Err(e) => ("not_configured", "onnx-runtime-cpu", e),
     }
 }
 
-fn try_backend() -> Result<std::sync::MutexGuard<'static, Result<OnnxMiniLm, String>>, String> {
-    LOADED
-        .get_or_init(|| Mutex::new(OnnxMiniLm::load()))
+fn try_backend() -> Result<MutexGuard<'static, Option<OnnxMiniLm>>, String> {
+    load_cached(&LOADED, OnnxMiniLm::load)
+}
+
+/// Locks `slot` and fills it with `load` when it is empty. A failed load leaves the slot empty
+/// so the next call tries again, and a lock poisoned by a panic is recovered. On `Ok` the slot
+/// holds a value.
+fn load_cached<T>(
+    slot: &'static OnceLock<Mutex<Option<T>>>,
+    load: impl FnOnce() -> Result<T, String>,
+) -> Result<MutexGuard<'static, Option<T>>, String> {
+    let mut guard = slot
+        .get_or_init(|| Mutex::new(None))
         .lock()
-        .map_err(|_| "onnx session lock poisoned".into())
+        .unwrap_or_else(PoisonError::into_inner);
+    if guard.is_none() {
+        *guard = Some(load()?);
+    }
+    Ok(guard)
 }
 
 pub struct OnnxMiniLm {
@@ -74,7 +103,7 @@ pub struct OnnxMiniLm {
 
 impl OnnxMiniLm {
     fn load() -> Result<Self, String> {
-        let (model_path, tok_path) = model_paths();
+        let (model_path, tok_path) = model_paths()?;
         if !model_path.is_file() {
             return Err(format!("missing model file {}", model_path.display()));
         }
@@ -145,11 +174,7 @@ impl OnnxMiniLm {
         if seq == 0 {
             return Err("empty tokenization".into());
         }
-        let type_ids: Vec<i64> = encoding
-            .get_type_ids()
-            .iter()
-            .map(|v| *v as i64)
-            .collect();
+        let type_ids: Vec<i64> = encoding.get_type_ids().iter().map(|v| *v as i64).collect();
 
         let ids_tensor = ort::value::Tensor::from_array(([1usize, seq], ids))
             .map_err(|e| format!("ids tensor: {e}"))?;
@@ -182,7 +207,7 @@ impl OnnxMiniLm {
         let (shape, data) = output
             .try_extract_tensor::<f32>()
             .map_err(|e| format!("extract tensor: {e}"))?;
-        mean_pool_normalize(&shape, data, &mask)
+        mean_pool_normalize(shape, data, &mask)
     }
 }
 
@@ -239,10 +264,10 @@ fn l2_normalize(v: &mut [f32]) {
 
 pub fn try_embed_text(text: &str) -> Result<Vec<f32>, String> {
     let mut guard = try_backend()?;
-    match guard.as_mut() {
-        Ok(backend) => backend.embed_inner(text),
-        Err(e) => Err(e.clone()),
-    }
+    guard
+        .as_mut()
+        .ok_or_else(|| "onnx backend not loaded".to_string())?
+        .embed_inner(text)
 }
 
 /// Validation-only document vectors for embed-bakeoff (not written to `memories.embedding`).
@@ -274,6 +299,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn no_home_directory_is_an_error_not_the_current_directory() {
+        assert!(model_dir_from(None).is_err());
+        assert_eq!(
+            model_dir_from(Some(PathBuf::from("/home/u"))).unwrap(),
+            PathBuf::from("/home/u/.ax/models")
+        );
+    }
+
+    #[test]
+    fn a_failed_load_is_retried_on_the_next_call() {
+        static SLOT: OnceLock<Mutex<Option<u32>>> = OnceLock::new();
+        let first = load_cached(&SLOT, || Err("missing model file".to_string()));
+        assert!(first.is_err());
+        drop(first);
+        let second = load_cached(&SLOT, || Ok(7)).expect("second load");
+        assert_eq!(*second, Some(7));
+    }
+
+    #[test]
+    fn a_poisoned_lock_is_recovered() {
+        static SLOT: OnceLock<Mutex<Option<u32>>> = OnceLock::new();
+        drop(load_cached(&SLOT, || Ok(1)));
+        let _ = std::thread::spawn(|| {
+            let _guard = load_cached(&SLOT, || Ok(2));
+            panic!("poison the lock");
+        })
+        .join();
+        let guard = load_cached(&SLOT, || Ok(3)).expect("poisoned lock recovered");
+        assert_eq!(*guard, Some(1));
+    }
+
+    #[test]
+    fn model_checksum_matches_a_whole_file_hash() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("m.onnx");
+        let bytes: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&path, &bytes).expect("write");
+        assert_eq!(
+            model_checksum(&path).unwrap(),
+            format!("blake3:{}", blake3::hash(&bytes).to_hex())
+        );
+    }
+
+    #[test]
     fn capability_without_panic() {
         let (status, kind, _note) = capability_status();
         assert_eq!(kind, "onnx-runtime-cpu");
@@ -287,7 +356,10 @@ mod tests {
 
     #[test]
     fn onnx_embeds_when_model_present() {
-        let (model, tok) = model_paths();
+        let Ok((model, tok)) = model_paths() else {
+            eprintln!("skip: no home directory");
+            return;
+        };
         if !model.is_file() || !tok.is_file() {
             eprintln!("skip: model not present at {}", model.display());
             return;

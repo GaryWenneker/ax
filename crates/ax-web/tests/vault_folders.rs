@@ -64,6 +64,15 @@ async fn fixture(readonly: bool) -> Fx {
     }
 }
 
+/// The server's connection layer records the socket peer; requests in these
+/// tests come from this computer.
+fn from_loopback(mut req: Request<Body>) -> Request<Body> {
+    let peer: std::net::SocketAddr = "127.0.0.1:50000".parse().unwrap();
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo(peer));
+    req
+}
+
 async fn send(
     app: &Router,
     method: &str,
@@ -80,7 +89,9 @@ async fn send(
     }
     let res = app
         .clone()
-        .oneshot(req.body(Body::from(body.to_string())).unwrap())
+        .oneshot(from_loopback(
+            req.body(Body::from(body.to_string())).unwrap(),
+        ))
         .await
         .unwrap();
     let status = res.status();
@@ -514,4 +525,93 @@ fn vault_names(root: &Path) -> Vec<String> {
         .iter()
         .map(|f| f["name"].as_str().unwrap().to_string())
         .collect()
+}
+
+/// `getcontentlength` of the single response in a Depth 0 PROPFIND.
+fn content_length(body: &str) -> Option<u64> {
+    let start = body.find("getcontentlength>")? + "getcontentlength>".len();
+    body[start..].split('<').next()?.trim().parse().ok()
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn d8_stat_reads_metadata_not_the_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = fixture(false).await;
+    configure(&fx, false).await;
+    let locked = fx.notes().join("locked.bin");
+    std::fs::write(&locked, vec![7u8; 4096]).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read(&locked).is_ok() {
+        return; // running as root: permissions do not stop reads
+    }
+    let (status, body) = send(
+        &fx.app,
+        "PROPFIND",
+        "/ax/folders/notes/locked.bin",
+        &[("Depth", "0")],
+        "",
+    )
+    .await;
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(status, StatusCode::MULTI_STATUS, "{body}");
+    assert_eq!(content_length(&body), Some(4096), "{body}");
+}
+
+#[tokio::test]
+async fn d9_large_folder_files_stream_in_full_and_by_range() {
+    let fx = fixture(false).await;
+    configure(&fx, false).await;
+    let size = 6 * 1024 * 1024 + 123;
+    let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+    std::fs::write(fx.notes().join("big.bin"), &data).unwrap();
+    let res = fx
+        .app
+        .clone()
+        .oneshot(from_loopback(
+            Request::builder()
+                .method("GET")
+                .uri("/ax/folders/notes/big.bin")
+                .header("host", "127.0.0.1:7070")
+                .body(Body::empty())
+                .unwrap(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(bytes.len(), size);
+    assert!(bytes[..] == data[..], "streamed bytes differ");
+    let res = fx
+        .app
+        .clone()
+        .oneshot(from_loopback(
+            Request::builder()
+                .method("GET")
+                .uri("/ax/folders/notes/big.bin")
+                .header("host", "127.0.0.1:7070")
+                .header("range", "bytes=5000000-5000009")
+                .body(Body::empty())
+                .unwrap(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::PARTIAL_CONTENT);
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert!(bytes[..] == data[5_000_000..5_000_010]);
+}
+
+#[tokio::test]
+async fn d10_overwriting_a_large_folder_file_with_put_works() {
+    let fx = fixture(false).await;
+    configure(&fx, false).await;
+    let big = fx.notes().join("big.bin");
+    std::fs::write(&big, vec![1u8; 6 * 1024 * 1024]).unwrap();
+    let (status, _) = send(&fx.app, "PUT", "/ax/folders/notes/big.bin", &[], "small").await;
+    assert!(status.is_success(), "{status}");
+    assert_eq!(std::fs::read_to_string(&big).unwrap(), "small");
 }

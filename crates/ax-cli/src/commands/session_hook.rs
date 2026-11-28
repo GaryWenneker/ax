@@ -34,7 +34,7 @@ pub async fn run() -> Result<(), String> {
         if let (Some(root), Some(window)) = (root, window) {
             // Missing bindings stay diagnostic only; MCP never borrows that chat.
             let path = std::path::Path::new(root);
-            if let Some(project) = ax_context::directory::find_nearest_ax_root(path) {
+            if let Some(project) = crate::commands::find_project_root(path) {
                 let _ = ax_usage::write_bound_cursor_session(&project, window, &session_id);
             }
         } else {
@@ -61,9 +61,7 @@ pub async fn run() -> Result<(), String> {
             let session = parse_cursor_hook_session_id(&input);
             if let (Some(session), Some(cwd)) = (session, input.get("cwd").and_then(|v| v.as_str()))
             {
-                if let Some(root) =
-                    ax_context::directory::find_nearest_ax_root(std::path::Path::new(cwd))
-                {
+                if let Some(root) = crate::commands::find_project_root(std::path::Path::new(cwd)) {
                     if ax_usage::session_from_args(&serde_json::json!({"session":session}))
                         .is_some()
                     {
@@ -169,7 +167,7 @@ fn hook_project_root(input: &serde_json::Value) -> Option<std::path::PathBuf> {
         .and_then(|roots| roots.first())
         .and_then(|value| value.as_str())
         .or_else(|| input.get("cwd").and_then(|value| value.as_str()))?;
-    ax_context::directory::find_nearest_ax_root(std::path::Path::new(raw))
+    crate::commands::find_project_root(std::path::Path::new(raw))
 }
 
 pub(crate) fn sync_current_turn_from_hook(input: &serde_json::Value) -> Result<(), String> {

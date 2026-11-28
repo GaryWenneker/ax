@@ -3,16 +3,11 @@
 use serde_json::{json, Value};
 
 #[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-#[cfg(test)]
-use std::sync::Mutex;
-
-#[cfg(test)]
-static PROCESS_RSS_SAMPLE_CALLS: AtomicUsize = AtomicUsize::new(0);
-
-#[cfg(test)]
-static PROCESS_RSS_SAMPLE_LOCK: Mutex<()> = Mutex::new(());
+thread_local! {
+    /// Samples taken on this thread. Per thread so parallel tests that each
+    /// run a harness only see their own samples.
+    static PROCESS_RSS_SAMPLE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// Builds the harness `memory` JSON from an already-sampled RSS value (no extra I/O).
 pub fn memory_json(bytes: Option<u64>) -> Value {
@@ -41,10 +36,7 @@ pub fn memory_report() -> serde_json::Value {
 /// Returns current RSS in bytes when readable; `None` when the platform reader fails.
 pub fn process_rss_bytes() -> Option<u64> {
     #[cfg(test)]
-    {
-        let _g = PROCESS_RSS_SAMPLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        PROCESS_RSS_SAMPLE_CALLS.fetch_add(1, Ordering::Relaxed);
-    }
+    PROCESS_RSS_SAMPLE_CALLS.with(|calls| calls.set(calls.get() + 1));
     #[cfg(target_os = "linux")]
     {
         let status = std::fs::read_to_string("/proc/self/status").ok()?;
@@ -58,14 +50,27 @@ pub fn process_rss_bytes() -> Option<u64> {
     }
     #[cfg(target_os = "macos")]
     {
-        let pid = std::process::id().to_string();
-        let output = std::process::Command::new("ps")
-            .args(["-o", "rss=", "-p", &pid])
-            .output()
-            .ok()?;
-        let text = String::from_utf8(output.stdout).ok()?;
-        let kb = text.trim().parse::<u64>().ok()?;
-        Some(kb.saturating_mul(1024))
+        // proc_pidinfo answers in-process; no child process is spawned.
+        let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::zeroed();
+        let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
+        let pid = std::process::id() as libc::c_int;
+        // SAFETY: `info` is a writable buffer of exactly `size` bytes for a
+        // PROC_PIDTASKINFO reply, and it is read only when the call filled it.
+        let written = unsafe {
+            libc::proc_pidinfo(
+                pid,
+                libc::PROC_PIDTASKINFO,
+                0,
+                info.as_mut_ptr().cast::<libc::c_void>(),
+                size,
+            )
+        };
+        if written != size {
+            return None;
+        }
+        // SAFETY: the call wrote the whole struct (checked above).
+        let info = unsafe { info.assume_init() };
+        Some(info.pti_resident_size)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
@@ -73,16 +78,16 @@ pub fn process_rss_bytes() -> Option<u64> {
     }
 }
 
+/// Returns and clears the number of samples taken on the calling thread.
 #[cfg(test)]
 pub(crate) fn take_process_rss_sample_calls() -> usize {
-    let _g = PROCESS_RSS_SAMPLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    PROCESS_RSS_SAMPLE_CALLS.swap(0, Ordering::Relaxed)
+    PROCESS_RSS_SAMPLE_CALLS.with(|calls| calls.replace(0))
 }
 
+/// Clears the sample count of the calling thread.
 #[cfg(test)]
 pub(crate) fn reset_process_rss_sample_calls() {
-    let _g = PROCESS_RSS_SAMPLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    PROCESS_RSS_SAMPLE_CALLS.store(0, Ordering::Relaxed);
+    PROCESS_RSS_SAMPLE_CALLS.with(|calls| calls.set(0));
 }
 
 #[cfg(test)]
@@ -100,6 +105,19 @@ mod tests {
 
         let missing = memory_json(None);
         assert_eq!(missing["kind"], "not_measured");
+    }
+
+    #[test]
+    fn sample_counter_ignores_samples_taken_on_other_threads() {
+        reset_process_rss_sample_calls();
+        std::thread::spawn(|| {
+            let _ = process_rss_bytes();
+        })
+        .join()
+        .unwrap();
+        assert_eq!(take_process_rss_sample_calls(), 0);
+        let _ = process_rss_bytes();
+        assert_eq!(take_process_rss_sample_calls(), 1);
     }
 
     #[test]

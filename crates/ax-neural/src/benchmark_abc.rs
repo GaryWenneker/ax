@@ -1,42 +1,15 @@
 //! Phase 2 A/B/C retrieval benchmark (SPEC-PHASE2-BENCHMARK.md).
 //! Benchmark-only adapters — production Neural ranking stays required.
 
-use ax_memory::bench::{load_coding_fixture, score_coding, CodingFixture};
+use crate::fixture::{is_locked, lexical_rank, median, LOCKED};
+use ax_memory::bench::{load_coding_fixture, score_coding};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-const LOCKED: &[&str] = &[
-    "named_trigger",
-    "paraphrase",
-    "abstention",
-    "delivery_budget",
-];
-
 pub use crate::metrics::{mrr, precision_at};
 
 use crate::metrics::{Acc, SummaryStyle, BENCHMARK_ABC};
-
-fn lexical_rank_keys(fixture: &CodingFixture, prompt: &str) -> Vec<String> {
-    let docs: Vec<crate::lexical::LexicalDoc> = fixture
-        .memories
-        .iter()
-        .filter(|m| m.insert)
-        .map(|m| {
-            crate::lexical::LexicalDoc::new(m.key.clone(), &m.title, &m.body, &m.triggers)
-        })
-        .collect();
-    let (ranked, abstained) = crate::lexical::rank(&docs, prompt);
-    if abstained {
-        Vec::new()
-    } else {
-        ranked.into_iter().map(|h| h.key).collect()
-    }
-}
-
-fn is_locked(family: &str) -> bool {
-    LOCKED.contains(&family)
-}
 
 /// Runs A (BM25), B (Ax locked fusion / hash-v1), C (Neural lexical when admitted else B).
 /// Does not change production ranking configuration.
@@ -60,7 +33,7 @@ pub async fn run_abc(fixture_text: &str) -> Result<Value, String> {
     let mut arm_b_held = Acc::default();
     let mut arm_c_held = Acc::default();
 
-    let lexical_active = crate::bakeoff::challenger_admitted();
+    let lexical_active = crate::bakeoff::challenger_admitted_async().await;
     let lex_started = Instant::now();
     let mut lexical_micros = Vec::new();
 
@@ -75,7 +48,7 @@ pub async fn run_abc(fixture_text: &str) -> Result<Value, String> {
         let b = &score.ax;
         let c_started = Instant::now();
         let c = if lexical_active {
-            lexical_rank_keys(&fixture, &question.prompt)
+            lexical_rank(&fixture, &question.prompt)
         } else {
             b.clone()
         };
@@ -143,14 +116,6 @@ pub async fn run_abc(fixture_text: &str) -> Result<Value, String> {
     }))
 }
 
-fn median(values: &mut [f64]) -> f64 {
-    if values.is_empty() {
-        return 0.0;
-    }
-    values.sort_by(f64::total_cmp);
-    values[values.len() / 2]
-}
-
 /// Compact comparison for scripts: locked-family recall@3 per arm.
 pub fn locked_recall3(report: &Value) -> BTreeMap<&'static str, Option<f64>> {
     let mut out = BTreeMap::new();
@@ -194,19 +159,28 @@ mod tests {
         assert_eq!(report["kind"], "measured");
         assert_eq!(report["productionRankingUnchanged"], true);
         assert_eq!(report["semanticWeight"], 0.0);
-        assert_eq!(report["arms"]["C_ax_neural"]["claimsNeuralInference"], false);
-        assert!(report["arms"]["A_ax_without_neural_ranking"]["locked"]["questionsScored"]
-            .as_u64()
-            .unwrap()
-            >= 1);
-        assert!(report["arms"]["B_ax_original_ranking"]["locked"]["questionsScored"]
-            .as_u64()
-            .unwrap()
-            >= 1);
-        assert!(report["arms"]["C_ax_neural"]["locked"]["questionsScored"]
-            .as_u64()
-            .unwrap()
-            >= 1);
+        assert_eq!(
+            report["arms"]["C_ax_neural"]["claimsNeuralInference"],
+            false
+        );
+        assert!(
+            report["arms"]["A_ax_without_neural_ranking"]["locked"]["questionsScored"]
+                .as_u64()
+                .unwrap()
+                >= 1
+        );
+        assert!(
+            report["arms"]["B_ax_original_ranking"]["locked"]["questionsScored"]
+                .as_u64()
+                .unwrap()
+                >= 1
+        );
+        assert!(
+            report["arms"]["C_ax_neural"]["locked"]["questionsScored"]
+                .as_u64()
+                .unwrap()
+                >= 1
+        );
         assert!(report["heldOutFamilyCount"].as_u64().unwrap() >= 1);
         match report["memory"]["kind"].as_str() {
             Some("measured") => {

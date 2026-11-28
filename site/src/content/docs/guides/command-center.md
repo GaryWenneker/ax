@@ -112,6 +112,8 @@ ax share --open                  # LAN share with token (read-only) — see Shar
 | `ax ship --draft` | Create a draft PR via configured remote provider |
 | `ax share` | Share Command Center on the LAN with a token |
 
+The git watcher looks at `.git/HEAD`, `.git/index` and `.git/refs` of each git root. After a change it waits until git has been quiet for 300 ms, then runs the gate once and shows the result in the dashboard. It runs again only when the branch, HEAD commit or staged content differs from what the previous run evaluated, so the gate's own checkpoint commits, rollbacks and index refreshes do not start another run. When you commit, stage or switch branch while a run is in progress, the gate runs again as soon as that run ends and git is quiet, so the dashboard never keeps showing a report for the state before your change.
+
 ## Configuration (`.ax/ship.toml`)
 
 Seeded by `ax init` when the file does not exist. Never overwritten on re-init.
@@ -163,9 +165,18 @@ message = "ax: auto-checkpoint before quality gate"
 revert_on_fail = false
 ```
 
+### Git repositories (`git_root`, `git_roots`)
+
+When the workspace is not itself a git repository, the gate works on the repositories under it. With neither `git_root` nor `git_roots` set, ax fills `git_roots` with the immediate child folders that hold a `.git` and saves it. With `git_roots` set, ax keeps every listed entry that is still a git repository, nested paths such as `services/api` included, in the order you wrote them, and appends repositories newly cloned directly under the workspace. With only `git_root` set, ax uses that one repository and does not add others.
+
+```toml
+[ship]
+git_roots = ["services/api", "services/web"]
+```
+
 ### Auto-commit / rollback (`[auto_commit]`)
 
-Off by default — a deliberate automation feature, not a silent behavior change. With `enabled = true`, every `ax ship --evaluate` commits the current uncommitted diff as a checkpoint before running index/diff/TIA/tests/Sonar/policy, across every git root under this workspace. If the gate passes, the checkpoint stays. If it fails and `revert_on_fail = true`, ax undoes *that exact commit* with `git reset --mixed HEAD~1` — never `--hard` — so the edits remain on disk, uncommitted, for the agent or user to fix and re-run. Rollback refuses if `HEAD` has moved since the checkpoint (e.g. something else was committed in between), rather than resetting the wrong commit.
+Off by default — a deliberate automation feature, not a silent behavior change. With `enabled = true`, every `ax ship --evaluate` commits the current uncommitted diff as a checkpoint before running index/diff/TIA/tests/Sonar/policy, across every git root under this workspace. If the gate passes, the checkpoint stays. If it fails, or a step stops the run with an error after the checkpoint, and `revert_on_fail = true`, ax undoes *that exact commit* with `git reset --mixed HEAD~1` — never `--hard` — so the edits remain on disk, uncommitted, for the agent or user to fix and re-run. Rollback refuses if `HEAD` has moved since the checkpoint (e.g. something else was committed in between), rather than resetting the wrong commit.
 
 Override for a single run without touching `ship.toml`:
 
@@ -213,7 +224,7 @@ The Agent terminal and Quality Gates pages have been removed. Old `/agent` and `
 | **Savings** | Token and dollar savings from graph queries; activity heatmap, trends, tool audit |
 | **Prices** | OpenRouter rates grouped by provider (jump legend), plus curated Cursor Composer rates OpenRouter does not list; chart legend uses distinct input/output colors |
 | **Unresolved** | Unresolved graph references with kind filters and a scrolling list |
-| **Logging** | Live verbose log for the active project in the app chrome, newest first by default. Event keeps the headline and direction details together (**Inbound** / **Outbound** / **Internal**); Time and Context show timestamps, kinds and tools. MCP and CLI both write here — CLI uses the same `inbound tool=` / `outbound tool=` bodies with an `[ax]` brand (from 8.4.4). Resize individual columns, sort headings and filter loaded rows. Incoming events honor those settings and keyboard navigation follows the visible order. Kind/tool/date/text filters and Scroll to new remain available. Narrow screens show cards with a Columns menu. Open an event for its full payload and call steps; Full expands the view. |
+| **Logging** | Live verbose log for the active project in the app chrome, newest first by default. Event keeps the headline and direction details together (**Inbound** / **Outbound** / **Internal**); Time and Context show timestamps, kinds and tools. MCP and CLI both write here — CLI uses the same `inbound tool=` / `outbound tool=` bodies with an `[ax]` brand (from 8.4.4). Resize individual columns, sort headings and filter loaded rows. Incoming events honor those settings and keyboard navigation follows the visible order. Kind/tool/date/text filters and Scroll to new remain available. Narrow screens show cards with a Columns menu. Open an event for its full payload and call steps; Full expands the view. On connect it loads the last 4 MiB of today's log (whole lines only) and then follows new lines; earlier days load as you scroll. |
 | **Policy** | View-first rule/skill editors with **Scope** (company → private); master-detail blade (slide-in on open, content reveal when switching rows); resizable list / metadata / source / preview columns (drag grips; double-click resets); Rules/Skills list **label autocomplete** (tag chips, multi-label AND filter, click table tags to toggle); **Rules and Skills grouped** by a shared catalog (collapsible folders with **Collapse all** / **Expand all**; **Groups** multiselect filter; empty groups hidden on the list but still assignable in the editor); Markdown **source** overlay and textarea share font-size / line-height so caret and selection match visible glyphs; tags required on save; layer filters; **Database** column plus teal (this project `ax.db`) vs gold (`~/.ax/global.db`) row bars and badges; right-click **context menu** (move between project and global.db); **History** (hash-on-change revisions, Restore); **Package** / **Restore package** (compose stays large; restore starts compact with drag-and-drop zip, then a near-full-width preview: select all, skill descriptions, one-line compare (red Local newer, orange Package newer, green Identical) plus Reject/Accept or **per-change** hunks labeled **Old** / **New** above the code, blake3 content hashes; re-index skips Cursor-native files in `.agents`); **Sync** (pack export/import + `policySync` hooks); **Review** queue for staged imports |
 
 The Rules and Skills pages have a toolbar with **Graph** (link graph of rules, skills, and memories), **Auto-group**, **Test match**, **Package**, **Restore package**, **Capture**, and **New rule** / **New skill**. The **Default MD / DB** switch picks where new items are stored: Markdown files in the policy folder, or the project database.
