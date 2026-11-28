@@ -57,3 +57,5 @@ A whole-file read or symbol search that the read guard already redirects is also
 ## MCP
 
 The existing server exposes `ax_tool_economics`, `ax_optimization_advice`, and `ax_cost`. Repository context still goes through `ax_explore`, `ax_node`, and `ax_context`.
+
+In [ax-admin](/guides/remote-admin/), the **Usage** page shows the results of these tools together with `ax_budget`: cost, tool economics, budget, and advice. The page appears only when the connection has the admin grant.

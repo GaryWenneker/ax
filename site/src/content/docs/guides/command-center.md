@@ -1,6 +1,9 @@
 ---
 title: Command Center
 description: Local web UI for policy, memory, the code graph, MCP logging, and savings.
+banner:
+  content: |
+    This page describes part of the full ax, which is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 ax ships a **Command Center** (`ax web`) — a local web UI for policy (rules, skills, memory), the code graph, MCP logging and savings, with CLI quality gates and optional draft PRs (Azure DevOps or GitHub). The API answers the browser that loaded it. Another website cannot read it.

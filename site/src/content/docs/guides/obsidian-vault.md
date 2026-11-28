@@ -1,6 +1,9 @@
 ---
 title: Obsidian Vault
 description: Open your ax rules, skills, and memories in Obsidian as normal notes, served straight from ax.db over WebDAV. No note files on disk.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 `ax web` serves your project's rules, skills, and memories as a WebDAV share at `http://127.0.0.1:7070/ax/` (the older `http://127.0.0.1:7070/dav/` still works). Mount it on macOS, Windows, or Linux and open it in Obsidian as a vault. You get the normal Obsidian editor, backlinks, search, and graph, and every save goes straight into `ax.db`. Agents see the change on their next `ax_preflight`.

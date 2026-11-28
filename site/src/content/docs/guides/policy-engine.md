@@ -18,8 +18,11 @@ ax policy restore-item <id>       # put one removed rule or skill back
 ax policy match "deploy"   # test which rules/skills match
 ax policy capture "always use mobile-first CSS"   # propose rule from directive language
 ax policy storage status   # show effective files vs database mode
-ax web --open              # edit rules/skills in the browser
+ax policy rules            # list the indexed rules
+ax policy skills           # list the indexed skills
 ```
+
+Rules and skills are files. Edit them with any editor, then run `ax policy index`. To browse them, use `ax policy rules` and `ax policy skills`, or the **Rules** and **Skills** pages of [ax-admin](/guides/remote-admin/). ax-admin has no rule or skill editor; see [Editing and browsing](#editing-and-browsing).
 
 On **`ax init`** and **`ax install`**, ax also seeds machine-wide policy. Existing files are left alone **unless** the template has a higher `seedVersion` than the on-disk copy, or gained `alwaysApply: true` or a `require-skill` guard the copy does not have yet. In those cases ax rewrites the file from the template, including local edits:
 
@@ -81,9 +84,9 @@ Saved rules go to **database** or **files** depending on `policy.storage` in `ax
 | Mode | Source of truth | Typical workflow |
 |---|---|---|
 | `files` | `.agents/rules/*.mdc` and `.agents/skills/*/SKILL.md` on disk | Edit in git, `ax policy index` syncs to DB |
-| `database` | `ax.db` policy tables | Edit in ax web or via capture; `ax policy export` for git |
+| `database` | `ax.db` policy tables | Add rules via capture; `ax policy export` writes them to files for git |
 
-**Hybrid storage:** `ax.json` sets the **project default**. Each rule/skill may override with frontmatter `storage: files|database` (Command Center list toggle or `ax policy storage set-item`). Delivery to agents remains via MCP from `ax.db` either way — the toggle chooses where edits are authoritative.
+**Hybrid storage:** `ax.json` sets the **project default**. Each rule/skill may override with frontmatter `storage: files|database` (set with `ax policy storage set-item`). Delivery to agents remains via MCP from `ax.db` either way — the toggle chooses where edits are authoritative.
 
 ```bash
 ax policy storage status                 # show project + global default (files vs database)
@@ -122,7 +125,7 @@ Configure in `ax.json`:
 
 ### External roots and stubs
 
-- **`policy.roots`** — mount directories (absolute or relative to the config file) as extra policy layers. Optional `member` limits a root to one workspace member name/path. Roots appear in `ax policy storage status` and Command Center settings.
+- **`policy.roots`** — mount directories (absolute or relative to the config file) as extra policy layers. Optional `member` limits a root to one workspace member name/path. Roots appear in `ax policy storage status`.
 - **Stubs** — a committed file under `.ax/policy/` can point elsewhere:
 
 ```yaml
@@ -140,7 +143,7 @@ Index loads the body from `source` (`root:<id>/…`, a project-relative path, or
 
 A `source` must name a `.mdc` or `.md` policy file inside the project, a configured policy root or a policy scope folder, and not inside a `.git` folder. Links are followed before the check. Any other `source`, including an absolute path to a folder outside those, is rejected for both reading and saving. To use a folder outside the project, add it under `policy.roots`.
 
-Both modes support the same **scopes**. Frontmatter field `scope` (and the DB column) records where an item lives. Capture interviews ask for scope; Command Center editors show a Scope selector.
+Both modes support the same **scopes**. Frontmatter field `scope` (and the DB column) records where an item lives. Capture interviews ask for scope; in a file, set `scope` in the frontmatter.
 
 ### Policy scopes
 
@@ -161,7 +164,7 @@ Merge order on index: company → workspace → project → inactive overlay →
 
 A rule or skill stored at the global level is not kept again in a project `ax.db`. Rows in `global.db` have a `level`: `global` rows are the machine-wide copies agents load, and `mirror` rows are the per-project copies written by `ax global sync`. Sync never writes a mirror for a name that already has a global row, and only global rows are loaded or counted.
 
-`ax policy dedup` applies the cleanup (`--dry-run` only lists it). The checks that run on their own during `ax install`, `ax global sync`, indexing and the Command Center are dry runs: they report how many duplicates they found and change nothing. Run `ax policy dedup` to remove them.
+`ax policy dedup` applies the cleanup (`--dry-run` only lists it). The checks that run on their own during `ax install`, `ax global sync` and indexing are dry runs: they report how many duplicates they found and change nothing. Run `ax policy dedup` to remove them.
 
 The cleanup compares each duplicate with the global copy:
 
@@ -175,7 +178,7 @@ The cleanup compares each duplicate with the global copy:
 
 Every change is versioned. Global bodies keep up to 20 versions in `global_policy_revisions` (sources `save`, `dedup-promote`, `dedup-removed`, `delete`, and `baseline` for the body a row had before versioning existed); a removed project row gets a project revision with source `dedup`, so `ax policy restore` can bring it back. Files on disk are never edited or deleted: the import skips names that exist at the global level instead.
 
-The cleanup runs after `ax sync`, `ax index` and the watch sync, after every policy index (`ax init`, `ax policy index`, MCP `ax_policy_index`), after `ax global sync`, at the end of `ax install`, and in `ax web` when a workspace opens and every 10 minutes (not in read-only mode). Run it by hand with `ax policy dedup [--dry-run] [--json]`. Without a `~/.ax/global.db` it does nothing. A run that stops on an error (an unreadable row, for example) changes nothing further: the CLI exits non-zero, and `ax web` and the sync hooks log a warning. `AX_GLOBAL_DB` points all of this at another global database.
+The cleanup runs after `ax sync`, `ax index` and the watch sync, after every policy index (`ax init`, `ax policy index`, MCP `ax_policy_index`), after `ax global sync`, and at the end of `ax install`. Run it by hand with `ax policy dedup [--dry-run] [--json]`. Without a `~/.ax/global.db` it does nothing. A run that stops on an error (an unreadable row, for example) changes nothing further: the CLI exits non-zero, and the sync hooks log a warning. `AX_GLOBAL_DB` points all of this at another global database.
 
 `ax init` does not write the skills stored in `global.db` (`review-loop`, `pr-review-comments`) into a project's `.agents/skills/`; they reach every project from the global level.
 
@@ -326,13 +329,13 @@ group: design
 | `priority` | Higher wins when multiple rules match |
 | `enabled` | When `false`, matcher/preflight skip the rule (default `true`) |
 | `status` | `approved` (active, the default), `pending` (review queue), or `rejected`. Any other value, and any unknown `scope`, fails validation, so the file is skipped on index and any row it produced before is removed, instead of being treated as approved |
-| `tags` | Required for Command Center filtering; free-form labels. Use `local` or `noshare` to opt out of pack export |
-| `group` | Optional catalog folder id for Command Center **Rules** grouping (same catalog as skills). Matching ignores this field |
+| `tags` | Free-form labels; give every rule at least one. `ax policy pack export --tag <tag>` selects by tag. Use `local` or `noshare` to opt out of pack export |
+| `group` | Optional catalog folder id that groups rules (same catalog as skills). Matching ignores this field |
 | `share` | Optional alias — normalized to tag `shared` on parse (legacy; default export no longer requires it) |
 
 Any other frontmatter key is kept as an extra property (`files`, `kind`, `aliases`, a checkbox, a list). ax stores it, writes it back, and includes it in `ax_preflight`, `ax_rules`, and `ax_skill` under a `Properties:` block when the rule matches. The same applies to skills. Empty values are dropped. Known fields above stay schema fields and are not repeated as properties.
 
-In Command Center, open the rule and use **Metadata → Properties**. **Add property** creates a text, list, number, or checkbox value. Save writes it with the rule. A name that matches a built-in field (for example `tags`) is rejected there.
+To add a property, write the key in the frontmatter of the rule file and run `ax policy index`. The value can be text, a list, a number, or a checkbox (`true` / `false`). A key with the name of a built-in field (for example `tags`) is that field, not an extra property.
 
 Disable without deleting:
 
@@ -341,7 +344,7 @@ ax policy disable mobile-first
 ax policy enable mobile-first
 ```
 
-The same fields are stored in `ax.db` (`policy_rules.enabled`, `policy_rules.status`). Command Center exposes an **Enabled** toggle on the Rules/Skills tables and in each rule/skill editor. That is separate from **Always apply** (matching): a rule must have Always apply, globs, or triggers to save — otherwise matching would never fire.
+The same fields are stored in `ax.db` (`policy_rules.enabled`, `policy_rules.status`). `enabled` is separate from `alwaysApply` (matching): give a rule `alwaysApply`, globs, or triggers, otherwise matching never fires.
 
 ---
 
@@ -368,13 +371,13 @@ The `name` is also the folder name, so it must be kebab-case (lowercase letters,
 
 When `alwaysApply` is `true`, `ax_preflight` injects the skill body on **every** turn (including empty prompts) under **Skills (always apply)** — the same contract as always-apply rules. Otherwise the skill matches on triggers/description and appears under **Suggested skills**. A trigger matches only as a whole word or phrase, the same as a rule trigger: `pr` matches "open a pr" but not "improve". At most two suggested skills are sent per turn: the ones that match the prompt best (each trigger hit counts more than description words), with `priority` and then the name breaking a tie. Load a specific workflow anytime with `ax_skill({ name: "deploy" })`.
 
-Give every skill at least one `tags` value (same as rules) so Command Center can filter it.
+Give every skill at least one `tags` value (same as rules).
 
-Extra frontmatter keys on a skill work the same way as on a rule. A skill can carry `globs`, `files`, `kind`, or any other key the rule schema does not use. When the skill is injected, those properties are sent with the body. `ax_skill` returns them on the skill row as `properties`. Command Center edits them under **Metadata → Properties** on the skill.
+Extra frontmatter keys on a skill work the same way as on a rule. A skill can carry `globs`, `files`, `kind`, or any other key the rule schema does not use. When the skill is injected, those properties are sent with the body. `ax_skill` returns them on the skill row as `properties`. Add them in the frontmatter of `SKILL.md`.
 
 ### Linking rules, skills and memories
 
-A rule, skill, or memory body can link to another item Obsidian-style: `[[pre-pr-check]]`, `[[skills/pr]]`, `[[global/skills/review-loop]]`, or `[[pr|the PR skill]]`. When `ax_preflight` delivers an item, it also delivers what that item links to: one hop, at most five items per turn, and never a disabled or unapproved one. A rule delivered this way has the match reason `link:rule/<id>` (or `link:skill/…`, `link:memory/…`). Links in code blocks are ignored, and the Command Center shows links as clickable, with a **Linked from** list under the body. Name lookup and the vault side are in the [Obsidian Vault](/guides/obsidian-vault/#links) guide.
+A rule, skill, or memory body can link to another item Obsidian-style: `[[pre-pr-check]]`, `[[skills/pr]]`, `[[global/skills/review-loop]]`, or `[[pr|the PR skill]]`. When `ax_preflight` delivers an item, it also delivers what that item links to: one hop, at most five items per turn, and never a disabled or unapproved one. A rule delivered this way has the match reason `link:rule/<id>` (or `link:skill/…`, `link:memory/…`). Links in code blocks are ignored. Name lookup and the vault side are in the [Obsidian Vault](/guides/obsidian-vault/#links) guide.
 
 The shipped `pr` skill opens the pull request as a draft, then reviews that draft. It keeps fixing findings on the same branch until a review round has zero findings. That review follows `review-loop`. Comments are not posted for the author to approve.
 
@@ -404,27 +407,13 @@ A directive whose `/regex/` or glob does not compile, or a rule glob that does n
 
 Two built-in checks need no directive. A CRITICAL rule tagged `utf8` or `encoding` (or with `utf8` as a word in its id) blocks content with a UTF-8 BOM, a UTF-16 BOM, or null-padded ASCII. A CRITICAL rule tagged `secrets` (or with `secret` or `secrets` as a word in its id) blocks writing or deleting files that usually hold secrets: `.env`, `.env.*` and names ending in `.env` (such as `prod.env`), `id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, files ending in `.pem`, `.key`, `.p12`, `.pfx`, `.jks` or `.keystore`, and files with `secrets` or `credentials` as a whole word in the name, split on `-`, `_` and `.` (such as `secrets.json`, `aws-credentials.json` or `.aws/credentials`), and any file inside a folder named exactly `secrets` or `credentials` (such as `config/credentials/prod.json`). Files with a source-code or documentation extension (`credentials_form.tsx`, `src/credentials/form.tsx`, `secrets-handling.md`) are not blocked by these name and folder checks, and committed templates with an `example`, `sample`, `template` or `dist` part in the name (`.env.example`, `example.env`, `credentials.example.json`) stay writable.
 
-### Command Center: label filter
-
-On **Policy → Rules** and **Policy → Skills**:
-
-1. Type in the search box to filter by id/name **and** to see matching tag suggestions
-2. Select a suggestion (Enter / click) to add a **label chip** — multiple chips use AND (item must have all selected tags)
-3. Click a chip or Backspace to remove it
-4. Click a tag badge in the table to toggle that label into the filter
-5. Editors require at least one tag before save
-
-The rule and skill **source** pane is a highlighted overlay on a textarea. Overlay and textarea use the same font-size, line-height, and font-family so clicks, the caret, and selection sit on the glyphs you see.
-
-Skills on **Policy → Skills** (and rules on **Policy → Rules**) are grouped into a fixed catalog (session, implementation, testing, release, …). Collapse a group header to hide its rows, or use **Collapse all** / **Expand all**. A **Groups** multiselect filters the list to one or more folders (empty selection shows every group that still matches search and other filters). Groups with no items are omitted from the list; the editor still lists every catalog group so a new item can be attached.
-
-**Auto-group.** The **Auto-group** button on the Rules and Skills pages suggests an existing group for every item that has none yet. It compares the item's name, description, tags, triggers, globs, and body with the text of each group's members, label, and aliases (TF-IDF cosine similarity, computed in the browser). A preview lists every ungrouped item with its suggestion; items without a close enough match (score below 0.15) show **No match**. Change a suggestion in the dropdown or untick a row, then **Apply** writes `group` to the selected items. Nothing is saved before you apply, and it never creates a new group.
+The full ax, which is being phased out, also has label filters, catalog groups and Auto-group for rules and skills in its Command Center; see [Command Center](/guides/command-center/).
 
 ---
 
 ## Per-project pack sync
 
-Share selected rules/skills with teammates via **git** (same project repo) — not `ax share` (LAN Command Center) and not a cloud registry.
+Share selected rules/skills with teammates via **git** (same project repo), not through a cloud registry.
 
 1. Export the pack → commit `.ax/policy/shared/`
 2. Colleagues pull and import
@@ -458,7 +447,7 @@ ax policy pack install azdo-fullstack --force
 
 ### Stacks
 
-Core policy (startup, debugging, TDD, design-first, and the preflight rules) is seeded for every project. Language, frontend, and CMS skills are **not** copied on init. The on-disk folder is `policy.agentsDir` in `ax.json` (default `.agents`); it must be a single folder name inside the project, and an unsafe value (a path, `..`, `.ax`, `.git`) is ignored in favor of `.agents`. `ax init` asks for that name when it is not set yet. Change it later with `ax policy agents-dir <name>` or in Command Center settings.
+Core policy (startup, debugging, TDD, design-first, and the preflight rules) is seeded for every project. Language, frontend, and CMS skills are **not** copied on init. The on-disk folder is `policy.agentsDir` in `ax.json` (default `.agents`); it must be a single folder name inside the project, and an unsafe value (a path, `..`, `.ax`, `.git`) is ignored in favor of `.agents`. `ax init` asks for that name when it is not set yet. Change it later with `ax policy agents-dir <name>`.
 
 ```bash
 ax policy stack detect
@@ -478,7 +467,7 @@ Save the choice in project `ax.json`:
 
 `ax init` asks which stacks to install on every run when stdin is a terminal, including a second init. The list is a colored checkbox menu, grouped into Platforms, Web, PHP, CMS, Systems, and Languages. Up and down arrows (or j and k) move through the stacks, Space toggles one, and Enter confirms. Installed stacks and newly detected stacks start checked. Clear every box for core policy only. If the menu cannot open, type ids separated by spaces, or `none`. A non-interactive run keeps the saved `policy.stacks` and does not block.
 
-![Command Center settings with the rules and skills folder](/screenshots/cc-settings-dark.png) The command writes `.ax/stacks.lock.json` (template version and content hash per file). Re-apply skips a file you edited unless you pass `--force`. A file that was already in the folder before the first apply, with other content, stays yours: apply, upgrade and `remove` leave it alone, and only `--force` replaces it with the stack's copy. Applying more stacks adds them: `policy.stacks` in `ax.json` always lists every installed stack, the same set as the lock. `ax policy stack status` reports a file as drifted only when it is neither what ax wrote nor the current template; an unedited file from an older template shows as an available upgrade. `ax policy stack upgrade` refreshes files that still match the lock. Stack detection skips folders such as `node_modules`, `vendor` or `target` below the project, never the project folder itself.
+`ax policy stack apply` writes `.ax/stacks.lock.json` (template version and content hash per file). Re-apply skips a file you edited unless you pass `--force`. A file that was already in the folder before the first apply, with other content, stays yours: apply, upgrade and `remove` leave it alone, and only `--force` replaces it with the stack's copy. Applying more stacks adds them: `policy.stacks` in `ax.json` always lists every installed stack, the same set as the lock. `ax policy stack status` reports a file as drifted only when it is neither what ax wrote nor the current template; an unedited file from an older template shows as an available upgrade. `ax policy stack upgrade` refreshes files that still match the lock. Stack detection skips folders such as `node_modules`, `vendor` or `target` below the project, never the project folder itself.
 
 Language stacks follow the languages ax indexes: `rust`, `python`, `go`, `typescript`, `javascript`, `c`, `cpp`, `ruby`, `swift`, `kotlin`, `dart`, `svelte`, `astro`, `scala`, `lua`, `luau`, `objc`, `r`, and `pascal`, in addition to `dotnet` (C#), `java`, and `php`. C# stays on the `dotnet` stack. Config formats ax also parses (YAML, XML, properties) are not stacks.
 
@@ -524,16 +513,7 @@ Install writes project files under `.ax/policy/`, then **imports into `ax.db`** 
 
 Sitecore-style **item pick → zip → restore with conflict preview**. This is not git pack sync and not OneDrive.
 
-1. Command Center **Rules** or **Skills**: **Package** — large modal, **Select all** / **Select none**, rule and skill **descriptions** (generated from the body when missing), click a name to inspect the local file, then **Download** `*.ax-policy.zip`.
-2. On the other machine: **Restore package** — drop or choose an `.ax-policy.zip` (compact modal until the zip loads, then a near-full-width preview), then a table of items with a one-line compare (`Different · Package newer` in orange, `Different · Local newer` in red, `Identical` in green, `New`, …) and **Reject** / **Accept**. Click a row for a two-column hunk view with **line numbers**. The file list stays readable (ids do not wrap letter-by-letter); Compare moves into the inspect title while a row is open. Each column is labeled **Old** (local file) and **New** (package) above the code. Check the box on a column (or both) for each change (or the whole file). Mixed hunks show **Partial**. **New** items default to Accept. Conflicts default to Reject (including local-newer files) so an older package does not replace a newer local file unless you Accept. Packs include a blake3 `contentHash` per file so “changed” does not depend on zip timestamps; a mismatched hash is invalid. Confirm writes into `.agents/`, then policy re-index. Files that are not ax schema (typical Cursor `.mdc` / `SKILL.md` without ax `id`/`level` or skill `description`) stay on disk and are **skipped** during index and during MCP session policy refresh (`ensure_policy_ready`); they do not abort restore or `ax_preflight` as `validation_failed`. Parsed disabled or private-scope files under `.agents/` still fail the leak gate. Accepted writes are also stored in a **local revision log** (blake3 hash-on-change, 20 per item) so you can Restore from **History** in the rule/skill editor. Identical Command Center saves are not listed.
-
 A package is refused when the zip is larger than 8 MiB, when one file in it unpacks to more than 8 MiB, when all files together unpack to more than 32 MiB, or when it holds more than 4096 files. Very large files still get a compare view, but past about four million line pairs it shows the differing middle part as removed and added instead of a line-by-line match.
-
-Team-wide moderation stays on git: merge a PR, then pack a zip (or attach the zip as a CI artifact). Command Center restore is local Accept/Reject, not a substitute for pull-request review.
-
-### Local revision history
-
-Command Center **History** on a rule or skill lists up to 20 snapshots. A snapshot is stored only when the serialized file hash changes (`save` from the editor, `restore` from an accepted zip item). Restore from History writes through the normal save path. Disk edits that never go through Command Center or `ax policy restore` are not recorded. This is not git history.
 
 ```bash
 ax policy pack zip --out team.ax-policy.zip --name "Team pack" --rules utf8-no-bom --skills startup
@@ -541,7 +521,21 @@ ax policy restore --preview team.ax-policy.zip
 ax policy restore team.ax-policy.zip --decisions decisions.json
 ```
 
-`decisions.json` maps `"rule:<id>"` / `"skill:<name>"` to `overwrite`, `skip`, `{ "action": "merge", "acceptHunks": [0, 2] }`, or `{ "action": "merge", "hunks": [{ "index": 0, "take": "both" }] }`. Missing keys: **new** → install, **conflict** → skip (never overwrite a newer local file unless listed as overwrite). Private and disabled items are never packed.
+1. **Package.** `ax policy pack zip` builds a `*.ax-policy.zip` of the rules and skills you name. Only shareable items go in: project and workspace scope, enabled. Private and disabled items are never packed.
+2. **Preview.** On the other machine, `ax policy restore --preview <zip>` compares every item in the package with the local file. Each item is new, identical or a conflict, and the preview JSON says which side is newer (`newer`). Packs include a blake3 `contentHash` per file so “changed” does not depend on zip timestamps; a mismatched hash is invalid.
+3. **Restore.** `ax policy restore <zip>` installs the package. **New** items are installed. Conflicts are skipped (including local-newer files), so an older package does not replace a newer local file unless you say so. Pass `--decisions decisions.json` to choose per item.
+
+`decisions.json` maps `"rule:<id>"` / `"skill:<name>"` to `overwrite`, `skip`, `{ "action": "merge", "acceptHunks": [0, 2] }`, or `{ "action": "merge", "hunks": [{ "index": 0, "take": "both" }] }`. Missing keys: **new** → install, **conflict** → skip (never overwrite a newer local file unless listed as overwrite).
+
+A restore writes into `.agents/`, then re-indexes policy. Files that are not ax schema (typical Cursor `.mdc` / `SKILL.md` without ax `id`/`level` or skill `description`) stay on disk and are **skipped** during index and during MCP session policy refresh (`ensure_policy_ready`); they do not abort restore or `ax_preflight` as `validation_failed`. Parsed disabled or private-scope files under `.agents/` still fail the leak gate.
+
+Team-wide moderation stays on git: merge a PR, then pack a zip (or attach the zip as a CI artifact). A restore is a local accept or skip per item, not a substitute for pull-request review.
+
+### Local revision history
+
+ax keeps a **local revision log** of up to 20 snapshots per rule or skill (blake3 hash-on-change). A snapshot is stored only when the serialized file hash changes, for example when `ax policy restore` writes an accepted item. Edits you make directly in the files are not recorded; use git for those. This is not git history.
+
+The headless CLI has no command that lists these snapshots. The full ax, which is being phased out, shows them under **History** in its Command Center; see [Command Center](/guides/command-center/). For a rule or skill that was removed, use `ax policy history` and `ax policy restore-item <id>` (see [Preserve customized rules and skills](#preserve-customized-rules-and-skills)).
 
 ### IDE-agnostic delivery (Cursor ↔ Continue ↔ …)
 
@@ -584,7 +578,7 @@ ax policy review reject <id>
 
 A pending file with broken frontmatter does not block the queue: `review list` still lists the other items and names the bad file with its failing fields (for example `level: required`). `review show`, `approve` and pack import report the same detail. Fix the file or reject it.
 
-Command Center: **Policy → Sync** (status, export/import, toggles), **Policy → Review** queue, label autocomplete on Rules/Skills (type to suggest tags, chips for multi-label AND filter; click a tag in the table to toggle it), layer filters, Scope on editors, and enable checkboxes. Every rule and skill should carry at least one `tags` value so you can filter (e.g. `azdo`, `cicd`, `workflow`). CLI equivalents: `ax policy pack …`, `ax policy review …`, `ax policy share …`, `ax policy enable|disable`.
+Pack sync, the review queue, remote share and enabling all go through the CLI: `ax policy pack …`, `ax policy review …`, `ax policy share …`, `ax policy enable|disable`. ax-admin has no policy review page and no policy sync page. Every rule and skill should carry at least one `tags` value so you can filter (e.g. `azdo`, `cicd`, `workflow`).
 
 For org-wide sync outside the project repo, see [Remote Policy Share](/guides/policy-sharing/).
 
@@ -619,8 +613,10 @@ ax policy skills [--json]
 ax policy skill <name>
 ax policy enable <id-or-name>
 ax policy disable <id-or-name>
-ax policy pack export|import|status
+ax policy pack export|import|status|install|zip
+ax policy restore [--preview] <zip> [--decisions decisions.json]
 ax policy review list|show|approve|reject
+ax policy share config|sync
 ax policy guard path               # test CRITICAL guard on a path
 ax policy capture <prompt> [--yes] [--json] [--file path]
 ax policy storage status [--json]
@@ -630,41 +626,42 @@ ax policy storage files [--yes] [--global] [--json]
 
 ---
 
-## ax web editor
+## Editing and browsing
+
+Rules and skills are files, so you edit them where they live:
+
+1. Open `.agents/rules/<id>.mdc` or `.agents/skills/<name>/SKILL.md` in any editor and change the frontmatter or the markdown body.
+2. Run `ax policy index` to bring the change into `ax.db`. An agent can call `ax_policy_index` instead, and in [ax-admin](/guides/remote-admin/) **Operations → Reload policy** does the same for the connected project (admin grant needed).
+3. Check the result with `ax policy match "<prompt>"`.
+
+To browse what is indexed:
 
 ```bash
-ax web --port 7070 --open
+ax policy rules [--json]
+ax policy skills [--json]
+ax policy skill <name>
 ```
 
-Open **Policy → Rules** or **Policy → Skills** in the sidebar to edit frontmatter and markdown, save to disk, and re-index automatically.
+In ax-admin, the **Rules** page lists the policy rules and shows which rules match a prompt, and the **Skills** page opens a skill by name. ax-admin has no rule or skill editor, so changes always go through the files and `ax policy index`.
 
-Selecting a row opens a master-detail blade (slides in once). Switching to another row while the blade is open keeps the panel in place and reveals the new metadata/body (no repeat slide-in).
+**Project vs global database:** `ax global sync` copies each project’s `policy_rules` / `policy_skills` into `~/.ax/global.db`. Those copies are storage, not agent-wide matching: agents still match only the current project database.
 
-**Project vs global database:** `ax global sync` copies each project’s `policy_rules` / `policy_skills` into `~/.ax/global.db`. Command Center lists **this project’s** `ax.db` as **Project** (teal `#3ee4b2`) and parked copies as **Global** (gold `#e0b341`, read-only). The source project is in the badge tooltip, not on the chip — global.db is storage, not agent-wide matching. Right-click a row for **Open / Edit / Enable / Move to global.db / Delete**, or **Open / Edit / Move to this project** and **Delete from global.db** on global rows. Global copies can be opened and saved in Command Center; GET/PUT use `?origin=global&projectId=`. Agents still match only the current project database.
-
-In the rule/skill editor, drag the handle between **Metadata** and the markdown panel to resize the meta column (persisted in the browser). In edit mode, drag the bar between the markdown source and the live preview to resize those panes. Double-click the meta handle to reset its width.
-
-![Policy Rules — sortable table with level badges, globs, triggers, capture and match testing](/screenshots/cc-policy-rules-dark.png)
-
-![Policy Skills — task-specific instructions agents load on demand via ax_skill](/screenshots/cc-policy-skills-dark.png)
+The full ax, which is being phased out, also has rule and skill editors in its Command Center; see [Command Center](/guides/command-center/).
 
 ## Policy search
 
-Policy search looks through rules and skills that are already indexed. It is separate from [skill search](/guides/command-center/#skill-search), which queries the public catalog.
+Policy search looks through rules and skills that are already indexed. It is separate from skill search ([`ax skill search`](/reference/cli/#ax-skill)), which queries the public catalog.
 
-On **Policy → Rules** and **Policy → Skills**, **Filters** search the list: label suggestions, tag chips (every selected tag must match), and a click on a table tag toggles that tag. **Groups** limits the list to a catalog folder.
-
-**Test match** previews which rules and skills would inject for a given prompt — the same matcher that runs during `ax_preflight`. From the terminal:
+`ax policy match` previews which rules and skills would inject for a given prompt — the same matcher that runs during `ax_preflight`:
 
 ```bash
 ax policy match "deploy to production" --file src/ship.rs
+ax policy match "utf8 bom" --json
 ax policy rules
 ax policy skills
 ```
 
-![Test match — simulate a prompt and preview the full policy inject output](/screenshots/cc-policy-match-dark.png)
-
-Set `AX_WEB_READONLY=1` for browse-only mode.
+Agents match rules with `ax_rules`. In ax-admin, the **Rules** page shows which rules match a prompt.
 
 ---
 
@@ -707,7 +704,6 @@ Run `ax policy sync` to verify managed policy files and warn about duplicate `.c
 | `AX_NO_POLICY=1` | Skip policy injection in prompt-hook |
 | `AX_NO_POLICY_CAPTURE=1` | Skip directive capture hints in prompt-hook |
 | `AX_POLICY_MAX_CHARS` | Cap **contextual** policy inject (default 16000). Always-apply rules **and** always-apply skills are never hard-truncated. |
-| `AX_WEB_READONLY` | Disable saves in ax web |
 | `AX_READ_GUARD=off` | Disable the read-guard hook |
 
 ---
