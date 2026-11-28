@@ -34,12 +34,19 @@ pub fn read_lock_info(pid_path: &Path) -> Option<DaemonLockInfo> {
     serde_json::from_str(raw.trim()).ok()
 }
 
+/// Publishes this process's lock unless a live daemon holds it.
+///
+/// Clearing a stale lock and publishing a new one run under the acquire guard
+/// ([`guard_path`]). Without it, an acquirer that judged the lock stale (or
+/// absent) could delete a lock another acquirer published in between, and both
+/// would run as the daemon.
 pub fn try_acquire_daemon_lock(project_root: &Path) -> std::io::Result<AcquireResult> {
     let pid_path = daemon_pid_path(project_root);
-    clear_stale_daemon_lock(&pid_path, None);
     if let Some(parent) = pid_path.parent() {
         fs::create_dir_all(parent)?;
     }
+    let _guard = lock_guard(&pid_path)?;
+    clear_stale_unguarded(&pid_path, None);
     let info = DaemonLockInfo {
         pid: std::process::id(),
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -61,6 +68,30 @@ pub fn try_acquire_daemon_lock(project_root: &Path) -> std::io::Result<AcquireRe
 /// A lock file that cannot be parsed is only treated as stale after this long:
 /// before that it may belong to a daemon that is still starting.
 const UNREADABLE_LOCK_GRACE: Duration = Duration::from_secs(5);
+
+/// The file next to `pid_path` whose OS lock serializes acquirers and stale-lock
+/// clearing. It is never deleted, so every process locks the same inode.
+fn guard_path(pid_path: &Path) -> PathBuf {
+    let name = pid_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "daemon.pid".into());
+    pid_path.with_file_name(format!("{name}.guard"))
+}
+
+/// Holds the acquire guard of `pid_path` until the returned file is dropped.
+/// The OS releases it when the holder dies, so a crash never blocks anyone.
+fn lock_guard(pid_path: &Path) -> std::io::Result<fs::File> {
+    use fs2::FileExt;
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(guard_path(pid_path))?;
+    file.lock_exclusive()?;
+    Ok(file)
+}
 
 /// A temporary file next to `path`, unique per process and call.
 fn temp_sibling(path: &Path) -> PathBuf {
@@ -143,7 +174,19 @@ pub fn rewrite_lock_socket_path(pid_path: &Path, socket_path: &str) -> std::io::
     ax_utils::atomic_write(pid_path, body.as_bytes())
 }
 
+/// Removes `pid_path` when no live daemon holds it, under the acquire guard.
 pub fn clear_stale_daemon_lock(pid_path: &Path, expected_pid: Option<u32>) {
+    if !pid_path.exists() {
+        return;
+    }
+    match lock_guard(pid_path) {
+        Ok(_guard) => clear_stale_unguarded(pid_path, expected_pid),
+        Err(e) => tracing::warn!("daemon lock guard unavailable; stale lock kept: {e}"),
+    }
+}
+
+/// [`clear_stale_daemon_lock`] for a caller that holds the acquire guard.
+fn clear_stale_unguarded(pid_path: &Path, expected_pid: Option<u32>) {
     if let Some(existing) = read_lock_info(pid_path) {
         if expected_pid.is_some_and(|p| p != existing.pid) {
             return;
@@ -180,7 +223,16 @@ pub fn is_pid_alive(pid: u32) -> bool {
         sysinfo::ProcessesToUpdate::Some(&[Pid::from_u32(pid)]),
         true,
     );
-    sys.process(Pid::from_u32(pid)).is_some()
+    sys.process(Pid::from_u32(pid)).is_some_and(is_running)
+}
+
+/// False for a process that has exited but was not reaped yet (a zombie). Linux
+/// still lists it; it runs nothing, holds no lock and cannot be stopped.
+fn is_running(process: &sysinfo::Process) -> bool {
+    !matches!(
+        process.status(),
+        sysinfo::ProcessStatus::Zombie | sysinfo::ProcessStatus::Dead
+    )
 }
 
 /// Whole seconds a process start time (which sysinfo reports in seconds) may lie
@@ -201,7 +253,7 @@ pub fn is_daemon_pid(pid: u32, started_at_ms: Option<u64>) -> bool {
         true,
         ProcessRefreshKind::nothing().with_exe(UpdateKind::Always),
     );
-    let Some(process) = sys.process(Pid::from_u32(pid)) else {
+    let Some(process) = sys.process(Pid::from_u32(pid)).filter(|p| is_running(p)) else {
         return false;
     };
     let exe_stem = process
@@ -477,6 +529,93 @@ mod tests {
             assert_eq!(acquired, 1, "daemons that acquired the same lock");
             assert_eq!(unreadable, 0, "a taken lock was seen without its contents");
         }
+    }
+
+    /// An acquirer waits while another one holds the acquire guard, and then
+    /// sees the lock that one published instead of clearing it.
+    #[test]
+    fn an_acquirer_waits_for_the_guard_and_keeps_the_lock_published_under_it() {
+        use fs2::FileExt;
+        let (_dir, root) = lock_root();
+        let pid_path = daemon_pid_path(&root);
+        fs::create_dir_all(pid_path.parent().unwrap()).unwrap();
+        let guard = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(guard_path(&pid_path))
+            .unwrap();
+        guard.lock_exclusive().unwrap();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let acquirer_root = root.clone();
+        let acquirer = std::thread::spawn(move || {
+            let result = try_acquire_daemon_lock(&acquirer_root).unwrap();
+            tx.send(()).unwrap();
+            result
+        });
+        assert!(
+            rx.recv_timeout(Duration::from_millis(300)).is_err(),
+            "an acquirer ran while another held the guard"
+        );
+        // What the guard holder publishes before it lets go must survive.
+        let theirs = DaemonLockInfo {
+            pid: std::process::id(),
+            version: "test".into(),
+            socket_path: "theirs".into(),
+            started_at: now_ms(),
+        };
+        fs::write(&pid_path, serde_json::to_string(&theirs).unwrap()).unwrap();
+        FileExt::unlock(&guard).unwrap();
+        match acquirer.join().unwrap() {
+            AcquireResult::Taken {
+                existing: Some(info),
+                ..
+            } => assert_eq!(info.socket_path, "theirs"),
+            _ => panic!("the acquirer replaced a lock published under the guard"),
+        }
+    }
+
+    /// A process that exited but was not reaped yet is not running, so it holds
+    /// no lock and needs no stopping.
+    #[cfg(unix)]
+    #[test]
+    fn a_zombie_process_is_not_alive_and_not_a_daemon() {
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        // Not waited on: once it exits it stays a zombie until `wait` below.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !is_zombie(pid) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "child never became a zombie"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!is_pid_alive(pid), "a zombie counted as a live process");
+        assert!(!is_daemon_pid(pid, None), "a zombie counted as the daemon");
+        let started = std::time::Instant::now();
+        assert_eq!(
+            stop_pid_with(pid, Duration::from_secs(5), |_| true),
+            StopOutcome::NotRunning
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+        child.wait().unwrap();
+    }
+
+    /// True when `ps` reports `pid` as a zombie (state `Z`).
+    #[cfg(unix)]
+    fn is_zombie(pid: u32) -> bool {
+        std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .trim_start()
+                    .starts_with('Z')
+            })
+            .unwrap_or(false)
     }
 
     fn now_ms() -> u64 {
