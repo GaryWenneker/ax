@@ -513,8 +513,8 @@ fn optimize_mode_approves_explore_and_can_replay_a_repeat_from_memory() {
         session_id: "abc123".into(),
         turn_id: "t".into(),
         call_id: "r1".into(),
-        tool_name: "bash".into(),
-        arguments: json!({"cmd": "same"}),
+        tool_name: "read".into(),
+        arguments: json!({"path": "notes.txt"}),
         repository_state: "head".into(),
         known_graph_entities: Vec::new(),
         indexed_paths: Vec::new(),
@@ -534,6 +534,79 @@ fn optimize_mode_approves_explore_and_can_replay_a_repeat_from_memory() {
         advice.apply.as_ref().map(|item| item.rule.as_str()),
         Some("exact-repeat")
     );
+}
+
+fn repeat_observation(
+    tool: &str,
+    arguments: serde_json::Value,
+    call_id: &str,
+) -> ToolCallObservation {
+    ToolCallObservation {
+        session_id: "abc123".into(),
+        turn_id: "t".into(),
+        call_id: call_id.into(),
+        tool_name: tool.into(),
+        arguments,
+        repository_state: "head".into(),
+        known_graph_entities: Vec::new(),
+        indexed_paths: Vec::new(),
+        output_text_for_estimate: Some(format!("{call_id}-body")),
+        output_token_estimate: Some(3),
+        output_bytes: None,
+        duration_ms: 1,
+        success: true,
+    }
+}
+
+fn assert_not_replayed(advice: &ax_pi::ToolCallAdvice) {
+    assert_eq!(advice.cached_output, None);
+    assert_ne!(
+        advice.apply.as_ref().map(|item| item.rule.as_str()),
+        Some("exact-repeat")
+    );
+}
+
+#[test]
+fn optimize_mode_never_replays_a_command_that_can_change_state() {
+    let pi = create_pi_integration(priced(OptimizationMode::Optimize));
+    let first = repeat_observation("bash", json!({"cmd": "cargo test"}), "b1");
+    pi.record_tool_result(&first).unwrap();
+    let again = repeat_observation("bash", json!({"cmd": "cargo test"}), "b2");
+    assert_not_replayed(&pi.advise_tool_call(&again).unwrap());
+}
+
+#[test]
+fn optimize_mode_never_replays_a_failed_call() {
+    let pi = create_pi_integration(priced(OptimizationMode::Optimize));
+    let mut first = repeat_observation("read", json!({"path": "notes.txt"}), "f1");
+    first.success = false;
+    pi.record_tool_result(&first).unwrap();
+    let again = repeat_observation("read", json!({"path": "notes.txt"}), "f2");
+    assert_not_replayed(&pi.advise_tool_call(&again).unwrap());
+}
+
+#[test]
+fn optimize_mode_never_replays_when_the_repository_state_is_unknown() {
+    for state in ["", "unknown"] {
+        let pi = create_pi_integration(priced(OptimizationMode::Optimize));
+        let mut first = repeat_observation("read", json!({"path": "notes.txt"}), "u1");
+        first.repository_state = state.into();
+        pi.record_tool_result(&first).unwrap();
+        let mut again = repeat_observation("read", json!({"path": "notes.txt"}), "u2");
+        again.repository_state = state.into();
+        assert_not_replayed(&pi.advise_tool_call(&again).unwrap());
+    }
+}
+
+#[test]
+fn optimize_mode_forgets_cached_reads_after_a_state_changing_call() {
+    let pi = create_pi_integration(priced(OptimizationMode::Optimize));
+    let read = repeat_observation("read", json!({"path": "notes.txt"}), "w1");
+    pi.record_tool_result(&read).unwrap();
+    let edit = repeat_observation("edit", json!({"path": "notes.txt", "text": "new"}), "w2");
+    pi.record_tool_result(&edit).unwrap();
+    let again = repeat_observation("read", json!({"path": "notes.txt"}), "w3");
+    assert_not_replayed(&pi.advise_tool_call(&again).unwrap());
 }
 
 #[test]

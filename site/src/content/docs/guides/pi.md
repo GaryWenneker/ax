@@ -17,6 +17,8 @@ Ax does not copy the transcript, does not start a second agent loop, and does no
 | `advise` | Also return alternatives such as `rg` to `ax_explore` |
 | `optimize` | Approve a high-confidence deterministic alternative. Pi's `beforeToolCall` hook cannot rename a tool, so approval is a decision for the host, not a patched Pi runtime |
 
+In `optimize` mode an exact repeat (same tool, arguments and repository state) is replayed from the earlier output only when the tool is read-only (`read`, `cat`, `rg`, `grep`, `search`, `ax_search`, `ax_explore`, `ax_node`), the earlier call succeeded, and the host has set a known repository state. Shell commands, edits and other tools always run again, and any such call drops the cached reads, because it may have changed what they saw. Other repeats are only suggested.
+
 ```json
 {
   "pi": {

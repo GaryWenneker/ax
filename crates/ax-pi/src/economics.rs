@@ -150,6 +150,35 @@ fn graph_tool(name: &str) -> bool {
     )
 }
 
+/// Tools whose output depends only on their arguments and the repository
+/// state, so an earlier result can stand in for a repeat. Shell commands,
+/// edits and anything else that may change state or read the clock are not
+/// on this list.
+fn read_only_tool(name: &str) -> bool {
+    read_tool(name)
+        || search_tool(name)
+        || graph_tool(name)
+        || matches!(name.trim().to_ascii_lowercase().as_str(), "ax_search")
+}
+
+fn known_repository_state(state: &str) -> bool {
+    let state = state.trim();
+    !state.is_empty() && !state.eq_ignore_ascii_case("unknown")
+}
+
+/// A result may be replayed for an exact repeat only when it came from a
+/// read-only tool, succeeded, and was taken at a known repository state.
+pub(crate) fn replayable(observation: &ToolCallObservation) -> bool {
+    observation.success
+        && read_only_tool(&observation.tool_name)
+        && known_repository_state(&observation.repository_state)
+}
+
+/// A call that is not read-only may have changed what earlier reads saw.
+pub(crate) fn may_change_state(tool_name: &str) -> bool {
+    !read_only_tool(tool_name)
+}
+
 fn query_text(arguments: &Value) -> String {
     match arguments {
         Value::String(text) => text.clone(),
@@ -243,7 +272,15 @@ pub fn advise_observation(
             estimated_current_tokens: current,
             estimated_alternative_tokens: 0,
             estimated_reduction_percent: reduction_percent(current, 0),
-            confidence: Confidence::High,
+            // Only a read-only call at a known repository state is safe to
+            // replay automatically; anything else stays a suggestion.
+            confidence: if read_only_tool(&observation.tool_name)
+                && known_repository_state(&observation.repository_state)
+            {
+                Confidence::High
+            } else {
+                Confidence::Medium
+            },
             reason: "The same tool, arguments, and repository state already ran.".into(),
             rule: "exact-repeat".into(),
         });

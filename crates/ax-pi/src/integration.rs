@@ -16,8 +16,8 @@ use serde_json::Value;
 
 use crate::context::{cache_key_string, AxContextEngine, ContextCache};
 use crate::economics::{
-    advise_observation, context_token_cost, estimate_text, identity_hash, model_cost,
-    RepeatDetector,
+    advise_observation, context_token_cost, estimate_text, identity_hash, may_change_state,
+    model_cost, replayable, RepeatDetector,
 };
 use crate::events::{self, arguments_for_hash, output_text_for_estimate};
 use crate::report::{
@@ -273,9 +273,16 @@ impl PiIntegration {
                     self.options.oversized_token_threshold,
                     true,
                 );
-                if self.options.mode == OptimizationMode::Optimize {
-                    if let Some(cached) = state.output_cache.get(&identity) {
-                        advice.cached_output = Some(cached.clone());
+                let replaying = advice
+                    .apply
+                    .as_ref()
+                    .is_some_and(|item| item.rule == "exact-repeat");
+                if self.options.mode == OptimizationMode::Optimize && replaying {
+                    match state.output_cache.get(&identity) {
+                        Some(cached) => advice.cached_output = Some(cached.clone()),
+                        // Nothing safe to replay (the earlier call failed or a
+                        // later call may have changed its result): run it.
+                        None => advice.apply = None,
                     }
                 }
                 Ok(advice)
@@ -750,7 +757,11 @@ fn record_tool(state: &mut State, options: &PiOptions, observation: &ToolCallObs
         options.oversized_token_threshold,
         true,
     );
-    if options.mode == OptimizationMode::Optimize {
+    if may_change_state(&observation.tool_name) {
+        // An edit, shell command or unknown tool may have changed what the
+        // cached reads saw, so none of them can be replayed any more.
+        state.output_cache.clear();
+    } else if options.mode == OptimizationMode::Optimize && replayable(observation) {
         if let Some(text) = &observation.output_text_for_estimate {
             state.output_cache.insert(identity, text.clone());
         }
