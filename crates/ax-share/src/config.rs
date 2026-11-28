@@ -312,7 +312,7 @@ fn migrate_old_token(
         if matches!(&stored, Ok(Some(current)) if *current == inline) {
             return Ok(());
         }
-        return secrets.set(key, &inline);
+        return secrets.set(key, &inline).map_err(String::from);
     }
     if let Ok(Some(_)) = stored {
         return Ok(());
@@ -418,27 +418,35 @@ pub fn write_project_share_config_with(
     }
     let github = &config.github;
     let key = crate::secret::token_key(project_root, &github.repo_url);
+    // A token stored for the repo URL this save replaces is removed, not
+    // moved: it belongs to that repository's host. Nothing else would ever
+    // remove it, since every later lookup and clear uses the new URL.
+    let previous_url = read_share_section(&path)
+        .and_then(|share| share.github)
+        .map(|github| github.repo_url.trim().to_string())
+        .filter(|url| !url.is_empty() && url != github.repo_url.trim());
+    let remove_previous = || match &previous_url {
+        Some(url) => remove_token(secrets, &crate::secret::token_key(project_root, url)),
+        None => Ok(()),
+    };
     if github.clear_token {
-        // The plain-text locations are always cleared. A store that holds a
-        // token and cannot delete it fails the save, since that token would
-        // come back on the next load. A store that cannot be read at all
-        // holds nothing ax loads (a load falls back the same way), so the
-        // delete is still tried and the clear succeeds with a warning.
+        // The plain-text locations are always cleared. A store that may hold
+        // the token and cannot delete it fails the save, since that token
+        // would come back on the next load (also a store that is only locked
+        // or busy right now). Only when this machine has no credential store
+        // at all is there nothing to delete, and the clear succeeds.
         let deleted = match secrets.get(&key) {
-            Ok(Some(_)) => secrets.delete(&key),
             Ok(None) => Ok(()),
-            Err(e) => {
-                if secrets.delete(&key).is_err() {
-                    crate::secret::warn_unavailable_once(&e);
-                }
-                Ok(())
-            }
+            Ok(Some(_)) | Err(_) => remove_token(secrets, &key),
         };
+        let previous = remove_previous();
         write_git_token(token_store, &github.repo_url, None)?;
         write_share_at(&path, config)?;
         deleted?;
+        previous?;
         return Ok(path);
     }
+    remove_previous()?;
     if !github.token.trim().is_empty() {
         // No plain-text fallback: a token that cannot go to the credential
         // store is refused.
@@ -448,6 +456,20 @@ pub fn write_project_share_config_with(
     }
     write_share_at(&path, config)?;
     Ok(path)
+}
+
+/// Deletes the credential-store entry `key`. Only a machine without any
+/// credential store counts as done (with a one-time warning); a store that
+/// refuses the delete (locked, busy, denied) is an error.
+fn remove_token(secrets: &dyn ShareTokenStore, key: &str) -> Result<(), String> {
+    match secrets.delete(key) {
+        Ok(()) => Ok(()),
+        Err(e) if e.is_absent() => {
+            crate::secret::warn_unavailable_once(&e);
+            Ok(())
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 fn write_share_at(path: &Path, config: &ShareConfig) -> Result<(), String> {
@@ -534,7 +556,7 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    use crate::secret::MemoryStore;
+    use crate::secret::{MemoryStore, SecretError};
 
     fn load_from_project(project: &Path) -> ShareConfig {
         let home = TempDir::new().unwrap();
@@ -548,15 +570,18 @@ mod tests {
     /// A credential store that is not there (locked keychain, no secret
     /// service on a headless Linux box).
     struct Unavailable;
+    fn unavailable() -> SecretError {
+        SecretError::Absent("OS credential store unavailable".into())
+    }
     impl ShareTokenStore for Unavailable {
-        fn get(&self, _: &str) -> Result<Option<String>, String> {
-            Err("OS credential store unavailable".into())
+        fn get(&self, _: &str) -> Result<Option<String>, SecretError> {
+            Err(unavailable())
         }
-        fn set(&self, _: &str, _: &str) -> Result<(), String> {
-            Err("OS credential store unavailable".into())
+        fn set(&self, _: &str, _: &str) -> Result<(), SecretError> {
+            Err(unavailable())
         }
-        fn delete(&self, _: &str) -> Result<(), String> {
-            Err("OS credential store unavailable".into())
+        fn delete(&self, _: &str) -> Result<(), SecretError> {
+            Err(unavailable())
         }
     }
 
@@ -876,14 +901,16 @@ mod tests {
     #[derive(Default)]
     struct DeleteFails(MemoryStore);
     impl ShareTokenStore for DeleteFails {
-        fn get(&self, key: &str) -> Result<Option<String>, String> {
+        fn get(&self, key: &str) -> Result<Option<String>, SecretError> {
             self.0.get(key)
         }
-        fn set(&self, key: &str, token: &str) -> Result<(), String> {
+        fn set(&self, key: &str, token: &str) -> Result<(), SecretError> {
             self.0.set(key, token)
         }
-        fn delete(&self, _: &str) -> Result<(), String> {
-            Err("Cannot remove the token from the OS credential store".into())
+        fn delete(&self, _: &str) -> Result<(), SecretError> {
+            Err(SecretError::Refused(
+                "Cannot remove the token from the OS credential store".into(),
+            ))
         }
     }
 
@@ -1091,6 +1118,116 @@ mod tests {
         assert!(!cfg.github.token_set);
         let raw = fs::read_to_string(project.path().join(CONFIG_FILENAME)).unwrap();
         assert!(!raw.contains("glpat-old"), "{raw}");
+    }
+
+    /// A credential store that holds tokens but can be locked (a locked macOS
+    /// keychain, a locked or busy Secret Service): while locked every call
+    /// fails, and the tokens are all there again once it is unlocked.
+    #[derive(Default)]
+    struct Lockable {
+        tokens: MemoryStore,
+        locked: std::sync::atomic::AtomicBool,
+    }
+    impl Lockable {
+        fn set_locked(&self, locked: bool) {
+            self.locked
+                .store(locked, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn check(&self) -> Result<(), SecretError> {
+            if self.locked.load(std::sync::atomic::Ordering::SeqCst) {
+                Err(SecretError::Refused(
+                    "Cannot read the OS credential store; unlock it and try again".into(),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+    impl ShareTokenStore for Lockable {
+        fn get(&self, key: &str) -> Result<Option<String>, SecretError> {
+            self.check()?;
+            self.tokens.get(key)
+        }
+        fn set(&self, key: &str, token: &str) -> Result<(), SecretError> {
+            self.check()?;
+            self.tokens.set(key, token)
+        }
+        fn delete(&self, key: &str) -> Result<(), SecretError> {
+            self.check()?;
+            self.tokens.delete(key)
+        }
+    }
+
+    /// Clearing while the store is locked must not report success: the token
+    /// is still in the store and would be loaded again once it is unlocked.
+    #[test]
+    fn clear_token_fails_while_the_credential_store_is_locked() {
+        let project = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let store = home.path().join("auth/git-share.json");
+        let secrets = Lockable::default();
+        write_project_share_config_with(
+            project.path(),
+            &github_with_token("glpat-locked"),
+            &secrets,
+            &store,
+        )
+        .unwrap();
+
+        secrets.set_locked(true);
+        let mut clear = github_with_token("");
+        clear.github.clear_token = true;
+        let err = write_project_share_config_with(project.path(), &clear, &secrets, &store)
+            .expect_err("a clear the locked store did not carry out must fail");
+        assert!(err.contains("credential store"), "{err}");
+
+        // Once unlocked, clearing again removes it for good.
+        secrets.set_locked(false);
+        write_project_share_config_with(project.path(), &clear, &secrets, &store).unwrap();
+        let cfg = load_share_config_with(project.path(), &secrets, &store);
+        assert_eq!(cfg.github.token, "");
+        assert!(!cfg.github.token_set);
+    }
+
+    #[test]
+    fn changing_the_repo_url_removes_the_token_stored_for_the_old_url() {
+        let project = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let store = home.path().join("auth/git-share.json");
+        let secrets = MemoryStore::default();
+        let old_url = "https://gitlab.example.com/team/policy.git";
+        let new_url = "https://gitlab.example.com/team/other.git";
+        let old_key = crate::secret::token_key(project.path(), old_url);
+        write_project_share_config_with(
+            project.path(),
+            &github_with_token("glpat-a"),
+            &secrets,
+            &store,
+        )
+        .unwrap();
+        assert_eq!(secrets.get(&old_key).unwrap().as_deref(), Some("glpat-a"));
+
+        // A save on another URL, with or without a new token, leaves no token
+        // for the old URL behind; the old token is never moved to the new URL.
+        let mut moved = github_with_token("");
+        moved.github.repo_url = new_url.into();
+        write_project_share_config_with(project.path(), &moved, &secrets, &store).unwrap();
+        assert_eq!(secrets.get(&old_key).unwrap(), None);
+        assert!(
+            !load_share_config_with(project.path(), &secrets, &store)
+                .github
+                .token_set
+        );
+
+        // The same holds for a clear that also changes the URL.
+        let new_key = crate::secret::token_key(project.path(), new_url);
+        moved.github.token = "glpat-b".into();
+        write_project_share_config_with(project.path(), &moved, &secrets, &store).unwrap();
+        let mut clear = github_with_token("");
+        clear.github.clear_token = true;
+        write_project_share_config_with(project.path(), &clear, &secrets, &store).unwrap();
+        assert_eq!(secrets.get(&new_key).unwrap(), None);
+        assert_eq!(secrets.get(&old_key).unwrap(), None);
     }
 
     #[test]
