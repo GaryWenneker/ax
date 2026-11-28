@@ -184,7 +184,10 @@ pub async fn search_semantic_query(
             "no semantic embedding backend admitted; the runtime backend is a text hash",
         ));
     }
-    let query_vec = backend.embed(prompt)?;
+    let prompt = prompt.to_string();
+    let query_vec = tokio::task::spawn_blocking(move || backend.embed(&prompt))
+        .await
+        .map_err(|error| format!("neural task failed: {error}"))??;
     let hits = rank_stored_vectors(pool, &query_vec, model_id).await?;
     Ok(serde_json::json!({
         "hits": hits,
@@ -205,7 +208,7 @@ async fn rank_stored_vectors(
 ) -> Result<Vec<serde_json::Value>, String> {
     let query_dim = query_vec.len() as i64;
     let expected_bytes = ax_memory::embed::embedding_blob_byte_len(query_vec.len());
-    let mut ranked: Vec<(f32, serde_json::Value)> = Vec::new();
+    let mut ranked: TopHits<(String, String, String)> = TopHits::new(SEMANTIC_HITS);
     let mut rows = if let Some(model_id) = model_id.filter(|id| !id.is_empty()) {
         sqlx::query(
             "SELECT entity_kind, entity_id, model_id, embedding FROM neural_embedding
@@ -235,18 +238,121 @@ async fn rank_stored_vectors(
             continue;
         }
         let score = ax_memory::embed::cosine(query_vec, &vector);
-        ranked.push((
+        if !ranked.admits(score) {
+            continue;
+        }
+        ranked.push(
             score,
-            serde_json::json!({
-                "entityKind": row.get::<String, _>("entity_kind"),
-                "entityId": row.get::<String, _>("entity_id"),
-                "modelId": row.get::<String, _>("model_id"),
-                "score": score
-            }),
-        ));
+            (
+                row.get::<String, _>("entity_kind"),
+                row.get::<String, _>("entity_id"),
+                row.get::<String, _>("model_id"),
+            ),
+        );
     }
-    ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
-    Ok(ranked.into_iter().take(10).map(|(_, hit)| hit).collect())
+    Ok(ranked
+        .into_sorted()
+        .into_iter()
+        .map(|(score, (entity_kind, entity_id, model_id))| {
+            serde_json::json!({
+                "entityKind": entity_kind,
+                "entityId": entity_id,
+                "modelId": model_id,
+                "score": score
+            })
+        })
+        .collect())
+}
+
+/// How many stored vectors a semantic search returns.
+const SEMANTIC_HITS: usize = 10;
+
+/// The best `k` items by score, held in a bounded min-heap. Equal scores keep
+/// arrival order, so the result matches a stable descending sort truncated to `k`.
+struct TopHits<T> {
+    k: usize,
+    seq: u64,
+    heap: std::collections::BinaryHeap<std::cmp::Reverse<Ranked<T>>>,
+}
+
+struct Ranked<T> {
+    score: f32,
+    seq: u64,
+    item: T,
+}
+
+impl<T> Ranked<T> {
+    /// Greater means better: a higher score, then an earlier arrival.
+    fn rank_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.score
+            .total_cmp(&other.score)
+            .then_with(|| other.seq.cmp(&self.seq))
+    }
+}
+
+impl<T> PartialEq for Ranked<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.rank_cmp(other).is_eq()
+    }
+}
+impl<T> Eq for Ranked<T> {}
+impl<T> PartialOrd for Ranked<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl<T> Ord for Ranked<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.rank_cmp(other)
+    }
+}
+
+impl<T> TopHits<T> {
+    fn new(k: usize) -> Self {
+        Self {
+            k,
+            seq: 0,
+            heap: std::collections::BinaryHeap::with_capacity(k + 1),
+        }
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.heap.len()
+    }
+
+    /// True when an item with `score` would be kept. A later arrival never
+    /// beats an equal score already held, so ties are not admitted once full.
+    fn admits(&self, score: f32) -> bool {
+        if self.heap.len() < self.k {
+            return self.k > 0;
+        }
+        self.heap
+            .peek()
+            .is_some_and(|worst| score.total_cmp(&worst.0.score).is_gt())
+    }
+
+    fn push(&mut self, score: f32, item: T) {
+        let seq = self.seq;
+        self.seq += 1;
+        if !self.admits(score) {
+            return;
+        }
+        self.heap
+            .push(std::cmp::Reverse(Ranked { score, seq, item }));
+        if self.heap.len() > self.k {
+            self.heap.pop();
+        }
+    }
+
+    /// Best first.
+    fn into_sorted(self) -> Vec<(f32, T)> {
+        let mut kept: Vec<Ranked<T>> = self.heap.into_iter().map(|entry| entry.0).collect();
+        kept.sort_by(|a, b| b.rank_cmp(a));
+        kept.into_iter()
+            .map(|entry| (entry.score, entry.item))
+            .collect()
+    }
 }
 
 /// Replaces the project's earlier suggestion rows in one transaction.
@@ -730,6 +836,23 @@ mod tests {
             .await
             .expect("temp database");
         (dir, database)
+    }
+
+    #[test]
+    fn top_hits_keeps_at_most_k_and_matches_a_full_stable_sort() {
+        let scores: Vec<f32> = (0..500u32)
+            .map(|i| ((i.wrapping_mul(2_654_435_761) >> 7) % 37) as f32 / 7.0)
+            .collect();
+        let mut top = TopHits::new(10);
+        for (index, score) in scores.iter().enumerate() {
+            top.push(*score, index);
+            assert!(top.len() <= 10);
+        }
+        let mut expected: Vec<(f32, usize)> = scores.iter().copied().zip(0..).collect();
+        expected.sort_by(|a, b| b.0.total_cmp(&a.0));
+        expected.truncate(10);
+        assert_eq!(top.into_sorted(), expected);
+        assert!(TopHits::<usize>::new(10).into_sorted().is_empty());
     }
 
     #[tokio::test]
