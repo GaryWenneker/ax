@@ -36,10 +36,7 @@ pub struct WorkspaceBundle {
     pub graph_pool: SqlitePool,
     pub policy: PolicyApiState,
     pub ship: ShipApiState,
-    _watch_task: Option<JoinHandle<()>>,
-    _sync_task: Option<JoinHandle<()>>,
-    _cleanup_task: Option<JoinHandle<()>>,
-    _dedup_task: Option<JoinHandle<()>>,
+    tasks: BackgroundTasks,
     /// Set once [`WorkspaceBundle::shut_down`] has closed the pools.
     closed: bool,
 }
@@ -289,6 +286,26 @@ pub struct SwitchInfo {
     pub label: String,
 }
 
+/// The background tasks of one served project (Ship watch, Ax sync, cleanup,
+/// policy dedup). They stop with the bundle, also when it is dropped without
+/// [`WorkspaceBundle::close`]; a leftover watcher would keep indexing the
+/// project next to the next one opened on it.
+struct BackgroundTasks(Vec<JoinHandle<()>>);
+
+impl BackgroundTasks {
+    fn abort_all(&mut self) {
+        for task in self.0.drain(..) {
+            task.abort();
+        }
+    }
+}
+
+impl Drop for BackgroundTasks {
+    fn drop(&mut self) {
+        self.abort_all();
+    }
+}
+
 impl WorkspaceBundle {
     pub async fn open(root: PathBuf, readonly: bool) -> Result<Self, String> {
         let db_path = root.join(".ax").join("ax.db");
@@ -374,10 +391,12 @@ impl WorkspaceBundle {
             graph_pool,
             policy,
             ship,
-            _watch_task: Some(watch_task),
-            _sync_task: sync_task,
-            _cleanup_task: cleanup_task,
-            _dedup_task: dedup_task,
+            tasks: BackgroundTasks(
+                [Some(watch_task), sync_task, cleanup_task, dedup_task]
+                    .into_iter()
+                    .flatten()
+                    .collect(),
+            ),
             closed: false,
         })
     }
@@ -388,17 +407,7 @@ impl WorkspaceBundle {
 
     /// Stop the background tasks and close both pools on `ax.db`.
     async fn shut_down(&mut self) {
-        for task in [
-            self._watch_task.take(),
-            self._sync_task.take(),
-            self._cleanup_task.take(),
-            self._dedup_task.take(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            task.abort();
-        }
+        self.tasks.abort_all();
         self.graph_pool.close().await;
         self.policy.store.pool().close().await;
         crate::node_tracker::forget(&self.db_path);
@@ -569,6 +578,25 @@ mod policy_dedup_tests {
         }
         task.abort();
         assert_eq!(remaining, 1);
+    }
+}
+
+#[cfg(test)]
+mod background_task_tests {
+    use super::BackgroundTasks;
+
+    #[tokio::test]
+    async fn dropping_the_tasks_stops_them() {
+        let task = tokio::spawn(std::future::pending::<()>());
+        let handle = task.abort_handle();
+        drop(BackgroundTasks(vec![task]));
+        for _ in 0..100 {
+            if handle.is_finished() {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("a dropped bundle left its background task running");
     }
 }
 

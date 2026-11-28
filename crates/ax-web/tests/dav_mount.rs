@@ -1,7 +1,8 @@
 //! `/ax/` alias and `/api/dav/mount` behaviors from docs/specs/webdav-mount-settings.md.
 
+mod common;
+
 use std::path::Path;
-use std::sync::OnceLock;
 
 use ax_policy::parse_rule_file;
 use ax_web::WebHub;
@@ -16,17 +17,9 @@ use tower_http::cors::{Any, CorsLayer};
 const RULE: &str =
     "---\nid: english-only\nlevel: WARNING\nalwaysApply: true\n---\n\nWrite English.";
 
-static HOME: OnceLock<TempDir> = OnceLock::new();
-
 fn isolate_home() -> &'static Path {
-    HOME.get_or_init(|| {
-        let dir = tempfile::tempdir().unwrap();
-        std::env::set_var("HOME", dir.path());
-        std::env::set_var("AX_HOME_DIR", dir.path());
-        std::env::set_var("AX_DAV_MOUNT_DRY_RUN", "1");
-        dir
-    })
-    .path()
+    std::env::set_var("AX_DAV_MOUNT_DRY_RUN", "1");
+    common::isolate_home()
 }
 
 async fn fixture(readonly: bool) -> (TempDir, Router) {

@@ -1,8 +1,9 @@
 //! Vault follow-ups from docs/specs/obsidian-links.md: `app.json` defaults (V) and the
 //! `global/` folders (G).
 
+mod common;
+
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 use ax_global_db::policy::PolicyKind;
 use ax_web::WebHub;
@@ -14,20 +15,12 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 use tower_http::cors::{Any, CorsLayer};
 
-static HOME: OnceLock<TempDir> = OnceLock::new();
 /// The tests share one `global.db`; each test that uses it holds this for its whole run.
 static GLOBAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Point `HOME` and `AX_GLOBAL_DB` at a temp dir shared by every test in this binary.
 fn isolate() -> PathBuf {
-    let dir = HOME.get_or_init(|| {
-        let dir = tempfile::tempdir().unwrap();
-        std::env::set_var("HOME", dir.path());
-        std::env::set_var("AX_HOME_DIR", dir.path());
-        std::env::set_var("AX_GLOBAL_DB", dir.path().join("global.db"));
-        dir
-    });
-    dir.path().join("global.db")
+    common::global_db(common::isolate_home())
 }
 
 struct Fx {
@@ -201,7 +194,7 @@ async fn n2_tests_use_a_temp_global_db() {
     let path = isolate();
     assert_eq!(ax_global_db::global_db_path().unwrap(), path);
     let home = ax_utils::paths::home_dir().unwrap();
-    assert_eq!(home, HOME.get().unwrap().path());
+    assert_eq!(home, common::isolate_home());
     assert!(path.starts_with(&home), "{path:?} not under {home:?}");
     assert!(home
         .canonicalize()

@@ -1,6 +1,8 @@
 //! A writable Command Center beyond loopback needs a login or a share token.
 //! Separate process: this test sets environment variables.
 
+mod common;
+
 use std::time::Duration;
 
 use ax_web::ServeOptions;
@@ -10,8 +12,7 @@ async fn an_anonymous_lan_bind_refuses_to_start() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("proj");
     std::fs::create_dir_all(root.join(".ax")).unwrap();
-    std::env::set_var("AX_HOME_DIR", dir.path());
-    std::env::set_var("AX_GLOBAL_DB", dir.path().join("global.db"));
+    common::isolate_home_at(dir.path());
     std::env::remove_var("AX_SHARE_TOKEN");
     std::env::remove_var("AX_WEB_READONLY");
     std::env::remove_var("AX_WEB_ALLOW_ANONYMOUS_LAN");

@@ -1,7 +1,7 @@
 //! Replay routes behind the manifest Authority panel, per
 //! docs/specs/specs-hierarchy-ui/REPLAY-ACTION.md.
 
-use std::sync::OnceLock;
+mod common;
 
 use ax_usage::context_authority::{
     resolve_context, store_manifest, store_receipt, ContextCandidate, ContextManifest, ReplayMode,
@@ -15,17 +15,9 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 use tower_http::cors::{Any, CorsLayer};
 
-static HOME: OnceLock<TempDir> = OnceLock::new();
-
 /// Point `HOME`, `AX_HOME_DIR`, and `AX_GLOBAL_DB` at a temp dir shared by every test in this binary.
 fn isolate() {
-    HOME.get_or_init(|| {
-        let dir = tempfile::tempdir().unwrap();
-        std::env::set_var("HOME", dir.path());
-        std::env::set_var("AX_HOME_DIR", dir.path());
-        std::env::set_var("AX_GLOBAL_DB", dir.path().join("global.db"));
-        dir
-    });
+    common::isolate_home();
 }
 
 struct Fx {

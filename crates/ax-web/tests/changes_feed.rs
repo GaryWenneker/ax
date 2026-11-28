@@ -1,6 +1,7 @@
 //! `GET /api/changes` (docs/specs/live-updates.md).
 
-use std::sync::OnceLock;
+mod common;
+
 use std::time::Duration;
 
 use ax_web::WebHub;
@@ -11,16 +12,8 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 use tower_http::cors::CorsLayer;
 
-static HOME: OnceLock<TempDir> = OnceLock::new();
-
 fn isolate() {
-    HOME.get_or_init(|| {
-        let dir = tempfile::tempdir().unwrap();
-        std::env::set_var("HOME", dir.path());
-        std::env::set_var("AX_HOME_DIR", dir.path());
-        std::env::set_var("AX_GLOBAL_DB", dir.path().join("global.db"));
-        dir
-    });
+    common::isolate_home();
 }
 
 async fn open_hub() -> (TempDir, WebHub) {
