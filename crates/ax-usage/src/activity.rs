@@ -298,6 +298,9 @@ pub async fn record_activity(
     .map_err(|e| e.to_string())?;
 
     let inserted = result.rows_affected() > 0;
+    if inserted {
+        crate::retention::maybe_prune_activity(&pool, root, &project_id, &event.event_id).await;
+    }
     let stored = load_by_idempotency(&pool, &project_id, &event.idempotency_key)
         .await?
         .ok_or_else(|| {
@@ -564,7 +567,15 @@ mod tests {
 
     impl Drop for TempRoot {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+            // A closed pool's SQLite worker thread can hold the database file a
+            // moment longer, and Windows refuses to remove an open file, so try
+            // again for up to two seconds.
+            for _ in 0..100 {
+                if std::fs::remove_dir_all(&self.0).is_ok() || !self.0.exists() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
         }
     }
 
@@ -810,5 +821,79 @@ mod tests {
         assert!(path.is_dir());
         drop(root);
         assert!(!path.exists());
+    }
+
+    async fn insert_old_event(root: &Path, id: &str) {
+        let pool = open_pool().await.unwrap();
+        sqlx::query(
+            "INSERT INTO ax_activity_event (event_id, idempotency_key, timestamp_ms, source,
+               project_id, operation, status, summary)
+             VALUES (?, ?, 0, 'cli', ?, 'old.op', 'success', 'old')",
+        )
+        .bind(id)
+        .bind(id)
+        .bind(project_scope(root))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    fn record(key: &str) -> ActivityRecord {
+        ActivityRecord {
+            idempotency_key: key.into(),
+            operation: "graph.explore".into(),
+            summary: "now".into(),
+            source: Some(ActivitySource::Cli),
+            ..ActivityRecord::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn activity_is_kept_without_a_retention_setting() {
+        let (root, _guard) = tmp_root().await;
+        insert_old_event(&root, "ancient").await;
+        record_activity(&root, record("fresh")).await.unwrap();
+        let listed = list_activity(&root, None, None, 10).await.unwrap();
+        assert_eq!(listed.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn activity_retention_from_ship_toml_prunes_old_events_on_write() {
+        let (root, _guard) = tmp_root().await;
+        std::fs::create_dir_all(root.join(".ax")).unwrap();
+        std::fs::write(
+            root.join(".ax/ship.toml"),
+            "[retention]\nactivity_days = 90\n",
+        )
+        .unwrap();
+        insert_old_event(&root, "ancient").await;
+        record_activity(&root, record("fresh")).await.unwrap();
+        let listed = list_activity(&root, None, None, 10).await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].idempotency_key, "fresh");
+    }
+
+    #[tokio::test]
+    async fn an_event_alone_over_the_byte_cap_is_still_stored() {
+        let (root, _guard) = tmp_root().await;
+        std::fs::create_dir_all(root.join(".ax")).unwrap();
+        std::fs::write(
+            root.join(".ax/ship.toml"),
+            "[retention]\nactivity_max_bytes = 50\n",
+        )
+        .unwrap();
+        insert_old_event(&root, "ancient").await;
+        let mut big = record("big");
+        big.summary = "word ".repeat(60);
+        let stored = record_activity(&root, big).await.unwrap();
+        assert_eq!(stored.idempotency_key, "big");
+        let listed = list_activity(&root, None, None, 10).await.unwrap();
+        let keys: Vec<_> = listed.iter().map(|e| e.idempotency_key.as_str()).collect();
+        assert_eq!(keys, ["big"]);
+        // A retry finds the stored row instead of inserting a second one.
+        let mut again = record("big");
+        again.summary = "word ".repeat(60);
+        let retried = record_activity(&root, again).await.unwrap();
+        assert_eq!(retried.event_id, stored.event_id);
     }
 }

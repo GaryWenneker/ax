@@ -162,8 +162,8 @@ The `/api/ship/sonar/*` endpoints (discover, install, start, stop, bootstrap, se
 | GET | `/api/usage/pricing` | Model price catalog |
 | GET | `/api/usage/pricing/status` | Last price sync |
 | GET | `/api/usage/pricing/history` | Price over time |
-| GET | `/api/usage/pricing/agents` | Agent / model mapping |
-| POST | `/api/usage/pricing/sync` | Sync prices now |
+| GET | `/api/usage/pricing/agents` | Coding-agent rows from the last `days` calendar days (default 30, 1-365). ax does not fetch this source yet, so the list is empty unless rows were stored by an earlier version |
+| POST | `/api/usage/pricing/sync` | Sync prices now from OpenRouter (`aa_price_count`, `aa_benchmark_count` and `coding_agent_count` in the reply are always 0) |
 | GET | `/api/usage/mcp-trace/events` | Live MCP verbose stream (SSE) |
 | GET | `/api/usage/mcp-trace/chunk` | Older log lines |
 | GET | `/api/usage/mcp-trace/path` | Path of today's log file. When this project has no verbose log, the local owner's own writable Command Center follows the most recently written log of another recent project; read-only (share) viewers and other callers only ever see this project's log |
