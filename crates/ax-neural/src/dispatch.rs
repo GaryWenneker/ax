@@ -374,18 +374,22 @@ pub async fn handle(
             let Some(pool) = pool else {
                 return Err("no database".into());
             };
+            // The gate reads the evidence registered with the model. A caller
+            // claim that it beats the baseline is refused rather than ignored,
+            // so nobody relies on a check that does not exist.
+            for claim in ["beatsBaseline", "regressionsClear"] {
+                if args.get(claim).and_then(|v| v.as_bool()) == Some(true) {
+                    return Err(format!(
+                        "{claim} is not accepted: promotion checks the bake-off evidence registered with the model (metrics.bakeoff.families)"
+                    ));
+                }
+            }
             promote(
                 pool,
                 &project_id(root),
                 &required_str(args, "modelId")?,
                 &required_str(args, "version")?,
                 args.get("explicit")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false),
-                args.get("beatsBaseline")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false),
-                args.get("regressionsClear")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false),
             )
@@ -921,10 +925,10 @@ mod tests {
             dataset_version: "ds",
             checksum: "abc",
             platforms: "macos-arm64",
-            metrics_json: "{}",
+            metrics_json: crate::learning::PASSING_EVIDENCE,
         };
         register(pool, &model).await.unwrap();
-        crate::store::promote(pool, &project, "candidate", "1", true, true, true)
+        crate::store::promote(pool, &project, "candidate", "1", true)
             .await
             .unwrap();
 
@@ -1363,6 +1367,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn promote_reads_the_registered_evidence_and_refuses_caller_claims() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = open(dir.path()).await;
+        let pool = database.pool();
+        let register = |version: &str, metrics: Value| json!({ "modelId": "x", "version": version, "checksum": "c", "metrics": metrics });
+        handle(
+            dir.path(),
+            "register",
+            &register("1", json!({})),
+            Some(pool),
+        )
+        .await
+        .unwrap();
+        let evidence: Value = serde_json::from_str(crate::learning::PASSING_EVIDENCE).unwrap();
+        handle(dir.path(), "register", &register("2", evidence), Some(pool))
+            .await
+            .unwrap();
+        let promote = |version: &str, extra: Value| {
+            let mut args = json!({ "modelId": "x", "version": version, "explicit": true });
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            args
+        };
+        let bare = handle(dir.path(), "promote", &promote("1", json!({})), Some(pool)).await;
+        assert!(bare.unwrap_err().contains("no bake-off evidence"));
+        let claimed = json!({ "beatsBaseline": true, "regressionsClear": true });
+        let claim = handle(dir.path(), "promote", &promote("1", claimed), Some(pool)).await;
+        assert!(claim.unwrap_err().contains("beatsBaseline is not accepted"));
+        let unset = json!({ "beatsBaseline": false, "regressionsClear": false });
+        let done = handle(dir.path(), "promote", &promote("2", unset), Some(pool))
+            .await
+            .unwrap();
+        assert_eq!(done["promoted"], true);
+    }
+
+    #[tokio::test]
     async fn rows_written_under_the_old_raw_project_key_are_kept() {
         let dir = tempfile::tempdir().unwrap();
         let real = dir.path().join("real");
@@ -1647,17 +1688,21 @@ mod tests {
             "modelType": "reranker",
             "datasetVersion": "coding-v1",
             "platforms": "macos-arm64",
-            "metrics": { "precision": 0.8 }
+            "metrics": evidence_with_precision()
         })
+    }
+
+    fn evidence_with_precision() -> Value {
+        let mut metrics: Value = serde_json::from_str(crate::learning::PASSING_EVIDENCE).unwrap();
+        metrics["precision"] = json!(0.8);
+        metrics
     }
 
     fn promote_args(version: &str) -> Value {
         json!({
             "modelId": "candidate",
             "version": version,
-            "explicit": true,
-            "beatsBaseline": true,
-            "regressionsClear": true
+            "explicit": true
         })
     }
 
@@ -1713,7 +1758,7 @@ mod tests {
         assert_eq!(row.get::<String, _>("dataset_version"), "coding-v1");
         assert_eq!(row.get::<String, _>("platforms"), "macos-arm64");
         let metrics: Value = serde_json::from_str(&row.get::<String, _>("metrics_json")).unwrap();
-        assert_eq!(metrics, json!({ "precision": 0.8 }));
+        assert_eq!(metrics, evidence_with_precision());
         assert_eq!(row.get::<i64, _>("promoted"), 0);
 
         let missing = handle(

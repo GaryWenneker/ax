@@ -149,19 +149,54 @@ pub fn secret_shaped(text: &str) -> bool {
     pattern_hit || ax_memory::redact_secrets(text) != text
 }
 
-/// Gate promotion on an explicit command and a **measured** bake-off.
-/// Caller `beats_baseline` / `regressions_clear` flags are ignored (API compatibility only).
-pub async fn promotion_allowed(
-    explicit: bool,
-    _claimed_beats_baseline: bool,
-    _claimed_regressions_clear: bool,
-) -> Result<(), String> {
+/// Registered metrics that clear the promotion gate on the built-in fixture.
+#[cfg(test)]
+pub(crate) const PASSING_EVIDENCE: &str = r#"{"bakeoff":{"families":{"named_trigger":{"scored":1,"hits":1},"paraphrase":{"scored":1,"hits":1},"abstention":{"scored":1,"hits":1},"delivery_budget":{"scored":1,"hits":1}}}}"#;
+
+/// Gates promotion of one registered model version on an explicit command and
+/// on that version's own bake-off evidence: the `bakeoff.families` object in
+/// the metrics it was registered with (`{family: {scored, hits}}`).
+///
+/// The evidence must score the same questions per family as the built-in
+/// coding fixture, keep every locked family fully hit, and beat hash-v1 on
+/// paraphrase. hash-v1 is scored on the fixture in this call, not read from a
+/// stored constant.
+pub async fn promotion_allowed(explicit: bool, metrics_json: &str) -> Result<(), String> {
     if !explicit {
         return Err("promotion requires an explicit command".into());
     }
+    let metrics: serde_json::Value = serde_json::from_str(metrics_json).unwrap_or(Value::Null);
+    let Some(candidate) = metrics["bakeoff"]["families"].as_object() else {
+        return Err(
+            "promotion refused: the model version has no bake-off evidence; register it with metrics.bakeoff.families".into(),
+        );
+    };
     let report = crate::bakeoff::baseline_report(crate::CODING_FIXTURE).await?;
-    if !locked_families_clear(&report) {
-        return Err("promotion blocked: bake-off regressions on locked families".into());
+    let baseline = &report["families"];
+    for (family, _) in crate::bakeoff::FAMILIES {
+        let expected = baseline[family]["scored"].as_u64().unwrap_or(0);
+        let scored = candidate
+            .get(family)
+            .and_then(|value| value["scored"].as_u64());
+        if scored != Some(expected) {
+            return Err(format!(
+                "promotion refused: the bake-off evidence does not score the built-in fixture ({family} scored {scored:?}, expected {expected})"
+            ));
+        }
+    }
+    if !locked_families_clear(&json!({ "families": candidate })) {
+        return Err(
+            "promotion refused: the candidate misses questions in the locked families".into(),
+        );
+    }
+    let candidate: std::collections::HashMap<String, Value> = candidate
+        .iter()
+        .map(|(family, value)| (family.clone(), value.clone()))
+        .collect();
+    if !crate::lexical::beats_baseline(baseline, &candidate) {
+        return Err(
+            "promotion refused: the candidate does not beat hash-v1 on the built-in fixture".into(),
+        );
     }
     Ok(())
 }
@@ -477,22 +512,44 @@ mod tests {
 
     #[tokio::test]
     async fn automatic_promotion_flag_is_not_enough() {
-        assert!(promotion_allowed(false, true, true).await.is_err());
-        // Caller bake-off claims are ignored; a measured clear bake-off is enough.
-        assert!(promotion_allowed(true, false, false).await.is_ok());
-        assert!(promotion_allowed(true, true, true).await.is_ok());
+        assert_eq!(
+            promotion_allowed(false, PASSING_EVIDENCE)
+                .await
+                .unwrap_err(),
+            "promotion requires an explicit command"
+        );
+        assert!(promotion_allowed(true, PASSING_EVIDENCE).await.is_ok());
     }
 
     #[tokio::test]
-    async fn promotion_ignores_caller_bakeoff_claims() {
-        assert!(
-            promotion_allowed(true, true, false).await.is_ok(),
-            "false regressionsClear from the caller must not block a clear measured bake-off"
+    async fn a_candidate_without_its_own_bakeoff_evidence_is_refused() {
+        for metrics in ["{}", "not json", r#"{"bakeoff":{}}"#] {
+            let error = promotion_allowed(true, metrics).await.unwrap_err();
+            assert!(error.contains("no bake-off evidence"), "{metrics}: {error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_candidate_must_beat_the_measured_baseline_and_keep_the_locked_families() {
+        let tie = PASSING_EVIDENCE.replace(
+            r#""paraphrase":{"scored":1,"hits":1}"#,
+            r#""paraphrase":{"scored":1,"hits":0}"#,
         );
-        assert!(
-            promotion_allowed(true, false, true).await.is_ok(),
-            "false beatsBaseline from the caller must not block a clear measured bake-off"
+        assert_ne!(tie, PASSING_EVIDENCE);
+        let error = promotion_allowed(true, &tie).await.unwrap_err();
+        assert!(error.contains("does not beat"), "{error}");
+        let regressed = PASSING_EVIDENCE.replace(
+            r#""abstention":{"scored":1,"hits":1}"#,
+            r#""abstention":{"scored":1,"hits":0}"#,
         );
+        let error = promotion_allowed(true, &regressed).await.unwrap_err();
+        assert!(error.contains("locked families"), "{error}");
+        let other_fixture = PASSING_EVIDENCE.replace(
+            r#""named_trigger":{"scored":1,"hits":1}"#,
+            r#""named_trigger":{"scored":7,"hits":7}"#,
+        );
+        let error = promotion_allowed(true, &other_fixture).await.unwrap_err();
+        assert!(error.contains("built-in fixture"), "{error}");
     }
 
     #[test]

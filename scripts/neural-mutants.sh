@@ -188,7 +188,7 @@ mutant export-no-db-check cli "$CLI" '    if !db_path.is_file() {
 mutant cli-default-not-status cli "$MAIN" 'Some(NeuralCommands::Status) | None => Ok(("status", json!({}))),' 'Some(NeuralCommands::Status) | None => Ok(("explain", json!({}))),'
 mutant cli-predict-field cli "$MAIN" 'Ok(("predict", json!({ "task": task })))' 'Ok(("predict", json!({ "query": task })))'
 mutant cli-model-status-command cli "$MAIN" 'Ok(("model_status", json!({ "modelId": model_id })))' 'Ok(("model-status", json!({ "modelId": model_id })))'
-mutant cli-promote-flag cli "$MAIN" '"beatsBaseline": beats_baseline,' '"beats_baseline": beats_baseline,'
+mutant cli-promote-flag cli "$MAIN" '"explicit": explicit' '"explicit": false'
 mutant cli-rollback-field cli "$MAIN" 'Ok(("rollback", json!({ "modelId": model_id })))' 'Ok(("rollback", json!({ "model_id": model_id })))'
 mutant cli-export-has-command cli "$MAIN" 'Err("export writes a file and has no MCP command".into())' 'Ok(("export", json!({})))'
 

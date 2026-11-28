@@ -3130,8 +3130,8 @@ fn extra_tools() -> Vec<Value> {
         }),
         json!({
             "name": "ax_neural_promote",
-            "description": "Explicit model promotion; needs explicit, beatsBaseline, and regressionsClear. Automatic promotion is refused. CLI: ax neural promote",
-            "inputSchema": { "type": "object", "properties": { "modelId": { "type": "string" }, "version": { "type": "string" }, "explicit": { "type": "boolean" }, "beatsBaseline": { "type": "boolean" }, "regressionsClear": { "type": "boolean" } }, "required": ["modelId", "version"] }
+            "description": "Explicit model promotion; needs explicit and bake-off evidence registered with the version (metrics.bakeoff.families) that keeps the locked families and beats hash-v1 on the built-in fixture. Automatic promotion is refused. CLI: ax neural promote",
+            "inputSchema": { "type": "object", "properties": { "modelId": { "type": "string" }, "version": { "type": "string" }, "explicit": { "type": "boolean" } }, "required": ["modelId", "version"] }
         }),
         json!({
             "name": "ax_neural_rollback",

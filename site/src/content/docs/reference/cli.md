@@ -1272,7 +1272,7 @@ ax neural export --out neural-feedback.json
 - `graph` reads this project's edges and successful feedback and stores suggestions labeled `predicted`. It never writes edges. `--edges '<json array>'` previews suggestions for the edges you pass and stores nothing. It returns nothing while `neural.graph.enabled` is false.
 - `rank <query> --blocks '<json array>'` ranks blocks the way preflight does.
 - `register <model-id> <version> <checksum>` takes `--model-type`, `--dataset-version`, `--platforms`, and `--metrics '<json object>'`. Registering does not promote.
-- `promote` is refused unless you pass `--explicit`, `--beats-baseline`, and `--regressions-clear`.
+- `promote` is refused unless you pass `--explicit` and the version was registered with bake-off evidence in `--metrics`: a `bakeoff.families` object (`{family: {scored, hits}}`) that scores the same questions as the built-in coding fixture, hits every `named_trigger`, `abstention` and `delivery_budget` question, and beats hash-v1 on `paraphrase`. hash-v1 is scored on the fixture during the promote.
 - `export --out <file>` writes feedback rows for an offline trainer. It leaves out the project path, execution ids, and secret-shaped rows. It has no MCP tool and sends nothing.
 
 ---

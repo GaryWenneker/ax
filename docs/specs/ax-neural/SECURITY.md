@@ -29,7 +29,7 @@ Reviewed against the code in `crates/ax-neural`, `crates/ax-mcp/src/neural_tool.
 ## Models
 
 - `hash-v1` cannot be inserted into `neural_embedding`. An unadmitted model cannot be inserted either. This run admitted nobody.
-- `automatic_training` and `automatic_model_promotion` are rejected at config load. `promote` requires `explicit: true` and then **re-runs** the coding-fixture bake-off. Locked families (`named_trigger`, `abstention`, `delivery_budget`) must clear. Caller `beatsBaseline` / `regressionsClear` flags are ignored.
+- `automatic_training` and `automatic_model_promotion` are rejected at config load. `promote` requires `explicit: true` and bake-off evidence registered with that version (`metrics.bakeoff.families`). The evidence must score the same questions as the built-in coding fixture, clear the locked families (`named_trigger`, `abstention`, `delivery_budget`), and beat hash-v1 on paraphrase; hash-v1 is scored on the fixture during the promote. A caller `beatsBaseline` / `regressionsClear` claim is refused.
 - Promotion, rollback, and stored evaluations write `neural_audit`. Rollback selects the previously **promoted** version from that audit history (not a never-promoted registered neighbour). It does not delete rows.
 
 ## Sharing and projects

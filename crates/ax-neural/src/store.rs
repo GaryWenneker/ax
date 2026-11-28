@@ -482,38 +482,54 @@ pub async fn register(pool: &SqlitePool, model: &ModelRecord<'_>) -> Result<(), 
     .map_err(|error| error.to_string())
 }
 
-/// Makes `version` the one promoted version of `model_id`. The check, the
-/// flag change and the audit row commit together or not at all.
+/// Makes `version` the one promoted version of `model_id`, once
+/// [`promotion_allowed`] accepts the bake-off evidence registered with that
+/// version. The flag change and the audit row commit together or not at all,
+/// and only when the registered metrics are still the ones that were checked.
 pub async fn promote(
     pool: &SqlitePool,
     project_id: &str,
     model_id: &str,
     version: &str,
     explicit: bool,
-    beats_baseline: bool,
-    regressions_clear: bool,
 ) -> Result<(), String> {
     if model_id == ax_memory::embed::ACTIVE_MODEL {
         return Err("hash-v1 is not a neural registry model".into());
     }
-    promotion_allowed(explicit, beats_baseline, regressions_clear).await?;
+    if !explicit {
+        return Err("promotion requires an explicit command".into());
+    }
+    let checked = registered_metrics(pool, model_id, version)
+        .await?
+        .ok_or_else(|| "model version is not registered".to_string())?;
+    promotion_allowed(explicit, &checked).await?;
     let mut tx = pool
         .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| error.to_string())?;
-    let exists: i64 =
-        sqlx::query("SELECT COUNT(*) AS n FROM neural_model WHERE model_id = ? AND version = ?")
-            .bind(model_id)
-            .bind(version)
-            .fetch_one(&mut *tx)
-            .await
-            .map(|row| row.get("n"))
-            .map_err(|error| error.to_string())?;
-    if exists == 0 {
-        return Err("model version is not registered".into());
+    let current = registered_metrics(&mut *tx, model_id, version).await?;
+    if current.as_deref() != Some(checked.as_str()) {
+        return Err("model version changed while its evidence was checked; try again".into());
     }
     activate(&mut tx, project_id, model_id, version, "promote").await?;
     tx.commit().await.map_err(|error| error.to_string())
+}
+
+async fn registered_metrics<'e, E>(
+    executor: E,
+    model_id: &str,
+    version: &str,
+) -> Result<Option<String>, String>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    sqlx::query("SELECT metrics_json FROM neural_model WHERE model_id = ? AND version = ?")
+        .bind(model_id)
+        .bind(version)
+        .fetch_optional(executor)
+        .await
+        .map(|row| row.map(|row| row.get("metrics_json")))
+        .map_err(|error| error.to_string())
 }
 
 /// Returns `model_id` to the version that was active before the current one,
@@ -1029,20 +1045,18 @@ mod tests {
                 dataset_version: "ds",
                 checksum,
                 platforms: "macos-arm64",
-                metrics_json: "{}",
+                metrics_json: crate::learning::PASSING_EVIDENCE,
             };
             register(database.pool(), &model).await.unwrap();
         }
-        assert!(
-            promote(database.pool(), "p", "candidate", "2", false, true, true)
-                .await
-                .is_err()
-        );
+        assert!(promote(database.pool(), "p", "candidate", "2", false)
+            .await
+            .is_err());
         // Both versions must be promoted before rollback can select the previous promoted one.
-        promote(database.pool(), "p", "candidate", "1", true, false, false)
+        promote(database.pool(), "p", "candidate", "1", true)
             .await
             .unwrap();
-        promote(database.pool(), "p", "candidate", "2", true, false, false)
+        promote(database.pool(), "p", "candidate", "2", true)
             .await
             .unwrap();
         assert_eq!(
@@ -1072,15 +1086,15 @@ mod tests {
                 dataset_version: "ds",
                 checksum,
                 platforms: "macos-arm64",
-                metrics_json: "{}",
+                metrics_json: crate::learning::PASSING_EVIDENCE,
             };
             register(database.pool(), &model).await.unwrap();
         }
-        promote(database.pool(), "p", "roll", "1", true, false, false)
+        promote(database.pool(), "p", "roll", "1", true)
             .await
             .unwrap();
         // v2 is registered but never promoted.
-        promote(database.pool(), "p", "roll", "3", true, false, false)
+        promote(database.pool(), "p", "roll", "3", true)
             .await
             .unwrap();
         let version = rollback(database.pool(), "p", "roll").await.unwrap();
@@ -1322,13 +1336,11 @@ mod tests {
             dataset_version: "ds",
             checksum: "abc",
             platforms: "macos-arm64",
-            metrics_json: "{}",
+            metrics_json: crate::learning::PASSING_EVIDENCE,
         };
         register(pool, &model).await.unwrap();
         let before = wall_clock_seconds();
-        promote(pool, "p", "candidate", "1", true, true, true)
-            .await
-            .unwrap();
+        promote(pool, "p", "candidate", "1", true).await.unwrap();
         let after = wall_clock_seconds();
         let at: i64 = sqlx::query("SELECT created_at FROM neural_audit WHERE action = 'promote'")
             .fetch_one(pool)
@@ -1359,7 +1371,7 @@ mod tests {
                 dataset_version: "ds",
                 checksum: "c",
                 platforms: "macos-arm64",
-                metrics_json: "{}",
+                metrics_json: crate::learning::PASSING_EVIDENCE,
             };
             register(pool, &model).await.unwrap();
         }
@@ -1388,7 +1400,7 @@ mod tests {
                 dataset_version: "ds",
                 checksum,
                 platforms: "macos-arm64",
-                metrics_json: "{}",
+                metrics_json: crate::learning::PASSING_EVIDENCE,
             };
             register(pool, &model).await.unwrap();
         }
@@ -1399,12 +1411,8 @@ mod tests {
             .map(|row| row.get("version"))
             .collect();
         assert_eq!(listed, ["1", "2", "10"]);
-        promote(pool, "p", "m", "2", true, true, true)
-            .await
-            .unwrap();
-        promote(pool, "p", "m", "10", true, true, true)
-            .await
-            .unwrap();
+        promote(pool, "p", "m", "2", true).await.unwrap();
+        promote(pool, "p", "m", "10", true).await.unwrap();
         assert_eq!(rollback(pool, "p", "m").await.unwrap(), "2");
         assert_eq!(
             promoted_checksum(pool, "m").await.unwrap().as_deref(),
@@ -1420,7 +1428,7 @@ mod tests {
             dataset_version: "ds",
             checksum: version,
             platforms: "macos-arm64",
-            metrics_json: "{}",
+            metrics_json: crate::learning::PASSING_EVIDENCE,
         }
     }
 
@@ -1459,10 +1467,30 @@ mod tests {
     #[tokio::test]
     async fn hash_v1_cannot_be_promoted() {
         let (_dir, database) = db().await;
-        let error = promote(database.pool(), "p", "hash-v1", "1", true, true, true)
+        let error = promote(database.pool(), "p", "hash-v1", "1", true)
             .await
             .unwrap_err();
         assert_eq!(error, "hash-v1 is not a neural registry model");
+    }
+
+    #[tokio::test]
+    async fn a_registered_candidate_without_evidence_is_not_promoted() {
+        let (_dir, database) = db().await;
+        let pool = database.pool();
+        let bare = ModelRecord {
+            metrics_json: "{}",
+            ..model("x", "1")
+        };
+        register(pool, &bare).await.unwrap();
+        let error = promote(pool, "p", "x", "1", true).await.unwrap_err();
+        assert!(error.contains("no bake-off evidence"), "{error}");
+        assert_eq!(promoted_checksum(pool, "x").await.unwrap(), None);
+        let audits: i64 = sqlx::query("SELECT COUNT(*) FROM neural_audit")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(audits, 0);
     }
 
     async fn registered(pool: &SqlitePool, versions: &[&'static str]) {
@@ -1498,13 +1526,9 @@ mod tests {
         let (_dir, database) = db().await;
         let pool = database.pool();
         registered(pool, &["1", "2"]).await;
-        promote(pool, "p", "m", "1", true, true, true)
-            .await
-            .unwrap();
+        promote(pool, "p", "m", "1", true).await.unwrap();
         fail_audit_inserts(pool).await;
-        let error = promote(pool, "p", "m", "2", true, true, true)
-            .await
-            .unwrap_err();
+        let error = promote(pool, "p", "m", "2", true).await.unwrap_err();
         assert!(error.contains("audit unavailable"), "{error}");
         assert_eq!(active(pool).await.as_deref(), Some("1"));
         assert_eq!(audit_rows(pool).await, 1);
@@ -1516,9 +1540,7 @@ mod tests {
         let pool = database.pool();
         registered(pool, &["1", "2"]).await;
         for version in ["1", "2"] {
-            promote(pool, "p", "m", version, true, true, true)
-                .await
-                .unwrap();
+            promote(pool, "p", "m", version, true).await.unwrap();
         }
         fail_audit_inserts(pool).await;
         assert!(rollback(pool, "p", "m").await.is_err());
@@ -1531,9 +1553,7 @@ mod tests {
         let pool = database.pool();
         registered(pool, &["1", "2"]).await;
         for version in ["1", "2", "1"] {
-            promote(pool, "p", "m", version, true, true, true)
-                .await
-                .unwrap();
+            promote(pool, "p", "m", version, true).await.unwrap();
         }
         assert_eq!(rollback(pool, "p", "m").await.unwrap(), "2");
         assert_eq!(active(pool).await.as_deref(), Some("2"));
@@ -1545,14 +1565,10 @@ mod tests {
         let pool = database.pool();
         registered(pool, &["1", "2", "3"]).await;
         for version in ["1", "2"] {
-            promote(pool, "p", "m", version, true, true, true)
-                .await
-                .unwrap();
+            promote(pool, "p", "m", version, true).await.unwrap();
         }
         assert_eq!(rollback(pool, "p", "m").await.unwrap(), "1");
-        promote(pool, "p", "m", "3", true, true, true)
-            .await
-            .unwrap();
+        promote(pool, "p", "m", "3", true).await.unwrap();
         assert_eq!(rollback(pool, "p", "m").await.unwrap(), "1");
         assert_eq!(active(pool).await.as_deref(), Some("1"));
     }
@@ -1563,12 +1579,8 @@ mod tests {
         let (_dir, database) = db().await;
         let pool = database.pool();
         registered(pool, &["1", "2"]).await;
-        promote(pool, "p", "m", "1", true, true, true)
-            .await
-            .unwrap();
-        promote(pool, "q", "m", "2", true, true, true)
-            .await
-            .unwrap();
+        promote(pool, "p", "m", "1", true).await.unwrap();
+        promote(pool, "q", "m", "2", true).await.unwrap();
         assert_eq!(rollback(pool, "q", "m").await.unwrap(), "1");
     }
 
@@ -1580,15 +1592,9 @@ mod tests {
         register(pool, &model("m_x", "9")).await.unwrap();
         register(pool, &model("m_", "1")).await.unwrap();
         register(pool, &model("m_", "2")).await.unwrap();
-        promote(pool, "p", "m_", "1", true, true, true)
-            .await
-            .unwrap();
-        promote(pool, "p", "m_x", "9", true, true, true)
-            .await
-            .unwrap();
-        promote(pool, "p", "m_", "2", true, true, true)
-            .await
-            .unwrap();
+        promote(pool, "p", "m_", "1", true).await.unwrap();
+        promote(pool, "p", "m_x", "9", true).await.unwrap();
+        promote(pool, "p", "m_", "2", true).await.unwrap();
         assert_eq!(rollback(pool, "p", "m_").await.unwrap(), "1");
     }
 
@@ -1596,7 +1602,7 @@ mod tests {
     async fn promote_and_rollback_refuse_what_the_registry_does_not_hold() {
         let (_dir, database) = db().await;
         let pool = database.pool();
-        let unknown = promote(pool, "p", "m", "1", true, true, true).await;
+        let unknown = promote(pool, "p", "m", "1", true).await;
         assert_eq!(unknown.unwrap_err(), "model version is not registered");
         register(pool, &model("m", "1")).await.unwrap();
         let nothing_promoted = rollback(pool, "p", "m").await;
@@ -1604,9 +1610,7 @@ mod tests {
             nothing_promoted.unwrap_err(),
             "no promoted model to roll back"
         );
-        promote(pool, "p", "m", "1", true, true, true)
-            .await
-            .unwrap();
+        promote(pool, "p", "m", "1", true).await.unwrap();
         let first = rollback(pool, "p", "m").await;
         assert_eq!(first.unwrap_err(), "no previous promoted version to select");
         assert_eq!(
