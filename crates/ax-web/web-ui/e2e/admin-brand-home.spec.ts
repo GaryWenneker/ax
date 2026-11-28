@@ -13,9 +13,12 @@ test('header matches homepage typography and logo links home', async ({ page }) 
   await expect(logo).toHaveAttribute('href','/');
   await expect(logo).toHaveAccessibleName('Ax home');
   const style = await logo.evaluate(async el => {
+    // The wordmark is an SVG mark without text, so the browser never fetches the
+    // brand font on its own. Load it explicitly: the bundled face must resolve and load.
+    const faces = await document.fonts.load('700 29px "Archivo Variable"');
     await document.fonts.ready;
     const s=getComputedStyle(el);
-    return {ink:s.color,font:s.fontFamily,weight:s.fontWeight,spacing:parseFloat(s.letterSpacing)/parseFloat(s.fontSize),loaded:document.fonts.check('700 29px "Archivo Variable"'),mark:getComputedStyle(el.querySelector('svg.ax-mark')!).color,accent:getComputedStyle(el.querySelector('svg.ax-mark path:last-child')!).fill};
+    return {ink:s.color,font:s.fontFamily,weight:s.fontWeight,spacing:parseFloat(s.letterSpacing)/parseFloat(s.fontSize),loaded:faces.length>0&&faces.every(f=>f.status==='loaded')&&document.fonts.check('700 29px "Archivo Variable"'),mark:getComputedStyle(el.querySelector('svg.ax-mark')!).color,accent:getComputedStyle(el.querySelector('svg.ax-mark path:last-child')!).fill};
   });
   expect(style.font).toContain('Archivo Variable');
   expect(style.weight).toBe('700');
