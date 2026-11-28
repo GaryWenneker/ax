@@ -120,7 +120,11 @@ pub async fn handle(
         "predict" => {
             let cfg = load(root);
             if !cfg.prediction_active() {
-                return Ok(json!({ "applied": false, "predictions": [] }));
+                let mut value = json!({ "applied": false, "predictions": [] });
+                if let Some(error) = &cfg.config_error {
+                    value["configError"] = json!(error);
+                }
+                return Ok(value);
             }
             let Some(pool) = pool else {
                 return Ok(json!({ "applied": false, "predictions": [], "reason": "no database" }));
@@ -166,7 +170,10 @@ pub async fn handle(
         "feedback" => {
             let cfg = load(root);
             if !cfg.feedback_active() {
-                return Err("feedback collection is disabled".into());
+                return Err(match &cfg.config_error {
+                    Some(error) => format!("feedback collection is disabled; ax.json: {error}"),
+                    None => "feedback collection is disabled".into(),
+                });
             }
             let Some(pool) = pool else {
                 return Err("no database".into());
@@ -1223,6 +1230,35 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(missing, "taskCategory is required");
+    }
+
+    #[tokio::test]
+    async fn refused_feedback_and_predict_name_the_config_error() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("ax.json"),
+            r#"{"neural":{"learning":{"feedback_colection":true}}}"#,
+        )
+        .unwrap();
+        let args = json!({ "executionId": "e1", "taskCategory": "parser", "outcome": "success" });
+        let error = handle(dir.path(), "feedback", &args, None)
+            .await
+            .unwrap_err();
+        assert!(
+            error.starts_with("feedback collection is disabled; ax.json: "),
+            "{error}"
+        );
+        assert!(error.contains("feedback_colection"), "{error}");
+        let off = handle(dir.path(), "predict", &json!({ "task": "x" }), None)
+            .await
+            .unwrap();
+        assert_eq!(off["applied"], false);
+        assert!(
+            off["configError"]
+                .as_str()
+                .is_some_and(|text| text.contains("feedback_colection")),
+            "{off}"
+        );
     }
 
     #[tokio::test]

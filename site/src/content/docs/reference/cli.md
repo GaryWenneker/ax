@@ -1252,7 +1252,7 @@ ax offload clear
 
 ### `ax neural`
 
-Neural Intelligence is required. Project `ax.json` cannot turn it off. Memory embeddings stay `hash-v1`. The default binary does not link an ML runtime. Context ranking, prediction, and graph suggestions run in process and do not call a language model. CLI JSON matches the `ax_neural_*` MCP tools, and the flags use the same fields. `--path` and the current directory resolve to the nearest project with `.ax/ax.db`, the same root the MCP server uses.
+Neural Intelligence is required. Project `ax.json` cannot turn it off. Memory embeddings stay `hash-v1`. The default binary does not link an ML runtime. Context ranking, prediction, and graph suggestions run in process and do not call a language model. CLI JSON matches the `ax_neural_*` MCP tools, and the flags use the same fields. A value in the `neural` section of `ax.json` that is invalid keeps its default while every valid setting still applies; each invalid value and each unknown key (for example a misspelled section name) is listed in `configError`, which `explain` shows and a refused `feedback` or `predict` repeats. `--path` and the current directory resolve to the nearest project with `.ax/ax.db`, the same root the MCP server uses.
 
 ```bash
 ax neural status
