@@ -90,6 +90,14 @@ pub async fn handle(
     pool: Option<&SqlitePool>,
 ) -> Result<Value, String> {
     let name = normalize_dispatch_tool(tool);
+    if let Some(pool) = pool {
+        // Rows stored under an older spelling of this root move to the
+        // canonical key. A failure here leaves them where they are; the next
+        // call tries again.
+        let _ =
+            crate::store::adopt_project_keys(pool, &project_id(root), &legacy_project_keys(root))
+                .await;
+    }
     match name.as_str() {
         "status" => {
             let mut value = status_report(root);
@@ -542,6 +550,18 @@ pub fn project_id(root: &Path) -> String {
     } else {
         text.into_owned()
     }
+}
+
+/// Keys earlier versions stored for this root: the path exactly as given, and
+/// the same text without trailing separators.
+fn legacy_project_keys(root: &Path) -> Vec<String> {
+    let raw = root.to_string_lossy().into_owned();
+    let trimmed = raw.trim_end_matches(['/', '\\']).to_string();
+    let mut keys = vec![raw];
+    if !trimmed.is_empty() && trimmed != keys[0] {
+        keys.push(trimmed);
+    }
+    keys
 }
 
 fn required_str(args: &Value, key: &str) -> Result<String, String> {
@@ -1340,6 +1360,66 @@ mod tests {
         let missing = dir.path().join("missing");
         let missing_slash = format!("{}/", missing.display());
         assert_eq!(project_id(Path::new(&missing_slash)), project_id(&missing));
+    }
+
+    #[tokio::test]
+    async fn rows_written_under_the_old_raw_project_key_are_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        #[cfg(unix)]
+        let root = {
+            let link = dir.path().join("link");
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            link
+        };
+        #[cfg(not(unix))]
+        let root = real.clone();
+        std::fs::write(
+            real.join("ax.json"),
+            r#"{"neural":{"prediction":{"enabled":true},"learning":{"feedback_collection":true}}}"#,
+        )
+        .unwrap();
+        let database = open(dir.path()).await;
+        let pool = database.pool();
+        parser_feedback(&root, pool).await;
+        crate::store::record_rank(pool, &project_id(&root), 1, 50, 200)
+            .await
+            .unwrap();
+        let evaluation = json!({ "precision": 0.5, "source": "fixture", "predictions": 2 });
+        crate::store::record_evaluation(pool, &project_id(&root), &evaluation)
+            .await
+            .unwrap();
+        // Rewrite every row to the spelling older versions stored: the path as
+        // given, with a trailing separator.
+        let legacy = format!("{}{}", root.to_string_lossy(), std::path::MAIN_SEPARATOR);
+        assert_ne!(legacy, project_id(&root));
+        for table in ["neural_feedback", "neural_audit", "neural_rank_total"] {
+            sqlx::query(&format!("UPDATE {table} SET project_id = ?"))
+                .bind(&legacy)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+        // A newer row under the canonical key must merge, not collide.
+        crate::store::record_rank(pool, &project_id(&root), 1, 10, 100)
+            .await
+            .unwrap();
+        let status = handle(Path::new(&legacy), "status", &json!({}), Some(pool))
+            .await
+            .unwrap();
+        assert_eq!(status["metrics"]["feedbackCount"]["value"], 2);
+        assert_eq!(status["metrics"]["tokenDelta"]["value"], -60);
+        assert_eq!(status["metrics"]["tokenDelta"]["preflights"], 2);
+        assert_eq!(status["metrics"]["predictionAccuracy"]["value"], 0.5);
+        let task = json!({ "task": "fix the parser" });
+        let predicted = handle(&real, "predict", &task, Some(pool)).await.unwrap();
+        assert!(predicted["predictions"].as_array().unwrap().len() >= 3);
+        let canonical = project_id(&root);
+        for table in ["neural_feedback", "neural_audit", "neural_rank_total"] {
+            let sql = format!("SELECT COUNT(*) FROM {table} WHERE project_id != '{canonical}'");
+            assert_eq!(count(pool, &sql).await, 0, "{table} keeps a legacy key");
+        }
     }
 
     async fn parser_feedback(root: &Path, pool: &SqlitePool) {

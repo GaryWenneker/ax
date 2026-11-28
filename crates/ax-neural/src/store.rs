@@ -645,6 +645,88 @@ pub async fn list_models(pool: &SqlitePool) -> Result<Vec<SqliteRow>, String> {
     .map_err(|error| error.to_string())
 }
 
+/// Per-project tables whose rows are keyed by `project_id`.
+const PROJECT_TABLES: [&str; 3] = ["neural_feedback", "neural_graph_suggestion", "neural_audit"];
+
+/// Moves rows stored under an older spelling of a project's key to `canonical`,
+/// in one transaction. Rank totals under both keys are added together. Returns
+/// how many legacy rows were moved; with nothing to move it only reads.
+pub async fn adopt_project_keys(
+    pool: &SqlitePool,
+    canonical: &str,
+    legacy: &[String],
+) -> Result<u64, String> {
+    let legacy: Vec<&str> = legacy
+        .iter()
+        .map(String::as_str)
+        .filter(|key| *key != canonical && !key.is_empty())
+        .collect();
+    if legacy.is_empty() {
+        return Ok(0);
+    }
+    let marks = vec!["?"; legacy.len()].join(", ");
+    let probe = PROJECT_TABLES
+        .iter()
+        .chain(std::iter::once(&"neural_rank_total"))
+        .map(|table| format!("SELECT 1 FROM {table} WHERE project_id IN ({marks})"))
+        .collect::<Vec<_>>()
+        .join(" UNION ALL ");
+    let mut query = sqlx::query(&probe);
+    for _ in 0..=PROJECT_TABLES.len() {
+        for key in &legacy {
+            query = query.bind(*key);
+        }
+    }
+    let found = query
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    if found.is_none() {
+        return Ok(0);
+    }
+    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut moved = 0;
+    for key in &legacy {
+        for table in PROJECT_TABLES {
+            moved += sqlx::query(&format!(
+                "UPDATE {table} SET project_id = ? WHERE project_id = ?"
+            ))
+            .bind(canonical)
+            .bind(key)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| error.to_string())?
+            .rows_affected();
+        }
+        sqlx::query(
+            "INSERT INTO neural_rank_total (
+                project_id, preflights, duplicate_blocks, duplicate_tokens, rank_micros, updated_at
+            )
+            SELECT ?, preflights, duplicate_blocks, duplicate_tokens, rank_micros, updated_at
+            FROM neural_rank_total WHERE project_id = ?
+            ON CONFLICT(project_id) DO UPDATE SET
+                preflights = preflights + excluded.preflights,
+                duplicate_blocks = duplicate_blocks + excluded.duplicate_blocks,
+                duplicate_tokens = duplicate_tokens + excluded.duplicate_tokens,
+                rank_micros = rank_micros + excluded.rank_micros,
+                updated_at = MAX(updated_at, excluded.updated_at)",
+        )
+        .bind(canonical)
+        .bind(key)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| error.to_string())?;
+        moved += sqlx::query("DELETE FROM neural_rank_total WHERE project_id = ?")
+            .bind(key)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| error.to_string())?
+            .rows_affected();
+    }
+    tx.commit().await.map_err(|error| error.to_string())?;
+    Ok(moved)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RankTotals {
     pub preflights: i64,
