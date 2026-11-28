@@ -15,14 +15,16 @@ test('header matches homepage typography and logo links home', async ({ page }) 
   const style = await logo.evaluate(async el => {
     await document.fonts.ready;
     const s=getComputedStyle(el);
-    return {ink:s.color,font:s.fontFamily,weight:s.fontWeight,spacing:parseFloat(s.letterSpacing)/parseFloat(s.fontSize),loaded:document.fonts.check('700 29px "Archivo Variable"'),underline:getComputedStyle(el.querySelector('span')!).color};
+    return {ink:s.color,font:s.fontFamily,weight:s.fontWeight,spacing:parseFloat(s.letterSpacing)/parseFloat(s.fontSize),loaded:document.fonts.check('700 29px "Archivo Variable"'),mark:getComputedStyle(el.querySelector('svg.ax-mark')!).color,accent:getComputedStyle(el.querySelector('svg.ax-mark path:last-child')!).fill};
   });
   expect(style.font).toContain('Archivo Variable');
   expect(style.weight).toBe('700');
   expect(style.ink).toBe('rgb(240, 243, 237)');
   expect(style.spacing).toBeCloseTo(-.085,3);
   expect(style.loaded).toBe(true);
-  expect(style.underline).toBe('rgb(185, 255, 106)');
+  // The logo mark takes the text colour; its accent arm is lime.
+  expect(style.mark).toBe('rgb(240, 243, 237)');
+  expect(style.accent).toBe('rgb(162, 245, 15)');
   await logo.focus();
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/\/(stats)?$/);
