@@ -30,6 +30,12 @@ pub mod speed;
 pub mod status;
 pub mod store;
 
+/// The `AX_MEMORY_BENCH_*` flags are process environment that `ax_memory`
+/// reads at call time. The ignored measurement tests that switch them hold
+/// this lock so they never overlap with each other.
+#[cfg(test)]
+pub(crate) static BENCH_ENV: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 pub use config::{load, NeuralConfig};
 pub use rank::{plan as plan_blocks, RankClass, RankItem, RankNote};
 

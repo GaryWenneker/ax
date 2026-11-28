@@ -684,6 +684,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn independent_graph_discovery() {
+        let _env = crate::BENCH_ENV.lock().await;
         for name in [
             "AX_MEMORY_BENCH_RAW",
             "AX_MEMORY_BENCH_SKIP_RELATIVE_COVERAGE",

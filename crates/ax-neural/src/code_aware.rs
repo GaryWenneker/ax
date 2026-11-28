@@ -396,6 +396,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn frozen_code_retrieval_comparison() {
+        let _env = crate::BENCH_ENV.lock().await;
         for name in [
             "AX_MEMORY_BENCH_RAW",
             "AX_MEMORY_BENCH_SKIP_RELATIVE_COVERAGE",
