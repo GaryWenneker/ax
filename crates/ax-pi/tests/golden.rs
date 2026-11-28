@@ -474,6 +474,26 @@ fn disabled_integration_accepts_events() {
 }
 
 #[test]
+fn ingesting_events_does_no_database_io_before_stop() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("ax.db");
+    let pi = create_pi_integration(PiOptions {
+        db_path: Some(db.clone()),
+        ..priced(OptimizationMode::Observe)
+    });
+    pi.start().unwrap();
+    let event = json!({"type": "turn_start", "sessionId": "abc123"});
+    for _ in 0..200 {
+        pi.ingest(&event).unwrap();
+    }
+    assert!(!db.exists(), "ingest touched the database");
+    assert_eq!(pi.economics(None).unwrap().turns, 200);
+}
+
+/// Wall-clock bound: a loaded machine can fail it with nothing wrong, so it
+/// runs only on request (`cargo test -p ax-pi -- --ignored`).
+#[test]
+#[ignore = "wall-clock timing; run with --ignored"]
 fn event_processing_stays_under_five_milliseconds_average() {
     let pi = create_pi_integration(priced(OptimizationMode::Observe));
     let event = json!({"type": "turn_start", "sessionId": "abc123"});

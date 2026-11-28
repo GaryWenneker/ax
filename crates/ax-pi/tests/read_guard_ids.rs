@@ -2,8 +2,8 @@ use ax_pi::read_guard_ids;
 
 #[test]
 fn the_read_guard_uses_the_current_turn_and_keeps_the_placeholder_without_one() {
-    let root = std::env::temp_dir().join(format!("ax-guard-ids-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = root.join(".ax/ax.db");
     std::fs::write(&db, "").unwrap();
@@ -23,7 +23,6 @@ fn the_read_guard_uses_the_current_turn_and_keeps_the_placeholder_without_one() 
         read_guard_ids(&db, "caller"),
         ("conv-1".to_string(), "gen-1".to_string())
     );
-    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[tokio::test]
