@@ -8,7 +8,7 @@ RED means a test failed on the code before the fix. Where the RED was a compile 
 
 | Item | State | RED seen | Test(s) | Commit |
 |---|---|---|---|---|
-| web-ui-014 (server API and ax-share storage) | Fixed | yes | `ax-share config::tests::the_git_token_goes_to_the_credential_store_and_never_to_a_file_or_the_api`, `::a_token_in_ax_json_moves_to_the_credential_store_on_first_load`, `::a_token_in_the_old_token_file_moves_to_the_credential_store`, `::without_a_credential_store_the_old_token_is_read_and_no_new_token_is_written`, `::an_empty_token_keeps_the_stored_one_and_clear_token_removes_it`; `ax-web tests/share_config_token.rs::share_config_reports_token_set_and_never_the_token` | ee452438 |
+| web-ui-014 (server API and ax-share storage) | Fixed | yes | `ax-share config::tests::the_git_token_goes_to_the_credential_store_and_never_to_a_file_or_the_api`, `::loading_a_token_from_ax_json_writes_nothing_and_a_save_moves_it`, `::a_token_in_the_old_token_file_is_read_without_writing` (renamed in review round 1), `::without_a_credential_store_the_old_token_is_read_and_no_new_token_is_written`, `::an_empty_token_keeps_the_stored_one_and_clear_token_removes_it`; `ax-web tests/share_config_token.rs::share_config_reports_token_set_and_never_the_token` | ee452438 |
 | Skill catalog well-known origin (ax-web install and audit) | Fixed | yes | `skill_catalog_api::well_known_origin_tests::a_well_known_file_on_another_origin_is_refused`, `ax-skill-catalog remote::tests::well_known_file_urls_stay_on_the_index_origin` | 63414d3f |
 | dav_vault "Database unavailable" / lost-update flake (b01, b16) | Fixed (causes found and removed; see notes) | yes | `ax-policy tests/save_vs_index.rs::an_index_running_during_a_save_keeps_the_saved_rule`, `workspace_state::background_task_tests::dropping_the_tasks_stops_them`, `tests/dav_vault.rs::the_isolated_home_covers_the_global_database`; dav_vault suite 20 runs in a row: 20/20 passed | ce639e60, 62a345af |
 
@@ -38,7 +38,22 @@ dav_vault flake: two causes were found and fixed. (1) An index pass (the hub's b
 
 web-server-057 deferred: the concrete defects were fixed in the first pass. What is left is the effort-L split of `crates/ax-web/src/policy.rs` into modules with generic rule/skill handlers. It is a pure move, and the open PR #329 (fix/review-policy) changes the same file, so doing it now would conflict; it belongs after #329 merges.
 
+## Review rounds
+
+| Round | Finding | State | RED seen | Test(s) | Commit |
+|---|---|---|---|---|---|
+| 1 | ax-share config.rs:316, old token file entry deleted for every project but the first | Fixed: the shared entry stays until `clearToken`; a project without its own entry reads it | yes | `ax-share config::tests::two_projects_on_one_repo_url_both_keep_the_old_file_token` | dfec6958 |
+| 1 | ax-share config.rs:299, migration wrote files on GET (also read-only) | Fixed: loading never writes; a save moves a token from `ax.json` (and fails instead of dropping it) or copies one from the old file | yes | `config::tests::loading_a_token_from_ax_json_writes_nothing_and_a_save_moves_it`, `::a_token_in_the_old_token_file_is_read_without_writing`, `::a_save_refuses_to_drop_a_token_in_ax_json_it_cannot_move`; `ax-web tests/share_config_token.rs::share_config_reports_token_set_and_never_the_token` (GET leaves `ax.json` byte-for-byte) | dfec6958 |
+| 1 | ax-share config.rs:432, `clearToken` succeeded when the store could not delete | Fixed: the plain-text locations are still cleared, then the delete error is returned | yes | `config::tests::clear_token_fails_when_the_credential_store_cannot_delete_it` | dfec6958 |
+| 1 | ax-web workspace.rs:1464, init run stuck when a grandchild holds the pipes | Fixed: `finish_pumps` gives the pumps a shared 5 s grace, then aborts them; `InitRun` always drops and `done` is sent | yes | `workspace::tests::a_pipe_held_open_by_a_grandchild_does_not_keep_init_running` | 242204e3 |
+| 1 | ax-cli skill_catalog.rs:815, duplicate well-known rule without SSRF vetting | Fixed: the CLI uses `ax_skill_catalog::well_known_file_url`, `http_bytes_same_origin` and `http_text` (wrapped in `block_in_place` inside the runtime); its private fetch is gone | yes | `commands::skill_catalog::tests::well_known_file_downloads_refuse_a_private_address` | 22f2aaec |
+| 1 | ax-skill-catalog remote.rs:267, whole body read before the 25 MiB check (pre-existing) | Fixed: Content-Length checked first, body read with `take(limit + 1)`; redirect errors carry their source chain | yes (both size tests timed out at 30 s; the cross-origin test lacked "origin" in the error) | `remote::tests::a_declared_oversize_body_is_refused_without_reading_it`, `::an_endless_body_stops_at_the_limit`, `::a_same_origin_fetch_refuses_a_redirect_to_another_origin`, `::a_same_origin_fetch_follows_a_same_origin_redirect` (moved from ax-cli) | 22f2aaec |
+| 1 | site web-api.md:84, orphaned `/api/policy/settings` row | Fixed: row moved into the catalog table, paragraph after a blank line | n/a (docs) | n/a | 22f2aaec |
+
+Round 1 checks: `cargo test -p ax-share` 49/49, `-p ax-skill-catalog` 47/47, `-p ax-web` all suites pass (lib 192), `-p ax-cli` 309/309 in 17 suites; `cargo clippy -p ax-share -p ax-skill-catalog -p ax-web -p ax-cli --all-targets -- -D warnings` clean; `cargo fmt --all --check` clean.
+
 ## Docs
 
-- `site/src/content/docs/guides/policy-sharing.md`: credential-store token storage, migration, no plain-text fallback, `tokenSet`, `AX_SHARE_SECRET_STORE=memory`.
+- `site/src/content/docs/guides/policy-sharing.md`: credential-store token storage, migration on the next save (loading never writes; the shared old-file entry stays until cleared), clear errors, no plain-text fallback, `tokenSet`, `AX_SHARE_SECRET_STORE=memory`.
+- `site/src/content/docs/reference/cli.md`: well-known downloads are vetted against local and private addresses.
 - `site/src/content/docs/reference/web-api.md`: well-known origin rule, Sonar proxy cookies, vault folder sync 409, loopback `AX_WEB_AUTH_ORIGIN`, sign-in identity order, last-seen throttle, workspace route behavior (recent list, init limits, `AX_GLOBAL_DB` purge), change feed `: ready`.
