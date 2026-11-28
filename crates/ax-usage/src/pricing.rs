@@ -2,7 +2,7 @@
 //!
 //! Resolution order:
 //! 1. Exact / longest-substring match in `~/.ax/pricing.toml` (user override)
-//! 2. Latest synced snapshot in `~/.ax/usage.db` (prefer Artificial Analysis over OpenRouter)
+//! 2. Latest synced OpenRouter snapshot in `~/.ax/usage.db`
 //! 3. Built-in defaults
 //!
 //! ```toml

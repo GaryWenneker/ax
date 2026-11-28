@@ -5,9 +5,7 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 
 use crate::pricing::{invalidate_price_cache, refresh_price_cache_from_db};
-use crate::pricing_fetch::{
-    fetch_all_sources, FetchedBenchmark, FetchedCodingAgent, FetchedPrice, SOURCE_OPENROUTER,
-};
+use crate::pricing_fetch::{fetch_all_sources, FetchedPrice, SOURCE_OPENROUTER};
 use crate::store::open_pool;
 
 #[derive(Debug, Clone, Serialize)]
@@ -27,8 +25,12 @@ pub struct PricingSyncReport {
     pub forced: bool,
     pub skipped: bool,
     pub openrouter_count: usize,
+    /// Always 0: only OpenRouter is fetched. Kept so the web API shape does
+    /// not change for clients that read these fields.
     pub aa_price_count: usize,
+    /// Always 0; see `aa_price_count`.
     pub aa_benchmark_count: usize,
+    /// Always 0; see `aa_price_count`.
     pub coding_agent_count: usize,
     pub warnings: Vec<String>,
     pub status: String,
@@ -163,76 +165,6 @@ async fn upsert_prices(
         .bind(row.cache_write_per_mtok)
         .bind(row.blended_3_to_1)
         .bind(row.context_length)
-        .bind(&row.raw_json)
-        .execute(pool)
-        .await
-        .map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
-#[allow(dead_code)]
-async fn upsert_benchmarks(
-    pool: &SqlitePool,
-    date: &str,
-    source: &str,
-    rows: &[FetchedBenchmark],
-) -> Result<(), String> {
-    for row in rows {
-        sqlx::query(
-            "INSERT INTO model_benchmark_daily
-                (date, source, model_id, display_name, intelligence, coding, agentic,
-                 median_output_tps, median_ttft_seconds)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(date, source, model_id) DO UPDATE SET
-                display_name = excluded.display_name,
-                intelligence = excluded.intelligence,
-                coding = excluded.coding,
-                agentic = excluded.agentic,
-                median_output_tps = excluded.median_output_tps,
-                median_ttft_seconds = excluded.median_ttft_seconds",
-        )
-        .bind(date)
-        .bind(source)
-        .bind(&row.model_id)
-        .bind(&row.display_name)
-        .bind(row.intelligence)
-        .bind(row.coding)
-        .bind(row.agentic)
-        .bind(row.median_output_tps)
-        .bind(row.median_ttft_seconds)
-        .execute(pool)
-        .await
-        .map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
-#[allow(dead_code)]
-async fn upsert_agents(
-    pool: &SqlitePool,
-    date: &str,
-    rows: &[FetchedCodingAgent],
-) -> Result<(), String> {
-    for row in rows {
-        sqlx::query(
-            "INSERT INTO coding_agent_daily
-                (date, agent, model, index_score, cost_per_task, time_per_task, tokens_per_task, raw_json)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(date, agent, model) DO UPDATE SET
-                index_score = excluded.index_score,
-                cost_per_task = excluded.cost_per_task,
-                time_per_task = excluded.time_per_task,
-                tokens_per_task = excluded.tokens_per_task,
-                raw_json = excluded.raw_json",
-        )
-        .bind(date)
-        .bind(&row.agent)
-        .bind(&row.model)
-        .bind(row.index_score)
-        .bind(row.cost_per_task)
-        .bind(row.time_per_task)
-        .bind(row.tokens_per_task)
         .bind(&row.raw_json)
         .execute(pool)
         .await
@@ -441,12 +373,25 @@ pub async fn list_latest_prices(source: Option<&str>) -> Result<Vec<PricingCatal
         Option<f64>,
         Option<f64>,
         Option<i64>,
+        Option<f64>,
+        Option<f64>,
+        Option<f64>,
     );
+    // Benchmark scores come from the same day's model_benchmark_daily row, in
+    // one query; Artificial Analysis scores win when several sources have one.
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT date, source, model_id, display_name, provider, input_per_mtok, output_per_mtok,
-                cache_read_per_mtok, blended_3_to_1, context_length
-         FROM model_price_daily WHERE date = ? AND source = ?
-         ORDER BY input_per_mtok ASC, model_id ASC",
+        "SELECT p.date, p.source, p.model_id, p.display_name, p.provider, p.input_per_mtok,
+                p.output_per_mtok, p.cache_read_per_mtok, p.blended_3_to_1, p.context_length,
+                b.intelligence, b.coding, b.agentic
+         FROM model_price_daily p
+         LEFT JOIN model_benchmark_daily b
+           ON b.rowid = (
+             SELECT b2.rowid FROM model_benchmark_daily b2
+             WHERE b2.date = p.date AND b2.model_id = p.model_id
+             ORDER BY CASE b2.source WHEN 'artificial_analysis' THEN 0 ELSE 1 END, b2.source
+             LIMIT 1)
+         WHERE p.date = ? AND p.source = ?
+         ORDER BY p.input_per_mtok ASC, p.model_id ASC",
     )
     .bind(&date)
     .bind(source)
@@ -454,49 +399,40 @@ pub async fn list_latest_prices(source: Option<&str>) -> Result<Vec<PricingCatal
     .await
     .map_err(|e| e.to_string())?;
 
-    let mut out = Vec::with_capacity(rows.len());
-    for (
-        date,
-        source,
-        model_id,
-        display_name,
-        provider,
-        input_per_mtok,
-        output_per_mtok,
-        cache_read_per_mtok,
-        blended_3_to_1,
-        context_length,
-    ) in rows
-    {
-        let bench: Option<(Option<f64>, Option<f64>, Option<f64>)> = sqlx::query_as(
-            "SELECT intelligence, coding, agentic FROM model_benchmark_daily
-             WHERE date = ? AND model_id = ?
-             ORDER BY CASE source WHEN 'artificial_analysis' THEN 0 ELSE 1 END
-             LIMIT 1",
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
+                date,
+                source,
+                model_id,
+                display_name,
+                provider,
+                input_per_mtok,
+                output_per_mtok,
+                cache_read_per_mtok,
+                blended_3_to_1,
+                context_length,
+                intelligence,
+                coding,
+                agentic,
+            )| PricingCatalogRow {
+                date,
+                source,
+                model_id,
+                display_name,
+                provider,
+                input_per_mtok,
+                output_per_mtok,
+                cache_read_per_mtok,
+                blended_3_to_1,
+                context_length,
+                intelligence,
+                coding,
+                agentic,
+            },
         )
-        .bind(&date)
-        .bind(&model_id)
-        .fetch_optional(&pool)
-        .await
-        .map_err(|e| e.to_string())?;
-        let (intelligence, coding, agentic) = bench.unwrap_or((None, None, None));
-        out.push(PricingCatalogRow {
-            date,
-            source,
-            model_id,
-            display_name,
-            provider,
-            input_per_mtok,
-            output_per_mtok,
-            cache_read_per_mtok,
-            blended_3_to_1,
-            context_length,
-            intelligence,
-            coding,
-            agentic,
-        });
-    }
-    Ok(out)
+        .collect())
 }
 
 pub async fn price_history(
@@ -578,7 +514,10 @@ async fn resolve_catalog_model(
 
 pub async fn list_coding_agents(days: i64) -> Result<Vec<CodingAgentRow>, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
-    let _ = days.clamp(1, 365);
+    // Rows from the last `days` calendar days, today included.
+    let since = (Local::now().date_naive() - chrono::Duration::days(days.clamp(1, 365) - 1))
+        .format("%Y-%m-%d")
+        .to_string();
     type Row = (
         String,
         String,
@@ -591,9 +530,11 @@ pub async fn list_coding_agents(days: i64) -> Result<Vec<CodingAgentRow>, String
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT date, agent, model, index_score, cost_per_task, time_per_task, tokens_per_task
          FROM coding_agent_daily
+         WHERE date >= ?
          ORDER BY date DESC, agent ASC
          LIMIT 500",
     )
+    .bind(since)
     .fetch_all(&pool)
     .await
     .map_err(|e| e.to_string())?;
@@ -620,7 +561,7 @@ pub async fn list_coding_agents(days: i64) -> Result<Vec<CodingAgentRow>, String
 pub(crate) type CatalogPriceRow = (String, f64, f64, Option<f64>, Option<f64>, String, String);
 
 /// Catalog rows on or before `until` whose model id matches `model`, newest
-/// first and Artificial Analysis first within a day. Model ids are matched
+/// first and OpenRouter first within a day. Model ids are matched
 /// once; only the matching models' rows are read.
 pub(crate) async fn matching_price_rows(
     pool: &SqlitePool,
@@ -650,7 +591,7 @@ pub(crate) async fn matching_price_rows(
          FROM model_price_daily
          WHERE date <= ? AND model_id IN (SELECT value FROM json_each(?))
          ORDER BY date DESC,
-                  CASE source WHEN 'artificial_analysis' THEN 0 ELSE 1 END",
+                  CASE source WHEN 'openrouter' THEN 0 ELSE 1 END",
     )
     .bind(until)
     .bind(ids_json)
@@ -713,9 +654,7 @@ pub async fn lookup_price_as_of(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pricing_fetch::{
-        parse_aa_models, parse_openrouter_models, SOURCE_ARTIFICIAL_ANALYSIS,
-    };
+    use crate::pricing_fetch::{parse_openrouter_models, SOURCE_ARTIFICIAL_ANALYSIS};
     use serde_json::json;
 
     use crate::store::UsageDbEnv;
@@ -853,6 +792,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn coding_agents_honour_the_days_window() {
+        let _env = UsageDbEnv::new().await;
+        let pool = open_pool().await.expect("pool");
+        for (date, agent) in [(days_ago(0), "recent"), (days_ago(40), "old")] {
+            sqlx::query("INSERT INTO coding_agent_daily (date, agent, model) VALUES (?, ?, 'm')")
+                .bind(date)
+                .bind(agent)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let week: Vec<String> = list_coding_agents(7)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.agent)
+            .collect();
+        assert_eq!(week, ["recent"]);
+        assert_eq!(list_coding_agents(60).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn catalog_rows_carry_their_benchmark_scores() {
+        let _env = UsageDbEnv::new().await;
+        let pool = open_pool().await.expect("pool");
+        let today = days_ago(0);
+        let rows = parse_openrouter_models(&json!({
+            "data": [
+                { "id": "a/scored", "pricing": { "prompt": "0.000001", "completion": "0.000002" } },
+                { "id": "a/plain", "pricing": { "prompt": "0.000003", "completion": "0.000004" } }
+            ]
+        }));
+        upsert_prices(&pool, &today, SOURCE_OPENROUTER, &rows)
+            .await
+            .unwrap();
+        for (source, coding) in [("other", 10.0), (SOURCE_ARTIFICIAL_ANALYSIS, 55.0)] {
+            sqlx::query(
+                "INSERT INTO model_benchmark_daily (date, source, model_id, coding) VALUES (?, ?, 'a/scored', ?)",
+            )
+            .bind(&today)
+            .bind(source)
+            .bind(coding)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let catalog = list_latest_prices(None).await.unwrap();
+        let by_id = |id: &str| catalog.iter().find(|r| r.model_id == id).unwrap().coding;
+        assert_eq!(catalog.len(), 2);
+        assert_eq!(by_id("a/scored"), Some(55.0));
+        assert_eq!(by_id("a/plain"), None);
+    }
+
+    #[tokio::test]
     async fn upsert_and_history() {
         let _env = UsageDbEnv::new().await;
 
@@ -879,18 +872,11 @@ mod tests {
         assert!(hist.len() >= 2);
         assert!((hist[0].input_per_mtok - 3.0).abs() < 1e-9);
 
-        let (aa_prices, aa_benches) = parse_aa_models(&json!({
-            "data": [{
-                "slug": "claude-sonnet-4",
-                "name": "Claude Sonnet 4",
-                "pricing": { "price_1m_input_tokens": 2.5, "price_1m_output_tokens": 12.0 },
-                "evaluations": { "artificial_analysis_coding_index": 55.0 }
-            }]
-        }));
-        upsert_prices(&pool, &today, SOURCE_ARTIFICIAL_ANALYSIS, &aa_prices)
-            .await
-            .unwrap();
-        upsert_benchmarks(&pool, &today, SOURCE_ARTIFICIAL_ANALYSIS, &aa_benches)
+        // Another source with a different price for the same model and day.
+        let mut other = rows.clone();
+        other[0].model_id = "claude-sonnet-4".into();
+        other[0].pricing.input_per_mtok = 2.5;
+        upsert_prices(&pool, &today, SOURCE_ARTIFICIAL_ANALYSIS, &other)
             .await
             .unwrap();
 
