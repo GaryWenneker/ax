@@ -186,8 +186,11 @@ pub fn save(project_root: &Path, graph: &DomainGraph) -> Result<(), String> {
 }
 
 pub async fn handle_get(State(hub): State<WebHub>) -> impl IntoResponse {
-    let ws = hub.read().await;
-    match load(&ws.project_root) {
+    let root = hub.read().await.project_root.clone();
+    let loaded = tokio::task::spawn_blocking(move || load(&root))
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()));
+    match loaded {
         Ok(graph) => (StatusCode::OK, Json(graph)).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, Json(ApiError { error: e })).into_response(),
     }
@@ -206,9 +209,12 @@ pub async fn handle_put(
         )
             .into_response();
     }
-    let ws = hub.read().await;
-    match save(&ws.project_root, &graph) {
-        Ok(()) => (StatusCode::OK, Json(graph)).into_response(),
+    let root = hub.read().await.project_root.clone();
+    let saved = tokio::task::spawn_blocking(move || save(&root, &graph).map(|()| graph))
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()));
+    match saved {
+        Ok(graph) => (StatusCode::OK, Json(graph)).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, Json(ApiError { error: e })).into_response(),
     }
 }

@@ -79,6 +79,10 @@ ax server run \
   --push-port 9072
 ```
 
+`--allow-private-http` accepts a private or link-local interface address (for example `--bind 192.168.1.20:9070`) or a wildcard. A wildcard is accepted only when every interface it listens on has a private address: `0.0.0.0` checks the IPv4 addresses, `::` checks all of them. Inside a Docker container that is the case. On a host with a public address the server refuses to start and names that address; bind the private interface address instead.
+
+With `--managed`, the control routes used by the Command Center answer on `127.0.0.1` with the same port. For a specific interface address Ax opens a second listener on `127.0.0.1`; for a wildcard bind the main listener serves them and answers only connections from this machine.
+
 **Do not expose plain HTTP or the Ax Command Center to the public Internet.** Put a properly configured HTTPS reverse proxy in front of the authenticated HTTP endpoint.
 
 ## 3. Join a replica
@@ -125,7 +129,7 @@ The replica uses its own transient UDP socket, so it can run on the same host as
 
 1. The replica sends an authenticated registration over UDP to the configured primary every 10 seconds.
 2. The primary tracks connected project/node IDs and their real UDP source addresses. Missing heartbeats expire after 45 seconds.
-3. Every three seconds the primary compares snapshot revisions of enrolled projects.
+3. Every three seconds the primary checks each project that has a registered replica. It builds a snapshot and compares its revision only when the project database, its WAL, the MCP logs or the usage database changed since the last check.
 4. On a new revision, it sends a **signed UDP change notification** to registered replicas.
 5. The replica verifies the message, contributes its native project data, and receives the combined knowledge and chunked datasets using the project-specific secret over HTTP(S).
 6. If UDP is dropped or blocked, a scheduled HTTPS pull still converges the mirror.
@@ -153,7 +157,7 @@ ax server sync --config ./ax-replica.json
 
 The status output reports the last attempt, last successful revision and failures for every enrolled project. If the primary goes offline, the replica keeps its last verified staged mirror. Once network connectivity returns, the next signed notification or HTTPS polling cycle can update it.
 
-A successful **mirror** does not overwrite the replica's local database. When you enable complete application, received graph/source and conversation history are projected separately from native records. Memories use stable, namespaced IDs and a ledger recording the last applied version. If a user modifies an imported memory locally, subsequent syncs detect the conflict instead of replacing it. Missing remote records never delete local records, including unchanged imports. Accepted source revisions are retained on the Primary; collisions from different nodes keep separate IDs. Policies are not activated automatically. The original revisioned mirror remains under `.ax/server/replicas/` for review.
+A successful **mirror** does not overwrite the replica's local database. When you enable complete application, received graph/source and conversation history are projected separately from native records. Memories use stable, namespaced IDs and a ledger recording the last applied version. If a user modifies an imported memory locally, subsequent syncs detect the conflict instead of replacing it. Missing remote records never delete local records, including unchanged imports. Every record a node sent is retained on the Primary; collisions from different nodes keep separate IDs. Policies are not activated automatically. The selected revision of the mirror remains under `.ax/server/replicas/` for review; older revisions are removed once a newer one is selected.
 
 ## Empty Primary, existing Replica and conflicts
 
@@ -161,17 +165,17 @@ Pairing an Ax environment that contains months of work to an empty Primary does 
 
 Different nodes that use the same record ID retain separate copies. A locally edited imported memory is preserved and contributed as a local variant; an unchanged imported copy is not uploaded again. Received rules and skills remain pending until you approve them. An unchanged approved import is also excluded from uploads, preventing feedback loops.
 
-Missing knowledge records never delete accepted memories, rules or skills. Knowledge revisions remain in `ax_node_contributions`; the current graph/source dataset for an origin replaces only that origin's imported graph. Accepted conversation rows and log contents are retained even after native cleanup or log truncation, including for newly joined replicas. Staged revisions remain under `.ax/server/replicas/`. Source contents and graph records are included through verified, whitelisted database exports. Provider keys, client tokens and unrelated project data remain local.
+Missing knowledge records never delete accepted memories, rules or skills. Knowledge contributions remain in `ax_node_contributions`: per node the latest revision, plus one compacted revision that holds the last value of every record from older revisions; the current graph/source dataset for an origin replaces only that origin's imported graph. Accepted conversation rows and log contents are retained even after native cleanup or log truncation, including for newly joined replicas. The replica keeps the selected staged revision under `.ax/server/replicas/` and removes older ones. Source contents and graph records are included through verified, whitelisted database exports. Provider keys, client tokens and unrelated project data remain local.
 
 Update **both Primary and Replica** to the current build. A Primary without the preserve-and-exchange endpoint is rejected; the client keeps its local data. Enrollment credentials now authorize contributing the enrolled project's full knowledge, including private records, so choose a Primary you trust with that data.
 
-The knowledge envelope retains its 8 MiB and 10,000-record-per-kind limits; its revision archive is capped at 64 MiB. Graph, source, history and logs use separate 512 KiB chunks, with an 8 GiB total dataset limit, up to 64 origins and 3,660 log files per origin. History exports and retained heads allow up to one million rows. Reaching a limit rejects the new contribution with an error; it never prunes accepted history to make room. Keep normal backups of your project state. Release and deployment remain paused.
+The knowledge envelope retains its 8 MiB and 10,000-record-per-kind limits; its contribution archive is capped at 64 MiB. Older revisions of a node are compacted on each exchange, so the archive stays near twice the node's knowledge size instead of growing with every change. Graph, source, history and logs use separate 512 KiB chunks, with an 8 GiB total dataset limit, up to 64 origins and 3,660 log files per origin. History exports and retained heads allow up to one million rows. Reaching a limit rejects the new contribution with an error; it never drops an accepted record to make room. Compaction only removes values that a later revision of the same record from the same node replaced. Keep normal backups of your project state. Release and deployment remain paused.
 
 ## 6. LAN discovery versus registration
 
 `ax server discover --config ./ax-replica.json --seconds 5` lists candidate peers when a primary was started with `--discovery-port 9071 --advertise https://primary.example.com`. Announcements are public hints, never authentication. The replica continues to trust only its configured `primary_url`.
 
-**UDP registration is different**: it uses `--push-port 9072` and signed messages with the per-project token. Registration never automatically trusts a new node simply because it answered an announcement.
+**UDP registration is different**: it uses `--push-port 9072` and signed messages with the per-project token. Registration never automatically trusts a new node simply because it answered an announcement. The primary listens for UDP on the same address as `--bind`: with the default loopback bind only replicas on the same computer can register, so bind a private interface (with `--allow-private-http`) for LAN replicas. Each signed message carries a one-time nonce, and a captured message sent again is ignored.
 
 ## 7. Docker, hosting and remote clients
 

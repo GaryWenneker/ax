@@ -1,21 +1,12 @@
 //! One memory, three doors: the library, the CLI, and the MCP tool.
 
+mod common;
+
 use std::process::Command;
 
-use serde_json::Value;
+use common::ax_bin;
 
-fn ax_bin() -> std::path::PathBuf {
-    std::env::var_os("CARGO_BIN_EXE_ax")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            let mut path = std::env::current_exe().unwrap();
-            path.pop();
-            if path.ends_with("deps") {
-                path.pop();
-            }
-            path.join("ax")
-        })
-}
+use serde_json::Value;
 
 fn run_ax(root: &std::path::Path, args: &[&str]) -> Value {
     let out = Command::new(ax_bin())
@@ -339,6 +330,20 @@ async fn archive_history_lists_the_same_graph_changes_on_every_door() {
     assert!(ids(&hot, "entries")
         .iter()
         .all(|id| !id.starts_with("graph-")));
+
+    // `backup` is accepted by both surfaces and searches like `hot`.
+    let backup_cli = run_ax(
+        root,
+        &["history", "save_turn", "--depth", "backup", "--json"],
+    );
+    let backup_tool = mcp(
+        root,
+        "ax_history",
+        serde_json::json!({ "query": "save_turn", "depth": "backup" }),
+    )
+    .await;
+    assert_eq!(ids(&backup_cli, "entries"), ids(&hot, "entries"));
+    assert_eq!(ids(&backup_tool, "entries"), ids(&hot, "entries"));
 }
 
 async fn candidate(db: &ax_db::Database, turn: &str) -> String {

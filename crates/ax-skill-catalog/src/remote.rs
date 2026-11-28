@@ -292,6 +292,9 @@ fn git_clone_within(
     let mut cmd = git_command();
     cmd.arg("clone").arg("--depth").arg("1");
     if let Some(reference) = reference {
+        if reference.is_empty() || reference.starts_with('-') {
+            return Err(format!("not a git ref: {reference}"));
+        }
         cmd.arg("--branch").arg(reference);
     }
     cmd.arg("--").arg(url).arg(dest);
@@ -386,6 +389,17 @@ pub fn http_bytes_allowing(url: &str, allow_private_hosts: &[String]) -> Result<
     fetch_vetted(url, &system_resolve, &private_ip, allow_private_hosts)
 }
 
+/// [`http_bytes_allowing`] for a file listed in a well-known skill index:
+/// redirects are followed only while they stay on the origin (scheme, host
+/// and port) of `url`, so a listed file cannot hand the download to another
+/// server or downgrade it to http.
+pub fn http_bytes_same_origin_allowing(
+    url: &str,
+    allow_private_hosts: &[String],
+) -> Result<Vec<u8>, String> {
+    fetch_vetted_with(url, &system_resolve, &private_ip, allow_private_hosts, true)
+}
+
 /// GET `url`, refusing private targets. The host is resolved once, the
 /// addresses are checked, and the connection is pinned to exactly those
 /// addresses, so a second DNS answer cannot point it somewhere else.
@@ -396,6 +410,21 @@ fn fetch_vetted(
     blocked: Blocked,
     allow: &[String],
 ) -> Result<Vec<u8>, String> {
+    fetch_vetted_with(url, resolve, blocked, allow, false)
+}
+
+/// [`fetch_vetted`]; with `same_origin`, a redirect that leaves the origin of
+/// `url` is refused.
+fn fetch_vetted_with(
+    url: &str,
+    resolve: Resolve,
+    blocked: Blocked,
+    allow: &[String],
+    same_origin: bool,
+) -> Result<Vec<u8>, String> {
+    let origin = reqwest::Url::parse(url)
+        .map_err(|e| e.to_string())?
+        .origin();
     let mut current = url.to_string();
     for _ in 0..=MAX_REDIRECTS {
         let vetted = vet(&current, resolve, blocked, allow)?;
@@ -416,11 +445,17 @@ fn fetch_vetted(
                 .get(reqwest::header::LOCATION)
                 .and_then(|value| value.to_str().ok())
                 .ok_or_else(|| format!("GET {current} redirected without a location"))?;
-            current = vetted
+            let next = vetted
                 .url
                 .join(location)
-                .map_err(|e| format!("GET {current} redirected to a bad url: {e}"))?
-                .to_string();
+                .map_err(|e| format!("GET {current} redirected to a bad url: {e}"))?;
+            if same_origin && next.origin() != origin {
+                return Err(format!(
+                    "redirect to {} leaves the index origin",
+                    next.origin().ascii_serialization()
+                ));
+            }
+            current = next.to_string();
             continue;
         }
         if !response.status().is_success() {

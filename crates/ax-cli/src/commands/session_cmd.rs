@@ -5,7 +5,7 @@ use std::io::Read;
 use serde_json::{json, Value};
 
 use crate::commands::preflight::invoke_shared_tool;
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 
 #[derive(Debug, Clone)]
 pub enum SessionAction {
@@ -29,7 +29,7 @@ pub struct SessionArgs {
 }
 
 pub async fn run(args: SessionArgs) -> Result<(), String> {
-    let root = resolve_path(args.path);
+    let root = resolve_project_root(args.path);
     let session = match (&args.action, &args.session) {
         (SessionAction::Start, None) => mint_session_id(),
         (SessionAction::Start, Some(id)) => id.clone(),
@@ -117,4 +117,200 @@ fn parse_stdin_json() -> Result<Value, String> {
         return Ok(json!({}));
     }
     serde_json::from_str(&buf).map_err(|e| format!("stdin JSON: {e}"))
+}
+
+/// Command-line form of `ax session`, mapped onto [`SessionArgs`].
+#[derive(clap::Subcommand)]
+pub enum SessionCliAction {
+    /// Create or print a session id
+    Start {
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    Get {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    Add {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
+        input_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Update {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
+        input_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Compact {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
+        input_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Fork {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    Handoff {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
+        input_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Resume {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    End {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+impl From<SessionCliAction> for SessionArgs {
+    fn from(action: SessionCliAction) -> Self {
+        match action {
+            SessionCliAction::Start {
+                session,
+                path,
+                json,
+            } => SessionArgs {
+                action: SessionAction::Start,
+                session,
+                path,
+                input_stdin: false,
+                json,
+            },
+            SessionCliAction::Get {
+                session,
+                path,
+                json,
+            } => SessionArgs {
+                action: SessionAction::Get,
+                session: Some(session),
+                path,
+                input_stdin: false,
+                json,
+            },
+            SessionCliAction::Add {
+                session,
+                path,
+                input_stdin,
+                json,
+            } => SessionArgs {
+                action: SessionAction::Add,
+                session: Some(session),
+                path,
+                input_stdin,
+                json,
+            },
+            SessionCliAction::Update {
+                session,
+                path,
+                input_stdin,
+                json,
+            } => SessionArgs {
+                action: SessionAction::Update,
+                session: Some(session),
+                path,
+                input_stdin,
+                json,
+            },
+            SessionCliAction::Compact {
+                session,
+                path,
+                input_stdin,
+                json,
+            } => SessionArgs {
+                action: SessionAction::Compact,
+                session: Some(session),
+                path,
+                input_stdin,
+                json,
+            },
+            SessionCliAction::Fork {
+                session,
+                path,
+                json,
+            } => SessionArgs {
+                action: SessionAction::Fork,
+                session: Some(session),
+                path,
+                input_stdin: false,
+                json,
+            },
+            SessionCliAction::Handoff {
+                session,
+                path,
+                input_stdin,
+                json,
+            } => SessionArgs {
+                action: SessionAction::Handoff,
+                session: Some(session),
+                path,
+                input_stdin,
+                json,
+            },
+            SessionCliAction::Resume {
+                session,
+                path,
+                json,
+            } => SessionArgs {
+                action: SessionAction::Resume,
+                session: Some(session),
+                path,
+                input_stdin: false,
+                json,
+            },
+            SessionCliAction::End {
+                session,
+                path,
+                json,
+            } => SessionArgs {
+                action: SessionAction::End,
+                session: Some(session),
+                path,
+                input_stdin: false,
+                json,
+            },
+        }
+    }
 }

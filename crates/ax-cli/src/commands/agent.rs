@@ -1,15 +1,15 @@
-//! `ax agent economics` and `ax agent optimize --report`.
+//! `ax agent economics` and `ax agent optimize`.
 
 use std::path::PathBuf;
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 
 pub async fn run_economics(
     path: Option<String>,
     session: Option<String>,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let db = root.join(".ax").join("ax.db");
     let (currency, usd_per_eur) = display_currency(&root);
     match ax_pi::read_economics(&db, session.as_deref(), currency, usd_per_eur).await {
@@ -39,7 +39,7 @@ pub async fn run_optimize(path: Option<String>, json: bool) -> Result<(), String
 }
 
 fn db_path(path: Option<String>) -> PathBuf {
-    resolve_path(path).join(".ax").join("ax.db")
+    resolve_project_root(path).join(".ax").join("ax.db")
 }
 
 fn display_currency(root: &std::path::Path) -> (&'static str, Option<f64>) {

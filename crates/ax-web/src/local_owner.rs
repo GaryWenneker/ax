@@ -3,9 +3,25 @@ use ax_global_db::access;
 use axum::http::HeaderMap;
 use sqlx::SqlitePool;
 
-/// A browser on this Command Center: loopback, or the same public host a
-/// reverse proxy presents (Cloudflare sets Host and Origin to that URL).
+/// True when [`crate::request_guard::guard`] found that the socket peer is
+/// this computer and no proxy forwarded the request.
+pub(crate) fn local_peer(headers: &HeaderMap) -> bool {
+    headers
+        .get(crate::request_guard::LOCAL_PEER)
+        .and_then(|v| v.to_str().ok())
+        == Some("1")
+}
+
+/// The local owner's own browser: a loopback socket peer with no proxy in
+/// between (see [`local_peer`]) that opened the loopback address.
 pub(crate) fn browser_serves(headers: &HeaderMap, port: u16) -> bool {
+    local_peer(headers) && loopback_browser(headers, port)
+}
+
+/// Header checks that can only refuse: not a cross-site request, the
+/// loopback address in `Host`, and no foreign `Origin`. They never prove the
+/// request is local on their own; that comes from the socket peer.
+pub(crate) fn loopback_browser(headers: &HeaderMap, port: u16) -> bool {
     if headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()) == Some("cross-site") {
         return false;
     }
@@ -13,43 +29,22 @@ pub(crate) fn browser_serves(headers: &HeaderMap, port: u16) -> bool {
         .get("host")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    if host.is_empty() {
-        return false;
-    }
     let loopback = [
         format!("127.0.0.1:{port}"),
         format!("localhost:{port}"),
         format!("[::1]:{port}"),
     ];
-    let origin = headers.get("origin").and_then(|v| v.to_str().ok());
-    if loopback.iter().any(|item| item == host) {
-        return origin.is_none_or(|value| {
+    if !loopback.iter().any(|item| item == host) {
+        return false;
+    }
+    headers
+        .get("origin")
+        .and_then(|v| v.to_str().ok())
+        .is_none_or(|value| {
             loopback
                 .iter()
                 .any(|item| value == format!("http://{item}"))
-        });
-    }
-    match origin {
-        Some(value) => origin_names_host(value, host),
-        None => {
-            headers
-                .get("x-forwarded-proto")
-                .and_then(|v| v.to_str().ok())
-                == Some("https")
-        }
-    }
-}
-
-fn origin_names_host(origin: &str, host: &str) -> bool {
-    let Some(rest) = origin
-        .strip_prefix("https://")
-        .or_else(|| origin.strip_prefix("http://"))
-    else {
-        return false;
-    };
-    let authority = rest.split('/').next().unwrap_or("");
-    authority == host
-        || authority.split(':').next() == host.split(':').next() && !authority.is_empty()
+        })
 }
 
 pub(crate) fn browser_headers(
@@ -102,6 +97,9 @@ mod tests {
     fn owner_surface_rejects_bearer_share_and_foreign_browser_authority() {
         let mut h = HeaderMap::new();
         h.insert("host", "localhost:7070".parse().unwrap());
+        // Without the socket-peer mark the same headers are not the owner.
+        assert!(browser_headers(&h, 7070, false, false, "csrf").is_err());
+        h.insert(crate::request_guard::LOCAL_PEER, "1".parse().unwrap());
         assert!(browser_headers(&h, 7070, false, false, "csrf").is_ok());
         assert!(browser_headers(&h, 7070, false, true, "csrf").is_err());
         h.insert("x-ax-csrf", "csrf".parse().unwrap());
@@ -122,12 +120,14 @@ mod tests {
             );
         }
         assert!(browser_headers(&h, 7070, true, false, "csrf").is_err());
+        // A public host forwarded by a proxy is never the local owner, even
+        // when the proxy runs on this computer: it needs a signed-in session.
         let mut proxy = HeaderMap::new();
         proxy.insert("host", "admin.wenneker.dev".parse().unwrap());
         proxy.insert("origin", "https://admin.wenneker.dev".parse().unwrap());
         proxy.insert("x-forwarded-proto", "https".parse().unwrap());
-        assert!(browser_headers(&proxy, 7070, false, false, "csrf").is_ok());
-        proxy.insert("sec-fetch-site", "cross-site".parse().unwrap());
+        assert!(browser_headers(&proxy, 7070, false, false, "csrf").is_err());
+        proxy.insert(crate::request_guard::LOCAL_PEER, "1".parse().unwrap());
         assert!(browser_headers(&proxy, 7070, false, false, "csrf").is_err());
     }
     #[tokio::test]

@@ -162,6 +162,28 @@ fn contains_phrase(haystack: &str, needle: &str) -> bool {
     })
 }
 
+/// Word endings a skill trigger of [`INFLECTED_TRIGGER_MIN`]+ characters may carry
+/// ("test" matches "tests" and the Dutch "testen").
+const TRIGGER_SUFFIXES: &[&str] = &["s", "es", "d", "ed", "ing", "er", "ers", "en"];
+const INFLECTED_TRIGGER_MIN: usize = 4;
+
+/// `trigger` occurs in `prompt_lc` as a whole word or phrase. A trigger inside
+/// another word never counts ("go" in "cargo"). A long enough trigger also
+/// matches an inflected form of itself.
+fn contains_trigger_word(prompt_lc: &str, trigger: &str) -> bool {
+    let is_word = |c: char| c.is_alphanumeric();
+    let inflects = trigger.chars().count() >= INFLECTED_TRIGGER_MIN;
+    prompt_lc.match_indices(trigger).any(|(start, _)| {
+        if prompt_lc[..start].chars().next_back().is_some_and(is_word) {
+            return false;
+        }
+        let rest = &prompt_lc[start + trigger.len()..];
+        let tail_len = rest.find(|c: char| !is_word(c)).unwrap_or(rest.len());
+        let tail = &rest[..tail_len];
+        tail.is_empty() || (inflects && TRIGGER_SUFFIXES.contains(&tail))
+    })
+}
+
 /// Match reason marker for an always-apply rule whose globs exclude every touched file.
 pub const OUT_OF_SCOPE: &str = "outOfScope";
 
@@ -239,7 +261,7 @@ fn score_skill(skill: &crate::types::PolicySkillRow, prompt_lc: &str) -> Option<
 
     for trigger in &skill.triggers {
         let t = trigger.to_lowercase();
-        if !t.is_empty() && contains_phrase(prompt_lc, &t) {
+        if !t.is_empty() && contains_trigger_word(prompt_lc, &t) {
             score += 25;
             reasons.push(format!("trigger:{trigger}"));
         }
@@ -499,6 +521,55 @@ mod tests {
             hit.is_some_and(|m| m.reason.contains("description:multiple-terms")),
             "punctuation must not hide description words"
         );
+    }
+
+    #[test]
+    fn c1_skill_trigger_inside_another_word_does_not_match() {
+        let go = skill_row("go-review", false, &["go"], 50);
+        let pr = skill_row("review-loop", false, &["pr"], 50);
+        let prompt = "run cargo fmt on the preflights";
+        assert!(score_skill(&go, prompt).is_none());
+        assert!(score_skill(&pr, prompt).is_none());
+    }
+
+    #[test]
+    fn c2_whole_word_skill_trigger_matches_case_insensitively() {
+        let go = skill_row("go-review", false, &["go"], 50);
+        let pr = skill_row("review-loop", false, &["PR"], 50);
+        let hit = score_skill(&go, &"Review this Go handler".to_lowercase()).unwrap();
+        assert!(hit.reason.contains("trigger:go"), "{}", hit.reason);
+        let hit = score_skill(&pr, "open a pr").unwrap();
+        assert!(hit.reason.contains("trigger:PR"), "{}", hit.reason);
+    }
+
+    #[test]
+    fn c3_multi_word_skill_trigger_matches_as_a_phrase() {
+        let skill = skill_row("old-coder", false, &["prove it works"], 50);
+        assert!(score_skill(&skill, "please prove it works.").is_some());
+        assert!(score_skill(&skill, "prove it somehow works").is_none());
+    }
+
+    #[test]
+    fn c4_inflected_form_of_a_long_trigger_matches() {
+        let test = skill_row("tdd", false, &["test"], 50);
+        let implement = skill_row("old-coder", false, &["implement"], 50);
+        assert!(score_skill(&test, "add tests").is_some());
+        assert!(score_skill(&test, "meerdere testen").is_some());
+        assert!(score_skill(&implement, "implementing the cap").is_some());
+        let pr = skill_row("review-loop", false, &["pr"], 50);
+        assert!(
+            score_skill(&pr, "two prs").is_none(),
+            "short triggers need the exact word"
+        );
+    }
+
+    #[test]
+    fn c5_unrelated_longer_word_does_not_match() {
+        let spec = skill_row("old-coder", false, &["spec"], 50);
+        let test = skill_row("tdd", false, &["test"], 50);
+        let prompt = "a specific contest about testament";
+        assert!(score_skill(&spec, prompt).is_none());
+        assert!(score_skill(&test, prompt).is_none());
     }
 
     #[test]

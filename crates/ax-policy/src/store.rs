@@ -692,6 +692,20 @@ impl PolicyStore {
         target: PolicyStorage,
         keep_file: bool,
     ) -> Result<serde_json::Value, AxError> {
+        self.try_set_item_storage(kind, id_or_name, target, keep_file)
+            .await?
+            .ok_or_else(|| AxError::Other("not found".into()))
+    }
+
+    /// Like [`Self::set_item_storage`], but `None` when no item of `kind` has
+    /// this id, so a caller can tell "not found" from a failure.
+    pub async fn try_set_item_storage(
+        &self,
+        kind: Option<PolicyItemKind>,
+        id_or_name: &str,
+        target: PolicyStorage,
+        keep_file: bool,
+    ) -> Result<Option<serde_json::Value>, AxError> {
         let found = self.find_item(id_or_name, kind).await?;
         if let Some(FoundItem::Rule(doc)) = found {
             let mut doc = *doc;
@@ -716,27 +730,27 @@ impl PolicyStore {
                         upsert_rule_doc(&self.pool, &again).await?;
                     }
                 }
-                return Ok(serde_json::json!({
+                return Ok(Some(serde_json::json!({
                     "ok": true,
                     "kind": "rule",
                     "id": id_or_name,
                     "storage": target.as_str(),
                     "effectiveStorage": target.as_str(),
                     "storageIsOverride": true,
-                }));
+                })));
             }
             // to files
             self.save_rule(doc.frontmatter, doc.body)
                 .await
                 .map_err(|e| AxError::Other(e.error))?;
-            return Ok(serde_json::json!({
+            return Ok(Some(serde_json::json!({
                 "ok": true,
                 "kind": "rule",
                 "id": id_or_name,
                 "storage": target.as_str(),
                 "effectiveStorage": target.as_str(),
                 "storageIsOverride": true,
-            }));
+            })));
         }
 
         if let Some(FoundItem::Skill(doc)) = found {
@@ -759,29 +773,29 @@ impl PolicyStore {
                         upsert_skill_doc(&self.pool, &again).await?;
                     }
                 }
-                return Ok(serde_json::json!({
+                return Ok(Some(serde_json::json!({
                     "ok": true,
                     "kind": "skill",
                     "name": id_or_name,
                     "storage": target.as_str(),
                     "effectiveStorage": target.as_str(),
                     "storageIsOverride": true,
-                }));
+                })));
             }
             self.save_skill(doc.frontmatter, doc.body)
                 .await
                 .map_err(|e| AxError::Other(e.error))?;
-            return Ok(serde_json::json!({
+            return Ok(Some(serde_json::json!({
                 "ok": true,
                 "kind": "skill",
                 "name": id_or_name,
                 "storage": target.as_str(),
                 "effectiveStorage": target.as_str(),
                 "storageIsOverride": true,
-            }));
+            })));
         }
 
-        Err(AxError::Other("not found".into()))
+        Ok(None)
     }
 
     /// Clear per-item storage override (inherit project default again).

@@ -1,4 +1,4 @@
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 
 pub async fn run_status(json: bool) -> Result<(), String> {
     let servers = ax_lsp::discover_servers();
@@ -24,7 +24,7 @@ pub async fn run_status(json: bool) -> Result<(), String> {
 }
 
 pub async fn run_enrich(path: Option<String>, limit: usize, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     ax_usage::log_lsp(
         Some(ax.project_root()),

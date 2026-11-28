@@ -2,11 +2,11 @@ use ax_policy::{GuardOp, ImportMode, MatchInput, PolicyStorage};
 
 use owo_colors::OwoColorize;
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 use crate::ui::{dim, info_line, ok_line, warn_line};
 
 pub async fn run_index(path: Option<String>, force: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let trace = ax_usage::ToolTrace::begin(
         Some(&root),
         "ax_policy_index",
@@ -83,7 +83,7 @@ pub async fn run_index(path: Option<String>, force: bool) -> Result<(), String> 
 }
 
 pub async fn run_import(path: Option<String>) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     ax_usage::log_policy(Some(&root), "import start");
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let result =
@@ -108,139 +108,10 @@ pub async fn run_import(path: Option<String>) -> Result<(), String> {
     Ok(())
 }
 
-/// Clone a remote git policy registry into `.ax/policy/vendored/<name>/` and re-index.
-pub async fn run_pull(
-    url: String,
-    path: Option<String>,
-    name: Option<String>,
-) -> Result<(), String> {
-    let root = resolve_path(path);
-    let ax_dir = root.join(".ax");
-    if !ax_dir.is_dir() {
-        return Err("project not initialized — run ax init first".into());
-    }
-
-    let vendor_name = name.unwrap_or_else(|| {
-        url.trim_end_matches('/')
-            .trim_end_matches(".git")
-            .rsplit(['/', ':'])
-            .next()
-            .unwrap_or("remote-policy")
-            .to_string()
-    });
-    let vendor_name = vendor_name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    if vendor_name.is_empty() {
-        return Err("could not derive vendor name — pass --name".into());
-    }
-
-    let dest = root.join(".ax/policy/vendored").join(&vendor_name);
-    if dest.exists() {
-        std::fs::remove_dir_all(&dest)
-            .map_err(|e| format!("failed to clear {}: {e}", dest.display()))?;
-    }
-    std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
-
-    let status = std::process::Command::new("git")
-        .args([
-            "clone",
-            "--depth",
-            "1",
-            "--quiet",
-            "--",
-            &url,
-            &dest.to_string_lossy(),
-        ])
-        .status()
-        .map_err(|e| format!("failed to run git: {e}"))?;
-    if !status.success() {
-        return Err(format!("git clone failed for {url}"));
-    }
-
-    // Prefer nested .ax/policy or top-level rules/skills; otherwise copy whole tree.
-    let policy_src = if dest.join(".ax/policy").is_dir() {
-        dest.join(".ax/policy")
-    } else if dest.join("rules").is_dir() || dest.join("policy").is_dir() {
-        if dest.join("policy").is_dir() {
-            dest.join("policy")
-        } else {
-            dest.clone()
-        }
-    } else {
-        dest.clone()
-    };
-
-    // Flatten into .ax/policy/rules and skills when the clone has those dirs.
-    let rules_src = policy_src.join("rules");
-    let skills_src = policy_src.join("skills");
-    let rules_dst = root.join(".ax/policy/rules");
-    let skills_dst = root.join(".ax/policy/skills");
-    std::fs::create_dir_all(&rules_dst).map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&skills_dst).map_err(|e| e.to_string())?;
-
-    let mut copied_rules = 0usize;
-    let mut copied_skills = 0usize;
-    if rules_src.is_dir() {
-        for entry in std::fs::read_dir(&rules_src).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("mdc") {
-                let dest_file = rules_dst.join(entry.file_name());
-                std::fs::copy(&path, &dest_file).map_err(|e| e.to_string())?;
-                copied_rules += 1;
-            }
-        }
-    }
-    if skills_src.is_dir() {
-        for entry in std::fs::read_dir(&skills_src).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let path = entry.path();
-            if path.is_dir() {
-                let dest_skill = skills_dst.join(entry.file_name());
-                copy_dir_recursive(&path, &dest_skill)?;
-                copied_skills += 1;
-            }
-        }
-    }
-
-    println!(
-        "Pulled policy from {url} → .ax/policy/vendored/{vendor_name}/ (copied {copied_rules} rules, {copied_skills} skills)"
-    );
-
-    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-    let result = ax.index_policy(true).await.map_err(|e| e.to_string())?;
-    println!(
-        "Re-indexed policy: {} rules, {} skills",
-        result.rules_indexed, result.skills_indexed
-    );
-    Ok(())
-}
-
-fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
-    std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;
-    for entry in std::fs::read_dir(src).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let from = entry.path();
-        let to = dst.join(entry.file_name());
-        if from.is_dir() {
-            copy_dir_recursive(&from, &to)?;
-        } else {
-            std::fs::copy(&from, &to).map_err(|e| e.to_string())?;
-        }
-    }
-    Ok(())
-}
+pub use super::policy_pull::run_pull;
 
 pub async fn run_export(path: Option<String>, out: String) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let out_path = if std::path::Path::new(&out).is_absolute() {
         std::path::PathBuf::from(out)
@@ -264,7 +135,7 @@ pub async fn run_match(
     json: bool,
     full: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let trace = ax_usage::ToolTrace::begin(
         Some(&root),
         "ax_rules",
@@ -347,7 +218,7 @@ fn strip_match_bodies(value: &mut serde_json::Value) {
 }
 
 pub async fn run_dedup(path: Option<String>, dry_run: bool, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let report = ax_core::policy_dedup::run_default(Some((ax.db_pool(), &root)), dry_run).await;
     if json {
@@ -369,7 +240,27 @@ pub async fn run_dedup(path: Option<String>, dry_run: bool, json: bool) -> Resul
     }
 }
 
-/// Global-level cleanup (duplicate global rows, shadowed mirrors) from sync code.
+/// One line for the installer about a background dedup run, or `None` when
+/// there is nothing to say. A dry run only reports; `ax policy dedup` applies.
+pub(crate) fn dedup_note(report: &ax_core::policy_dedup::DedupReport) -> Option<String> {
+    if let Some(e) = &report.error {
+        return Some(format!(
+            "Note: policy dedup check stopped: {e} (run `ax policy dedup` to clean up)"
+        ));
+    }
+    let n = report.actions.len();
+    if n == 0 {
+        return None;
+    }
+    Some(if report.dry_run {
+        format!("Found {n} duplicate policy row(s) in ~/.ax/global.db; run `ax policy dedup` to remove them")
+    } else {
+        format!("Cleaned {n} duplicate policy row(s) in ~/.ax/global.db")
+    })
+}
+
+/// Report (dry run) duplicate global rows and shadowed mirrors from sync code.
+/// Background runs never change policy; `ax policy dedup` applies the cleanup.
 pub(crate) fn dedup_global_blocking() -> Result<ax_core::policy_dedup::DedupReport, String> {
     std::thread::spawn(|| {
         tokio::runtime::Builder::new_current_thread()
@@ -383,7 +274,7 @@ pub(crate) fn dedup_global_blocking() -> Result<ax_core::policy_dedup::DedupRepo
 }
 
 pub async fn run_rules(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let rules = ax_policy::list_rules(ax.db_pool())
         .await
@@ -402,7 +293,7 @@ pub async fn run_rules(path: Option<String>, json: bool) -> Result<(), String> {
 }
 
 pub async fn run_skills(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let trace = ax_usage::ToolTrace::begin(
         Some(&root),
         "ax_skill",
@@ -445,7 +336,7 @@ pub async fn run_skills(path: Option<String>, json: bool) -> Result<(), String> 
 }
 
 pub async fn run_skill(path: Option<String>, name: String) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let trace = ax_usage::ToolTrace::begin(
         Some(&root),
         "ax_skill",
@@ -487,7 +378,7 @@ pub async fn run_guard(
     delete: bool,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let operation = if delete { "delete" } else { "write" };
     let trace = ax_usage::ToolTrace::begin(
         Some(&root),
@@ -566,7 +457,7 @@ pub async fn run_guard(
 }
 
 pub async fn run_sync(path: Option<String>, fix: bool, force: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax_dir = root.join(".ax");
     if !ax_dir.is_dir() {
         return Err("project not initialized — run ax init first".into());
@@ -626,7 +517,7 @@ pub async fn run_sync(path: Option<String>, fix: bool, force: bool) -> Result<()
 }
 
 pub fn run_policy_history(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let events = ax_policy::history::read_events(&ax_policy::history::project_history_path(&root))
         .map_err(|err| err.to_string())?;
     if json {
@@ -654,7 +545,7 @@ pub async fn run_policy_restore_item(
     id: String,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let restored = ax_policy::restore_removed_item(&root, &id).map_err(|err| err.to_string())?;
     if let Ok(ax) = ax_core::Ax::open(&root).await {
         let _ = ax_policy::history::mirror_project(ax.db_pool(), &root).await;
@@ -681,8 +572,13 @@ struct PolicyTestResult {
     detail: String,
 }
 
-pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+/// `ax policy test`: health checks that hold on any initialized project.
+///
+/// Checks that need a particular rule or file are skipped when it is absent.
+/// `self_check` (hidden `--self`) adds assertions that only hold inside the ax
+/// repository, for its own CI.
+pub async fn run_test(path: Option<String>, json: bool, self_check: bool) -> Result<(), String> {
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let mut results: Vec<PolicyTestResult> = Vec::new();
 
@@ -707,7 +603,7 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
     let status = ax.policy_status().await.map_err(|e| e.to_string())?;
     check(
         "policy_status",
-        status.indexed && status.rules >= 4,
+        status.indexed && status.rules > 0,
         &format!(
             "mode={} rules={} skills={}",
             status.mode, status.rules, status.skills
@@ -718,25 +614,10 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
     let always: Vec<_> = rules.iter().filter(|r| r.always_apply).collect();
-    check(
-        "always_apply_rules",
-        always.len() >= 4,
-        &format!("{} alwaysApply rules", always.len()),
-    );
-
-    let subagents_rule = rules.iter().any(|r| r.id == "subagents");
-    check("subagents_rule", subagents_rule, "subagents rule indexed");
-
     let skills = ax_policy::list_skills(ax.db_pool())
         .await
         .map_err(|e| e.to_string())?;
-    let subagents_skill = skills.iter().any(|s| s.name == "subagents");
     let startup_skill = skills.iter().any(|s| s.name == "startup");
-    check(
-        "subagents_skill",
-        subagents_skill,
-        "subagents skill indexed",
-    );
     check("startup_skill", startup_skill, "startup skill indexed");
 
     let baseline = MatchInput {
@@ -746,93 +627,83 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
         changed_files: vec![],
     };
     let baseline_match = ax.match_policy(baseline).await.map_err(|e| e.to_string())?;
+    let missing_always: Vec<&str> = always
+        .iter()
+        .filter(|r| r.enabled && r.status == "approved")
+        .filter(|r| !baseline_match.rules.iter().any(|m| m.id == r.id))
+        .map(|r| r.id.as_str())
+        .collect();
     check(
         "match_baseline",
-        baseline_match.rules.len() >= 4,
-        &format!("{} rules matched", baseline_match.rules.len()),
+        missing_always.is_empty(),
+        &if missing_always.is_empty() {
+            format!(
+                "{} rules matched, every alwaysApply rule included",
+                baseline_match.rules.len()
+            )
+        } else {
+            format!(
+                "alwaysApply rules not matched: {}",
+                missing_always.join(", ")
+            )
+        },
     );
-
-    let release = MatchInput {
-        prompt: "deploy release latest.txt".into(),
-        cwd: root.clone(),
-        open_files: vec![root.join("site/public/releases/latest.txt")],
-        changed_files: vec![],
-    };
-    let release_match = ax.match_policy(release).await.map_err(|e| e.to_string())?;
-    let has_release = release_match
-        .rules
-        .iter()
-        .any(|r| r.id == "release-all-platforms");
-    check(
-        "match_release_trigger",
-        has_release,
-        &format!(
-            "release rule matched={has_release}, skills={}",
-            release_match.skills.len()
-        ),
-    );
-
-    if skills.iter().any(|s| s.name == "savings-gauntlet") {
-        let savings = MatchInput {
-            prompt: "rerun the savings gauntlet".into(),
-            cwd: root.clone(),
-            open_files: vec![],
-            changed_files: vec![],
-        };
-        let savings_match = ax.match_policy(savings).await.map_err(|e| e.to_string())?;
-        let matched = savings_match
-            .skills
-            .iter()
-            .any(|s| s.name == "savings-gauntlet");
-        check(
-            "match_savings_gauntlet",
-            matched,
-            &format!("savings-gauntlet matched={matched}"),
-        );
-    }
 
     let meta = ax_policy::build_preflight_meta(&status, &baseline_match);
     check(
         "preflight_meta",
-        meta.guard_required && meta.matched_rules >= 4,
+        meta.matched_rules == baseline_match.rules.len(),
         &format!(
             "guardRequired={} matchedRules={}",
             meta.guard_required, meta.matched_rules
         ),
     );
 
-    let inject_ok = baseline_match.inject.contains("<ax_policy")
-        && baseline_match.inject.contains("agent-workflow");
-    check("inject_block", inject_ok, "inject contains team policy");
+    if baseline_match.rules.is_empty() {
+        check("inject_block", true, "skipped — no rule matched");
+    } else {
+        check(
+            "inject_block",
+            baseline_match.inject.contains("<ax_policy"),
+            "inject contains team policy",
+        );
+    }
 
-    let guard_target = root.join("crates/ax-cli/src/main.rs");
-    let guard_ok = ax
-        .guard_operation(
-            &guard_target,
-            GuardOp::Write,
-            std::fs::read(&guard_target).ok().as_deref(),
-        )
+    let new_target = root.join(".ax/policy-test-new.rs");
+    let guard_new = ax
+        .guard_operation(&new_target, GuardOp::Write, Some(b"fn main() {}\n"))
         .await
         .map(|r| r.allowed)
         .unwrap_or(false);
-    check(
-        "guard_utf8_existing",
-        guard_ok,
-        "existing UTF-8 file allowed",
-    );
+    check("guard_utf8_new", guard_new, "new UTF-8 file allowed");
 
-    let new_target = root.join("target-dev/policy-test-new.rs");
-    let bom = [0xEFu8, 0xBB, 0xBF, b'x'];
-    let guard_bom = ax
-        .guard_operation(&new_target, GuardOp::Write, Some(&bom))
-        .await
-        .map(|r| !r.allowed)
-        .unwrap_or(false);
-    check(
-        "guard_utf8_bom_blocked",
-        guard_bom,
-        "UTF-8 BOM in proposed content blocked",
-    );
+    let has_utf8_rule = rules.iter().any(|r| {
+        let id = r.id.to_lowercase();
+        r.enabled
+            && r.level.eq_ignore_ascii_case("CRITICAL")
+            && (id.contains("utf8")
+                || id.contains("encoding")
+                || r.tags.iter().any(|t| t.eq_ignore_ascii_case("utf8")))
+    });
+    if has_utf8_rule {
+        let bom = [0xEFu8, 0xBB, 0xBF, b'x'];
+        let guard_bom = ax
+            .guard_operation(&new_target, GuardOp::Write, Some(&bom))
+            .await
+            .map(|r| !r.allowed)
+            .unwrap_or(false);
+        check(
+            "guard_utf8_bom_blocked",
+            guard_bom,
+            "UTF-8 BOM in proposed content blocked",
+        );
+    } else {
+        check(
+            "guard_utf8_bom_blocked",
+            true,
+            "skipped — no CRITICAL UTF-8 rule indexed",
+        );
+    }
 
     let env_target = root.join(".env");
     let has_secrets_rule = rules
@@ -865,12 +736,94 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
         .any(|c| c.label.contains("startup") && c.ok);
     check("bootstrap_startup", startup_ok, "startup skill file OK");
 
-    let ide = ax_policy::sync_ide_bootstrap(&root, false).map_err(|e| e.to_string())?;
-    let cursor_ok = ide
-        .checks
-        .iter()
-        .any(|c| c.label.contains("ax.mdc") && c.ok);
-    check("bootstrap_cursor", cursor_ok, ".cursor/rules/ax.mdc OK");
+    if root.join(".cursor").is_dir() {
+        let ide = ax_policy::sync_ide_bootstrap(&root, false).map_err(|e| e.to_string())?;
+        let cursor_ok = ide
+            .checks
+            .iter()
+            .any(|c| c.label.contains("ax.mdc") && c.ok);
+        check("bootstrap_cursor", cursor_ok, ".cursor/rules/ax.mdc OK");
+    } else {
+        check("bootstrap_cursor", true, "skipped — no .cursor folder");
+    }
+
+    if self_check {
+        check(
+            "self_always_apply_rules",
+            always.len() >= 4,
+            &format!("{} alwaysApply rules", always.len()),
+        );
+        check(
+            "self_subagents_rule",
+            rules.iter().any(|r| r.id == "subagents"),
+            "subagents rule indexed",
+        );
+        check(
+            "self_subagents_skill",
+            skills.iter().any(|s| s.name == "subagents"),
+            "subagents skill indexed",
+        );
+        check(
+            "self_inject_agent_workflow",
+            baseline_match.inject.contains("agent-workflow"),
+            "inject contains agent-workflow",
+        );
+
+        let release = MatchInput {
+            prompt: "deploy release latest.txt".into(),
+            cwd: root.clone(),
+            open_files: vec![root.join("site/public/releases/latest.txt")],
+            changed_files: vec![],
+        };
+        let release_match = ax.match_policy(release).await.map_err(|e| e.to_string())?;
+        let has_release = release_match
+            .rules
+            .iter()
+            .any(|r| r.id == "release-all-platforms");
+        check(
+            "self_match_release_trigger",
+            has_release,
+            &format!(
+                "release rule matched={has_release}, skills={}",
+                release_match.skills.len()
+            ),
+        );
+
+        if skills.iter().any(|s| s.name == "savings-gauntlet") {
+            let savings = MatchInput {
+                prompt: "rerun the savings gauntlet".into(),
+                cwd: root.clone(),
+                open_files: vec![],
+                changed_files: vec![],
+            };
+            let savings_match = ax.match_policy(savings).await.map_err(|e| e.to_string())?;
+            let matched = savings_match
+                .skills
+                .iter()
+                .any(|s| s.name == "savings-gauntlet");
+            check(
+                "self_match_savings_gauntlet",
+                matched,
+                &format!("savings-gauntlet matched={matched}"),
+            );
+        }
+
+        let guard_target = root.join("crates/ax-cli/src/main.rs");
+        let guard_ok = ax
+            .guard_operation(
+                &guard_target,
+                GuardOp::Write,
+                std::fs::read(&guard_target).ok().as_deref(),
+            )
+            .await
+            .map(|r| r.allowed)
+            .unwrap_or(false);
+        check(
+            "self_guard_utf8_existing",
+            guard_ok && guard_target.is_file(),
+            "existing UTF-8 file allowed",
+        );
+    }
 
     let failed: Vec<_> = results.iter().filter(|r| !r.ok).collect();
     if json {
@@ -892,13 +845,13 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
     }
 
     if !failed.is_empty() {
-        std::process::exit(1);
+        return Err(format!("{} policy check(s) failed", failed.len()));
     }
     Ok(())
 }
 
 pub fn run_agents_dir(path: Option<String>, name: Option<String>) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let Some(raw) = name else {
         let current = ax_policy::agents_dir_name(&root);
         let defined = ax_policy::configured_agents_dir(&root).is_some();
@@ -922,7 +875,7 @@ pub fn run_agents_dir(path: Option<String>, name: Option<String>) -> Result<(), 
 }
 
 pub async fn run_storage_status(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let status = ax_policy::policy_storage_status(&root);
     if json {
         println!(
@@ -980,7 +933,7 @@ pub async fn run_storage_set_item(
     keep_file: bool,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let target = PolicyStorage::parse(&storage)
         .ok_or_else(|| "storage must be files or database".to_string())?;
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
@@ -1009,17 +962,20 @@ pub async fn run_storage_set_item(
     Ok(())
 }
 
+/// Switch the policy storage mode.
+///
+/// Without `yes` this only previews. With `yes` (project scope) the migration
+/// runs first and the config is written only after it succeeded; markdown
+/// sources are removed last, after the config points at the database.
 pub async fn run_storage_set(
     path: Option<String>,
     target: PolicyStorage,
     global: bool,
-    migrate: bool,
     yes: bool,
     keep_files: bool,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
-    let _ = migrate;
+    let root = resolve_project_root(path);
     let do_migrate = !global;
 
     // Propose migration plan without changing storage or importing.
@@ -1104,20 +1060,25 @@ pub async fn run_storage_set(
         return Ok(());
     }
 
-    let config_path = if global {
-        ax_policy::write_global_policy_storage(target)?
-    } else {
-        ax_policy::write_project_policy_storage(&root, target)?
+    let write_config = || {
+        if global {
+            ax_policy::write_global_policy_storage(target)
+        } else {
+            ax_policy::write_project_policy_storage(&root, target)
+        }
     };
 
-    if yes && !global {
+    let mut found: Option<(u32, u32, usize)> = None;
+    let config_path = if yes && !global {
         let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
         match target {
             PolicyStorage::Database => {
-                let (plan, apply) =
-                    ax_policy::exclusive_to_database(ax.db_pool(), &root, keep_files)
-                        .await
-                        .map_err(|e| e.to_string())?;
+                let (plan, mut apply) = ax_policy::migrate_to_database(ax.db_pool(), &root).await?;
+                let config_path = write_config()?;
+                if !keep_files {
+                    apply.files_removed =
+                        ax_policy::remove_ax_policy_file_sources(&root, &plan.candidates);
+                }
                 if !json {
                     println!(
                         "Migrated {} rules, {} skills into database (scanned {} candidates, {} skipped)",
@@ -1132,6 +1093,8 @@ pub async fn run_storage_set(
                         println!("  removed {} .agents/.ax/policy files", apply.files_removed);
                     }
                 }
+                found = Some((plan.rules_found, plan.skills_found, plan.candidates.len()));
+                config_path
             }
             PolicyStorage::Files => {
                 let out = ax_policy::agents_dir(&root);
@@ -1139,6 +1102,7 @@ pub async fn run_storage_set(
                     ax_policy::export_policy_to_files_filtered(ax.db_pool(), &root, &out, false)
                         .await
                         .map_err(|e| e.to_string())?;
+                let config_path = write_config()?;
                 ax.index_policy(true).await.map_err(|e| e.to_string())?;
                 if !json {
                     println!(
@@ -1146,9 +1110,12 @@ pub async fn run_storage_set(
                         result.rules_exported, result.skills_exported, result.output_dir
                     );
                 }
+                config_path
             }
         }
-    }
+    } else {
+        write_config()?
+    };
 
     if json {
         let mut payload = serde_json::json!({
@@ -1160,11 +1127,10 @@ pub async fn run_storage_set(
             "migrated": yes && !global,
             "keepFiles": keep_files,
         });
-        if yes && target == PolicyStorage::Database {
-            let plan = ax_policy::scan_policy_candidates(&root);
-            payload["rulesFound"] = serde_json::json!(plan.rules_found);
-            payload["skillsFound"] = serde_json::json!(plan.skills_found);
-            payload["candidates"] = serde_json::json!(plan.candidates.len());
+        if let Some((rules, skills, candidates)) = found {
+            payload["rulesFound"] = serde_json::json!(rules);
+            payload["skillsFound"] = serde_json::json!(skills);
+            payload["candidates"] = serde_json::json!(candidates);
         }
         println!(
             "{}",
@@ -1187,7 +1153,7 @@ pub async fn run_capture(
     yes: bool,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
 
     let mut proposal = ax_policy::propose_rule_from_prompt(&prompt, &files);
@@ -1279,7 +1245,7 @@ pub async fn run_disable(path: Option<String>, id: String) -> Result<(), String>
 }
 
 async fn set_enabled(path: Option<String>, id: &str, enabled: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let store = ax_policy::PolicyStore::new(ax.db_pool().clone(), root.clone());
     let (kind, bare_id) = ax_policy::PolicyItemKind::split_prefixed(id);
@@ -1301,7 +1267,7 @@ pub async fn run_pack_export(
     out: Option<String>,
     quiet: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let out_path = out.as_ref().map(std::path::PathBuf::from);
     let result = ax_policy::export_pack(ax.db_pool(), &root, &tag, out_path.as_deref())
@@ -1322,7 +1288,7 @@ pub async fn run_pack_import(
     force: bool,
     quiet: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let pack_path = pack.as_ref().map(std::path::PathBuf::from);
     let result = ax_policy::import_pack(ax.db_pool(), &root, pack_path.as_deref(), force)
@@ -1360,7 +1326,7 @@ pub async fn run_pack_import(
 }
 
 pub async fn run_pack_status(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let status = ax_policy::pack_status(ax.db_pool(), &root)
         .await
@@ -1414,7 +1380,7 @@ pub async fn run_pack_install(
     }
 
     let pack_name = name.unwrap();
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let result =
         ax_policy::install_builtin_pack(&root, &pack_name, force).map_err(|e| e.to_string())?;
 
@@ -1454,7 +1420,7 @@ pub async fn run_pack_install(
 }
 
 pub async fn run_review_list(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let queue = ax_policy::list_pending_report(&root).map_err(|e| e.to_string())?;
     let items = &queue.items;
     if json {
@@ -1482,7 +1448,7 @@ pub async fn run_review_list(path: Option<String>, json: bool) -> Result<(), Str
 }
 
 pub async fn run_review_show(path: Option<String>, id: String, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let store = ax_policy::PolicyStore::new(ax.db_pool().clone(), root.clone());
     let (kind, bare_id) = ax_policy::PolicyItemKind::split_prefixed(&id);
@@ -1508,7 +1474,7 @@ pub async fn run_review_show(path: Option<String>, id: String, json: bool) -> Re
 }
 
 pub async fn run_review_approve(path: Option<String>, id: String) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let result = ax_policy::approve_pending(ax.db_pool(), &root, &id)
         .await
@@ -1518,7 +1484,7 @@ pub async fn run_review_approve(path: Option<String>, id: String) -> Result<(), 
 }
 
 pub async fn run_review_reject(path: Option<String>, id: String) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let result = ax_policy::reject_pending(ax.db_pool(), &root, &id)
         .await
@@ -1543,7 +1509,7 @@ pub async fn run_pack_zip(
     rules: Option<String>,
     skills: Option<String>,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let spec = ax_policy::PackSpec {
         name,
         description: description.unwrap_or_default(),
@@ -1570,7 +1536,7 @@ pub async fn run_policy_restore(
     preview: bool,
     decisions: Option<String>,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let bytes = std::fs::read(&zip).map_err(|e| format!("{zip}: {e}"))?;
     if preview {
         let p = ax_policy::preview_policy_zip(&root, &bytes).map_err(|e| e.to_string())?;
@@ -1641,7 +1607,7 @@ pub fn run_stack_list(json: bool) -> Result<(), String> {
 }
 
 pub fn run_stack_detect(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let found = ax_policy::detect_stacks(&root);
     if json {
         let rows: Vec<_> = found
@@ -1679,7 +1645,7 @@ pub async fn run_stack_apply(
     yes: bool,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let chosen = if ids.is_empty() {
         let configured = ax_policy::read_configured_stacks(&root);
         if !configured.is_empty() {
@@ -1743,7 +1709,7 @@ pub async fn run_stack_apply(
 }
 
 pub async fn run_stack_remove(path: Option<String>, id: String, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let removed = ax_policy::remove_stack(&root, &id)?;
     reindex_policy(&root).await?;
     if json {
@@ -1761,7 +1727,7 @@ pub async fn run_stack_remove(path: Option<String>, id: String, json: bool) -> R
 }
 
 pub fn run_stack_status(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let rows = ax_policy::stack_status(&root);
     if json {
         println!(
@@ -1796,7 +1762,7 @@ pub fn run_stack_status(path: Option<String>, json: bool) -> Result<(), String> 
 }
 
 pub async fn run_stack_upgrade(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let report = ax_policy::upgrade_stacks(&root)?;
     reindex_policy(&root).await?;
     if json {
@@ -1821,8 +1787,51 @@ pub async fn run_stack_upgrade(path: Option<String>, json: bool) -> Result<(), S
 
 #[cfg(test)]
 mod tests {
-    use super::strip_match_bodies;
+    use super::{dedup_note, strip_match_bodies};
+    use ax_core::policy_dedup::{Action, DedupAction, DedupReport};
     use serde_json::json;
+
+    fn report(dry_run: bool, n: usize) -> DedupReport {
+        DedupReport {
+            dry_run,
+            actions: (0..n)
+                .map(|i| DedupAction {
+                    kind: "rule",
+                    name: format!("r{i}"),
+                    action: Action::RemovedGlobalDuplicate { project_id: 1 },
+                    reason: "duplicate".into(),
+                })
+                .collect(),
+            ..DedupReport::default()
+        }
+    }
+
+    #[test]
+    fn dedup_note_does_not_claim_a_dry_run_cleaned_anything() {
+        let note = dedup_note(&report(true, 3)).unwrap();
+        assert!(!note.contains("Cleaned"), "{note}");
+        assert!(note.contains("Found 3 duplicate"), "{note}");
+        assert!(note.contains("ax policy dedup"), "{note}");
+    }
+
+    #[test]
+    fn dedup_note_reports_a_real_run_as_cleaned() {
+        let note = dedup_note(&report(false, 2)).unwrap();
+        assert!(note.starts_with("Cleaned 2 duplicate"), "{note}");
+    }
+
+    #[test]
+    fn dedup_note_is_silent_when_nothing_was_found() {
+        assert_eq!(dedup_note(&report(true, 0)), None);
+    }
+
+    #[test]
+    fn dedup_note_points_a_stopped_check_at_the_real_command() {
+        let mut r = report(true, 0);
+        r.error = Some("global.db has an older schema; a real run upgrades it first".into());
+        let note = dedup_note(&r).unwrap();
+        assert!(note.contains("ax policy dedup"), "{note}");
+    }
 
     #[test]
     fn match_json_keeps_bodies_only_in_inject() {

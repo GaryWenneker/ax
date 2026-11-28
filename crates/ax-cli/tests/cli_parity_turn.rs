@@ -1,83 +1,33 @@
 //! CLI-only turn lifecycle integration (no MCP transport).
 
+mod common;
+
 use std::fs;
-use std::process::Command;
 
+use common::{git, git_init_commit, run_ax_env};
 use tempfile::tempdir;
-
-fn ax_bin() -> std::path::PathBuf {
-    std::env::var_os("CARGO_BIN_EXE_ax")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            let mut p = std::env::current_exe().unwrap();
-            p.pop();
-            if p.ends_with("deps") {
-                p.pop();
-            }
-            p.join("ax")
-        })
-}
-
-fn run_ax(root: &std::path::Path, args: &[&str], stdin: Option<&str>) -> (i32, String, String) {
-    let mut cmd = Command::new(ax_bin());
-    cmd.current_dir(root).args(args);
-    if stdin.is_some() {
-        cmd.stdin(std::process::Stdio::piped());
-    }
-    let mut child = cmd
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .expect("spawn ax");
-    if let Some(input) = stdin {
-        use std::io::Write;
-        let mut sin = child.stdin.take().unwrap();
-        sin.write_all(input.as_bytes()).unwrap();
-    }
-    let out = child.wait_with_output().unwrap();
-    (
-        out.status.code().unwrap_or(1),
-        String::from_utf8_lossy(&out.stdout).into_owned(),
-        String::from_utf8_lossy(&out.stderr).into_owned(),
-    )
-}
 
 #[test]
 fn research_turn_without_file_changes_is_persisted() {
     let dir = tempdir().unwrap();
     let root = dir.path();
+    // The usage database lives outside the repository so it is not a changed file.
+    let usage = tempdir().unwrap();
+    let usage_db = usage.path().join("usage.db");
+    let envs = [("AX_USAGE_DB", usage_db.as_os_str())];
+    let run_ax = |root: &std::path::Path, args: &[&str], stdin: Option<&str>| {
+        run_ax_env(root, args, stdin, &envs)
+    };
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
     // Minimal git repo so snapshots work.
-    let _ = Command::new("git")
-        .args(["init"])
-        .current_dir(root)
-        .status();
-    let _ = Command::new("git")
-        .args(["config", "user.email", "ax@test"])
-        .current_dir(root)
-        .status();
-    let _ = Command::new("git")
-        .args(["config", "user.name", "ax"])
-        .current_dir(root)
-        .status();
-    let _ = Command::new("git")
-        .args(["add", "."])
-        .current_dir(root)
-        .status();
-    let _ = Command::new("git")
-        .args(["commit", "-m", "init"])
-        .current_dir(root)
-        .status();
-
-    // Isolate usage.db for this test.
-    std::env::set_var("AX_USAGE_DB", root.join("usage.db"));
+    git_init_commit(root);
 
     let (code, out, err) = run_ax(root, &["init", &root.display().to_string()], None);
-    assert!(
-        code == 0 || out.contains("Initialized") || err.contains("already"),
-        "init failed code={code} out={out} err={err}"
-    );
+    assert_eq!(code, 0, "init failed: out={out} err={err}");
+    // Commit what init wrote, so the turn starts from a clean tree.
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "ax init"]);
 
     let (code, out, err) = run_ax(root, &["session", "start", "--json"], None);
     assert_eq!(code, 0, "session start: {err}");
@@ -138,14 +88,30 @@ fn research_turn_without_file_changes_is_persisted() {
     );
     assert_eq!(code, 0, "turn finish: {err}\n{out}");
     let receipt: serde_json::Value = serde_json::from_str(&out).expect(&out);
-    assert!(receipt["memory_id"].as_str().is_some() || receipt["memoryId"].as_str().is_some());
-    let files = receipt
-        .get("files")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    // Research turn: no requirement for file changes.
-    assert!(files.is_empty() || files.iter().all(|f| f.as_str().is_some()));
+    assert_eq!(receipt["state"], "finished", "{receipt}");
+    assert_eq!(
+        receipt["turn_id"].as_str(),
+        Some(turn.as_str()),
+        "{receipt}"
+    );
+    // Research turn: nothing in the tree changed.
+    assert_eq!(receipt["files"], serde_json::json!([]), "{receipt}");
+    let memory_id = receipt["memory_id"]
+        .as_str()
+        .expect("memory_id in the receipt")
+        .to_string();
+
+    let (code, out, err) = run_ax(root, &["recall", "--id", &memory_id, "--json"], None);
+    assert_eq!(code, 0, "recall: {err}\n{out}");
+    let recalled: serde_json::Value = serde_json::from_str(&out).expect(&out);
+    let matches = recalled["matches"].as_array().expect("matches");
+    assert_eq!(matches.len(), 1, "{recalled}");
+    let body = matches[0]["body"].as_str().expect("memory body");
+    assert!(
+        body.contains("Root cause confirmed without code changes."),
+        "{body}"
+    );
+    assert!(body.contains("Use Lax SameSite"), "{body}");
 
     let (code, out, err) = run_ax(
         root,
@@ -153,5 +119,7 @@ fn research_turn_without_file_changes_is_persisted() {
         None,
     );
     assert_eq!(code, 0, "turn status: {err}");
-    assert!(out.contains(&turn) || out.contains("finished"));
+    let status: serde_json::Value = serde_json::from_str(&out).expect(&out);
+    assert_eq!(status["finished"], serde_json::json!([turn]), "{status}");
+    assert_eq!(status["open"], serde_json::json!([]), "{status}");
 }

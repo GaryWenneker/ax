@@ -112,8 +112,9 @@ async fn foreign_origin_cannot_open_the_terminal_socket() {
     assert_eq!(allowed.status(), StatusCode::UPGRADE_REQUIRED);
 }
 
+/// A terminal socket request from a browser on this computer.
 fn ws_request(origin: &str) -> Request<Body> {
-    Request::builder()
+    let mut req = Request::builder()
         .uri("/api/agent/pty/ws?agent=builtin")
         .header("origin", origin)
         .header("connection", "Upgrade")
@@ -121,5 +122,9 @@ fn ws_request(origin: &str) -> Request<Body> {
         .header("sec-websocket-version", "13")
         .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
         .body(Body::empty())
-        .unwrap()
+        .unwrap();
+    let peer: std::net::SocketAddr = "127.0.0.1:50000".parse().unwrap();
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo(peer));
+    req
 }

@@ -16,6 +16,12 @@ The MCP server (`ax serve --mcp`) is started by your agent — you do not run it
 
 Running `ax` with **no subcommand** starts the interactive installer (same as `ax install`).
 
+## Which project a command uses
+
+A command given a `path` uses that path. Without one, a command that reads or updates a project (`status`, `query`, `callers`, `explore`, `recall`, `policy`, `spec`, `neural`, `daemon`, `db`, …) and the agent hooks use the nearest directory at or above the current one that holds `.ax/ax.db`, the same way the MCP server finds its project. `~/.ax` is the global ax folder and is never taken for a project. So these commands work from any subdirectory of a project.
+
+`init`, `install`, `uninit`, `index`, `sync`, `ship` and `bootstrap` act on the current directory itself and never reach up into a parent project.
+
 ## Environment variables
 
 | Variable | Effect |
@@ -59,7 +65,7 @@ Interactive installer — writes MCP config for detected AI agents (Cursor, Clau
 | `--all` | flag | Configure every supported agent, not only detected ones |
 | `--target <id>` | string | Wire a single agent (e.g. `vscode`, `cursor`); ids are case-insensitive |
 | `--path <dir>` | string | Project root for workspace MCP files (default: current directory). |
-| `--mode <mode>` | string | `full` (default) wires MCP/hooks; `cli-only` seeds IDE instruction files without MCP, plugins, IDE hooks, or daemons (all supported IDEs — see [CLI-only mode](/guides/cli-only/)) |
+| `--mode <mode>` | `full` \| `cli-only` | `full` (default) wires MCP/hooks; `cli-only` (also `cli_only`, any case) seeds IDE instruction files without MCP, plugins, IDE hooks, or daemons (all supported IDEs — see [CLI-only mode](/guides/cli-only/)). Any other value is rejected |
 
 Agent configs and hooks get the first `ax` on your `PATH`, exactly as found there: a shim such as `~/.local/bin/ax` stays the shim, so a later upgrade of the binary behind it needs no reinstall. With no `ax` on `PATH`, the binary running the install is written, and the report says so. When the two differ, the report names both. A Claude Code hook whose `ax` path is stale is repaired in place; your own hooks stay as they are.
 
@@ -138,14 +144,16 @@ ax bootstrap --json
 
 ### `ax uninit [path]`
 
-Delete the `.ax/` directory and remove git sync hooks. Permanently removes the local index.
+Remove the git sync hooks, then delete the `.ax/` directory. This permanently removes everything in `.ax/`: the index and stored memories (`ax.db`), project rules and skills (`policy/`), shared memories (`memory/`) and backups. The command lists what `.ax/` holds and asks before deleting. Without a terminal (a script or CI) it deletes nothing unless `--yes` is given. When a git hook cannot be cleaned, the command stops before `.ax/` is touched.
 
 | Argument | Type | Description |
 |---|---|---|
 | `path` | optional | Project root (default: current directory) |
+| `--yes`, `-y` | flag | Delete without asking |
 
 ```bash
 ax uninit
+ax uninit --yes
 ax uninit ./old-project
 ```
 
@@ -220,7 +228,7 @@ ax status --json
 
 ### `ax unlock [path]`
 
-Force-remove a stale `.ax/ax.lock` and stop orphaned `ax.exe` processes. Prefer `ax daemon restart` first — writers normally wait up to 180s for the lock and clear dead PIDs automatically.
+Clear a stale `.ax/ax.lock`. When nobody holds the lock it is cleared right away and no process is touched. When a live process holds it, `ax unlock` stops that process only, and only when it is an ax process: SIGTERM first, SIGKILL after 5 seconds. Other ax processes, such as MCP daemons of other projects, keep running. A lock held by something that is not ax is reported and left alone. Prefer `ax daemon restart` first — writers normally wait up to 180s for the lock and clear dead PIDs automatically.
 
 | Argument | Type | Description |
 |---|---|---|
@@ -254,7 +262,7 @@ ax query auth --json
 
 ### `ax explore [query…]`
 
-Natural-language explore — same output shape as the `ax_explore` MCP tool. Optional BYO LLM offload via `ax offload`.
+Natural-language explore — same output shape as the `ax_explore` MCP tool. Optional BYO LLM offload via `ax offload` rewrites the text answer; `--json` prints the structured result and never calls the offload API.
 
 | Argument / flag | Type | Description |
 |---|---|---|
@@ -430,7 +438,7 @@ ax report --stdout
 
 ### `ax validate [path]`
 
-Graph hygiene report: isolated symbols (no call or import edges), dangling edges (an edge whose target is missing), and orphan docs (Markdown with no documents / references edges). Use `--ci` to fail a pipeline on a dirty graph.
+Graph hygiene report: isolated symbols (no call or import edges), dangling edges (an edge whose target is missing), and orphan docs (Markdown with no documents / references edges). Use `--ci` to fail a pipeline on a dirty graph. Counts are always complete; the lists are capped at 200 isolated symbols and 100 orphan docs (`isolatedCount` and `orphanDocsCount` in `--json` carry the full numbers).
 
 | Argument / flag | Type | Default | Description |
 |---|---|---|---|
@@ -564,7 +572,7 @@ When did I change X: dated agent turns (prompt, outcome, files, commits) and git
 | `--since` | `YYYY-MM-DD` | — | Only entries on or after this date |
 | `--limit` | number | `20` | Max entries (1–50) |
 | `--id` | string | — | Show one turn memory with its full outcome |
-| `--depth` | `hot` \| `archive` | `hot` | `archive` includes demoted turns, graph diffs, and activity. Same as `ax_history` `depth` |
+| `--depth` | `hot` \| `archive` \| `backup` | `hot` | `archive` includes demoted turns, graph diffs, and activity; `backup` searches like `hot`. Same as `ax_history` `depth` |
 | `--json` | flag | — | JSON output (`entries`, `count`) |
 
 ```bash
@@ -614,6 +622,23 @@ Import JSONL memories (upsert by id). Used after `git pull` or via the post-merg
 ```bash
 ax memory import
 ax memory import --path ./shared-memories.jsonl
+```
+
+### `ax memory prune-file-changes`
+
+Remove automatic `file_change` memories (`changed <path>`) whose every path the index excludes: builtin skip folders such as `target`, `node_modules`, and `.git`, dot-folders such as `.claude/worktrees`, `ax.json` excludes, and gitignored paths (every `.gitignore`, `.git/info/exclude`, and the global excludes file). Sync and the file watcher no longer write these memories; this command removes the ones older builds wrote. Other memory kinds are never touched.
+
+Without `--apply` it is a dry run: it prints how many memories match, the folders they name, and deletes nothing. With `--apply`, each matched memory is purged with its cues, links, and vector, and its id is tombstoned so import and restore cannot bring it back.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--apply` | off | Delete the matched memories |
+| `--json` | off | Print the report as JSON (`dry_run`, `scanned`, `matched`, `purged`, `kept`, `areas`, `sample`) |
+
+```bash
+ax memory prune-file-changes
+ax memory prune-file-changes --json
+ax memory prune-file-changes --apply
 ```
 
 ### `ax docs-catalog sync`
@@ -735,6 +760,8 @@ ax doctor --mode cli
 ax doctor --mode all --json
 ```
 
+`--mode` takes `cli` (the default) or `all`; any other value is rejected.
+
 `ax doctor` also runs a quick integrity check of `.ax/ax.db` and names `ax db repair` when that check finds a problem. When an older MCP build is registered, it names that process and says to restart the MCP server in Cursor. It does not stop the server.
 
 ### `ax db`
@@ -802,7 +829,7 @@ ax diff --base origin/main --json
 
 ### `ax test-impact`
 
-Test-function impact analysis (git diff + TIA graph).
+Test-function impact analysis (git diff + TIA graph). When git cannot diff against the base (an unknown ref, a shallow clone without it, or no git repository), the command fails with the git error instead of reporting zero changed files.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -905,7 +932,7 @@ rustup component add rust-analyzer
 
 ### `ax stop-hook`
 
-Claude Code `Stop` / `SubagentStop` hook target — internal command wired automatically by `ax install` for Claude Code, not meant to be run manually. Reads Claude's JSON payload on stdin, runs `ax_guard`-equivalent checks against every uncommitted file (`git status --porcelain`), and on a CRITICAL violation prints `{"decision": "block", "reason": "..."}` so Claude fixes the issue before the turn actually ends. Honors `stop_hook_active` to avoid infinite loops and no-ops when there's no indexed policy. It also writes the [per-turn memory](/guides/memory/#per-turn-memories) for the turn.
+Claude Code `Stop` / `SubagentStop` hook target — internal command wired automatically by `ax install` for Claude Code, not meant to be run manually. Reads Claude's JSON payload on stdin, runs `ax_guard`-equivalent checks against the uncommitted files inside the ax project (`git status --porcelain -z --untracked-files=all`, so new files in new folders and non-ASCII names count, and a project in a subfolder of the repository works), up to 40 files per turn (the block reason says how many were left out), and on a CRITICAL violation prints `{"decision": "block", "reason": "..."}` so Claude fixes the issue before the turn actually ends. Honors `stop_hook_active` to avoid infinite loops and no-ops when there's no indexed policy. It also writes the [per-turn memory](/guides/memory/#per-turn-memories) for the turn.
 
 | Env var | Effect |
 |---|---|
@@ -949,7 +976,7 @@ Zed, Continue, Kiro, opencode, Antigravity, and Hermes have no blocking tool hoo
 
 ### `ax daemon [path] [status|stop|restart]`
 
-MCP background daemon control (shared index connection per project). IDEs attach as stdio proxies; `restart` clears a stuck daemon and stale locks without killing every `ax.exe` (unlike `ax unlock`).
+MCP background daemon control (shared index connection per project). IDEs attach as stdio proxies; `restart` clears a stuck daemon and stale locks.
 
 The daemon follows its binary. It checks every 30 seconds (`AX_DAEMON_EXE_CHECK_MS`) whether its `ax` file was replaced, for example by `ax upgrade`, and then stops cleanly. A proxy on a newer `ax` build restarts an older daemon on its own binary; a proxy on an older build attaches to a newer daemon and leaves it running. When the daemon goes away, the proxies reconnect or start a new one without the IDE noticing. A call that was in flight gets the error `ax daemon restarted; retry the call`. If no daemon is back within 15 seconds, the proxy exits with the reason on stderr.
 
@@ -957,7 +984,7 @@ The daemon follows its binary. It checks every 30 seconds (`AX_DAEMON_EXE_CHECK_
 |---|---|
 | `path` | Optional project root (before subcommand) |
 | `status` | Show pid, port, socket from `.ax/daemon.json` (default) |
-| `stop` | Stop the running daemon |
+| `stop` | Stop the running daemon. It first checks that the recorded pid is still an ax daemon, sends SIGTERM, waits up to 5 seconds, then sends SIGKILL; it reports "stopped" only once the process is gone and fails otherwise. A pid that now belongs to another program is left running and the stale `.ax/daemon.json` is removed |
 | `restart` | Stop + start a fresh daemon (Command Center **Reload MCP** uses the same path) |
 
 ```bash
@@ -982,7 +1009,13 @@ ax --version
 
 ### `ax upgrade [version]`
 
-Self-update from [getax.wenneker.io/releases/latest.txt](https://getax.wenneker.io/releases/latest.txt) (GitHub fallback). Non-interactive — no confirmation prompt.
+Self-update from GitHub Releases, with [getax.wenneker.io/releases](https://getax.wenneker.io/releases/latest.txt) as the fallback. Non-interactive — no confirmation prompt.
+
+For private repositories and higher rate limits, `ax upgrade` and `ax upgrade --check` send a GitHub token from `AX_GITHUB_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN`, or else from `gh auth token`. The `gh` call runs with stdin closed and is stopped after 3 seconds. The background update notice after other commands uses only the environment variables and never runs `gh`.
+
+Versions compare as semver: `2.1.0-rc.1` is lower than `2.1.0`, so a pre-release build is offered the final release. A release tag or `latest.txt` value that is not a `major.minor.patch` version (with an optional `-pre` suffix), such as `nightly` or an HTML error page, is ignored and never shown as an update.
+
+Every downloaded archive is checked against the release's `SHA256SUMS` (fetched from GitHub when possible, otherwise from getax) before it is extracted. A missing checksum list, a missing entry or a different digest stops the upgrade and leaves the installed binary alone. A `--local` archive is checked against a `SHA256SUMS` in the same folder when one is there.
 
 | Argument / flag | Type | Description |
 |---|---|---|
@@ -999,6 +1032,8 @@ ax upgrade --local dist/ax-win32-x64.zip
 ```
 
 On Windows the process exits immediately; a detached helper finishes the binary swap. Open a new terminal and run `ax version` to verify.
+
+The first regular `ax` command that a new version runs inside an initialized project rewrites the managed IDE instruction files there once, and records that version in `.ax/ide-seed-version`. The hidden hook commands, `ax version`, `ax uninit` and `ax uninstall` never do this.
 
 ---
 
@@ -1019,6 +1054,8 @@ ax telemetry status
 ax telemetry on
 ax telemetry off
 ```
+
+`ax install` without `--yes` asks once whether to share usage data and stores the answer. When it runs without a terminal (a script, CI or an IDE task), it does not ask and stores nothing, so the question comes back on the next interactive install.
 
 ---
 
@@ -1048,7 +1085,7 @@ ax savings hook install
 |---|---|
 | `import --all` | Import Cursor + Claude Code session transcripts |
 | `tag-session` | Manually record model name for a session id |
-| `hook install` | Install Cursor sessionStart hook into `~/.cursor/hooks/` |
+| `hook install` | Install the Cursor sessionStart hook into `~/.cursor/hooks/` (executable) and merge it into `~/.cursor/hooks.json`; a `hooks.json` that is not valid JSON is left untouched with a message |
 
 The **Savings** page in `ax web` (enable in Settings) exposes the same filters. See [Token savings](/guides/token-savings/).
 
@@ -1109,8 +1146,8 @@ ax agent economics --json
 Estimated avoidable context from recorded tool calls. The report is advisory. `optimization.mode` defaults to `observe`. `optimize` approves only high-confidence deterministic rules and does not rewrite Pi's transcript.
 
 ```bash
-ax agent optimize --report
-ax agent optimize --report --json
+ax agent optimize
+ax agent optimize --json
 ```
 
 ### `ax budget`
@@ -1217,7 +1254,7 @@ ax cursor auth use enterprise
 
 ### `ax offload`
 
-Configure optional LLM offload for `ax explore` (BYO OpenAI-compatible API). Stored in `~/.ax/config.json`.
+Configure optional LLM offload for `ax explore` (BYO OpenAI-compatible API). Stored in `~/.ax/config.json`. Offload is off until `set-endpoint` switches it on; `ax init` only prints the command when it finds a provider key in the environment.
 
 #### `ax offload status`
 
@@ -1290,6 +1327,10 @@ Local web UI — graph browser, policy editor, token usage dashboard, Command Ce
 
 Set `AX_WEB_READONLY=1` for browse-only mode.
 
+When the port is taken by an earlier `ax web`, that process is asked to stop (then force-stopped after 3 seconds) and the new server takes the port. When any other program holds the port, `ax web` leaves it running and exits with a message naming the program; pick another port with `--port`.
+
+`ax web` stops on Ctrl+C, and on Unix also on SIGTERM (systemd, Docker, an IDE). Requests still open get 3 seconds to finish; live event streams from an open Command Center tab are then closed, so a tab left open never keeps the server running.
+
 On start, `ax web` checks GitHub for a newer release (skips the 24-hour `~/.ax/update-check.json` cache) and prints the boxed notice to stderr **before** the server blocks. Disable with `AX_NO_UPDATE_CHECK=1`. Short commands still check after they exit.
 
 ```bash
@@ -1306,6 +1347,9 @@ Native wgpu Command Center (egui/eframe). Embeds `ax-web` in-process — same `/
 | `path` | optional | cwd | Project root (must contain `.ax/ax.db`) |
 | `--port` | number | `7070` | Embedded `ax-web` listen port |
 | `--bind` | string | `127.0.0.1` | Bind address |
+| `--allow-anonymous-lan` | flag | off | Serve a non-loopback `--bind` without sign-in |
+
+A bind address other than loopback needs Command Center sign-in (**Settings → Security**). Without it the server refuses to start, because anyone who can reach the address could read the project and run the agent. `--allow-anonymous-lan` (or `AX_WEB_ALLOW_ANONYMOUS_LAN=1`) starts it anyway and prints a warning. Even then, owner-only actions and the agent terminal work only from a browser on this computer at `http://127.0.0.1`.
 
 ```bash
 ax desktop
@@ -1364,12 +1408,19 @@ ax policy dedup --json
 
 ### `ax policy pull <git-url> [path]`
 
-Clone a remote git policy registry into `.ax/policy/vendored/<name>/`, copy `rules/` and `skills/` into the project policy tree, and re-index.
+Clone a remote git policy registry into `.ax/policy/vendored/<name>/`, merge its `rules/*.mdc` and `skills/<name>/` into the project's agents folder (`.agents/` unless `policy.agentsDir` says otherwise), and re-index.
+
+- The new clone replaces the vendored copy only after `git clone` succeeded; a failed clone keeps the previous copy.
+- A local rule or skill with the same name that differs from the remote one is kept and reported. Pass `--force` to replace it. Identical items are left alone.
+- Symlinks in the remote repository are never followed or copied, and a `rules/` or `skills/` folder that resolves outside the clone is refused.
+- A remote tree larger than 5,000 files, 50 MB or 16 nested folders is refused before anything is written.
+- A URL that starts with `-` is refused.
 
 | Argument / flag | Type | Description |
 |---|---|---|
 | `git-url` | required | HTTPS or SSH git URL |
 | `--name` | string | Vendor subdirectory name (default: repo name) |
+| `--force` | bool | Replace local rules and skills that differ from the remote copy |
 
 ```bash
 ax policy pull https://github.com/acme/ax-org-policy.git
@@ -1451,7 +1502,7 @@ ax policy quality english-only
 ax skill report-installs --on
 ```
 
-Installed skills are usable immediately. A source is an `owner/repo` GitHub shorthand (letters, digits, `.`, `-` and `_` only), `git@github.com:owner/repo.git`, an https URL, or a local path; scp-style `user@host:path` for any host other than github.com is refused with a hint to use the https URL. Git clones always use https and keep a self-hosted port such as `https://gitlab.internal:8443/team/skills`. In a tree URL such as `https://github.com/o/r/tree/feature/x/skills/pdf`, a missing branch `feature` is retried as `feature/x` with path `skills/pdf`, and so on for up to eight segments. Azure `path` and `version` query values are percent-decoded. Each file a well-known index lists must be a plain relative path: absolute, drive, UNC and `..` paths (backslashes included) are refused. Skill downloads over HTTP (well-known indexes and their files, catalog search) use http or https only and refuse local hosts, private addresses, embedded credentials, and redirects to any of these, the same as the Command Center. To install from an intranet skill index, list its host names in `allowPrivateHosts` in `.ax/skill-catalog.json`, for example `{"allowPrivateHosts": ["skills.corp.example"]}`: the CLI (`ax skill add`, `ax skill audit --source`) then fetches from those hosts, and from redirects to them, even when they resolve to a private, shared (100.64.0.0/10) or loopback address, and logs a warning each time. The list is empty by default, and the Command Center ignores it. A skill folder must carry the name in its `SKILL.md` frontmatter, except for a repository whose `SKILL.md` sits at the top level: that skill installs under its frontmatter name, without the repository's `.git` data. `ax skill audit` stores a quality report for one skill and does not hide it. `ax skill brief` prints the edits for skills and rules. `ax policy quality <id>` audits one rule file and stores the same kind of report. Preflight includes both, and `ax_rules` returns rule briefs in `audits`. The agent edits the named file and leaves the skill or rule enabled. `--source` audits a catalog candidate without installing it. The audit never follows a symlink: a symlinked `SKILL.md` or skill directory gives a `symlink` failure and an empty report instead of the target's content. An agent submits a verdict JSON file with `verdict` (`pass`, `revise`, or `reject`), scores `clarity`, `trigger`, `steps`, `files`, and `safety` from 1 to 5, and findings whose `evidence` quotes the skill text. Git sources and the publish remote (`--remote`, or `publishRemote` in `.ax/skill-catalog.json`) must be `https://`, `ssh://` or scp-style `user@host:path`; any other value, including one that starts with `-`, is refused before git runs. Reporting an install to skills.sh stays off until `ax skill report-installs --on` or the Report installs switch on the Skills page.
+Installed skills are usable immediately. A source is an `owner/repo` GitHub shorthand (letters, digits, `.`, `-` and `_` only), `git@github.com:owner/repo.git`, an https URL, or a local path; scp-style `user@host:path` for any host other than github.com is refused with a hint to use the https URL. Git clones always use https and keep a self-hosted port such as `https://gitlab.internal:8443/team/skills`. In a tree URL such as `https://github.com/o/r/tree/feature/x/skills/pdf`, a missing branch `feature` is retried as `feature/x` with path `skills/pdf`, and so on for up to eight segments. Azure `path` and `version` query values are percent-decoded. For a well-known URL, every file the index lists must be relative to the index or on the same origin (scheme, host and port); a file on another server is refused, and so is a redirect that leaves that origin. A relative entry must be a plain relative path: absolute, drive, UNC and `..` paths (backslashes included) are refused. Each download stops at 25 MiB. Skill downloads over HTTP (well-known indexes and their files, catalog search) use http or https only and refuse local hosts, private addresses, embedded credentials, and redirects to any of these, the same as the Command Center. To install from an intranet skill index, list its host names in `allowPrivateHosts` in `.ax/skill-catalog.json`, for example `{"allowPrivateHosts": ["skills.corp.example"]}`: the CLI (`ax skill add`, `ax skill audit --source`) then fetches from those hosts, and from redirects to them, even when they resolve to a private, shared (100.64.0.0/10) or loopback address, and logs a warning each time. The list is empty by default, and the Command Center ignores it. A skill folder must carry the name in its `SKILL.md` frontmatter, except for a repository whose `SKILL.md` sits at the top level: that skill installs under its frontmatter name, without the repository's `.git` data. `ax skill audit` stores a quality report for one skill and does not hide it. `ax skill brief` prints the edits for skills and rules. `ax policy quality <id>` audits one rule file and stores the same kind of report. Preflight includes both, and `ax_rules` returns rule briefs in `audits`. The agent edits the named file and leaves the skill or rule enabled. `--source` audits a catalog candidate without installing it. The audit never follows a symlink: a symlinked `SKILL.md` or skill directory gives a `symlink` failure and an empty report instead of the target's content. An agent submits a verdict JSON file with `verdict` (`pass`, `revise`, or `reject`), scores `clarity`, `trigger`, `steps`, `files`, and `safety` from 1 to 5, and findings whose `evidence` quotes the skill text. Git sources and the publish remote (`--remote`, or `publishRemote` in `.ax/skill-catalog.json`) must be `https://`, `ssh://` or scp-style `user@host:path`; any other value, including one that starts with `-`, is refused before git runs, and so is a branch or tag that starts with `-`. Reporting an install to skills.sh stays off until `ax skill report-installs --on` or the Report installs switch on the Skills page.
 
 ### `ax policy skill <name> [path]`
 
@@ -1485,7 +1536,7 @@ ax policy guard old-file.txt --delete
 
 ### `ax policy test [path]`
 
-Smoke tests: match, guard, bootstrap, subagents.
+Policy health checks that hold on any initialized project: policy indexed, the `startup` skill present, every alwaysApply rule matched and injected, a new UTF-8 file allowed by the guard, and the bootstrap files in place. Checks that need a particular rule or folder (a CRITICAL UTF-8 rule, a secrets rule, `.cursor/`) report `skipped` when it is absent. Exits with status 1 when any check fails.
 
 | Flag | Description |
 |---|---|
@@ -1556,8 +1607,7 @@ Set **database** as the project default (`ax.db`). Without `--yes`, prints a sca
 | Flag | Description |
 |---|---|
 | `--global` | Write to `~/.ax/config.json` instead of project `ax.json` |
-| `--migrate` | Same as running without `--yes`: print the scan plan |
-| `--yes` | Import all candidates into `ax.db` and **delete** `.agents/` / `.ax/policy/` markdown |
+| `--yes` | Import all candidates into `ax.db`, then switch the config, then **delete** `.agents/` / `.ax/policy/` markdown. When the import fails, the config and the files stay as they were |
 | `--keep-files` | With `--yes`, import but leave markdown on disk |
 | `--json` | JSON output |
 
@@ -1574,8 +1624,7 @@ Set **files** as the project default source of truth (`.agents/` on disk).
 | Flag | Description |
 |---|---|
 | `--global` | Write to `~/.ax/config.json` |
-| `--migrate` | Preview export |
-| `--yes` | Export every rule/skill from `ax.db` into `.agents/` |
+| `--yes` | Export every rule/skill from `ax.db` into `.agents/`, then switch the config. When the export fails, the config stays as it was |
 | `--json` | JSON output |
 
 ```bash
@@ -1931,7 +1980,7 @@ Approving a new spec body marks selections of plans written against the previous
 
 `ax spec-policy` records which policy revision applies. A `body` field is rejected. The stored link has the revision id and content hash, not the rule text. Sending the same link again keeps the one row.
 
-A stale `basedOn` on `ax spec-revise` or `ax spec-amend` comes back as an error containing `conflict`, with `base` (the revision you named), `head` (the current revision), and `incoming` (the body that was not stored). Nothing is merged. An empty spec body is rejected. Approval reads the member's role. A `roles` field in the JSON is ignored. The command binds the active owner and forces the actor to be human.
+A stale `basedOn` on `ax spec-revise` or `ax spec-amend` comes back as an error containing `conflict`, with `base` (the revision you named), `head` (the current revision), and `incoming` (the body that was not stored). Nothing is merged. An empty spec body is rejected. Approval reads the member's role. A `roles` field in the JSON is ignored. The command binds the active owner and forces the actor to be human, so it only runs in an interactive terminal: it shows what will be approved and in whose name, and records the approval only after you type `approve`. Run without a terminal (an agent's shell tool, a script, a pipe), it is refused before anything is read. Approve in the Command Center when you are not at a terminal.
 
 ```bash
 ax spec-approve '{"projectId":"ax","artifactKind":"plan","artifactId":"ledger","version":1,"reason":"Ready to build."}'

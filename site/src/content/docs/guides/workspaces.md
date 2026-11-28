@@ -46,7 +46,7 @@ Each member keeps an independent SQLite graph under `<member>/.ax/ax.db`.
 ax policy pull https://github.com/acme/ax-org-policy.git
 ```
 
-Clones into `.ax/policy/vendored/<name>/`, copies rules/skills into the project policy tree, and re-indexes.
+Clones into `.ax/policy/vendored/<name>/`, merges rules and skills into the project's agents folder, and re-indexes. Local rules and skills that differ from the remote copy are kept unless you pass `--force`; symlinks in the remote repository are never followed. See [`ax policy pull`](/reference/cli/#ax-policy-pull-git-url-path).
 
 ## External / sibling-repo policy roots
 

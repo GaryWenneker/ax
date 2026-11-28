@@ -24,7 +24,8 @@ pub use lockfile::{catalog_id, LockEntry, LockFile};
 pub use publish::stage_one_skill;
 pub use remote::{
     attach_catalog_cards, fetch_source, fetch_source_allowing, git_clone, git_publish, http_bytes,
-    http_bytes_allowing, http_text, http_text_allowing, search_body, Fetched,
+    http_bytes_allowing, http_bytes_same_origin_allowing, http_text, http_text_allowing,
+    search_body, Fetched,
 };
 pub use search::{parse_search_body, SearchHit};
 pub use settings::{load_settings, save_settings, CatalogSettings};

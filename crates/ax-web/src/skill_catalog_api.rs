@@ -92,7 +92,9 @@ async fn put_settings(
     State(hub): State<WebHub>,
     Json(body): Json<SettingsBody>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    refuse_readonly(&hub)?;
     let root = hub.read().await.project_root.clone();
+    validate_publish_remote(&root, &body.publish_remote).map_err(bad)?;
     // Keep fields this page does not edit, such as `allowPrivateHosts`.
     let mut settings = ax_skill_catalog::load_settings(&root).unwrap_or_default();
     settings.report_installs = body.report_installs;
@@ -117,6 +119,7 @@ async fn install(
     State(hub): State<WebHub>,
     Json(body): Json<InstallBody>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    refuse_readonly(&hub)?;
     let root = hub.read().await.project_root.clone();
     let source = body.source.clone();
     let skill = body.skill.clone();
@@ -173,7 +176,7 @@ async fn known_skill_names(hub: &WebHub) -> (PathBuf, Vec<String>) {
     }
     drop(ws);
     if let Ok(path) = ax_global_db::global_db_path() {
-        if let Ok(pool) = ax_global_db::open_and_init(&path).await {
+        if let Ok(pool) = crate::global_pool::pool_at(&path).await {
             if let Ok(rows) = ax_global_db::policy::list_skill_payloads(&pool).await {
                 names.extend(rows.into_iter().map(|(id, _)| id));
             }
@@ -193,6 +196,7 @@ async fn audit_rule_one(
     State(hub): State<WebHub>,
     Path(id): Path<String>,
 ) -> Result<Json<ax_skill_catalog::SkillAuditReport>, (StatusCode, String)> {
+    refuse_readonly(&hub)?;
     ax_skill_catalog::require_one_skill(&id).map_err(bad)?;
     let (root, names) = known_skill_names(&hub).await;
     let rule_id = id.clone();
@@ -233,6 +237,7 @@ async fn audit_one(
     Path(name): Path<String>,
     Json(body): Json<AuditBody>,
 ) -> Result<Json<ax_skill_catalog::SkillAuditReport>, (StatusCode, String)> {
+    refuse_readonly(&hub)?;
     ax_skill_catalog::require_one_skill(&name).map_err(bad)?;
     let (root, names) = known_skill_names(&hub).await;
     let stored = {
@@ -260,6 +265,7 @@ async fn audit_candidate(
     State(hub): State<WebHub>,
     Json(body): Json<CandidateAuditBody>,
 ) -> Result<Json<ax_skill_catalog::SkillAuditReport>, (StatusCode, String)> {
+    refuse_readonly(&hub)?;
     ax_skill_catalog::require_one_skill(&body.skill).map_err(bad)?;
     let source = body.source.clone();
     let skill = body.skill.clone();
@@ -276,6 +282,7 @@ async fn publish_one(
     State(hub): State<WebHub>,
     Path(name): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    refuse_readonly(&hub)?;
     if name.is_empty() || name == "*" || name.contains(',') || name.contains(' ') {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -293,6 +300,77 @@ async fn publish_one(
 
 fn bad(err: String) -> (StatusCode, String) {
     (StatusCode::BAD_REQUEST, err)
+}
+
+/// Every route here that writes (skills, settings, audit reports, a publish)
+/// is refused in read-only mode, such as an `ax share` session.
+fn refuse_readonly(hub: &WebHub) -> Result<(), (StatusCode, String)> {
+    if hub.readonly {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "read-only mode (AX_WEB_READONLY=1)".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// The publish repository is an `https://` or `ssh://` URL, an scp-style
+/// `user@host:path`, or a folder inside the project (optionally prefixed
+/// with `well-known:`). Anything else, including option-like values that
+/// `git clone` would read as flags, other URL schemes and folders outside
+/// the project, is refused.
+fn validate_publish_remote(root: &std::path::Path, remote: &str) -> Result<(), String> {
+    let remote = remote.trim();
+    if remote.is_empty() {
+        return Ok(());
+    }
+    let refuse = || {
+        Err(format!(
+            "publish repository must be an https:// or ssh:// URL, user@host:path, or a folder inside the project: {remote}"
+        ))
+    };
+    if remote.starts_with('-') || remote.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return refuse();
+    }
+    if remote.starts_with("https://") || remote.starts_with("ssh://") {
+        return match reqwest::Url::parse(remote) {
+            Ok(url)
+                if url
+                    .host_str()
+                    .is_some_and(|h| !h.is_empty() && !h.starts_with('-')) =>
+            {
+                Ok(())
+            }
+            _ => refuse(),
+        };
+    }
+    if let Some((user_host, path)) = remote.split_once(':') {
+        if let Some((user, host)) = user_host.split_once('@') {
+            let plain = |part: &str| {
+                !part.is_empty()
+                    && !part.starts_with('-')
+                    && part
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+            };
+            if plain(user) && plain(host) && !path.is_empty() && !path.contains("::") {
+                return Ok(());
+            }
+            return refuse();
+        }
+    }
+    let folder = remote.strip_prefix("well-known:").unwrap_or(remote);
+    let path = std::path::Path::new(folder);
+    let inside = if path.is_absolute() {
+        path.starts_with(root) && ax_utils::ensure_within(root, path).is_ok()
+    } else {
+        !folder.contains(':') && ax_utils::contained_join(root, folder).is_ok()
+    };
+    if inside {
+        Ok(())
+    } else {
+        refuse()
+    }
 }
 
 fn install_blocking(
@@ -445,9 +523,16 @@ fn publish_blocking(root: &std::path::Path, name: &str) -> Result<String, String
     let agents = ax_policy::configured_agents_dir(root)
         .unwrap_or_else(|| ax_policy::DEFAULT_AGENTS_DIR.to_string());
     let skills = root.join(agents).join("skills");
-    let remote = settings.publish_remote.clone();
-    if remote.starts_with("well-known:") || PathBuf::from(&remote).is_dir() {
-        let output = PathBuf::from(remote.trim_start_matches("well-known:"));
+    let remote = settings.publish_remote.trim().to_string();
+    validate_publish_remote(root, &remote)?;
+    let git_remote = remote.starts_with("https://")
+        || remote.starts_with("ssh://")
+        || remote
+            .split_once(':')
+            .is_some_and(|(head, _)| head.contains('@'));
+    if !git_remote {
+        // A folder inside the project; relative folders are relative to it.
+        let output = root.join(remote.trim_start_matches("well-known:"));
         ax_skill_catalog::stage_one_skill(&skills, name, &output)?;
         return Ok(format!("published {name} into {}", output.display()));
     }
