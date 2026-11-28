@@ -357,33 +357,78 @@ body.ax-landing {
 
 /* ---------- Deploy links ---------- */
 .ax-landing .ax-cloud-deploy {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 8px;
-  margin-top: 14px;
+  margin-top: 28px;
+  width: min(560px, 100%);
   font-size: 13px;
-  color: var(--ax-dim);
 }
 .ax-landing .ax-cloud-deploy-title {
-  margin-right: 4px;
-  color: var(--ax-muted);
+  color: var(--ax-dim);
   text-decoration: underline;
   text-underline-offset: 3px;
 }
 .ax-landing .ax-cloud-deploy-title:hover {
   color: var(--ax-ink);
 }
-.ax-landing .ax-cloud-deploy-button {
-  padding: 3px 10px;
-  border: 1px solid var(--ax-border);
-  border-radius: 6px;
-  color: var(--ax-muted);
+
+.ax-landing .ax-deploy-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 1rem 0;
 }
-.ax-landing .ax-cloud-deploy-button:hover,
-.ax-landing .ax-cloud-deploy-button:focus-visible {
+.ax-landing .ax-deploy,
+.ax-landing .ax-deploy:hover {
+  text-decoration: none;
+}
+.ax-landing .ax-deploy {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: 13rem;
+  max-width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--ax-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ax-ink);
+  font-size: 0.9rem;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+.ax-landing .ax-deploy::before {
+  content: "";
+  flex: none;
+  width: 18px;
+  height: 18px;
+  background: currentColor;
+  -webkit-mask: var(--ax-deploy-logo) center / contain no-repeat;
+  mask: var(--ax-deploy-logo) center / contain no-repeat;
+}
+.ax-landing .ax-deploy::after {
+  content: "\2197";
+  margin-left: auto;
+  color: var(--ax-dim);
+  font-weight: 400;
+}
+.ax-landing .ax-deploy:hover {
+  background: var(--ax-surface);
   border-color: var(--ax-dim);
   color: var(--ax-ink);
+}
+.ax-landing .ax-deploy[data-provider="azure"] { --ax-deploy-logo: url("/logos/azure.svg"); }
+.ax-landing .ax-deploy[data-provider="render"] { --ax-deploy-logo: url("/logos/render.svg"); }
+.ax-landing .ax-deploy[data-provider="koyeb"] { --ax-deploy-logo: url("/logos/koyeb.svg"); }
+/* On the homepage the three buttons share the width of the install control. */
+.ax-landing .ax-deploy-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 10px 0 0;
+}
+.ax-landing .ax-deploy {
+  width: auto;
+  font-size: 14px;
 }
 
 /* ---------- Footer ---------- */
@@ -431,5 +476,6 @@ body.ax-landing {
   .ax-landing .ax-download-controls { display: block; }
   .ax-landing .ax-other-platforms { width: 100%; min-height: 44px; }
   .ax-landing .ax-platform-panel { left: 0; right: auto; width: 100%; }
+  .ax-landing .ax-deploy-row { grid-template-columns: 1fr; }
   .ax-landing .ax-footer { padding-block: 16px; }
 }

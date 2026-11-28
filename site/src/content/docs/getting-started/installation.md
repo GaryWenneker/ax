@@ -30,7 +30,11 @@ The installer puts one static binary in `/usr/local/bin` as root, otherwise in `
 
 To run it in the cloud without installing anything locally, deploy it as a hosted remote MCP server for one repository:
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fgetax.wenneker.io%2Fdeploy%2Fazure-slim-server.json) [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/GaryWenneker/ax) [![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?type=docker&name=ax-mcp&image=ghcr.io%2Fgarywenneker%2Fax-slim%3Alatest-server&ports=8080%3Bhttp%3B%2F&env%5BPORT%5D=8080&env%5BAX_REPO_URL%5D=https%3A%2F%2Fgithub.com%2FOWNER%2FREPO&env%5BAX_API_KEY%5D=CHANGE_ME&env%5BAX_PROJECT_ID%5D=project)
+<div class="ax-deploy-row">
+<a class="ax-deploy" data-provider="azure" href="https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fgetax.wenneker.io%2Fdeploy%2Fazure-slim-server.json" target="_blank" rel="noopener noreferrer">Deploy to Azure</a>
+<a class="ax-deploy" data-provider="render" href="https://render.com/deploy?repo=https://github.com/GaryWenneker/ax" target="_blank" rel="noopener noreferrer">Deploy to Render</a>
+<a class="ax-deploy" data-provider="koyeb" href="https://app.koyeb.com/deploy?type=docker&amp;name=ax-mcp&amp;image=ghcr.io%2Fgarywenneker%2Fax-slim%3Alatest-server&amp;ports=8080%3Bhttp%3B%2F&amp;env%5BPORT%5D=8080&amp;env%5BAX_REPO_URL%5D=https%3A%2F%2Fgithub.com%2FOWNER%2FREPO&amp;env%5BAX_API_KEY%5D=CHANGE_ME&amp;env%5BAX_PROJECT_ID%5D=project" target="_blank" rel="noopener noreferrer">Deploy to Koyeb</a>
+</div>
 
 See [Deploy to the cloud](/guides/headless-linux/#deploy-to-the-cloud) for what each button creates and the API key it needs, and [Headless Linux build](/guides/headless-linux/) for options, container images, an Azure job that indexes once, and Vercel Sandbox.
 

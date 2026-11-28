@@ -213,7 +213,9 @@ The `-ubuntu` image contains `ax-index-repo`, a job entry point that clones `AX_
 
 #### Deploy with one click
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fgetax.wenneker.io%2Fdeploy%2Fazure-slim.json)
+<div class="ax-deploy-row">
+<a class="ax-deploy" data-provider="azure" href="https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fgetax.wenneker.io%2Fdeploy%2Fazure-slim.json" target="_blank" rel="noopener noreferrer">Deploy to Azure</a>
+</div>
 
 The button opens a custom deployment in the Azure portal. Pick a subscription and resource group, enter the repository URL, and choose **Review + create**. It creates:
 
@@ -258,19 +260,25 @@ Authorization: Bearer <AX_API_KEY>
 
 ### Azure Container Apps
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fgetax.wenneker.io%2Fdeploy%2Fazure-slim-server.json)
+<div class="ax-deploy-row">
+<a class="ax-deploy" data-provider="azure" href="https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fgetax.wenneker.io%2Fdeploy%2Fazure-slim-server.json" target="_blank" rel="noopener noreferrer">Deploy to Azure</a>
+</div>
 
 Log Analytics workspace, Container Apps environment and an always-on Container App with HTTPS ingress. The MCP URL is in the deployment's **Outputs**.
 
 ### Render
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/GaryWenneker/ax)
+<div class="ax-deploy-row">
+<a class="ax-deploy" data-provider="render" href="https://render.com/deploy?repo=https://github.com/GaryWenneker/ax" target="_blank" rel="noopener noreferrer">Deploy to Render</a>
+</div>
 
 A web service from `render.yaml` in the repository (plan `starter`). Render generates `AX_API_KEY`; copy it from the service's **Environment** tab.
 
 ### Koyeb
 
-[![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?type=docker&name=ax-mcp&image=ghcr.io%2Fgarywenneker%2Fax-slim%3Alatest-server&ports=8080%3Bhttp%3B%2F&env%5BPORT%5D=8080&env%5BAX_REPO_URL%5D=https%3A%2F%2Fgithub.com%2FOWNER%2FREPO&env%5BAX_API_KEY%5D=CHANGE_ME&env%5BAX_PROJECT_ID%5D=project)
+<div class="ax-deploy-row">
+<a class="ax-deploy" data-provider="koyeb" href="https://app.koyeb.com/deploy?type=docker&amp;name=ax-mcp&amp;image=ghcr.io%2Fgarywenneker%2Fax-slim%3Alatest-server&amp;ports=8080%3Bhttp%3B%2F&amp;env%5BPORT%5D=8080&amp;env%5BAX_REPO_URL%5D=https%3A%2F%2Fgithub.com%2FOWNER%2FREPO&amp;env%5BAX_API_KEY%5D=CHANGE_ME&amp;env%5BAX_PROJECT_ID%5D=project" target="_blank" rel="noopener noreferrer">Deploy to Koyeb</a>
+</div>
 
 A web service from the image. Replace `AX_REPO_URL` and `AX_API_KEY` in the form before you deploy; the placeholder key is rejected on purpose.
 
