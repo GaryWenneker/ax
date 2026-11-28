@@ -37,7 +37,12 @@ impl McpOutputFormat {
 }
 
 pub fn parse_output_format(raw: &str) -> Result<McpOutputFormat, String> {
-    match raw.trim().to_ascii_lowercase().replace([' ', '-'], "").as_str() {
+    match raw
+        .trim()
+        .to_ascii_lowercase()
+        .replace([' ', '-'], "")
+        .as_str()
+    {
         "xml" => Ok(McpOutputFormat::Xml),
         "plaintext" | "plain" | "text" => Ok(McpOutputFormat::Plaintext),
         "richtext" | "rich" | "html" => Ok(McpOutputFormat::RichText),
@@ -56,8 +61,8 @@ pub fn load_output_format() -> McpOutputFormat {
 }
 
 pub fn load_output_format_from(path: &Path) -> Option<McpOutputFormat> {
-    let text = fs::read_to_string(path).ok()?;
-    let root: Value = serde_json::from_str(&text).ok()?;
+    let bytes = fs::read(path).ok()?;
+    let root: Value = crate::budget::parse_config_json(&bytes).ok()?;
     let raw = root
         .get("mcp")
         .and_then(|v| v.get("outputFormat"))
@@ -70,25 +75,35 @@ pub fn save_output_format(format: McpOutputFormat) -> Result<(), String> {
     save_output_format_at(&path, format)
 }
 
+/// Set `mcp.outputFormat` and keep every other setting. A config file that
+/// does not parse as a JSON object is left untouched and reported as an error.
 pub fn save_output_format_at(path: &Path, format: McpOutputFormat) -> Result<(), String> {
-    let mut root: Value = fs::read_to_string(path)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_else(|| json!({}));
-    let obj = root
-        .as_object_mut()
-        .ok_or("config root is not an object")?;
-    let mcp = obj
-        .entry("mcp")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .ok_or("mcp is not an object")?;
-    mcp.insert("outputFormat".into(), json!(format.as_str()));
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let body = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
-    fs::write(path, body).map_err(|e| e.to_string())
+    let invalid = |message: String| std::io::Error::new(std::io::ErrorKind::InvalidData, message);
+    ax_utils::update_locked(path, |existing| {
+        let mut root: Value = match existing {
+            Some(bytes) => crate::budget::parse_config_json(&bytes).map_err(|e| {
+                invalid(format!(
+                    "{} is not valid JSON ({e}); fix it before changing the output format",
+                    path.display()
+                ))
+            })?,
+            None => json!({}),
+        };
+        let obj = root
+            .as_object_mut()
+            .ok_or_else(|| invalid("config root is not an object".into()))?;
+        let mcp = obj
+            .entry("mcp")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or_else(|| invalid("mcp is not an object".into()))?;
+        mcp.insert("outputFormat".into(), json!(format.as_str()));
+        serde_json::to_vec_pretty(&root)
+            .map(Some)
+            .map_err(std::io::Error::other)
+    })
+    .map(|_| ())
+    .map_err(|e| e.to_string())
 }
 
 /// Rewrite a tool reply. XML is the tagged preflight ax already emits.
@@ -101,18 +116,61 @@ pub fn render_mcp_output(text: &str, format: McpOutputFormat) -> String {
     }
 }
 
+/// One `<ax_...>` or `</ax_...>` tag found in a reply.
+struct AxTag<'a> {
+    start: usize,
+    end: usize,
+    name: &'a str,
+    closing: bool,
+}
+
+/// Find the next ax tag. Any other `<` (code such as `a < b`, HTML in a
+/// snippet) is ordinary text.
+fn next_ax_tag(text: &str) -> Option<AxTag<'_>> {
+    let mut from = 0;
+    while let Some(offset) = text[from..].find('<') {
+        let start = from + offset;
+        let rest = &text[start + 1..];
+        let (closing, body) = match rest.strip_prefix('/') {
+            Some(b) => (true, b),
+            None => (false, rest),
+        };
+        if body.starts_with("ax_") {
+            let name_len = body
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+                .unwrap_or(body.len());
+            let name = &body[..name_len];
+            let after = &body[name_len..];
+            if let Some(close) = after.find(['>', '<', '\n']) {
+                let attrs_ok = if closing {
+                    after[..close].trim().is_empty()
+                } else {
+                    close == 0 || after.starts_with(char::is_whitespace)
+                };
+                if after.as_bytes()[close] == b'>' && attrs_ok {
+                    let end = start + 1 + usize::from(closing) + name_len + close + 1;
+                    return Some(AxTag {
+                        start,
+                        end,
+                        name,
+                        closing,
+                    });
+                }
+            }
+        }
+        from = start + 1;
+    }
+    None
+}
+
 fn to_plaintext(text: &str) -> String {
     let mut out = String::new();
-    let mut in_tag = false;
-    for ch in text.chars() {
-        if ch == '<' {
-            in_tag = true;
-        } else if ch == '>' {
-            in_tag = false;
-        } else if !in_tag {
-            out.push(ch);
-        }
+    let mut rest = text;
+    while let Some(tag) = next_ax_tag(rest) {
+        out.push_str(&rest[..tag.start]);
+        rest = &rest[tag.end..];
     }
+    out.push_str(rest);
     let mut collapsed = String::new();
     let mut blank = 0;
     for line in out.lines() {
@@ -137,18 +195,12 @@ fn to_plaintext(text: &str) -> String {
 fn to_markdown(text: &str) -> String {
     let mut out = String::new();
     let mut rest = text;
-    while let Some(start) = rest.find('<') {
-        out.push_str(&rest[..start]);
-        let after = &rest[start + 1..];
-        let Some(end) = after.find('>') else {
-            out.push_str(&rest[start..]);
-            break;
-        };
-        let tag = &after[..end];
-        rest = &after[end + 1..];
-        if let Some(name) = opening_tag_name(tag) {
-            out.push_str(&format!("\n\n## {name}\n\n"));
+    while let Some(tag) = next_ax_tag(rest) {
+        out.push_str(&rest[..tag.start]);
+        if !tag.closing {
+            out.push_str(&format!("\n\n## {}\n\n", tag.name));
         }
+        rest = &rest[tag.end..];
     }
     out.push_str(rest);
     out
@@ -157,30 +209,15 @@ fn to_markdown(text: &str) -> String {
 fn to_richtext(text: &str) -> String {
     let mut body = String::new();
     let mut rest = text;
-    while let Some(start) = rest.find('<') {
-        body.push_str(&escape_html(&rest[..start]));
-        let after = &rest[start + 1..];
-        let Some(end) = after.find('>') else {
-            body.push_str(&escape_html(&rest[start..]));
-            break;
-        };
-        let tag = &after[..end];
-        rest = &after[end + 1..];
-        if let Some(name) = opening_tag_name(tag) {
-            body.push_str(&format!("<h2>{}</h2>", escape_html(name)));
+    while let Some(tag) = next_ax_tag(rest) {
+        body.push_str(&escape_html(&rest[..tag.start]));
+        if !tag.closing {
+            body.push_str(&format!("<h2>{}</h2>", escape_html(tag.name)));
         }
+        rest = &rest[tag.end..];
     }
     body.push_str(&escape_html(rest));
     format!("<article class=\"ax-mcp\">{body}</article>")
-}
-
-fn opening_tag_name(tag: &str) -> Option<&str> {
-    let tag = tag.trim();
-    if tag.starts_with('/') || tag.starts_with('!') {
-        return None;
-    }
-    let name = tag.split_whitespace().next().unwrap_or("");
-    (!name.is_empty()).then_some(name)
 }
 
 fn escape_html(text: &str) -> String {
@@ -225,5 +262,81 @@ mod tests {
         assert!(rich.contains("<h2>ax_policy</h2>"));
         assert!(rich.contains("Keep this."));
         assert!(!rich.contains("<ax_policy"));
+    }
+
+    #[test]
+    fn save_refuses_to_replace_an_unparsable_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let original = "{\"budget\": {\"monthlyUsd\": 50},}\n";
+        fs::write(&path, original).unwrap();
+        assert!(save_output_format_at(&path, McpOutputFormat::Markdown).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn save_keeps_other_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        fs::write(&path, "{\"budget\": {\"monthlyUsd\": 50}}").unwrap();
+        save_output_format_at(&path, McpOutputFormat::Markdown).unwrap();
+        let root: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(root["budget"]["monthlyUsd"], 50);
+        assert_eq!(
+            load_output_format_from(&path),
+            Some(McpOutputFormat::Markdown)
+        );
+    }
+
+    #[test]
+    fn save_accepts_a_config_with_a_bom_or_only_a_bom() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, body) in [
+            ("bom.json", "\u{feff}{\"budget\": {\"monthly\": 50}}"),
+            ("bom-only.json", "\u{feff}\n "),
+        ] {
+            let path = dir.path().join(name);
+            fs::write(&path, body).unwrap();
+            save_output_format_at(&path, McpOutputFormat::Markdown)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let text = fs::read_to_string(&path).unwrap();
+            assert!(!text.starts_with('\u{feff}'), "{name}");
+            assert_eq!(
+                load_output_format_from(&path),
+                Some(McpOutputFormat::Markdown),
+                "{name}"
+            );
+        }
+        let path = dir.path().join("bom.json");
+        let root: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(root["budget"]["monthly"], 50);
+        // The reader accepts a BOM too.
+        fs::write(
+            &path,
+            "\u{feff}{\"mcp\": {\"outputFormat\": \"plaintext\"}}",
+        )
+        .unwrap();
+        assert_eq!(
+            load_output_format_from(&path),
+            Some(McpOutputFormat::Plaintext)
+        );
+    }
+
+    #[test]
+    fn only_ax_tags_are_rewritten() {
+        let raw = "<ax_policy>\nif a < b && c > d { x }\n</ax_policy>\n";
+        let plain = render_mcp_output(raw, McpOutputFormat::Plaintext);
+        assert!(plain.contains("if a < b && c > d { x }"), "{plain}");
+        assert!(!plain.contains("ax_policy"));
+        let md = render_mcp_output(raw, McpOutputFormat::Markdown);
+        assert!(md.contains("if a < b && c > d { x }"), "{md}");
+        assert!(md.contains("## ax_policy"));
+        assert!(!md.contains("## b"));
+        let rich = render_mcp_output(raw, McpOutputFormat::RichText);
+        assert!(
+            rich.contains("if a &lt; b &amp;&amp; c &gt; d { x }"),
+            "{rich}"
+        );
+        assert!(!rich.contains("<h2>b</h2>"));
     }
 }

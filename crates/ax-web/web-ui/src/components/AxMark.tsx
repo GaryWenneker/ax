@@ -1,0 +1,9 @@
+/** The Ax logo mark, drawn from assets/logo.svg. The letterforms take the text colour. */
+export default function AxMark() {
+  return (
+    <svg className="ax-mark" viewBox="0 0 162 100" aria-hidden="true" focusable="false">
+      <path fill="currentColor" d="M0 100 60 0l60 100H92L60 46.667 28 100ZM68 0h28l60 100h-28Z" />
+      <path fill="#A2F50F" d="M134 0h28l-29 48.333L119 25Z" />
+    </svg>
+  );
+}

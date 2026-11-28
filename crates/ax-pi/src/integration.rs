@@ -6,31 +6,30 @@
 //! transcript, so this crate returns context sections for a tool or resource
 //! boundary and does not ask the host to rewrite `session.agent.state.messages`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use ax_usage::ModelPricing;
 use serde_json::Value;
 
 use crate::context::{cache_key_string, AxContextEngine, ContextCache};
 use crate::economics::{
-    advise_observation, context_token_cost, estimate_text, identity_hash, model_cost,
-    RepeatDetector,
+    advise_observation, advise_with, context_token_cost, estimate_text, identity_hash,
+    may_change_state, model_cost, replayable, RepeatDetector,
 };
 use crate::events::{self, arguments_for_hash, output_text_for_estimate};
 use crate::report::{
-    apply_display_currency, economics_from, format_economics, format_optimization,
-    optimization_from, EconomicsReport, OptimizationReport,
+    apply_display_currency, economics_from, economics_of, format_economics, format_optimization,
+    optimization_from, optimization_of, EconomicsReport, OptimizationReport, ReportRows,
 };
-use crate::store::{
-    self, CacheRow, ModelRow, OptimizationRow, PersistedSnapshot, SessionRow, TurnRow,
-};
+use crate::store::{self, ModelRow, OptimizationRow, PersistedSnapshot, SessionRow, TurnRow};
 use crate::types::{
     AxAgentEvent, AxSessionState, BudgetSnapshot, ContextCacheKey, ContextRequest, ContextResult,
-    ContextSection, CostSnapshot, OptimizationMode, ToolCallAdvice, ToolCallObservation,
-    ToolEconomicsRecord, UsageSnapshot, DEFAULT_CONTEXT_MAX_TOKENS, DEFAULT_OVERSIZED_TOKENS,
+    ContextSection, CostSnapshot, OptimizationMode, SectionType, ToolCallAdvice,
+    ToolCallObservation, ToolEconomicsRecord, UsageSnapshot, DEFAULT_CONTEXT_MAX_TOKENS,
+    DEFAULT_OVERSIZED_TOKENS,
 };
 
 const LOG_TAG: &str = "AX_PI_INTEGRATION_ERROR";
@@ -103,6 +102,9 @@ impl PiOptions {
         if let Some(currency) = value.pointer("/budget/currency").and_then(Value::as_str) {
             options.currency = currency.to_string();
         }
+        if let Some(rate) = value.pointer("/budget/usdPerEur").and_then(Value::as_f64) {
+            options.usd_per_eur = Some(rate);
+        }
         options
     }
 }
@@ -124,13 +126,143 @@ struct State {
     active_turn: HashMap<String, String>,
     turn_seq: HashMap<String, u32>,
     knowledge: Vec<ContextSection>,
-    entities: Vec<String>,
-    indexed_paths: Vec<String>,
+    /// Shared so a tool event can lend them to the advice without a copy.
+    entities: Arc<[String]>,
+    /// Content hash of `entities`, part of the context cache key.
+    entities_version: String,
+    indexed_paths: Arc<[String]>,
     repository_state: String,
-    output_cache: HashMap<String, String>,
-    pending_args: HashMap<String, Value>,
+    output_cache: OutputCache,
+    pending_tools: PendingTools,
+    /// First and last event time per session, in milliseconds.
+    session_times: HashMap<String, (u64, u64)>,
+    /// Sequence for generated tool call ids when the host sends none.
+    tool_seq: u64,
     started: bool,
     model_seq: u64,
+    /// Unique per integration instance. Generated turn, model and tool ids
+    /// carry it, so a later run on the same database never reuses an id.
+    run_id: String,
+}
+
+/// Tool calls that started and have not ended yet, holding their arguments
+/// until the end event. A start with a call id pairs with the end carrying the
+/// same id; starts without one pair first-in, first-out per session and tool.
+#[derive(Default)]
+struct PendingTools {
+    by_id: HashMap<String, (String, Value)>,
+    unnamed: HashMap<(String, String), VecDeque<Value>>,
+    count: usize,
+}
+
+/// Unfinished tool calls kept at most. Starts beyond this are not held; their
+/// end events fall back to the arguments they carry themselves.
+const MAX_PENDING_TOOLS: usize = 1024;
+
+/// Tool output text kept for exact-repeat replay, in bytes.
+const MAX_OUTPUT_CACHE_BYTES: usize = 16 * 1024 * 1024;
+
+/// Read-only tool output kept for exact-repeat replay, oldest dropped first
+/// once it holds more than [`MAX_OUTPUT_CACHE_BYTES`].
+#[derive(Default)]
+struct OutputCache {
+    entries: HashMap<String, String>,
+    order: VecDeque<String>,
+    bytes: usize,
+}
+
+impl OutputCache {
+    fn get(&self, identity: &str) -> Option<&String> {
+        self.entries.get(identity)
+    }
+
+    fn insert(&mut self, identity: String, text: String) {
+        if text.len() > MAX_OUTPUT_CACHE_BYTES {
+            return;
+        }
+        if let Some(old) = self.entries.remove(&identity) {
+            self.bytes -= old.len();
+            self.order.retain(|key| key != &identity);
+        }
+        while self.bytes + text.len() > MAX_OUTPUT_CACHE_BYTES {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(old) = self.entries.remove(&oldest) {
+                self.bytes -= old.len();
+            }
+        }
+        self.bytes += text.len();
+        self.order.push_back(identity.clone());
+        self.entries.insert(identity, text);
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.order.clear();
+        self.bytes = 0;
+    }
+
+    #[cfg(test)]
+    fn values(&self) -> impl Iterator<Item = &String> {
+        self.entries.values()
+    }
+}
+
+impl PendingTools {
+    fn start(&mut self, session: &str, tool: &str, call_id: Option<String>, arguments: Value) {
+        if self.count >= MAX_PENDING_TOOLS {
+            return;
+        }
+        match call_id {
+            Some(id) => {
+                if self
+                    .by_id
+                    .insert(id, (session.to_string(), arguments))
+                    .is_none()
+                {
+                    self.count += 1;
+                }
+            }
+            None => {
+                self.unnamed
+                    .entry((session.to_string(), tool.to_string()))
+                    .or_default()
+                    .push_back(arguments);
+                self.count += 1;
+            }
+        }
+    }
+
+    fn finish(&mut self, session: &str, tool: &str, call_id: Option<&str>) -> Option<Value> {
+        let found = match call_id {
+            Some(id) => self.by_id.remove(id).map(|(_, arguments)| arguments),
+            None => {
+                let key = (session.to_string(), tool.to_string());
+                let queue = self.unnamed.get_mut(&key)?;
+                let found = queue.pop_front();
+                if queue.is_empty() {
+                    self.unnamed.remove(&key);
+                }
+                found
+            }
+        };
+        if found.is_some() {
+            self.count -= 1;
+        }
+        found
+    }
+
+    fn drop_session(&mut self, session: &str) {
+        self.by_id.retain(|_, (owner, _)| owner != session);
+        self.unnamed.retain(|(owner, _), _| owner != session);
+        self.count = self.by_id.len() + self.unnamed.values().map(VecDeque::len).sum::<usize>();
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.count
+    }
 }
 
 impl PiIntegration {
@@ -191,9 +323,20 @@ impl PiIntegration {
                     intent_hash: crate::context::intent_hash(
                         request.user_intent.as_deref().unwrap_or(""),
                     ),
-                    graph_version: state.entities.join(","),
-                    policy_version: "policy".into(),
-                    skill_version: "skill".into(),
+                    graph_version: format!(
+                        "{}|{}",
+                        state.entities_version,
+                        knowledge_version(&state.knowledge, |kind| !matches!(
+                            kind,
+                            SectionType::Rule | SectionType::Constraint | SectionType::Skill
+                        ))
+                    ),
+                    policy_version: knowledge_version(&state.knowledge, |kind| {
+                        matches!(kind, SectionType::Rule | SectionType::Constraint)
+                    }),
+                    skill_version: knowledge_version(&state.knowledge, |kind| {
+                        matches!(kind, SectionType::Skill)
+                    }),
                 };
                 if let Some(hit) = state.cache.get(&key) {
                     return Ok(ContextResult {
@@ -255,10 +398,9 @@ impl PiIntegration {
                     self.options.oversized_token_threshold,
                     true,
                 );
-                if self.options.mode == OptimizationMode::Optimize {
-                    if let Some(cached) = state.output_cache.get(&identity) {
-                        advice.cached_output = Some(cached.clone());
-                    }
+                let cached = state.output_cache.get(&identity);
+                if withhold_replay(&mut advice, self.options.mode, cached.is_some()) {
+                    advice.cached_output = cached.cloned();
                 }
                 Ok(advice)
             },
@@ -268,7 +410,13 @@ impl PiIntegration {
     pub fn record_tool_result(&self, observation: &ToolCallObservation) -> Result<(), PiError> {
         self.guard(|| {
             let mut state = self.state.lock().map_err(|err| err.to_string())?;
-            record_tool(&mut state, &self.options, observation);
+            record_tool(
+                &mut state,
+                &self.options,
+                observation,
+                &observation.known_graph_entities,
+                &observation.indexed_paths,
+            );
             Ok(())
         })
     }
@@ -276,7 +424,7 @@ impl PiIntegration {
     pub fn get_cost(&self, session_id: &str) -> Result<CostSnapshot, PiError> {
         self.guard_or(
             CostSnapshot {
-                currency: self.options.currency.clone(),
+                currency: "USD".into(),
                 model_usd: None,
                 tool_context_usd: None,
                 confidence: "estimated".into(),
@@ -289,7 +437,7 @@ impl PiIntegration {
                     .get(session_id)
                     .map(|session| session.cumulative_cost.clone())
                     .unwrap_or(CostSnapshot {
-                        currency: self.options.currency.clone(),
+                        currency: "USD".into(),
                         model_usd: None,
                         tool_context_usd: None,
                         confidence: "estimated".into(),
@@ -299,17 +447,28 @@ impl PiIntegration {
     }
 
     pub fn economics(&self, session_id: Option<&str>) -> Result<EconomicsReport, PiError> {
+        let currency = self.options.currency.as_str();
+        let usd_per_eur = self.options.usd_per_eur;
+        let mut empty = empty_report("USD");
+        apply_display_currency(&mut empty, currency, usd_per_eur);
         self.guard_or(
-            empty_report(&self.options.currency),
+            empty,
             |report| report,
             || {
                 let state = self.state.lock().map_err(|err| err.to_string())?;
-                Ok(economics_from(
-                    &snapshot_of(&state),
-                    session_id,
-                    &self.options.currency,
-                    self.budget_of(&state),
-                ))
+                // Figures stay in USD until the one display conversion below.
+                let rows = ReportRows {
+                    turns: &state.turns,
+                    tools: &state.tools,
+                    models: &state.models,
+                    optimizations: &state.optimizations,
+                };
+                let budget = self.budget_of(&state);
+                let budget_omitted = self.budget_omitted(budget.is_some());
+                let mut report = economics_of(&rows, session_id, "USD", budget);
+                report.budget_omitted = budget_omitted;
+                apply_display_currency(&mut report, currency, usd_per_eur);
+                Ok(report)
             },
         )
     }
@@ -323,7 +482,7 @@ impl PiIntegration {
             |report| report,
             || {
                 let state = self.state.lock().map_err(|err| err.to_string())?;
-                Ok(optimization_from(&snapshot_of(&state)))
+                Ok(optimization_of(&state.optimizations))
             },
         )
     }
@@ -345,7 +504,10 @@ impl PiIntegration {
 
     pub fn set_graph_entities(&self, entities: Vec<String>) -> Result<(), PiError> {
         self.guard(|| {
-            self.state.lock().map_err(|err| err.to_string())?.entities = entities;
+            let version = list_version(&entities);
+            let mut state = self.state.lock().map_err(|err| err.to_string())?;
+            state.entities = Arc::from(entities);
+            state.entities_version = version;
             Ok(())
         })
     }
@@ -355,7 +517,7 @@ impl PiIntegration {
             self.state
                 .lock()
                 .map_err(|err| err.to_string())?
-                .indexed_paths = paths;
+                .indexed_paths = Arc::from(paths);
             Ok(())
         })
     }
@@ -386,8 +548,14 @@ impl PiIntegration {
         self.broken.store(true, Ordering::SeqCst);
     }
 
+    /// The budget in USD, like the spend it is compared with. `None` when the
+    /// monthly budget's currency has no rate; no exchange rate is assumed.
     fn budget_of(&self, state: &State) -> Option<BudgetSnapshot> {
-        let monthly = self.options.monthly_budget?;
+        let monthly = crate::economics::amount_in_usd(
+            self.options.monthly_budget?,
+            &self.options.currency,
+            self.options.usd_per_eur,
+        )?;
         let spent = state
             .sessions
             .values()
@@ -399,8 +567,20 @@ impl PiIntegration {
             self.options.days_remaining,
             monthly,
         );
-        snapshot.currency = self.options.currency.clone();
+        snapshot.currency = "USD".into();
         Some(snapshot)
+    }
+
+    /// Why a configured monthly budget is left out of the report: only a USD
+    /// budget, or a EUR budget with `usdPerEur`, can be compared with spend.
+    fn budget_omitted(&self, compared: bool) -> Option<String> {
+        if compared || self.options.monthly_budget.is_none() {
+            return None;
+        }
+        Some(format!(
+            "monthly budget in {} left out: only a USD budget, or a EUR budget with budget.usdPerEur, is compared with spend",
+            self.options.currency
+        ))
     }
 
     fn guard(&self, body: impl FnOnce() -> Result<(), String>) -> Result<(), PiError> {
@@ -456,6 +636,40 @@ impl PiIntegration {
     }
 }
 
+/// Content hash of a list, with each item length-prefixed so `["a,b"]` and
+/// `["a", "b"]` differ.
+fn list_version(items: &[String]) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&(items.len() as u64).to_le_bytes());
+    for item in items {
+        hasher.update(&(item.len() as u64).to_le_bytes());
+        hasher.update(item.as_bytes());
+    }
+    hasher.finalize().to_hex().to_string()
+}
+
+/// Content hash of the knowledge sections whose kind `include` accepts, so a
+/// changed rule, skill, memory or source section gives a new cache key.
+fn knowledge_version(
+    sections: &[ContextSection],
+    include: impl Fn(&SectionType) -> bool,
+) -> String {
+    let mut hasher = blake3::Hasher::new();
+    for section in sections.iter().filter(|section| include(&section.kind)) {
+        for part in [section.id.as_str(), section.content.as_str()] {
+            hasher.update(&(part.len() as u64).to_le_bytes());
+            hasher.update(part.as_bytes());
+        }
+        hasher.update(&section.priority.to_le_bytes());
+        hasher.update(&[u8::from(section.mandatory)]);
+        for path in &section.source_paths {
+            hasher.update(&(path.len() as u64).to_le_bytes());
+            hasher.update(path.as_bytes());
+        }
+    }
+    hasher.finalize().to_hex().to_string()
+}
+
 fn empty_advice(mode: OptimizationMode) -> ToolCallAdvice {
     ToolCallAdvice {
         mode,
@@ -481,6 +695,7 @@ fn empty_report(currency: &str) -> EconomicsReport {
         largest_tool: None,
         currency: currency.into(),
         budget: None,
+        budget_omitted: None,
     }
 }
 
@@ -499,18 +714,29 @@ pub fn create_pi_integration(options: PiOptions) -> PiIntegration {
             active_turn: HashMap::new(),
             turn_seq: HashMap::new(),
             knowledge: Vec::new(),
-            entities: Vec::new(),
-            indexed_paths: Vec::new(),
+            entities: Arc::from(Vec::new()),
+            entities_version: list_version(&[]),
+            indexed_paths: Arc::from(Vec::new()),
             repository_state: "unknown".into(),
-            output_cache: HashMap::new(),
-            pending_args: HashMap::new(),
+            output_cache: OutputCache::default(),
+            pending_tools: PendingTools::default(),
+            session_times: HashMap::new(),
+            tool_seq: 0,
             started: false,
             model_seq: 0,
+            run_id: uuid::Uuid::new_v4().simple().to_string(),
         }),
     }
 }
 
 fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw: &Value) {
+    let base = event.base();
+    let times = state
+        .session_times
+        .entry(base.session_id.clone())
+        .or_insert((base.timestamp, base.timestamp));
+    times.0 = times.0.min(base.timestamp);
+    times.1 = times.1.max(base.timestamp);
     match event {
         AxAgentEvent::SessionStarted(base) => {
             state
@@ -520,8 +746,9 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
         }
         AxAgentEvent::SessionEnded(base) => {
             if let Some(session) = state.sessions.get_mut(&base.session_id) {
-                session.cumulative_cost.currency = options.currency.clone();
+                session.cumulative_cost.currency = "USD".into();
             }
+            state.pending_tools.drop_session(&base.session_id);
         }
         AxAgentEvent::TurnStarted(base) => {
             let session_id = base.session_id.clone();
@@ -534,7 +761,7 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
             let turn_id = base
                 .turn_id
                 .clone()
-                .unwrap_or_else(|| format!("{session_id}-turn-{seq}"));
+                .unwrap_or_else(|| format!("{session_id}-{}-turn-{seq}", state.run_id));
             state
                 .active_turn
                 .insert(session_id.clone(), turn_id.clone());
@@ -562,6 +789,8 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
                     turn.ended_at = Some(base.timestamp);
                 }
             }
+            // A tool that has not ended by the end of its turn never will.
+            state.pending_tools.drop_session(&base.session_id);
         }
         AxAgentEvent::ModelResponse(model) => {
             state.model_seq += 1;
@@ -585,8 +814,12 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
                 .or_else(|| state.active_turn.get(&model.base.session_id).cloned());
             if let Some(turn_id) = &turn_id {
                 if let Some(turn) = state.turns.iter_mut().find(|turn| &turn.id == turn_id) {
-                    turn.input_tokens += model.usage.input_tokens.unwrap_or(0);
-                    turn.output_tokens += model.usage.output_tokens.unwrap_or(0);
+                    turn.input_tokens = turn
+                        .input_tokens
+                        .saturating_add(model.usage.input_tokens.unwrap_or(0));
+                    turn.output_tokens = turn
+                        .output_tokens
+                        .saturating_add(model.usage.output_tokens.unwrap_or(0));
                     if let Some(cost) = cost {
                         turn.estimated_cost = Some(turn.estimated_cost.unwrap_or(0.0) + cost);
                     }
@@ -605,7 +838,10 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
                 }
             }
             state.models.push(ModelRow {
-                id: format!("{}-model-{}", model.base.session_id, state.model_seq),
+                id: format!(
+                    "{}-{}-model-{}",
+                    model.base.session_id, state.run_id, state.model_seq
+                ),
                 session_id: model.base.session_id,
                 turn_id,
                 provider: model.provider,
@@ -618,32 +854,41 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
             });
         }
         AxAgentEvent::ToolStarted(start) => {
-            let call_id = start
-                .base
-                .operation_id
-                .clone()
-                .unwrap_or_else(|| format!("{}-{}", start.tool_name, state.tools.len()));
-            state.pending_args.insert(call_id, arguments_for_hash(raw));
+            state.pending_tools.start(
+                &start.base.session_id,
+                &start.tool_name,
+                start.base.operation_id.clone(),
+                arguments_for_hash(raw),
+            );
         }
         AxAgentEvent::ToolEnded(end) => {
-            let call_id = end
-                .base
-                .operation_id
-                .clone()
-                .unwrap_or_else(|| format!("{}-{}", end.tool_name, state.tools.len()));
             let arguments = state
-                .pending_args
-                .remove(&call_id)
+                .pending_tools
+                .finish(
+                    &end.base.session_id,
+                    &end.tool_name,
+                    end.base.operation_id.as_deref(),
+                )
                 .unwrap_or_else(|| arguments_for_hash(raw));
+            let call_id = match end.base.operation_id.clone() {
+                Some(id) => id,
+                None => {
+                    state.tool_seq += 1;
+                    format!("{}-{}-{}", end.tool_name, state.run_id, state.tool_seq)
+                }
+            };
             let turn_id = end
                 .base
                 .turn_id
                 .clone()
                 .or_else(|| state.active_turn.get(&end.base.session_id).cloned())
                 .unwrap_or_else(|| "turn".into());
+            let output_text = output_text_for_estimate(raw);
             let tokens = end
                 .output_token_estimate
-                .or_else(|| output_text_for_estimate(raw).as_deref().map(estimate_text));
+                .or_else(|| output_text.as_deref().map(estimate_text));
+            let entities = Arc::clone(&state.entities);
+            let indexed_paths = Arc::clone(&state.indexed_paths);
             record_tool(
                 state,
                 options,
@@ -654,14 +899,16 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
                     tool_name: end.tool_name,
                     arguments,
                     repository_state: state.repository_state.clone(),
-                    known_graph_entities: state.entities.clone(),
-                    indexed_paths: state.indexed_paths.clone(),
-                    output_text_for_estimate: output_text_for_estimate(raw),
+                    known_graph_entities: Vec::new(),
+                    indexed_paths: Vec::new(),
+                    output_text_for_estimate: output_text,
                     output_token_estimate: tokens,
                     output_bytes: end.output_bytes,
                     duration_ms: end.duration_ms,
                     success: end.success,
                 },
+                &entities,
+                &indexed_paths,
             );
         }
         AxAgentEvent::ModelRequest(_)
@@ -671,7 +918,31 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
     }
 }
 
-fn record_tool(state: &mut State, options: &PiOptions, observation: &ToolCallObservation) {
+/// In optimize mode, withdraws an exact-repeat approval when nothing safe is
+/// cached for the call (the earlier call failed, or a later call may have
+/// changed its result), so the call runs. Returns true when the advice still
+/// replays a cached result.
+fn withhold_replay(advice: &mut ToolCallAdvice, mode: OptimizationMode, cached: bool) -> bool {
+    let replaying = advice
+        .apply
+        .as_ref()
+        .is_some_and(|item| item.rule == "exact-repeat");
+    if mode != OptimizationMode::Optimize || !replaying {
+        return false;
+    }
+    if !cached {
+        advice.apply = None;
+    }
+    cached
+}
+
+fn record_tool(
+    state: &mut State,
+    options: &PiOptions,
+    observation: &ToolCallObservation,
+    entities: &[String],
+    indexed_paths: &[String],
+) {
     let identity = identity_hash(
         &observation.tool_name,
         &observation.arguments,
@@ -686,18 +957,33 @@ fn record_tool(state: &mut State, options: &PiOptions, observation: &ToolCallObs
     });
     let context_cost = context_token_cost(output_tokens, options.pricing);
     let already = state.repeats.contains(&identity);
+    let had_cached = state.output_cache.get(&identity).is_some();
     let (repeated, _) =
         state
             .repeats
             .observe(&identity, &observation.call_id, output_tokens, context_cost);
-    let advice = advise_observation(
+    // Observe mode shows no advice but still records what it would have said.
+    let recorded_mode = match options.mode {
+        OptimizationMode::Observe => OptimizationMode::Advise,
+        mode => mode,
+    };
+    let mut advice = advise_with(
         observation,
+        entities,
+        indexed_paths,
         already,
-        options.mode,
+        recorded_mode,
         options.oversized_token_threshold,
         true,
     );
-    if options.mode == OptimizationMode::Optimize {
+    // Log the decision advise_tool_call made: a replay only counts as
+    // accepted when a cached result existed before this call.
+    withhold_replay(&mut advice, options.mode, had_cached);
+    if may_change_state(&observation.tool_name) {
+        // An edit, shell command or unknown tool may have changed what the
+        // cached reads saw, so none of them can be replayed any more.
+        state.output_cache.clear();
+    } else if options.mode == OptimizationMode::Optimize && replayable(observation) {
         if let Some(text) = &observation.output_text_for_estimate {
             state.output_cache.insert(identity, text.clone());
         }
@@ -714,22 +1000,6 @@ fn record_tool(state: &mut State, options: &PiOptions, observation: &ToolCallObs
             accepted: advice.apply.is_some(),
             alternative,
         });
-    } else if options.mode == OptimizationMode::Observe {
-        let hidden = advise_observation(
-            observation,
-            already,
-            OptimizationMode::Advise,
-            options.oversized_token_threshold,
-            true,
-        );
-        if let Some(alternative) = hidden.alternatives.into_iter().next() {
-            state.optimizations.push(OptimizationRow {
-                id: format!("opt-{}", observation.call_id),
-                tool_call_id: observation.call_id.clone(),
-                accepted: false,
-                alternative,
-            });
-        }
     }
     if let Some(cost) = context_cost {
         if let Some(session) = state.sessions.get_mut(&observation.session_id) {
@@ -770,8 +1040,9 @@ fn session_state(options: &PiOptions, session_id: &str) -> AxSessionState {
         context_version: None,
         cache_namespace: format!("{}:{session_id}", options.project_id),
         cumulative_usage: UsageSnapshot::default(),
+        // `model_usd` and `tool_context_usd` are USD figures.
         cumulative_cost: CostSnapshot {
-            currency: options.currency.clone(),
+            currency: "USD".into(),
             model_usd: None,
             tool_context_usd: None,
             confidence: "estimated".into(),
@@ -784,36 +1055,30 @@ fn snapshot_of(state: &State) -> PersistedSnapshot {
         sessions: state
             .sessions
             .values()
-            .map(|session| SessionRow {
-                id: session.session_id.clone(),
-                project_id: session.project_id.clone(),
-                created_at: 0,
-                updated_at: 0,
-                repository_root: session.repository_root.clone(),
-                active_branch: session.active_branch.clone(),
-                cache_namespace: session.cache_namespace.clone(),
+            .map(|session| {
+                let (created_at, updated_at) = state
+                    .session_times
+                    .get(&session.session_id)
+                    .copied()
+                    .unwrap_or_else(|| {
+                        let now = now_ms();
+                        (now, now)
+                    });
+                SessionRow {
+                    id: session.session_id.clone(),
+                    project_id: session.project_id.clone(),
+                    created_at,
+                    updated_at,
+                    repository_root: session.repository_root.clone(),
+                    active_branch: session.active_branch.clone(),
+                    cache_namespace: session.cache_namespace.clone(),
+                }
             })
             .collect(),
         turns: state.turns.clone(),
         tools: state.tools.clone(),
         models: state.models.clone(),
         optimizations: state.optimizations.clone(),
-        cache_entries: state
-            .cache
-            .entries()
-            .into_iter()
-            .map(|entry| CacheRow {
-                key: entry.key.clone(),
-                project_id: entry.project_id.clone(),
-                created_at: entry.created_at,
-                estimated_tokens: entry.estimated_tokens,
-                source_hashes: entry.source_hashes.clone(),
-                git_revision: entry.git_revision.clone(),
-                policy_version: entry.policy_version.clone(),
-                skill_version: entry.skill_version.clone(),
-                graph_version: entry.graph_version.clone(),
-            })
-            .collect(),
     }
 }
 
@@ -873,6 +1138,15 @@ pub fn read_guard_ids(db: &Path, fallback_session: &str) -> (String, String) {
     (session.to_string(), turn.to_string())
 }
 
+/// A tool call id for a read-guard row: the time, the process id and a
+/// per-process counter, so hooks that fire in the same millisecond, in one
+/// process or several, get distinct ids.
+fn read_guard_call_id() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("read-guard-{}-{}-{sequence}", now_ms(), std::process::id())
+}
+
 pub async fn note_read_guard(
     db: &Path,
     session_id: &str,
@@ -888,7 +1162,7 @@ pub async fn note_read_guard(
     let observation = ToolCallObservation {
         session_id,
         turn_id,
-        call_id: format!("read-guard-{}", now_ms()),
+        call_id: read_guard_call_id(),
         tool_name: tool_name.to_string(),
         arguments,
         repository_state: String::new(),
@@ -919,4 +1193,202 @@ pub async fn read_optimization(path: &Path) -> Result<(String, Value), String> {
     let text = format_optimization(&report);
     let json = serde_json::to_value(&report).map_err(|err| err.to_string())?;
     Ok((text, json))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn integration() -> PiIntegration {
+        create_pi_integration(PiOptions {
+            session_id: Some("s".into()),
+            ..PiOptions::default()
+        })
+    }
+
+    fn pending_count(pi: &PiIntegration) -> usize {
+        let state = pi.state.lock().unwrap();
+        state.pending_tools.len()
+    }
+
+    #[test]
+    fn tools_that_never_end_are_dropped_when_the_session_ends() {
+        let pi = integration();
+        pi.ingest(&json!({"type": "agent_start"})).unwrap();
+        pi.ingest(&json!({"type": "tool_execution_start", "toolName": "rg", "toolCallId": "c1", "args": {"q": 1}}))
+            .unwrap();
+        pi.ingest(&json!({"type": "tool_execution_start", "toolName": "rg", "args": {"q": 2}}))
+            .unwrap();
+        assert!(pending_count(&pi) > 0);
+        pi.ingest(&json!({"type": "agent_end"})).unwrap();
+        assert_eq!(pending_count(&pi), 0);
+    }
+
+    #[test]
+    fn unfinished_tools_are_held_up_to_a_limit() {
+        let pi = integration();
+        for n in 0..(MAX_PENDING_TOOLS + 50) {
+            pi.ingest(&json!({"type": "tool_execution_start", "toolName": "rg", "args": {"n": n}}))
+                .unwrap();
+        }
+        assert_eq!(pending_count(&pi), MAX_PENDING_TOOLS);
+    }
+
+    fn read_like(tool: &str, path: &str, call_id: &str) -> ToolCallObservation {
+        ToolCallObservation {
+            session_id: "s".into(),
+            turn_id: "t".into(),
+            call_id: call_id.into(),
+            tool_name: tool.into(),
+            arguments: json!({ "path": path }),
+            repository_state: "head".into(),
+            known_graph_entities: Vec::new(),
+            indexed_paths: Vec::new(),
+            output_text_for_estimate: Some(format!("{call_id}-body")),
+            output_token_estimate: Some(3_000),
+            output_bytes: None,
+            duration_ms: 1,
+            success: true,
+        }
+    }
+
+    fn exact_repeat_accepted(pi: &PiIntegration, call_id: &str) -> Option<bool> {
+        let state = pi.state.lock().unwrap();
+        state
+            .optimizations
+            .iter()
+            .find(|row| row.tool_call_id == call_id && row.alternative.rule == "exact-repeat")
+            .map(|row| row.accepted)
+    }
+
+    #[test]
+    fn a_repeat_that_could_not_be_replayed_is_not_logged_as_accepted() {
+        let pi = create_pi_integration(PiOptions {
+            mode: OptimizationMode::Optimize,
+            ..PiOptions::default()
+        });
+        pi.record_tool_result(&read_like("read", "notes.txt", "r1"))
+            .unwrap();
+        pi.record_tool_result(&read_like("read", "notes.txt", "r2"))
+            .unwrap();
+        assert_eq!(exact_repeat_accepted(&pi, "r2"), Some(true));
+        pi.record_tool_result(&read_like("edit", "notes.txt", "e1"))
+            .unwrap();
+        let again = read_like("read", "notes.txt", "r3");
+        assert_eq!(pi.advise_tool_call(&again).unwrap().apply, None);
+        pi.record_tool_result(&again).unwrap();
+        assert_eq!(exact_repeat_accepted(&pi, "r3"), Some(false));
+    }
+
+    #[test]
+    fn cached_tool_output_is_bounded_in_bytes() {
+        let pi = create_pi_integration(PiOptions {
+            mode: OptimizationMode::Optimize,
+            ..PiOptions::default()
+        });
+        pi.set_repository_state("head").unwrap();
+        let body = "x".repeat(1024 * 1024);
+        for n in 0..(MAX_OUTPUT_CACHE_BYTES / body.len() + 8) {
+            pi.record_tool_result(&ToolCallObservation {
+                session_id: "s".into(),
+                turn_id: "t".into(),
+                call_id: format!("c{n}"),
+                tool_name: "read".into(),
+                arguments: json!({"path": format!("f{n}.txt")}),
+                repository_state: "head".into(),
+                known_graph_entities: Vec::new(),
+                indexed_paths: Vec::new(),
+                output_text_for_estimate: Some(body.clone()),
+                output_token_estimate: Some(10),
+                output_bytes: None,
+                duration_ms: 1,
+                success: true,
+            })
+            .unwrap();
+        }
+        let state = pi.state.lock().unwrap();
+        let held: usize = state.output_cache.values().map(String::len).sum();
+        assert!(held <= MAX_OUTPUT_CACHE_BYTES, "{held} bytes held");
+        assert!(held > 0, "recent outputs stay cached");
+    }
+
+    #[test]
+    fn different_entity_lists_never_share_a_context_cache_entry() {
+        let pi = integration();
+        let request = ContextRequest {
+            session_id: "s".into(),
+            turn_id: "t".into(),
+            user_intent: Some("task".into()),
+            repository_root: None,
+            changed_files: Vec::new(),
+            previous_tool_names: Vec::new(),
+        };
+        pi.set_graph_entities(vec!["Alpha,Beta".into()]).unwrap();
+        assert!(!pi.get_session_context(&request).unwrap().cache_hit);
+        pi.set_graph_entities(vec!["Alpha".into(), "Beta".into()])
+            .unwrap();
+        assert!(!pi.get_session_context(&request).unwrap().cache_hit);
+        assert!(pi.get_session_context(&request).unwrap().cache_hit);
+    }
+
+    async fn run_session(db: &Path, times: &[u64]) {
+        let pi = create_pi_integration(PiOptions {
+            session_id: Some("s".into()),
+            db_path: Some(db.to_path_buf()),
+            ..PiOptions::default()
+        });
+        pi.start().unwrap();
+        let (first, rest) = times.split_first().unwrap();
+        pi.ingest(&json!({"type": "agent_start", "timestamp": first}))
+            .unwrap();
+        for time in rest {
+            pi.ingest(&json!({"type": "turn_start", "timestamp": time}))
+                .unwrap();
+        }
+        pi.stop().await.unwrap();
+    }
+
+    async fn session_times(db: &Path) -> (u64, u64) {
+        let snapshot = store::load(db).await.unwrap();
+        let row = snapshot.sessions.iter().find(|row| row.id == "s").unwrap();
+        (row.created_at, row.updated_at)
+    }
+
+    #[tokio::test]
+    async fn session_rows_carry_first_and_last_event_times() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("ax.db");
+        run_session(&db, &[1_000, 1_500, 2_000]).await;
+        assert_eq!(session_times(&db).await, (1_000, 2_000));
+        run_session(&db, &[5_000, 6_000]).await;
+        assert_eq!(session_times(&db).await, (1_000, 6_000));
+        // An older run flushed later never moves the times backwards.
+        run_session(&db, &[3_000, 3_500]).await;
+        assert_eq!(session_times(&db).await, (1_000, 6_000));
+    }
+
+    #[test]
+    fn a_turn_end_drops_that_sessions_unfinished_tools_only() {
+        let pi = integration();
+        pi.ingest(&json!({"type": "tool_execution_start", "toolName": "rg", "toolCallId": "c1", "args": {}}))
+            .unwrap();
+        pi.ingest(&json!({"type": "tool_execution_start", "toolName": "rg", "toolCallId": "c2", "sessionId": "other", "args": {}}))
+            .unwrap();
+        pi.ingest(&json!({"type": "turn_end"})).unwrap();
+        assert_eq!(pending_count(&pi), 1);
+    }
+}
+
+#[cfg(test)]
+mod read_guard_call_id_tests {
+    use super::read_guard_call_id;
+
+    #[test]
+    fn read_guard_call_ids_are_distinct_within_one_millisecond() {
+        let ids: std::collections::HashSet<String> =
+            (0..1000).map(|_| read_guard_call_id()).collect();
+        assert_eq!(ids.len(), 1000);
+        assert!(ids.iter().all(|id| id.starts_with("read-guard-")));
+    }
 }

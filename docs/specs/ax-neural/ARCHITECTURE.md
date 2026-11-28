@@ -28,6 +28,8 @@ The product is Rust. Command Center is TypeScript in `crates/ax-web/web-ui`. The
 
 Candle, Burn, ONNX Runtime, and Tract are not workspace dependencies. The default `ax` binary does not link them. The Cargo feature `neural-runtime` exists and is empty so a later runtime can sit behind it. CPU hash-v1 remains the embedder in every build.
 
+The retrieval experiments (`query_prior`, `code_aware`, `code_discovery`, `recovery`, `learn_validate`) have no caller in dispatch, the CLI, MCP or the web server. They compile only for tests and with the Cargo feature `neural-lab`, so `cargo test -p ax-neural` still runs their tests and release builds leave them out.
+
 ## Data added
 
 Schema version 45 adds tables. They reference entities by id and content hash. They do not copy memory bodies, rule bodies, or source files.

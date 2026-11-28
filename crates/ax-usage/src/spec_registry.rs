@@ -6,30 +6,25 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
+/// Registry tables; the shared `specs` and `spec_revisions` tables come from
+/// `spec_hierarchy::SPEC_TABLES`.
 const SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS specs (
-    id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL,
-    title TEXT NOT NULL,
-    markdown_path TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS spec_revisions (
-    spec_id TEXT NOT NULL,
-    version INTEGER NOT NULL,
-    status TEXT NOT NULL,
-    body TEXT NOT NULL,
-    content_hash TEXT NOT NULL,
-    source TEXT NOT NULL,
-    session_id TEXT,
-    turn_id TEXT,
-    based_on INTEGER,
-    created_at INTEGER NOT NULL,
-    PRIMARY KEY (spec_id, version)
-);
 CREATE TABLE IF NOT EXISTS spec_bindings (
     session_id TEXT PRIMARY KEY,
     spec_id TEXT NOT NULL
+);
+-- Sessions whose binding came from a scanned plan file, not from a capture
+-- or edit in that session. Only these bindings are moved by a later scan.
+CREATE TABLE IF NOT EXISTS spec_implicit_bindings (
+    session_id TEXT PRIMARY KEY
+);
+-- Plan files already imported, so an unchanged file is not read again.
+CREATE TABLE IF NOT EXISTS spec_plan_files (
+    path TEXT PRIMARY KEY,
+    modified INTEGER NOT NULL,
+    size INTEGER NOT NULL,
+    spec_id TEXT,
+    stored INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS spec_deliveries (
     session_id TEXT NOT NULL,
@@ -74,17 +69,17 @@ pub fn is_plan_request(prompt: &str) -> bool {
     .any(|phrase| lower.contains(phrase))
 }
 
+static REGISTRY_MIGRATED: crate::spec_hierarchy::MigratedPools =
+    crate::spec_hierarchy::MigratedPools::new();
+
+/// Create the registry tables. The work runs once per pool.
 pub async fn ensure_spec_schema(pool: &SqlitePool) -> Result<(), String> {
-    for statement in SCHEMA.split(';') {
-        let statement = statement.trim();
-        if statement.is_empty() {
-            continue;
-        }
-        sqlx::query(statement)
-            .execute(pool)
-            .await
-            .map_err(|error| error.to_string())?;
+    if REGISTRY_MIGRATED.contains(pool) {
+        return Ok(());
     }
+    crate::spec_hierarchy::run_schema(pool, crate::spec_hierarchy::SPEC_TABLES).await?;
+    crate::spec_hierarchy::run_schema(pool, SCHEMA).await?;
+    REGISTRY_MIGRATED.insert(pool);
     Ok(())
 }
 
@@ -106,6 +101,7 @@ pub async fn capture_finished_plan(
     if !finished || body.trim().is_empty() {
         return Ok(None);
     }
+    let body = stored_body(body);
     if source == "turn" && !is_plan_request(prompt) {
         return Ok(None);
     }
@@ -120,9 +116,24 @@ pub async fn capture_finished_plan(
         .await?;
         return Ok(None);
     }
+    // A changed spec file only binds a session that has no spec yet.
+    let bind = |pool, session_id, spec_id| async move {
+        if source == "file" {
+            bind_session_if_unbound(pool, session_id, spec_id).await
+        } else {
+            bind_session(pool, session_id, spec_id).await
+        }
+    };
     if let Some(existing) = revision_for_turn(pool, spec_id, session_id, turn_id).await? {
-        bind_session(pool, session_id, spec_id).await?;
+        bind(pool, session_id, spec_id).await?;
         return Ok(Some(existing));
+    }
+    // The same body as the latest revision is not a new draft.
+    if let Some(latest) = latest_revision(pool, spec_id).await? {
+        if latest.content_hash == hash_text(body) {
+            bind(pool, session_id, spec_id).await?;
+            return Ok(Some(latest));
+        }
     }
     let markdown_path = format!("docs/specs/{spec_id}/SPEC.md");
     sqlx::query(
@@ -142,7 +153,7 @@ pub async fn capture_finished_plan(
         pool, spec_id, "draft", body, source, session_id, turn_id, None,
     )
     .await?;
-    bind_session(pool, session_id, spec_id).await?;
+    bind(pool, session_id, spec_id).await?;
     Ok(Some(revision))
 }
 
@@ -157,24 +168,18 @@ pub async fn on_turn_finished(
     outcome: &str,
     files: &[String],
 ) -> Result<(), String> {
-    let spec_id = slug(prompt);
+    let spec_id = keep_legacy_spec_id(pool, prompt_spec_id(prompt), prompt).await?;
     let _ = capture_finished_plan(
         pool, project_id, &spec_id, prompt, prompt, outcome, session_id, turn_id, "turn", true,
     )
     .await?;
     for file in files {
-        if is_spec_markdown(file) {
+        // The Markdown mirror of an existing spec is checked by `sync_markdown`.
+        if is_spec_markdown(file) && spec_for_markdown(pool, file).await?.is_none() {
             if let Ok(body) = std::fs::read_to_string(root.join(file)) {
+                let spec_id = keep_legacy_spec_id(pool, markdown_spec_id(file), file).await?;
                 let _ = capture_finished_plan(
-                    pool,
-                    project_id,
-                    &slug(file),
-                    file,
-                    file,
-                    &body,
-                    session_id,
-                    turn_id,
-                    "file",
+                    pool, project_id, &spec_id, file, file, &body, session_id, turn_id, "file",
                     true,
                 )
                 .await?;
@@ -210,37 +215,16 @@ pub async fn approve_revision(
     let revision = revision(pool, spec_id, version)
         .await?
         .ok_or_else(|| format!("spec {spec_id} has no version {version}"))?;
-    sqlx::query(
-        "UPDATE spec_revisions SET status = 'superseded'
-         WHERE spec_id = ?1 AND status = 'approved' AND version != ?2",
-    )
-    .bind(spec_id)
-    .bind(version)
-    .execute(pool)
-    .await
-    .map_err(|error| error.to_string())?;
-    sqlx::query(
-        "UPDATE spec_revisions SET status = 'approved' WHERE spec_id = ?1 AND version = ?2",
-    )
-    .bind(spec_id)
-    .bind(version)
-    .execute(pool)
-    .await
-    .map_err(|error| error.to_string())?;
     let path = markdown_path(pool, spec_id).await?;
-    let absolute = root.join(&path);
-    if let Some(parent) = absolute.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    // Seal each path once, hashed before anything is written.
+    let mut seals: Vec<String> = Vec::new();
+    for linked in linked_files {
+        if !seals.contains(linked) {
+            seals.push(linked.clone());
+        }
     }
-    std::fs::write(&absolute, format!("{}\n", revision.body)).map_err(|error| error.to_string())?;
-    sqlx::query("DELETE FROM spec_file_seals WHERE spec_id = ?1")
-        .bind(spec_id)
-        .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
-    let mut seals: Vec<String> = linked_files.to_vec();
     for named in paths_named_in(&revision.body) {
-        if seals.iter().any(|path| path == &named) {
+        if seals.contains(&named) {
             continue;
         }
         if named.split('/').count() < 2 || named.contains("..") {
@@ -250,10 +234,44 @@ pub async fn approve_revision(
             seals.push(named);
         }
     }
-    for linked in &seals {
-        let hash = std::fs::read(root.join(linked))
-            .map(|bytes| hash_bytes(&bytes))
-            .unwrap_or_else(|_| "missing".into());
+    let sealed: Vec<(String, String)> = seals
+        .into_iter()
+        .map(|linked| {
+            let hash = std::fs::read(root.join(&linked))
+                .map(|bytes| hash_bytes(&bytes))
+                .unwrap_or_else(|_| "missing".into());
+            (linked, hash)
+        })
+        .collect();
+    // All database changes commit together, and only after the Markdown copy
+    // was replaced; a failure at any step leaves the previous approval as is.
+    let mut tx = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|error| error.to_string())?;
+    sqlx::query(
+        "UPDATE spec_revisions SET status = 'superseded'
+         WHERE spec_id = ?1 AND status = 'approved' AND version != ?2",
+    )
+    .bind(spec_id)
+    .bind(version)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query(
+        "UPDATE spec_revisions SET status = 'approved' WHERE spec_id = ?1 AND version = ?2",
+    )
+    .bind(spec_id)
+    .bind(version)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query("DELETE FROM spec_file_seals WHERE spec_id = ?1")
+        .bind(spec_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| error.to_string())?;
+    for (linked, hash) in &sealed {
         sqlx::query(
             "INSERT INTO spec_file_seals (spec_id, path, content_hash, sealed_version)
              VALUES (?1, ?2, ?3, ?4)",
@@ -262,10 +280,13 @@ pub async fn approve_revision(
         .bind(linked)
         .bind(hash)
         .bind(version)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|error| error.to_string())?;
     }
+    ax_utils::atomic_write(&root.join(&path), format!("{}\n", revision.body).as_bytes())
+        .map_err(|error| format!("write {path}: {error}"))?;
+    tx.commit().await.map_err(|error| error.to_string())?;
     revision_row(pool, spec_id, version).await
 }
 
@@ -301,20 +322,18 @@ pub async fn check_linked_files(
         "Linked files changed since the approved spec. The approved body was not rewritten.\n{}",
         drifted.join("\n")
     );
-    if latest_with_body(pool, spec_id, &note).await?.is_none() {
-        let approved = approved_revision(pool, spec_id).await?;
-        insert_revision(
-            pool,
-            spec_id,
-            "change_requested",
-            &note,
-            "drift",
-            session_id,
-            turn_id,
-            approved.as_ref().map(|item| item.version),
-        )
-        .await?;
-    }
+    let approved = approved_revision(pool, spec_id).await?;
+    insert_revision_if_new(
+        pool,
+        spec_id,
+        "change_requested",
+        &note,
+        "drift",
+        session_id,
+        turn_id,
+        approved.as_ref().map(|item| item.version),
+    )
+    .await?;
     Ok(true)
 }
 
@@ -332,26 +351,23 @@ pub async fn sync_markdown(
     let Ok(text) = std::fs::read_to_string(&path) else {
         return Ok(None);
     };
-    let file_hash = hash_text(text.trim_end_matches('\n'));
-    if file_hash == approved.content_hash {
+    let file_body = stored_body(&text);
+    let file_hash = hash_text(file_body);
+    // Older rows kept the trailing newline in the body; compare without it.
+    if file_hash == approved.content_hash || file_body == stored_body(&approved.body) {
         return Ok(None);
     }
-    if latest_with_body(pool, spec_id, text.trim_end_matches('\n'))
-        .await?
-        .is_none()
-    {
-        insert_revision(
-            pool,
-            spec_id,
-            "draft",
-            text.trim_end_matches('\n'),
-            "file",
-            "",
-            "",
-            Some(approved.version),
-        )
-        .await?;
-    }
+    insert_revision_if_new(
+        pool,
+        spec_id,
+        "draft",
+        file_body,
+        "file",
+        "",
+        "",
+        Some(approved.version),
+    )
+    .await?;
     Ok(Some((approved.content_hash, file_hash)))
 }
 
@@ -372,15 +388,18 @@ pub async fn spec_context_block(pool: &SqlitePool, root: &Path, session_id: &str
         return format!("spec: {spec_id}\napproved: none\npointer: ax spec show {spec_id}");
     };
     let conflict = sync_markdown(pool, root, &spec_id).await.ok().flatten();
-    let drift = check_linked_files(pool, root, &spec_id, session_id, "preflight")
-        .await
-        .unwrap_or(false);
+    // A failed check is not evidence that nothing drifted.
+    let drift = match check_linked_files(pool, root, &spec_id, session_id, "preflight").await {
+        Ok(true) => "yes",
+        Ok(false) => "no",
+        Err(_) => "unknown",
+    };
     let mut lines = vec![
         format!("spec: {spec_id}"),
         format!("approved: v{}", approved.version),
         format!("hash: {}", approved.content_hash),
         format!("objective: {}", first_line(&approved.body)),
-        format!("drift: {}", if drift { "yes" } else { "no" }),
+        format!("drift: {drift}"),
         format!("pointer: ax spec show {spec_id}@{}", approved.version),
     ];
     if let Some((approved_hash, file_hash)) = conflict {
@@ -531,23 +550,6 @@ async fn revision_for_turn(
     }
 }
 
-async fn latest_with_body(
-    pool: &SqlitePool,
-    spec_id: &str,
-    body: &str,
-) -> Result<Option<i64>, String> {
-    let hash = hash_text(body);
-    sqlx::query_scalar(
-        "SELECT version FROM spec_revisions WHERE spec_id = ?1 AND content_hash = ?2
-         ORDER BY version DESC LIMIT 1",
-    )
-    .bind(spec_id)
-    .bind(hash)
-    .fetch_optional(pool)
-    .await
-    .map_err(|error| error.to_string())
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn insert_revision(
     pool: &SqlitePool,
@@ -559,21 +561,60 @@ async fn insert_revision(
     turn_id: &str,
     based_on: Option<i64>,
 ) -> Result<SpecRevision, String> {
-    let version: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(version), 0) + 1 FROM spec_revisions WHERE spec_id = ?1",
+    insert_revision_where(
+        pool, spec_id, status, body, source, session_id, turn_id, based_on, false,
     )
-    .bind(spec_id)
-    .fetch_one(pool)
+    .await?
+    .ok_or_else(|| format!("spec {spec_id}: revision was not stored"))
+}
+
+/// Store a revision unless one with the same body already exists for the spec.
+/// Returns `None` when such a revision exists.
+#[allow(clippy::too_many_arguments)]
+async fn insert_revision_if_new(
+    pool: &SqlitePool,
+    spec_id: &str,
+    status: &str,
+    body: &str,
+    source: &str,
+    session_id: &str,
+    turn_id: &str,
+    based_on: Option<i64>,
+) -> Result<Option<SpecRevision>, String> {
+    insert_revision_where(
+        pool, spec_id, status, body, source, session_id, turn_id, based_on, true,
+    )
     .await
-    .map_err(|error| error.to_string())?;
+}
+
+/// One statement picks the next version and inserts the row, so concurrent
+/// callers never compute the same version. With `only_new`, the same
+/// statement also skips a body the spec already has.
+#[allow(clippy::too_many_arguments)]
+async fn insert_revision_where(
+    pool: &SqlitePool,
+    spec_id: &str,
+    status: &str,
+    body: &str,
+    source: &str,
+    session_id: &str,
+    turn_id: &str,
+    based_on: Option<i64>,
+    only_new: bool,
+) -> Result<Option<SpecRevision>, String> {
+    let body = stored_body(body);
     let content_hash = hash_text(body);
-    sqlx::query(
+    let version: Option<i64> = sqlx::query_scalar(
         "INSERT INTO spec_revisions
          (spec_id, version, status, body, content_hash, source, session_id, turn_id, based_on, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+         SELECT ?1, COALESCE(MAX(version), 0) + 1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+         FROM spec_revisions WHERE spec_id = ?1
+         HAVING ?10 = 0 OR NOT EXISTS (
+             SELECT 1 FROM spec_revisions WHERE spec_id = ?1 AND content_hash = ?4
+         )
+         RETURNING version",
     )
     .bind(spec_id)
-    .bind(version)
     .bind(status)
     .bind(body)
     .bind(&content_hash)
@@ -582,16 +623,17 @@ async fn insert_revision(
     .bind(turn_id)
     .bind(based_on)
     .bind(now_ms())
-    .execute(pool)
+    .bind(only_new)
+    .fetch_optional(pool)
     .await
     .map_err(|error| error.to_string())?;
-    Ok(SpecRevision {
+    Ok(version.map(|version| SpecRevision {
         spec_id: spec_id.to_string(),
         version,
         status: status.to_string(),
         body: body.to_string(),
         content_hash,
-    })
+    }))
 }
 
 async fn bind_session(pool: &SqlitePool, session_id: &str, spec_id: &str) -> Result<(), String> {
@@ -607,7 +649,148 @@ async fn bind_session(pool: &SqlitePool, session_id: &str, spec_id: &str) -> Res
     .execute(pool)
     .await
     .map_err(|error| error.to_string())?;
+    sqlx::query("DELETE FROM spec_implicit_bindings WHERE session_id = ?1")
+        .bind(session_id)
+        .execute(pool)
+        .await
+        .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+/// Bind a session found in a scanned plan file. A session with no binding, or
+/// one that an earlier scan bound, follows the plan. A binding made by a
+/// capture or an edit in the session itself is kept.
+async fn bind_session_implicit(
+    pool: &SqlitePool,
+    session_id: &str,
+    spec_id: &str,
+) -> Result<(), String> {
+    if session_id.is_empty() {
+        return Ok(());
+    }
+    match bound_spec(pool, session_id).await? {
+        Some(current) if current == spec_id => return Ok(()),
+        Some(_) => {
+            let implicit: Option<String> = sqlx::query_scalar(
+                "SELECT session_id FROM spec_implicit_bindings WHERE session_id = ?1",
+            )
+            .bind(session_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+            if implicit.is_none() {
+                return Ok(());
+            }
+        }
+        None => {}
+    }
+    sqlx::query(
+        "INSERT INTO spec_bindings (session_id, spec_id) VALUES (?1, ?2)
+         ON CONFLICT(session_id) DO UPDATE SET spec_id = excluded.spec_id",
+    )
+    .bind(session_id)
+    .bind(spec_id)
+    .execute(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query("INSERT OR IGNORE INTO spec_implicit_bindings (session_id) VALUES (?1)")
+        .bind(session_id)
+        .execute(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+async fn bind_session_if_unbound(
+    pool: &SqlitePool,
+    session_id: &str,
+    spec_id: &str,
+) -> Result<(), String> {
+    if session_id.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(
+        "INSERT INTO spec_bindings (session_id, spec_id) VALUES (?1, ?2)
+         ON CONFLICT(session_id) DO NOTHING",
+    )
+    .bind(session_id)
+    .bind(spec_id)
+    .execute(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+async fn latest_revision(pool: &SqlitePool, spec_id: &str) -> Result<Option<SpecRevision>, String> {
+    let version: Option<i64> = sqlx::query_scalar(
+        "SELECT version FROM spec_revisions WHERE spec_id = ?1 ORDER BY version DESC LIMIT 1",
+    )
+    .bind(spec_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    match version {
+        Some(version) => revision_optional(pool, spec_id, version).await,
+        None => Ok(None),
+    }
+}
+
+/// The spec whose Markdown mirror is this project-relative path.
+async fn spec_for_markdown(pool: &SqlitePool, file: &str) -> Result<Option<String>, String> {
+    ensure_spec_schema(pool).await?;
+    sqlx::query_scalar("SELECT id FROM specs WHERE markdown_path = ?1 LIMIT 1")
+        .bind(file.replace('\\', "/"))
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Spec id for a changed spec file: the folder name for `docs/specs/<id>/SPEC.md`,
+/// else a [`distinct_slug`] of the whole path.
+fn markdown_spec_id(file: &str) -> String {
+    let path = file.replace('\\', "/");
+    let parts: Vec<&str> = path.split('/').collect();
+    match parts.as_slice() {
+        ["docs", "specs", dir, name] if name.eq_ignore_ascii_case("SPEC.md") => {
+            let id = slug(dir);
+            if id.is_empty() {
+                distinct_slug(file)
+            } else {
+                id
+            }
+        }
+        _ => distinct_slug(file),
+    }
+}
+
+/// Earlier builds named a captured spec by the plain cut [`slug`] of its
+/// prompt or file path. When `id` is not taken yet and a spec with that legacy
+/// id and the same title exists, the legacy id is kept, so later revisions of
+/// the same document stay under one spec. Titles are compared with whitespace
+/// collapsed, because earlier builds stored a prompt title with its line breaks
+/// and runs of spaces joined into single spaces.
+async fn keep_legacy_spec_id(pool: &SqlitePool, id: String, text: &str) -> Result<String, String> {
+    let legacy = slug(text);
+    if legacy.is_empty() || legacy == id {
+        return Ok(id);
+    }
+    ensure_spec_schema(pool).await?;
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, title FROM specs WHERE id IN (?1, ?2)")
+            .bind(&id)
+            .bind(&legacy)
+            .fetch_all(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+    let id_taken = rows.iter().any(|(row_id, _)| *row_id == id);
+    let legacy_matches = rows.iter().any(|(row_id, title)| {
+        *row_id == legacy && title.split_whitespace().eq(text.split_whitespace())
+    });
+    if !id_taken && legacy_matches {
+        Ok(legacy)
+    } else {
+        Ok(id)
+    }
 }
 
 async fn bound_spec(pool: &SqlitePool, session_id: &str) -> Result<Option<String>, String> {
@@ -917,7 +1100,9 @@ fn plan_file_is_finished(body: &str) -> bool {
 }
 
 /// Store finished Markdown plans under one project root. A one-line fragment
-/// is ignored. Nothing is approved and no Markdown copy is written.
+/// is ignored. Nothing is approved and no Markdown copy is written. Returns how
+/// many plan files found have a stored revision, including ones stored by an
+/// earlier import.
 pub async fn import_plan_mode_files(
     pool: &SqlitePool,
     root: &Path,
@@ -968,6 +1153,91 @@ fn extra_user_plan_dirs() -> Vec<PathBuf> {
 const MAX_PLAN_FILES: usize = 400;
 const SKIP_PLAN_DIRS: &[&str] = &["node_modules", "target", "target-dev", ".git"];
 
+/// One Markdown file found in a plan folder. `body` is read only when the
+/// file is new or its size or modification time changed since the last import.
+struct PlanFile {
+    path: PathBuf,
+    modified: i64,
+    size: i64,
+    body: Option<String>,
+}
+
+/// What an earlier import recorded for a file: its size and modification
+/// time, the spec it became (none for a fragment), and whether a revision was
+/// stored for it.
+struct KnownPlanFile {
+    modified: i64,
+    size: i64,
+    spec_id: Option<String>,
+    stored: bool,
+}
+
+fn modified_nanos(meta: &std::fs::Metadata) -> i64 {
+    meta.modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| i64::try_from(duration.as_nanos()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
+/// Walk the plan folders and read the files that changed. Blocking file
+/// access, so it runs on the blocking pool.
+fn scan_plan_files(
+    dirs: &[PathBuf],
+    known: &std::collections::HashMap<String, (i64, i64)>,
+) -> Vec<PlanFile> {
+    let mut paths = Vec::new();
+    for dir in dirs {
+        collect_plan_markdown(dir, &mut paths, 0);
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            let meta = std::fs::metadata(&path).ok()?;
+            let modified = modified_nanos(&meta);
+            let size = i64::try_from(meta.len()).unwrap_or(i64::MAX);
+            let key = path.to_string_lossy().into_owned();
+            let body = if known.get(&key) == Some(&(modified, size)) {
+                None
+            } else {
+                Some(std::fs::read_to_string(&path).ok()?)
+            };
+            Some(PlanFile {
+                path,
+                modified,
+                size,
+                body,
+            })
+        })
+        .collect()
+}
+
+async fn known_plan_files(
+    pool: &SqlitePool,
+) -> Result<std::collections::HashMap<String, KnownPlanFile>, String> {
+    let rows: Vec<(String, i64, i64, Option<String>, i64)> =
+        sqlx::query_as("SELECT path, modified, size, spec_id, stored FROM spec_plan_files")
+            .fetch_all(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(|(path, modified, size, spec_id, stored)| {
+            (
+                path,
+                KnownPlanFile {
+                    modified,
+                    size,
+                    spec_id,
+                    stored: stored != 0,
+                },
+            )
+        })
+        .collect())
+}
+
 async fn import_plan_dirs(
     pool: &SqlitePool,
     project_id: &str,
@@ -976,65 +1246,168 @@ async fn import_plan_dirs(
     live_sessions: &[String],
 ) -> Result<usize, String> {
     ensure_spec_schema(pool).await?;
-    let mut files = Vec::new();
-    for dir in dirs {
-        collect_plan_markdown(dir, &mut files, 0);
-    }
-    files.sort();
-    files.dedup();
-    let newest = newest_user_plan(&files, user_plans_dir);
-    let mut stored = 0usize;
-    let mut newest_id: Option<String> = None;
-    for path in &files {
-        let Ok(body) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        if !plan_file_is_finished(&body) {
-            continue;
-        }
-        let stem = path
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .unwrap_or("plan");
-        let spec_id = slug(stem);
-        if spec_id.is_empty() {
-            continue;
-        }
-        let title = plan_title(&body, stem);
-        let hash = hash_bytes(body.trim().as_bytes());
-        let session = format!("plan-{spec_id}");
-        if capture_finished_plan(
-            pool,
-            project_id,
-            &spec_id,
-            &title,
-            "plan mode",
-            body.trim(),
-            &session,
-            &hash,
-            "plan_mode",
-            true,
-        )
+    let known = known_plan_files(pool).await?;
+    let stamps: std::collections::HashMap<String, (i64, i64)> = known
+        .iter()
+        .map(|(path, file)| (path.clone(), (file.modified, file.size)))
+        .collect();
+    let scan_dirs = dirs.to_vec();
+    let files = tokio::task::spawn_blocking(move || scan_plan_files(&scan_dirs, &stamps))
         .await
-        .ok()
-        .flatten()
-        .is_some()
-        {
+        .map_err(|error| error.to_string())?;
+    let mut stored = 0usize;
+    // The newest finished file in the user plan folder, by modification time.
+    let mut newest: Option<(i64, String)> = None;
+    for file in &files {
+        let key = file.path.to_string_lossy().into_owned();
+        let (spec_id, was_stored) = match &file.body {
+            None => {
+                let Some(entry) = known.get(&key) else {
+                    continue;
+                };
+                (entry.spec_id.clone(), entry.stored)
+            }
+            Some(body) => {
+                let earlier = known.get(&key).and_then(|entry| entry.spec_id.as_deref());
+                let Some(outcome) =
+                    import_plan_file(pool, project_id, &file.path, body, earlier).await
+                else {
+                    continue;
+                };
+                sqlx::query(
+                    "INSERT INTO spec_plan_files (path, modified, size, spec_id, stored)
+                     VALUES (?1, ?2, ?3, ?4, ?5)
+                     ON CONFLICT(path) DO UPDATE SET modified = excluded.modified,
+                        size = excluded.size, spec_id = excluded.spec_id,
+                        stored = excluded.stored",
+                )
+                .bind(&key)
+                .bind(file.modified)
+                .bind(file.size)
+                .bind(outcome.0.as_deref())
+                .bind(i64::from(outcome.1))
+                .execute(pool)
+                .await
+                .map_err(|error| error.to_string())?;
+                outcome
+            }
+        };
+        if was_stored {
             stored += 1;
         }
-        for extra in sessions_named_in(&body) {
-            bind_session(pool, &extra, &spec_id).await?;
-        }
-        if newest.as_ref().is_some_and(|chosen| chosen == path) {
-            newest_id = Some(spec_id);
+        let Some(spec_id) = spec_id else {
+            continue;
+        };
+        let in_user_dir = user_plans_dir.is_some_and(|dir| file.path.starts_with(dir));
+        if in_user_dir
+            && newest
+                .as_ref()
+                .is_none_or(|(time, _)| file.modified >= *time)
+        {
+            newest = Some((file.modified, spec_id));
         }
     }
-    if let Some(spec_id) = newest_id {
+    if let Some((_, spec_id)) = newest {
         for session in live_sessions {
-            bind_session(pool, session, &spec_id).await?;
+            bind_session_implicit(pool, session, &spec_id).await?;
         }
     }
     Ok(stored)
+}
+
+/// Spec id for a plan file. A file keeps the id an earlier import gave it.
+/// Otherwise it is the slug of the file name, unless another file already
+/// holds that id: then the first 8 hex digits of the path's SHA-256 are added,
+/// so `plan.md` in two projects stays two specs.
+async fn plan_file_spec_id(
+    pool: &SqlitePool,
+    path: &Path,
+    earlier: Option<&str>,
+) -> Result<Option<String>, String> {
+    if let Some(id) = earlier.filter(|id| !id.is_empty()) {
+        return Ok(Some(id.to_string()));
+    }
+    let stem = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("plan");
+    let base = slug(stem);
+    if base.is_empty() {
+        return Ok(None);
+    }
+    let key = path.to_string_lossy();
+    let taken: Option<String> = sqlx::query_scalar(
+        "SELECT path FROM spec_plan_files WHERE spec_id = ?1 AND path != ?2 LIMIT 1",
+    )
+    .bind(&base)
+    .bind(key.as_ref())
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    if taken.is_none() {
+        return Ok(Some(base));
+    }
+    Ok(Some(format!("{base}-{}", &hash_text(&key)[..8])))
+}
+
+/// Store one changed plan file and bind the sessions it names. Returns the
+/// spec id (none for a fragment) and whether a revision was stored, or `None`
+/// when the import failed and should be tried again on the next scan; the
+/// failure is logged.
+async fn import_plan_file(
+    pool: &SqlitePool,
+    project_id: &str,
+    path: &Path,
+    body: &str,
+    earlier: Option<&str>,
+) -> Option<(Option<String>, bool)> {
+    match import_plan_file_inner(pool, project_id, path, body, earlier).await {
+        Ok(outcome) => Some(outcome),
+        Err(error) => {
+            tracing::warn!("plan file {} not imported: {error}", path.display());
+            None
+        }
+    }
+}
+
+async fn import_plan_file_inner(
+    pool: &SqlitePool,
+    project_id: &str,
+    path: &Path,
+    body: &str,
+    earlier: Option<&str>,
+) -> Result<(Option<String>, bool), String> {
+    if !plan_file_is_finished(body) {
+        return Ok((None, false));
+    }
+    let stem = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("plan");
+    let Some(spec_id) = plan_file_spec_id(pool, path, earlier).await? else {
+        return Ok((None, false));
+    };
+    let title = plan_title(body, stem);
+    let hash = hash_bytes(body.trim().as_bytes());
+    let session = format!("plan-{spec_id}");
+    let stored = capture_finished_plan(
+        pool,
+        project_id,
+        &spec_id,
+        &title,
+        "plan mode",
+        body.trim(),
+        &session,
+        &hash,
+        "plan_mode",
+        true,
+    )
+    .await?
+    .is_some();
+    for extra in sessions_named_in(body) {
+        bind_session_implicit(pool, &extra, &spec_id).await?;
+    }
+    Ok((Some(spec_id), stored))
 }
 
 fn collect_plan_markdown(dir: &Path, out: &mut Vec<PathBuf>, depth: u8) {
@@ -1045,6 +1418,9 @@ fn collect_plan_markdown(dir: &Path, out: &mut Vec<PathBuf>, depth: u8) {
         return;
     };
     for entry in entries.flatten() {
+        if out.len() >= MAX_PLAN_FILES {
+            return;
+        }
         let path = entry.path();
         if path.is_dir() {
             let name = path
@@ -1269,29 +1645,6 @@ fn is_broad_root(path: &Path) -> bool {
     ax_utils::paths::home_dir().is_some_and(|home| path == home)
 }
 
-fn newest_user_plan(files: &[PathBuf], user_plans_dir: Option<&Path>) -> Option<PathBuf> {
-    let user_dir = user_plans_dir?;
-    let mut newest: Option<(PathBuf, std::time::SystemTime)> = None;
-    for path in files {
-        if !path.starts_with(user_dir) {
-            continue;
-        }
-        let Ok(body) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        if !plan_file_is_finished(&body) {
-            continue;
-        }
-        let Ok(modified) = std::fs::metadata(path).and_then(|meta| meta.modified()) else {
-            continue;
-        };
-        if newest.as_ref().is_none_or(|(_, time)| modified >= *time) {
-            newest = Some((path.clone(), modified));
-        }
-    }
-    newest.map(|(path, _)| path)
-}
-
 fn paths_named_in(body: &str) -> Vec<String> {
     let mut found = Vec::new();
     for raw in body.split(|c: char| {
@@ -1324,7 +1677,30 @@ fn paths_named_in(body: &str) -> Vec<String> {
     found
 }
 
+/// Longest plain spec id made from text.
+const SLUG_CHARS: usize = 48;
+
+/// Spec id for a plan request: [`distinct_slug`] of the prompt.
+fn prompt_spec_id(prompt: &str) -> String {
+    distinct_slug(prompt.trim())
+}
+
+/// [`slug`] of `text`, plus the first 8 hex digits of its SHA-256 when the slug
+/// was cut, so two long texts that share their first 48 characters get
+/// different ids. Short texts keep their plain slug.
+fn distinct_slug(text: &str) -> String {
+    let short = slug(text);
+    if short.is_empty() || slug_limited(text, usize::MAX) == short {
+        return short;
+    }
+    format!("{short}-{}", &hash_text(text)[..8])
+}
+
 fn slug(text: &str) -> String {
+    slug_limited(text, SLUG_CHARS)
+}
+
+fn slug_limited(text: &str, limit: usize) -> String {
     let mut slug = String::new();
     let mut dash = false;
     for character in text.chars().flat_map(|character| character.to_lowercase()) {
@@ -1335,7 +1711,7 @@ fn slug(text: &str) -> String {
             slug.push('-');
             dash = true;
         }
-        if slug.len() >= 48 {
+        if slug.len() >= limit {
             break;
         }
     }
@@ -1349,6 +1725,12 @@ fn first_line(body: &str) -> String {
         .chars()
         .take(180)
         .collect()
+}
+
+/// A revision body as stored and hashed: without trailing line breaks. The
+/// Markdown copy adds one newline back, and a file read compares the same way.
+fn stored_body(body: &str) -> &str {
+    body.trim_end_matches(['\n', '\r'])
 }
 
 fn hash_text(text: &str) -> String {
@@ -1374,16 +1756,27 @@ pub(crate) mod tests {
     pub(crate) static HOME_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
         std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
+    /// Variables that point plan import at folders outside the test. The
+    /// isolated home sets `AX_HOME_DIR` and clears the others.
+    const HOME_VARS: [&str; 3] = ["AX_HOME_DIR", "XDG_CONFIG_HOME", "HERMES_HOME"];
+
+    /// A temporary `AX_HOME_DIR` with `XDG_CONFIG_HOME` and `HERMES_HOME` unset,
+    /// restored on drop. Hold [`HOME_LOCK`] while it lives.
     pub(crate) struct IsolatedHome {
-        previous: Option<std::ffi::OsString>,
+        previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
         dir: tempfile::TempDir,
     }
 
     impl IsolatedHome {
         pub(crate) fn new() -> Self {
             let dir = tempfile::tempdir().unwrap();
-            let previous = std::env::var_os("AX_HOME_DIR");
+            let previous = HOME_VARS
+                .iter()
+                .map(|name| (*name, std::env::var_os(name)))
+                .collect();
             std::env::set_var("AX_HOME_DIR", dir.path());
+            std::env::remove_var("XDG_CONFIG_HOME");
+            std::env::remove_var("HERMES_HOME");
             Self { previous, dir }
         }
 
@@ -1394,11 +1787,29 @@ pub(crate) mod tests {
 
     impl Drop for IsolatedHome {
         fn drop(&mut self) {
-            match self.previous.clone() {
-                Some(value) => std::env::set_var("AX_HOME_DIR", value),
-                None => std::env::remove_var("AX_HOME_DIR"),
+            for (name, value) in &self.previous {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
             }
         }
+    }
+
+    /// The specs in `pool` are exactly `id`: nothing was imported from the
+    /// machine's own home, recent projects, or plan folders.
+    async fn assert_only_spec(pool: &SqlitePool, id: &str) {
+        let ids: Vec<String> = list_specs(pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|item| item.id)
+            .collect();
+        assert_eq!(
+            ids,
+            vec![id.to_string()],
+            "plans from outside the test were imported"
+        );
     }
 
     struct Open {
@@ -1544,7 +1955,88 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn the_approved_spec_markdown_is_not_captured_as_another_spec() {
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        capture_finished_plan(
+            pool,
+            "ax",
+            "registry",
+            "Registry",
+            "make a plan",
+            "one",
+            "s",
+            "t1",
+            "turn",
+            true,
+        )
+        .await
+        .unwrap();
+        approve_revision(pool, dir.path(), "registry", 1, &[])
+            .await
+            .unwrap();
+        let changed = vec!["docs/specs/registry/SPEC.md".to_string()];
+        for turn in ["t2", "t3", "t4"] {
+            on_turn_finished(pool, dir.path(), "ax", "s", turn, "", "", &changed)
+                .await
+                .unwrap();
+        }
+        let ids: Vec<String> = list_specs(pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|item| item.id)
+            .collect();
+        assert_eq!(ids, vec!["registry".to_string()]);
+        assert_eq!(
+            bound_spec(pool, "s").await.unwrap().as_deref(),
+            Some("registry")
+        );
+        assert_eq!(list_revisions(pool, "registry").await.unwrap().len(), 1);
+        assert_eq!(delivered_version(pool, "s", "t4").await.unwrap(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn a_dirty_spec_file_adds_one_draft_and_keeps_the_binding() {
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        capture_finished_plan(
+            pool,
+            "ax",
+            "registry",
+            "Registry",
+            "make a plan",
+            "one",
+            "s",
+            "t1",
+            "turn",
+            true,
+        )
+        .await
+        .unwrap();
+        let other = dir.path().join("docs/specs/billing/SPEC.md");
+        std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+        std::fs::write(&other, "Charge once.\n").unwrap();
+        let changed = vec!["docs/specs/billing/SPEC.md".to_string()];
+        for turn in ["t2", "t3", "t4"] {
+            on_turn_finished(pool, dir.path(), "ax", "s", turn, "", "", &changed)
+                .await
+                .unwrap();
+        }
+        // The spec id comes from its folder, and one body is one draft.
+        assert_eq!(list_revisions(pool, "billing").await.unwrap().len(), 1);
+        assert_eq!(
+            bound_spec(pool, "s").await.unwrap().as_deref(),
+            Some("registry")
+        );
+    }
+
+    #[tokio::test]
     async fn a_linked_file_change_does_not_rewrite_the_approved_body() {
+        let _lock = HOME_LOCK.lock().await;
+        let _home = IsolatedHome::new();
         let open = open().await;
         let pool = &open.pool;
         let dir = &open.dir;
@@ -1575,6 +2067,7 @@ pub(crate) mod tests {
         let approved = approved_revision(pool, "registry").await.unwrap().unwrap();
         assert_eq!(approved.body, "keep me");
         let context = spec_context_block(pool, dir.path(), "s").await;
+        assert_only_spec(pool, "registry").await;
         assert!(context.contains("approved: v1"));
         assert!(context.contains("drift: yes"));
         assert!(context.contains("hash: "));
@@ -1582,6 +2075,8 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn an_edited_markdown_file_is_a_conflict() {
+        let _lock = HOME_LOCK.lock().await;
+        let _home = IsolatedHome::new();
         let open = open().await;
         let pool = &open.pool;
         let dir = &open.dir;
@@ -1612,13 +2107,255 @@ pub(crate) mod tests {
         let approved = approved_revision(pool, "registry").await.unwrap().unwrap();
         assert_eq!(approved.body, "approved text");
         let context = spec_context_block(pool, dir.path(), "s").await;
+        assert_only_spec(pool, "registry").await;
         assert!(context.contains("delivery: conflict"));
         assert!(context.contains(&format!("approvedHash: {}", hashes.0)));
         assert!(context.contains(&format!("fileHash: {}", hashes.1)));
     }
 
     #[tokio::test]
+    async fn an_approved_body_ending_in_a_newline_is_not_a_conflict() {
+        let _lock = HOME_LOCK.lock().await;
+        let _home = IsolatedHome::new();
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        let plans = dir.path().join("docs/plans");
+        std::fs::create_dir_all(&plans).unwrap();
+        std::fs::write(plans.join("x.md"), "# X\n\nKeep the file plan.\n").unwrap();
+        on_turn_finished(
+            pool,
+            dir.path(),
+            "ax",
+            "s",
+            "t1",
+            "edit the plan",
+            "done",
+            &["docs/plans/x.md".to_string()],
+        )
+        .await
+        .unwrap();
+        let spec_id = markdown_spec_id("docs/plans/x.md");
+        approve_revision(pool, dir.path(), &spec_id, 1, &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            sync_markdown(pool, dir.path(), &spec_id).await.unwrap(),
+            None
+        );
+        let context = spec_context_block(pool, dir.path(), "s").await;
+        assert!(!context.contains("delivery: conflict"), "{context}");
+        assert_eq!(list_revisions(pool, &spec_id).await.unwrap().len(), 1);
+        // A body stored before newlines were trimmed is compared the same way.
+        sqlx::query("UPDATE spec_revisions SET body = body || char(10), content_hash = ?1 WHERE spec_id = ?2")
+            .bind(hash_text("# X\n\nKeep the file plan.\n"))
+            .bind(&spec_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            sync_markdown(pool, dir.path(), &spec_id).await.unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn a_long_multi_line_plan_prompt_keeps_its_legacy_id() {
+        let _lock = HOME_LOCK.lock().await;
+        let _home = IsolatedHome::new();
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        let prompt =
+            "Make a plan for the new export feature\n\nfor the billing dashboard,\n  with  CSV and PDF output";
+        let legacy = slug(prompt);
+        assert_ne!(legacy, prompt_spec_id(prompt), "the prompt must be long");
+        // Earlier builds stored the title with whitespace collapsed.
+        let collapsed = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+        capture_finished_plan(
+            pool, "ax", &legacy, &collapsed, &collapsed, "First.", "s", "t1", "turn", true,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        on_turn_finished(pool, dir.path(), "ax", "s", "t2", prompt, "Second.", &[])
+            .await
+            .unwrap();
+        let revisions = list_revisions(pool, &legacy).await.unwrap();
+        assert_eq!(revisions.len(), 2, "{revisions:?}");
+        assert!(list_revisions(pool, &prompt_spec_id(prompt))
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_long_plan_file_captured_under_its_legacy_id_keeps_that_id() {
+        let _lock = HOME_LOCK.lock().await;
+        let _home = IsolatedHome::new();
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        let file = "docs/plans/2026-11-27-some-feature-name-with-a-long-title.md";
+        let legacy = slug(file);
+        assert_ne!(legacy, markdown_spec_id(file), "the path must be long");
+        let plans = dir.path().join("docs/plans");
+        std::fs::create_dir_all(&plans).unwrap();
+        // A draft stored the way earlier builds named it: the cut slug of the path.
+        capture_finished_plan(
+            pool,
+            "ax",
+            &legacy,
+            file,
+            file,
+            "# Plan\n\nFirst.\n",
+            "s",
+            "t1",
+            "file",
+            true,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        std::fs::write(dir.path().join(file), "# Plan\n\nSecond.\n").unwrap();
+        on_turn_finished(
+            pool,
+            dir.path(),
+            "ax",
+            "s",
+            "t2",
+            "edit",
+            "done",
+            &[file.to_string()],
+        )
+        .await
+        .unwrap();
+        let revisions = list_revisions(pool, &legacy).await.unwrap();
+        assert_eq!(revisions.len(), 2, "{revisions:?}");
+        assert!(list_revisions(pool, &markdown_spec_id(file))
+            .await
+            .unwrap()
+            .is_empty());
+
+        // A new long file uses the distinct id.
+        let other = "docs/plans/2026-11-27-another-feature-name-with-a-long-title.md";
+        std::fs::write(dir.path().join(other), "# Other\n").unwrap();
+        on_turn_finished(
+            pool,
+            dir.path(),
+            "ax",
+            "s2",
+            "t1",
+            "edit",
+            "done",
+            &[other.to_string()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            list_revisions(pool, &markdown_spec_id(other))
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn plan_files_do_not_replace_an_explicit_binding() {
+        let _lock = HOME_LOCK.lock().await;
+        let home = IsolatedHome::new();
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        capture_finished_plan(
+            pool,
+            "ax",
+            "registry",
+            "Registry",
+            "make a plan",
+            "Keep the registry.",
+            "axs_bound",
+            "t1",
+            "turn",
+            true,
+        )
+        .await
+        .unwrap();
+        approve_revision(pool, dir.path(), "registry", 1, &[])
+            .await
+            .unwrap();
+        let user_plans = home.path().join(".cursor").join("plans");
+        std::fs::create_dir_all(&user_plans).unwrap();
+        std::fs::write(
+            user_plans.join("other.plan.md"),
+            "# Other\n\nA plan for another project.\n",
+        )
+        .unwrap();
+        let plans = dir.path().join("docs").join("plans");
+        std::fs::create_dir_all(&plans).unwrap();
+        std::fs::write(
+            plans.join("notes.md"),
+            "# Notes\n\nSeen in axs_bound earlier.\n",
+        )
+        .unwrap();
+        let turns = dir.path().join(".ax").join("turns");
+        std::fs::create_dir_all(&turns).unwrap();
+        std::fs::write(
+            turns.join("current.json"),
+            "{\"session_id\":\"axs_bound\"}\n",
+        )
+        .unwrap();
+        let context = spec_context_block(pool, dir.path(), "axs_bound").await;
+        assert!(
+            context.starts_with("spec: registry\napproved: v1"),
+            "{context}"
+        );
+        assert_eq!(
+            bound_spec(pool, "axs_bound").await.unwrap().as_deref(),
+            Some("registry")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_plan_file_binding_follows_the_newest_plan() {
+        let _lock = HOME_LOCK.lock().await;
+        let home = IsolatedHome::new();
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        let user_plans = home.path().join(".cursor").join("plans");
+        std::fs::create_dir_all(&user_plans).unwrap();
+        let first = user_plans.join("first.plan.md");
+        std::fs::write(&first, "# First\n\nThe first plan.\n").unwrap();
+        let turns = dir.path().join(".ax").join("turns");
+        std::fs::create_dir_all(&turns).unwrap();
+        std::fs::write(
+            turns.join("current.json"),
+            "{\"session_id\":\"axs_live\"}\n",
+        )
+        .unwrap();
+        let context = spec_context_block(pool, dir.path(), "axs_live").await;
+        assert!(context.starts_with("spec: first-plan\n"), "{context}");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&first)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+            .unwrap();
+        std::fs::write(
+            user_plans.join("second.plan.md"),
+            "# Second\n\nThe next plan.\n",
+        )
+        .unwrap();
+        let context = spec_context_block(pool, dir.path(), "axs_live").await;
+        assert!(context.starts_with("spec: second-plan\n"), "{context}");
+    }
+
+    #[tokio::test]
     async fn a_bound_turn_can_show_the_version_it_received() {
+        let _lock = HOME_LOCK.lock().await;
+        let _home = IsolatedHome::new();
         let open = open().await;
         let pool = &open.pool;
         let dir = &open.dir;
@@ -1668,6 +2405,7 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(delivered_version(pool, "s", "t9").await.unwrap(), Some(1));
         let context = spec_context_block(pool, dir.path(), "s").await;
+        assert_only_spec(pool, "registry").await;
         assert!(context.contains("approved: v2"));
         assert!(context.contains("pointer: ax spec show registry@2"));
     }
@@ -1728,6 +2466,103 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn plan_files_with_one_name_in_two_folders_stay_two_specs() {
+        let open = open().await;
+        let pool = &open.pool;
+        let first = open.dir.path().join("one").join(".claude").join("plans");
+        let second = open.dir.path().join("two").join(".claude").join("plans");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::write(
+            first.join("plan.md"),
+            "# One\n\nThe first project's plan.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            second.join("plan.md"),
+            "# Two\n\nThe second project's plan.\n",
+        )
+        .unwrap();
+        import_plan_dirs(pool, "ax", &[first.clone(), second.clone()], None, &[])
+            .await
+            .unwrap();
+        let specs = list_specs(pool).await.unwrap();
+        assert_eq!(
+            specs.len(),
+            2,
+            "{:?}",
+            specs.iter().map(|s| &s.id).collect::<Vec<_>>()
+        );
+        for spec in &specs {
+            assert_eq!(spec.revision_count, 1, "{} merged two plans", spec.id);
+        }
+        // The id each file got is kept when it changes later.
+        let ids: Vec<String> = specs.iter().map(|s| s.id.clone()).collect();
+        std::fs::write(
+            second.join("plan.md"),
+            "# Two\n\nThe second project's plan, edited.\n",
+        )
+        .unwrap();
+        import_plan_dirs(pool, "ax", &[first, second], None, &[])
+            .await
+            .unwrap();
+        let mut again: Vec<String> = list_specs(pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        again.sort();
+        let mut ids = ids;
+        ids.sort();
+        assert_eq!(again, ids);
+    }
+
+    #[tokio::test]
+    async fn long_plan_prompts_with_one_beginning_stay_two_specs() {
+        let _lock = HOME_LOCK.lock().await;
+        let _home = IsolatedHome::new();
+        let open = open().await;
+        let pool = &open.pool;
+        let prefix = "Please make a plan for the new billing service that charges";
+        for (turn, tail) in [("t1", " customers monthly"), ("t2", " partners yearly")] {
+            on_turn_finished(
+                pool,
+                open.dir.path(),
+                "ax",
+                turn,
+                turn,
+                &format!("{prefix}{tail}"),
+                &format!("# Plan\n\nCharge{tail}.\n"),
+                &[],
+            )
+            .await
+            .unwrap();
+        }
+        let specs = list_specs(pool).await.unwrap();
+        assert_eq!(
+            specs.len(),
+            2,
+            "{:?}",
+            specs.iter().map(|s| &s.id).collect::<Vec<_>>()
+        );
+        // A short prompt keeps its plain id.
+        assert_eq!(prompt_spec_id("Plan the queue"), "plan-the-queue");
+        assert_eq!(prompt_spec_id(prefix), prompt_spec_id(prefix));
+    }
+
+    #[test]
+    fn a_flat_plan_folder_is_cut_at_the_file_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        for n in 0..MAX_PLAN_FILES + 50 {
+            std::fs::write(dir.path().join(format!("p{n}.md")), "x").unwrap();
+        }
+        let mut out = Vec::new();
+        collect_plan_markdown(dir.path(), &mut out, 0);
+        assert_eq!(out.len(), MAX_PLAN_FILES);
+    }
+
+    #[tokio::test]
     async fn a_finished_plan_file_is_a_draft_and_a_fragment_is_not() {
         let open = open().await;
         let pool = &open.pool;
@@ -1766,6 +2601,62 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn an_unchanged_plan_file_is_not_read_again() {
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        let plans = dir.path().join(".cursor").join("plans");
+        std::fs::create_dir_all(&plans).unwrap();
+        let path = plans.join("billing.md");
+        std::fs::write(&path, "# Billing\n\nKeep the first price.\n").unwrap();
+        assert_eq!(
+            import_plan_mode_files(pool, dir.path(), "ax")
+                .await
+                .unwrap(),
+            1
+        );
+        let stamp = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        // Same size and modification time: the import trusts its record and
+        // does not read the file, so the new text is not captured.
+        std::fs::write(&path, "# Billing\n\nKeep the other price.\n").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(stamp)
+            .unwrap();
+        assert_eq!(
+            import_plan_mode_files(pool, dir.path(), "ax")
+                .await
+                .unwrap(),
+            1
+        );
+        let history = list_revisions(pool, "billing").await.unwrap();
+        assert_eq!(history.len(), 1);
+        assert!(history[0].body.contains("Keep the first price."));
+
+        // A new modification time makes the import read and capture it.
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(stamp + std::time::Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(
+            import_plan_mode_files(pool, dir.path(), "ax")
+                .await
+                .unwrap(),
+            1
+        );
+        let history = list_revisions(pool, "billing").await.unwrap();
+        assert_eq!(history.len(), 2);
+        assert!(history
+            .iter()
+            .any(|rev| rev.body.contains("Keep the other price")));
+    }
+
+    #[tokio::test]
     async fn a_named_code_file_change_is_drift_and_the_approved_body_stays() {
         let open = open().await;
         let pool = &open.pool;
@@ -1799,6 +2690,177 @@ pub(crate) mod tests {
         assert_eq!(approved.body, "Keep src/lib.rs stable.");
         let history = list_revisions(pool, "billing").await.unwrap();
         assert!(history.iter().any(|row| row.status == "change_requested"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_drift_checks_store_one_note_and_all_report_drift() {
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        let code = dir.path().join("src");
+        std::fs::create_dir_all(&code).unwrap();
+        std::fs::write(code.join("lib.rs"), "fn price() {}\n").unwrap();
+        capture_finished_plan(
+            pool,
+            "ax",
+            "billing",
+            "Billing",
+            "make a plan",
+            "Keep src/lib.rs stable.",
+            "s",
+            "t1",
+            "turn",
+            true,
+        )
+        .await
+        .unwrap();
+        approve_revision(pool, dir.path(), "billing", 1, &[])
+            .await
+            .unwrap();
+        std::fs::write(code.join("lib.rs"), "fn price() { 1 }\n").unwrap();
+        let tasks: Vec<_> = (0..12)
+            .map(|index| {
+                let pool = pool.clone();
+                let root = dir.path().to_path_buf();
+                tokio::spawn(async move {
+                    check_linked_files(&pool, &root, "billing", "s", &format!("t{index}")).await
+                })
+            })
+            .collect();
+        for task in tasks {
+            assert_eq!(task.await.unwrap(), Ok(true));
+        }
+        let notes: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM spec_revisions WHERE spec_id = 'billing' AND status = 'change_requested'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert_eq!(notes, 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_drift_check_is_reported_as_unknown_not_as_no_drift() {
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        let _lock = HOME_LOCK.lock().await;
+        let _home = IsolatedHome::new();
+        capture_finished_plan(
+            pool,
+            "ax",
+            "billing",
+            "Billing",
+            "make a plan",
+            "Keep the ledger.",
+            "s",
+            "t1",
+            "turn",
+            true,
+        )
+        .await
+        .unwrap();
+        approve_revision(pool, dir.path(), "billing", 1, &[])
+            .await
+            .unwrap();
+        sqlx::query("DROP TABLE spec_file_seals")
+            .execute(pool)
+            .await
+            .unwrap();
+        let context = spec_context_block(pool, dir.path(), "s").await;
+        assert!(context.contains("drift: unknown"), "{context}");
+    }
+
+    async fn draft_billing(pool: &SqlitePool) {
+        capture_finished_plan(
+            pool,
+            "ax",
+            "billing",
+            "Billing",
+            "make a plan",
+            "Keep the ledger.",
+            "s",
+            "t1",
+            "turn",
+            true,
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn table_shape(
+        pool: &SqlitePool,
+        table: &str,
+    ) -> Vec<(String, String, i64, Option<String>, i64)> {
+        sqlx::query_as(&format!(
+            "SELECT name, type, \"notnull\", dflt_value, pk FROM pragma_table_info('{table}') ORDER BY cid"
+        ))
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    async fn memory_pool() -> SqlitePool {
+        sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_spec_tables_have_one_shape_whichever_module_creates_them() {
+        let registry = memory_pool().await;
+        ensure_spec_schema(&registry).await.unwrap();
+        let hierarchy = memory_pool().await;
+        crate::spec_hierarchy::ensure_hierarchy_schema(&hierarchy)
+            .await
+            .unwrap();
+        for table in ["specs", "spec_revisions"] {
+            assert_eq!(
+                table_shape(&registry, table).await,
+                table_shape(&hierarchy, table).await,
+                "{table}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn approving_with_a_duplicate_linked_file_stores_one_seal() {
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/a.rs"), "fn a() {}\n").unwrap();
+        draft_billing(pool).await;
+        let links = ["src/a.rs".to_string(), "src/a.rs".to_string()];
+        let approved = approve_revision(pool, dir.path(), "billing", 1, &links)
+            .await
+            .unwrap();
+        assert_eq!(approved.status, "approved");
+        let seals: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM spec_file_seals WHERE spec_id = 'billing'")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        assert_eq!(seals, 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_markdown_write_leaves_the_revision_unapproved() {
+        let open = open().await;
+        let pool = &open.pool;
+        let dir = &open.dir;
+        draft_billing(pool).await;
+        // A file where the spec folder should be makes the write fail.
+        std::fs::create_dir_all(dir.path().join("docs/specs")).unwrap();
+        std::fs::write(dir.path().join("docs/specs/billing"), "not a folder").unwrap();
+        assert!(approve_revision(pool, dir.path(), "billing", 1, &[])
+            .await
+            .is_err());
+        let status = revision(pool, "billing", 1).await.unwrap().unwrap().status;
+        assert_eq!(status, "draft");
+        assert_eq!(approved_revision(pool, "billing").await.unwrap(), None);
     }
 
     #[tokio::test]

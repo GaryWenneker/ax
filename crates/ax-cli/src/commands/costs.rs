@@ -58,6 +58,8 @@ pub async fn run(
                     .map(|row| serde_json::json!({ "label": row.label, "usd": row.usd }))
                     .collect::<Vec<_>>(),
                 "sessionSourced": report.session_sourced,
+                "sessionsMerged": report.sessions_merged,
+                "sessionsExcluded": report.sessions_excluded,
             })
         );
         return Ok(());

@@ -86,7 +86,9 @@ fn kill_process(pid: u32) {
         return;
     }
     let pid = Pid::from_u32(pid);
-    let mut sys = System::new();
+    let Ok(mut sys) = System::new() else {
+        return;
+    };
     sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
     if let Some(p) = sys.process(pid) {
         p.kill();

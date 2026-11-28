@@ -9,8 +9,8 @@
   background: var(--bg);
 }
 .admin-connect-panel { width: min(560px, 100%); }
-.admin-connect-brand { display: flex; align-items: baseline; gap: 8px; margin-bottom: 20px; color: var(--text-dim); }
-.admin-connect-brand .ax-app-wordmark { font-size: 22px; }
+.admin-connect-brand { display: flex; align-items: flex-end; gap: 14px; margin-bottom: 24px; color: var(--text-dim); }
+.admin-connect-brand .ax-app-wordmark { font-size: 76px; }
 
 .admin-form { display: flex; flex-direction: column; gap: 14px; padding: var(--card-pad-y) var(--card-pad-x); }
 .admin-field { display: flex; flex-direction: column; gap: 4px; }

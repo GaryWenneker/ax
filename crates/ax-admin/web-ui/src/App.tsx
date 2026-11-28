@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import AxMark from '@cc/components/AxMark';
 import Codicon from '@cc/components/Codicon';
 import { ErrorBoundary } from '@cc/components/ErrorBoundary';
 import { PageCard, PageLoading } from '@cc/components/ui/PageLayout';
@@ -111,7 +112,7 @@ export default function App() {
       <main className="admin-connect" data-testid="connect-screen">
         <div className="admin-connect-panel">
           <div className="admin-connect-brand">
-            <span className="ax-app-wordmark">Ax<span aria-hidden="true">_</span></span>
+            <span className="ax-app-wordmark"><AxMark /></span>
             <span>Admin</span>
           </div>
           <ErrorBoundary fallbackTitle="The connect form failed to render">
@@ -130,7 +131,7 @@ export default function App() {
       <header className="titlebar">
         <div className="titlebar-inner">
           <span className="titlebar-brand">
-            <span className="ax-app-wordmark">Ax<span aria-hidden="true">_</span></span>
+            <span className="ax-app-wordmark"><AxMark /></span>
             <span>/ admin</span>
           </span>
           <div className="titlebar-tools">

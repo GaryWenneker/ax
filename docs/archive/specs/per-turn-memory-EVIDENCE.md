@@ -20,7 +20,7 @@ After every agent turn that changed files or made a commit, ax saves a `turn` me
 | T5 | `t5_same_turn_end_twice_gives_the_same_id`, `t5_different_turns_get_different_ids`, `saving_the_same_turn_twice_keeps_one_memory`, layer 7 |
 | T6 | `t6_no_snapshot_means_no_record` |
 | T7 | `t7_per_turn_false_in_ax_json_disables_both_hooks`, `per_turn_true_or_other_ax_json_keeps_it_on`, `only_ax_no_stop_hook_1_disables`, layer 7 |
-| T8 | `prune_removes_only_old_turn_memories`, `end_turn_saves_the_memory_and_prunes_old_turns` |
+| T8 | `prune_demotes_only_old_turn_memories`, `end_turn_saves_the_memory_and_prunes_old_turns` |
 | T9 | `tools::tests::memory_titles_skip_turn_memories`, `memory_titles_are_empty_when_only_turns_exist`, `preflight_recall_skips_turn_memories_but_recall_finds_them`, `preflight_recall_still_returns_other_kinds_when_turns_outrank_them` |
 | T10 | `preflight_recall_skips_turn_memories_but_recall_finds_them`, layer 7 (`ax recall` finds the turn) |
 | T11 | `export_never_writes_turn_memories`, layer 7 (`ax memory export` has no turn) |
@@ -32,7 +32,7 @@ After every agent turn that changed files or made a commit, ax saves a `turn` me
 | Hook input | `parses_cursor_hook_input`, `parses_claude_hook_input` (Revision 1a fields) |
 | Must not change: Claude `Stop` behavior | existing `stop_hook` tests pass unchanged; the diff adds one line before the `stop_hook_active` check |
 | Must not change: preflight without turns | existing preflight and memory title tests pass unchanged |
-| Must not change: other memory kinds | `preflight_recall_still_returns_other_kinds_when_turns_outrank_them`, `prune_removes_only_old_turn_memories`, existing `ax-memory` tests |
+| Must not change: other memory kinds | `preflight_recall_still_returns_other_kinds_when_turns_outrank_them`, `prune_demotes_only_old_turn_memories`, existing `ax-memory` tests |
 
 ## Gauntlet (one run on `184fcce`)
 

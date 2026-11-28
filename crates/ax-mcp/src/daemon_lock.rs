@@ -218,7 +218,9 @@ pub fn release_daemon_lock_if_owned(pid_path: &Path, pid: u32) {
 
 pub fn is_pid_alive(pid: u32) -> bool {
     use sysinfo::{Pid, System};
-    let mut sys = System::new();
+    let Ok(mut sys) = System::new() else {
+        return false;
+    };
     sys.refresh_processes(
         sysinfo::ProcessesToUpdate::Some(&[Pid::from_u32(pid)]),
         true,
@@ -247,7 +249,10 @@ const START_SLACK_SECS: u64 = 2;
 /// `ax` binary (or this binary) and must have started before the file was written.
 pub fn is_daemon_pid(pid: u32, started_at_ms: Option<u64>) -> bool {
     use sysinfo::{Pid, ProcessRefreshKind, System, UpdateKind};
-    let mut sys = System::new();
+    // No process table: nothing can be shown to be the daemon.
+    let Ok(mut sys) = System::new() else {
+        return false;
+    };
     sys.refresh_processes_specifics(
         sysinfo::ProcessesToUpdate::Some(&[Pid::from_u32(pid)]),
         true,
