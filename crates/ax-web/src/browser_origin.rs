@@ -24,7 +24,18 @@ pub(crate) fn command_center_cors(bind: &str, port: u16) -> CorsLayer {
         .allow_headers(Any)
 }
 
-pub(crate) fn browser_origin_allowed(origin: Option<&str>, port: u16, local_only: bool) -> bool {
+/// The terminal socket accepts only the local owner's browser: a loopback
+/// socket peer with no proxy in between (see
+/// [`crate::local_owner::local_peer`]) whose page is on a loopback origin with
+/// this port. A LAN bind does not widen this.
+pub(crate) fn terminal_request_allowed(headers: &axum::http::HeaderMap, port: u16) -> bool {
+    let origin = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|value| value.to_str().ok());
+    crate::local_owner::local_peer(headers) && browser_origin_allowed(origin, port)
+}
+
+pub(crate) fn browser_origin_allowed(origin: Option<&str>, port: u16) -> bool {
     let Some(origin) = origin else {
         return false;
     };
@@ -37,16 +48,7 @@ pub(crate) fn browser_origin_allowed(origin: Option<&str>, port: u16, local_only
     if url.port_or_known_default() != Some(port) {
         return false;
     }
-    let Some(host) = url.host_str() else {
-        return false;
-    };
-    if is_loopback_host(host) {
-        return true;
-    }
-    if local_only {
-        return false;
-    }
-    host.parse::<std::net::IpAddr>().is_ok()
+    url.host_str().is_some_and(is_loopback_host)
 }
 
 fn allowed_origin_values(bind: &str, port: u16) -> Vec<String> {
@@ -73,6 +75,10 @@ fn explicit_bind_origin(bind: &str, port: u16) -> Option<String> {
 }
 
 fn is_loopback_host(host: &str) -> bool {
+    let host = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
     host == "localhost"
         || host == "127.0.0.1"
         || host == "::1"
@@ -92,37 +98,32 @@ mod tests {
 
     #[test]
     fn loopback_origin_matches_the_command_center_port() {
-        assert!(browser_origin_allowed(
-            Some("http://127.0.0.1:7070"),
-            7070,
-            true
-        ));
-        assert!(browser_origin_allowed(
-            Some("http://localhost:7070"),
-            7070,
-            true
-        ));
-        assert!(!browser_origin_allowed(
-            Some("http://evil.example"),
-            7070,
-            true
-        ));
+        assert!(browser_origin_allowed(Some("http://127.0.0.1:7070"), 7070));
+        assert!(browser_origin_allowed(Some("http://localhost:7070"), 7070));
+        assert!(browser_origin_allowed(Some("http://[::1]:7070"), 7070));
+        assert!(!browser_origin_allowed(Some("http://evil.example"), 7070));
         assert!(!browser_origin_allowed(
             Some("http://evil.example:7070"),
-            7070,
-            true
+            7070
         ));
-        assert!(!browser_origin_allowed(None, 7070, true));
+        assert!(!browser_origin_allowed(None, 7070));
+        assert!(!browser_origin_allowed(Some("http://127.0.0.1:8080"), 7070));
+        // A LAN address is someone else's browser, whatever the bind.
         assert!(!browser_origin_allowed(
             Some("http://192.168.1.10:7070"),
-            7070,
-            true
+            7070
         ));
-        assert!(browser_origin_allowed(
-            Some("http://192.168.1.10:7070"),
-            7070,
-            false
-        ));
+    }
+
+    #[test]
+    fn terminal_needs_the_local_peer_mark_and_a_loopback_origin() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("origin", "http://127.0.0.1:7070".parse().unwrap());
+        assert!(!terminal_request_allowed(&headers, 7070));
+        headers.insert(crate::request_guard::LOCAL_PEER, "1".parse().unwrap());
+        assert!(terminal_request_allowed(&headers, 7070));
+        headers.insert("origin", "http://10.0.0.9:7070".parse().unwrap());
+        assert!(!terminal_request_allowed(&headers, 7070));
     }
 
     #[tokio::test]

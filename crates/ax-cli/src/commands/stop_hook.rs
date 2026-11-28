@@ -16,7 +16,7 @@ use std::process::Command;
 
 use ax_policy::{guard_operation, GuardOp};
 
-use crate::commands::resolve_path;
+use crate::commands::{find_project_root, git_status, resolve_project_root};
 
 const MAX_FILES_SCANNED: usize = 40;
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
@@ -38,13 +38,7 @@ pub async fn run() -> Result<(), String> {
 
     super::turn_hook::end_from_input(&input).await;
 
-    // Claude sets this true when re-invoking the hook after a prior block —
-    // never block twice on the same turn, or the conversation loops forever.
-    if input
-        .get("stop_hook_active")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-    {
+    if already_blocked(&input) {
         return Ok(());
     }
 
@@ -52,51 +46,105 @@ pub async fn run() -> Result<(), String> {
         .get("cwd")
         .and_then(|v| v.as_str())
         .map(PathBuf::from)
-        .unwrap_or_else(|| resolve_path(None));
+        .unwrap_or_else(|| resolve_project_root(None));
 
     let _ = ingest_transcript_tail(&cwd, &input).await;
 
-    let Ok(ax) = ax_core::Ax::open(&cwd).await else {
+    let root = find_project_root(&cwd).unwrap_or_else(|| cwd.clone());
+    let Ok(ax) = ax_core::Ax::open(&root).await else {
         return Ok(());
     };
     if !ax.policy_exists() {
         return Ok(());
     }
 
-    let changed = match uncommitted_files(&cwd) {
-        Some(files) => files,
-        None => return Ok(()),
+    let Some(targets) = guard_targets(&cwd, &root) else {
+        return Ok(());
     };
-    if changed.is_empty() {
+    if targets.is_empty() {
         return Ok(());
     }
 
     let pool = ax.db_pool().clone();
-    let mut violations: Vec<(String, String)> = Vec::new();
-    for rel_path in changed.into_iter().take(MAX_FILES_SCANNED) {
-        let abs_path = cwd.join(&rel_path);
+    let (violations, unscanned) = scan_targets(targets, |abs_path, bytes| {
+        let pool = pool.clone();
+        let root = root.clone();
+        async move {
+            guard_operation(&pool, &root, &abs_path, GuardOp::Write, Some(&bytes))
+                .await
+                .map(|result| {
+                    result
+                        .violations
+                        .into_iter()
+                        .map(|v| format!("[{}] {}", v.rule_id, v.message))
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+    })
+    .await;
+
+    let Some(out) = block_decision(&violations, unscanned) else {
+        if unscanned > 0 {
+            eprintln!(
+                "ax stop-hook: {unscanned} changed file(s) were not guard-scanned (limit {MAX_FILES_SCANNED} per turn)."
+            );
+        }
+        return Ok(());
+    };
+    let mut stdout = io::stdout();
+    stdout
+        .write_all(out.to_string().as_bytes())
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Claude sets `stop_hook_active` when it re-invokes the hook after a prior
+/// block. The hook never blocks twice on the same turn, or the conversation
+/// loops forever.
+fn already_blocked(input: &serde_json::Value) -> bool {
+    input
+        .get("stop_hook_active")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// Run `guard` on the first [`MAX_FILES_SCANNED`] targets, skipping files that
+/// cannot be read or are larger than [`MAX_FILE_BYTES`]. Returns each
+/// violation as `(path shown, message)` and the number of targets left out.
+async fn scan_targets<F, Fut>(
+    targets: Vec<GuardTarget>,
+    mut guard: F,
+) -> (Vec<(String, String)>, usize)
+where
+    F: FnMut(PathBuf, Vec<u8>) -> Fut,
+    Fut: std::future::Future<Output = Vec<String>>,
+{
+    let unscanned = targets.len().saturating_sub(MAX_FILES_SCANNED);
+    let mut violations = Vec::new();
+    for GuardTarget { rel_path, abs_path } in targets.into_iter().take(MAX_FILES_SCANNED) {
         let Ok(meta) = std::fs::metadata(&abs_path) else {
-            continue; // deleted / unreadable — nothing to guard
+            continue; // unreadable — nothing to guard
         };
-        if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
+        if meta.len() > MAX_FILE_BYTES {
             continue;
         }
         let Ok(bytes) = std::fs::read(&abs_path) else {
             continue;
         };
-        if let Ok(result) =
-            guard_operation(&pool, &cwd, &abs_path, GuardOp::Write, Some(&bytes)).await
-        {
-            for v in result.violations {
-                violations.push((rel_path.clone(), format!("[{}] {}", v.rule_id, v.message)));
-            }
+        for message in guard(abs_path, bytes).await {
+            violations.push((rel_path.clone(), message));
         }
     }
+    (violations, unscanned)
+}
 
+/// The Stop hook's block decision for these violations, or `None` to let the
+/// turn end.
+fn block_decision(violations: &[(String, String)], unscanned: usize) -> Option<serde_json::Value> {
     if violations.is_empty() {
-        return Ok(());
+        return None;
     }
-
     let mut lines: Vec<String> = violations
         .iter()
         .take(MAX_VIOLATIONS_SHOWN)
@@ -108,59 +156,62 @@ pub async fn run() -> Result<(), String> {
             violations.len() - MAX_VIOLATIONS_SHOWN
         ));
     }
+    if unscanned > 0 {
+        lines.push(format!(
+            "- {unscanned} more changed file(s) were not scanned (limit {MAX_FILES_SCANNED} per turn)"
+        ));
+    }
     let reason = format!(
         "ax policy guard found {} CRITICAL violation(s) in files changed this turn — fix before finishing:\n{}",
         violations.len(),
         lines.join("\n")
     );
-
-    let out = serde_json::json!({ "decision": "block", "reason": reason });
-    let mut stdout = io::stdout();
-    stdout
-        .write_all(out.to_string().as_bytes())
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    Some(serde_json::json!({ "decision": "block", "reason": reason }))
 }
 
-/// Working-tree files touched since the last commit (staged + unstaged + untracked),
-/// used as the per-turn change set. Returns `None` if this isn't a git repo.
-fn uncommitted_files(cwd: &Path) -> Option<Vec<String>> {
+#[derive(Debug, PartialEq)]
+struct GuardTarget {
+    /// Path shown in the block reason.
+    rel_path: String,
+    abs_path: PathBuf,
+}
+
+/// Existing files under the ax project `root` that changed since the last
+/// commit (staged, unstaged and untracked), for the guard to scan. Returns
+/// `None` outside a git work tree.
+///
+/// Porcelain paths are relative to the repository top level, which is not
+/// `cwd` when the project lives in a subdirectory of the repository, so they
+/// are joined onto the top level and then kept only when inside `root`.
+fn guard_targets(cwd: &Path, root: &Path) -> Option<Vec<GuardTarget>> {
+    let top = git_status::toplevel(cwd)?;
     let output = Command::new("git")
-        .current_dir(cwd)
-        .args(["status", "--porcelain=v1", "--untracked-files=normal"])
+        .current_dir(&top)
+        .args(git_status::STATUS_ARGS)
         .output()
         .ok()?;
     if !output.status.success() {
         return None;
     }
-    Some(parse_porcelain_status(&String::from_utf8_lossy(
-        &output.stdout,
-    )))
-}
-
-/// Parse `git status --porcelain=v1` output into a list of paths worth guard-scanning
-/// (skips deleted entries; resolves `old -> new` rename lines to the new path).
-fn parse_porcelain_status(text: &str) -> Vec<String> {
-    let mut files = Vec::new();
-    for line in text.lines() {
-        if line.len() < 4 {
-            continue;
-        }
-        let status = &line[..2];
-        let rest = line[3..].trim();
-        if status.contains('D') {
-            continue; // deleted — no content left to guard
-        }
-        let path = match rest.split_once(" -> ") {
-            Some((_, renamed_to)) => renamed_to.trim(),
-            None => rest,
-        };
-        let cleaned = path.trim_matches('"');
-        if !cleaned.is_empty() {
-            files.push(cleaned.to_string());
-        }
-    }
-    files
+    let top = top.canonicalize().unwrap_or(top);
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    Some(
+        git_status::parse_porcelain_z(&output.stdout)
+            .into_iter()
+            .filter(|entry| !entry.is_deleted())
+            .filter_map(|entry| {
+                let abs_path = top.join(&entry.path);
+                let rel_path = abs_path
+                    .strip_prefix(&root)
+                    .ok()?
+                    .to_string_lossy()
+                    .into_owned();
+                abs_path
+                    .is_file()
+                    .then_some(GuardTarget { rel_path, abs_path })
+            })
+            .collect(),
+    )
 }
 
 async fn ingest_transcript_tail(cwd: &Path, input: &serde_json::Value) {
@@ -183,7 +234,7 @@ async fn ingest_transcript_tail(cwd: &Path, input: &serde_json::Value) {
     };
     let tail: Vec<&str> = text.lines().rev().take(200).collect();
     let tail = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
-    let Some(root) = ax_context::directory::find_nearest_ax_root(cwd) else {
+    let Some(root) = find_project_root(cwd) else {
         return;
     };
     let Some(session) = session
@@ -236,39 +287,197 @@ fn newest_claude_jsonl(cwd: &Path) -> Option<PathBuf> {
 mod tests {
     use super::*;
 
+    fn git(dir: &Path, args: &[&str]) {
+        let ok = Command::new("git")
+            .current_dir(dir)
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .output()
+            .unwrap()
+            .status
+            .success();
+        assert!(ok, "git {args:?}");
+    }
+
+    /// A git repo with the ax project in `services/api` and one committed
+    /// file inside it and one outside it.
+    fn monorepo(name: &str) -> (tempfile::TempDir, PathBuf) {
+        let repo = tempfile::Builder::new().prefix(name).tempdir().unwrap();
+        let api = repo.path().join("services").join("api");
+        std::fs::create_dir_all(api.join("src")).unwrap();
+        std::fs::write(api.join("src/lib.rs"), "pub fn a() {}\n").unwrap();
+        std::fs::write(repo.path().join("other.rs"), "fn b() {}\n").unwrap();
+        git(repo.path(), &["init", "-q"]);
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-q", "-m", "init"]);
+        (repo, api)
+    }
+
+    fn scanned(cwd: &Path) -> Vec<PathBuf> {
+        guard_targets(cwd, cwd)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.abs_path.canonicalize().unwrap())
+            .collect()
+    }
+
     #[test]
-    fn parses_modified_and_untracked() {
-        let porcelain = " M src/lib.rs\n?? new_file.txt\n";
-        let files = parse_porcelain_status(porcelain);
+    fn subdirectory_project_scans_its_changed_files() {
+        let (repo, api) = monorepo("ax-stop-subdir");
+        std::fs::write(api.join("src/lib.rs"), "pub fn changed() {}\n").unwrap();
+        std::fs::write(repo.path().join("other.rs"), "fn changed() {}\n").unwrap();
+        let targets = guard_targets(&api, &api).unwrap();
         assert_eq!(
-            files,
-            vec!["src/lib.rs".to_string(), "new_file.txt".to_string()]
+            targets.len(),
+            1,
+            "only the file inside the project: {targets:?}"
+        );
+        assert_eq!(
+            targets[0].abs_path.canonicalize().unwrap(),
+            api.join("src/lib.rs").canonicalize().unwrap()
+        );
+        assert_eq!(targets[0].rel_path, "src/lib.rs");
+    }
+
+    #[test]
+    fn new_file_in_new_directory_is_scanned() {
+        let (_repo, api) = monorepo("ax-stop-newdir");
+        std::fs::create_dir_all(api.join("src/newmod")).unwrap();
+        std::fs::write(api.join("src/newmod/handler.rs"), "x\n").unwrap();
+        assert_eq!(
+            scanned(&api),
+            vec![api.join("src/newmod/handler.rs").canonicalize().unwrap()]
         );
     }
 
     #[test]
-    fn skips_deleted_entries() {
-        let porcelain = " D removed.rs\nM  kept.rs\n";
-        let files = parse_porcelain_status(porcelain);
-        assert_eq!(files, vec!["kept.rs".to_string()]);
+    fn non_ascii_and_spaced_names_are_scanned() {
+        let (repo, _api) = monorepo("ax-stop-unicode");
+        let root = repo.path();
+        std::fs::write(root.join("caf\u{e9}.rs"), "x\n").unwrap();
+        std::fs::write(root.join("with space.rs"), "x\n").unwrap();
+        let mut got = scanned(root);
+        got.sort();
+        let mut want = vec![
+            root.join("caf\u{e9}.rs").canonicalize().unwrap(),
+            root.join("with space.rs").canonicalize().unwrap(),
+        ];
+        want.sort();
+        assert_eq!(got, want);
     }
 
     #[test]
-    fn resolves_rename_to_new_path() {
-        let porcelain = "R  old_name.rs -> new_name.rs\n";
-        let files = parse_porcelain_status(porcelain);
-        assert_eq!(files, vec!["new_name.rs".to_string()]);
-    }
-
-    #[test]
-    fn stop_hook_active_short_circuits_without_stdin_block() {
-        // stop_hook_active=true must never be treated as a violation signal —
-        // this is a smoke check that the JSON field name/shape used in `run()`
-        // matches what Claude Code actually sends.
-        let input: serde_json::Value = serde_json::json!({ "stop_hook_active": true, "cwd": "." });
+    fn deleted_files_are_skipped_and_renames_scan_the_new_path() {
+        let (repo, _api) = monorepo("ax-stop-rename");
+        let root = repo.path();
+        git(root, &["mv", "other.rs", "renamed.rs"]);
+        std::fs::remove_file(root.join("services/api/src/lib.rs")).unwrap();
         assert_eq!(
-            input.get("stop_hook_active").and_then(|v| v.as_bool()),
-            Some(true)
+            scanned(root),
+            vec![root.join("renamed.rs").canonicalize().unwrap()]
+        );
+    }
+
+    #[test]
+    fn outside_a_git_work_tree_there_is_nothing_to_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(guard_targets(dir.path(), dir.path()), None);
+    }
+
+    #[test]
+    fn stop_hook_active_short_circuits() {
+        assert!(already_blocked(
+            &serde_json::json!({ "stop_hook_active": true, "cwd": "." })
+        ));
+        assert!(!already_blocked(
+            &serde_json::json!({ "stop_hook_active": false })
+        ));
+        assert!(!already_blocked(
+            &serde_json::json!({ "stop_hook_active": "true" })
+        ));
+        assert!(!already_blocked(&serde_json::Value::Null));
+    }
+
+    #[test]
+    fn no_violations_never_block() {
+        assert_eq!(block_decision(&[], 0), None);
+        assert_eq!(block_decision(&[], 7), None);
+    }
+
+    #[test]
+    fn violations_block_with_a_capped_reason() {
+        let violations: Vec<(String, String)> = (0..MAX_VIOLATIONS_SHOWN + 2)
+            .map(|i| (format!("f{i}.rs"), format!("[rule] bad {i}")))
+            .collect();
+        let out = block_decision(&violations, 3).unwrap();
+        assert_eq!(out["decision"], "block");
+        let reason = out["reason"].as_str().unwrap();
+        assert!(reason.starts_with(&format!(
+            "ax policy guard found {} CRITICAL violation(s)",
+            violations.len()
+        )));
+        assert!(reason.contains("- f0.rs: [rule] bad 0"));
+        assert!(!reason.contains(&format!("f{MAX_VIOLATIONS_SHOWN}.rs")));
+        assert!(reason.contains("- …and 2 more"));
+        assert!(reason.contains("- 3 more changed file(s) were not scanned"));
+    }
+
+    fn target(dir: &Path, name: &str, bytes: &[u8]) -> GuardTarget {
+        let abs_path = dir.join(name);
+        std::fs::write(&abs_path, bytes).unwrap();
+        GuardTarget {
+            rel_path: name.to_string(),
+            abs_path,
+        }
+    }
+
+    #[tokio::test]
+    async fn scan_caps_files_and_skips_large_or_missing_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut targets: Vec<GuardTarget> = (0..MAX_FILES_SCANNED + 4)
+            .map(|i| target(dir.path(), &format!("f{i:02}.rs"), b"bad"))
+            .collect();
+        targets[0] = target(
+            dir.path(),
+            "big.rs",
+            &vec![b'x'; MAX_FILE_BYTES as usize + 1],
+        );
+        targets[1] = GuardTarget {
+            rel_path: "gone.rs".into(),
+            abs_path: dir.path().join("gone.rs"),
+        };
+        let mut calls = 0;
+        let (violations, unscanned) = scan_targets(targets, |_, bytes| {
+            calls += 1;
+            async move {
+                if bytes == b"bad" {
+                    vec!["[rule] bad".to_string()]
+                } else {
+                    Vec::new()
+                }
+            }
+        })
+        .await;
+        assert_eq!(unscanned, 4);
+        assert_eq!(
+            calls,
+            MAX_FILES_SCANNED - 2,
+            "big and missing files are not guarded"
+        );
+        assert_eq!(violations.len(), MAX_FILES_SCANNED - 2);
+        assert!(violations
+            .iter()
+            .all(|(path, _)| path != "big.rs" && path != "gone.rs"));
+        assert_eq!(
+            violations[0],
+            ("f02.rs".to_string(), "[rule] bad".to_string())
         );
     }
 }

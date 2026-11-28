@@ -206,6 +206,41 @@ async fn stop(host: &Host, credentials: &Credentials) -> Result<(), String> {
     }
     Err("Remote MCP host is still stopping".into())
 }
+/// Stop our host if it is the one on the saved port. A foreign service on that
+/// port, or missing control credentials, means our host is not reachable there,
+/// so there is nothing to stop and stop or removal can continue.
+async fn stop_if_ours(host: &Host, credentials: Option<&Credentials>) -> Result<(), String> {
+    let Some(credentials) = credentials else {
+        return Ok(());
+    };
+    match probe(host, credentials).await {
+        Ok(true) => stop(host, credentials).await,
+        Ok(false) | Err(_) => Ok(()),
+    }
+}
+async fn free_port() -> Result<u16, String> {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(listener.local_addr().map_err(|e| e.to_string())?.port())
+}
+/// Returns true when our host already runs on the saved port. When another
+/// service holds that port, a fresh loopback port is picked into `host.port`.
+async fn claim_port(host: &mut Host, credentials: &Credentials) -> Result<bool, String> {
+    match probe(host, credentials).await {
+        Ok(true) => return Ok(true),
+        Ok(false)
+            if tokio::net::TcpListener::bind(("127.0.0.1", host.port))
+                .await
+                .is_ok() =>
+        {
+            return Ok(false)
+        }
+        Ok(false) | Err(_) => {}
+    }
+    host.port = free_port().await?;
+    Ok(false)
+}
 pub(crate) async fn setup(
     root: &Path,
     public_url: Option<String>,
@@ -246,11 +281,7 @@ pub(crate) async fn setup(
             client_address_header: None,
         }
     };
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .map_err(|e| e.to_string())?;
-    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-    drop(listener);
+    let port = free_port().await?;
     let mut host = Host {
         config,
         port,
@@ -293,32 +324,43 @@ pub async fn auto_start(root: &Path) -> Result<(), String> {
     scoped(&mut host, root)?;
     let _lock = lock(root)?;
     let credentials = credentials(root, false).await?;
-    if !probe(&host, &credentials).await? {
+    let saved = host.port;
+    if !claim_port(&mut host, &credentials).await? {
         spawn(root, &host, &credentials).await?;
+        if host.port != saved {
+            write(root, FILE, &host)?;
+        }
     }
     Ok(())
 }
 pub(crate) async fn change(root: &Path, operation: &str) -> Result<(), String> {
     let _lock = lock(root)?;
     let mut host = read(root)?.ok_or("No remote host configured")?;
-    scoped(&mut host, root)?;
-    let credentials = credentials(root, false).await?;
     match operation {
         "start" => {
-            if !probe(&host, &credentials).await? {
+            scoped(&mut host, root)?;
+            let credentials = credentials(root, true).await?;
+            if !claim_port(&mut host, &credentials).await? {
                 spawn(root, &host, &credentials).await?;
             }
             host.enabled = true;
             write(root, FILE, &host)?;
         }
         "stop" => {
-            stop(&host, &credentials).await?;
+            scoped(&mut host, root)?;
+            let credentials = credentials(root, false).await.ok();
+            stop_if_ours(&host, credentials.as_ref()).await?;
             host.enabled = false;
             write(root, FILE, &host)?;
         }
         "remove" => {
-            stop(&host, &credentials).await?;
-            if host.config.oauth.built_in {
+            // Removal must always be able to delete the saved configuration, even
+            // when the port is now held by another program, the keychain entry is
+            // gone or the file no longer matches this project.
+            let in_scope = scoped(&mut host, root).is_ok();
+            let credentials = credentials(root, false).await.ok();
+            stop_if_ours(&host, credentials.as_ref()).await?;
+            if in_scope && host.config.oauth.built_in {
                 OAuthStore::open(&host.config.public_url)
                     .await?
                     .revoke_project(&host.config.projects[0].id)
@@ -350,4 +392,63 @@ pub(crate) async fn change(root: &Path, operation: &str) -> Result<(), String> {
         _ => return Err("Unknown host action".into()),
     }
     Ok(())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn host(port: u16) -> Host {
+        serde_json::from_value(serde_json::json!({
+            "config": {"public_url":"https://ax.example","oauth":{"issuer":"https://issuer.example/","jwks_uri":"https://issuer.example/jwks"},"projects":[]},
+            "port": port,
+            "enabled": true
+        }))
+        .unwrap()
+    }
+    fn credentials() -> Credentials {
+        Credentials {
+            token: "t".repeat(32),
+            control: "c".repeat(32),
+        }
+    }
+    /// A foreign HTTP service that rejects our control token.
+    async fn foreign_service() -> u16 {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let app = axum::Router::new().fallback(|| async { axum::http::StatusCode::UNAUTHORIZED });
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        port
+    }
+    #[tokio::test]
+    async fn stop_treats_a_foreign_service_on_the_port_as_not_our_host() {
+        let host = host(foreign_service().await);
+        stop_if_ours(&host, Some(&credentials())).await.unwrap();
+    }
+    #[tokio::test]
+    async fn stop_without_credentials_still_lets_removal_continue() {
+        let host = host(foreign_service().await);
+        stop_if_ours(&host, None).await.unwrap();
+    }
+    #[tokio::test]
+    async fn start_moves_to_a_free_port_when_another_service_holds_the_saved_one() {
+        let taken = foreign_service().await;
+        let mut host = host(taken);
+        assert!(!claim_port(&mut host, &credentials()).await.unwrap());
+        assert_ne!(host.port, taken);
+        tokio::net::TcpListener::bind(("127.0.0.1", host.port))
+            .await
+            .unwrap();
+    }
+    #[tokio::test]
+    async fn start_keeps_a_free_saved_port() {
+        let free = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = free.local_addr().unwrap().port();
+        drop(free);
+        let mut host = host(port);
+        assert!(!claim_port(&mut host, &credentials()).await.unwrap());
+        assert_eq!(host.port, port);
+    }
 }

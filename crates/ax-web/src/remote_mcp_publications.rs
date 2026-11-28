@@ -384,6 +384,137 @@ async fn remove(
     }
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HostSetupRequest {
+    workspace_id: String,
+    public_url: Option<String>,
+    config: Option<RemoteConfig>,
+    clients: Option<ClientRegistrations>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HostActionRequest {
+    workspace_id: String,
+    operation: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HostDecisionRequest {
+    workspace_id: String,
+    decision: String,
+}
+async fn host_status(State(hub): State<WebHub>) -> Response {
+    let ws = hub.read().await;
+    let id = match catalog::workspace_id(&ws.project_root) {
+        Ok(id) => id,
+        Err(_) => return failure(StatusCode::CONFLICT, "Active project unavailable"),
+    };
+    let host = match crate::remote_host::read(&ws.project_root) {
+        Ok(host) => host,
+        Err(e) => return failure(StatusCode::CONFLICT, &e),
+    };
+    let value = if let Some(host) = host {
+        let (status, message) = match crate::remote_host::running(&ws.project_root, &host).await {
+            Ok(true) => ("running", None),
+            Ok(false) => ("stopped", None),
+            Err(e) => ("error", Some(e)),
+        };
+        json!({"status":status,"message":message,"publicUrl":host.config.public_url,"localUrl":format!("http://127.0.0.1:{}",host.port),"builtInOAuth":host.config.oauth.built_in,"autoStart":host.enabled})
+    } else {
+        Value::Null
+    };
+    response(StatusCode::OK, json!({"workspaceId":id,"host":value}))
+}
+async fn host_setup(State(hub): State<WebHub>, Json(body): Json<HostSetupRequest>) -> Response {
+    let ws = hub.read().await;
+    if let Err(e) = matches_workspace(&ws.project_root, &body.workspace_id) {
+        return failure(StatusCode::CONFLICT, e);
+    }
+    match crate::remote_host::setup(&ws.project_root, body.public_url, body.config, body.clients)
+        .await
+    {
+        Ok(()) => response(
+            StatusCode::OK,
+            json!({"workspaceId":body.workspace_id,"updated":true}),
+        ),
+        Err(e) => failure(StatusCode::CONFLICT, &e),
+    }
+}
+async fn host_action(State(hub): State<WebHub>, Json(body): Json<HostActionRequest>) -> Response {
+    let ws = hub.read().await;
+    if let Err(e) = matches_workspace(&ws.project_root, &body.workspace_id) {
+        return failure(StatusCode::CONFLICT, e);
+    }
+    match crate::remote_host::change(&ws.project_root, &body.operation).await {
+        Ok(()) => response(
+            StatusCode::OK,
+            json!({"workspaceId":body.workspace_id,"updated":true}),
+        ),
+        Err(e) => failure(StatusCode::CONFLICT, &e),
+    }
+}
+/// Answer for a remote host settings file that registers no project.
+const NO_HOST_PROJECT: &str = "Invalid remote host settings: no project is registered";
+async fn host_authorizations(State(hub): State<WebHub>) -> Response {
+    let ws = hub.read().await;
+    let id = match catalog::workspace_id(&ws.project_root) {
+        Ok(id) => id,
+        Err(_) => return failure(StatusCode::CONFLICT, "Active project unavailable"),
+    };
+    let host = match crate::remote_host::read(&ws.project_root) {
+        Ok(host) => host,
+        Err(e) => return failure(StatusCode::CONFLICT, &e),
+    };
+    let requests = if let Some(host) = host.filter(|h| h.config.oauth.built_in) {
+        let store = match ax_mcp::remote::oauth::OAuthStore::open(&host.config.public_url).await {
+            Ok(store) => store,
+            Err(e) => return failure(StatusCode::INTERNAL_SERVER_ERROR, &e),
+        };
+        let Some(project) = host.config.projects.first() else {
+            return failure(StatusCode::CONFLICT, NO_HOST_PROJECT);
+        };
+        match store.requests(&project.id).await {
+            Ok(requests) => requests,
+            Err(e) => return failure(StatusCode::INTERNAL_SERVER_ERROR, &e),
+        }
+    } else {
+        vec![]
+    };
+    response(
+        StatusCode::OK,
+        json!({"workspaceId":id,"requests":requests}),
+    )
+}
+async fn host_decide(
+    State(hub): State<WebHub>,
+    Path(request_id): Path<String>,
+    Json(body): Json<HostDecisionRequest>,
+) -> Response {
+    let ws = hub.read().await;
+    if let Err(e) = matches_workspace(&ws.project_root, &body.workspace_id) {
+        return failure(StatusCode::CONFLICT, e);
+    }
+    let host = match crate::remote_host::read(&ws.project_root) {
+        Ok(Some(host)) if host.config.oauth.built_in => host,
+        _ => return failure(StatusCode::CONFLICT, "No built-in OAuth host configured"),
+    };
+    let Some(project) = host.config.projects.first() else {
+        return failure(StatusCode::CONFLICT, NO_HOST_PROJECT);
+    };
+    let store = match ax_mcp::remote::oauth::OAuthStore::open(&host.config.public_url).await {
+        Ok(store) => store,
+        Err(e) => return failure(StatusCode::INTERNAL_SERVER_ERROR, &e),
+    };
+    match store.decide(&project.id, &request_id, &body.decision).await {
+        Ok(()) => response(
+            StatusCode::OK,
+            json!({"workspaceId":body.workspace_id,"updated":true}),
+        ),
+        Err(e) => failure(StatusCode::CONFLICT, &e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -431,6 +562,8 @@ mod tests {
             .method(method)
             .uri(path)
             .header("Host", "localhost:7070")
+            // What request_guard::guard sets for a loopback socket peer.
+            .header(crate::request_guard::LOCAL_PEER, "1")
             .header("Content-Type", "application/json");
         if csrf {
             builder = builder.header("X-Ax-Csrf", remote_mcp::csrf());
@@ -537,6 +670,7 @@ mod tests {
                     .method("POST")
                     .uri("/import")
                     .header("Host", "localhost:7070")
+                    .header(crate::request_guard::LOCAL_PEER, "1")
                     .header("Content-Type", "application/json")
                     .header("X-Ax-Csrf", remote_mcp::csrf())
                     .body(Body::from("x".repeat(256 * 1024 + 1)))
@@ -635,131 +769,5 @@ mod tests {
             call(&router, "POST", &url, stale, true).await.0,
             StatusCode::CONFLICT
         );
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct HostSetupRequest {
-    workspace_id: String,
-    public_url: Option<String>,
-    config: Option<RemoteConfig>,
-    clients: Option<ClientRegistrations>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct HostActionRequest {
-    workspace_id: String,
-    operation: String,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct HostDecisionRequest {
-    workspace_id: String,
-    decision: String,
-}
-async fn host_status(State(hub): State<WebHub>) -> Response {
-    let ws = hub.read().await;
-    let id = match catalog::workspace_id(&ws.project_root) {
-        Ok(id) => id,
-        Err(_) => return failure(StatusCode::CONFLICT, "Active project unavailable"),
-    };
-    let host = match crate::remote_host::read(&ws.project_root) {
-        Ok(host) => host,
-        Err(e) => return failure(StatusCode::CONFLICT, &e),
-    };
-    let value = if let Some(host) = host {
-        let (status, message) = match crate::remote_host::running(&ws.project_root, &host).await {
-            Ok(true) => ("running", None),
-            Ok(false) => ("stopped", None),
-            Err(e) => ("error", Some(e)),
-        };
-        json!({"status":status,"message":message,"publicUrl":host.config.public_url,"localUrl":format!("http://127.0.0.1:{}",host.port),"builtInOAuth":host.config.oauth.built_in,"autoStart":host.enabled})
-    } else {
-        Value::Null
-    };
-    response(StatusCode::OK, json!({"workspaceId":id,"host":value}))
-}
-async fn host_setup(State(hub): State<WebHub>, Json(body): Json<HostSetupRequest>) -> Response {
-    let ws = hub.read().await;
-    if let Err(e) = matches_workspace(&ws.project_root, &body.workspace_id) {
-        return failure(StatusCode::CONFLICT, e);
-    }
-    match crate::remote_host::setup(&ws.project_root, body.public_url, body.config, body.clients)
-        .await
-    {
-        Ok(()) => response(
-            StatusCode::OK,
-            json!({"workspaceId":body.workspace_id,"updated":true}),
-        ),
-        Err(e) => failure(StatusCode::CONFLICT, &e),
-    }
-}
-async fn host_action(State(hub): State<WebHub>, Json(body): Json<HostActionRequest>) -> Response {
-    let ws = hub.read().await;
-    if let Err(e) = matches_workspace(&ws.project_root, &body.workspace_id) {
-        return failure(StatusCode::CONFLICT, e);
-    }
-    match crate::remote_host::change(&ws.project_root, &body.operation).await {
-        Ok(()) => response(
-            StatusCode::OK,
-            json!({"workspaceId":body.workspace_id,"updated":true}),
-        ),
-        Err(e) => failure(StatusCode::CONFLICT, &e),
-    }
-}
-async fn host_authorizations(State(hub): State<WebHub>) -> Response {
-    let ws = hub.read().await;
-    let id = match catalog::workspace_id(&ws.project_root) {
-        Ok(id) => id,
-        Err(_) => return failure(StatusCode::CONFLICT, "Active project unavailable"),
-    };
-    let host = match crate::remote_host::read(&ws.project_root) {
-        Ok(host) => host,
-        Err(e) => return failure(StatusCode::CONFLICT, &e),
-    };
-    let requests = if let Some(host) = host.filter(|h| h.config.oauth.built_in) {
-        let store = match ax_mcp::remote::oauth::OAuthStore::open(&host.config.public_url).await {
-            Ok(store) => store,
-            Err(e) => return failure(StatusCode::INTERNAL_SERVER_ERROR, &e),
-        };
-        match store.requests(&host.config.projects[0].id).await {
-            Ok(requests) => requests,
-            Err(e) => return failure(StatusCode::INTERNAL_SERVER_ERROR, &e),
-        }
-    } else {
-        vec![]
-    };
-    response(
-        StatusCode::OK,
-        json!({"workspaceId":id,"requests":requests}),
-    )
-}
-async fn host_decide(
-    State(hub): State<WebHub>,
-    Path(request_id): Path<String>,
-    Json(body): Json<HostDecisionRequest>,
-) -> Response {
-    let ws = hub.read().await;
-    if let Err(e) = matches_workspace(&ws.project_root, &body.workspace_id) {
-        return failure(StatusCode::CONFLICT, e);
-    }
-    let host = match crate::remote_host::read(&ws.project_root) {
-        Ok(Some(host)) if host.config.oauth.built_in => host,
-        _ => return failure(StatusCode::CONFLICT, "No built-in OAuth host configured"),
-    };
-    let store = match ax_mcp::remote::oauth::OAuthStore::open(&host.config.public_url).await {
-        Ok(store) => store,
-        Err(e) => return failure(StatusCode::INTERNAL_SERVER_ERROR, &e),
-    };
-    match store
-        .decide(&host.config.projects[0].id, &request_id, &body.decision)
-        .await
-    {
-        Ok(()) => response(
-            StatusCode::OK,
-            json!({"workspaceId":body.workspace_id,"updated":true}),
-        ),
-        Err(e) => failure(StatusCode::CONFLICT, &e),
     }
 }

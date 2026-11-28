@@ -40,6 +40,8 @@ pub struct WorkspaceBundle {
     _sync_task: Option<JoinHandle<()>>,
     _cleanup_task: Option<JoinHandle<()>>,
     _dedup_task: Option<JoinHandle<()>>,
+    /// Set once [`WorkspaceBundle::shut_down`] has closed the pools.
+    closed: bool,
 }
 
 impl WebHub {
@@ -60,11 +62,25 @@ impl WebHub {
         self.inner.read().await
     }
 
+    /// Switches the served project. The switch runs in its own task, so a
+    /// caller that goes away (a browser that disconnects) cannot stop it
+    /// half-way, and the in-progress flag is cleared however the task ends.
     pub async fn switch(&self, new_root: PathBuf) -> Result<SwitchInfo, String> {
         if self.switching.swap(true, Ordering::SeqCst) {
             return Err("Workspace switch already in progress".into());
         }
-        let result = async {
+        let flag = SwitchFlag(self.switching.clone());
+        let hub = self.clone();
+        tokio::spawn(async move {
+            let _flag = flag;
+            hub.switch_now(new_root).await
+        })
+        .await
+        .unwrap_or_else(|_| Err("Workspace switch failed".into()))
+    }
+
+    async fn switch_now(&self, new_root: PathBuf) -> Result<SwitchInfo, String> {
+        async {
             if self.readonly {
                 return Err("Read-only mode".into());
             }
@@ -104,16 +120,17 @@ impl WebHub {
             ax_usage::log_workspace(Some(&new_root), format!("switch path={}", info.path));
             Ok(info)
         }
-        .await;
-        self.switching.store(false, Ordering::SeqCst);
-        result
+        .await
     }
 
-    /// Close the open graph database when `root` is the project currently served.
-    /// File deletion can then remove `ax.db` instead of leaving a live inode.
-    pub async fn close_graph_pool_if_current(&self, root: &Path) -> bool {
+    /// Close the project when `root` is the one currently served: stop its
+    /// background tasks and close every pool on `ax.db` (graph and policy), so
+    /// file deletion can remove the database. The hub then serves no project
+    /// until the next switch; project routes answer 409 "No project open".
+    pub async fn close_project_if_current(&self, root: &Path) -> bool {
         let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-        let guard = self.inner.read().await;
+        // The write lock keeps new readers off the pools while they close.
+        let mut guard = self.inner.write().await;
         let current = guard
             .project_root
             .canonicalize()
@@ -121,11 +138,13 @@ impl WebHub {
         if current != root {
             return false;
         }
-        if let Some(task) = &guard._sync_task {
-            task.abort();
-        }
-        guard.graph_pool.close().await;
+        guard.shut_down().await;
         true
+    }
+
+    /// True when the served project was closed and no other one opened since.
+    pub async fn project_closed(&self) -> bool {
+        self.inner.read().await.closed
     }
 
     pub fn nest_routers(&self, cors: tower_http::cors::CorsLayer) -> Router {
@@ -145,7 +164,7 @@ impl WebHub {
             )
             .nest(
                 "/api/auth/microsoft",
-                crate::policy_share::microsoft_auth_router(),
+                crate::policy_share::microsoft_auth_router(hub.clone()),
             )
             .nest("/api/policy", policy::router_hub(hub.clone()))
             .nest("/api/ship", ship::router_hub(hub.clone()))
@@ -199,9 +218,69 @@ impl WebHub {
                 )),
             )
             .layer(axum::middleware::from_fn_with_state(
-                hub,
+                hub.clone(),
+                refuse_when_closed,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                hub.clone(),
                 crate::web_auth::gate,
             ))
+            // Outermost: refuse unexpected Host names before anything else runs.
+            .layer(axum::middleware::from_fn_with_state(
+                crate::request_guard::AllowedHosts::from_environment(hub.local_only),
+                crate::request_guard::guard,
+            ))
+    }
+}
+
+/// Routes that keep working while no project is open, so the browser can
+/// still sign in and open another project.
+const ROUTES_WITHOUT_PROJECT: &[&str] = &[
+    "/api/workspace",
+    "/api/access",
+    "/api/web-auth",
+    "/api/actions",
+    "/api/reset-client-cache",
+    "/api/version",
+];
+
+fn needs_project(path: &str) -> bool {
+    let under = |prefix: &str| {
+        path == prefix
+            || path
+                .strip_prefix(prefix)
+                .is_some_and(|rest| rest.starts_with('/'))
+    };
+    (under("/api") || under("/dav")) && !ROUTES_WITHOUT_PROJECT.iter().any(|p| under(p))
+}
+
+/// Answers 409 "No project open" for project routes after the served project
+/// was closed (its database purged), instead of a closed-pool failure.
+async fn refuse_when_closed(
+    axum::extract::State(hub): axum::extract::State<WebHub>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if needs_project(request.uri().path()) && hub.project_closed().await {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            axum::Json(serde_json::json!({
+                "ok": false,
+                "error": "No project open: its database was removed. Open a project to continue.",
+            })),
+        )
+            .into_response();
+    }
+    next.run(request).await
+}
+
+/// Clears [`WebHub`]'s switch-in-progress flag when dropped.
+struct SwitchFlag(Arc<AtomicBool>);
+
+impl Drop for SwitchFlag {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
     }
 }
 
@@ -299,23 +378,31 @@ impl WorkspaceBundle {
             _sync_task: sync_task,
             _cleanup_task: cleanup_task,
             _dedup_task: dedup_task,
+            closed: false,
         })
     }
 
-    pub async fn close(self) {
-        if let Some(h) = self._watch_task {
-            h.abort();
-        }
-        if let Some(h) = self._sync_task {
-            h.abort();
-        }
-        if let Some(h) = self._cleanup_task {
-            h.abort();
-        }
-        if let Some(h) = self._dedup_task {
-            h.abort();
+    pub async fn close(mut self) {
+        self.shut_down().await;
+    }
+
+    /// Stop the background tasks and close both pools on `ax.db`.
+    async fn shut_down(&mut self) {
+        for task in [
+            self._watch_task.take(),
+            self._sync_task.take(),
+            self._cleanup_task.take(),
+            self._dedup_task.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            task.abort();
         }
         self.graph_pool.close().await;
+        self.policy.store.pool().close().await;
+        crate::node_tracker::forget(&self.db_path);
+        self.closed = true;
     }
 }
 
@@ -482,5 +569,35 @@ mod policy_dedup_tests {
         }
         task.abort();
         assert_eq!(remaining, 1);
+    }
+}
+
+#[cfg(test)]
+mod closed_project_tests {
+    use super::needs_project;
+
+    #[test]
+    fn project_routes_need_a_project_and_workspace_routes_do_not() {
+        for path in [
+            "/api/stats",
+            "/api/memory/",
+            "/api/policy/rules",
+            "/dav/x.md",
+            "/dav",
+        ] {
+            assert!(needs_project(path), "{path}");
+        }
+        for path in [
+            "/api/workspace/switch",
+            "/api/access/session",
+            "/api/web-auth/status",
+            "/api/version",
+            "/",
+            "/assets/app.js",
+            "/api-docs",
+            "/davinci",
+        ] {
+            assert!(!needs_project(path), "{path}");
+        }
     }
 }

@@ -8,7 +8,7 @@ use ax_db::integrity::{
 };
 use serde::Serialize;
 
-use super::resolve_path;
+use super::resolve_project_root;
 
 pub async fn run_check(
     path: Option<String>,
@@ -16,7 +16,7 @@ pub async fn run_check(
     quick: bool,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let targets = targets(&root, &which)?;
     let model = active_model();
     let mut reports = Vec::new();
@@ -52,7 +52,7 @@ pub async fn run_repair(
     stop_writers: bool,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path.clone());
+    let root = resolve_project_root(path.clone());
     if stop_writers {
         super::daemon::run(path, super::daemon::DaemonAction::Stop).await?;
     }
@@ -75,14 +75,17 @@ pub async fn run_repair(
             },
         )
         .await;
+        let mut follow_error = None;
         if repair.proceed && !dry_run {
             match follow_memory(&target.path, &repair.follow_up).await {
                 Ok(actions) => repair.actions.extend(actions),
-                Err(err) => repair.remaining.push(ax_db::integrity::Finding {
-                    code: "io".into(),
-                    subject: String::new(),
-                    detail: err,
-                }),
+                Err(err) => {
+                    follow_error = Some(ax_db::integrity::Finding {
+                        code: "io".into(),
+                        subject: "follow-up".into(),
+                        detail: format!("follow-up step failed: {err}"),
+                    })
+                }
             }
         }
         let after = check_database(
@@ -93,8 +96,7 @@ pub async fn run_repair(
             },
         )
         .await;
-        repair.remaining = after.findings;
-        repair.ok = repair.remaining.is_empty();
+        settle_remaining(&mut repair, after.findings, follow_error);
         if !repair.ok && !dry_run {
             let _ = record_incident(
                 &target.path,
@@ -112,6 +114,18 @@ pub async fn run_repair(
         return Err("integrity repair left findings".into());
     }
     Ok(())
+}
+
+/// Sets what is left after a repair: the re-check's findings, plus a failed follow-up step
+/// (re-embed, vector rebuild, re-index), which the database re-check cannot see.
+fn settle_remaining(
+    repair: &mut RepairReport,
+    after: Vec<ax_db::integrity::Finding>,
+    follow_error: Option<ax_db::integrity::Finding>,
+) {
+    repair.remaining = after;
+    repair.remaining.extend(follow_error);
+    repair.ok = repair.remaining.is_empty();
 }
 
 struct Target {
@@ -204,8 +218,70 @@ fn project_root_of(path: &Path) -> Option<std::path::PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::project_root_of;
+    use super::{project_root_of, settle_remaining};
+    use ax_db::integrity::{Finding, RepairReport};
     use std::path::Path;
+
+    fn report() -> RepairReport {
+        RepairReport {
+            path: "/work/app/.ax/ax.db".into(),
+            ok: false,
+            proceed: true,
+            dry_run: false,
+            backup: None,
+            actions: vec!["rebuilt indexes".into()],
+            follow_up: vec!["reindex:src/foo.rs".into()],
+            remaining: Vec::new(),
+        }
+    }
+
+    fn finding(code: &str, detail: &str) -> Finding {
+        Finding {
+            code: code.into(),
+            subject: String::new(),
+            detail: detail.into(),
+        }
+    }
+
+    #[test]
+    fn a_failed_follow_up_step_fails_the_repair_even_when_the_recheck_is_clean() {
+        let mut repair = report();
+        settle_remaining(
+            &mut repair,
+            Vec::new(),
+            Some(finding(
+                "io",
+                "follow-up step failed: src/foo.rs unreadable",
+            )),
+        );
+        assert!(!repair.ok);
+        assert_eq!(repair.remaining.len(), 1);
+        assert!(repair.remaining[0].detail.contains("src/foo.rs unreadable"));
+    }
+
+    #[test]
+    fn a_failed_follow_up_step_is_kept_next_to_the_recheck_findings() {
+        let mut repair = report();
+        settle_remaining(
+            &mut repair,
+            vec![finding("stale_embedding", "3 memories")],
+            Some(finding("io", "follow-up step failed: reembed")),
+        );
+        assert!(!repair.ok);
+        let codes: Vec<&str> = repair.remaining.iter().map(|f| f.code.as_str()).collect();
+        assert_eq!(codes, ["stale_embedding", "io"]);
+    }
+
+    #[test]
+    fn a_clean_recheck_without_follow_up_errors_is_ok() {
+        let mut repair = report();
+        repair
+            .remaining
+            .push(finding("stale", "replaced by the re-check"));
+        settle_remaining(&mut repair, Vec::new(), None);
+        assert!(repair.ok);
+        assert!(repair.remaining.is_empty());
+    }
 
     #[test]
     fn a_database_inside_dot_ax_names_the_project_and_any_other_file_does_not() {
