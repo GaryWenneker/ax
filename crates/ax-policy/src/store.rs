@@ -313,8 +313,11 @@ impl PolicyStore {
         frontmatter: RuleFrontmatter,
         body: String,
     ) -> Result<PolicyRuleDoc, ValidationError> {
+        // Check, delete and save under one hold, so no save or index pass
+        // lands between the checks and the writes.
+        let _writer = crate::write_lock::policy_write_lock(&self.project_root).await;
         if old_id == frontmatter.id {
-            return self.save_rule(frontmatter, body).await;
+            return self.save_rule_locked(frontmatter, body).await;
         }
 
         let exists_old = self
@@ -348,14 +351,14 @@ impl PolicyStore {
             });
         }
 
-        self.delete_rule(old_id)
+        self.delete_rule_locked(old_id)
             .await
             .map_err(|e| ValidationError {
                 error: e.to_string(),
                 fields: Default::default(),
             })?;
 
-        self.save_rule(frontmatter, body).await
+        self.save_rule_locked(frontmatter, body).await
     }
 
     pub async fn save_skill(
@@ -543,6 +546,11 @@ impl PolicyStore {
 
     pub async fn delete_rule(&self, id: &str) -> Result<bool, AxError> {
         let _writer = crate::write_lock::policy_write_lock(&self.project_root).await;
+        self.delete_rule_locked(id).await
+    }
+
+    /// [`Self::delete_rule`] for a caller that already holds the write lock.
+    async fn delete_rule_locked(&self, id: &str) -> Result<bool, AxError> {
         let doc = self.get_rule_doc(id).await?;
         let Some(doc) = doc else {
             return delete_rule_by_id(&self.pool, id).await;
@@ -654,6 +662,9 @@ impl PolicyStore {
         target: PolicyStorage,
         keep_file: bool,
     ) -> Result<Option<serde_json::Value>, AxError> {
+        // Read, write back and clean up under one hold, so a save in between
+        // is kept.
+        let _writer = crate::write_lock::policy_write_lock(&self.project_root).await;
         if let Some(mut doc) = self.get_rule_doc(id_or_name).await? {
             let before = self.item_effective_storage(doc.frontmatter.storage.as_deref());
             doc.frontmatter.storage = Some(target.as_str().into());
@@ -661,7 +672,7 @@ impl PolicyStore {
                 let body = doc.body.clone();
                 let fm = doc.frontmatter.clone();
                 // Persist to DB with override.
-                self.save_rule(fm.clone(), body)
+                self.save_rule_locked(fm.clone(), body)
                     .await
                     .map_err(|e| AxError::Other(e.error))?;
                 if !keep_file && before == PolicyStorage::Files {
@@ -686,7 +697,7 @@ impl PolicyStore {
                 })));
             }
             // to files
-            self.save_rule(doc.frontmatter, doc.body)
+            self.save_rule_locked(doc.frontmatter, doc.body)
                 .await
                 .map_err(|e| AxError::Other(e.error))?;
             return Ok(Some(serde_json::json!({
@@ -710,13 +721,16 @@ impl PolicyStore {
         target: PolicyStorage,
         keep_file: bool,
     ) -> Result<Option<serde_json::Value>, AxError> {
+        // Read, write back and clean up under one hold, so a save in between
+        // is kept.
+        let _writer = crate::write_lock::policy_write_lock(&self.project_root).await;
         if let Some(mut doc) = self.get_skill_doc(id_or_name).await? {
             let before = self.item_effective_storage(doc.frontmatter.storage.as_deref());
             doc.frontmatter.storage = Some(target.as_str().into());
             if target == PolicyStorage::Database {
                 let body = doc.body.clone();
                 let fm = doc.frontmatter.clone();
-                self.save_skill(fm, body)
+                self.save_skill_locked(fm, body)
                     .await
                     .map_err(|e| AxError::Other(e.error))?;
                 if !keep_file && before == PolicyStorage::Files {
@@ -738,7 +752,7 @@ impl PolicyStore {
                     "storageIsOverride": true,
                 })));
             }
-            self.save_skill(doc.frontmatter, doc.body)
+            self.save_skill_locked(doc.frontmatter, doc.body)
                 .await
                 .map_err(|e| AxError::Other(e.error))?;
             return Ok(Some(serde_json::json!({
@@ -756,16 +770,18 @@ impl PolicyStore {
 
     /// Clear per-item storage override (inherit project default again).
     pub async fn clear_item_storage_override(&self, id_or_name: &str) -> Result<bool, AxError> {
+        // Read and write back under one lock, so a save in between is kept.
+        let _writer = crate::write_lock::policy_write_lock(&self.project_root).await;
         if let Some(mut doc) = self.get_rule_doc(id_or_name).await? {
             doc.frontmatter.storage = None;
-            self.save_rule(doc.frontmatter, doc.body)
+            self.save_rule_locked(doc.frontmatter, doc.body)
                 .await
                 .map_err(|e| AxError::Other(e.error))?;
             return Ok(true);
         }
         if let Some(mut doc) = self.get_skill_doc(id_or_name).await? {
             doc.frontmatter.storage = None;
-            self.save_skill(doc.frontmatter, doc.body)
+            self.save_skill_locked(doc.frontmatter, doc.body)
                 .await
                 .map_err(|e| AxError::Other(e.error))?;
             return Ok(true);
@@ -907,5 +923,185 @@ mod tests {
             row.body
         );
         assert!(!row.enabled, "the rule stayed enabled");
+    }
+
+    async fn test_store() -> (
+        tempfile::TempDir,
+        std::path::PathBuf,
+        std::sync::Arc<PolicyStore>,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        std::fs::create_dir_all(root.join(".ax")).unwrap();
+        let db = ax_db::Database::open(&root.join(".ax").join("ax.db"))
+            .await
+            .unwrap();
+        let store = std::sync::Arc::new(PolicyStore::new(db.pool().clone(), root.clone()));
+        (dir, root, store)
+    }
+
+    /// Runs `queued_save` and then `change` while the test holds the write
+    /// lock, so both queue in that order once it is released.
+    async fn queue_save_then<T: Send + 'static>(
+        root: &Path,
+        queued_save: impl std::future::Future<Output = ()> + Send + 'static,
+        change: impl std::future::Future<Output = T> + Send + 'static,
+    ) -> T {
+        let writer = crate::write_lock::policy_write_lock(root).await;
+        let saver = tokio::spawn(queued_save);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let changer = tokio::spawn(change);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        drop(writer);
+        saver.await.unwrap();
+        changer.await.unwrap()
+    }
+
+    /// Moving a rule to the database reads it and writes it back. A save
+    /// that lands in between must survive.
+    #[tokio::test]
+    async fn moving_a_rule_to_the_database_keeps_a_body_saved_while_it_waited() {
+        let (_dir, root, store) = test_store().await;
+        let (fm, body) = rule("moved", "Old body.");
+        store.save_rule(fm, body).await.unwrap();
+
+        let saved = {
+            let store = store.clone();
+            let (fm, body) = rule("moved", "New body.");
+            async move {
+                store.save_rule(fm, body).await.unwrap();
+            }
+        };
+        let change = {
+            let store = store.clone();
+            async move {
+                store
+                    .set_rule_storage("moved", PolicyStorage::Database, false)
+                    .await
+            }
+        };
+        let out = queue_save_then(&root, saved, change).await.unwrap();
+        assert!(out.is_some());
+
+        let row = crate::get_rule(store.pool(), "moved")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            row.body.contains("New body."),
+            "lost the save: {}",
+            row.body
+        );
+        assert_eq!(row.storage.as_deref(), Some("database"));
+    }
+
+    /// Same as the rule case, for a skill.
+    #[tokio::test]
+    async fn moving_a_skill_to_the_database_keeps_a_body_saved_while_it_waited() {
+        let (_dir, root, store) = test_store().await;
+        let skill = |body: &str| {
+            let raw = format!("---\nname: moved\ndescription: A skill.\n---\n\n{body}");
+            let doc = crate::parse_skill_file(Path::new("SKILL.md"), &raw).unwrap();
+            (doc.frontmatter, doc.body)
+        };
+        let (fm, body) = skill("Old body.");
+        store.save_skill(fm, body).await.unwrap();
+
+        let saved = {
+            let store = store.clone();
+            let (fm, body) = skill("New body.");
+            async move {
+                store.save_skill(fm, body).await.unwrap();
+            }
+        };
+        let change = {
+            let store = store.clone();
+            async move {
+                store
+                    .set_skill_storage("moved", PolicyStorage::Database, false)
+                    .await
+            }
+        };
+        let out = queue_save_then(&root, saved, change).await.unwrap();
+        assert!(out.is_some());
+
+        let row = crate::get_skill(store.pool(), "moved")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            row.body.contains("New body."),
+            "lost the save: {}",
+            row.body
+        );
+    }
+
+    /// Clearing a storage override reads and writes back too.
+    #[tokio::test]
+    async fn clearing_a_storage_override_keeps_a_body_saved_while_it_waited() {
+        let (_dir, root, store) = test_store().await;
+        let (mut fm, body) = rule("cleared", "Old body.");
+        fm.storage = Some("files".into());
+        store.save_rule(fm, body).await.unwrap();
+
+        let saved = {
+            let store = store.clone();
+            let (mut fm, body) = rule("cleared", "New body.");
+            fm.storage = Some("files".into());
+            async move {
+                store.save_rule(fm, body).await.unwrap();
+            }
+        };
+        let change = {
+            let store = store.clone();
+            async move { store.clear_item_storage_override("cleared").await }
+        };
+        assert!(queue_save_then(&root, saved, change).await.unwrap());
+
+        let row = crate::get_rule(store.pool(), "cleared")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            row.body.contains("New body."),
+            "lost the save: {}",
+            row.body
+        );
+    }
+
+    /// A rename checks that the new id is free and then writes it. A rule
+    /// saved under the new id in the meantime must not be overwritten.
+    #[tokio::test]
+    async fn renaming_a_rule_keeps_a_rule_saved_under_the_new_id_while_it_waited() {
+        let (_dir, root, store) = test_store().await;
+        let (fm, body) = rule("old-id", "Renamed body.");
+        store.save_rule(fm, body).await.unwrap();
+
+        let saved = {
+            let store = store.clone();
+            let (fm, body) = rule("new-id", "Other rule.");
+            async move {
+                store.save_rule(fm, body).await.unwrap();
+            }
+        };
+        let change = {
+            let store = store.clone();
+            let (fm, body) = rule("new-id", "Renamed body.");
+            async move { store.rename_rule("old-id", fm, body).await }
+        };
+        let err = queue_save_then(&root, saved, change)
+            .await
+            .expect_err("the rename overwrote a rule saved under its new id");
+        assert_eq!(err.error, "validation_failed");
+
+        let other = crate::get_rule(store.pool(), "new-id")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(other.body.contains("Other rule."), "{}", other.body);
+        assert!(crate::get_rule(store.pool(), "old-id")
+            .await
+            .unwrap()
+            .is_some());
     }
 }

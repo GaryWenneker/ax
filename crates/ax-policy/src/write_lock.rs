@@ -5,9 +5,12 @@
 //! Command Center's background watcher indexes while a user saves), the pass
 //! can prune the new rule or put an older body back. Every policy row writer
 //! takes this lock: the index pass, the database-mode refresh in
-//! `ensure_policy_ready`, saves, deletes and enable/disable (which reads and
-//! writes back under one hold). The lock is not reentrant, so a holder calls
-//! the `*_locked` helpers. It covers writers in this process only.
+//! `ensure_policy_ready`, saves, deletes, renames, storage changes and
+//! enable/disable. A writer that reads an item and writes it back (rename,
+//! storage change, clearing a storage override, enable/disable) does the
+//! read, the write and any follow-up cleanup under one hold. The lock is not
+//! reentrant, so a holder calls the `*_locked` helpers. It covers writers in
+//! this process only.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
