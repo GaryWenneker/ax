@@ -146,6 +146,9 @@ fn node_ids_json(nodes: &[GraphNode]) -> anyhow::Result<String> {
     Ok(serde_json::to_string(&ids)?)
 }
 
+/// The GLOB operator and its bound pattern for `origin`. Only the `'static`
+/// operator is interpolated into SQL; dynamic filters elsewhere in this module add
+/// literal clauses with `?` placeholders, so their `AssertSqlSafe` wraps are safe.
 fn graph_scope(origin: &str) -> anyhow::Result<(&'static str, String)> {
     if origin.is_empty() {
         return Ok(("NOT GLOB", "ax-replica/*".to_string()));
@@ -189,11 +192,12 @@ pub async fn get_graph(
 ) -> anyhow::Result<GraphPayload> {
     let (op, pattern) = graph_scope(origin)?;
     let systems = graph_systems(pool).await?;
-    let total_nodes: i64 =
-        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM nodes WHERE id {op} ?"))
-            .bind(&pattern)
-            .fetch_one(pool)
-            .await?;
+    let total_nodes: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT COUNT(*) FROM nodes WHERE id {op} ?"
+    )))
+    .bind(&pattern)
+    .fetch_one(pool)
+    .await?;
 
     let node_rows = sqlx::query_as::<
         _,
@@ -206,7 +210,7 @@ pub async fn get_graph(
             Option<String>,
             i64,
         ),
-    >(&format!(
+    >(sqlx::AssertSqlSafe(format!(
         r#"
         WITH deg AS (
             SELECT id, SUM(cnt) AS degree FROM (
@@ -229,7 +233,7 @@ pub async fn get_graph(
         ORDER BY degree DESC, n.name ASC
         LIMIT ?
         "#
-    ))
+    )))
     .bind(&pattern)
     .bind(&pattern)
     .bind(&pattern)
@@ -500,7 +504,8 @@ pub async fn get_nodes(pool: &SqlitePool, f: NodeFilter<'_>) -> anyhow::Result<N
         );
 
         // We build queries without sqlx macros since the SQL is dynamic.
-        let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql).bind(&q_term);
+        let mut count_q =
+            sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql)).bind(&q_term);
         if let Some(k) = f.kind {
             count_q = count_q.bind(k);
         }
@@ -540,7 +545,7 @@ pub async fn get_nodes(pool: &SqlitePool, f: NodeFilter<'_>) -> anyhow::Result<N
                 Option<String>,
                 i64,
             ),
-        >(&fts_with_match)
+        >(sqlx::AssertSqlSafe(fts_with_match))
         .bind(&q_term);
         if let Some(k) = f.kind {
             rows_q = rows_q.bind(k);
@@ -566,7 +571,7 @@ pub async fn get_nodes(pool: &SqlitePool, f: NodeFilter<'_>) -> anyhow::Result<N
     );
     let count_sql = format!("SELECT COUNT(*) FROM nodes {where_sql}");
 
-    let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
+    let mut count_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql));
     if let Some(k) = f.kind {
         count_q = count_q.bind(k);
     }
@@ -592,7 +597,7 @@ pub async fn get_nodes(pool: &SqlitePool, f: NodeFilter<'_>) -> anyhow::Result<N
             Option<String>,
             i64,
         ),
-    >(&list_sql);
+    >(sqlx::AssertSqlSafe(list_sql));
     if let Some(k) = f.kind {
         rows_q = rows_q.bind(k);
     }
@@ -880,7 +885,7 @@ pub async fn get_files(pool: &SqlitePool, f: FileFilter<'_>) -> anyhow::Result<F
         "SELECT path, language, size, node_count, indexed_at FROM files {where_sql} ORDER BY path LIMIT ? OFFSET ?"
     );
 
-    let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
+    let mut count_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql));
     if let Some(l) = f.lang {
         count_q = count_q.bind(l);
     }
@@ -892,7 +897,8 @@ pub async fn get_files(pool: &SqlitePool, f: FileFilter<'_>) -> anyhow::Result<F
     }
     let total = count_q.fetch_one(pool).await?;
 
-    let mut rows_q = sqlx::query_as::<_, (String, String, i64, i64, i64)>(&list_sql);
+    let mut rows_q =
+        sqlx::query_as::<_, (String, String, i64, i64, i64)>(sqlx::AssertSqlSafe(list_sql));
     if let Some(l) = f.lang {
         rows_q = rows_q.bind(l);
     }
@@ -1075,7 +1081,7 @@ pub async fn get_unresolved_refs(
          LIMIT ? OFFSET ?"
     );
 
-    let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
+    let mut count_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql));
     if let Some(k) = f.kind {
         count_q = count_q.bind(k);
     }
@@ -1085,8 +1091,9 @@ pub async fn get_unresolved_refs(
     }
     let total = count_q.fetch_one(pool).await?;
 
-    let mut rows_q =
-        sqlx::query_as::<_, (i64, String, String, String, i64, i64, String, String)>(&list_sql);
+    let mut rows_q = sqlx::query_as::<_, (i64, String, String, String, i64, i64, String, String)>(
+        sqlx::AssertSqlSafe(list_sql),
+    );
     if let Some(k) = f.kind {
         rows_q = rows_q.bind(k);
     }

@@ -107,12 +107,12 @@ pub fn leader_index(items: &[GlobalItem]) -> usize {
 }
 
 async fn has_column(pool: &SqlitePool, table: &str, column: &str) -> Result<bool, sqlx::Error> {
-    let found: Option<(String,)> = sqlx::query_as(&format!(
-        "SELECT name FROM pragma_table_info('{table}') WHERE name = ?"
-    ))
-    .bind(column)
-    .fetch_optional(pool)
-    .await?;
+    let found: Option<(String,)> =
+        sqlx::query_as("SELECT name FROM pragma_table_info(?1) WHERE name = ?2")
+            .bind(table)
+            .bind(column)
+            .fetch_optional(pool)
+            .await?;
     Ok(found.is_some())
 }
 
@@ -157,12 +157,13 @@ async fn load_kind(
     } else {
         "NULL"
     };
+    // Safe: `table` is `Kind::table()`, and both fragments are literals chosen above.
     let sql = format!(
         "SELECT g.project_id, g.item_id, g.payload,
                 COALESCE({revision_ms}, CAST(strftime('%s', g.synced_at) AS INTEGER) * 1000, 0)
          FROM {table} g {level_filter} ORDER BY g.item_id, g.project_id"
     );
-    let mut query = sqlx::query_as::<_, (i64, String, String, i64)>(&sql);
+    let mut query = sqlx::query_as::<_, (i64, String, String, i64)>(sqlx::AssertSqlSafe(sql));
     if with_revisions {
         query = query.bind(kind.revision_kind());
     }

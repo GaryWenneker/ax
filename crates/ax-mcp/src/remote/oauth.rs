@@ -106,9 +106,10 @@ impl OAuthStore {
             return Err("Only revoked, denied or expired connections can be removed".into());
         }
         for table in ["remote_oauth_tokens", "remote_oauth_used_refresh"] {
-            sqlx::query(&format!(
+            // Safe: `table` comes from the literal list above.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "DELETE FROM {table} WHERE origin=? AND request_id=?"
-            ))
+            )))
             .bind(&self.origin)
             .bind(id)
             .execute(&mut *tx)

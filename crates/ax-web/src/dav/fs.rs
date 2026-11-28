@@ -275,32 +275,35 @@ impl From<RawMeta> for StoredMeta {
     }
 }
 
-const META_COLUMNS: &str = "path, is_dir, length(content), draft_error, updated_at";
+/// `SELECT <metadata columns> FROM dav_files` followed by `$rest`, as one `&'static str`.
+macro_rules! select_meta {
+    ($rest:literal) => {
+        concat!(
+            "SELECT path, is_dir, length(content), draft_error, updated_at FROM dav_files",
+            $rest
+        )
+    };
+}
 
 /// One row's metadata, without loading its contents.
 async fn stored_meta(pool: &SqlitePool, path: &str) -> FsResult<Option<StoredMeta>> {
-    let row: Option<RawMeta> = sqlx::query_as(&format!(
-        "SELECT {META_COLUMNS} FROM dav_files WHERE path = ?"
-    ))
-    .bind(path)
-    .fetch_optional(pool)
-    .await
-    .map_err(db_err)?;
+    let row: Option<RawMeta> = sqlx::query_as(select_meta!(" WHERE path = ?"))
+        .bind(path)
+        .fetch_optional(pool)
+        .await
+        .map_err(db_err)?;
     Ok(row.map(StoredMeta::from))
 }
 
 /// Saved rows below `dir` (every saved row for the root), without contents.
 async fn stored_below(pool: &SqlitePool, dir: &str) -> FsResult<Vec<StoredMeta>> {
     let rows: Vec<RawMeta> = if dir.is_empty() {
-        sqlx::query_as(&format!(
-            "SELECT {META_COLUMNS} FROM dav_files WHERE draft_error IS NULL"
-        ))
-        .fetch_all(pool)
-        .await
+        sqlx::query_as(select_meta!(" WHERE draft_error IS NULL"))
+            .fetch_all(pool)
+            .await
     } else {
-        sqlx::query_as(&format!(
-            "SELECT {META_COLUMNS} FROM dav_files
-             WHERE draft_error IS NULL AND path LIKE ? ESCAPE '\\'"
+        sqlx::query_as(select_meta!(
+            " WHERE draft_error IS NULL AND path LIKE ? ESCAPE '\\'"
         ))
         .bind(like_prefix(dir))
         .fetch_all(pool)
@@ -323,12 +326,11 @@ async fn stored_dir_updated(pool: &SqlitePool, dir: &str) -> FsResult<Option<i64
 }
 
 async fn drafts(pool: &SqlitePool) -> FsResult<Vec<StoredMeta>> {
-    let rows: Vec<RawMeta> = sqlx::query_as(&format!(
-        "SELECT {META_COLUMNS} FROM dav_files WHERE draft_error IS NOT NULL ORDER BY path"
-    ))
-    .fetch_all(pool)
-    .await
-    .map_err(db_err)?;
+    let rows: Vec<RawMeta> =
+        sqlx::query_as(select_meta!(" WHERE draft_error IS NOT NULL ORDER BY path"))
+            .fetch_all(pool)
+            .await
+            .map_err(db_err)?;
     Ok(rows
         .into_iter()
         .map(StoredMeta::from)

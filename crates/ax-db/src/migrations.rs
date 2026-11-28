@@ -702,7 +702,10 @@ pub async fn run_migrations(pool: &SqlitePool, from_version: i32) -> Result<(), 
             continue;
         }
         for trimmed in crate::schema::split_statements(migration.sql) {
-            let result = sqlx::query(&trimmed).execute(pool).await;
+            // Safe: statements come from the compiled-in `MIGRATIONS` table.
+            let result = sqlx::query(sqlx::AssertSqlSafe(trimmed.as_str()))
+                .execute(pool)
+                .await;
             if let Err(e) = result {
                 let msg = e.to_string();
                 if msg.contains("duplicate column") || msg.contains("already exists") {

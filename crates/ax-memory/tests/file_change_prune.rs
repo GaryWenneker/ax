@@ -1,6 +1,6 @@
 use ax_memory::{prune_excluded_file_changes, save_file_changes};
 
-async fn count(db: &ax_db::Database, sql: &str) -> i64 {
+async fn count(db: &ax_db::Database, sql: &'static str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(db.pool()).await.unwrap()
 }
 
@@ -109,11 +109,12 @@ async fn prune_removes_only_file_changes_whose_paths_are_all_excluded() {
     .await;
     let tombstones = count(&db, "SELECT COUNT(*) FROM memory_tombstones").await;
     let links = count(&db, "SELECT COUNT(*) FROM memory_links").await;
-    let tombstoned_junk = count(
-        &db,
-        &format!("SELECT COUNT(*) FROM memory_tombstones WHERE memory_id = '{junk_id}'"),
-    )
-    .await;
+    let tombstoned_junk: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM memory_tombstones WHERE memory_id = ?")
+            .bind(&junk_id)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
     let orphan_cues = count(
         &db,
         "SELECT COUNT(*) FROM memory_cues WHERE memory_id NOT IN (SELECT id FROM memories)",

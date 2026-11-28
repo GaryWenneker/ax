@@ -607,16 +607,17 @@ async fn policy_dir_disk_stale(pool: &SqlitePool, policy_dir: &Path) -> Result<b
 
 async fn properties_differ(
     pool: &SqlitePool,
-    table: &str,
-    id_col: &str,
+    table: &'static str,
+    id_col: &'static str,
     id: &str,
     parsed: &crate::types::PolicyProperties,
 ) -> Result<bool, AxError> {
     if parsed.is_empty() {
         return Ok(false);
     }
+    // Safe: table and column are `'static` literals from the callers.
     let sql = format!("SELECT properties FROM {table} WHERE {id_col} = ?");
-    let stored: Option<String> = sqlx::query_scalar(&sql)
+    let stored: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(id)
         .fetch_optional(pool)
         .await
@@ -760,7 +761,7 @@ async fn prune_rules_hybrid(pool: &SqlitePool, keep: &[String]) -> Result<(), Ax
         "DELETE FROM policy_rules WHERE id NOT IN ({placeholders}) \
          AND COALESCE(NULLIF(storage, ''), 'files') != 'database'"
     );
-    let mut q = sqlx::query(&sql);
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
     for id in keep {
         q = q.bind(id);
     }
@@ -785,7 +786,7 @@ async fn prune_skills_hybrid(pool: &SqlitePool, keep: &[String]) -> Result<(), A
         "DELETE FROM policy_skills WHERE name NOT IN ({placeholders}) \
          AND COALESCE(NULLIF(storage, ''), 'files') != 'database'"
     );
-    let mut q = sqlx::query(&sql);
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
     for name in keep {
         q = q.bind(name);
     }
@@ -795,6 +796,8 @@ async fn prune_skills_hybrid(pool: &SqlitePool, keep: &[String]) -> Result<(), A
     Ok(())
 }
 
+// RULE_SELECT / SKILL_SELECT are constant prefixes: queries built from them only
+// append literal clauses, so wrapping them in `AssertSqlSafe` is safe.
 const RULE_SELECT: &str = "SELECT id, level, always_apply, globs, triggers, tags, priority, body, source_path,
                 COALESCE(enabled, 1) as enabled, COALESCE(status, 'approved') as status,
                 COALESCE(scope, 'project') as scope, storage, source, root_id, stub_path, skill_group,
@@ -808,11 +811,12 @@ const SKILL_SELECT: &str = "SELECT name, description, COALESCE(always_apply, 0) 
          FROM policy_skills";
 
 pub async fn list_rules(pool: &SqlitePool) -> Result<Vec<PolicyRuleRow>, AxError> {
-    let rows =
-        sqlx::query_as::<_, RuleDbRow>(&format!("{RULE_SELECT} ORDER BY id COLLATE NOCASE ASC"))
-            .fetch_all(pool)
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    let rows = sqlx::query_as::<_, RuleDbRow>(sqlx::AssertSqlSafe(format!(
+        "{RULE_SELECT} ORDER BY id COLLATE NOCASE ASC"
+    )))
+    .fetch_all(pool)
+    .await
+    .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(rows.into_iter().map(RuleDbRow::into_row).collect())
 }
 
@@ -830,9 +834,9 @@ pub async fn list_rules_enriched(
 }
 
 pub async fn list_skills(pool: &SqlitePool) -> Result<Vec<PolicySkillRow>, AxError> {
-    let rows = sqlx::query_as::<_, SkillDbRow>(&format!(
+    let rows = sqlx::query_as::<_, SkillDbRow>(sqlx::AssertSqlSafe(format!(
         "{SKILL_SELECT} ORDER BY name COLLATE NOCASE ASC"
-    ))
+    )))
     .fetch_all(pool)
     .await
     .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
@@ -884,20 +888,23 @@ pub fn enrich_skill_row(row: &mut PolicySkillRow, default: PolicyStorage) {
 }
 
 pub async fn get_rule(pool: &SqlitePool, id: &str) -> Result<Option<PolicyRuleRow>, AxError> {
-    let row = sqlx::query_as::<_, RuleDbRow>(&format!("{RULE_SELECT} WHERE id = ?"))
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    let row =
+        sqlx::query_as::<_, RuleDbRow>(sqlx::AssertSqlSafe(format!("{RULE_SELECT} WHERE id = ?")))
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(row.map(RuleDbRow::into_row))
 }
 
 pub async fn get_skill(pool: &SqlitePool, name: &str) -> Result<Option<PolicySkillRow>, AxError> {
-    let row = sqlx::query_as::<_, SkillDbRow>(&format!("{SKILL_SELECT} WHERE name = ?"))
-        .bind(name)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    let row = sqlx::query_as::<_, SkillDbRow>(sqlx::AssertSqlSafe(format!(
+        "{SKILL_SELECT} WHERE name = ?"
+    )))
+    .bind(name)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(row.map(SkillDbRow::into_row))
 }
 
@@ -1445,19 +1452,19 @@ mod tests {
             .await
             .unwrap();
         for table in ["global_policy_rules", "global_policy_skills"] {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "CREATE TABLE {table} (project_id INTEGER NOT NULL, item_id TEXT NOT NULL,
                     payload TEXT NOT NULL, synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     level TEXT NOT NULL DEFAULT 'global', PRIMARY KEY (project_id, item_id))"
-            ))
+            )))
             .execute(&pool)
             .await
             .unwrap();
         }
         for (table, name, body, level) in rows {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "INSERT INTO {table} (project_id, item_id, payload, level) VALUES (1, ?, ?, ?)"
-            ))
+            )))
             .bind(name)
             .bind(serde_json::json!({ "body": body }).to_string())
             .bind(level)

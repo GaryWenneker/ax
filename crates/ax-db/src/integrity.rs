@@ -830,14 +830,14 @@ fn step_finding(err: String) -> Finding {
     }
 }
 
-async fn pragma_rows(pool: &SqlitePool, sql: &str) -> Result<Vec<String>, String> {
+async fn pragma_rows(pool: &SqlitePool, sql: &'static str) -> Result<Vec<String>, String> {
     sqlx::query_scalar::<_, String>(sql)
         .fetch_all(pool)
         .await
         .map_err(|err| err.to_string())
 }
 
-async fn count(pool: &SqlitePool, sql: &str) -> Result<i64, String> {
+async fn count(pool: &SqlitePool, sql: &'static str) -> Result<i64, String> {
     sqlx::query_scalar::<_, i64>(sql)
         .fetch_one(pool)
         .await
@@ -884,8 +884,9 @@ async fn push_fts(pool: &SqlitePool, findings: &mut Vec<Finding>) -> Result<(), 
     for name in names {
         // rank 1 compares the index with the content table. Without it, a deleted
         // index row is invisible to the check.
+        // Safe: `fts_tables` keeps only `safe_ident` names ([A-Za-z0-9_]).
         let sql = format!("INSERT INTO \"{name}\"(\"{name}\", rank) VALUES ('integrity-check', 1)");
-        if let Err(err) = sqlx::query(&sql).execute(pool).await {
+        if let Err(err) = sqlx::query(sqlx::AssertSqlSafe(sql)).execute(pool).await {
             let detail = err.to_string();
             if is_locked(&detail) {
                 findings.push(finding("writers_active", &name, detail));
@@ -1057,16 +1058,16 @@ async fn push_embedding_dimension(
     if column == 0 {
         return Ok(());
     }
-    let n = count(
-        pool,
-        &format!(
-            "SELECT COUNT(*) FROM memories
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM memories
              WHERE embedding IS NOT NULL
                AND length(embedding) > 0
-               AND length(embedding) != {EMBED_BYTES}"
-        ),
+               AND length(embedding) != ?1",
     )
-    .await?;
+    .bind(EMBED_BYTES)
+    .fetch_one(pool)
+    .await
+    .map_err(|err| err.to_string())?;
     if n > 0 {
         findings.push(finding(
             "embedding_dimension",
@@ -1173,7 +1174,7 @@ async fn apply(
                 .iter()
                 .find(|(name, _, _)| *name == finding.subject)
             {
-                sqlx::query(sql)
+                sqlx::query(*sql)
                     .execute(pool)
                     .await
                     .map_err(|err| err.to_string())?;
@@ -1182,8 +1183,9 @@ async fn apply(
         }
         if finding.code == "fts" && safe_ident(&finding.subject) {
             let name = &finding.subject;
+            // Safe: guarded by `safe_ident` above.
             let sql = format!("INSERT INTO \"{name}\"(\"{name}\") VALUES ('rebuild')");
-            sqlx::query(&sql)
+            sqlx::query(sqlx::AssertSqlSafe(sql))
                 .execute(pool)
                 .await
                 .map_err(|err| err.to_string())?;
@@ -1270,9 +1272,10 @@ async fn backup_database(path: &Path, backup_dir: &Path) -> Result<PathBuf, Stri
 
 async fn vacuum_into(path: &Path, backup_dir: &Path) -> Result<PathBuf, String> {
     let dest = backup_destination(backup_dir)?;
-    let quoted = dest.display().to_string().replace('\'', "''");
+    let target = dest.display().to_string();
     let pool = open_pool(path, true).await.map_err(|err| err.detail)?;
-    let written = sqlx::query(&format!("VACUUM INTO '{quoted}'"))
+    let written = sqlx::query("VACUUM INTO ?1")
+        .bind(target)
         .execute(&pool)
         .await;
     pool.close().await;

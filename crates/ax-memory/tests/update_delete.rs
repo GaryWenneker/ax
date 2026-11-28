@@ -41,7 +41,7 @@ async fn add_node(pool: &SqlitePool, id: &str, file: &str) {
     .unwrap();
 }
 
-async fn count(pool: &SqlitePool, sql: &str, id: &str) -> i64 {
+async fn count(pool: &SqlitePool, sql: &'static str, id: &str) -> i64 {
     sqlx::query_scalar(sql)
         .bind(id)
         .fetch_one(pool)

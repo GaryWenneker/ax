@@ -249,6 +249,7 @@ struct ProjectRow {
     updated_at: i64,
 }
 
+/// Table and id column for `kind`: literals, so interpolating them into SQL is safe.
 fn project_table(kind: Kind) -> (&'static str, &'static str) {
     match kind {
         Kind::Rule => ("policy_rules", "id"),
@@ -258,9 +259,9 @@ fn project_table(kind: Kind) -> (&'static str, &'static str) {
 
 async fn project_rows(pool: &SqlitePool, kind: Kind) -> Result<Vec<ProjectRow>, Error> {
     let (table, id_col) = project_table(kind);
-    let rows: Vec<(String, String, String, i64)> = sqlx::query_as(&format!(
+    let rows: Vec<(String, String, String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {id_col}, body, source_path, updated_at FROM {table} ORDER BY {id_col}"
-    ))
+    )))
     .fetch_all(pool)
     .await?;
     Ok(rows
@@ -342,10 +343,12 @@ async fn promote(
         return Ok(gpolicy::next_version(global, gkind(kind), name).await?);
     }
     let (table, id_col) = project_table(kind);
-    let row = sqlx::query(&format!("SELECT * FROM {table} WHERE {id_col} = ?"))
-        .bind(name)
-        .fetch_one(pool)
-        .await?;
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT * FROM {table} WHERE {id_col} = ?"
+    )))
+    .bind(name)
+    .fetch_one(pool)
+    .await?;
     let payload = ax_global_db::sync::row_to_policy_json(&row, id_col);
     match gpolicy::upsert_policy_item_from(
         global,
@@ -372,10 +375,12 @@ async fn remove_project_row(pool: &SqlitePool, kind: Kind, row: &ProjectRow) -> 
     )
     .await?;
     let (table, id_col) = project_table(kind);
-    sqlx::query(&format!("DELETE FROM {table} WHERE {id_col} = ?"))
-        .bind(&row.name)
-        .execute(pool)
-        .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DELETE FROM {table} WHERE {id_col} = ?"
+    )))
+    .bind(&row.name)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -474,9 +479,9 @@ mod tests {
         } else {
             "global_policy_skills"
         };
-        let rows: Vec<(i64, String)> = sqlx::query_as(&format!(
+        let rows: Vec<(i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT project_id, payload FROM {table} WHERE item_id = ? ORDER BY project_id"
-        ))
+        )))
         .bind(name)
         .fetch_all(&f.global)
         .await

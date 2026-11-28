@@ -12,7 +12,8 @@ pub async fn initialize_schema(pool: &SqlitePool) -> Result<()> {
     // Every statement is idempotent, so one that lost a race for the write
     // lock with another process opening the same file is simply run again.
     for stmt in split_statements(SCHEMA_SQL) {
-        with_busy_retry(|| sqlx::query(&stmt).execute(pool))
+        // Safe: statements come from the compiled-in global schema.
+        with_busy_retry(|| sqlx::query(sqlx::AssertSqlSafe(stmt.as_str())).execute(pool))
             .await
             .with_context(|| {
                 format!(
@@ -149,25 +150,27 @@ async fn rebuild_member_role_tables(
 }
 
 /// Tables created before the `level` column existed: every row they hold is global.
-async fn add_level_column(pool: &SqlitePool, table: &str) -> Result<()> {
+async fn add_level_column(pool: &SqlitePool, table: &'static str) -> Result<()> {
     add_column_if_missing(pool, table, "level", "TEXT NOT NULL DEFAULT 'global'").await
 }
 
 async fn add_column_if_missing(
     pool: &SqlitePool,
-    table: &str,
-    column: &str,
-    definition: &str,
+    table: &'static str,
+    column: &'static str,
+    definition: &'static str,
 ) -> Result<()> {
-    let has: Option<(String,)> = sqlx::query_as(&format!(
-        "SELECT name FROM pragma_table_info('{table}') WHERE name = '{column}'"
-    ))
-    .fetch_optional(pool)
-    .await?;
+    let has: Option<(String,)> =
+        sqlx::query_as("SELECT name FROM pragma_table_info(?1) WHERE name = ?2")
+            .bind(table)
+            .bind(column)
+            .fetch_optional(pool)
+            .await?;
     if has.is_none() {
-        sqlx::query(&format!(
+        // Safe: table, column and definition are `'static` literals from this module.
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "ALTER TABLE {table} ADD COLUMN {column} {definition}"
-        ))
+        )))
         .execute(pool)
         .await
         .with_context(|| format!("add {column} column to {table}"))?;

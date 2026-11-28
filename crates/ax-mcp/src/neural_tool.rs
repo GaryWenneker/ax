@@ -264,11 +264,13 @@ mod tests {
             .unwrap();
         let legacy = format!("{}{}", root.to_string_lossy(), std::path::MAIN_SEPARATOR);
         for table in ["neural_feedback", "neural_audit", "neural_rank_total"] {
-            sqlx::query(&format!("UPDATE {table} SET project_id = ?"))
-                .bind(&legacy)
-                .execute(pool)
-                .await
-                .unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE {table} SET project_id = ?"
+            )))
+            .bind(&legacy)
+            .execute(pool)
+            .await
+            .unwrap();
         }
         (ax, root, legacy)
     }

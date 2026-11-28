@@ -617,7 +617,8 @@ impl QueryBuilder {
                 "SELECT source, target, kind, metadata, line, col, provenance, confidence FROM edges WHERE source = ? AND kind IN ({})",
                 placeholders.iter().map(|_| "?").collect::<Vec<_>>().join(",")
             );
-            let mut query = sqlx::query_as::<_, EdgeRow>(&sql).bind(node_id);
+            // Safe: only a `?` placeholder list is interpolated.
+            let mut query = sqlx::query_as::<_, EdgeRow>(sqlx::AssertSqlSafe(sql)).bind(node_id);
             for k in kinds {
                 query = query.bind(k.as_str());
             }
@@ -789,7 +790,8 @@ impl QueryBuilder {
                 binds.extend(langs.clone());
             }
             sql.push_str(" LIMIT ? OFFSET ?");
-            let mut q = sqlx::query_as::<_, NodeRow>(&sql);
+            // Safe: only `?` placeholder lists are appended; values are bound.
+            let mut q = sqlx::query_as::<_, NodeRow>(sqlx::AssertSqlSafe(sql));
             for b in &binds {
                 q = q.bind(b);
             }
@@ -817,7 +819,8 @@ impl QueryBuilder {
                     binds.extend(langs.clone());
                 }
                 sql.push_str(" ORDER BY rank LIMIT ? OFFSET ?");
-                let mut q = sqlx::query_as::<_, NodeRow>(&sql);
+                // Safe: only `?` placeholder lists are appended; values are bound.
+                let mut q = sqlx::query_as::<_, NodeRow>(sqlx::AssertSqlSafe(sql));
                 for b in &binds {
                     q = q.bind(b);
                 }
@@ -847,7 +850,8 @@ impl QueryBuilder {
                     binds.extend(langs.clone());
                 }
                 sql.push_str(" LIMIT ? OFFSET ?");
-                let mut q = sqlx::query_as::<_, NodeRow>(&sql);
+                // Safe: only `?` placeholder lists are appended; values are bound.
+                let mut q = sqlx::query_as::<_, NodeRow>(sqlx::AssertSqlSafe(sql));
                 for b in &binds {
                     q = q.bind(b);
                 }
@@ -991,7 +995,8 @@ impl QueryBuilder {
             "SELECT * FROM unresolved_refs WHERE file_path IN ({})",
             placeholders
         );
-        let mut query = sqlx::query_as::<_, UnresolvedRefRow>(&sql);
+        // Safe: only a `?` placeholder list is interpolated.
+        let mut query = sqlx::query_as::<_, UnresolvedRefRow>(sqlx::AssertSqlSafe(sql));
         for f in files {
             query = query.bind(f);
         }
@@ -1160,7 +1165,8 @@ impl QueryBuilder {
         let sql = format!(
             "DELETE FROM unresolved_refs WHERE from_node_id NOT GLOB 'ax-replica/*' AND reference_kind = 'calls' AND reference_name IN ({placeholders})"
         );
-        let mut query = sqlx::query(&sql);
+        // Safe: only a `?` placeholder list is interpolated.
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
         for name in EXTERNAL {
             query = query.bind(*name);
         }
@@ -1236,14 +1242,15 @@ impl QueryBuilder {
 
     async fn count_grouped(
         &self,
-        table: &str,
-        column: &str,
+        table: &'static str,
+        column: &'static str,
     ) -> Result<HashMap<String, i64>, AxError> {
         let sql = format!(
             "SELECT {}, COUNT(*) as cnt FROM {} GROUP BY {}",
             column, table, column
         );
-        let rows: Vec<(String, i64)> = sqlx::query_as(&sql)
+        // Safe: table and column are `'static` identifiers chosen by the caller.
+        let rows: Vec<(String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
             .fetch_all(&self.pool)
             .await
             .map_err(|e| self.sql_err(e))?;

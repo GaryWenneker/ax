@@ -758,7 +758,7 @@ mod tests {
             .unwrap();
     }
 
-    async fn count(pool: &SqlitePool, sql: &str) -> i64 {
+    async fn count(pool: &SqlitePool, sql: &'static str) -> i64 {
         sqlx::query(sql).fetch_one(pool).await.unwrap().get(0)
     }
 
@@ -1502,11 +1502,13 @@ mod tests {
         let legacy = format!("{}{}", root.to_string_lossy(), std::path::MAIN_SEPARATOR);
         assert_ne!(legacy, project_id(&root));
         for table in ["neural_feedback", "neural_audit", "neural_rank_total"] {
-            sqlx::query(&format!("UPDATE {table} SET project_id = ?"))
-                .bind(&legacy)
-                .execute(pool)
-                .await
-                .unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE {table} SET project_id = ?"
+            )))
+            .bind(&legacy)
+            .execute(pool)
+            .await
+            .unwrap();
         }
         // A newer row under the canonical key must merge, not collide.
         crate::store::record_rank(pool, &project_id(&root), 1, 10, 100)
@@ -1524,8 +1526,14 @@ mod tests {
         assert!(predicted["predictions"].as_array().unwrap().len() >= 3);
         let canonical = project_id(&root);
         for table in ["neural_feedback", "neural_audit", "neural_rank_total"] {
-            let sql = format!("SELECT COUNT(*) FROM {table} WHERE project_id != '{canonical}'");
-            assert_eq!(count(pool, &sql).await, 0, "{table} keeps a legacy key");
+            // Safe: `table` comes from the literal list above; the key is bound.
+            let sql = format!("SELECT COUNT(*) FROM {table} WHERE project_id != ?");
+            let left: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+                .bind(&canonical)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            assert_eq!(left, 0, "{table} keeps a legacy key");
         }
     }
 
@@ -1543,9 +1551,13 @@ mod tests {
         assert_eq!(canonical, project_id(&root));
         let totals = crate::store::rank_totals(pool, &canonical).await.unwrap();
         assert_eq!(totals.map(|totals| totals.preflights), Some(1));
-        let sql =
-            format!("SELECT COUNT(*) FROM neural_rank_total WHERE project_id != '{canonical}'");
-        assert_eq!(count(pool, &sql).await, 0);
+        let left: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM neural_rank_total WHERE project_id != ?")
+                .bind(&canonical)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        assert_eq!(left, 0);
         // The canonical spelling has nothing to adopt and leaves the rows alone.
         assert_eq!(adopted_project_id(pool, &root).await, canonical);
         let totals = crate::store::rank_totals(pool, &canonical).await.unwrap();

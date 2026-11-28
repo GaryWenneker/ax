@@ -176,11 +176,11 @@ async fn stored(pid: i64, kind: PolicyKind, id: &str) -> Option<Value> {
 }
 
 async fn rows_named(kind: PolicyKind, id: &str) -> usize {
-    let table = match kind {
-        PolicyKind::Rules => "global_policy_rules",
-        PolicyKind::Skills => "global_policy_skills",
+    let sql = match kind {
+        PolicyKind::Rules => "SELECT COUNT(*) FROM global_policy_rules WHERE item_id = ?",
+        PolicyKind::Skills => "SELECT COUNT(*) FROM global_policy_skills WHERE item_id = ?",
     };
-    let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE item_id = ?"))
+    let n: i64 = sqlx::query_scalar(sql)
         .bind(id)
         .fetch_one(&global_pool().await)
         .await

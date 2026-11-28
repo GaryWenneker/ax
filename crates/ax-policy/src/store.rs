@@ -815,9 +815,12 @@ pub async fn open_rw_pool(db_path: &Path) -> Result<sqlx::SqlitePool, AxError> {
                 .acquire_timeout(timeout)
                 .after_connect(move |conn, _meta| {
                     Box::pin(async move {
-                        sqlx::query(&format!("PRAGMA busy_timeout = {timeout_ms}"))
-                            .execute(&mut *conn)
-                            .await?;
+                        // Safe: integer milliseconds.
+                        sqlx::query(sqlx::AssertSqlSafe(format!(
+                            "PRAGMA busy_timeout = {timeout_ms}"
+                        )))
+                        .execute(&mut *conn)
+                        .await?;
                         Ok(())
                     })
                 })

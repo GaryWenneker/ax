@@ -23,7 +23,7 @@ fn turn(id: &str, title: &str) -> TurnRecord {
     }
 }
 
-async fn count(db: &ax_db::Database, sql: &str) -> i64 {
+async fn count(db: &ax_db::Database, sql: &'static str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(db.pool()).await.unwrap()
 }
 

@@ -269,7 +269,7 @@ async fn rows_of(
     pool: &SqlitePool,
     tables: &[String],
     table: &str,
-    sql: &str,
+    sql: &'static str,
 ) -> Result<Vec<sqlx::sqlite::SqliteRow>, String> {
     if !tables.iter().any(|name| name == table) {
         return Ok(Vec::new());

@@ -80,6 +80,7 @@ pub async fn record_if_changed(
 }
 
 async fn prune_old(pool: &SqlitePool, kind: &str, item_id: &str) -> Result<(), AxError> {
+    // Safe: the only interpolated value is the integer constant `POLICY_REVISION_CAP`.
     let sql = format!(
         "DELETE FROM policy_revisions
          WHERE id IN (
@@ -89,7 +90,7 @@ async fn prune_old(pool: &SqlitePool, kind: &str, item_id: &str) -> Result<(), A
            LIMIT -1 OFFSET {POLICY_REVISION_CAP}
          )"
     );
-    sqlx::query(&sql)
+    sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(kind)
         .bind(item_id)
         .execute(pool)

@@ -203,25 +203,27 @@ async fn sync_policy_table(
     global: &SqlitePool,
     project: &SqlitePool,
     pid: i64,
-    source_table: &str,
-    id_col: &str,
-    dest_table: &str,
+    source_table: &'static str,
+    id_col: &'static str,
+    dest_table: &'static str,
 ) -> Result<()> {
+    // Safe (all queries below): the table names are `'static` literals from `sync_project`.
     if !table_exists(project, source_table).await {
         return Ok(());
     }
-    let rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(&format!("SELECT * FROM {source_table}"))
-        .fetch_all(project)
-        .await
-        .unwrap_or_default();
+    let rows: Vec<sqlx::sqlite::SqliteRow> =
+        sqlx::query(sqlx::AssertSqlSafe(format!("SELECT * FROM {source_table}")))
+            .fetch_all(project)
+            .await
+            .unwrap_or_default();
     for row in rows {
         let item_id: String = row.try_get::<String, _>(id_col).unwrap_or_default();
         if item_id.is_empty() {
             continue;
         }
-        let at_global_level: Option<(i64,)> = sqlx::query_as(&format!(
+        let at_global_level: Option<(i64,)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT 1 FROM {dest_table} WHERE item_id = ? AND level = 'global' LIMIT 1"
-        ))
+        )))
         .bind(&item_id)
         .fetch_optional(global)
         .await?;
@@ -229,11 +231,11 @@ async fn sync_policy_table(
             continue;
         }
         let payload = row_to_policy_json(&row, id_col);
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "INSERT INTO {dest_table} (project_id, item_id, payload, level) VALUES (?, ?, ?, 'mirror')
              ON CONFLICT(project_id, item_id) DO UPDATE SET payload = excluded.payload, synced_at = CURRENT_TIMESTAMP
              WHERE level = 'mirror'"
-        ))
+        )))
         .bind(pid)
         .bind(&item_id)
         .bind(payload.to_string())

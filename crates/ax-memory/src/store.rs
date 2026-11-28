@@ -110,6 +110,8 @@ fn row_from_db(
     }
 }
 
+// A constant prefix: queries built from it append only literal clauses and `?`
+// placeholders, so wrapping them in `AssertSqlSafe` is safe.
 const MEMORY_SELECT: &str = r#"SELECT id, kind, title, body, tags, files, confidence, source, created_at, updated_at, enabled, COALESCE(tier, 't2')
            FROM memories"#;
 
@@ -119,9 +121,9 @@ pub(crate) async fn expired_turn_rows(
     pool: &SqlitePool,
     before: i64,
 ) -> Result<Vec<MemoryRow>, AxError> {
-    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+    let rows = sqlx::query_as::<_, MemoryDbRow>(sqlx::AssertSqlSafe(format!(
         "{MEMORY_SELECT} WHERE kind IN (?, ?) AND created_at < ? AND COALESCE(tier, 't1') != 't3' ORDER BY created_at, id LIMIT 10000"
-    ))
+    )))
     .bind(crate::turns::TURN_KIND)
     .bind(crate::turns::FILE_CHANGE_KIND)
     .bind(before)
@@ -137,13 +139,14 @@ pub(crate) async fn turn_rows_by_id(
 ) -> Result<Vec<MemoryRow>, AxError> {
     let mut out = Vec::new();
     for id in ids {
-        let row =
-            sqlx::query_as::<_, MemoryDbRow>(&format!("{MEMORY_SELECT} WHERE id = ? AND kind = ?"))
-                .bind(id)
-                .bind(crate::turns::TURN_KIND)
-                .fetch_optional(pool)
-                .await
-                .map_err(|e| db_err(pool, e))?;
+        let row = sqlx::query_as::<_, MemoryDbRow>(sqlx::AssertSqlSafe(format!(
+            "{MEMORY_SELECT} WHERE id = ? AND kind = ?"
+        )))
+        .bind(id)
+        .bind(crate::turns::TURN_KIND)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| db_err(pool, e))?;
         out.extend(row.map(row_from_db));
     }
     Ok(out)
@@ -151,9 +154,9 @@ pub(crate) async fn turn_rows_by_id(
 
 /// Every `turn` memory, oldest first.
 pub async fn turn_rows(pool: &SqlitePool) -> Result<Vec<MemoryRow>, AxError> {
-    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+    let rows = sqlx::query_as::<_, MemoryDbRow>(sqlx::AssertSqlSafe(format!(
         "{MEMORY_SELECT} WHERE kind = ? ORDER BY created_at, id"
-    ))
+    )))
     .bind(crate::turns::TURN_KIND)
     .fetch_all(pool)
     .await
@@ -182,14 +185,14 @@ pub(crate) async fn matching_turn_rows(
 ) -> Result<Vec<MemoryRow>, AxError> {
     let as_json = |v: &[String]| serde_json::to_string(v).unwrap_or_else(|_| "[]".into());
     let suffix_like = suffix.map(path_suffix_pattern);
-    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+    let rows = sqlx::query_as::<_, MemoryDbRow>(sqlx::AssertSqlSafe(format!(
         "{MEMORY_SELECT} WHERE kind = ? AND enabled = 1 AND COALESCE(tier, 't1') != 't3' AND created_at >= ? \
          AND (id IN (SELECT value FROM json_each(?)) \
               OR EXISTS (SELECT 1 FROM json_each(memories.files) AS f \
                          WHERE f.value IN (SELECT value FROM json_each(?)) \
                             OR f.value LIKE ? ESCAPE '\\')) \
          ORDER BY created_at DESC, id LIMIT ?"
-    ))
+    )))
     .bind(crate::turns::TURN_KIND)
     .bind(since.unwrap_or(i64::MIN))
     .bind(as_json(ids))
@@ -207,9 +210,9 @@ pub(crate) async fn recent_turn_rows(
     pool: &SqlitePool,
     limit: usize,
 ) -> Result<Vec<MemoryRow>, AxError> {
-    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+    let rows = sqlx::query_as::<_, MemoryDbRow>(sqlx::AssertSqlSafe(format!(
         "{MEMORY_SELECT} WHERE kind = ? AND enabled = 1 AND COALESCE(tier, 't1') != 't3' ORDER BY created_at DESC, id LIMIT ?"
-    ))
+    )))
     .bind(crate::turns::TURN_KIND)
     .bind(i64::try_from(limit).unwrap_or(i64::MAX))
     .fetch_all(pool)
@@ -227,10 +230,10 @@ pub(crate) async fn turn_by_request_id(
     if id.is_empty() || id.contains(['%', '_', '\n', '\r']) {
         return Ok(None);
     }
-    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+    let rows = sqlx::query_as::<_, MemoryDbRow>(sqlx::AssertSqlSafe(format!(
         "{MEMORY_SELECT} WHERE kind = ? AND enabled = 1 AND body LIKE ? \
          ORDER BY created_at DESC LIMIT 20"
-    ))
+    )))
     .bind(crate::turns::TURN_KIND)
     .bind(format!("%\nRequest: {id}%"))
     .fetch_all(pool)
@@ -780,7 +783,7 @@ async fn fts_ranking(
            LIMIT ?"#
         )
     };
-    sqlx::query_scalar::<_, String>(&sql)
+    sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql))
         .bind(&fts_query)
         .bind(overfetch as i64)
         .fetch_all(pool)
@@ -844,7 +847,8 @@ async fn top_by_cosine(
 
     let flush_at = keep.saturating_mul(2).max(64);
     let mut best: Vec<(String, f32)> = Vec::new();
-    let mut rows = sqlx::query_as::<_, (String, Vec<u8>)>(sql).fetch(pool);
+    // Safe: callers pass a literal or a query assembled from static fragments only.
+    let mut rows = sqlx::query_as::<_, (String, Vec<u8>)>(sqlx::AssertSqlSafe(sql)).fetch(pool);
     while let Some((id, blob)) = rows.try_next().await.map_err(|e| db_err(pool, e))? {
         let Some(embedding) = crate::embed::blob_to_embedding(&blob) else {
             continue;
@@ -1390,12 +1394,12 @@ pub(crate) async fn enabled_with_tag(
     pool: &SqlitePool,
     tag: &str,
 ) -> Result<Vec<MemoryRow>, AxError> {
-    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+    let rows = sqlx::query_as::<_, MemoryDbRow>(sqlx::AssertSqlSafe(format!(
         "{MEMORY_SELECT} WHERE enabled = 1 AND EXISTS (
              SELECT 1 FROM json_each(CASE WHEN json_valid(memories.tags) THEN memories.tags ELSE '[]' END) t
              WHERE lower(t.value) = lower(?))
          ORDER BY id"
-    ))
+    )))
     .bind(tag)
     .fetch_all(pool)
     .await
@@ -1412,9 +1416,9 @@ pub async fn list(
         .fetch_one(pool)
         .await
         .map_err(|e| db_err(pool, e))?;
-    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+    let rows = sqlx::query_as::<_, MemoryDbRow>(sqlx::AssertSqlSafe(format!(
         "{MEMORY_SELECT} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?"
-    ))
+    )))
     .bind(limit as i64)
     .bind(offset as i64)
     .fetch_all(pool)
@@ -1443,7 +1447,7 @@ pub(crate) async fn backup_page(
         sql.push_str(" AND updated_at > ?");
     }
     sql.push_str(" ORDER BY updated_at DESC, id DESC LIMIT ?");
-    let mut query = sqlx::query_as::<_, MemoryDbRow>(&sql);
+    let mut query = sqlx::query_as::<_, MemoryDbRow>(sqlx::AssertSqlSafe(sql));
     if let Some((updated_at, id)) = after {
         query = query.bind(updated_at).bind(updated_at).bind(id.to_string());
     }
@@ -1470,9 +1474,9 @@ pub async fn list_for_session(
         .fetch_one(pool)
         .await
         .map_err(|e| db_err(pool, e))?;
-    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+    let rows = sqlx::query_as::<_, MemoryDbRow>(sqlx::AssertSqlSafe(format!(
         "{MEMORY_SELECT} WHERE session_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?"
-    ))
+    )))
     .bind(session)
     .bind(limit as i64)
     .bind(offset as i64)
@@ -1495,7 +1499,7 @@ pub async fn session_ids(
         let marks = vec!["?"; chunk.len()].join(", ");
         let sql =
             format!("SELECT id, COALESCE(session_id, '') FROM memories WHERE id IN ({marks})");
-        let mut query = sqlx::query_as::<_, (String, String)>(&sql);
+        let mut query = sqlx::query_as::<_, (String, String)>(sqlx::AssertSqlSafe(sql));
         for id in chunk {
             query = query.bind(id);
         }
@@ -1535,11 +1539,13 @@ pub async fn link_catalog(pool: &SqlitePool) -> Result<Vec<MemoryRow>, AxError> 
 }
 
 pub async fn get(pool: &SqlitePool, id: &str) -> Result<Option<MemoryRow>, AxError> {
-    let row = sqlx::query_as::<_, MemoryDbRow>(&format!("{MEMORY_SELECT} WHERE id = ?"))
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| db_err(pool, e))?;
+    let row = sqlx::query_as::<_, MemoryDbRow>(sqlx::AssertSqlSafe(format!(
+        "{MEMORY_SELECT} WHERE id = ?"
+    )))
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| db_err(pool, e))?;
     Ok(row.map(row_from_db))
 }
 
@@ -1552,9 +1558,9 @@ pub(crate) async fn get_many(
         return Ok(std::collections::HashMap::new());
     }
     let ids = serde_json::to_string(ids).unwrap_or_else(|_| "[]".into());
-    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+    let rows = sqlx::query_as::<_, MemoryDbRow>(sqlx::AssertSqlSafe(format!(
         "{MEMORY_SELECT} WHERE id IN (SELECT value FROM json_each(?))"
-    ))
+    )))
     .bind(ids)
     .fetch_all(pool)
     .await

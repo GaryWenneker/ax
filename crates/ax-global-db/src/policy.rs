@@ -22,14 +22,15 @@ pub async fn extend_with_foreign_policy(
         PolicyKind::Rules => "global_policy_rules",
         PolicyKind::Skills => "global_policy_skills",
     };
-    let rows: Vec<(i64, String, String, String, String)> = sqlx::query_as(&format!(
-        "SELECT p.id, p.name, p.path, g.item_id, g.payload
+    let rows: Vec<(i64, String, String, String, String)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT p.id, p.name, p.path, g.item_id, g.payload
          FROM {table} g
          JOIN projects p ON p.id = g.project_id"
-    ))
-    .fetch_all(global)
-    .await
-    .unwrap_or_default();
+        )))
+        .fetch_all(global)
+        .await
+        .unwrap_or_default();
 
     let local_ids: std::collections::HashSet<String> = local
         .iter()
@@ -90,6 +91,7 @@ pub async fn ensure_project(global: &SqlitePool, project_root: &Path) -> Result<
     Ok(row.0)
 }
 
+/// The table for `kind`. Interpolating it into SQL is safe: it is one of two literals.
 fn table_for(kind: PolicyKind) -> &'static str {
     match kind {
         PolicyKind::Rules => "global_policy_rules",
@@ -126,9 +128,9 @@ pub async fn policy_item_exists(
     item_id: &str,
 ) -> Result<bool> {
     let table = table_for(kind);
-    let row: Option<(i64,)> = sqlx::query_as(&format!(
+    let row: Option<(i64,)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT 1 FROM {table} WHERE project_id = ? AND item_id = ? LIMIT 1"
-    ))
+    )))
     .bind(project_id)
     .bind(item_id)
     .fetch_optional(global)
@@ -143,11 +145,12 @@ pub async fn global_policy_item_exists(
     item_id: &str,
 ) -> Result<bool> {
     let table = table_for(kind);
-    let row: Option<(i64,)> =
-        sqlx::query_as(&format!("SELECT 1 FROM {table} WHERE item_id = ? LIMIT 1"))
-            .bind(item_id)
-            .fetch_optional(global)
-            .await?;
+    let row: Option<(i64,)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT 1 FROM {table} WHERE item_id = ? LIMIT 1"
+    )))
+    .bind(item_id)
+    .fetch_optional(global)
+    .await?;
     Ok(row.is_some())
 }
 
@@ -178,17 +181,17 @@ pub async fn upsert_policy_item_from(
     // Reserve the writer before reading the previous payload: upgrading a deferred
     // WAL read transaction can fail immediately when another writer commits.
     let mut tx = global.begin_with("BEGIN IMMEDIATE").await?;
-    let current: Option<(String,)> = sqlx::query_as(&format!(
+    let current: Option<(String,)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT payload FROM {table} WHERE project_id = ? AND item_id = ?"
-    ))
+    )))
     .bind(project_id)
     .bind(item_id)
     .fetch_optional(&mut *tx)
     .await?;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO {table} (project_id, item_id, payload) VALUES (?, ?, ?)
          ON CONFLICT(project_id, item_id) DO UPDATE SET payload = excluded.payload, synced_at = CURRENT_TIMESTAMP"
-    ))
+    )))
     .bind(project_id)
     .bind(item_id)
     .bind(&text)
@@ -310,11 +313,12 @@ pub async fn next_version(global: &SqlitePool, kind: PolicyKind, item_id: &str) 
         return Ok(max + 1);
     }
     let table = table_for(kind);
-    let stored: Option<(i64,)> =
-        sqlx::query_as(&format!("SELECT 1 FROM {table} WHERE item_id = ? LIMIT 1"))
-            .bind(item_id)
-            .fetch_optional(&mut *conn)
-            .await?;
+    let stored: Option<(i64,)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT 1 FROM {table} WHERE item_id = ? LIMIT 1"
+    )))
+    .bind(item_id)
+    .fetch_optional(&mut *conn)
+    .await?;
     Ok(if stored.is_some() { 2 } else { 1 })
 }
 
@@ -326,17 +330,17 @@ pub async fn shadowed_mirrors(
     delete: bool,
 ) -> Result<Vec<(i64, String)>> {
     let table = table_for(kind);
-    let shadowed: Vec<(i64, String)> = sqlx::query_as(&format!(
+    let shadowed: Vec<(i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT project_id, item_id FROM {table} WHERE level = 'mirror'
          AND item_id IN (SELECT item_id FROM {table} WHERE level = 'global') ORDER BY item_id, project_id"
-    ))
+    )))
     .fetch_all(global)
     .await?;
     if delete {
         for (pid, item_id) in &shadowed {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "DELETE FROM {table} WHERE project_id = ? AND item_id = ? AND level = 'mirror'"
-            ))
+            )))
             .bind(pid)
             .bind(item_id)
             .execute(global)
@@ -372,9 +376,9 @@ pub async fn load_policy_item(
     item_id: &str,
 ) -> Result<Option<Value>> {
     let table = table_for(kind);
-    let row: Option<(String,)> = sqlx::query_as(&format!(
+    let row: Option<(String,)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT payload FROM {table} WHERE project_id = ? AND item_id = ?"
-    ))
+    )))
     .bind(project_id)
     .bind(item_id)
     .fetch_optional(global)
@@ -401,9 +405,9 @@ pub async fn delete_policy_item_from(
 ) -> Result<bool> {
     let table = table_for(kind);
     let mut tx = global.begin().await?;
-    let current: Option<(String,)> = sqlx::query_as(&format!(
+    let current: Option<(String,)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT payload FROM {table} WHERE project_id = ? AND item_id = ?"
-    ))
+    )))
     .bind(project_id)
     .bind(item_id)
     .fetch_optional(&mut *tx)
@@ -412,9 +416,9 @@ pub async fn delete_policy_item_from(
         return Ok(false);
     };
     record_revision(&mut tx, kind, item_id, project_id, &payload, source).await?;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "DELETE FROM {table} WHERE project_id = ? AND item_id = ?"
-    ))
+    )))
     .bind(project_id)
     .bind(item_id)
     .execute(&mut *tx)

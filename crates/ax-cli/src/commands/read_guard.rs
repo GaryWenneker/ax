@@ -21,6 +21,7 @@ const STATE_CAP: usize = 2_000;
 const MAX_LISTED: usize = 8;
 const MIN_SYMBOL_LEN: usize = 3;
 const EVALUATE_BUDGET: Duration = Duration::from_millis(1_500);
+/// A literal SQL list; queries interpolating it (and `MAX_LISTED`) are safe.
 const NON_SYMBOL_KINDS: &str = "('file','doc','table')";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -621,7 +622,7 @@ async fn file_symbols(conn: &mut SqliteConnection, rel: &str) -> Option<Vec<Symb
         "SELECT name, kind, start_line, end_line FROM nodes WHERE file_path = ? AND kind NOT IN {NON_SYMBOL_KINDS} ORDER BY start_line LIMIT {}",
         MAX_LISTED + 1
     );
-    let rows = sqlx::query(&sql)
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(rel)
         .fetch_all(&mut *conn)
         .await
@@ -652,7 +653,7 @@ async fn named_symbols(
         MAX_LISTED + 1
     );
     let dir_prefix = format!("{scope}/");
-    let rows = sqlx::query(&sql)
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(name)
         .bind(scope)
         .bind(scope)

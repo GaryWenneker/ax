@@ -535,7 +535,7 @@ async fn a_dangling_vector_map_row_is_deleted() {
     cleanup(&root);
 }
 
-async fn cue_count_query(path: &Path, sql: &str) -> i64 {
+async fn cue_count_query(path: &Path, sql: &'static str) -> i64 {
     let db = Database::open(path).await.unwrap();
     let count: i64 = sqlx::query_scalar(sql).fetch_one(db.pool()).await.unwrap();
     db.close().await;

@@ -110,7 +110,7 @@ async fn seed(pool: &sqlx::SqlitePool, rows: usize) {
                 (vector, json)
             })
             .clone();
-        sqlx::query(&insert)
+        sqlx::query(sqlx::AssertSqlSafe(insert.as_str()))
             .bind(&id)
             .bind(&title)
             .bind(&body)
