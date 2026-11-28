@@ -632,6 +632,23 @@ ax memory import
 ax memory import --path ./shared-memories.jsonl
 ```
 
+### `ax memory prune-file-changes`
+
+Remove automatic `file_change` memories (`changed <path>`) whose every path the index excludes: builtin skip folders such as `target`, `node_modules`, and `.git`, dot-folders such as `.claude/worktrees`, `ax.json` excludes, and gitignored paths (every `.gitignore`, `.git/info/exclude`, and the global excludes file). Sync and the file watcher no longer write these memories; this command removes the ones older builds wrote. Other memory kinds are never touched.
+
+Without `--apply` it is a dry run: it prints how many memories match, the folders they name, and deletes nothing. With `--apply`, each matched memory is purged with its cues, links, and vector, and its id is tombstoned so import and restore cannot bring it back.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--apply` | off | Delete the matched memories |
+| `--json` | off | Print the report as JSON (`dry_run`, `scanned`, `matched`, `purged`, `kept`, `areas`, `sample`) |
+
+```bash
+ax memory prune-file-changes
+ax memory prune-file-changes --json
+ax memory prune-file-changes --apply
+```
+
 ### `ax docs-catalog sync`
 
 Build `documentation-catalog` memories from an optional git wiki, `.docs/`, agent skills, and script READMEs, import them into `ax.db`, and run `ax sync`. The Command Center Memory page (**Sync docs catalog**) uses the same engine.
