@@ -1,0 +1,513 @@
+/* ---- Policy ---- */
+.policy-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.badge {
+  font-size: var(--fs-xs);
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+}
+
+.editor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  min-height: 50vh;
+}
+
+.form-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.form-panel input,
+.form-panel select,
+.form-panel textarea {
+  font-size: calc(var(--fs-base) * var(--ui-scale));
+  padding: 4px 8px;
+  border: 1px solid var(--border-hi);
+  background: var(--bg-input);
+  color: var(--text);
+  width: 100%;
+}
+
+.form-panel .checkbox {
+  flex-direction: row;
+  align-items: center;
+}
+
+.md-panel {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  min-height: 280px;
+}
+
+.md-editor-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 280px;
+}
+
+.md-editor-wrap .w-md-editor {
+  background: var(--bg);
+  color: var(--text);
+  border: none;
+  box-shadow: none;
+}
+
+.md-editor-wrap .w-md-editor-toolbar {
+  background: var(--bg-side);
+  border-bottom: 1px solid var(--border);
+  padding: 2px;
+}
+
+.md-editor-wrap .w-md-editor-toolbar li > button {
+  color: var(--text-dim);
+  min-height: 28px;
+  min-width: 28px;
+}
+
+.md-editor-wrap .w-md-editor-content { background: var(--bg); }
+
+/* Source | preview split with a real vertical resize handle */
+.md-editor-split {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.md-editor-split-edit {
+  width: var(--md-edit-pct, 50%);
+  min-width: 180px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.md-editor-split-edit .w-md-editor,
+.md-editor-split-edit .w-md-editor-content {
+  height: 100% !important;
+  min-height: 0;
+}
+
+.md-editor-split-preview {
+  flex: 1;
+  min-width: 180px;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg);
+}
+
+.md-editor-split--single .md-editor-split-edit {
+  width: auto;
+  flex: 1;
+}
+
+.policy-body-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.policy-body-toggle {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.policy-body-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 0;
+}
+
+.policy-body-toggle-btn + .policy-body-toggle-btn {
+  margin-left: -1px;
+}
+
+.policy-body-toggle-btn--active {
+  border-color: var(--accent-text);
+  color: var(--text-hi);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.md-editor-split-preview .md-preview-wrap {
+  height: 100%;
+  min-height: 0;
+  padding: clamp(16px, 2vw, 28px);
+  box-sizing: border-box;
+}
+
+.md-preview-resize-handle {
+  width: 12px;
+  min-width: 12px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  position: relative;
+  z-index: 20;
+  touch-action: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-side);
+  border-left: 1px solid var(--border-hi);
+  border-right: 1px solid var(--border-hi);
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.md-preview-resize-handle:hover,
+body.md-split-resizing .md-preview-resize-handle {
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-side));
+  border-color: var(--accent-text);
+}
+
+body.md-split-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.md-split-resizing .md-editor-split {
+  pointer-events: none;
+}
+
+body.md-split-resizing .md-preview-resize-handle {
+  pointer-events: auto;
+}
+
+.md-editor-wrap .w-md-editor-text,
+.md-editor-wrap .w-md-editor-text-pre,
+.md-editor-wrap .w-md-editor-text-pre > code,
+.md-editor-wrap .w-md-editor-text-input {
+  font-size: calc(var(--fs-base) * var(--ui-scale)) !important;
+  line-height: 1.5 !important;
+  font-family: var(--font-mono) !important;
+  letter-spacing: 0 !important;
+  font-variant-ligatures: none !important;
+  font-weight: 400 !important;
+  font-style: normal !important;
+  white-space: pre-wrap !important;
+  overflow-wrap: break-word !important;
+  word-break: break-word !important;
+}
+
+.md-editor-wrap .w-md-editor-text-pre code,
+.md-editor-wrap .w-md-editor-text-pre code * {
+  font-weight: 400 !important;
+  font-style: normal !important;
+}
+
+/* Keep textarea glyphs invisible even when selected (overlay stays the only paint).
+   ::selection and ::-moz-selection MUST be separate rules — browsers drop a grouped selector. */
+.md-editor-wrap textarea.w-md-editor-text-input {
+  color: transparent !important;
+  caret-color: var(--text) !important;
+  -webkit-text-fill-color: transparent !important;
+}
+
+.md-editor-wrap textarea.w-md-editor-text-input::selection {
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  background: rgba(88, 166, 255, 0.38) !important;
+}
+
+.md-editor-wrap textarea.w-md-editor-text-input::-moz-selection {
+  color: transparent !important;
+  background: rgba(88, 166, 255, 0.38) !important;
+}
+
+.md-editor-wrap .w-md-editor-preview {
+  box-sizing: border-box;
+  padding: clamp(20px, 2.4vw, 32px) !important;
+  overflow: auto;
+}
+
+.md-editor-wrap .wmde-markdown {
+  background: var(--bg);
+  color: var(--text);
+  font-size: calc(var(--fs-base) * var(--ui-scale));
+  box-sizing: border-box;
+  padding: 0;
+}
+
+.md-editor-wrap .wmde-markdown > :first-child {
+  margin-top: 0;
+}
+
+.md-editor-wrap .wmde-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.md-editor-wrap .wmde-markdown pre,
+.md-editor-wrap .w-md-editor-text-pre code,
+.md-editor-wrap .w-md-editor-text-input {
+  font-family: var(--font-mono) !important;
+}
+
+.md-editor-wrap .wmde-markdown pre {
+  background: rgba(0, 0, 0, 0.35) !important;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px !important;
+  overflow: auto;
+}
+
+.md-editor-wrap .wmde-markdown code {
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--accent-text);
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+}
+
+.md-editor-wrap .wmde-markdown pre code {
+  background: transparent;
+  color: var(--text);
+  padding: 0;
+}
+
+.page-md-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 560px;
+}
+
+.page-md-panel .md-editor-wrap {
+  flex: 1;
+  min-height: 520px;
+}
+
+.md-preview-wrap {
+  flex: 1;
+  min-height: 520px;
+  padding: clamp(18px, 2.2vw, 28px);
+  overflow: auto;
+  font-size: calc(var(--fs-base) * var(--ui-scale));
+  line-height: 1.55;
+  color: var(--text);
+  box-sizing: border-box;
+}
+
+.md-preview-wrap .wmde-markdown {
+  background: transparent;
+  color: var(--text);
+  padding: 0;
+}
+
+.md-preview-wrap.wmde-markdown {
+  background: transparent;
+  color: var(--text);
+}
+
+.md-preview-wrap .wmde-markdown > :first-child,
+.md-preview-wrap > .wmde-markdown:first-child {
+  margin-top: 0;
+}
+
+.page-md-preview {
+  border-top: 1px solid var(--border);
+}
+
+.policy-view-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.policy-view-meta .detail-kv--stack {
+  align-items: flex-start;
+}
+
+.policy-view-meta .detail-kv--stack .detail-val {
+  width: 100%;
+}
+
+.policy-view-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.policy-view-empty {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.policy-properties {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.policy-properties-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.policy-properties-row .settings-input,
+.policy-properties-row .settings-select {
+  width: 100%;
+  min-width: 0;
+}
+
+.policy-properties-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.policy-properties-read {
+  display: flex;
+  gap: 8px;
+}
+
+.policy-properties-read-key {
+  color: var(--text-dim);
+  min-width: 6rem;
+}
+
+.policy-property-name {
+  grid-area: title;
+  width: 8.5rem;
+  min-width: 8.5rem;
+  max-width: 8.5rem;
+}
+
+.policy-property-label {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  text-align: left;
+  cursor: text;
+}
+
+.policy-property-add {
+  grid-area: title;
+  justify-self: start;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.policy-property-add:hover,
+.policy-property-add:focus-visible {
+  color: var(--text-hi);
+}
+
+.policy-property-value {
+  position: relative;
+}
+
+.page-editor-grid .policy-property-value > .policy-property-type,
+.policy-inline-pane--props .policy-property-value > .policy-property-type {
+  width: auto;
+  max-width: 8rem;
+  flex: 0 0 auto;
+}
+
+.policy-property-value:has(.policy-property-type) > .settings-input {
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.policy-property-remove {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0;
+  border: 0;
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.settings-row:hover .policy-property-remove,
+.policy-property-remove:focus-visible {
+  opacity: 1;
+}
+
+.page-editor-grid .policy-properties-error,
+.policy-inline-pane--props .policy-properties-error {
+  grid-column: 1 / -1;
+  padding: 2px var(--card-pad-x) 8px;
+}
+
+.tab-bar {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab-bar button {
+  flex: 1;
+  min-height: 28px;
+  border: none;
+  background: var(--bg-side);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: calc(var(--fs-base) * var(--ui-scale));
+}
+
+.tab-bar button.active {
+  background: var(--bg);
+  color: var(--text-hi);
+  font-weight: 600;
+}
+
+.match-result {
+  margin-top: 10px;
+  white-space: pre-wrap;
+  border: 1px solid var(--border);
+  max-height: 50vh;
+  overflow: auto;
+  padding: 8px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+
+.capture-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 6px;
+  font-size: var(--fs-sm);
+}
+
+.full-width {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+}

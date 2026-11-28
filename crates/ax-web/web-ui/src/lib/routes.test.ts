@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { navigateRoute } from './routes.ts';
+import { buildPath, legacyEditRedirect, migrateLegacyHash, navigateRoute, pageFromNavId, parseLocation, parsePathname, type Page, type RouteState } from './routes.ts';
 
 function withWindow(run: (pushed: string[]) => void) {
   const pushed: string[] = [];
@@ -40,4 +40,139 @@ test('navigateRoute opens a CLI turn memory from Logging', () => {
     navigateRoute({ page: 'memory', memoryId: 'turn-abc123def456' });
     assert.deepEqual(pushed, ['/memory?memory=turn-abc123def456']);
   });
+});
+
+function loc(path: string): Location {
+  const url = new URL(path, 'http://localhost');
+  return { pathname: url.pathname, search: url.search } as Location;
+}
+
+const EMPTY: Omit<RouteState, 'page'> = {
+  ruleId: null,
+  skillName: null,
+  kind: null,
+  memoryId: null,
+  sonarTab: 'dashboard',
+  ruleEditMode: false,
+  skillEditMode: false,
+  origin: null,
+  projectId: null,
+  session: null,
+  recallQuery: null,
+  specId: null,
+  section: null,
+};
+
+const CASES: Array<Partial<RouteState> & { page: Page }> = [
+  { page: 'stats' },
+  { page: 'nodes' },
+  { page: 'graph' },
+  { page: 'files' },
+  { page: 'search' },
+  { page: 'memory', memoryId: 'turn-1', session: 's 1', recallQuery: 'a&b=c' },
+  { page: 'sonar', sonarTab: 'setup' },
+  { page: 'settings' },
+  { page: 'logging', kind: 'tool', session: 'abc' },
+  { page: 'specs', specId: 'full-review-fixes' },
+  { page: 'savings' },
+  { page: 'prices' },
+  { page: 'unresolved', kind: 'calls' },
+  { page: 'policy-rules', ruleId: 'r/1' },
+  { page: 'policy-rule-edit', ruleId: 'r1', ruleEditMode: true },
+  { page: 'policy-skills', skillName: 'old-coder', origin: 'global', projectId: 7 },
+  { page: 'policy-skill-edit', skillName: 'old-coder', skillEditMode: true },
+  { page: 'policy-match' },
+  { page: 'policy-review' },
+  { page: 'policy-sync' },
+];
+
+for (const state of CASES) {
+  test(`parseLocation(buildPath(state)) round-trips ${state.page}`, () => {
+    const parsed = parseLocation(loc(buildPath(state)));
+    assert.deepEqual(parsed, { ...EMPTY, ...state, valid: true });
+  });
+}
+
+test('parsePathname accepts / and trailing slashes and flags unknown paths', () => {
+  assert.deepEqual(parsePathname('/'), { page: 'stats', valid: true });
+  assert.deepEqual(parsePathname('/policy/rules/'), { page: 'policy-rules', valid: true });
+  assert.deepEqual(parsePathname('policy/skills'), { page: 'policy-skills', valid: true });
+  assert.deepEqual(parsePathname('/nope'), { page: 'stats', valid: false });
+});
+
+test('parseLocation ignores edit mode on other pages and a non-numeric projectId', () => {
+  const parsed = parseLocation(loc('/policy/rules?id=r1&mode=edit&origin=global&projectId=x'));
+  assert.equal(parsed.ruleEditMode, false);
+  assert.equal(parsed.projectId, null);
+  assert.equal(parsed.origin, 'global');
+});
+
+test('buildPath drops parameters that do not belong to the page', () => {
+  assert.equal(buildPath({ page: 'stats', ruleId: 'r1', session: 's', specId: 'x', kind: 'k' }), '/stats');
+  assert.equal(buildPath({ page: 'policy-rule-edit', ruleEditMode: true }), '/policy/rules/edit');
+});
+
+function withHash(hash: string, run: (replaced: string[]) => void) {
+  const replaced: string[] = [];
+  const g = globalThis as unknown as { window?: unknown };
+  const prev = g.window;
+  g.window = {
+    location: { hash, pathname: '/', search: '' },
+    history: { replaceState: (_s: unknown, _t: string, u: string) => replaced.push(u) },
+  };
+  try {
+    run(replaced);
+  } finally {
+    g.window = prev;
+  }
+}
+
+test('migrateLegacyHash turns old hash bookmarks into fixed paths', () => {
+  withHash('#policy-rule-edit?id=r1&mode=edit', (replaced) => {
+    assert.equal(migrateLegacyHash(), '/policy/rules/edit?id=r1&mode=edit');
+    assert.deepEqual(replaced, ['/policy/rules/edit?id=r1&mode=edit']);
+  });
+  withHash('#ship', (replaced) => {
+    assert.equal(migrateLegacyHash(), '/stats');
+    assert.deepEqual(replaced, ['/stats']);
+  });
+  withHash('#sonar?tab=setup', () => assert.equal(migrateLegacyHash(), '/sonar?tab=setup'));
+});
+
+test('migrateLegacyHash leaves an empty or unknown hash alone', () => {
+  withHash('', (replaced) => {
+    assert.equal(migrateLegacyHash(), null);
+    assert.deepEqual(replaced, []);
+  });
+  withHash('#unknown?id=1', (replaced) => {
+    assert.equal(migrateLegacyHash(), null);
+    assert.deepEqual(replaced, []);
+  });
+});
+
+test('pageFromNavId refuses editor and match pages', () => {
+  assert.equal(pageFromNavId('logging'), 'logging');
+  assert.equal(pageFromNavId('policy-rule-edit'), null);
+  assert.equal(pageFromNavId('policy-match'), null);
+  assert.equal(pageFromNavId('ship'), null);
+});
+
+test('old edit bookmarks keep the global origin and project when they redirect to the list view', () => {
+  const rule = parseLocation({ pathname: '/policy/rules/edit', search: '?id=team-style&origin=global&projectId=7' } as Location);
+  const ruleTarget = legacyEditRedirect(rule);
+  assert.ok(ruleTarget);
+  assert.equal(ruleTarget.page, 'policy-rules');
+  assert.equal(ruleTarget.ruleEditMode, false);
+  assert.equal(buildPath(ruleTarget), '/policy/rules?id=team-style&origin=global&projectId=7');
+
+  const skill = parseLocation({ pathname: '/policy/skills/edit', search: '?name=deploy&origin=global&projectId=3' } as Location);
+  const skillTarget = legacyEditRedirect(skill);
+  assert.ok(skillTarget);
+  assert.equal(skillTarget.page, 'policy-skills');
+  assert.equal(skillTarget.skillEditMode, false);
+  assert.equal(buildPath(skillTarget), '/policy/skills?name=deploy&origin=global&projectId=3');
+
+  assert.equal(legacyEditRedirect(parseLocation({ pathname: '/policy/rules/edit', search: '?id=x&mode=edit' } as Location)), null);
+  assert.equal(legacyEditRedirect(parseLocation({ pathname: '/policy/rules/edit', search: '' } as Location)), null);
+  assert.equal(legacyEditRedirect(parseLocation({ pathname: '/policy/rules', search: '?id=x' } as Location)), null);
 });

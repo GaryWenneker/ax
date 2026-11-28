@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {orderRows,validWidths,clampWidth} from './columnModel.ts';
+import {orderRows,validWidths,clampWidth,arrangeTree,countTreeRows,type TreeEntry} from './columnModel.ts';
 const rows=[{id:'a',values:['Zulu',10]},{id:'b',values:['Alpha',2]},{id:'c',values:['Alpha',10]}];
 test('sorting is stable, numeric and preserves original data',()=>{
  assert.deepEqual(orderRows(rows,{column:1,direction:'asc'},{}).map(r=>r.id),['b','a','c']);
@@ -29,4 +29,20 @@ test('currency and percentages use decimal value order',()=>{
 
 test('abbreviated numeric values sort by magnitude',()=>{
  assert.deepEqual(orderRows([{values:['1M']},{values:['500K']}],{column:0,direction:'asc'},{}).map(r=>r.values[0]),['500K','1M']);
+});
+
+test('grouped rows are filtered and sorted inside their groups, and emptied groups disappear',()=>{
+ type Row={id:string;values:string[]};
+ const row=(id:string,time:string,context:string):TreeEntry<Row,string,string>=>({kind:'row',row:{id,values:[id,time,context]}});
+ const tree:TreeEntry<Row,string,string>[]=[
+  {kind:'group',group:'session-1',children:[{kind:'fixed',item:'summary-1'},{kind:'group',group:'turn-1',children:[{kind:'fixed',item:'turn-summary'},row('late','20:00:02','IN Search'),row('early','20:00:01','OUT Search'),row('status','20:00:00','INT Status')]}]},
+  {kind:'group',group:'session-2',children:[{kind:'fixed',item:'summary-2'},row('other','19:00:00','INT Status')]},
+ ];
+ const flat=(entries:readonly TreeEntry<Row,string,string>[]):string[]=>entries.flatMap(e=>e.kind==='row'?[e.row.id]:e.kind==='group'?[e.group,...flat(e.children)]:[e.item]);
+ const filtered=arrangeTree(tree,rows=>orderRows(rows,{column:1,direction:'asc'},{2:'search'}));
+ assert.deepEqual(flat(filtered),['session-1','summary-1','turn-1','turn-summary','early','late']);
+ assert.equal(countTreeRows(filtered),2);
+ assert.deepEqual(flat(arrangeTree(tree,rows=>orderRows(rows,null,{}))),flat(tree));
+ assert.equal(countTreeRows(tree),4);
+ assert.equal(countTreeRows(arrangeTree(tree,rows=>orderRows(rows,null,{0:'missing'}))),0);
 });

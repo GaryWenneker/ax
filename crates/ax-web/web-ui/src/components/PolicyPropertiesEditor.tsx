@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import SettingsSelect from './ui/SettingsSelect';
 import {
   draftsFromProperties,
+  invalidNumber,
   propertiesFromDrafts,
   reservedClash,
   type PropertyDraft,
@@ -73,6 +74,7 @@ export default function PolicyPropertiesEditor({ properties, reserved, descripti
 
   const clash = reservedClash(drafts, reserved);
   const duplicate = duplicateName(drafts);
+  const badNumber = invalidNumber(drafts);
 
   return (
     <>
@@ -96,6 +98,8 @@ export default function PolicyPropertiesEditor({ properties, reserved, descripti
                   placeholder="name"
                   ref={index === drafts.length - 1 && !row.key.trim() ? newNameRef : undefined}
                   onChange={(e) => update(index, { key: e.target.value })}
+                  // Keep the input while it has focus; a typed name must not swap it for the label.
+                  onFocus={() => setRenaming(index)}
                   onBlur={() => setRenaming((current) => (current === index ? null : current))}
                   autoFocus={renaming === index}
                 />
@@ -161,6 +165,11 @@ export default function PolicyPropertiesEditor({ properties, reserved, descripti
           {clash} is already a built-in field. Use the row above, or pick another name.
         </p>
       ) : null}
+      {badNumber ? (
+        <p className="policy-properties-error" role="alert">
+          {badNumber} needs a number. The stored value is kept until you enter one.
+        </p>
+      ) : null}
       {duplicate ? (
         <p className="policy-properties-error" role="alert">
           {duplicate} is listed twice. The last value is the one that is saved.
@@ -173,6 +182,7 @@ export default function PolicyPropertiesEditor({ properties, reserved, descripti
             className="policy-property-add"
             onClick={() => {
               pendingNameFocus.current = true;
+              setRenaming(drafts.length);
               commit([...drafts, { key: '', kind: 'text', text: '', checked: false }]);
             }}
           >

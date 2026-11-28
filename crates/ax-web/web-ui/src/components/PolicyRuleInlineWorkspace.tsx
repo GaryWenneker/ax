@@ -12,6 +12,7 @@ import { RULE_PROPERTY_RESERVED } from '../lib/policyProperties';
 import { POLICY_SCOPES, type RuleFrontmatter } from '../policyTypes';
 import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
 import SettingsSelect from './ui/SettingsSelect';
+import { cleanPolicyList } from '../lib/policyList';
 
 interface Props {
   ruleId: string;
@@ -22,10 +23,8 @@ interface Props {
   /** Open the properties popup as soon as this rule is shown. */
   openProperties?: boolean;
   propertiesTick?: number;
-}
-
-function parseCsv(s: string): string[] {
-  return s.split(',').map((x) => x.trim()).filter(Boolean);
+  /** Called with true while the editor holds changes that are not saved yet. */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 function normalizeRuleFm(fm: RuleFrontmatter): RuleFrontmatter {
@@ -42,13 +41,19 @@ function normalizeRuleFm(fm: RuleFrontmatter): RuleFrontmatter {
   };
 }
 
-export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, onClose, onSaved, openProperties = false, propertiesTick = 0 }: Props) {
+function editorSnapshot(fm: unknown, body: string, ...lists: string[][]): string {
+  return JSON.stringify([fm, body, ...lists]);
+}
+
+export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, onClose, onSaved, openProperties = false, propertiesTick = 0, onDirtyChange }: Props) {
   const [fm, setFm] = useState<RuleFrontmatter | null>(null);
   const [body, setBody] = useState('');
-  const links = useItemLinks('rule', ruleId, origin, body);
-  const [globsText, setGlobsText] = useState('');
-  const [triggersText, setTriggersText] = useState('');
-  const [tagsText, setTagsText] = useState('');
+  /** Bumped after each save so the links, which come from the saved body, load again. */
+  const [savedTick, setSavedTick] = useState(0);
+  const links = useItemLinks('rule', ruleId, origin, body, savedTick);
+  const [globs, setGlobs] = useState<string[]>([]);
+  const [triggers, setTriggers] = useState<string[]>([]);
+  const [tags, setTags] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -56,6 +61,13 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
   /** Reveal content when switching rows; first open uses the blade slide-in only. */
   const [reveal, setReveal] = useState(false);
   const prevRuleIdRef = useRef<string | null>(null);
+  /** Snapshot of the editor right after load or save; differs once there are unsaved edits. */
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+  const currentSnapshot = fm ? editorSnapshot(fm, body, globs, triggers, tags) : null;
+  const dirty = savedSnapshot !== null && currentSnapshot !== null && currentSnapshot !== savedSnapshot;
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,15 +78,17 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
     setError('');
     setFm(null);
     setBody('');
+    setSavedSnapshot(null);
     fetchPolicyRule(ruleId, { origin, projectId })
       .then((doc) => {
         if (cancelled) return;
         const normalized = normalizeRuleFm(doc.frontmatter);
         setFm(normalized);
         setBody(doc.body);
-        setGlobsText(normalized.globs.join(', '));
-        setTriggersText(normalized.triggers.join(', '));
-        setTagsText(normalized.tags.join(', '));
+        setGlobs(normalized.globs);
+        setTriggers(normalized.triggers);
+        setTags(normalized.tags);
+        setSavedSnapshot(editorSnapshot(normalized, doc.body, normalized.globs, normalized.triggers, normalized.tags));
       })
       .catch((e: Error) => {
         if (!cancelled) setError(e.message);
@@ -93,17 +107,18 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
 
   async function save() {
     if (!fm) return;
+    const snapshotAtSave = currentSnapshot;
     setSaving(true);
     setError('');
     try {
-      const tags = parseCsv(tagsText);
-      if (tags.length === 0) {
+      const savedTags = cleanPolicyList(tags);
+      if (savedTags.length === 0) {
         setError('At least one tag is required so rules can be filtered in the list.');
         return;
       }
-      const globs = parseCsv(globsText);
-      const triggers = parseCsv(triggersText);
-      if (!fm.alwaysApply && globs.length === 0 && triggers.length === 0) {
+      const savedGlobs = cleanPolicyList(globs);
+      const savedTriggers = cleanPolicyList(triggers);
+      if (!fm.alwaysApply && savedGlobs.length === 0 && savedTriggers.length === 0) {
         setError('Turn on Always apply, or set at least one glob or trigger — otherwise the rule never matches.');
         return;
       }
@@ -111,11 +126,13 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
         ...fm,
         alwaysApply: !!fm.alwaysApply,
         enabled: fm.enabled !== false,
-        globs,
-        triggers,
-        tags,
+        globs: savedGlobs,
+        triggers: savedTriggers,
+        tags: savedTags,
       };
       await savePolicyRule(ruleId, frontmatter, body, { origin, projectId });
+      setSavedSnapshot(snapshotAtSave);
+      setSavedTick((t) => t + 1);
       onSaved?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed');
@@ -145,9 +162,11 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
                   const normalized = normalizeRuleFm(doc.frontmatter);
                   setFm(normalized);
                   setBody(doc.body);
-                  setGlobsText(normalized.globs.join(', '));
-                  setTriggersText(normalized.triggers.join(', '));
-                  setTagsText(normalized.tags.join(', '));
+                  setGlobs(normalized.globs);
+                  setTriggers(normalized.triggers);
+                  setTags(normalized.tags);
+                  setSavedSnapshot(editorSnapshot(normalized, doc.body, normalized.globs, normalized.triggers, normalized.tags));
+                  setSavedTick((t) => t + 1);
                   onSaved?.();
                 })
                 .catch((e: Error) => setError(e.message))
@@ -279,15 +298,15 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
                 />
               </PageRow>
               <PageRow title="Globs">
-                <PolicyChipField label="Globs" values={parseCsv(globsText)} suggestions={['**/*.ts', '**/*.tsx', '**/*.rs', '**/*.md', '**/*.css']} onChange={(next) => setGlobsText(next.join(', '))} />
+                <PolicyChipField label="Globs" values={globs} suggestions={['**/*.ts', '**/*.tsx', '**/*.rs', '**/*.md', '**/*.css']} onChange={setGlobs} />
               </PageRow>
               <PageRow title="Triggers">
-                <PolicyChipField label="Triggers" values={parseCsv(triggersText)} suggestions={['implement', 'review', 'test', 'mcp', 'preflight', 'always', 'never']} onChange={(next) => setTriggersText(next.join(', '))} />
+                <PolicyChipField label="Triggers" values={triggers} suggestions={['implement', 'review', 'test', 'mcp', 'preflight', 'always', 'never']} onChange={setTriggers} />
               </PageRow>
               <PageRow title="Tags">
                 <div className="policy-chips">
-                  <button type="button" className="btn" onClick={() => setTagsText([...parseCsv(tagsText), ...suggestTags(body, fm.id, parseCsv(tagsText))].join(', '))}>Autotag</button>
-                  <PolicyChipField label="Tags" values={parseCsv(tagsText)} suggestions={['policy', 'mcp', 'frontend', 'security', 'testing', 'docs']} onChange={(next) => setTagsText(next.join(', '))} />
+                  <button type="button" className="btn" onClick={() => setTags([...tags, ...suggestTags(body, fm.id, tags)])}>Autotag</button>
+                  <PolicyChipField label="Tags" values={tags} suggestions={['policy', 'mcp', 'frontend', 'security', 'testing', 'docs']} onChange={setTags} />
                 </div>
               </PageRow>
               <PolicyPropertiesEditor

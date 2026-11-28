@@ -112,3 +112,44 @@ test('only the latest preflight sparkle animates while that turn is still receiv
   assert.equal(fromLog.turnId, 'turn-a');
   assert.equal(fromLog.entryId, parsed.id);
 });
+
+test('appendTraceEntries keeps only the newest entries once the cap is reached', async () => {
+  const { appendTraceEntries } = await import('./mcpTrace.ts');
+  const mk = (n: number) => ({ id: `e${n}` }) as unknown as import('./mcpTrace.ts').TraceEntry;
+  const prev = [mk(1), mk(2), mk(3)];
+  const under = appendTraceEntries(prev, [mk(4)], 5);
+  assert.deepEqual(under.entries.map((e) => e.id), ['e1', 'e2', 'e3', 'e4']);
+  assert.equal(under.trimmed, false);
+  const over = appendTraceEntries(prev, [mk(4), mk(5), mk(6)], 4);
+  assert.deepEqual(over.entries.map((e) => e.id), ['e3', 'e4', 'e5', 'e6']);
+  assert.equal(over.trimmed, true);
+  const huge = appendTraceEntries([], [mk(1), mk(2), mk(3)], 2);
+  assert.deepEqual(huge.entries.map((e) => e.id), ['e2', 'e3']);
+  assert.equal(huge.trimmed, true);
+});
+
+test('prependTraceEntries drops the oldest of the older rows past the cap', async () => {
+  const { prependTraceEntries } = await import('./mcpTrace.ts');
+  const mk = (n: number) => ({ id: `e${n}` }) as unknown as import('./mcpTrace.ts').TraceEntry;
+  const fits = prependTraceEntries([mk(1), mk(2)], [mk(3)], 5);
+  assert.deepEqual(fits.entries.map((e) => e.id), ['e1', 'e2', 'e3']);
+  assert.equal(fits.trimmed, false);
+  const over = prependTraceEntries([mk(1), mk(2), mk(3)], [mk(4), mk(5)], 3);
+  assert.deepEqual(over.entries.map((e) => e.id), ['e3', 'e4', 'e5']);
+  assert.equal(over.trimmed, true);
+});
+
+test('the trace buffer cap is a positive bound', async () => {
+  const { MCP_TRACE_MAX_ENTRIES } = await import('./mcpTrace.ts');
+  assert.ok(Number.isInteger(MCP_TRACE_MAX_ENTRIES) && MCP_TRACE_MAX_ENTRIES >= 1000 && MCP_TRACE_MAX_ENTRIES <= 20000);
+});
+
+test('isTraceLogLine only takes the legacy ts= format at the start of the line', async () => {
+  const { isTraceLogLine } = await import('./mcpTrace.ts');
+  assert.equal(isTraceLogLine('ts=1712345678901 inbound tool=ax_search'), true);
+  assert.equal(isTraceLogLine('[ax-mcp] inbound tool=ax_search'), true);
+  assert.equal(isTraceLogLine('2026-01-02T03:04:05Z inbound'), true);
+  assert.equal(isTraceLogLine('warning: 3 results=stale'), false);
+  assert.equal(isTraceLogLine('counts=4 hits=2'), false);
+  assert.equal(isTraceLogLine('ts=abc'), false);
+});

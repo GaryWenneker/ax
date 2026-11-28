@@ -108,6 +108,20 @@ export type SharedEventSourceOptions = {
   events?: Record<string, EventHandler>;
   onError?: () => void;
   onOpen?: () => void;
+  /**
+   * Called when the stream opens again after this subscriber already saw it open
+   * (a browser retry or a hub reconnect). Events sent while it was down are not
+   * replayed, so a subscriber that tracks server state should reload here.
+   */
+  onReconnect?: () => void;
+  /**
+   * This subscriber needs the snapshot the server sends when a connection opens.
+   * When it joins a stream that is already open, the shared connection is closed
+   * and reopened for it, so every subscriber of the URL sees `onOpen` and the
+   * snapshot again. A stream that is still connecting is shared as is, because
+   * its snapshot has not been sent yet.
+   */
+  replaySnapshot?: boolean;
 };
 
 /** Subscribe to a shared SSE URL. Returns an unsubscribe function. */
@@ -152,14 +166,30 @@ export function subscribeSharedEventSource(
   if (opts.onOpen) hub.openHandlers.add(opts.onOpen);
 
   // A connection opened for another subscriber already sent its snapshot.
-  // Late listeners, such as Logging after the status bar, would otherwise
-  // miss that snapshot and fall back to yesterday's file.
-  if (opts.events?.batch && hub.es && hub.es.readyState !== EventSource.CLOSED) {
+  // A late subscriber that needs it, such as Logging after the status bar,
+  // would otherwise miss that snapshot and fall back to yesterday's file.
+  if (opts.replaySnapshot && hub.es && hub.es.readyState === EventSource.OPEN) {
     tearDownEs(hub);
   }
   ensureConnected(hub);
 
+  let reopenHandler: (() => void) | null = null;
+  if (opts.onReconnect) {
+    const onReconnect = opts.onReconnect;
+    // A stream that is already open counts as seen: its next open is a reconnect.
+    let seenOpen = hub.es?.readyState === EventSource.OPEN;
+    reopenHandler = () => {
+      if (seenOpen) onReconnect();
+      seenOpen = true;
+    };
+    hub.openHandlers.add(reopenHandler);
+  }
+
+  let released = false;
   return () => {
+    // React may call a cleanup twice; release this subscriber's reference only once.
+    if (released) return;
+    released = true;
     for (const [type, handler] of added) {
       const set = hub!.handlers.get(type);
       set?.delete(handler);
@@ -170,16 +200,18 @@ export function subscribeSharedEventSource(
     }
     if (opts.onError) hub!.errorHandlers.delete(opts.onError);
     if (opts.onOpen) hub!.openHandlers.delete(opts.onOpen);
+    if (reopenHandler) hub!.openHandlers.delete(reopenHandler);
 
-    hub!.refCount -= 1;
-    if (hub!.refCount <= 0) {
+    hub!.refCount = Math.max(0, hub!.refCount - 1);
+    if (hub!.refCount === 0) {
       tearDownEs(hub!);
-      hubs.delete(url);
+      // A newer hub may own this URL by now; only forget the one this subscriber joined.
+      if (hubs.get(url) === hub) hubs.delete(url);
     }
   };
 }
 
-/** Close every shared SSE (e.g. pagehide) so sockets cannot outlive the tab. */
+/** Close every shared SSE and forget all hubs. Subscribers still mounted are not reconnected. */
 export function closeAllSharedEventSources() {
   for (const [url, hub] of [...hubs.entries()]) {
     hub.refCount = 0;
@@ -188,6 +220,25 @@ export function closeAllSharedEventSources() {
   }
 }
 
+/**
+ * Close the sockets on pagehide so they cannot outlive the tab (and the page stays eligible
+ * for the back/forward cache), but keep every hub and its subscribers.
+ */
+function suspendSharedEventSources() {
+  for (const hub of hubs.values()) tearDownEs(hub);
+}
+
+/** A page restored from the back/forward cache reopens the streams its subscribers still use. */
+function resumeSharedEventSources() {
+  for (const hub of hubs.values()) {
+    hub.reconnectDelay = 1000;
+    ensureConnected(hub);
+  }
+}
+
 if (typeof window !== 'undefined') {
-  window.addEventListener('pagehide', () => closeAllSharedEventSources());
+  window.addEventListener('pagehide', () => suspendSharedEventSources());
+  window.addEventListener('pageshow', (ev) => {
+    if ((ev as PageTransitionEvent).persisted) resumeSharedEventSources();
+  });
 }

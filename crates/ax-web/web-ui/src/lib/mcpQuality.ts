@@ -1,4 +1,5 @@
 /** MCP quality snapshot types + API helpers for Command Center. */
+import { request } from '../api.ts';
 
 export interface EnrichmentMetrics {
   injectCharsP50: number;
@@ -57,9 +58,7 @@ export interface QualitySnapshot {
   sessionPath?: string | null;
 }
 
-export const MCP_QUALITY_URL = '/api/usage/mcp-quality';
 export const MCP_QUALITY_EVENTS_URL = '/api/usage/mcp-quality/events';
-export const MCP_AUDIT_URL = '/api/usage/mcp-audit';
 
 export const MCP_QUALITY_OPEN = 'ax-mcp-quality-open';
 export const MCP_QUALITY_FINDING = 'ax-mcp-quality-finding';
@@ -106,10 +105,8 @@ export function emptyQualitySnapshot(): QualitySnapshot {
   };
 }
 
-export async function fetchMcpQuality(): Promise<QualitySnapshot> {
-  const res = await fetch(MCP_QUALITY_URL);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<QualitySnapshot>;
+export function fetchMcpQuality(): Promise<QualitySnapshot> {
+  return request<QualitySnapshot>('GET', '/usage/mcp-quality');
 }
 
 export async function runMcpAudit(opts?: {
@@ -117,21 +114,11 @@ export async function runMcpAudit(opts?: {
   windowMinutes?: number;
   markdown?: boolean;
 }): Promise<QualitySnapshot & { markdown?: string }> {
-  const res = await fetch(MCP_AUDIT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      session: opts?.session,
-      window_minutes: opts?.windowMinutes,
-      markdown: opts?.markdown ?? false,
-    }),
+  const data = await request<QualitySnapshot & { markdown?: string; snapshot?: QualitySnapshot }>('POST', '/usage/mcp-audit', {
+    session: opts?.session,
+    window_minutes: opts?.windowMinutes,
+    markdown: opts?.markdown ?? false,
   });
-  const data = (await res.json()) as QualitySnapshot & {
-    markdown?: string;
-    snapshot?: QualitySnapshot;
-    error?: string;
-  };
-  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
   if (data.snapshot) {
     return { ...data.snapshot, markdown: data.markdown };
   }

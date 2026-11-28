@@ -13,7 +13,7 @@ function sectionLabels(): string[] {
 test('sidebar groups most-used policy and code above activity and system', () => {
   assert.deepEqual(sectionLabels(), ['Policy', 'Code', 'Activity', 'System']);
   const items = labels();
-  assert.deepEqual(items.slice(0, 3), ['Rules', 'Skills', 'Memory']);
+  assert.deepEqual(items.slice(0, 4), ['Rules', 'Skills', 'Specs & Plans', 'Memory']);
   assert.ok(items.indexOf('Graph') < items.indexOf('Logging'));
   assert.ok(items.indexOf('Logging') < items.indexOf('Settings'));
   assert.ok(items.indexOf('Settings') < items.indexOf('Prices'));

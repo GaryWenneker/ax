@@ -20,8 +20,25 @@ test('a replay starts only from an intact seal while no other replay is starting
   assert.equal(canStartReplay({ integrity_ok: false }, 'manifest-1'), false);
 });
 
+/** The panel's Replay button and its start handler both call canStartReplay with the same arguments. */
+function gatesShareCheck(source: string): boolean {
+  const args = (match: RegExpMatchArray | null) => match?.[1].replace(/\s+/g, '') ?? null;
+  const button = args(source.match(/disabled=\{\s*!canStartReplay\(([^)]*)\)\s*\}/));
+  const start = args(source.match(/if\s*\(\s*!canStartReplay\(([^)]*)\)\s*\)\s*return\b/));
+  return button !== null && button === start;
+}
+
 test('the panel gates the Replay button and the start on the same check and shows the receipt once', () => {
-  assert.match(panel, /disabled=\{!canStartReplay\(row, busyId\)\}/);
-  assert.match(panel, /if \(!canStartReplay\(row, busyId\)\) return;/);
+  assert.equal(gatesShareCheck(panel), true);
   assert.equal(panel.match(/formatReplayNotice\(/g)?.length, 1);
+});
+
+test('the gate check follows the call, not the local variable names', () => {
+  const renamed = panel.replace(/\bbusyId\b/g, 'startingId').replace(/\brow\b/g, 'item');
+  assert.notEqual(renamed, panel);
+  assert.equal(gatesShareCheck(renamed), true);
+  const ungated = panel.replace(/if \(!canStartReplay\([^)]*\)\) return;/, '');
+  assert.equal(gatesShareCheck(ungated), false);
+  const mismatched = panel.replace(/disabled=\{!canStartReplay\([^)]*\)\}/, 'disabled={!canStartReplay(row, null)}');
+  assert.equal(gatesShareCheck(mismatched), false);
 });

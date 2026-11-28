@@ -1,61 +1,65 @@
 import hljs from 'highlight.js/lib/core';
-import c from 'highlight.js/lib/languages/c';
-import cpp from 'highlight.js/lib/languages/cpp';
-import csharp from 'highlight.js/lib/languages/csharp';
-import dart from 'highlight.js/lib/languages/dart';
-import delphi from 'highlight.js/lib/languages/delphi';
-import go from 'highlight.js/lib/languages/go';
-import ini from 'highlight.js/lib/languages/ini';
-import java from 'highlight.js/lib/languages/java';
-import javascript from 'highlight.js/lib/languages/javascript';
-import kotlin from 'highlight.js/lib/languages/kotlin';
-import lua from 'highlight.js/lib/languages/lua';
-import objectivec from 'highlight.js/lib/languages/objectivec';
-import php from 'highlight.js/lib/languages/php';
-import python from 'highlight.js/lib/languages/python';
-import r from 'highlight.js/lib/languages/r';
-import ruby from 'highlight.js/lib/languages/ruby';
-import rust from 'highlight.js/lib/languages/rust';
-import scala from 'highlight.js/lib/languages/scala';
-import swift from 'highlight.js/lib/languages/swift';
-import typescript from 'highlight.js/lib/languages/typescript';
-import xml from 'highlight.js/lib/languages/xml';
-import yaml from 'highlight.js/lib/languages/yaml';
+import type { LanguageFn } from 'highlight.js';
 
-const LANGUAGE_LOADERS: Record<string, () => void> = {
-  c: () => hljs.registerLanguage('c', c),
-  cpp: () => hljs.registerLanguage('cpp', cpp),
-  csharp: () => hljs.registerLanguage('csharp', csharp),
-  dart: () => hljs.registerLanguage('dart', dart),
-  delphi: () => hljs.registerLanguage('delphi', delphi),
-  go: () => hljs.registerLanguage('go', go),
-  ini: () => hljs.registerLanguage('ini', ini),
-  java: () => hljs.registerLanguage('java', java),
-  javascript: () => hljs.registerLanguage('javascript', javascript),
-  kotlin: () => hljs.registerLanguage('kotlin', kotlin),
-  lua: () => hljs.registerLanguage('lua', lua),
-  objectivec: () => hljs.registerLanguage('objectivec', objectivec),
-  php: () => hljs.registerLanguage('php', php),
-  python: () => hljs.registerLanguage('python', python),
-  r: () => hljs.registerLanguage('r', r),
-  ruby: () => hljs.registerLanguage('ruby', ruby),
-  rust: () => hljs.registerLanguage('rust', rust),
-  scala: () => hljs.registerLanguage('scala', scala),
-  swift: () => hljs.registerLanguage('swift', swift),
-  typescript: () => hljs.registerLanguage('typescript', typescript),
-  xml: () => hljs.registerLanguage('xml', xml),
-  yaml: () => hljs.registerLanguage('yaml', yaml),
+type GrammarModule = { default: LanguageFn };
+
+// Each grammar is its own chunk, fetched the first time a file in that language is shown.
+const LANGUAGE_LOADERS: Record<string, () => Promise<GrammarModule>> = {
+  c: () => import('highlight.js/lib/languages/c'),
+  cpp: () => import('highlight.js/lib/languages/cpp'),
+  csharp: () => import('highlight.js/lib/languages/csharp'),
+  dart: () => import('highlight.js/lib/languages/dart'),
+  delphi: () => import('highlight.js/lib/languages/delphi'),
+  go: () => import('highlight.js/lib/languages/go'),
+  ini: () => import('highlight.js/lib/languages/ini'),
+  java: () => import('highlight.js/lib/languages/java'),
+  javascript: () => import('highlight.js/lib/languages/javascript'),
+  kotlin: () => import('highlight.js/lib/languages/kotlin'),
+  lua: () => import('highlight.js/lib/languages/lua'),
+  objectivec: () => import('highlight.js/lib/languages/objectivec'),
+  php: () => import('highlight.js/lib/languages/php'),
+  python: () => import('highlight.js/lib/languages/python'),
+  r: () => import('highlight.js/lib/languages/r'),
+  ruby: () => import('highlight.js/lib/languages/ruby'),
+  rust: () => import('highlight.js/lib/languages/rust'),
+  scala: () => import('highlight.js/lib/languages/scala'),
+  swift: () => import('highlight.js/lib/languages/swift'),
+  typescript: () => import('highlight.js/lib/languages/typescript'),
+  xml: () => import('highlight.js/lib/languages/xml'),
+  yaml: () => import('highlight.js/lib/languages/yaml'),
 };
 
 const registered = new Set<string>();
+const pending = new Map<string, Promise<boolean>>();
 
-function ensureLanguage(language: string) {
-  if (registered.has(language)) return;
+function ensureLanguage(language: string): Promise<boolean> {
+  if (registered.has(language)) return Promise.resolve(true);
   const load = LANGUAGE_LOADERS[language];
-  if (load) {
-    load();
-    registered.add(language);
+  if (!load) return Promise.resolve(false);
+  let loading = pending.get(language);
+  if (!loading) {
+    loading = load()
+      .then((grammar) => {
+        hljs.registerLanguage(language, grammar.default);
+        registered.add(language);
+        return true;
+      })
+      .catch(() => false)
+      .finally(() => pending.delete(language));
+    pending.set(language, loading);
   }
+  return loading;
+}
+
+/** Load the grammar for an ax language id. Resolves true once highlightLine can color it. */
+export function loadLanguage(axLang: string): Promise<boolean> {
+  const language = mapLanguage(axLang);
+  return language ? ensureLanguage(language) : Promise.resolve(false);
+}
+
+/** True when the grammar for an ax language id is already loaded. */
+export function languageReady(axLang: string): boolean {
+  return registered.has(mapLanguage(axLang));
 }
 
 const AX_LANGUAGE_MAP: Record<string, string> = {
@@ -109,7 +113,7 @@ export function highlightLine(text: string, axLang: string): string {
   const language = mapLanguage(axLang);
   if (!language) return escapeHtml(text);
 
-  ensureLanguage(language);
+  // Until the grammar has loaded (see loadLanguage) the line is shown as plain text.
   if (!registered.has(language)) return escapeHtml(text);
 
   try {

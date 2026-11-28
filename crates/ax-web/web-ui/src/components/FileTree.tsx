@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { FileRoot, FileRow } from '../types';
 import { Spinner } from './ui/Spinner';
 import Codicon from './Codicon';
@@ -232,7 +232,6 @@ export default function FileTree({
     const built = buildFileTree(files);
     return roots?.length ? mergeRootsIntoTree(built, roots) : built;
   }, [files, roots]);
-  const hydrated = useRef(false);
 
   // Filter mode: expand ancestors of matches. Browse mode: start collapsed —
   // top-level repos are lazy shells until the user opens them.
@@ -245,60 +244,65 @@ export default function FileTree({
     [files, filterActive],
   );
 
-  const [expanded, setExpanded] = useState<Set<string>>(() => {
-    if (filterActive) return defaultExpanded;
+  // Browse-mode expansion is what the user toggled; it is the only state saved.
+  const [browseExpanded, setBrowseExpanded] = useState<Set<string>>(() => {
     const stored = loadExpandedSet();
     if (stored && stored.size > 0) return stored;
     return new Set();
   });
+  // Filter-mode expansion opens the ancestors of every match. It lives only
+  // while the filter is active and is never saved, so clearing the filter
+  // returns to the browse tree without lazy-loading every folder it opened.
+  const [filterExpanded, setFilterExpanded] = useState<Set<string>>(
+    () => new Set([...browseExpanded, ...defaultExpanded]),
+  );
+  const expanded = filterActive ? filterExpanded : browseExpanded;
 
   useEffect(() => {
-    if (!hydrated.current) {
-      hydrated.current = true;
-      if (!filterActive) {
-        const stored = loadExpandedSet();
-        if (stored && stored.size > 0) {
-          setExpanded(stored);
-          return;
-        }
-        setExpanded(new Set());
-        return;
-      }
-    }
     if (filterActive) {
-      setExpanded((prev) => {
+      setFilterExpanded((prev) => {
         const next = new Set(prev);
         defaultExpanded.forEach((p) => next.add(p));
-        saveJson(EXPANDED_KEY, [...next]);
         return next;
       });
+    } else {
+      setFilterExpanded(new Set(browseExpanded));
     }
+    // browseExpanded is read only to seed the next filter session.
   }, [defaultExpanded, filterActive]);
 
   // Persisted / restored expanded paths must still fetch their lazy children.
   useEffect(() => {
     if (!onLoadPrefix || filterActive) return;
-    for (const path of expanded) {
+    for (const path of browseExpanded) {
       if (path) onLoadPrefix(path);
     }
-  }, [expanded, onLoadPrefix, filterActive]);
+  }, [browseExpanded, onLoadPrefix, filterActive]);
 
   function toggle(path: string) {
-    const willOpen = !expanded.has(path);
-    if (willOpen) {
-      onLoadPrefix?.(path);
-    }
-    setExpanded((prev) => {
+    const flip = (prev: Set<string>) => {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
       else next.add(path);
+      return next;
+    };
+    if (filterActive) {
+      setFilterExpanded(flip);
+      return;
+    }
+    if (!browseExpanded.has(path)) {
+      onLoadPrefix?.(path);
+    }
+    setBrowseExpanded((prev) => {
+      const next = flip(prev);
       saveJson(EXPANDED_KEY, [...next]);
       return next;
     });
   }
 
   function collapseAll() {
-    setExpanded(new Set());
+    setBrowseExpanded(new Set());
+    setFilterExpanded(new Set());
     saveJson(EXPANDED_KEY, []);
   }
 
