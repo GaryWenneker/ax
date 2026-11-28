@@ -22,7 +22,7 @@
     "@tiptap/react": "~3.35.0",
     "@tiptap/starter-kit": "~3.35.0",
     "@tiptap/suggestion": "~3.35.0",
-    "@uiw/react-md-editor": "^4.2.2",
+    "@uiw/react-md-editor": "^4.2.4",
     "@vscode/codicons": "^0.0.45",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
