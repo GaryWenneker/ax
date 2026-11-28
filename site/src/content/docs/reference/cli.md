@@ -1911,6 +1911,8 @@ ax policy share config --json
 ax policy share config ./services/api
 ```
 
+The `--json` output reports `github.tokenSet` (`true` when a git API token is stored for `github.repoUrl`) and never the token itself. This field was called `github.hasToken` before; a script that reads `github.hasToken` must switch to `github.tokenSet`.
+
 #### `ax policy share sync [path]`
 
 Pull (and optionally push) rules, skills, and shared memory from the configured remote.

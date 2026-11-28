@@ -448,13 +448,6 @@ pub fn write_project_share_config_with(
         previous?;
         return Ok(path);
     }
-    // Without a clear, a store that refuses to delete the old URL's token
-    // (locked, or a session bus without a Secret Service) does not block the
-    // URL change: no lookup uses the old URL's entry any more, and the token
-    // there is never moved to the new URL.
-    if let Err(e) = remove_previous() {
-        tracing::warn!("ax share: the token for the previous repo URL was not removed: {e}");
-    }
     if !github.token.trim().is_empty() {
         // No plain-text fallback: a token that cannot go to the credential
         // store is refused.
@@ -463,6 +456,15 @@ pub fn write_project_share_config_with(
         migrate_old_token(&path, &key, &github.repo_url, secrets, token_store)?;
     }
     write_share_at(&path, config)?;
+    // The old URL's token goes only after the new configuration is saved, so
+    // a save that fails above leaves the active configuration with its token.
+    // Without a clear, a store that refuses to delete it (locked, or a
+    // session bus without a Secret Service) does not block the URL change:
+    // no lookup uses the old URL's entry any more, and the token there is
+    // never moved to the new URL.
+    if let Err(e) = remove_previous() {
+        tracing::warn!("ax share: the token for the previous repo URL was not removed: {e}");
+    }
     Ok(path)
 }
 
@@ -1312,6 +1314,53 @@ mod tests {
             .expect("a locked store must not block a repo URL change");
         let on_disk = fs::read_to_string(&config_path).unwrap();
         assert!(on_disk.contains("team/third.git"), "{on_disk}");
+    }
+
+    /// A credential store that reads and deletes but refuses to store (a
+    /// per-item ACL, a write-only error).
+    #[derive(Default)]
+    struct SetFails(MemoryStore);
+    impl ShareTokenStore for SetFails {
+        fn get(&self, key: &str) -> Result<Option<String>, SecretError> {
+            self.0.get(key)
+        }
+        fn set(&self, _: &str, _: &str) -> Result<(), SecretError> {
+            Err(SecretError::Refused(
+                "Cannot write the token to the OS credential store".into(),
+            ))
+        }
+        fn delete(&self, key: &str) -> Result<(), SecretError> {
+            self.0.delete(key)
+        }
+    }
+
+    /// A save that fails leaves the configuration that is still active
+    /// working: the old URL's token is only removed once the new token and
+    /// `ax.json` are both written.
+    #[test]
+    fn a_failed_repo_url_change_keeps_the_token_of_the_old_url() {
+        let project = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let store = home.path().join("auth/git-share.json");
+        let old_url = "https://gitlab.example.com/team/policy.git";
+        let config_path = project.path().join(CONFIG_FILENAME);
+        write_share_json(
+            &config_path,
+            serde_json::json!({ "provider": "github", "github": { "repoUrl": old_url } }),
+        );
+        let secrets = SetFails::default();
+        let old_key = crate::secret::token_key(project.path(), old_url);
+        secrets.0.set(&old_key, "glpat-old").unwrap();
+
+        let mut moved = github_with_token("glpat-new");
+        moved.github.repo_url = "https://gitlab.example.com/team/other.git".into();
+        let err = write_project_share_config_with(project.path(), &moved, &secrets, &store)
+            .expect_err("a token the store refused must fail the save");
+        assert!(err.contains("credential store"), "{err}");
+
+        let on_disk = fs::read_to_string(&config_path).unwrap();
+        assert!(on_disk.contains("team/policy.git"), "{on_disk}");
+        assert_eq!(secrets.get(&old_key).unwrap().as_deref(), Some("glpat-old"));
     }
 
     #[test]
