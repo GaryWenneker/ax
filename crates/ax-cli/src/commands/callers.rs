@@ -1,10 +1,10 @@
 use ax_types::SearchOptions;
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 use crate::ui::SpinnerGuard;
 
 pub async fn run(symbol: String) -> Result<(), String> {
-    let root = resolve_path(None);
+    let root = resolve_project_root(None);
     let _spinner = SpinnerGuard::new(format!("Finding callers of \"{}\"...", symbol), false);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let nodes = ax

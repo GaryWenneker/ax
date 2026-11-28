@@ -494,11 +494,13 @@ async fn status(ax: &mut Ax) -> Result<Value, String> {
     let last = ax.get_last_indexed_at().await.map_err(|e| e.to_string())?;
     let pending = ax.get_pending_files().await;
     let text = ax_core::stats_format::format_status_text(&stats, last, &pending);
+    let (pending, pending_total) = ax_core::stats_format::listed_pending(&pending);
     let mut out = json!({
         "text": text,
         "stats": stats,
         "lastIndexedAt": last,
         "pendingFiles": pending,
+        "pendingFilesTotal": pending_total,
         "integrity": ax_core::database_incident_value(ax.project_root()),
     });
     if let Some(note) = ax_core::database_incident_notice(ax.project_root()) {
@@ -1177,7 +1179,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         inject.push('\n');
     }
     if has_directive {
-        inject.push_str("<ax_capture_hint>Directive detected — a ready rule proposal is in captureProposal. Ask the user captureProposal.questions, then call ax_policy_capture({ action: \"save\", rule }) after they confirm.</ax_capture_hint>");
+        inject.push_str("<ax_capture_hint>Directive detected — the proposed rule and its questions follow. Ask the user each question, then call ax_policy_capture({ action: \"save\", rule }) after they confirm; ax_policy_capture({ action: \"propose\", prompt }) returns the rule again.</ax_capture_hint>");
         crate::verbose::push_line("enrich directive capture_hint appended");
     } else {
         crate::verbose::push_line("enrich directive none");
@@ -1335,6 +1337,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
             delivered.push((key, hash));
         }
     }
+    let (pending_listed, pending_total) = ax_core::stats_format::listed_pending(&pending);
     let mut out = json!({
         "policySources":sources,
         "project": { "path": ax_usage::project_scope(ax.project_root()) },
@@ -1351,7 +1354,8 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         "skills": result.skills,
         "memories": memories,
         "indexStats": index_stats,
-        "pendingFiles": pending,
+        "pendingFiles": pending_listed,
+        "pendingFilesTotal": pending_total,
         "integrity": ax_core::database_incident_value(ax.project_root()),
         "sourceContext": ice_context.as_ref().map(|c| serde_json::json!({
             "status": c.status,
@@ -3442,7 +3446,8 @@ mod tests {
             "when:file:src/*.rs".to_string(),
             "when:file:crates/**/*.rs".to_string(),
         ];
-        let abs = root.join("/work/proj/src/a.rs");
+        // A full path inside the project root.
+        let abs = root.join("src/a.rs");
         let rel = guard_relative_path(root, &abs);
         assert_eq!(rel, "src/a.rs");
         assert_eq!(

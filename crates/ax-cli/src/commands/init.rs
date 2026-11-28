@@ -4,10 +4,9 @@ use owo_colors::OwoColorize;
 
 use ax_context::directory::is_initialized;
 use ax_extraction::orchestrator::IndexOptions;
-use ax_reasoning::seed_offload_on_init;
 use ax_sync::git_hooks::install_git_sync_hooks;
 
-use crate::commands::{check_unsafe_root, resolve_path};
+use crate::commands::{check_unsafe_root, resolve_target_dir};
 use crate::installer::{run_installer, InstallOptions};
 use crate::ui::install_log::tildify;
 use crate::ui::{
@@ -83,7 +82,7 @@ async fn run_inner(
     savings: bool,
     interactive: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_target_dir(path);
     check_unsafe_root(&root)?;
 
     if workspace {
@@ -292,72 +291,14 @@ async fn run_inner(
         }
     }
 
-    match seed_offload_on_init().await {
-        Ok(report) => {
-            if report.catalog_written {
-                println!(
-                    "{}",
-                    ok_line(format!(
-                        "Wired {} LLM offload providers in ~/.ax/config.json",
-                        ax_reasoning::OFFLOAD_PROVIDERS.len()
-                    ))
-                );
-                for p in ax_reasoning::OFFLOAD_PROVIDERS {
-                    let marker = if report.discovered.contains(&p.id.to_string()) {
-                        "found"
-                    } else {
-                        "set key"
-                    };
-                    println!(
-                        "  {} {} ({}) — {}",
-                        dim("·"),
-                        p.name,
-                        p.key_env.unwrap_or("(no key)"),
-                        marker
-                    );
-                }
-                println!();
-            }
-            if let Some(active) = &report.active {
-                if report.skipped_existing {
-                    println!(
-                        "{}",
-                        ok_line(format!(
-                            "Offload already configured: {} ({})",
-                            active.name, active.url
-                        ))
-                    );
-                } else {
-                    println!(
-                        "{}",
-                        ok_line(format!("Offload active: {} ({})", active.name, active.url))
-                    );
-                }
-                println!();
-            } else if let Some(s) = &report.suggested {
-                let key_env = s.key_env.as_deref().unwrap_or("");
-                println!(
-                    "  {}",
-                    dim(format!(
-                        "Found {key_env}. Offload stays off; to send explore context to {} run: ax offload set-endpoint {} --key-env {key_env}",
-                        s.name, s.url
-                    ))
-                );
-                println!();
-            } else if report.catalog_written {
-                println!(
-                    "  {}",
-                    dim(
-                        "Offload is off. To use it, run: ax offload set-endpoint <url> --key-env <VAR>"
-                    )
-                );
-                println!();
-            }
-        }
-        Err(e) => {
-            eprintln!("{}", dim(format!("Offload wiring skipped: {e}")));
-        }
+    for line in offload_init_lines(ax_reasoning::read_offload_config().url.as_deref(), |key| {
+        std::env::var(key)
+            .ok()
+            .is_some_and(|v| !v.trim().is_empty())
+    }) {
+        println!("{line}");
     }
+    println!();
 
     let mut ax = if already_initialized {
         ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?
@@ -453,6 +394,36 @@ async fn run_inner(
         run_savings_setup().await;
     }
     Ok(())
+}
+
+/// What `ax init` says about LLM offload. Init never switches offload on: it sends explore
+/// text (project source) to an outside model, so the user turns it on with
+/// `ax offload set-endpoint`. An API key in the environment only produces that hint.
+fn offload_init_lines(configured_url: Option<&str>, has_key: impl Fn(&str) -> bool) -> Vec<String> {
+    if let Some(url) = configured_url.map(str::trim).filter(|u| !u.is_empty()) {
+        return vec![ok_line(format!(
+            "Offload on: {url} (turn off with: ax offload clear)"
+        ))];
+    }
+    let mut lines = vec![dim("Offload is off: explore text stays on this machine.")];
+    let found = ax_reasoning::OFFLOAD_PROVIDERS
+        .iter()
+        .find(|p| p.key_env.is_some_and(&has_key));
+    if let Some(provider) = found {
+        let key_env = provider.key_env.unwrap_or_default();
+        lines.push(format!(
+            "  {} found {key_env}; to send explore text to {} run: ax offload set-endpoint {} --key-env {key_env}",
+            dim("·"),
+            provider.name,
+            provider.url,
+        ));
+    } else {
+        lines.push(format!(
+            "  {} to use an outside model run: ax offload set-endpoint <url> --key-env <VAR>",
+            dim("·")
+        ));
+    }
+    lines
 }
 
 /// Ask for the on-disk rules/skills folder when `policy.agentsDir` is unset.

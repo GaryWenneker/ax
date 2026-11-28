@@ -19,6 +19,7 @@ mod docs_catalog;
 mod domain_graph;
 mod folder_picker;
 mod global_policy;
+mod global_pool;
 mod graph_export;
 mod links_api;
 mod local_mcp_export;
@@ -39,6 +40,7 @@ mod project_purge;
 mod queries;
 mod remote_mcp;
 mod remote_mcp_publications;
+mod request_guard;
 mod savings;
 mod share_api;
 mod share_auth;
@@ -46,6 +48,7 @@ mod ship;
 mod skill_catalog_api;
 mod sonar_proxy;
 mod specs;
+mod utf8_stream;
 mod vault_folders;
 mod web_auth;
 mod workspace;
@@ -159,6 +162,17 @@ fn nodes_max_limit() -> i64 {
     2_000
 }
 
+/// Page size from a query string, kept in `1..=max`. SQLite reads a negative
+/// `LIMIT` as "no limit", so the lower bound matters as much as the upper.
+fn page_limit(limit: i64, max: i64) -> i64 {
+    limit.clamp(1, max)
+}
+
+/// Row offset from a query string; negative values start at the first row.
+fn page_offset(offset: i64) -> i64 {
+    offset.max(0)
+}
+
 async fn handle_nodes(State(hub): State<WebHub>, Query(p): Query<NodesQuery>) -> impl IntoResponse {
     let ws = hub.read().await;
     let filter = queries::NodeFilter {
@@ -166,8 +180,8 @@ async fn handle_nodes(State(hub): State<WebHub>, Query(p): Query<NodesQuery>) ->
         lang: p.lang.as_deref(),
         file: p.file.as_deref(),
         q: p.q.as_deref(),
-        limit: p.limit.min(nodes_max_limit()),
-        offset: p.offset,
+        limit: page_limit(p.limit, nodes_max_limit()),
+        offset: page_offset(p.offset),
     };
     match queries::get_nodes(&ws.graph_pool, filter).await {
         Ok(page) => (
@@ -211,8 +225,8 @@ async fn handle_files(State(hub): State<WebHub>, Query(p): Query<FilesQuery>) ->
         lang: p.lang.as_deref(),
         q: p.q.as_deref(),
         prefix: p.prefix.as_deref(),
-        limit: p.limit.min(files_max_limit()),
-        offset: p.offset,
+        limit: page_limit(p.limit, files_max_limit()),
+        offset: page_offset(p.offset),
     };
     match queries::get_files(&ws.graph_pool, filter).await {
         Ok(page) => (
@@ -249,7 +263,7 @@ async fn handle_search(
 ) -> impl IntoResponse {
     let ws = hub.read().await;
     let q = p.q.as_deref().unwrap_or("");
-    match queries::search(&ws.graph_pool, q, p.limit.min(100)).await {
+    match queries::search(&ws.graph_pool, q, page_limit(p.limit, 100)).await {
         Ok(results) => (
             StatusCode::OK,
             Json(serde_json::json!({ "results": results })),
@@ -285,8 +299,8 @@ async fn handle_unresolved(
     let filter = queries::UnresolvedFilter {
         q: p.q.as_deref(),
         kind: p.kind.as_deref(),
-        limit: p.limit.min(500),
-        offset: p.offset,
+        limit: page_limit(p.limit, 500),
+        offset: page_offset(p.offset),
     };
     match queries::get_unresolved_refs(&ws.graph_pool, filter).await {
         Ok(page) => (
@@ -349,6 +363,46 @@ fn default_source_context() -> i64 {
 
 const SOURCE_MAX_LINES: i64 = 500;
 
+/// Largest file `/api/source` reads; bigger files get 413.
+const SOURCE_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Paths `/api/source` never serves, even when an index lists them.
+fn source_path_denied(rel: &str) -> bool {
+    rel.split('/')
+        .any(|part| part == ".git" || part == ".ax" || part == ".env" || part.starts_with(".env."))
+}
+
+/// Whether `/api/source` may serve `resolved`: the file must be in the
+/// index's `files` table (by the requested path or by its path relative to
+/// the canonical root) and not on the deny list.
+async fn source_is_indexed(
+    pool: &sqlx::SqlitePool,
+    root: &std::path::Path,
+    resolved: &std::path::Path,
+    requested: &str,
+) -> Result<bool, sqlx::Error> {
+    let Ok(rel) = resolved.strip_prefix(root) else {
+        return Ok(false);
+    };
+    let rel = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/");
+    let requested = requested.replace('\\', "/");
+    let requested = requested.trim_start_matches("./");
+    if rel.is_empty() || source_path_denied(&rel) || source_path_denied(requested) {
+        return Ok(false);
+    }
+    let hit =
+        sqlx::query_scalar::<_, i64>("SELECT 1 FROM files WHERE path = ? OR path = ? LIMIT 1")
+            .bind(&rel)
+            .bind(requested)
+            .fetch_optional(pool)
+            .await?;
+    Ok(hit.is_some())
+}
+
 async fn handle_source(
     State(hub): State<WebHub>,
     Query(p): Query<SourceQuery>,
@@ -401,21 +455,64 @@ async fn handle_source(
             )
                 .into_response();
         }
+        // Serve only files the index holds, so files left out of the index on
+        // purpose (secrets, VCS metadata, ax state) stay unreadable here.
+        match source_is_indexed(&ws.graph_pool, &root, &resolved, &p.path).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(ApiError {
+                        error: format!("file is not in the index: {}", p.path),
+                    }),
+                )
+                    .into_response()
+            }
+            Err(e) => return api_err(e.to_string()).into_response(),
+        }
 
-        match tokio::fs::read_to_string(&resolved).await {
-            Ok(t) => t,
+        let path = resolved.clone();
+        let read =
+            tokio::task::spawn_blocking(move || ax_utils::read_bounded(&path, SOURCE_MAX_BYTES))
+                .await;
+        match read {
+            Ok(Ok(bytes)) => match String::from_utf8(bytes) {
+                Ok(t) => t,
+                Err(_) => {
+                    return api_err(format!("cannot read {}: not UTF-8 text", p.path))
+                        .into_response()
+                }
+            },
+            Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => {
+                return (
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    Json(ApiError {
+                        error: format!(
+                            "{} is larger than {} MiB",
+                            p.path,
+                            SOURCE_MAX_BYTES / (1024 * 1024)
+                        ),
+                    }),
+                )
+                    .into_response()
+            }
+            Ok(Err(e)) => return api_err(format!("cannot read {}: {e}", p.path)).into_response(),
             Err(e) => return api_err(format!("cannot read {}: {e}", p.path)).into_response(),
         }
     };
     let lines: Vec<&str> = text.lines().collect();
     let total = lines.len() as i64;
 
+    // Query values are untrusted i64s: saturate so extreme values clamp
+    // instead of overflowing.
+    let context = p.context.max(0);
     let start = p.start.unwrap_or(1).max(1);
-    let end = p.end.unwrap_or(start + 200).max(start);
-    let from = (start - p.context.max(0)).max(1);
-    let to = (end + p.context.max(0))
+    let end = p.end.unwrap_or(start.saturating_add(200)).max(start);
+    let from = start.saturating_sub(context).max(1);
+    let to = end
+        .saturating_add(context)
         .min(total)
-        .min(from + SOURCE_MAX_LINES - 1);
+        .min(from.saturating_add(SOURCE_MAX_LINES - 1));
 
     let slice: Vec<serde_json::Value> = lines
         .iter()
@@ -711,16 +808,25 @@ pub async fn handle_reset_client_cache() -> impl IntoResponse {
         .unwrap()
 }
 
+/// Reads one web UI file. `path` comes from the request URL, so it must stay
+/// inside a dist folder: `..`, absolute paths, backslashes and links that
+/// point out of the folder are refused.
 fn dist_file(path: &str) -> Option<(Vec<u8>, &'static str)> {
     let _ = WEB_DIST_DISK_HINT;
+    if path.contains('\\') {
+        return None;
+    }
+    let rel = ax_utils::safe_relative(path).ok()?;
     for root in dist_roots() {
-        let disk = root.join(path);
+        let Ok(disk) = ax_utils::contained_join(&root, path) else {
+            continue;
+        };
         if disk.is_file() {
             return std::fs::read(disk).ok().map(|b| (b, "disk"));
         }
     }
     WEB_DIST
-        .get_file(path)
+        .get_file(&rel)
         .map(|f| (f.contents().to_vec(), "embed"))
 }
 
@@ -820,6 +926,9 @@ pub struct ServeOptions {
     pub bind: String,
     /// When set, requires `?token=` / Bearer / cookie (also sets `AX_SHARE_TOKEN`).
     pub share_token: Option<String>,
+    /// Serve beyond loopback without a login or share token. Off by default;
+    /// `AX_WEB_ALLOW_ANONYMOUS_LAN=1` has the same effect.
+    pub allow_anonymous_lan: bool,
 }
 
 impl Default for ServeOptions {
@@ -830,6 +939,7 @@ impl Default for ServeOptions {
             open: false,
             bind: "127.0.0.1".into(),
             share_token: None,
+            allow_anonymous_lan: false,
         }
     }
 }
@@ -855,6 +965,26 @@ pub async fn serve_with(opts: ServeOptions) -> Result<(), String> {
         opts.bind.as_str(),
         "127.0.0.1" | "localhost" | "::1" | "[::1]"
     );
+    if !hub.local_only {
+        let login = match ax_global_db::global_db_path() {
+            Ok(path) => match ax_global_db::open_and_init(&path).await {
+                Ok(pool) => web_auth::web_login_enabled(&pool).await,
+                Err(_) => false,
+            },
+            Err(_) => false,
+        };
+        let allow_anonymous = opts.allow_anonymous_lan
+            || std::env::var("AX_WEB_ALLOW_ANONYMOUS_LAN").ok().as_deref() == Some("1");
+        if let Some(warning) = request_guard::lan_exposure(
+            &opts.bind,
+            opts.share_token.is_some(),
+            login,
+            allow_anonymous,
+        )? {
+            tracing::warn!("{warning}");
+            eprintln!("ax web: WARNING: {warning}");
+        }
+    }
     if !readonly {
         if let Err(error) = replication_setup::auto_start(&opts.root).await {
             tracing::warn!("replication automatic startup failed: {error}");
@@ -910,13 +1040,42 @@ pub async fn serve_with(opts: ServeOptions) -> Result<(), String> {
     actions::publish("web", "server started", None);
     ax_usage::spawn_ensure_daily_pricing_sync();
 
-    axum::serve(
+    serve_until(listener, app, shutdown_signal()).await
+}
+
+/// Serve `app` until `signal` fires. Requests still open then get
+/// [`SHUTDOWN_GRACE`] to finish; event streams never finish on their own, so
+/// after that the server stops without them.
+async fn serve_until<F>(
+    listener: tokio::net::TcpListener,
+    app: axum::Router,
+    signal: F,
+) -> Result<(), String>
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    let (fired, on_fired) = tokio::sync::oneshot::channel::<()>();
+    let server = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
-    .await
-    .map_err(|e| e.to_string())
+    .with_graceful_shutdown(async move {
+        signal.await;
+        let _ = fired.send(());
+    });
+    let server = std::future::IntoFuture::into_future(server);
+    tokio::pin!(server);
+    tokio::select! {
+        result = &mut server => return result.map_err(|e| e.to_string()),
+        _ = on_fired => {}
+    }
+    match tokio::time::timeout(SHUTDOWN_GRACE, server).await {
+        Ok(result) => result.map_err(|e| e.to_string()),
+        Err(_) => {
+            eprintln!("ax web: closed the requests that were still open.");
+            Ok(())
+        }
+    }
 }
 
 fn guess_lan_ip() -> Option<String> {
@@ -927,28 +1086,118 @@ fn guess_lan_ip() -> Option<String> {
 }
 
 async fn bind_web_listener(addr: &str, port: u16) -> Result<tokio::net::TcpListener, String> {
-    free_web_port(port);
-
     match tokio::net::TcpListener::bind(addr).await {
         Ok(listener) => Ok(listener),
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-            free_web_port(port);
-            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-            tokio::net::TcpListener::bind(addr)
+            // Only an earlier `ax web` is stopped; any other program keeps the port.
+            let stopped = tokio::task::spawn_blocking(move || stop_previous_ax_web(port))
                 .await
-                .map_err(|e| format!("Cannot bind to {addr}: {e}"))
+                .map_err(|e| format!("Cannot bind to {addr}: {e}"))??;
+            if stopped > 0 {
+                eprintln!("ax web: stopped the previous ax web on port {port}");
+            }
+            for _ in 0..10 {
+                match tokio::net::TcpListener::bind(addr).await {
+                    Ok(listener) => return Ok(listener),
+                    Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    }
+                    Err(e) => return Err(format!("Cannot bind to {addr}: {e}")),
+                }
+            }
+            Err(format!(
+                "Cannot bind to {addr}: port {port} is still in use. Choose another port with --port."
+            ))
         }
         Err(e) => Err(format!("Cannot bind to {addr}: {e}")),
     }
 }
 
-fn free_web_port(port: u16) {
-    let self_pid = std::process::id();
-    match ax_utils::kill_listening_on_port(port, self_pid) {
-        Ok(0) => {}
-        Ok(n) => eprintln!("ax web: freed port {port} (stopped {n} process(es))"),
-        Err(e) => eprintln!("ax web: warning: could not free port {port}: {e}"),
+/// Whether a process command (name or executable path) is the `ax` binary.
+fn is_ax_command(command: &str) -> bool {
+    let name = command
+        .trim()
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default();
+    name == "ax" || name.eq_ignore_ascii_case("ax.exe")
+}
+
+/// The command name of `pid`, or `None` when it cannot be read.
+fn process_command(pid: u32) -> Option<String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let out = std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let first = text.lines().next()?.split(',').next()?.trim_matches('"');
+        (!first.is_empty() && !first.contains(' ')).then(|| first.to_string())
     }
+    #[cfg(unix)]
+    {
+        let out = std::process::Command::new("ps")
+            .args(["-o", "comm=", "-p", &pid.to_string()])
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (out.status.success() && !text.is_empty()).then_some(text)
+    }
+}
+
+/// Asks `pid` to stop, waits, and force-stops it only if it is still running.
+fn stop_pid_gracefully(pid: u32) {
+    #[cfg(windows)]
+    let (soft, hard): (Vec<String>, Vec<String>) = (
+        vec!["/PID".into(), pid.to_string()],
+        vec!["/PID".into(), pid.to_string(), "/F".into()],
+    );
+    #[cfg(windows)]
+    let program = "taskkill";
+    #[cfg(unix)]
+    let (soft, hard): (Vec<String>, Vec<String>) = (
+        vec!["-TERM".into(), pid.to_string()],
+        vec!["-KILL".into(), pid.to_string()],
+    );
+    #[cfg(unix)]
+    let program = "kill";
+    let _ = std::process::Command::new(program).args(&soft).status();
+    for _ in 0..30 {
+        if !ax_utils::is_pid_alive(pid) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let _ = std::process::Command::new(program).args(&hard).status();
+}
+
+/// Stops an earlier `ax web` that holds `port`. Fails, and stops nothing,
+/// when the port belongs to any other program. Returns how many processes
+/// were stopped.
+fn stop_previous_ax_web(port: u16) -> Result<usize, String> {
+    let self_pid = std::process::id();
+    let pids: Vec<u32> = ax_utils::pids_listening_on_port(port)
+        .map_err(|e| format!("Port {port} is in use ({e}). Choose another port with --port."))?
+        .into_iter()
+        .filter(|pid| *pid != self_pid)
+        .collect();
+    for pid in &pids {
+        let command = process_command(*pid);
+        if !command.as_deref().is_some_and(is_ax_command) {
+            let who = command.unwrap_or_else(|| "an unknown program".into());
+            return Err(format!(
+                "Port {port} is in use by {who} (pid {pid}). ax web does not stop other programs; choose another port with --port."
+            ));
+        }
+    }
+    for pid in &pids {
+        stop_pid_gracefully(*pid);
+    }
+    Ok(pids.len())
 }
 
 fn open_browser(url: &str) {
@@ -962,7 +1211,150 @@ fn open_browser(url: &str) {
     let _ = std::process::Command::new("xdg-open").arg(url).spawn();
 }
 
+/// How long open requests (event streams included) may run after a shutdown
+/// signal before the server stops anyway.
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Ctrl+C, or SIGTERM on Unix (systemd, Docker, an IDE stopping `ax web`).
 async fn shutdown_signal() {
-    tokio::signal::ctrl_c().await.ok();
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut term) => {
+                term.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = terminate => {}
+    }
     eprintln!("\nax web: shutting down.");
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    use axum::response::sse::{Event, Sse};
+    use std::time::Duration;
+
+    /// An event stream that never ends, like `/api/changes`.
+    fn endless_stream_app() -> axum::Router {
+        axum::Router::new().route(
+            "/events",
+            axum::routing::get(|| async {
+                let stream = futures_util::stream::unfold((), |()| async {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    Some((
+                        Ok::<_, std::convert::Infallible>(Event::default().data("tick")),
+                        (),
+                    ))
+                });
+                Sse::new(stream)
+            }),
+        )
+    }
+
+    #[tokio::test]
+    async fn an_open_event_stream_does_not_keep_the_server_running() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(listener, endless_stream_app(), async {
+            let _ = stopped.await;
+        }));
+
+        // A browser tab keeps the stream open.
+        let mut tab = tokio::net::TcpStream::connect(addr).await.unwrap();
+        tokio::io::AsyncWriteExt::write_all(
+            &mut tab,
+            b"GET /events HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n",
+        )
+        .await
+        .unwrap();
+        let mut first = [0u8; 64];
+        let n = tokio::io::AsyncReadExt::read(&mut tab, &mut first)
+            .await
+            .unwrap();
+        assert!(n > 0, "the stream never started");
+
+        stop.send(()).unwrap();
+        let ended = tokio::time::timeout(SHUTDOWN_GRACE + Duration::from_secs(5), server).await;
+        assert!(ended.is_ok(), "the server kept running for the open stream");
+        drop(tab);
+    }
+
+    /// `ax web` under systemd, Docker or an IDE is stopped with SIGTERM.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sigterm_starts_the_shutdown() {
+        let waiting = tokio::spawn(shutdown_signal());
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let status = std::process::Command::new("kill")
+            .args(["-TERM", &std::process::id().to_string()])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let fired = tokio::time::timeout(Duration::from_secs(5), waiting).await;
+        assert!(fired.is_ok(), "SIGTERM did not start the shutdown");
+    }
+}
+
+#[cfg(test)]
+mod port_tests {
+    use super::*;
+
+    #[test]
+    fn only_ax_commands_count_as_ax() {
+        assert!(is_ax_command("ax"));
+        assert!(is_ax_command("/usr/local/bin/ax"));
+        assert!(is_ax_command("C:\\Tools\\ax.exe"));
+        assert!(is_ax_command("ax.exe"));
+        assert!(!is_ax_command("node"));
+        assert!(!is_ax_command("/usr/bin/python3"));
+        assert!(!is_ax_command("max"));
+        assert!(!is_ax_command("ax-something-else"));
+        assert!(!is_ax_command(""));
+    }
+
+    /// Another program holding the port is left alone: binding fails with a
+    /// message that names `--port`, and the program keeps running.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_foreign_listener_is_not_killed() {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+        let script = format!(
+            "import socket,time\ns=socket.socket()\ns.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\ns.bind(('127.0.0.1',{port}))\ns.listen()\ntime.sleep(60)"
+        );
+        let Ok(mut child) = std::process::Command::new("python3")
+            .args(["-c", &script])
+            .spawn()
+        else {
+            eprintln!("skip: python3 not available");
+            return;
+        };
+        let addr = format!("127.0.0.1:{port}");
+        let mut up = false;
+        for _ in 0..100 {
+            if std::net::TcpStream::connect(&addr).is_ok() {
+                up = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(up, "helper listener did not start");
+
+        let result = bind_web_listener(&addr, port).await;
+        let alive = child.try_wait().unwrap().is_none();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(alive, "the foreign listener was killed");
+        let err = result.expect_err("bind must fail while the port is taken");
+        assert!(err.contains("--port"), "{err}");
+    }
 }

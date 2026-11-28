@@ -42,18 +42,25 @@ async fn handle_sync(State(hub): State<WebHub>, Json(input): Json<SyncInput>) ->
     if hub.readonly {
         return forbidden_readonly();
     }
-    let ws = hub.read().await;
-    match sync_catalog(
-        &ws.project_root,
-        SyncOptions {
-            skip_wiki_pull: input.skip_wiki_pull,
-            dry_run: input.dry_run,
-        },
-        None,
-    )
+    // Copy the root out and release the workspace lock: a sync can take long,
+    // and a queued workspace switch would otherwise stall every reader.
+    let root = hub.read().await.project_root.clone();
+    let opts = SyncOptions {
+        skip_wiki_pull: input.skip_wiki_pull,
+        dry_run: input.dry_run,
+    };
+    // The sync runs git and file scans synchronously inside its future, so
+    // drive it from the blocking pool instead of an async worker.
+    let runtime = tokio::runtime::Handle::current();
+    let synced = tokio::task::spawn_blocking(move || {
+        runtime
+            .block_on(sync_catalog(&root, opts, None))
+            .map_err(|e| e.to_string())
+    })
     .await
-    {
+    .unwrap_or_else(|e| Err(e.to_string()));
+    match synced {
         Ok(report) => (StatusCode::OK, Json(report)).into_response(),
-        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e),
     }
 }

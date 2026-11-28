@@ -64,7 +64,8 @@ pub fn resolve(root: &Path, rest: &str) -> FsResult<PathBuf> {
 
 pub enum Found {
     Dir(i64),
-    File(Vec<u8>, i64),
+    /// A file's resolved path, length and modified time. Its contents are not read.
+    File(PathBuf, u64, i64),
 }
 
 pub fn lookup(root: &Path, rest: &str) -> FsResult<Found> {
@@ -73,9 +74,16 @@ pub fn lookup(root: &Path, rest: &str) -> FsResult<Found> {
     if meta.is_dir() {
         Ok(Found::Dir(modified_ms(&meta)))
     } else {
-        let bytes = std::fs::read(&path).map_err(io_err)?;
-        Ok(Found::File(bytes, modified_ms(&meta)))
+        Ok(Found::File(path, meta.len(), modified_ms(&meta)))
     }
+}
+
+/// The whole file, for editing in place. Refused above `limit` bytes.
+pub fn read_limited(path: &Path, limit: usize) -> FsResult<Vec<u8>> {
+    ax_utils::read_bounded(path, limit as u64).map_err(|e| match e.kind() {
+        std::io::ErrorKind::InvalidData => FsError::TooLarge,
+        _ => io_err(e),
+    })
 }
 
 /// Children as `name -> (is_dir, len, modified_ms)`. Symlinks are not listed.

@@ -30,7 +30,7 @@ By default the server lists the **turn contract** plus the **whole graph read su
 
 `ax_explore` remains the one call that usually answers a whole question: give it a natural-language question or a bag of symbol and file names and it returns the **verbatim, line-numbered source** of the relevant symbols grouped by file, plus call paths and a blast-radius summary. Reach for the narrower tools when you already know exactly what you want.
 
-The specification tools use the same camelCase JSON as `POST /api/specs/...`. `ax_spec_flag` reads or sets `hierarchy_v2`, which defaults off. `ax_spec_approve` is called as an agent and is refused. A person approves with `ax spec-approve`. `ax_spec_review` lists finished plans that are waiting for a parent spec. `ax_spec_policy` links a spec or plan to one policy revision and stores the hash, not the rule body. `ax_spec_compatibility` records that a plan selection was checked after its spec changed. The CLI equivalents are in [CLI](/reference/cli/#specifications-and-plans).
+The specification tools use the same camelCase JSON as `POST /api/specs/...`. `ax_spec_flag` reads or sets `hierarchy_v2`, which defaults off. `ax_spec_approve` is called as an agent and is refused. A person approves with `ax spec-approve` in an interactive terminal, or in the Command Center. `ax_spec_review` lists finished plans that are waiting for a parent spec. `ax_spec_policy` links a spec or plan to one policy revision and stores the hash, not the rule body. `ax_spec_compatibility` records that a plan selection was checked after its spec changed. The CLI equivalents are in [CLI](/reference/cli/#specifications-and-plans).
 
 **Why the default is no longer minimal.** Earlier versions listed six tools and left the rest callable-but-unlisted. That created a contradiction: ax's own CRITICAL rules tell agents to call `ax_search` before `Grep` and `ax_sync` after edits, while `tools/list` said those tools did not exist. Agents that trusted the catalog fell back to filesystem sweeps — the behaviour the rules exist to prevent. The full audit is in `docs/audits/2026-08-19-preflight-graph-only/`.
 
@@ -110,7 +110,7 @@ Call `ax_guard` with the target file path before editing project files. See [Pol
 
 ### Turn-end post-flight (Claude Code)
 
-`ax install` wires two more Claude Code hooks alongside the existing `UserPromptSubmit` prompt-hook: `Stop` and `SubagentStop`, both running `ax stop-hook`. The ax path in every hook command uses forward slashes, including on Windows, so Git Bash does not treat `\` as an escape and fail with "command not found". On turn end it scans the working-tree files changed since the last commit (`git status --porcelain`) through the same `ax_guard` checks described above, and — only on a CRITICAL violation — returns `{"decision": "block", "reason": "…"}` so Claude fixes the issue before actually finishing. It always honors `stop_hook_active` to avoid looping, and no-ops entirely when there's no `.ax/policy/` or the project isn't indexed. Disable with `AX_NO_STOP_HOOK=1`.
+`ax install` wires two more Claude Code hooks alongside the existing `UserPromptSubmit` prompt-hook: `Stop` and `SubagentStop`, both running `ax stop-hook`. The ax path in every hook command uses forward slashes, including on Windows, so Git Bash does not treat `\` as an escape and fail with "command not found". On turn end it scans the working-tree files inside the ax project that changed since the last commit (`git status --porcelain -z --untracked-files=all`, so new files in new folders and non-ASCII names are included and a project in a repository subfolder works; at most 40 files per turn, and the block reason counts any left out) through the same `ax_guard` checks described above, and — only on a CRITICAL violation — returns `{"decision": "block", "reason": "…"}` so Claude fixes the issue before actually finishing. It always honors `stop_hook_active` to avoid looping, and no-ops entirely when there's no `.ax/policy/` or the project isn't indexed. Disable with `AX_NO_STOP_HOOK=1`.
 
 ### Diagnostics bridge: `ax_diagnostics`
 
@@ -231,6 +231,8 @@ By default ax uses **[Smart Output](/guides/smart-output/)**. Agent-facing bodie
 
 Savings measurement (`ax savings`) always runs against the full pre-projection payload, so the leaner wire format never distorts the numbers.
 
+Some clients, Claude Code among them, hand the model `structuredContent` in place of `content.text` when a reply has both. With the lean payload the model would see counts and never the rule bodies, skill bodies, memories or numbered source, so a client whose `initialize` name contains `claude` gets text-only replies: no `structuredContent` on any tool. The session id, cache ids and directive questions are in the text. `AX_MCP_STRUCTURED=off` forces this for any client and `AX_MCP_STRUCTURED=lean` turns it off. The remote server applies the same rule after it has recorded the chat and cache ids it issued.
+
 Set `AX_MCP_FULL=1` to restore raw `structuredContent` for inline results (for clients that read only structured data). Existing oversized-reply stubs still return cache metadata. It does not bypass project isolation; legacy unscoped handles must be recreated. See [migration and compatibility](/guides/smart-output/#compatibility-and-release).
 
 ### Verbose MCP logging (Cursor Output)
@@ -258,6 +260,7 @@ MCP lines are prefixed with `[ax-mcp]`. From **ax 8.4.4**, matching CLI graph/po
 | Variable | Default | Purpose |
 |---|---|---|
 | `AX_MCP_FULL` | unset | `1`/`true`/`yes` restores full `structuredContent` on every tool |
+| `AX_MCP_STRUCTURED` | unset | `off` sends text-only replies (no `structuredContent`) to every client; `lean` sends the lean payload to every client. Unset: a client whose `initialize` name contains `claude` gets text-only replies, every other client the lean payload. `AX_MCP_FULL` wins over both |
 | `AX_MCP_VERBOSE` | unset | Legacy compatibility flag; current MCP delivery writes project traces and stderr regardless of this value |
 | `AX_EXPLORE_MAX_LINES` | 40 | Max source lines per `ax_explore` snippet |
 | `AX_EXPLORE_MAX_SOURCE_CHARS` | 2000 | Max source characters per `ax_explore` snippet |
