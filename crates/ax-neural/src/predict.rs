@@ -31,16 +31,16 @@ pub fn predict(rows: &[Observation], task: &str, minimum_confidence: f64) -> Vec
     predict_with_edges(rows, task, minimum_confidence, &[])
 }
 
-/// Same as [`predict`], but marks a prediction `relationship: verified` when a graph edge
-/// joins its target to another id that this task predicts or that its matching feedback
-/// rows used as context. Edges never become predictions on their own. At most
-/// [`MAX_PREDICTIONS`] predictions are returned.
 /// True when some feedback row matches `task`, the only case in which
-/// `predict_with_edges` reads its edges.
+/// [`predict_with_edges`] reads its edges.
 pub fn any_matches(rows: &[Observation], task: &str) -> bool {
     rows.iter().any(|row| category_matches(row, task))
 }
 
+/// Same as [`predict`], but marks a prediction `relationship: verified` when a graph edge
+/// joins its target to another id that this task predicts or that its matching feedback
+/// rows used as context. Edges never become predictions on their own. At most
+/// [`MAX_PREDICTIONS`] predictions are returned.
 pub fn predict_with_edges(
     rows: &[Observation],
     task: &str,
