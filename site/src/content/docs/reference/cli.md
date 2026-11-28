@@ -1268,6 +1268,7 @@ ax neural export --out neural-feedback.json
 - `benchmark` scores the fused hash-v1 recall pipeline on the built-in coding fixture in a temporary database. It reports hits per question family and the measured query latency. It does not open `.ax/ax.db` and it does not download a model.
 - `evaluate` holds out each coding-fixture question in turn, predicts its memories from the rest, and stores precision, false-positive rate, and coverage for `status`.
 - `feedback` takes `--context-id`, `--skill-id`, and `--rule-id` (repeat each for more), plus `--retry-count`, `--input-tokens`, and `--output-tokens`. It is refused unless `neural.learning.feedback_collection` is true.
+- `learn` trains a ranking prior from this project's stored feedback and never promotes it. It reads stored feedback only while `neural.learning.feedback_collection` is true, and reports `applied: false` with a reason when collection is off or there are no feedback rows. The MCP tool also takes `rows` to train on rows you pass instead.
 - `graph` reads this project's edges and successful feedback and stores suggestions labeled `predicted`. It never writes edges. `--edges '<json array>'` previews suggestions for the edges you pass and stores nothing. It returns nothing while `neural.graph.enabled` is false.
 - `rank <query> --blocks '<json array>'` ranks blocks the way preflight does.
 - `register <model-id> <version> <checksum>` takes `--model-type`, `--dataset-version`, `--platforms`, and `--metrics '<json object>'`. Registering does not promote.

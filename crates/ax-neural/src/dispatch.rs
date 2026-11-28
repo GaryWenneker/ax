@@ -252,12 +252,6 @@ pub async fn handle(
         "agent_eval" => crate::agent_eval::run_agent_eval(crate::CODING_FIXTURE).await,
         "learn" | "train" => {
             let cfg = load(root);
-            if !cfg.feedback_active() && pool.is_none() {
-                return Ok(serde_json::json!({
-                    "applied": false,
-                    "reason": "feedback collection disabled and no database rows"
-                }));
-            }
             let seed = args.get("seed").and_then(|v| v.as_u64()).unwrap_or(1);
             let ratio = args
                 .get("validationRatio")
@@ -271,8 +265,15 @@ pub async fn handle(
                 .get("modelVersion")
                 .and_then(|v| v.as_str())
                 .unwrap_or("rank-prior-1");
+            // Passed rows are trained as given. Stored feedback is read only
+            // while feedback collection is on.
             let rows = if let Some(arr) = args.get("rows").and_then(|v| v.as_array()) {
                 arr.clone()
+            } else if !cfg.feedback_active() {
+                return Ok(json!({
+                    "applied": false,
+                    "reason": "feedback collection is disabled"
+                }));
             } else if let Some(pool) = pool {
                 let export = training_export(pool, &project_id(root)).await?;
                 export
@@ -283,6 +284,9 @@ pub async fn handle(
             } else {
                 Vec::new()
             };
+            if rows.is_empty() {
+                return Ok(json!({ "applied": false, "reason": "no feedback rows" }));
+            }
             let mut report = crate::learning::train_ranking_prior(
                 &rows,
                 ratio,
@@ -1170,6 +1174,49 @@ mod tests {
             })
             .collect();
         assert_eq!(pairs, vec![("memory:a", "rule:b")]);
+    }
+
+    #[tokio::test]
+    async fn learn_uses_stored_feedback_only_while_collection_is_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let on = r#"{"neural":{"learning":{"feedback_collection":true}}}"#;
+        std::fs::write(dir.path().join("ax.json"), on).unwrap();
+        let database = open(dir.path()).await;
+        let pool = database.pool();
+        let empty = handle(dir.path(), "learn", &json!({}), Some(pool))
+            .await
+            .unwrap();
+        assert_eq!(
+            empty,
+            json!({ "applied": false, "reason": "no feedback rows" })
+        );
+        for execution in ["e1", "e2", "e3", "e4"] {
+            let context = json!(["memory:a"]);
+            outcome_feedback(dir.path(), pool, execution, "success", context).await;
+        }
+        let trained = handle(dir.path(), "learn", &json!({}), Some(pool))
+            .await
+            .unwrap();
+        assert_eq!(trained["applied"], true, "{trained}");
+        assert_eq!(trained["rowCount"], 4);
+
+        std::fs::write(dir.path().join("ax.json"), "{}").unwrap();
+        let off = handle(dir.path(), "learn", &json!({}), Some(pool))
+            .await
+            .unwrap();
+        assert_eq!(
+            off,
+            json!({ "applied": false, "reason": "feedback collection is disabled" })
+        );
+        let rows = json!({ "rows": [
+            { "outcome": "success", "contextIds": ["memory:a"] },
+            { "outcome": "success", "contextIds": ["memory:a"] },
+            { "outcome": "success", "contextIds": ["memory:a"] },
+            { "outcome": "success", "contextIds": ["memory:a"] }
+        ]});
+        let passed = handle(dir.path(), "learn", &rows, None).await.unwrap();
+        assert_eq!(passed["applied"], true, "{passed}");
+        assert_eq!(passed["rowCount"], 4);
     }
 
     async fn parser_feedback(root: &Path, pool: &SqlitePool) {
