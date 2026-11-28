@@ -1,6 +1,9 @@
 ---
 title: MCP Logging & Quality
 description: End-to-end guide to verbose MCP and CLI traces, the Logging page, Quality slide-out, session hooks, and ax mcp audit.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 ax ships an **observability loop** for both MCP and CLI: record what agents send and receive, score how well they use ax tools, and turn waste into a fixpack you can paste back into chat.

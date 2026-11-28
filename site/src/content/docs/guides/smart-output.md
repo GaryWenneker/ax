@@ -1,6 +1,9 @@
 ---
 title: Smart Output
 description: Compact agent context, structured metadata, project-bound expansion and honest token measurements.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 Ax Smart Output is the default MCP response architecture. Ax chooses the representation; there is no XML/JSON/Markdown selector. Settings shows **MCP Output: Smart Output** as information, without claiming runtime cache status or token savings it cannot verify.

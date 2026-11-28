@@ -1,6 +1,9 @@
 ---
 title: Affected Tests in CI
 description: Run only the tests a change actually touches.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 `ax affected` traces import dependencies transitively to find which test files are affected by a set of changed source files — so CI can run only the relevant tests.

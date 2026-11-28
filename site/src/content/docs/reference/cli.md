@@ -1,6 +1,9 @@
 ---
 title: CLI
 description: Reference for ax commands, arguments, and flags in the current main source.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 Run `ax <command> --help` for the same information from the installed binary. Global help: `ax --help`.

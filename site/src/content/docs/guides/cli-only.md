@@ -1,6 +1,9 @@
 ---
 title: CLI-only mode
 description: Run the same ax preflight, session, turn, and graph engines without MCP, plugins, IDE hooks, or daemons.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 Use ax when your agent cannot (or must not) load an MCP server. The CLI talks to the **same shared engines** MCP uses: preflight, sessions, turns, memory, graph explore, and activity logging.

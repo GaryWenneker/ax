@@ -1,6 +1,9 @@
 ---
 title: Open Knowledge Format (OKF)
 description: Export a portable Markdown OKF bundle from the ax graph, with optional Azure DevOps Wiki publish.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 # Open Knowledge Format (OKF)

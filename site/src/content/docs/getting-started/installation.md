@@ -1,11 +1,18 @@
 ---
 title: Installation
 description: Install ax from the shell, then run ax install and ax init in your project.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 Install ax from your terminal. The shell installer downloads the published binary for your operating system and CPU. That is the regular install. You do not clone the repository or build ax for this.
 
 ## 1. Install with the shell
+
+:::caution[The full ax is being phased out]
+The installers on this page install the full ax, with the built-in Command Center. It is being phased out. The headless build becomes ax on every platform, and `ax-admin` becomes the only visual interface. No date is set, and today the headless build is released for Linux only. See [Headless ax and ax-admin](/guides/phase-out/).
+:::
 
 ax is a **native Rust binary**. No Node.js and no Rust toolchain are required.
 
@@ -109,13 +116,13 @@ See [Deploy to the cloud](/guides/headless-linux/#deploy-to-the-cloud) for what 
 
 ### ax-admin (separate application)
 
-`ax-admin` manages a remote Ax, including the headless build, from your own computer. It has its own installer and does not need `ax`:
+`ax-admin` is the interface going forward. It manages a remote Ax, including the headless build, from your own computer. It has its own installer and does not need `ax`:
 
 ```bash
 curl -fsSL https://getax.wenneker.io/install-admin.sh | sh
 ```
 
-On Windows use `irm https://getax.wenneker.io/install-admin.ps1 | iex`. See [Remote admin](/guides/remote-admin/).
+On Windows use `irm https://getax.wenneker.io/install-admin.ps1 | iex`. See [ax-admin](/guides/remote-admin/).
 
 ### Windows
 

@@ -1,6 +1,9 @@
 ---
 title: Architecture Insights
 description: Communities, god nodes, surprising connections, the architecture report, and the interactive graph — from one analysis engine.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 ax turns the knowledge graph into a map of your architecture. One analysis engine powers three surfaces: the `ax insights` / `ax report` CLI commands, the `ax_insights` / `ax_report` MCP tools, and the Command Center **Graph** page. It works entirely on your local index — no LLM calls required.

@@ -1,6 +1,9 @@
 ---
 title: Remote Policy Share
 description: Sync team rules, skills, and shared memories from any git host (GitHub, GitLab, Azure DevOps, on-prem) or OneDrive via Microsoft Graph — per-project ax.json config and bootstrap seeding.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 **Remote policy share** lets teams distribute `.ax/policy/shared/` packs and optional `memory/shared.jsonl` from a central location without committing policy to every repo. ax pulls and pushes from **any git host** (GitHub, GitLab, Azure DevOps, on-prem) or **OneDrive / SharePoint** using `ax policy share sync`.

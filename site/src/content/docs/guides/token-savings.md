@@ -1,6 +1,9 @@
 ---
 title: Token Savings
 description: How ax cuts agent token usage with graph queries, plus a complete playbook for reducing LLM costs by 60-99% in production.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 ax measures how much context its graph queries save compared to blind file reads, and ships a dashboard to track it over time.

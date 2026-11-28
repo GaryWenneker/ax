@@ -1,6 +1,9 @@
 ---
 title: Resolution & Frameworks
 description: How ax connects references and links routes to handlers.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 Extraction produces nodes and raw edges; **resolution** turns names into real connections.

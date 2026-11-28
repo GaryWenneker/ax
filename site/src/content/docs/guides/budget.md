@@ -1,6 +1,9 @@
 ---
 title: Agent budget
 description: Quote local agent usage, plan a monthly budget, and simulate cycles without blocking provider calls.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 Ax reads Claude Code and Cursor session logs already on disk, quotes each turn from the price catalog, and compares the known total with a budget in `~/.ax/config.json`. A missing price stays **unknown**. Catalog quotes are **estimated**. **Actual** is a provider invoice, which Ax does not receive.

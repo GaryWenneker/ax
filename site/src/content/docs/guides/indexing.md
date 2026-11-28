@@ -1,6 +1,9 @@
 ---
 title: Indexing a Project
 description: Full index, incremental sync, and the file watcher.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 ## Initialize and index

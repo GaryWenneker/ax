@@ -1,6 +1,9 @@
 ---
 title: Agent Terminal (removed)
 description: The Agent terminal page is no longer part of the Command Center.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 The **Agent** page has been removed from the Command Center. Old `/agent` links now open **Stats**.

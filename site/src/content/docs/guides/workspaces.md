@@ -1,6 +1,9 @@
 ---
 title: Workspaces (monorepo)
 description: Discover and sync multiple ax projects from one root with ax.json members.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 # Workspaces (monorepo)

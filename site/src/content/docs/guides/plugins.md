@@ -1,6 +1,9 @@
 ---
 title: Extractor plugins
 description: Out-of-tree process and WASM extractors under .ax/plugins.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 ax loads custom extractors from `.ax/plugins/<name>/plugin.toml` during `ax index` / `ax sync`. Matching extensions are handled by the plugin **before** the built-in tree-sitter pool.

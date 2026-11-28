@@ -1,6 +1,9 @@
 ---
 title: The Knowledge Graph
 description: The node and edge kinds the graph is built from.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 ax stores three things: **nodes** (symbols and files), **edges** (relationships between them), and **files**. Every node and edge carries an exact `kind`, drawn from a fixed vocabulary so queries are consistent across languages.

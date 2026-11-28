@@ -1,6 +1,9 @@
 ---
 title: Dependency lifecycle security
 description: How Ax uses automated vulnerability audits, a seven-day package release-age gate, and review-only remediation pull requests.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 Ax maintains third-party supply-chain hygiene with GitHub Actions and

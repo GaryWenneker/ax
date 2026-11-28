@@ -1,20 +1,26 @@
 ---
 title: Introduction
-description: What ax is — knowledge graph, memory vault, policy engine, and Command Center for AI coding agents.
+description: What ax is — knowledge graph, memory vault, policy engine, and an admin interface for AI coding agents.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 ![ax Command Center — Rules page with the Policy, Code, Activity, and System sidebar](/screenshots/cc-policy-rules-dark.png)
 
 **ax** is **local-first intelligence for AI coding agents** — written in Rust, installed as a single binary, with no cloud index and no API keys.
 
-Four layers work together in every project:
+Ax is moving to a headless `ax` on every platform with `ax-admin` as the only visual interface. The full ax and its built-in Command Center are being phased out; see [Headless ax and ax-admin](/guides/phase-out/).
+
+These layers work together in every project:
 
 | Layer | What it does |
 |---|---|
 | **Knowledge graph** | Tree-sitter parsing → SQLite index of symbols, calls, imports, and routes |
 | **Memory** | Five tiers in one local database: this chat's notes, recent turns, named long-term decisions, a permanent archive, and the live code graph. A name fetches the exact memory. Preflight injects at most three current titles and never the archive. MCP and the CLI do the same thing. |
 | **Policy engine** | IDE-agnostic rules and skills in `.agents/`, matched and injected per turn |
-| **Command Center** | Policy editors, memory vault, graph, quality gates, token savings, Logging / Quality (MCP + CLI inbound/outbound/internal), SSE dashboard, draft PRs |
+| **ax-admin** | A separate application and the interface going forward: status, search, symbols, insights, rules, skills, memory, sessions, operations, files, usage and logging of any Ax, through its remote MCP address. See [ax-admin](/guides/remote-admin/) |
+| **Command Center** (being phased out) | Policy editors, memory vault, graph, quality gates, token savings, Logging / Quality (MCP + CLI inbound/outbound/internal), SSE dashboard, draft PRs |
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 

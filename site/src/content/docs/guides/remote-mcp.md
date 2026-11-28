@@ -1,6 +1,9 @@
 ---
 title: Remote MCP and browser login
 description: Run Ax on your own computer and retrieve project context from ChatGPT or another IDE through authenticated HTTPS.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 Remote MCP exposes Ax's existing context tools through an authenticated HTTP endpoint. Ax can run on your Mac while ChatGPT or an IDE on another computer retrieves its rules, graph, memories and working context. The remote connection uses the same [Smart Output](/guides/smart-output/) dispatcher as local stdio.

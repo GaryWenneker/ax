@@ -1,6 +1,9 @@
 ---
 title: Get Started
 description: Get up and running with ax using a published download or the current main source.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 Install the published binary with the shell below, then run `ax install` and `ax init` in your project. Knowledge graph, memory vault, policy engine, Logging / Quality (MCP and CLI), and Command Center run in one binary. Building from source is a separate path at the bottom of [Installation](/getting-started/installation/#build-from-main).
@@ -40,7 +43,11 @@ After `ax install`, run `ax init` in each directory where you want to use ax. Re
 
 `ax init` creates `.ax/`, builds the knowledge graph, and installs git hooks (sync, ship evaluate, memory capture). It asks which stacks and which IDEs to set up. Your agent uses ax tools automatically when `.ax/` exists.
 
-## 4. Optional — open Command Center
+## 4. Optional — open an interface
+
+`ax-admin` is the interface going forward. It is a separate application that connects to an Ax through its remote MCP address; see [ax-admin](/guides/remote-admin/) to install and connect it.
+
+The full ax still has the built-in Command Center, which is being phased out:
 
 ```bash
 ax web --open

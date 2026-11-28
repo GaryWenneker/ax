@@ -1,6 +1,9 @@
 ---
 title: LSP enrichment
 description: Optional Language Server bridge for Exact graph edges.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 Tree-sitter remains the default extractor. The LSP bridge is **opt-in** and best-effort: missing servers, timeouts, and empty definitions are skipped.

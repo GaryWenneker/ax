@@ -1,6 +1,9 @@
 ---
 title: MCP Server
 description: The tools ax exposes to AI agents over MCP.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 For authenticated context access from ChatGPT or another IDE through your existing tunnel, see [Remote MCP and browser login](/guides/remote-mcp/). That guide covers browser OAuth, dynamic local ports, project grants and the stdio bridge. Remote transport uses the [Smart Output](/guides/smart-output/) contract.

@@ -1,6 +1,9 @@
 ---
 title: Next Steps
 description: Where to go once ax is installed and indexing.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 You've got ax installed and a graph built. Here's where to go next.
@@ -20,8 +23,11 @@ You've got ax installed and a graph built. Here's where to go next.
 - [Memory](/guides/memory/) — working notes, named long-term decisions, and a permanent archive. MCP and the CLI use the same commands.
 - [Framework Routes](/guides/framework-routes/) — link URL patterns to their handlers.
 - [Affected Tests in CI](/guides/affected-tests/) — run only the tests a change touches (`ax ship --ci`).
-- [Command Center](/guides/command-center/) — policy, graph, memory, logging, and the /ship quality-gate dashboard.
-- [Share Command Center](/guides/share/) — LAN token share, PWA, live action stream.
+- [Headless ax and ax-admin](/guides/phase-out/) — where Ax is going: one headless `ax` on every platform, `ax-admin` as the only visual interface.
+- [ax-admin](/guides/remote-admin/) — the separate admin application: status, search, memory, rules, operations, usage and logging of any Ax.
+- [Headless Linux build](/guides/headless-linux/) — the build without a built-in interface, for sandboxes, containers and CI.
+- [Command Center](/guides/command-center/) — being phased out. Policy, graph, memory, logging, and the /ship quality-gate dashboard of the full ax.
+- [Share Command Center](/guides/share/) — being phased out. LAN token share, PWA, live action stream.
 - [MCP Logging & Quality](/guides/mcp-quality/) — inbound/outbound/internal traces (MCP + CLI), Logging page, Q slide-out, session hooks, and `ax mcp audit`.
 - [CLI-only mode](/guides/cli-only/) — headless graph/policy without MCP, with the same Logging directions from ax 8.4.4.
 - [Token Savings](/guides/token-savings/) — measure context-token savings from graph queries.

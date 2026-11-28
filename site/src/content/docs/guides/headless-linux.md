@@ -3,7 +3,11 @@ title: Headless Linux build
 description: Install or build a smaller ax binary without the Command Center, desktop client or self-update, for Linux sandboxes and containers.
 ---
 
-The headless build is the same `ax` binary without its graphical parts. It is meant for places with no screen and no browser: a Vercel Sandbox, an Azure Container Apps job, a CI runner. The regular ax download stays the full build.
+The headless build is the same `ax` binary without its graphical parts. It is meant for places with no screen and no browser: a Vercel Sandbox, an Azure Container Apps job, a CI runner. The regular ax download is still the full build.
+
+:::note[Direction]
+The full ax is being phased out. This headless build becomes ax on every platform, with [ax-admin](/guides/remote-admin/) as the only visual interface. Today it is released for Linux only. See [Headless ax and ax-admin](/guides/phase-out/).
+:::
 
 It keeps the CLI, MCP over stdio (`ax serve --mcp`), `ax mcp remote serve`, indexing, graph queries, policy, specs, sessions and the memory vault. It leaves out `ax web`, `ax share`, `ax desktop`, `ax ship --watch`, `ax upgrade` and `ax server`. The first five still parse and exit with a message that they are not part of this build; `ax server` is removed entirely.
 

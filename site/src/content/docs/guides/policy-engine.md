@@ -1,6 +1,9 @@
 ---
 title: Policy Engine
 description: IDE-agnostic rules and skills for AI agents — stored in .agents/, indexed locally, delivered via MCP without reading source files.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 ax ships a **policy engine**: project-local rules and skills that work in any IDE or agent harness — not tied to Cursor rules or a single vendor format.

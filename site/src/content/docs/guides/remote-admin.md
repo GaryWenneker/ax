@@ -1,11 +1,15 @@
 ---
-title: Remote admin (ax-admin)
+title: ax-admin
 description: A standalone application with the Command Center look that manages any Ax, including the headless build, through its remote MCP endpoint.
 ---
 
 `ax-admin` is a separate application for looking after an Ax that runs somewhere else: in a container, in a sandbox or on another computer. It has the look of the Command Center, but it is not part of `ax` and does not need `ax` installed.
 
 The headless Linux build has no `ax web`. `ax-admin` is the interface for it, and it works the same against a full Ax.
+
+:::note[Direction]
+`ax-admin` becomes the only visual interface of Ax. The Command Center (`ax web`) and the desktop client are being phased out together with the full ax. See [Headless ax and ax-admin](/guides/phase-out/) for what moves where.
+:::
 
 ![The Operations page of ax-admin connected to a headless Ax](/screenshots/ax-admin-operations.png)
 

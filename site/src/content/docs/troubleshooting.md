@@ -1,6 +1,9 @@
 ---
 title: Troubleshooting
 description: Fixes for the most common ax issues.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 ## "ax not initialized"
@@ -37,7 +40,7 @@ ax daemon restart
 3. **Stale lock after a crash** — `ax unlock` clears the lock. When a live process still holds it, only that process is stopped, and only if it is an ax process (SIGTERM first, SIGKILL after 5 seconds). Other ax processes keep running.
 4. Avoid starting a second long `ax index` / `ax init` while one is already running (the second will wait, then proceed).
 5. **Network filesystem** — WAL may not work reliably on SMB/NFS or WSL2 `/mnt`. Keep the project (with `.ax/`) on a local disk.
-6. Prefer **one primary IDE MCP client** for a workspace when the daemon keeps failing; use Command Center Logging to confirm `attached to ax daemon`.
+6. Prefer **one primary IDE MCP client** for a workspace when the daemon keeps failing; use Command Center Logging (or the **Logging** page of [ax-admin](/guides/remote-admin/)) to confirm `attached to ax daemon`.
 
 ## MCP server not connecting
 

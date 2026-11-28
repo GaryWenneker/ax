@@ -1,6 +1,9 @@
 ---
 title: Memory
 description: Brain-style memory for ax — working notes, named long-term decisions, and a permanent archive bound to the code graph.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 ax keeps a brain-style memory in the same local SQLite database as the code graph.

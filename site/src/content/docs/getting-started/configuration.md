@@ -1,6 +1,9 @@
 ---
 title: Configuration
 description: ax is zero-config by default. One optional ax.json handles per-project overrides; one optional ~/.ax/config.json sets global defaults across every project.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 ax is **zero-config by default** — language support is automatic from the file extension, and there is nothing to wire up per language. Two optional config files let you tune behaviour at different scopes:
@@ -201,7 +204,7 @@ Request limits are set with environment variables only:
 
 When the provider rejects a request or cannot be reached, ax falls back to the plain explore output and logs a warning with the status code and the start of the provider's reply (once per process; every time with `AX_OFFLOAD_DEBUG=1`). The API key is never logged.
 
-MCP graph calls log estimated context-token savings in **`~/.ax/usage.db`**. Query with [`ax savings`](/reference/cli/#ax-savings) or the **Savings** page in `ax web`. See [Token savings](/guides/token-savings/). Imported agent turns are quoted separately with [`ax costs`](/reference/cli/#ax-costs) and compared to a local plan with [`ax budget`](/reference/cli/#ax-budget). See [Agent budget](/guides/budget/). Pi runs stay in Pi; Ax can record their estimates with [`ax agent economics`](/reference/cli/#ax-agent-economics). See [Pi integration](/guides/pi/).
+MCP graph calls log estimated context-token savings in **`~/.ax/usage.db`**. Query with [`ax savings`](/reference/cli/#ax-savings) or the **Savings** page in `ax web`. In [ax-admin](/guides/remote-admin/) the **Usage** page shows cost, tool economics and budget. See [Token savings](/guides/token-savings/). Imported agent turns are quoted separately with [`ax costs`](/reference/cli/#ax-costs) and compared to a local plan with [`ax budget`](/reference/cli/#ax-budget). See [Agent budget](/guides/budget/). Pi runs stay in Pi; Ax can record their estimates with [`ax agent economics`](/reference/cli/#ax-agent-economics). See [Pi integration](/guides/pi/).
 
 ## Policy rules and skills
 

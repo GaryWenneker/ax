@@ -1,6 +1,9 @@
 ---
 title: Integrations
 description: Supported agents, and manual MCP setup.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 The interactive installer auto-detects supported agents and wires the ax MCP server. For agents that use an instructions file, it also writes a short marker-fenced ax section so subagents learn the `ax explore` workflow; `ax uninstall` removes it.
