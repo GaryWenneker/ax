@@ -364,9 +364,7 @@ async fn handle_init_stream(
         if outcome.is_err() {
             let _ = child.kill().await;
         }
-        for pump in [h1, h2].into_iter().flatten() {
-            let _ = pump.await;
-        }
+        finish_pumps([h1, h2].into_iter().flatten(), PUMP_GRACE).await;
 
         let ok = outcome.as_ref().is_ok_and(|ok| *ok);
         if ok {
@@ -657,6 +655,25 @@ where
     }
 }
 
+/// Waits for the output pumps once `ax init` has exited or been killed.
+/// A grandchild that inherited stdout or stderr can keep a pipe open after
+/// the child is gone, so the pumps share `grace` and are then aborted: the run
+/// must always finish, free its folder and send `done`.
+async fn finish_pumps(
+    pumps: impl IntoIterator<Item = tokio::task::JoinHandle<()>>,
+    grace: std::time::Duration,
+) {
+    let deadline = tokio::time::Instant::now() + grace;
+    for mut pump in pumps {
+        if tokio::time::timeout_at(deadline, &mut pump).await.is_err() {
+            pump.abort();
+        }
+    }
+}
+
+/// How long the output pumps may keep reading after `ax init` has ended.
+const PUMP_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Folders with an `ax init` running from the Command Center.
 static INITS: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
 
@@ -704,6 +721,21 @@ mod tests {
         assert_eq!(texts[0], "first");
         assert!(texts[1].ends_with(" broken"), "{texts:?}");
         assert_eq!(texts[2], "third");
+    }
+
+    #[tokio::test]
+    async fn a_pipe_held_open_by_a_grandchild_does_not_keep_init_running() {
+        // The writer half stays alive, as a pipe inherited by a grandchild
+        // of `ax init` would: the pump never sees EOF.
+        let (_writer, reader) = tokio::io::duplex(64);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let pump = tokio::spawn(pump_lines(reader, "", tx));
+        let finished = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            finish_pumps([pump], std::time::Duration::from_millis(50)),
+        )
+        .await;
+        assert!(finished.is_ok(), "the pumps were never released");
     }
 
     #[test]
