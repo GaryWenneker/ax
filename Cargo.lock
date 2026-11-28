@@ -1326,7 +1326,6 @@ dependencies = [
  "if-addrs",
  "include_dir",
  "mime_guess",
- "openssl",
  "portable-pty",
  "reqwest 0.12.28",
  "serde",
@@ -2423,7 +2422,7 @@ dependencies = [
  "sec1",
  "serde",
  "sha1 0.11.0",
- "sha2 0.11.2",
+ "sha2 0.11.1",
  "signature 3.0.0",
  "spki",
  "subtle",
@@ -4647,12 +4646,12 @@ dependencies = [
 
 [[package]]
 name = "jiff"
-version = "1.0.3"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "107f2e89536b6818514025f6787b0d94d819e54fe3b40365275fc753de485b3f"
+checksum = "9cc767b5763de45e810109520123bb2829a653f3a7ed9be40b2bc4f81158f595"
 dependencies = [
- "jiff-core 1.0.2",
- "jiff-static 1.0.3",
+ "jiff-core 1.0.0",
+ "jiff-static 1.0.0",
  "jiff-tzdb-platform 1.0.0",
  "log",
  "portable-atomic",
@@ -4672,9 +4671,9 @@ dependencies = [
 
 [[package]]
 name = "jiff-core"
-version = "1.0.2"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d44c923edf2bf456a982253f1a9ee1f6e89e421dffd0065d9b9a581da0def58f"
+checksum = "894f7ac42105f584100691b3bf6e6b92dd12fcfa225f6c397f95c8a94b47b68f"
 dependencies = [
  "log",
 ]
@@ -4693,11 +4692,11 @@ dependencies = [
 
 [[package]]
 name = "jiff-static"
-version = "1.0.3"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4996f71e569e3a3e32b925c28ef8f0027dc30bb1d594b33eeda409eea185f5c8"
+checksum = "955491488dc99b572ea6d67b172dcd98787d00744b1fb44a5689b4e6413695a6"
 dependencies = [
- "jiff-core 1.0.2",
+ "jiff-core 1.0.0",
  "proc-macro2",
  "quote",
  "syn 3.0.10",
@@ -6218,7 +6217,7 @@ dependencies = [
  "elliptic-curve",
  "primefield",
  "primeorder",
- "sha2 0.11.2",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -6232,7 +6231,7 @@ dependencies = [
  "fiat-crypto",
  "primefield",
  "primeorder",
- "sha2 0.11.2",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -6246,7 +6245,7 @@ dependencies = [
  "elliptic-curve",
  "primefield",
  "primeorder",
- "sha2 0.11.2",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -6603,7 +6602,7 @@ dependencies = [
  "pbkdf2",
  "rand_core 0.10.1",
  "scrypt",
- "sha2 0.11.2",
+ "sha2 0.11.1",
  "spki",
 ]
 
@@ -7460,7 +7459,7 @@ dependencies = [
  "pkcs1",
  "pkcs8",
  "rand_core 0.10.1",
- "sha2 0.11.2",
+ "sha2 0.11.1",
  "signature 3.0.0",
  "spki",
  "zeroize",
@@ -7714,7 +7713,7 @@ dependencies = [
  "cfg-if",
  "pbkdf2",
  "salsa20",
- "sha2 0.11.2",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -7916,7 +7915,7 @@ dependencies = [
  "indexmap 1.9.3",
  "indexmap 2.14.2",
  "jiff 0.2.46",
- "jiff 1.0.3",
+ "jiff 1.0.0",
  "schemars 0.9.0",
  "schemars 1.2.3",
  "serde_core",
@@ -8006,9 +8005,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.11.2"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b0e5c7d67bc53f435386b2130fdc900488c5703770f6d8a4633060e34288a27"
+checksum = "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
@@ -8305,7 +8304,7 @@ dependencies = [
  "base64ct",
  "der",
  "digest 0.11.3",
- "sha2 0.11.2",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -8660,7 +8659,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.6",
  "windows-sys 0.61.2",
