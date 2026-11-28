@@ -1,40 +1,29 @@
 ---
 title: Remote MCP and browser login
-description: Run Ax on your own computer and retrieve project context from ChatGPT or another IDE through authenticated HTTPS.
+description: Serve an Ax project over authenticated HTTPS, so that ax-admin, ChatGPT or an IDE on another computer can use its tools.
 ---
 
-Remote MCP exposes Ax's existing context tools through an authenticated HTTP endpoint. Ax can run on your Mac while ChatGPT or an IDE on another computer retrieves its rules, graph, memories and working context. The remote connection uses the same [Smart Output](/guides/smart-output/) dispatcher as local stdio.
+Remote MCP exposes Ax's existing context tools through an authenticated HTTP endpoint. Ax can run on a server, in a container or on your own computer while ChatGPT, an IDE or [ax-admin](/guides/remote-admin/) on another computer retrieves its rules, graph, memories and working context. The remote connection uses the same [Smart Output](/guides/smart-output/) dispatcher as local stdio.
+
+`ax mcp remote serve` is part of the [headless build](/guides/headless-linux/). A server is set up with a configuration file; see [Configure the server](#configure-the-server). A client gets in with an API key or with a browser sign-in at an external OAuth provider. For a ready-made server for one repository, see [Deploy to the cloud](/guides/headless-linux/#deploy-to-the-cloud).
 
 This guide describes the remote MCP feature. Availability requires a binary built from the feature or a release containing it. It does not claim that a local build has already been published or that your OAuth provider has been configured.
 
-## Set up the host in Command Center
-
-On the computer that holds the project, open **Settings → Remote MCP → Set up remote MCP**. Enter the public HTTPS origin that routes to this computer, then choose **Generate and start host**. Ax writes its own server configuration, generates a stable native public client ID, starts the local listener and saves the settings for automatic startup. Route your HTTPS hostname to the **Proxy target** shown in the host overview. This does not create a hostname or tunnel for you.
-
-An existing server configuration can be selected in the same modal. **Advanced OAuth options** explains the issuer (authentication service), JWKS URI (external provider signing keys) and public client IDs (app identifiers, never passwords). A generated host uses built-in OAuth with opaque, project-scoped tokens. Ax registers its own native client and supports dynamic registration for public clients. Externally managed providers retain their existing issuer/JWKS and registered IDs; those registrations must come from that provider.
-
-For another computer, choose **Copy connection details** under **Share this project**. On the receiving computer, use **Paste connection details** under **Connect to another Ax**, then **Connect with browser**. With built-in OAuth, the browser displays a request ID. The host's owner matches it in **Connection approvals**, checks context versus read/write access, then approves or denies it. Authentication uses S256 PKCE and exact redirect/resource validation. Codes are single-use, refresh tokens rotate, refresh replay revokes the grant, and the owner can revoke access at any time. Secrets are stored as hashes; exported connection details contain public metadata only.
-
-The host card reports actual local service state. **Stop host** disables automatic startup until **Start host** is used. **Remove host** stops it, revokes its built-in grants and removes its saved configuration. Removal always succeeds in deleting the saved configuration, even when another program now holds the host's local port or the OS keychain entry is gone. When another program holds the saved local port, **Start host** moves the host to a free local port; the card shows the new local URL, so update any tunnel that points at the old one. The setup button remains available on the hosting computer. Advanced registration of an externally managed server only adds export metadata; it does not manage that service.
-
-In **Connection approvals**, revoked, denied or expired entries offer **Remove connection**. Confirm to remove that grant and its token records. Live grants must first be revoked; an expired access token with a usable refresh token remains a live grant. Under **Connect to another Ax**, **Disconnect** or **Remove saved connection** clears the local credentials even when provider revocation cannot be confirmed.
-
-![Remote MCP host status and project-scoped connection approval](/screenshots/cc-remote-host.png)
-
-The manual external-provider setup below remains available.
+The full ax, which is being phased out, can also generate a host from its Command Center, with a built-in authorization server where the owner approves each browser sign-in; see [Command Center](/guides/command-center/). A headless Ax has no place to approve those sign-ins.
 
 ## What runs where
 
 | Component | Responsibility |
 |---|---|
-| Ax on your computer | Owns registered project roots, database access, tools, project grants and context sessions |
-| Your existing Cloudflare Tunnel | Routes a public HTTPS hostname to the local Ax remote listener |
+| Ax on your computer or server | Owns registered project roots, database access, tools, project grants and context sessions |
+| Your existing Cloudflare Tunnel, or another HTTPS proxy or ingress | Routes a public HTTPS hostname to the local Ax remote listener |
 | OAuth authorization server | Signs users in, grants consent and issues Ax access/refresh tokens |
 | ChatGPT | Connects as an OAuth MCP client and invokes the permitted tools |
 | Another IDE | Connects directly over HTTP when supported, or uses Ax's authenticated stdio bridge |
+| ax-admin | Connects with an API key or a browser sign-in and shows the environment; see [ax-admin](/guides/remote-admin/) |
 | Netlify documentation site | Hosts this guide; it does not run your local Ax instance |
 
-The Mac must remain powered on and reachable. Sleep, a stopped tunnel or a disconnected network makes the local server unavailable. Remote MCP does not copy your project to Netlify or turn Ax into a language model.
+The computer that runs Ax must remain powered on and reachable. Sleep, a stopped tunnel or a disconnected network makes the local server unavailable. Remote MCP does not copy your project to Netlify or turn Ax into a language model.
 
 ## Configure the server
 
@@ -66,7 +55,7 @@ Initialize each project normally with `ax init`. Create a private JSON configura
 - `write_subjects` must be a subset of `subjects`. Memory/policy writes additionally require the `ax:write` token scope.
 - `admin_subjects` (optional) must be a subset of `write_subjects`. See [Admin access](#admin-access).
 - `allowed_origins` accepts explicit HTTPS browser origins. Requests without an Origin header can still come from authenticated native clients; present foreign Origin headers are rejected.
-- Each root must already contain `.ax/ax.db`. Project IDs must be unique and URL-safe. Remote calls cannot override a root or switch the Command Center's current workspace.
+- Each root must already contain `.ax/ax.db`. Project IDs must be unique and URL-safe. Remote calls cannot override a root.
 
 Start the dedicated remote listener:
 
@@ -82,7 +71,48 @@ For the example, connect clients to:
 https://ax.example.com/projects/my-project/mcp
 ```
 
-Keep the existing Command Center local. Do not expose all of `ax web` as the remote MCP service; its workspace switching and administration APIs serve a different purpose.
+By default the listener binds `127.0.0.1` and serves plain HTTP. Put an HTTPS tunnel, proxy or ingress in front of it. Pass `--bind 0.0.0.0` only behind such an ingress, as the [hosted deployments](/guides/headless-linux/#deploy-to-the-cloud) do.
+
+### API keys without an OAuth provider
+
+The `oauth` block is required. A server that only hands out API keys names the built-in authorization server there and lists the keys:
+
+```json
+{
+  "public_url": "https://ax.example.com",
+  "oauth": {
+    "built_in": true,
+    "issuer": "https://ax.example.com/oauth",
+    "jwks_uri": "https://ax.example.com/oauth/jwks"
+  },
+  "projects": [
+    {
+      "id": "my-project",
+      "root": "/srv/my-project",
+      "subjects": ["owner"]
+    }
+  ],
+  "api_keys": [
+    {
+      "id": "other-laptop",
+      "sha256": "REPLACE_WITH_64_HEX_CHARACTERS",
+      "projects": ["my-project"],
+      "write": false
+    }
+  ]
+}
+```
+
+With `"built_in": true`, `issuer` must be `<public_url>/oauth` and `jwks_uri` must be `<public_url>/oauth/jwks`. `subjects` may not be empty. Browser sign-ins at the built-in authorization server are approved in the Command Center of the full ax. A headless Ax has no place to approve them, so with this configuration only the API keys get in. The `-server` container image writes a configuration of this shape.
+
+`sha256` is the SHA-256 of the key in hexadecimal, never the key itself. For example:
+
+```bash
+KEY="$(openssl rand -hex 32)"
+printf '%s' "$KEY" | sha256sum
+```
+
+Give the key to the client and keep only the hash in the configuration. See [Connect an IDE on another laptop](#connect-an-ide-on-another-laptop) for the client side and [Admin access](#admin-access) for a key that may manage the environment.
 
 ## Dynamic ports and your existing Cloudflare route
 
@@ -111,7 +141,7 @@ The server does not rewrite your Cloudflare configuration or create another tunn
 
 ## External OAuth provider setup
 
-A generated host uses Ax's built-in authorization server and project-scoped host approvals. The following steps apply only when selecting an existing configuration that uses an external provider. In that mode, the provider manages accounts and sign-in, while Ax validates its access tokens.
+With an external provider, the provider manages accounts and sign-in, while Ax validates its access tokens. This is the way to offer browser sign-in on a headless Ax. The following steps apply to a configuration whose `oauth` block names that provider's `issuer` and `jwks_uri`.
 
 Configure the provider to:
 
@@ -132,17 +162,13 @@ It advertises the canonical resource, configured authorization server and `ax:co
 
 ## Use Ax on this computer, or share the setup
 
-Open **Settings → Connections → Remote MCP**. Start with **Use on this computer** if your app and the project are on this machine. Choose Cursor, VS Code, Cline, Claude Code or another local MCP app, then select **Copy for this computer** or **Download local configuration**. Ax supplies the active project path and its executable automatically. No remote server file, public hostname or OAuth ID is needed for this local connection.
+When your app and the project are on the same computer, you do not need remote MCP. The app starts Ax itself over stdio. No remote server file, public hostname or OAuth ID is needed for this local connection. Add an `ax` server entry to the MCP configuration of Cursor, VS Code, Cline, Claude Code or another local MCP app, with `ax` as the command and `serve --mcp` as its arguments. Keep existing servers in that file, then reload the app. See [Manual setup](/reference/integrations/#manual-setup) and the [MCP Server reference](/reference/mcp-server/).
 
-The card tells you where to paste the `ax` server entry. Keep existing servers in that file, then reload the app. **Open IDEs & agents** takes you to the existing automatic connection controls if you prefer Ax to write your installed app's settings.
-
-For Cursor and VS Code, **Copy to share with project** produces a configuration with `ax` on PATH and `${workspaceFolder}` in place of this computer's paths. Add it to `.cursor/mcp.json` or `.vscode/mcp.json` in the project. Each recipient installs Ax, opens their own project checkout and runs `ax init` there. This shares local setup; it does not give access to the project hosted on your Mac. For hosted project access, use the remote flow below.
-
-![Local and remote MCP setup choices](/screenshots/mcp-local-and-remote.png)
+To share that local setup with a team, commit the entry to `.cursor/mcp.json` or `.vscode/mcp.json` in the project, with `ax` on PATH and `${workspaceFolder}` in place of this computer's paths. Each recipient installs Ax, opens their own project checkout and runs `ax init` there. This shares local setup; it does not give access to the project hosted on your computer. For hosted project access, use the remote flow below.
 
 ## Copy a project's remote configuration
 
-Open **Settings → Connections → Remote MCP → Share this project** in Command Center or its embedded IDE panel. The card uses the active project's canonical root and the remote project ID from your server configuration. It does not guess a public hostname from the browser URL or project folder name.
+A client needs one thing from the server: the project MCP URL, `<public_url>/projects/<project id>/mcp`. `ax mcp remote serve` prints each project URL in its startup JSON. The URL is built from `public_url` and the project ID in your server configuration, never from a folder name.
 
 `ax mcp remote serve` registers its validated public export metadata automatically. You can register it without starting a server, indexing a project or signing in:
 
@@ -160,11 +186,9 @@ ax mcp remote register --config /absolute/path/remote-mcp.json \
   --vscode-client-id YOUR_VSCODE_PUBLIC_CLIENT_ID
 ```
 
-These IDs are separate OAuth registrations. No client secret belongs in the export. Adding client ID flags replaces the stored public registration map; omit all three flags to preserve it. Starting the server preserves your stored label and client IDs.
+These IDs are separate OAuth registrations. No client secret belongs in the export. Adding client ID flags replaces the stored public registration map; omit all three flags to preserve it. Starting the server preserves your stored label and client IDs. Stop a running server before you register a different configuration for it. The CLI registers all explicitly configured projects and removes stale bindings omitted from a subsequent server snapshot. The catalogue retains canonical roots internally to match workspaces; exports exclude roots, subjects, grants, key hashes and tokens.
 
-Alternatively, choose **Import existing server file** and select the `remote-mcp.json` used by `ax mcp remote serve --config` on the computer hosting this project. This is the remote server setup file, rather than a Cursor/VS Code client configuration. The dialog explains where it comes from and keeps optional public OAuth IDs under **Advanced**. If no HTTPS server is configured yet, follow the server setup section above; local copy actions remain available without one. This saves public metadata for the active project only. The CLI registers all explicitly configured projects and removes stale bindings omitted from a subsequent server snapshot. The catalogue retains canonical roots internally to match workspaces; exports exclude roots, subjects, grants, key hashes and tokens.
-
-Choose a publisher if the project is available on multiple servers, then choose your client:
+Write the client entry yourself. Where it goes and which transport it uses depends on the client:
 
 | Client | Destination and transport |
 |---|---|
@@ -172,43 +196,36 @@ Choose a publisher if the project is available on multiple servers, then choose 
 | VS Code | `.vscode/mcp.json`, `servers`; `http` or `stdio` |
 | Claude Code | `.mcp.json`, `mcpServers`, `http` |
 | Cline | Cline MCP settings; Ax proxy by default, or verified direct `streamableHttp` |
-| ChatGPT | Copy the MCP URL and follow the OAuth custom app setup; no JSON file |
+| ChatGPT | Enter the MCP URL and follow the OAuth custom app setup; no JSON file |
 | Other / Ax proxy | `mcpServers`, `ax` command with a JSON argument array |
+| ax-admin | Enter the MCP URL and an API key or client ID on its connect screen; no JSON file |
 
-**Copy configuration** and **Download configuration** produce the displayed remote client configuration. Merge its server entry into your existing file. **Copy MCP URL** copies the registered project endpoint. If clipboard permission is denied, the card selects the text for manual copying and shows an error. For the proxy, sign in on the receiving computer first; a POSIX login command is available only when a native public client ID is registered. In PowerShell, double single quotes inside quoted arguments.
+Merge the server entry into your existing file. The Ax proxy entry is shown under [Connect an IDE on another laptop](#connect-an-ide-on-another-laptop). For the proxy, sign in on the receiving computer first with `ax mcp remote login`. In PowerShell, double single quotes inside quoted arguments.
 
-A stopped server remains copyable. **Local server running** means Ax received a recent local heartbeat; it does not prove the public tunnel works or that the receiving user is authorized. **Verify endpoint** sends an unauthenticated, bounded initialization probe to the registered public HTTPS endpoint. The expected OAuth challenge and matching resource metadata produce **Endpoint reachable, sign-in required**. Private-network endpoints remain copyable but are excluded from this public probe. Redirects are not followed.
+A client entry does not issue credentials, authorize additional users or grant writes. Direct OAuth compatibility depends on the actual client surface/version and provider registration; valid JSON alone does not prove a successful login. To check that the public endpoint answers before anyone signs in, see [Verify your tunnel before signing in](#verify-your-tunnel-before-signing-in).
 
-Switching workspaces clears the previous preview and copy feedback. Every export rechecks the active project and configuration revision. A conflicting remote project ID cannot silently move to a different local root; remove the old **local registration** explicitly first. Stop a live server before replacing a different server snapshot. Removing a local registration does not change the running server, project permissions or saved login credentials.
-
-Publications are managed only by an active local owner, with loopback Host/Origin and CSRF checks. Remote bearer credentials and read-only/share sessions cannot inspect or export the catalogue. Copying configuration does not issue credentials, authorize additional users or grant writes. Direct OAuth compatibility depends on the actual client surface/version and provider registration; valid JSON alone does not prove a successful login.
-
-![Remote MCP project sharing on desktop](/screenshots/remote-mcp-project-desktop.png)
-![Remote MCP project sharing on mobile](/screenshots/remote-mcp-project-mobile.png)
+The full ax, which is being phased out, also builds these client entries for you, with copy and download actions and an endpoint check, under **Settings → Connections → Remote MCP** in its Command Center; see [Command Center](/guides/command-center/).
 
 ## Send and receive an Ax remote connection
 
-On the computer hosting the project, select **Copy connection details** in **Share this project**. Send the copied text to the person connecting. It contains the project HTTPS address and the public native Ax sign-in app ID, when that ID is configured. It excludes local paths, API keys, access/refresh tokens and project grants. This is separate from a private server setup file and from an IDE-specific MCP configuration.
+To let someone connect, send them the project HTTPS address and, for browser sign-in, the public native Ax sign-in app ID (the native client ID registered with your OAuth provider). Neither is a secret. Do not send local paths, access or refresh tokens, project grants or your private server setup file. An API key is a secret: hand it over through a channel you trust, and only to the person who will use it.
 
-On the receiving computer:
+On the receiving computer, use one of:
 
-1. Open **Settings → Connections → Remote MCP → Connect to another Ax**.
-2. Select **Paste connection details**, paste the text and choose **Use connection**.
-3. Review the populated project URL and public OAuth client ID, then select **Connect with browser**.
-4. Sign in with your own account and return to Ax.
+- **CLI:** `ax mcp remote login --url <project URL> --client-id <native client ID>`; see [Browser login from the CLI or ax-admin](#browser-login-from-the-cli-or-ax-admin).
+- **ax-admin:** enter the address with the client ID or an API key on the connect screen; see [First start: connect to an environment](/guides/remote-admin/#first-start-connect-to-an-environment).
+- **An IDE or ChatGPT:** enter the project URL in the client; see the sections below.
 
-Pasting does not contact the server, sign in, store a token or grant project access. Each user must already be authorized for the remote project. If the copied details have no native Ax client ID, the UI explains that the server owner must supply it before browser sign-in. An IDE's public client ID is not substituted for the native Ax registration.
+Receiving the details does not contact the server, sign in, store a token or grant project access. Each user must already be authorized for the remote project. Without a native Ax client ID, browser sign-in from the CLI or `ax-admin` is not possible; the server owner must supply it. An IDE's public client ID is not a substitute for the native Ax registration.
 
-![Importing an existing remote server](/screenshots/mcp-import-existing-server.png)
-
-## Browser login from CLI or Settings
+## Browser login from the CLI or ax-admin
 
 The interaction follows a familiar desktop account-connection flow:
 
-1. Enter the project MCP URL and native client ID.
-2. Select **Connect with browser**, or run the CLI login command.
+1. Have the project MCP URL and native client ID at hand.
+2. Run the CLI login command, or choose **Browser sign-in** on the `ax-admin` connect screen.
 3. Sign in and consent in the system browser.
-4. Return to Ax. Ax exchanges the code, verifies access to the selected MCP project and stores credentials in the OS credential store. You can cancel a pending sign-in from Settings or with Ctrl+C in the CLI.
+4. Return to Ax. Ax exchanges the code, verifies access to the selected MCP project and stores credentials in the OS credential store. You can cancel a pending sign-in with Ctrl+C in the CLI.
 
 ```bash
 ax mcp remote login \
@@ -221,13 +238,13 @@ ax mcp remote logout \
   --url https://ax.example.com/projects/my-project/mcp
 ```
 
-Add `--write` to CLI login only when memory/policy writes are wanted and granted. The Settings connection requests context access by default.
+Add `--write` to CLI login only when memory/policy writes are wanted and granted.
 
-In Command Center, open **Settings → Connections → Remote MCP → Connect to another Ax**. The IDE's embedded Command Center uses this same component. Browser blocking has an explicit sign-in link fallback. Invalid state or issuer is rejected; cancellation, timeout, missing project permission and unavailable credential storage produce errors rather than a connected confirmation.
+Invalid state or issuer is rejected; cancellation, timeout, missing project permission and unavailable credential storage produce errors rather than a connected confirmation.
 
-Access and refresh tokens are kept in the OS credential store, with no plaintext fallback. A local metadata file records connection URLs/client IDs/expiry, without tokens. “Credentials saved” is stored state, not a continuous network health check. Disconnect removes local credentials and attempts provider revocation when the provider publishes that endpoint.
+Access and refresh tokens are kept in the OS credential store, with no plaintext fallback. A local metadata file records connection URLs/client IDs/expiry, without tokens. `ax mcp remote status` lists the saved connections; “Credentials saved” is stored state, not a continuous network health check. `ax mcp remote logout` removes local credentials and attempts provider revocation when the provider publishes that endpoint.
 
-The Settings login API accepts only the local Command Center Host/Origin and requires a CSRF token for changes. It is unavailable in a read-only share session.
+`ax-admin` uses the same sign-in and shares the stored tokens for that address with `ax mcp remote`; see [Browser sign-in](/guides/remote-admin/#browser-sign-in).
 
 ## Connect an IDE on another laptop
 
@@ -283,7 +300,7 @@ Management tools (re-index, sync, policy reload, file list, usage reports and th
 
 A configuration that grants admin without write access is rejected at start-up. Both settings default to off, so an existing configuration file grants nothing new. Without the grant, the tool list and every response are the same as before, and a direct call to a management tool is refused.
 
-The built-in authorization server of a generated host issues `ax:context` and `ax:write` only; it cannot grant admin access. Use an API key for that.
+The built-in authorization server issues `ax:context` and `ax:write` only; it cannot grant admin access. Use an API key for that.
 
 The discovery document lists `ax:admin` under `scopes_supported` only when an external provider is configured and at least one project has an admin subject. Otherwise it is unchanged, so a client that asks for every advertised scope keeps working.
 
@@ -304,7 +321,7 @@ Account and workspace settings control custom MCP availability. See the [officia
 
 After connecting, invoke `ax_preflight` first each turn, then the graph, policy or memory tools needed for the task. A successful server build does not establish that ChatGPT is already connected; verify the real connection independently.
 
-ChatGPT's documented MCP authentication flow uses Authorization Code + PKCE. It cannot be configured to send your arbitrary customer API key as a substitute for this login.
+ChatGPT's documented MCP authentication flow uses Authorization Code + PKCE. It cannot be configured to send your arbitrary customer API key as a substitute for this login. With a headless Ax, ChatGPT therefore needs a server configured with an [external OAuth provider](#external-oauth-provider-setup).
 
 ## Tools, projects and conversations
 
@@ -343,9 +360,9 @@ curl -i -X POST https://ax.example.com/projects/my-project/mcp \
   --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"manual-check","version":"1"}}}'
 ```
 
-Discovery returns the configured resource/issuer, never credentials. The unauthenticated POST must return HTTP 401 and a challenge pointing to your public discovery URL. Cloudflare sign-in HTML, a 502, or the Command Center UI indicates a routing/access issue to resolve before OAuth.
+Discovery returns the configured resource/issuer, never credentials. The unauthenticated POST must return HTTP 401 and a challenge pointing to your public discovery URL. Cloudflare sign-in HTML, a 502, or the page of another application indicates a routing/access issue to resolve before OAuth.
 
-Run native browser login on the laptop that will use the connection: its callback is local to that laptop. Logging in on the server Mac does not sign in another IDE automatically.
+Run native browser login on the laptop that will use the connection: its callback is local to that laptop. Logging in on the server does not sign in another IDE automatically.
 
 ## Troubleshooting and verification
 

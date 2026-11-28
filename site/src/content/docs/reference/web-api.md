@@ -1,6 +1,9 @@
 ---
 title: Command Center HTTP API
 description: Every HTTP endpoint served by ax web / ax ship --watch, grouped by area.
+banner:
+  content: |
+    This page describes part of the full ax, which is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 `ax web` (and `ax ship --watch`) serve the Command Center UI and a JSON API on the same port (default `7070`). Every path below is relative to that server, for example `http://127.0.0.1:7070/api/stats`.
