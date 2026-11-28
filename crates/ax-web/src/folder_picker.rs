@@ -107,7 +107,7 @@ async fn run_dialog() -> Result<Option<String>, ()> {
 }
 
 async fn pick(State(hub): State<WebHub>, headers: HeaderMap) -> Response {
-    if !crate::dav::mount::allowed(&headers, hub.readonly) {
+    if !crate::dav::mount::allowed(&headers, hub.readonly, hub.port) {
         return error(
             StatusCode::FORBIDDEN,
             "only the local browser on this machine can open the folder dialog",

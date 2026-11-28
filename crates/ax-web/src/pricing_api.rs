@@ -110,7 +110,11 @@ struct SyncBody {
     force: bool,
 }
 
-async fn handle_sync(body: Option<Json<SyncBody>>) -> impl IntoResponse {
+async fn handle_sync(readonly: bool, body: Option<Json<SyncBody>>) -> axum::response::Response {
+    // A sync fetches prices and writes them to ~/.ax/usage.db.
+    if readonly {
+        return crate::savings::readonly_refusal();
+    }
     let force = body.map(|b| b.force).unwrap_or(true);
     match sync_pricing(force).await {
         Ok(report) => (StatusCode::OK, Json(report)).into_response(),
@@ -122,11 +126,14 @@ async fn handle_sync(body: Option<Json<SyncBody>>) -> impl IntoResponse {
     }
 }
 
-pub fn router() -> Router {
+pub fn router(readonly: bool) -> Router {
     Router::new()
         .route("/pricing", get(handle_catalog))
         .route("/pricing/status", get(handle_status))
         .route("/pricing/history", get(handle_history))
         .route("/pricing/agents", get(handle_agents))
-        .route("/pricing/sync", post(handle_sync))
+        .route(
+            "/pricing/sync",
+            post(move |body: Option<Json<SyncBody>>| handle_sync(readonly, body)),
+        )
 }

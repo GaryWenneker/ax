@@ -2,7 +2,7 @@
 
 use axum::{
     extract::State,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
@@ -56,7 +56,25 @@ async fn handle_health(State(hub): State<WebHub>) -> impl IntoResponse {
     }))
 }
 
-async fn handle_reload(State(hub): State<WebHub>) -> impl IntoResponse {
+async fn handle_reload(State(hub): State<WebHub>, headers: HeaderMap) -> impl IntoResponse {
+    // Restarting the shared daemon drops every IDE's MCP connection: only the
+    // local owner's own writable Command Center page may do it. The page check
+    // also stops a bodyless cross-site form POST, which needs no CORS preflight.
+    if hub.readonly {
+        ax_usage::log_share(None, "readonly write denied");
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "ok": false, "error": "read-only mode (AX_WEB_READONLY=1)" })),
+        )
+            .into_response();
+    }
+    if !crate::local_owner::browser_serves(&headers, hub.port) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "ok": false, "error": "Command Center host required" })),
+        )
+            .into_response();
+    }
     let root = {
         let ws = hub.read().await;
         ws.project_root.clone()

@@ -19,10 +19,18 @@ struct Args {
     /// Bind address for the embedded server.
     #[arg(long, default_value = "127.0.0.1")]
     bind: String,
+
+    /// Serve a non-loopback bind without sign-in. Anyone who can reach the
+    /// address can read and change the project.
+    #[arg(long)]
+    allow_anonymous_lan: bool,
 }
 
 fn main() {
     let args = Args::parse();
+    if args.allow_anonymous_lan {
+        std::env::set_var("AX_WEB_ALLOW_ANONYMOUS_LAN", "1");
+    }
     if let Err(e) = ax_desktop_client::run(args.path, args.port, args.bind) {
         eprintln!("ax-desktop: {e}");
         std::process::exit(1);

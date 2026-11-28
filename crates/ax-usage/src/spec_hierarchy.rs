@@ -148,7 +148,66 @@ pub struct CreatedSpecPlan {
     pub plan_version: i64,
 }
 
+/// Columns added after the first schema; each must exist for the schema to be complete.
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("specs", "needs_plan", "INTEGER NOT NULL DEFAULT 0"),
+    ("specs", "execution_ready", "INTEGER NOT NULL DEFAULT 0"),
+    (
+        "plan_selections",
+        "compatibility",
+        "TEXT NOT NULL DEFAULT 'current'",
+    ),
+];
+
+/// True when every table, the flag row and every added column already exist,
+/// so nothing needs writing. A read-only connection depends on this: it can
+/// read a complete schema but cannot run the `INSERT` or `ALTER` statements.
+async fn hierarchy_schema_complete(pool: &SqlitePool) -> bool {
+    let tables: Vec<&str> = SCHEMA
+        .split("CREATE TABLE IF NOT EXISTS ")
+        .skip(1)
+        .filter_map(|rest| rest.split_whitespace().next())
+        .collect();
+    let present: Vec<String> =
+        match sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type = 'table'")
+            .fetch_all(pool)
+            .await
+        {
+            Ok(names) => names,
+            Err(_) => return false,
+        };
+    if !tables
+        .iter()
+        .all(|table| present.iter().any(|name| name == table))
+    {
+        return false;
+    }
+    let flag: Option<String> =
+        sqlx::query_scalar("SELECT key FROM spec_flags WHERE key = 'hierarchy_v2'")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+    if flag.is_none() {
+        return false;
+    }
+    for (table, column, _) in ADDED_COLUMNS {
+        let columns: Vec<String> =
+            sqlx::query_scalar(&format!("SELECT name FROM pragma_table_info('{table}')"))
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default();
+        if !columns.iter().any(|name| name == column) {
+            return false;
+        }
+    }
+    true
+}
+
 pub async fn ensure_hierarchy_schema(pool: &SqlitePool) -> Result<(), String> {
+    if hierarchy_schema_complete(pool).await {
+        return Ok(());
+    }
     for statement in SCHEMA.split(';') {
         let statement = statement.trim();
         if statement.is_empty() {
@@ -159,21 +218,9 @@ pub async fn ensure_hierarchy_schema(pool: &SqlitePool) -> Result<(), String> {
             .await
             .map_err(|error| error.to_string())?;
     }
-    add_column_if_missing(pool, "specs", "needs_plan", "INTEGER NOT NULL DEFAULT 0").await?;
-    add_column_if_missing(
-        pool,
-        "specs",
-        "execution_ready",
-        "INTEGER NOT NULL DEFAULT 0",
-    )
-    .await?;
-    add_column_if_missing(
-        pool,
-        "plan_selections",
-        "compatibility",
-        "TEXT NOT NULL DEFAULT 'current'",
-    )
-    .await?;
+    for (table, column, definition) in ADDED_COLUMNS {
+        add_column_if_missing(pool, table, column, definition).await?;
+    }
     Ok(())
 }
 

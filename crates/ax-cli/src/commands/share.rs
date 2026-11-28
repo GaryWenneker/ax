@@ -27,6 +27,7 @@ pub async fn run(
             open,
             bind,
             share_token: Some(share_token),
+            allow_anonymous_lan: false,
         })
         .await
     }

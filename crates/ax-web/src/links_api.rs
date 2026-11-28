@@ -115,8 +115,10 @@ async fn entries(hub: &WebHub) -> Result<Vec<Entry>, String> {
             .iter()
             .map(|m| (m.id.as_str(), m.title.as_str(), m.created_at))
             .collect();
+        let by_id: std::collections::HashMap<&str, &ax_memory::MemoryRow> =
+            memories.iter().map(|m| (m.id.as_str(), m)).collect();
         for (id, stem) in unique_stems(&keys) {
-            if let Some(m) = memories.iter().find(|m| m.id == id) {
+            if let Some(m) = by_id.get(id.as_str()) {
                 let mut entry =
                     Entry::project(LinkKind::Memory, &id, &stem, &m.title, m.body.clone());
                 entry.turn = m.kind == ax_memory::TURN_KIND || m.kind == "policy";
