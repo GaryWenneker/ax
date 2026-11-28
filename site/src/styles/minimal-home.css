@@ -53,6 +53,9 @@ body.ax-landing {
 .ax-landing .ax-header,
 .ax-landing .ax-main,
 .ax-landing .ax-footer {
+  /* Above the dot grid, which is fixed behind the page. */
+  position: relative;
+  z-index: 1;
   width: 100%;
   max-width: 1080px;
   margin-inline: auto;

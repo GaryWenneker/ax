@@ -3,9 +3,12 @@ import CloudDeploy from './CloudDeploy.astro';
 import MinimalDownload from './MinimalDownload.astro';
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 import AxMark from './AxMark.astro';
+import GridBackdrop from './GridBackdrop.astro';
 ---
 <a class="ax-skip" href="#main">Skip to content</a>
 <div class="ax-page">
+  <GridBackdrop />
+
   <header class="ax-header">
     <a class="ax-wordmark" href={base + '/'} aria-label="Ax home"><AxMark /></a>
     <nav class="ax-navigation" aria-label="Primary navigation">
