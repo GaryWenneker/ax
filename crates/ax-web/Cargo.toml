@@ -57,7 +57,8 @@ webauthn-rs = { version = "0.5.5", features = ["conditional-ui"] }
 # runners have no usable system library for the target, so compile the vendored copy.
 openssl = { version = "0.10.81", features = ["vendored"] }
 portable-pty = "0.9"
-dav-server = { version = "0.12", default-features = false }
+# `proppatch` keeps PROPPATCH handled; dav-server 0.12 moved it behind a default feature.
+dav-server = { version = "0.12", default-features = false, features = ["proppatch"] }
 bytes = "1"
 serde_yaml = { workspace = true }
 
