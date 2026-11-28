@@ -1096,7 +1096,7 @@ ax costs model
 
 ### `ax agent economics`
 
-Estimated tokens and catalog cost for a Pi session recorded by the Ax adapter. Tool output tokens are estimates of what was delivered into context. Tool execution itself is not priced as model tokens. Missing rates stay unknown.
+Estimated tokens and catalog cost for a Pi session recorded by the Ax adapter. Tool output tokens are estimates of what was delivered into context. Tool execution itself is not priced as model tokens. Missing rates stay unknown. Without `--session` the totals cover every recorded session and the report says `(all sessions)`; `--session` limits every figure to that session. Each model is listed once.
 
 ```bash
 ax agent economics

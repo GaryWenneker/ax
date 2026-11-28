@@ -467,9 +467,7 @@ impl PiIntegration {
             || {
                 let state = self.state.lock().map_err(|err| err.to_string())?;
                 // Figures stay in USD until the one display conversion below.
-                // Same session order as the persisted snapshot's rows.
                 let rows = ReportRows {
-                    last_session: state.sessions.keys().last().map(String::as_str),
                     turns: &state.turns,
                     tools: &state.tools,
                     models: &state.models,

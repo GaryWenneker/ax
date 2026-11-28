@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct EconomicsReport {
+    /// The session the report is filtered to; `None` when it covers every session.
     pub session_id: Option<String>,
     pub turns: usize,
     pub models: Vec<String>,
@@ -40,7 +41,6 @@ pub struct OptimizationGroup {
 /// Borrowed rows a report is built from, so a live integration can report
 /// without copying its state.
 pub(crate) struct ReportRows<'a> {
-    pub last_session: Option<&'a str>,
     pub turns: &'a [TurnRow],
     pub tools: &'a [ToolEconomicsRecord],
     pub models: &'a [ModelRow],
@@ -50,7 +50,6 @@ pub(crate) struct ReportRows<'a> {
 impl<'a> ReportRows<'a> {
     fn of(snapshot: &'a PersistedSnapshot) -> Self {
         Self {
-            last_session: snapshot.sessions.last().map(|session| session.id.as_str()),
             turns: &snapshot.turns,
             tools: &snapshot.tools,
             models: &snapshot.models,
@@ -98,11 +97,8 @@ pub(crate) fn economics_of(
         .filter_map(|model| model.cached_input_tokens)
         .sum();
     let estimated_model_cost = sum_optional(models.iter().map(|model| model.estimated_cost));
-    let session_id = session_filter
-        .map(str::to_string)
-        .or_else(|| rows.last_session.map(str::to_string));
     EconomicsReport {
-        session_id,
+        session_id: session_filter.map(str::to_string),
         turns: turns.len(),
         models: models
             .iter()
@@ -187,7 +183,7 @@ pub fn format_economics(report: &EconomicsReport) -> String {
         String::new(),
         format!(
             "Session:\n{}",
-            report.session_id.as_deref().unwrap_or("(none)")
+            report.session_id.as_deref().unwrap_or("(all sessions)")
         ),
         String::new(),
         format!("Turns:\n{}", report.turns),
@@ -458,5 +454,145 @@ mod tests {
         assert_eq!(budget.currency, "USD");
         assert!((budget.spent - 10.8).abs() < 1e-9, "{budget:?}");
         assert!((budget.remaining - 54.0).abs() < 1e-9, "{budget:?}");
+    }
+}
+
+#[cfg(test)]
+mod aggregate_tests {
+    use super::*;
+    use crate::store::SessionRow;
+    use crate::types::{Confidence, ToolAlternative};
+
+    fn session(id: &str) -> SessionRow {
+        SessionRow {
+            id: id.into(),
+            project_id: "p".into(),
+            created_at: 1,
+            updated_at: 2,
+            repository_root: None,
+            active_branch: None,
+            cache_namespace: String::new(),
+        }
+    }
+
+    fn model(id: &str, session_id: &str, name: &str) -> ModelRow {
+        ModelRow {
+            id: id.into(),
+            session_id: session_id.into(),
+            turn_id: None,
+            provider: Some("anthropic".into()),
+            model: Some(name.into()),
+            input_tokens: Some(10),
+            output_tokens: Some(1),
+            cached_input_tokens: None,
+            estimated_cost: Some(0.01),
+            created_at: 1,
+        }
+    }
+
+    fn tool(id: &str, output_tokens: u32, cost: f64) -> ToolEconomicsRecord {
+        ToolEconomicsRecord {
+            id: id.into(),
+            session_id: "s1".into(),
+            turn_id: "t1".into(),
+            tool_name: "rg".into(),
+            input_hash: "h".into(),
+            input_bytes: None,
+            output_bytes: None,
+            output_tokens,
+            token_confidence: "estimated".into(),
+            duration_ms: 0,
+            execution_cost_usd: 0.0,
+            context_cost_usd: Some(cost),
+            cache_hit: false,
+            repeated: false,
+            alternative: None,
+        }
+    }
+
+    fn optimization(id: &str, call: &str, current: u32, alternative: u32) -> OptimizationRow {
+        let percent = if current == 0 {
+            0.0
+        } else {
+            f64::from(current - alternative) * 100.0 / f64::from(current)
+        };
+        OptimizationRow {
+            id: id.into(),
+            tool_call_id: call.into(),
+            accepted: false,
+            alternative: ToolAlternative {
+                tool_name: "ax_explore".into(),
+                estimated_current_tokens: current,
+                estimated_alternative_tokens: alternative,
+                estimated_reduction_percent: percent,
+                confidence: Confidence::High,
+                reason: "graph".into(),
+                rule: "rg-symbol".into(),
+            },
+        }
+    }
+
+    fn snapshot() -> PersistedSnapshot {
+        PersistedSnapshot {
+            sessions: vec![session("s1"), session("s2")],
+            turns: Vec::new(),
+            tools: Vec::new(),
+            models: vec![
+                model("m1", "s1", "claude"),
+                model("m2", "s2", "claude"),
+                model("m3", "s1", "gpt"),
+                model("m4", "s1", "claude"),
+            ],
+            optimizations: Vec::new(),
+            cache_entries: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn unfiltered_report_is_labelled_as_all_sessions() {
+        let report = economics_from(&snapshot(), None, "USD", None);
+        assert_eq!(report.session_id, None, "the totals cover every session");
+        assert_eq!(report.input_tokens, 40);
+        assert!(format_economics(&report).contains("Session:\n(all sessions)"));
+        let filtered = economics_from(&snapshot(), Some("s2"), "USD", None);
+        assert_eq!(filtered.session_id.as_deref(), Some("s2"));
+        assert_eq!(filtered.input_tokens, 10);
+    }
+
+    #[test]
+    fn report_lists_each_model_once_in_first_seen_order() {
+        let report = economics_from(&snapshot(), None, "USD", None);
+        assert_eq!(report.models, vec!["claude".to_string(), "gpt".to_string()]);
+        assert!(format_economics(&report).contains("Model:\nclaude, gpt\n"));
+    }
+
+    #[test]
+    fn group_reduction_is_saved_over_current_for_the_whole_group() {
+        let report = optimization_of(&[
+            optimization("o1", "c1", 7423, 668),
+            optimization("o2", "c2", 0, 0),
+        ]);
+        let group = &report.items[0];
+        assert_eq!((group.calls, group.tokens), (2, 7423));
+        let expected = f64::from(7423 - 668) * 100.0 / 7423.0;
+        assert!(
+            (group.estimated_reduction_percent - expected).abs() < 1e-9,
+            "{group:?}"
+        );
+        assert_eq!(report.total_estimated_avoidable_tokens, 7423 - 668);
+    }
+
+    #[test]
+    fn potential_cost_matches_each_optimization_to_its_tool_call() {
+        let tools = [tool("c1", 1000, 0.10), tool("c2", 500, 0.20)];
+        let refs: Vec<&ToolEconomicsRecord> = tools.iter().collect();
+        let rows = [
+            optimization("o1", "c1", 1000, 500),
+            optimization("o2", "c2", 500, 0),
+            optimization("o3", "missing", 900, 0),
+        ];
+        let cost = potential_cost(&rows, &refs).expect("a cost");
+        assert!((cost - (0.05 + 0.20)).abs() < 1e-9, "{cost}");
+        assert_eq!(potential_cost(&rows[2..], &refs), None);
     }
 }
