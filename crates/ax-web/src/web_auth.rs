@@ -33,6 +33,20 @@ const PUBLIC_RECOVERY_DENIED: &str = "Invalid recovery code";
 fn err(status: StatusCode, reason: &'static str) -> ErrorResponse {
     (status, Json(serde_json::json!({"error":reason})))
 }
+/// Logs the cause of a server-side failure and answers with `reason` only:
+/// the response names no path, SQL or library error.
+fn internal<E: std::fmt::Display>(reason: &'static str) -> impl FnOnce(E) -> ErrorResponse {
+    move |error| {
+        tracing::error!("web auth: {reason}: {error}");
+        err(StatusCode::INTERNAL_SERVER_ERROR, reason)
+    }
+}
+/// A security event that could not be recorded is logged instead of dropped.
+fn log_audit<T, E: std::fmt::Display>(result: Result<T, E>) {
+    if let Err(error) = result {
+        tracing::warn!("web auth: security audit record not written: {error}");
+    }
+}
 fn hash(s: &str) -> String {
     blake3::hash(s.as_bytes()).to_hex().to_string()
 }
@@ -71,12 +85,7 @@ async fn enabled(pool: &SqlitePool) -> Result<bool, ErrorResponse> {
         .fetch_optional(pool)
         .await
         .map(|v| v.unwrap_or(0) != 0)
-        .map_err(|_| {
-            err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Authentication configuration unavailable",
-            )
-        })
+        .map_err(internal("Authentication configuration unavailable"))
 }
 pub(crate) async fn web_login_enabled(pool: &SqlitePool) -> bool {
     // A database error must never silently disable protection.
@@ -86,42 +95,91 @@ pub(crate) async fn session_member(
     pool: &SqlitePool,
     headers: &HeaderMap,
 ) -> Option<(String, access::MemberRole)> {
-    let id = member_for_session(pool, headers).await?;
-    let members = access::list_members(pool).await.ok()?;
-    let role = members
-        .into_iter()
-        .find(|m| m.id == id && m.status == "active")?
-        .role;
-    Some((id, role))
-}
-async fn member_for_session(pool: &SqlitePool, headers: &HeaderMap) -> Option<String> {
     let token = cookie_value(headers)?;
     if token.len() != 64 || !token.bytes().all(|c| c.is_ascii_hexdigit()) {
         return None;
     }
-    let member_id: Option<(String,)> = sqlx::query_as(
-        "SELECT s.member_id FROM web_sessions s JOIN team_members m ON m.id=s.member_id
+    let token_hash = hash(token);
+    let (id, role, last_seen): (String, String, i64) = sqlx::query_as(
+        "SELECT s.member_id, m.role, s.last_seen_at FROM web_sessions s
+         JOIN team_members m ON m.id=s.member_id
          WHERE s.token_hash=? AND s.revoked_at IS NULL AND m.status='active'
          AND s.expires_at > unixepoch() AND s.last_seen_at > unixepoch()-1800",
     )
-    .bind(hash(token))
+    .bind(&token_hash)
     .fetch_optional(pool)
     .await
-    .ok()?;
-    let id = member_id?.0;
-    let _ = sqlx::query("UPDATE web_sessions SET last_seen_at=unixepoch() WHERE token_hash=?")
-        .bind(hash(token))
-        .execute(pool)
-        .await;
-    Some(id)
+    .ok()??;
+    // The idle timeout counts in minutes, so one write a minute is enough;
+    // a write on every request competes for global.db's write lock.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    if now - last_seen >= LAST_SEEN_EVERY_SECS {
+        let _ = sqlx::query("UPDATE web_sessions SET last_seen_at=unixepoch() WHERE token_hash=?")
+            .bind(&token_hash)
+            .execute(pool)
+            .await;
+    }
+    let role = [
+        access::MemberRole::Owner,
+        access::MemberRole::Approver,
+        access::MemberRole::Admin,
+        access::MemberRole::Member,
+        access::MemberRole::Readonly,
+    ]
+    .into_iter()
+    .find(|r| r.as_str() == role)?;
+    Some((id, role))
+}
+/// How often a session's `last_seen_at` is written.
+const LAST_SEEN_EVERY_SECS: i64 = 60;
+async fn member_for_session(pool: &SqlitePool, headers: &HeaderMap) -> Option<String> {
+    session_member(pool, headers).await.map(|(id, _)| id)
+}
+/// The active member a sign-in identity names: an exact id first, then an
+/// email, then a display name.
+async fn resolve_identity<'c, E>(exec: E, identity: &str) -> Result<Option<String>, sqlx::Error>
+where
+    E: sqlx::Executor<'c, Database = sqlx::Sqlite>,
+{
+    // Display names are not unique: one that names more than one active
+    // member names nobody.
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT id, CASE WHEN id=? THEN 0 WHEN email=? THEN 1 ELSE 2 END AS rank
+         FROM team_members WHERE status='active'
+         AND (id=? OR email=? OR display_name=?)
+         ORDER BY rank, id LIMIT 2",
+    )
+    .bind(identity)
+    .bind(identity)
+    .bind(identity)
+    .bind(identity)
+    .bind(identity)
+    .fetch_all(exec)
+    .await?;
+    Ok(match rows.as_slice() {
+        [(id, rank), ..] if *rank < 2 => Some(id.clone()),
+        [(id, _)] => Some(id.clone()),
+        _ => None,
+    })
 }
 fn trusted_local_mode(hub: &WebHub) -> bool {
     // A TLS/public canonical origin can be proxied into a loopback listener.
     // That cannot act as proof of local Owner identity before sign-in.
     hub.local_only
-        && std::env::var("AX_WEB_AUTH_ORIGIN")
-            .ok()
-            .is_none_or(|configured| configured.starts_with("http://localhost:"))
+        && configured_origin_is_local(std::env::var("AX_WEB_AUTH_ORIGIN").ok().as_deref())
+}
+/// No `AX_WEB_AUTH_ORIGIN`, or one on a loopback host over plain http.
+fn configured_origin_is_local(configured: Option<&str>) -> bool {
+    configured.is_none_or(|configured| {
+        Url::parse(configured).is_ok_and(|url| url.scheme() == "http" && loopback_host(&url))
+    })
+}
+/// `localhost`, `127.0.0.1` or `[::1]`: the hosts a local origin may name.
+fn loopback_host(url: &Url) -> bool {
+    // `host_str` keeps the brackets of an IPv6 host and normalizes the rest.
+    matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
 }
 async fn require_recent_login(pool: &SqlitePool, headers: &HeaderMap) -> Result<(), ErrorResponse> {
     let token = cookie_value(headers).unwrap_or("");
@@ -132,7 +190,7 @@ async fn require_recent_login(pool: &SqlitePool, headers: &HeaderMap) -> Result<
     .bind(hash(token))
     .fetch_optional(pool)
     .await
-    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Session unavailable"))?;
+    .map_err(internal("Session unavailable"))?;
     if recent.is_none() {
         return Err(err(
             StatusCode::FORBIDDEN,
@@ -167,7 +225,7 @@ async fn browser_member(
     ) {
         return access::list_members(pool)
             .await
-            .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Members unavailable"))?
+            .map_err(internal("Members unavailable"))?
             .into_iter()
             .find(|m| m.role == access::MemberRole::Owner && m.status == "active")
             .map(|m| m.id)
@@ -181,7 +239,7 @@ async fn require_owner(pool: &SqlitePool, member_id: &str) -> Result<(), ErrorRe
             .bind(member_id)
             .fetch_optional(pool)
             .await
-            .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Members unavailable"))?;
+            .map_err(internal("Members unavailable"))?;
     if owner.is_some_and(|(role,)| role == "owner") {
         Ok(())
     } else {
@@ -227,7 +285,7 @@ async fn establish(
     let token = fresh_secret();
     sqlx::query("INSERT INTO web_sessions (id,token_hash,member_id,expires_at) VALUES (?,?,?,unixepoch()+28800)")
         .bind(Uuid::new_v4().to_string()).bind(hash(&token)).bind(member_id).execute(pool).await
-        .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Cannot establish session"))?;
+        .map_err(internal("Cannot establish session"))?;
     Ok(cookie_response(
         serde_json::json!({"authenticated":true}),
         session_cookie(&token, secure),
@@ -302,8 +360,7 @@ fn parse_origin(value: &str) -> Result<Url, ErrorResponse> {
         .map_err(|_| err(StatusCode::BAD_REQUEST, "Invalid AX_WEB_AUTH_ORIGIN"))?;
     let host = url.host_str().unwrap_or("");
     if host.is_empty()
-        || !(url.scheme() == "https"
-            || (url.scheme() == "http" && matches!(host, "localhost" | "127.0.0.1" | "::1")))
+        || !(url.scheme() == "https" || (url.scheme() == "http" && loopback_host(&url)))
     {
         return Err(err(
             StatusCode::BAD_REQUEST,
@@ -319,12 +376,7 @@ fn webauthn(headers: &HeaderMap) -> Result<Webauthn, ErrorResponse> {
         .ok_or_else(|| err(StatusCode::BAD_REQUEST, "RP ID missing"))?;
     WebauthnBuilder::new(rp_id, &url)
         .and_then(|builder| builder.build())
-        .map_err(|_| {
-            err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "WebAuthn configuration invalid",
-            )
-        })
+        .map_err(internal("WebAuthn configuration invalid"))
 }
 fn secure_origin(headers: &HeaderMap) -> bool {
     page_origin(headers).is_ok_and(|u| u.scheme() == "https")
@@ -484,7 +536,7 @@ async fn hash_new_password(password: String) -> Result<String, ErrorResponse> {
             .map(|hash| hash.to_string())
     })
     .await?
-    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Password setup failed"))
+    .map_err(internal("Password setup failed"))
 }
 fn dummy_password_hash() -> &'static str {
     static DUMMY: OnceLock<String> = OnceLock::new();
@@ -508,12 +560,31 @@ enum Ceremony {
 async fn store_challenge(ceremony: Ceremony) -> String {
     let id = fresh_secret();
     let mut map = passkey_ceremonies().lock().await;
-    map.retain(|_, (created, _)| created.elapsed() < Duration::from_secs(180));
-    if map.len() >= 1000 {
-        map.clear();
-    }
-    map.insert(id.clone(), (Instant::now(), ceremony));
+    insert_bounded(&mut map, id.clone(), ceremony, MAX_CEREMONIES);
     id
+}
+const MAX_CEREMONIES: usize = 1000;
+/// Adds one live ceremony, dropping expired ones first.
+fn insert_bounded<T>(
+    map: &mut std::collections::HashMap<String, (Instant, T)>,
+    id: String,
+    value: T,
+    cap: usize,
+) {
+    map.retain(|_, (created, _)| created.elapsed() < Duration::from_secs(180));
+    // Unauthenticated callers can fill the store; dropping everything would
+    // cancel the sign-ins of real users, so only the oldest ones go.
+    while map.len() >= cap {
+        let Some(oldest) = map
+            .iter()
+            .min_by_key(|(_, (created, _))| *created)
+            .map(|(id, _)| id.clone())
+        else {
+            break;
+        };
+        map.remove(&oldest);
+    }
+    map.insert(id, (Instant::now(), value));
 }
 async fn consume_challenge(id: &str) -> Option<Ceremony> {
     let (when, state) = passkey_ceremonies().lock().await.remove(id)?;
@@ -579,15 +650,14 @@ async fn session(headers: HeaderMap) -> Result<Json<serde_json::Value>, ErrorRes
         .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "Sign in required"))?;
     let user = access::list_members(&pool)
         .await
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Members unavailable"))?
+        .map_err(internal("Members unavailable"))?
         .into_iter()
         .find(|m| m.id == id)
         .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "Invalid session"))?;
-    let mut member = serde_json::to_value(&user)
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Members unavailable"))?;
+    let mut member = serde_json::to_value(&user).map_err(internal("Members unavailable"))?;
     let avatar = access::member_avatar(&pool, &id)
         .await
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Members unavailable"))?;
+        .map_err(internal("Members unavailable"))?;
     member["avatar"] = serde_json::json!(avatar);
     Ok(Json(
         serde_json::json!({"authenticated":true,"member":member}),
@@ -614,7 +684,7 @@ async fn setup(
     }
     let owner = access::list_members(&pool)
         .await
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Members unavailable"))?
+        .map_err(internal("Members unavailable"))?
         .into_iter()
         .find(|m| m.role == access::MemberRole::Owner && m.status == "active")
         .ok_or_else(|| err(StatusCode::FORBIDDEN, "Owner required"))?;
@@ -627,7 +697,7 @@ async fn setup(
     .bind(verifier)
     .execute(&pool)
     .await
-    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Password setup failed"))?;
+    .map_err(internal("Password setup failed"))?;
     Ok(Json(
         serde_json::json!({"configured":true,"member_id":owner.id}),
     ))
@@ -657,19 +727,14 @@ async fn configure(
             "SELECT COUNT(*) FROM web_password_credentials w JOIN team_members m ON m.id=w.member_id
              WHERE m.role='owner' AND m.status='active'"
         ).fetch_one(&pool).await
-            .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Owner credentials unavailable"))?;
+            .map_err(internal("Owner credentials unavailable"))?;
         let keys: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM web_passkeys p JOIN team_members m ON m.id=p.member_id
              WHERE m.role='owner' AND m.status='active' AND p.revoked_at IS NULL",
         )
         .fetch_one(&pool)
         .await
-        .map_err(|_| {
-            err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Owner passkeys unavailable",
-            )
-        })?;
+        .map_err(internal("Owner passkeys unavailable"))?;
         if count.0 + keys.0 == 0 {
             return Err(err(
                 StatusCode::CONFLICT,
@@ -686,7 +751,7 @@ async fn configure(
         .bind(hash(cookie_value(&headers).unwrap_or("")))
         .fetch_optional(&pool)
         .await
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Session unavailable"))?;
+        .map_err(internal("Session unavailable"))?;
         if recent.is_none() {
             return Err(err(
                 StatusCode::FORBIDDEN,
@@ -694,12 +759,10 @@ async fn configure(
             ));
         }
     }
-    let mut transaction = pool.begin().await.map_err(|_| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Cannot update authentication",
-        )
-    })?;
+    let mut transaction = pool
+        .begin()
+        .await
+        .map_err(internal("Cannot update authentication"))?;
     sqlx::query(
         "INSERT INTO web_auth_settings(singleton,enabled) VALUES (1,?)
                  ON CONFLICT(singleton) DO UPDATE SET enabled=excluded.enabled",
@@ -707,32 +770,27 @@ async fn configure(
     .bind(body.enabled)
     .execute(&mut *transaction)
     .await
-    .map_err(|_| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Cannot update authentication",
-        )
-    })?;
+    .map_err(internal("Cannot update authentication"))?;
     sqlx::query("UPDATE web_sessions SET revoked_at=unixepoch() WHERE revoked_at IS NULL")
         .execute(&mut *transaction)
         .await
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Cannot revoke sessions"))?;
-    transaction.commit().await.map_err(|_| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Cannot finalize authentication change",
+        .map_err(internal("Cannot revoke sessions"))?;
+    transaction
+        .commit()
+        .await
+        .map_err(internal("Cannot finalize authentication change"))?;
+    log_audit(
+        access::audit(
+            &pool,
+            Some(&actor),
+            None,
+            "web_auth.config_updated",
+            "installation",
+            "1",
+            &serde_json::json!({"enabled":body.enabled}),
         )
-    })?;
-    let _ = access::audit(
-        &pool,
-        Some(&actor),
-        None,
-        "web_auth.config_updated",
-        "installation",
-        "1",
-        &serde_json::json!({"enabled":body.enabled}),
-    )
-    .await;
+        .await,
+    );
     Ok(Json(serde_json::json!({"enabled":body.enabled})))
 }
 async fn password_login(
@@ -755,17 +813,19 @@ async fn password_login(
             "Too many login attempts",
         ));
     }
-    let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT m.id, c.password_hash FROM team_members m
-         JOIN web_password_credentials c ON c.member_id=m.id
-         WHERE m.status='active' AND (m.id=? OR m.email=? OR m.display_name=?) LIMIT 1",
-    )
-    .bind(identity)
-    .bind(identity)
-    .bind(identity)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Sign-in unavailable"))?;
+    let member = resolve_identity(&pool, identity)
+        .await
+        .map_err(internal("Sign-in unavailable"))?;
+    let row: Option<(String, String)> = match member {
+        Some(id) => sqlx::query_as(
+            "SELECT member_id, password_hash FROM web_password_credentials WHERE member_id=?",
+        )
+        .bind(id)
+        .fetch_optional(&pool)
+        .await
+        .map_err(internal("Sign-in unavailable"))?,
+        None => None,
+    };
     // Always run Argon2, even for unknown identities, to avoid timing
     // differences that disclose account existence.
     let digest = row.as_ref().map(|(_, hash)| hash.clone());
@@ -816,7 +876,7 @@ async fn user_password(
             .bind(&target)
             .fetch_optional(&pool)
             .await
-            .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "User lookup failed"))?;
+            .map_err(internal("User lookup failed"))?;
     if exists.is_none() {
         return Err(err(StatusCode::NOT_FOUND, "Active user not found"));
     }
@@ -824,7 +884,7 @@ async fn user_password(
     let mut tx = pool
         .begin()
         .await
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Password update failed"))?;
+        .map_err(internal("Password update failed"))?;
     sqlx::query(
         "INSERT INTO web_password_credentials(member_id,password_hash) VALUES (?,?)
          ON CONFLICT(member_id) DO UPDATE SET password_hash=excluded.password_hash",
@@ -833,27 +893,29 @@ async fn user_password(
     .bind(verifier)
     .execute(&mut *tx)
     .await
-    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Password update failed"))?;
+    .map_err(internal("Password update failed"))?;
     sqlx::query(
         "UPDATE web_sessions SET revoked_at=unixepoch() WHERE member_id=? AND revoked_at IS NULL",
     )
     .bind(&target)
     .execute(&mut *tx)
     .await
-    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Sessions unavailable"))?;
+    .map_err(internal("Sessions unavailable"))?;
     tx.commit()
         .await
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Password update failed"))?;
-    let _ = access::audit(
-        &pool,
-        Some(&actor),
-        None,
-        "web_auth.password_reset",
-        "member",
-        &target,
-        &serde_json::json!({}),
-    )
-    .await;
+        .map_err(internal("Password update failed"))?;
+    log_audit(
+        access::audit(
+            &pool,
+            Some(&actor),
+            None,
+            "web_auth.password_reset",
+            "member",
+            &target,
+            &serde_json::json!({}),
+        )
+        .await,
+    );
     Ok(Json(serde_json::json!({"updated":true})))
 }
 #[derive(Deserialize)]
@@ -877,14 +939,14 @@ async fn list_sessions(
     .bind(member)
     .fetch_all(&pool)
     .await
-    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Sessions unavailable"))?;
+    .map_err(internal("Sessions unavailable"))?;
     let current_hash = hash(cookie_value(&headers).unwrap_or(""));
     let current_id: Option<(String,)> =
         sqlx::query_as("SELECT id FROM web_sessions WHERE token_hash=? AND revoked_at IS NULL")
             .bind(current_hash)
             .fetch_optional(&pool)
             .await
-            .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Sessions unavailable"))?;
+            .map_err(internal("Sessions unavailable"))?;
     let active = current_id.map(|(id,)| id);
     Ok(Json(serde_json::json!({"sessions":rows.into_iter()
         .map(|(id,created_at,last_seen_at,expires_at)|serde_json::json!({
@@ -909,20 +971,22 @@ async fn revoke_session(
     .bind(&actor)
     .execute(&pool)
     .await
-    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Cannot revoke session"))?;
+    .map_err(internal("Cannot revoke session"))?;
     if result.rows_affected() == 0 {
         return Err(err(StatusCode::NOT_FOUND, "Session unavailable"));
     }
-    let _ = access::audit(
-        &pool,
-        Some(&actor),
-        None,
-        "web_auth.session_revoked",
-        "web_session",
-        &id,
-        &serde_json::json!({}),
-    )
-    .await;
+    log_audit(
+        access::audit(
+            &pool,
+            Some(&actor),
+            None,
+            "web_auth.session_revoked",
+            "web_session",
+            &id,
+            &serde_json::json!({}),
+        )
+        .await,
+    );
     Ok(Json(serde_json::json!({"revoked":true})))
 }
 async fn rotate_recovery(
@@ -933,22 +997,15 @@ async fn rotate_recovery(
     let pool = db().await?;
     let actor = browser_member(&pool, &headers, peer, &hub).await?;
     require_recent_if_enabled(&pool, &headers).await?;
-    let mut tx = pool.begin().await.map_err(|_| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Recovery storage unavailable",
-        )
-    })?;
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(internal("Recovery storage unavailable"))?;
     sqlx::query("DELETE FROM web_recovery_codes WHERE member_id=?")
         .bind(&actor)
         .execute(&mut *tx)
         .await
-        .map_err(|_| {
-            err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Recovery storage unavailable",
-            )
-        })?;
+        .map_err(internal("Recovery storage unavailable"))?;
     let mut codes = Vec::with_capacity(10);
     for _ in 0..10 {
         let code = format!("axr-{}", fresh_secret());
@@ -957,30 +1014,24 @@ async fn rotate_recovery(
             .bind(hash(&code))
             .execute(&mut *tx)
             .await
-            .map_err(|_| {
-                err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Recovery storage unavailable",
-                )
-            })?;
+            .map_err(internal("Recovery storage unavailable"))?;
         codes.push(code);
     }
-    tx.commit().await.map_err(|_| {
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Recovery storage unavailable",
+    tx.commit()
+        .await
+        .map_err(internal("Recovery storage unavailable"))?;
+    log_audit(
+        access::audit(
+            &pool,
+            Some(&actor),
+            None,
+            "web_auth.recovery_rotated",
+            "member",
+            &actor,
+            &serde_json::json!({"count":10}),
         )
-    })?;
-    let _ = access::audit(
-        &pool,
-        Some(&actor),
-        None,
-        "web_auth.recovery_rotated",
-        "member",
-        &actor,
-        &serde_json::json!({"count":10}),
-    )
-    .await;
+        .await,
+    );
     Ok(Json(serde_json::json!({"codes":codes})))
 }
 async fn recover_login(
@@ -1004,17 +1055,11 @@ async fn recover_login(
     let mut tx = pool
         .begin()
         .await
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Recovery unavailable"))?;
-    let member: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM team_members WHERE status='active'
-         AND (id=? OR email=? OR display_name=?) LIMIT 1",
-    )
-    .bind(identity)
-    .bind(identity)
-    .bind(identity)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Recovery unavailable"))?;
+        .map_err(internal("Recovery unavailable"))?;
+    let member: Option<(String,)> = resolve_identity(&mut *tx, identity)
+        .await
+        .map_err(internal("Recovery unavailable"))?
+        .map(|id| (id,));
     let code_holder: Option<(String,)> = sqlx::query_as(
         "SELECT member_id FROM web_recovery_codes
          WHERE verifier=? AND consumed_at IS NULL LIMIT 1",
@@ -1022,7 +1067,7 @@ async fn recover_login(
     .bind(&verifier)
     .fetch_optional(&mut *tx)
     .await
-    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Recovery unavailable"))?;
+    .map_err(internal("Recovery unavailable"))?;
     let member_id = match (member, code_holder) {
         (Some((id,)), Some((code_member,))) if id == code_member => id,
         _ => return Err(err(StatusCode::UNAUTHORIZED, PUBLIC_RECOVERY_DENIED)),
@@ -1035,23 +1080,25 @@ async fn recover_login(
     .bind(&verifier)
     .execute(&mut *tx)
     .await
-    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Recovery unavailable"))?;
+    .map_err(internal("Recovery unavailable"))?;
     if updated.rows_affected() != 1 {
         return Err(err(StatusCode::UNAUTHORIZED, PUBLIC_RECOVERY_DENIED));
     }
     tx.commit()
         .await
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Recovery unavailable"))?;
-    let _ = access::audit(
-        &pool,
-        Some(&member_id),
-        None,
-        "web_auth.recovery_used",
-        "member",
-        &member_id,
-        &serde_json::json!({}),
-    )
-    .await;
+        .map_err(internal("Recovery unavailable"))?;
+    log_audit(
+        access::audit(
+            &pool,
+            Some(&member_id),
+            None,
+            "web_auth.recovery_used",
+            "member",
+            &member_id,
+            &serde_json::json!({}),
+        )
+        .await,
+    );
     forgive_attempt(&keys).await;
     establish(&pool, &member_id, &headers, secure_origin(&headers)).await
 }
@@ -1062,7 +1109,7 @@ async fn logout(headers: HeaderMap) -> Result<Response, ErrorResponse> {
             .bind(hash(token))
             .execute(&pool)
             .await
-            .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Logout failed"))?;
+            .map_err(internal("Logout failed"))?;
     }
     Ok(cookie_response(
         serde_json::json!({"authenticated":false}),
@@ -1079,7 +1126,7 @@ async fn passkeys(
     let rows: Vec<(String,String,String,Option<i64>)> = sqlx::query_as(
         "SELECT id,label,created_at,revoked_at FROM web_passkeys WHERE member_id=? ORDER BY created_at"
     ).bind(actor).fetch_all(&pool).await
-        .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Passkeys unavailable"))?;
+        .map_err(internal("Passkeys unavailable"))?;
     Ok(Json(
         serde_json::json!({"passkeys":rows.into_iter().map(|(id,label,created_at,revoked_at)|
         serde_json::json!({"id":id,"label":label,"created_at":created_at,"revoked":revoked_at.is_some()})).collect::<Vec<_>>()}),
@@ -1095,7 +1142,7 @@ async fn register_start(
     require_recent_if_enabled(&pool, &headers).await?;
     let user = access::list_members(&pool)
         .await
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Members unavailable"))?
+        .map_err(internal("Members unavailable"))?
         .into_iter()
         .find(|m| m.id == actor)
         .ok_or_else(|| err(StatusCode::FORBIDDEN, "Unknown user"))?;
@@ -1151,24 +1198,23 @@ async fn register_finish(
     .bind(&id)
     .bind(&actor)
     .bind(URL_SAFE_NO_PAD.encode(passkey.cred_id()))
-    .bind(
-        serde_json::to_string(&passkey)
-            .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Passkey storage failed"))?,
-    )
+    .bind(serde_json::to_string(&passkey).map_err(internal("Passkey storage failed"))?)
     .bind("Passkey")
     .execute(&pool)
     .await
     .map_err(|_| err(StatusCode::CONFLICT, "Passkey already registered"))?;
-    let _ = access::audit(
-        &pool,
-        Some(&actor),
-        None,
-        "web_auth.passkey_added",
-        "passkey",
-        &id,
-        &serde_json::json!({}),
-    )
-    .await;
+    log_audit(
+        access::audit(
+            &pool,
+            Some(&actor),
+            None,
+            "web_auth.passkey_added",
+            "passkey",
+            &id,
+            &serde_json::json!({}),
+        )
+        .await,
+    );
     Ok(Json(serde_json::json!({"id":id,"created":true})))
 }
 fn discoverable_challenge(mut options: RequestChallengeResponse) -> serde_json::Value {
@@ -1227,16 +1273,11 @@ async fn auth_finish(
             .bind(&id)
             .fetch_optional(&pool)
             .await
-            .map_err(|_| {
-                err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Credential lookup failed",
-                )
-            })?;
+            .map_err(internal("Credential lookup failed"))?;
             let (record_id, json, member_id) =
                 stored.ok_or_else(|| err(StatusCode::UNAUTHORIZED, "No available passkey"))?;
-            let passkey: Passkey = serde_json::from_str(&json)
-                .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Stored key malformed"))?;
+            let passkey: Passkey =
+                serde_json::from_str(&json).map_err(internal("Stored key malformed"))?;
             let verified = webauthn(&headers)?
                 .finish_discoverable_authentication(
                     &credential,
@@ -1260,14 +1301,11 @@ async fn auth_finish(
         return Err(err(StatusCode::UNAUTHORIZED, "Passkey identity mismatch"));
     }
     sqlx::query("UPDATE web_passkeys SET credential_json=?,last_used_at=unixepoch() WHERE id=?")
-        .bind(
-            serde_json::to_string(&passkey)
-                .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Cannot update passkey"))?,
-        )
+        .bind(serde_json::to_string(&passkey).map_err(internal("Cannot update passkey"))?)
         .bind(record_id)
         .execute(&pool)
         .await
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Cannot update passkey"))?;
+        .map_err(internal("Cannot update passkey"))?;
     establish(&pool, &member_id, &headers, secure_origin(&headers)).await
 }
 /// Atomically revoke an authenticator only if the last active Owner keeps
@@ -1297,7 +1335,7 @@ async fn revoke_passkey_in_db(
     .bind(id)
     .execute(pool)
     .await
-    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Cannot revoke passkey"))?;
+    .map_err(internal("Cannot revoke passkey"))?;
     Ok(result.rows_affected() == 1)
 }
 async fn remove_key(
@@ -1315,16 +1353,18 @@ async fn remove_key(
             "Passkey not found or final Owner login method",
         ));
     }
-    let _ = access::audit(
-        &pool,
-        Some(&actor),
-        None,
-        "web_auth.passkey_revoked",
-        "passkey",
-        &id,
-        &serde_json::json!({}),
-    )
-    .await;
+    log_audit(
+        access::audit(
+            &pool,
+            Some(&actor),
+            None,
+            "web_auth.passkey_revoked",
+            "passkey",
+            &id,
+            &serde_json::json!({}),
+        )
+        .await,
+    );
     Ok(Json(serde_json::json!({"revoked":true})))
 }
 async fn rename_key(
@@ -1347,7 +1387,7 @@ async fn rename_key(
     .bind(actor)
     .execute(&pool)
     .await
-    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Cannot rename passkey"))?;
+    .map_err(internal("Cannot rename passkey"))?;
     if result.rows_affected() != 1 {
         return Err(err(StatusCode::NOT_FOUND, "Passkey not found"));
     }
@@ -1368,7 +1408,7 @@ async fn save_avatar(
     };
     access::set_member_avatar(&pool, &id, image)
         .await
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Cannot save photo"))?;
+        .map_err(internal("Cannot save photo"))?;
     Ok(Json(serde_json::json!({"saved": true})))
 }
 
@@ -1448,7 +1488,7 @@ pub async fn gate(State(hub): State<WebHub>, mut req: Request, next: Next) -> Re
     {
         return next.run(req).await;
     }
-    let Some(member_id) = member_for_session(&pool, req.headers()).await else {
+    let Some((member_id, role)) = session_member(&pool, req.headers()).await else {
         return err(StatusCode::UNAUTHORIZED, "Sign in required").into_response();
     };
     if req.method() != Method::GET && req.method() != Method::HEAD {
@@ -1464,9 +1504,6 @@ pub async fn gate(State(hub): State<WebHub>, mut req: Request, next: Next) -> Re
     // Coarse Command Center permissions are enforced here before resource-level ACLs.
     // All write operations require a writable human role, and management APIs
     // require Admin or Owner. Client token scopes remain independent.
-    let Some((_, role)) = session_member(&pool, req.headers()).await else {
-        return err(StatusCode::UNAUTHORIZED, "Sign in required").into_response();
-    };
     // Routes that act on this computer (agent CLIs and their terminal,
     // language servers, OS drive mounts, sign-in setup) are management too.
     let admin_path = path == "/api/agent"
@@ -1541,6 +1578,134 @@ pub fn router(hub: WebHub) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_loopback_origin_counts_as_local() {
+        assert!(configured_origin_is_local(None));
+        for origin in [
+            "http://localhost:7070",
+            "http://127.0.0.1:7070",
+            "http://[::1]:7070",
+        ] {
+            assert!(configured_origin_is_local(Some(origin)), "{origin}");
+            assert!(parse_origin(origin).is_ok(), "{origin}");
+        }
+        for origin in [
+            "https://ax.example.com",
+            "http://example.com:7070",
+            "http://localhost.example.com:7070",
+            "https://localhost:7070",
+            "not a url",
+        ] {
+            assert!(!configured_origin_is_local(Some(origin)), "{origin}");
+        }
+    }
+
+    #[test]
+    fn a_full_ceremony_store_drops_only_the_oldest() {
+        let mut map = HashMap::new();
+        for n in 0..3u32 {
+            insert_bounded(&mut map, format!("c{n}"), n, 3);
+        }
+        insert_bounded(&mut map, "c3".into(), 3, 3);
+        assert_eq!(map.len(), 3);
+        assert!(!map.contains_key("c0"), "the oldest ceremony goes");
+        for id in ["c1", "c2", "c3"] {
+            assert!(map.contains_key(id), "{id} was dropped");
+        }
+    }
+
+    async fn auth_pool() -> (tempfile::TempDir, SqlitePool) {
+        let directory = tempfile::tempdir().unwrap();
+        let pool = ax_global_db::open_and_init(&directory.path().join("auth.db"))
+            .await
+            .unwrap();
+        (directory, pool)
+    }
+
+    #[tokio::test]
+    async fn sign_in_identity_prefers_id_then_email_and_refuses_a_shared_display_name() {
+        let (_dir, pool) = auth_pool().await;
+        access::bootstrap_owner(&pool, "owner", "Owner", Some("owner@example.com"))
+            .await
+            .unwrap();
+        // Another member whose display name is the owner's email and id.
+        access::create_member(
+            &pool,
+            "m1",
+            "owner@example.com",
+            None,
+            access::MemberRole::Member,
+        )
+        .await
+        .unwrap();
+        access::create_member(&pool, "m2", "owner", None, access::MemberRole::Member)
+            .await
+            .unwrap();
+        access::create_member(&pool, "m3", "Sam", None, access::MemberRole::Member)
+            .await
+            .unwrap();
+        access::create_member(&pool, "m4", "Sam", None, access::MemberRole::Member)
+            .await
+            .unwrap();
+        for _ in 0..5 {
+            assert_eq!(
+                resolve_identity(&pool, "owner@example.com")
+                    .await
+                    .unwrap()
+                    .as_deref(),
+                Some("owner")
+            );
+            assert_eq!(
+                resolve_identity(&pool, "owner").await.unwrap().as_deref(),
+                Some("owner")
+            );
+        }
+        assert_eq!(resolve_identity(&pool, "Sam").await.unwrap(), None);
+        assert_eq!(
+            resolve_identity(&pool, "m3").await.unwrap().as_deref(),
+            Some("m3")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_session_lookup_writes_last_seen_at_most_once_a_minute() {
+        let (_dir, pool) = auth_pool().await;
+        access::bootstrap_owner(&pool, "owner", "Owner", None)
+            .await
+            .unwrap();
+        let token = "a".repeat(64);
+        sqlx::query(
+            "INSERT INTO web_sessions (id,token_hash,member_id,expires_at,last_seen_at)
+             VALUES ('s1',?,'owner',unixepoch()+3600,unixepoch()-30)",
+        )
+        .bind(hash(&token))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            format!("ax_web_session={token}").parse().unwrap(),
+        );
+        let seen = || async {
+            sqlx::query_scalar::<_, i64>("SELECT last_seen_at FROM web_sessions WHERE id='s1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+        let before = seen().await;
+        let (id, role) = session_member(&pool, &headers).await.expect("signed in");
+        assert_eq!((id.as_str(), role), ("owner", access::MemberRole::Owner));
+        assert_eq!(seen().await, before, "a fresh session is not rewritten");
+        sqlx::query("UPDATE web_sessions SET last_seen_at=unixepoch()-120")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let stale = seen().await;
+        session_member(&pool, &headers).await.expect("signed in");
+        assert!(seen().await > stale, "an older session is refreshed");
+    }
     #[test]
     fn attempts_older_than_the_window_are_dropped() {
         let mut limiter = AttemptLimiter::default();

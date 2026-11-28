@@ -1,5 +1,7 @@
 //! `GET /api/links` (A1–A4 in docs/specs/obsidian-links.md).
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -45,27 +47,20 @@ async fn fixture_with(readonly: bool) -> Fx {
     let global = isolate();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("proj");
-    std::fs::create_dir_all(root.join(".ax")).unwrap();
-    ax_db::Database::open(&root.join(".ax").join("ax.db"))
-        .await
-        .unwrap();
     let memory_id = {
-        let seed = WebHub::open(root.clone(), false, 0).await.unwrap();
-        let ws = seed.read().await;
+        let seed = common::seed_stores(&root).await;
         let rule = ax_policy::parse_rule_file(Path::new("x.mdc"), RULE).unwrap();
-        ws.policy
-            .store
+        seed.policy
             .save_rule(rule.frontmatter, rule.body)
             .await
             .unwrap();
         let skill = ax_policy::parse_skill_file(Path::new("SKILL.md"), SKILL).unwrap();
-        ws.policy
-            .store
+        seed.policy
             .save_skill(skill.frontmatter, skill.body)
             .await
             .unwrap();
         ax_memory::remember(
-            &ws.graph_pool,
+            seed.graph_pool(),
             ax_memory::RememberInput {
                 title: "raw prompt".into(),
                 body: "a raw chat prompt, stored as a turn".into(),
@@ -77,8 +72,8 @@ async fn fixture_with(readonly: bool) -> Fx {
         )
         .await
         .unwrap();
-        ax_memory::remember(
-            &ws.graph_pool,
+        let id = ax_memory::remember(
+            seed.graph_pool(),
             ax_memory::RememberInput {
                 title: "Use SQLite".into(),
                 body: "SQLite is the truth, see [[global/skills/gl-skill]].".into(),
@@ -90,7 +85,9 @@ async fn fixture_with(readonly: bool) -> Fx {
         )
         .await
         .unwrap()
-        .id
+        .id;
+        seed.close().await;
+        id
     };
     let pool = ax_global_db::open_and_init(&global).await.unwrap();
     let global_pid =

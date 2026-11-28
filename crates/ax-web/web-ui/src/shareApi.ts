@@ -22,12 +22,17 @@ export interface GithubShareConfig {
   subpath: string;
   /**
    * Optional API token (e.g. GitLab PAT) for hosts that gate raw git behind SSO.
-   * Write-only: the server stores it in ~/.ax/auth and never returns it. An empty
+   * Write-only: the server stores it in the OS credential store and never returns it. An empty
    * value on save keeps the stored token.
    */
   token: string;
   /** Set by the server: a token is stored for this repo URL. */
-  hasToken?: boolean;
+  tokenSet?: boolean;
+  /**
+   * Set by the server: the OS credential store refused to read the token (locked or busy), so
+   * whether one is stored is unknown. Git sync fails until the store is unlocked.
+   */
+  tokenUnreadable?: boolean;
   /** Send `true` on save to remove the stored token. */
   clearToken?: boolean;
 }

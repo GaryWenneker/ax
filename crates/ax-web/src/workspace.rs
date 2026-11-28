@@ -79,7 +79,7 @@ async fn handle_current(State(hub): State<WebHub>) -> impl IntoResponse {
     let ws = hub.read().await;
     let path = canonical_or(&ws.project_root);
     drop(ws);
-    let _ = touch_recent_project(&path, is_initialized(&path));
+    // A read leaves the recent list alone; opening and switching update it.
     let recent = switcher_projects().await;
     Json(serde_json::json!({
         "ok": true,
@@ -144,8 +144,26 @@ async fn handle_browse(
         .into_response();
     }
 
+    // Listing a folder and probing each entry is blocking IO.
+    let scan = base.clone();
+    let entries = tokio::task::spawn_blocking(move || browse_entries(&scan))
+        .await
+        .unwrap_or_default();
+
+    Json(serde_json::json!({
+        "ok": true,
+        "path": display_path(&base),
+        "parent": base.parent().map(display_path),
+        "initialized": is_initialized(&base),
+        "entries": entries,
+    }))
+    .into_response()
+}
+
+/// The non-hidden subfolders of `base`, ax projects first.
+fn browse_entries(base: &Path) -> Vec<BrowseEntry> {
     let mut entries = Vec::new();
-    if let Ok(read) = std::fs::read_dir(&base) {
+    if let Ok(read) = std::fs::read_dir(base) {
         for ent in read.flatten() {
             // Prefer DirEntry::file_type — includes empty dirs and avoids
             // extra metadata probes that can fail on locked Windows folders.
@@ -180,14 +198,7 @@ async fn handle_browse(
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
 
-    Json(serde_json::json!({
-        "ok": true,
-        "path": display_path(&base),
-        "parent": base.parent().map(display_path),
-        "initialized": is_initialized(&base),
-        "entries": entries,
-    }))
-    .into_response()
+    entries
 }
 
 #[derive(Deserialize)]
@@ -307,15 +318,24 @@ async fn handle_init_stream(
         .into_response();
     }
 
+    let Some(run) = InitRun::start(&target) else {
+        return Json(serde_json::json!({
+            "ok": false,
+            "error": "ax init is already running for this folder",
+        }))
+        .into_response();
+    };
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
     let path = target.clone();
     tokio::spawn(async move {
+        let _run = run;
         let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("ax"));
         let path_str = path.to_string_lossy().into_owned();
         let mut child = match tokio::process::Command::new(exe)
             .args(["init", &path_str])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .kill_on_drop(true)
             .spawn()
         {
             Ok(c) => c,
@@ -327,64 +347,39 @@ async fn handle_init_stream(
             }
         };
 
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-
-        async fn pump_stdout(
-            tx: mpsc::UnboundedSender<String>,
-            reader: Option<tokio::process::ChildStdout>,
-            prefix: &str,
-        ) {
-            use tokio::io::{AsyncBufReadExt, BufReader};
-            if let Some(out) = reader {
-                let mut lines = BufReader::new(out).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    let _ = tx.send(
-                        serde_json::json!({"type":"line","text": format!("{prefix}{line}")})
-                            .to_string(),
-                    );
-                }
-            }
+        let h1 = child
+            .stdout
+            .take()
+            .map(|out| tokio::spawn(pump_lines(out, "", tx.clone())));
+        let h2 = child
+            .stderr
+            .take()
+            .map(|err| tokio::spawn(pump_lines(err, "[stderr] ", tx.clone())));
+        // Stop the child when the browser goes away or it runs too long.
+        let outcome = tokio::select! {
+            status = child.wait() => status.map(|s| s.success()).map_err(|e| e.to_string()),
+            _ = tx.closed() => Err("the browser closed the stream".to_string()),
+            _ = tokio::time::sleep(INIT_TIMEOUT) => Err("ax init took too long".to_string()),
+        };
+        if outcome.is_err() {
+            let _ = child.kill().await;
         }
+        finish_pumps([h1, h2].into_iter().flatten(), PUMP_GRACE).await;
 
-        async fn pump_stderr(
-            tx: mpsc::UnboundedSender<String>,
-            reader: Option<tokio::process::ChildStderr>,
-            prefix: &str,
-        ) {
-            use tokio::io::{AsyncBufReadExt, BufReader};
-            if let Some(out) = reader {
-                let mut lines = BufReader::new(out).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    let _ = tx.send(
-                        serde_json::json!({"type":"line","text": format!("{prefix}{line}")})
-                            .to_string(),
-                    );
-                }
-            }
-        }
-
-        let tx2 = tx.clone();
-        let tx3 = tx.clone();
-        let h1 = tokio::spawn(pump_stdout(tx2, stdout, ""));
-        let h2 = tokio::spawn(pump_stderr(tx3, stderr, "[stderr] "));
-        let status = child.wait().await;
-        let _ = h1.await;
-        let _ = h2.await;
-
-        let ok = status.map(|s| s.success()).unwrap_or(false);
+        let ok = outcome.as_ref().is_ok_and(|ok| *ok);
         if ok {
             let _ = touch_recent_project(&path, true);
         }
-        let _ = tx.send(
-            serde_json::json!({
-                "type": "done",
-                "ok": ok,
-                "path": path.to_string_lossy(),
-                "initialized": ok && is_initialized(&path),
-            })
-            .to_string(),
-        );
+        let mut done = serde_json::json!({
+            "type": "done",
+            "ok": ok,
+            "path": path.to_string_lossy(),
+            "initialized": ok && is_initialized(&path),
+        });
+        if let Err(error) = outcome {
+            done["error"] = serde_json::json!(error);
+        }
+        let _ = tx.send(done.to_string());
     });
 
     let stream = async_stream::stream! {
@@ -522,7 +517,19 @@ async fn handle_purge(State(hub): State<WebHub>, Json(body): Json<PurgeBody>) ->
     };
 
     let mut report = if present {
-        crate::project_purge::remove_selected(&target, &body.groups)
+        // A recursive delete is blocking IO.
+        let (dir, groups) = (target.clone(), body.groups.clone());
+        match tokio::task::spawn_blocking(move || {
+            crate::project_purge::remove_selected(&dir, &groups)
+        })
+        .await
+        {
+            Ok(report) => report,
+            Err(_) => crate::project_purge::PurgeReport {
+                removed: Vec::new(),
+                errors: vec!["the purge stopped unexpectedly".into()],
+            },
+        }
     } else {
         crate::project_purge::PurgeReport {
             removed: Vec::new(),
@@ -555,19 +562,16 @@ async fn handle_purge(State(hub): State<WebHub>, Json(body): Json<PurgeBody>) ->
 }
 
 async fn forget_global_project_row(path: &Path) -> Result<(), String> {
-    let Some(home) = ax_utils::paths::home_dir() else {
+    // The configured global database (AX_GLOBAL_DB wins over ~/.ax).
+    let Ok(db) = ax_global_db::global_db_path() else {
         return Ok(());
     };
-    let db = home.join(".ax").join("global.db");
     if !db.is_file() {
         return Ok(());
     }
-    let url = format!("sqlite://{}", db.display());
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(&url)
+    let pool = ax_global_db::open_pool(&db, false)
         .await
-        .map_err(|err| format!("global.db: {err}"))?;
+        .map_err(|err| format!("global.db: {err:#}"))?;
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let result = sqlx::query("DELETE FROM projects WHERE path = ?1 OR path = ?2")
         .bind(canonical.to_string_lossy().to_string())
@@ -624,9 +628,130 @@ async fn local_or_signed_in(
         .into_response()
 }
 
+/// Sends each output line of `reader` to `tx` as an SSE line event.
+async fn pump_lines<R>(reader: R, prefix: &str, tx: mpsc::UnboundedSender<String>)
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    // Read bytes, not `lines()`: a line that is not UTF-8 would end the
+    // pump, the pipe would fill and `ax init` would block for good.
+    let mut reader = BufReader::new(reader);
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        match reader.read_until(b'\n', &mut buf).await {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {
+                let line = String::from_utf8_lossy(&buf);
+                let line = line.trim_end_matches(['\n', '\r']);
+                // A closed stream (the browser left) still drains the pipe.
+                let _ = tx.send(
+                    serde_json::json!({"type":"line","text": format!("{prefix}{line}")})
+                        .to_string(),
+                );
+            }
+        }
+    }
+}
+
+/// Waits for the output pumps once `ax init` has exited or been killed.
+/// A grandchild that inherited stdout or stderr can keep a pipe open after
+/// the child is gone, so the pumps share `grace` and are then aborted: the run
+/// must always finish, free its folder and send `done`.
+async fn finish_pumps(
+    pumps: impl IntoIterator<Item = tokio::task::JoinHandle<()>>,
+    grace: std::time::Duration,
+) {
+    let deadline = tokio::time::Instant::now() + grace;
+    for mut pump in pumps {
+        if tokio::time::timeout_at(deadline, &mut pump).await.is_err() {
+            pump.abort();
+        }
+    }
+}
+
+/// How long the output pumps may keep reading after `ax init` has ended.
+const PUMP_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Folders with an `ax init` running from the Command Center.
+static INITS: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// Marks `path` as being initialized until dropped.
+struct InitRun(PathBuf);
+
+impl InitRun {
+    fn start(path: &Path) -> Option<Self> {
+        let mut running = INITS.lock().unwrap_or_else(|e| e.into_inner());
+        if running.iter().any(|p| p == path) {
+            return None;
+        }
+        running.push(path.to_path_buf());
+        Some(Self(path.to_path_buf()))
+    }
+}
+
+impl Drop for InitRun {
+    fn drop(&mut self) {
+        INITS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|p| p != &self.0);
+    }
+}
+
+/// The longest an `ax init` started from the Command Center may run.
+const INIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn init_output_keeps_flowing_after_a_line_that_is_not_utf8() {
+        let output: &[u8] = b"first\n\xff\xfe broken\nthird\n";
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        pump_lines(output, "", tx).await;
+        let mut texts = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            let value: serde_json::Value = serde_json::from_str(&event).unwrap();
+            texts.push(value["text"].as_str().unwrap().to_string());
+        }
+        assert_eq!(texts.len(), 3, "{texts:?}");
+        assert_eq!(texts[0], "first");
+        assert!(texts[1].ends_with(" broken"), "{texts:?}");
+        assert_eq!(texts[2], "third");
+    }
+
+    #[tokio::test]
+    async fn a_pipe_held_open_by_a_grandchild_does_not_keep_init_running() {
+        // The writer half stays alive, as a pipe inherited by a grandchild
+        // of `ax init` would: the pump never sees EOF.
+        let (_writer, reader) = tokio::io::duplex(64);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let pump = tokio::spawn(pump_lines(reader, "", tx));
+        let finished = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            finish_pumps([pump], std::time::Duration::from_millis(50)),
+        )
+        .await;
+        assert!(finished.is_ok(), "the pumps were never released");
+    }
+
+    #[test]
+    fn a_second_init_of_the_same_folder_is_refused_while_one_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = InitRun::start(dir.path()).expect("first init");
+        assert!(
+            InitRun::start(dir.path()).is_none(),
+            "two inits of one folder"
+        );
+        drop(first);
+        assert!(
+            InitRun::start(dir.path()).is_some(),
+            "the folder is free again"
+        );
+    }
 
     #[test]
     fn only_absolute_paths_are_accepted() {

@@ -1,7 +1,8 @@
 //! `GET /api/graph/recent` (docs/specs/live-updates.md, revisions 2 and 3).
 
+mod common;
+
 use std::path::PathBuf;
-use std::sync::OnceLock;
 
 use ax_web::WebHub;
 use axum::body::Body;
@@ -11,16 +12,8 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 use tower_http::cors::CorsLayer;
 
-static HOME: OnceLock<TempDir> = OnceLock::new();
-
 fn isolate() {
-    HOME.get_or_init(|| {
-        let dir = tempfile::tempdir().unwrap();
-        std::env::set_var("HOME", dir.path());
-        std::env::set_var("AX_HOME_DIR", dir.path());
-        std::env::set_var("AX_GLOBAL_DB", dir.path().join("global.db"));
-        dir
-    });
+    common::isolate_home();
 }
 
 struct Project {

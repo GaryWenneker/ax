@@ -381,6 +381,31 @@ pub fn http_bytes(url: &str) -> Result<Vec<u8>, String> {
     http_bytes_allowing(url, &[])
 }
 
+/// The URL of one file listed in a well-known skill index. A relative entry
+/// resolves under the index; an absolute entry must share the index's origin
+/// (scheme, host and port), so an index cannot point the download at another
+/// server or downgrade it from https to http. The CLI and the web server both
+/// resolve index files with this.
+pub fn well_known_file_url(base: &str, name: &str, file: &str) -> Result<String, String> {
+    if !(file.starts_with("http://") || file.starts_with("https://")) {
+        return Ok(format!("{base}/{name}/{file}"));
+    }
+    let index = reqwest::Url::parse(base).map_err(|e| format!("bad index URL {base}: {e}"))?;
+    let target = reqwest::Url::parse(file).map_err(|e| format!("bad file URL {file}: {e}"))?;
+    if index.origin() != target.origin() {
+        return Err(format!(
+            "skill file {file} is not on the index origin {}",
+            index.origin().ascii_serialization()
+        ));
+    }
+    Ok(file.to_string())
+}
+
+/// [`http_bytes_same_origin_allowing`] with no private hosts allowed.
+pub fn http_bytes_same_origin(url: &str) -> Result<Vec<u8>, String> {
+    http_bytes_same_origin_allowing(url, &[])
+}
+
 /// GET `url`, refusing local hosts and private addresses unless the URL's host
 /// (or a redirect hop's host) is named in `allow_private_hosts`. The names
 /// come from `allowPrivateHosts` in `.ax/skill-catalog.json`; each use is
@@ -617,7 +642,128 @@ pub fn encode(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::vetted_download;
+    use super::{vetted_download, well_known_file_url};
+
+    /// A same-origin fetch that lets the loopback test servers through; the
+    /// address vetting is tested on its own below.
+    fn fetch_any(url: &str) -> Result<Vec<u8>, String> {
+        super::fetch_vetted_with(url, &super::system_resolve, &|_| false, &[], true)
+    }
+
+    /// Serve one HTTP response: `head` (status line and headers), then
+    /// `body_len` bytes of body, then keep the connection open for 40 s.
+    fn stalling_server(head: &'static str, body_len: usize) -> String {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(head.as_bytes());
+            let chunk = vec![b'a'; 64 * 1024];
+            let mut sent = 0;
+            while sent < body_len {
+                let n = chunk.len().min(body_len - sent);
+                if stream.write_all(&chunk[..n]).is_err() {
+                    return;
+                }
+                sent += n;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(40));
+        });
+        format!("http://{addr}/file")
+    }
+
+    #[test]
+    fn a_declared_oversize_body_is_refused_without_reading_it() {
+        let url = stalling_server("HTTP/1.1 200 OK\r\nContent-Length: 104857600\r\n\r\n", 1024);
+        let started = std::time::Instant::now();
+        let err = fetch_any(&url).unwrap_err();
+        assert!(err.contains("25 MiB"), "{err}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    }
+
+    #[test]
+    fn an_endless_body_stops_at_the_limit() {
+        let url = stalling_server(
+            "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n",
+            26 * 1024 * 1024,
+        );
+        let started = std::time::Instant::now();
+        let err = fetch_any(&url).unwrap_err();
+        assert!(err.contains("25 MiB"), "{err}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    }
+
+    /// Answer one request with `response`, return the server's base URL.
+    fn one_shot_server(response: String) -> String {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[test]
+    fn a_same_origin_fetch_refuses_a_redirect_to_another_origin() {
+        let other = one_shot_server(
+            "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nevil!".to_string(),
+        );
+        let start = one_shot_server(format!(
+            "HTTP/1.1 302 Found\r\nLocation: {other}/SKILL.md\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        ));
+        let err = fetch_any(&format!("{start}/x/SKILL.md")).unwrap_err();
+        assert!(err.contains("origin"), "{err}");
+    }
+
+    #[test]
+    fn a_same_origin_fetch_follows_a_same_origin_redirect() {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let replies = [
+                "HTTP/1.1 302 Found\r\nLocation: /moved/SKILL.md\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+            ];
+            for reply in replies {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+        let got = fetch_any(&format!("http://{addr}/x/SKILL.md")).unwrap();
+        assert_eq!(got, b"ok");
+    }
+
+    #[test]
+    fn well_known_file_urls_stay_on_the_index_origin() {
+        let base = "https://skills.example.org/.well-known/agent-skills";
+        assert_eq!(
+            well_known_file_url(base, "x", "SKILL.md").unwrap(),
+            "https://skills.example.org/.well-known/agent-skills/x/SKILL.md"
+        );
+        assert_eq!(
+            well_known_file_url(base, "x", "https://skills.example.org/cdn/x/SKILL.md").unwrap(),
+            "https://skills.example.org/cdn/x/SKILL.md"
+        );
+        for other in [
+            "https://evil.example.net/SKILL.md",
+            "http://skills.example.org/x/SKILL.md",
+            "https://skills.example.org:8443/x/SKILL.md",
+        ] {
+            let err = well_known_file_url(base, "x", other).unwrap_err();
+            assert!(err.contains("index origin"), "{other}: {err}");
+        }
+    }
 
     fn fetched(tree: &std::path::Path, skill_path: &str) -> super::Fetched {
         super::Fetched {

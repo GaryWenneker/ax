@@ -235,7 +235,7 @@ async fn install_one(
             &name,
             dest,
             replace,
-            |file| http_bytes_same_origin(&well_known_file_url(&base, &name, file)?, &allow),
+            |file| well_known_file(&base, &name, file, &allow),
         )?]
     } else {
         install_tree(&fetched.skill_tree()?, dest, only, replace)?
@@ -483,7 +483,7 @@ fn audit_candidate(
         let dest = temp.path().join("skills");
         let base = fetched.file_base.clone();
         materialize_well_known(&index, name, &dest, true, |file| {
-            http_bytes_same_origin(&well_known_file_url(&base, name, file)?, allow)
+            well_known_file(&base, name, file, allow)
         })?;
         let mut report = audit_directory(&dest.join(name))?;
         report.candidate = true;
@@ -674,23 +674,19 @@ fn http_bytes_same_origin(url: &str, allow: &[String]) -> Result<Vec<u8>, String
     blocking(|| ax_skill_catalog::http_bytes_same_origin_allowing(url, allow))
 }
 
-/// The URL of one file listed in a well-known skill index. A relative entry
-/// resolves under the index; an absolute entry must share the index's origin
-/// (scheme, host and port), so an index cannot point the download at another
-/// server or downgrade it from https to http.
-fn well_known_file_url(base: &str, name: &str, file: &str) -> Result<String, String> {
-    if !(file.starts_with("http://") || file.starts_with("https://")) {
-        return Ok(format!("{base}/{name}/{file}"));
-    }
-    let index = reqwest::Url::parse(base).map_err(|e| format!("bad index URL {base}: {e}"))?;
-    let target = reqwest::Url::parse(file).map_err(|e| format!("bad file URL {file}: {e}"))?;
-    if index.origin() != target.origin() {
-        return Err(format!(
-            "skill file {file} is not on the index origin {}",
-            index.origin().ascii_serialization()
-        ));
-    }
-    Ok(file.to_string())
+/// GET one file listed in a well-known skill index, with the rule the
+/// Command Center uses: the file must be relative to the index or on its
+/// origin ([`ax_skill_catalog::well_known_file_url`]), every redirect stays on
+/// that origin and is vetted, and the body is read up to 25 MiB. `allow` is
+/// `allowPrivateHosts`, so an intranet index can serve its own files.
+fn well_known_file(
+    base: &str,
+    name: &str,
+    file: &str,
+    allow: &[String],
+) -> Result<Vec<u8>, String> {
+    let url = ax_skill_catalog::well_known_file_url(base, name, file)?;
+    http_bytes_same_origin(&url, allow)
 }
 
 #[cfg(test)]
@@ -813,20 +809,45 @@ mod tests {
     }
 
     #[test]
+    fn well_known_files_follow_the_private_host_allow_list() {
+        let reply = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
+        let base = one_shot_server(reply.to_string());
+        let index = format!("{base}/.well-known/agent-skills");
+        let err = well_known_file(&index, "x", "SKILL.md", &[]).unwrap_err();
+        assert!(err.contains("private address"), "{err}");
+
+        let base = one_shot_server(reply.to_string());
+        let index = format!("{base}/.well-known/agent-skills");
+        let got = well_known_file(&index, "x", "SKILL.md", &loopback()).unwrap();
+        assert_eq!(got, b"ok");
+    }
+
+    #[test]
     fn well_known_file_urls_stay_on_the_index_origin() {
         let base = "https://skills.example.org/.well-known/agent-skills";
         assert_eq!(
-            well_known_file_url(base, "x", "SKILL.md").unwrap(),
+            ax_skill_catalog::well_known_file_url(base, "x", "SKILL.md").unwrap(),
             "https://skills.example.org/.well-known/agent-skills/x/SKILL.md"
         );
         assert_eq!(
-            well_known_file_url(base, "x", "https://skills.example.org/cdn/x/SKILL.md").unwrap(),
+            ax_skill_catalog::well_known_file_url(
+                base,
+                "x",
+                "https://skills.example.org/cdn/x/SKILL.md"
+            )
+            .unwrap(),
             "https://skills.example.org/cdn/x/SKILL.md"
         );
-        let err = well_known_file_url(base, "x", "https://evil.example.net/SKILL.md").unwrap_err();
-        assert!(err.contains("origin"), "{err}");
         let err =
-            well_known_file_url(base, "x", "http://skills.example.org/x/SKILL.md").unwrap_err();
+            ax_skill_catalog::well_known_file_url(base, "x", "https://evil.example.net/SKILL.md")
+                .unwrap_err();
+        assert!(err.contains("origin"), "{err}");
+        let err = ax_skill_catalog::well_known_file_url(
+            base,
+            "x",
+            "http://skills.example.org/x/SKILL.md",
+        )
+        .unwrap_err();
         assert!(err.contains("origin"), "{err}");
     }
 

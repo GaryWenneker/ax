@@ -36,10 +36,7 @@ pub struct WorkspaceBundle {
     pub graph_pool: SqlitePool,
     pub policy: PolicyApiState,
     pub ship: ShipApiState,
-    _watch_task: Option<JoinHandle<()>>,
-    _sync_task: Option<JoinHandle<()>>,
-    _cleanup_task: Option<JoinHandle<()>>,
-    _dedup_task: Option<JoinHandle<()>>,
+    tasks: BackgroundTasks,
     /// Set once [`WorkspaceBundle::shut_down`] has closed the pools.
     closed: bool,
 }
@@ -289,6 +286,26 @@ pub struct SwitchInfo {
     pub label: String,
 }
 
+/// The background tasks of one served project (Ship watch, Ax sync, cleanup,
+/// policy dedup). They stop with the bundle, also when it is dropped without
+/// [`WorkspaceBundle::close`]; a leftover watcher would keep indexing the
+/// project next to the next one opened on it.
+struct BackgroundTasks(Vec<JoinHandle<()>>);
+
+impl BackgroundTasks {
+    fn abort_all(&mut self) {
+        for task in self.0.drain(..) {
+            task.abort();
+        }
+    }
+}
+
+impl Drop for BackgroundTasks {
+    fn drop(&mut self) {
+        self.abort_all();
+    }
+}
+
 impl WorkspaceBundle {
     pub async fn open(root: PathBuf, readonly: bool) -> Result<Self, String> {
         let db_path = root.join(".ax").join("ax.db");
@@ -374,10 +391,12 @@ impl WorkspaceBundle {
             graph_pool,
             policy,
             ship,
-            _watch_task: Some(watch_task),
-            _sync_task: sync_task,
-            _cleanup_task: cleanup_task,
-            _dedup_task: dedup_task,
+            tasks: BackgroundTasks(
+                [Some(watch_task), sync_task, cleanup_task, dedup_task]
+                    .into_iter()
+                    .flatten()
+                    .collect(),
+            ),
             closed: false,
         })
     }
@@ -388,17 +407,7 @@ impl WorkspaceBundle {
 
     /// Stop the background tasks and close both pools on `ax.db`.
     async fn shut_down(&mut self) {
-        for task in [
-            self._watch_task.take(),
-            self._sync_task.take(),
-            self._cleanup_task.take(),
-            self._dedup_task.take(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            task.abort();
-        }
+        self.tasks.abort_all();
         self.graph_pool.close().await;
         self.policy.store.pool().close().await;
         crate::node_tracker::forget(&self.db_path);
@@ -454,11 +463,19 @@ fn spawn_policy_dedup(
         let mut interval = tokio::time::interval(POLICY_DEDUP_EVERY);
         loop {
             interval.tick().await;
-            ax_core::policy_dedup::run(&global_path, Some((&pool, &root)), true)
-                .await
-                .log();
+            dedup_once(&pool, &root, &global_path).await.log();
         }
     }))
+}
+
+/// One dedup check of the project against `global.db`. It only reports
+/// (a dry run): the Command Center never removes project policy on its own.
+async fn dedup_once(
+    pool: &SqlitePool,
+    root: &Path,
+    global_path: &Path,
+) -> ax_core::policy_dedup::DedupReport {
+    ax_core::policy_dedup::run(global_path, Some((pool, root)), true).await
 }
 
 async fn spawn_unresolved_cleanup_inner(pool: SqlitePool) {
@@ -548,9 +565,7 @@ mod policy_dedup_tests {
     async fn readonly_web_does_not_dedup() {
         let dir = tempfile::tempdir().unwrap();
         let (pool, root, global_path) = fixture(dir.path()).await;
-        let task = spawn_policy_dedup(pool.clone(), root, true, Some(global_path));
-        assert!(task.is_none());
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(spawn_policy_dedup(pool.clone(), root, true, Some(global_path)).is_none());
         assert_eq!(project_skills(&pool).await, 1);
     }
 
@@ -558,17 +573,34 @@ mod policy_dedup_tests {
     async fn writable_web_reports_dedup_without_mutating_project() {
         let dir = tempfile::tempdir().unwrap();
         let (pool, root, global_path) = fixture(dir.path()).await;
-        let task = spawn_policy_dedup(pool.clone(), root, false, Some(global_path)).expect("task");
-        let mut remaining = 1;
-        for _ in 0..50 {
-            remaining = project_skills(&pool).await;
-            if remaining == 0 {
-                break;
+        let report = dedup_once(&pool, &root, &global_path).await;
+        assert!(report.dry_run);
+        assert_eq!(report.error, None, "{report:?}");
+        assert!(
+            report.actions.iter().any(|a| a.name == "noti"
+                && a.action == ax_core::policy_dedup::Action::RemovedFromProject),
+            "the duplicate is reported: {report:?}"
+        );
+        assert_eq!(project_skills(&pool).await, 1, "a dry run changes nothing");
+    }
+}
+
+#[cfg(test)]
+mod background_task_tests {
+    use super::BackgroundTasks;
+
+    #[tokio::test]
+    async fn dropping_the_tasks_stops_them() {
+        let task = tokio::spawn(std::future::pending::<()>());
+        let handle = task.abort_handle();
+        drop(BackgroundTasks(vec![task]));
+        for _ in 0..100 {
+            if handle.is_finished() {
+                return;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            tokio::task::yield_now().await;
         }
-        task.abort();
-        assert_eq!(remaining, 1);
+        panic!("a dropped bundle left its background task running");
     }
 }
 

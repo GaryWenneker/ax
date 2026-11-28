@@ -1,7 +1,6 @@
 //! WebDAV vault (`/dav`) behaviors from docs/specs/obsidian-webdav-vault.md.
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 use ax_policy::parse_rule_file;
 use ax_web::WebHub;
@@ -15,16 +14,17 @@ use tower_http::cors::{Any, CorsLayer};
 const RULE: &str =
     "---\nid: english-only\nlevel: WARNING\nalwaysApply: true\n---\n\nWrite English.";
 
-static HOME: OnceLock<TempDir> = OnceLock::new();
+mod common;
+use common::{isolate_home, seed_stores};
 
-/// Keep `~/.ax/global.db` of the machine running the tests out of reach.
-fn isolate_home() {
-    HOME.get_or_init(|| {
-        let dir = tempfile::tempdir().unwrap();
-        std::env::set_var("HOME", dir.path());
-        std::env::set_var("AX_HOME_DIR", dir.path());
-        dir
-    });
+#[test]
+fn the_isolated_home_covers_the_global_database() {
+    let home = isolate_home();
+    let global = std::env::var_os("AX_GLOBAL_DB").expect("AX_GLOBAL_DB is set");
+    assert!(
+        Path::new(&global).starts_with(home),
+        "{global:?} is outside {home:?}"
+    );
 }
 
 struct Fx {
@@ -47,21 +47,15 @@ async fn fixture_with(readonly: bool) -> Fx {
     isolate_home();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("proj");
-    std::fs::create_dir_all(root.join(".ax")).unwrap();
-    ax_db::Database::open(&root.join(".ax").join("ax.db"))
-        .await
-        .unwrap();
     {
-        let seed = WebHub::open(root.clone(), false, 0).await.unwrap();
-        let ws = seed.read().await;
+        let seed = seed_stores(&root).await;
         let doc = parse_rule_file(Path::new("x.mdc"), RULE).unwrap();
-        ws.policy
-            .store
+        seed.policy
             .save_rule(doc.frontmatter, doc.body)
             .await
             .unwrap();
         ax_memory::remember(
-            &ws.graph_pool,
+            seed.graph_pool(),
             ax_memory::RememberInput {
                 title: "Use SQLite".into(),
                 body: "SQLite is the source of truth.".into(),
@@ -73,6 +67,7 @@ async fn fixture_with(readonly: bool) -> Fx {
         )
         .await
         .unwrap();
+        seed.close().await;
     }
     let hub = WebHub::open(root.clone(), readonly, 0).await.unwrap();
     let app = app_for(&hub);

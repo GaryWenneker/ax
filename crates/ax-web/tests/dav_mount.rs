@@ -1,7 +1,8 @@
 //! `/ax/` alias and `/api/dav/mount` behaviors from docs/specs/webdav-mount-settings.md.
 
+mod common;
+
 use std::path::Path;
-use std::sync::OnceLock;
 
 use ax_policy::parse_rule_file;
 use ax_web::WebHub;
@@ -16,36 +17,23 @@ use tower_http::cors::{Any, CorsLayer};
 const RULE: &str =
     "---\nid: english-only\nlevel: WARNING\nalwaysApply: true\n---\n\nWrite English.";
 
-static HOME: OnceLock<TempDir> = OnceLock::new();
-
 fn isolate_home() -> &'static Path {
-    HOME.get_or_init(|| {
-        let dir = tempfile::tempdir().unwrap();
-        std::env::set_var("HOME", dir.path());
-        std::env::set_var("AX_HOME_DIR", dir.path());
-        std::env::set_var("AX_DAV_MOUNT_DRY_RUN", "1");
-        dir
-    })
-    .path()
+    std::env::set_var("AX_DAV_MOUNT_DRY_RUN", "1");
+    common::isolate_home()
 }
 
 async fn fixture(readonly: bool) -> (TempDir, Router) {
     isolate_home();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("proj");
-    std::fs::create_dir_all(root.join(".ax")).unwrap();
-    ax_db::Database::open(&root.join(".ax").join("ax.db"))
-        .await
-        .unwrap();
     {
-        let seed = WebHub::open(root.clone(), false, 0).await.unwrap();
-        let ws = seed.read().await;
+        let seed = common::seed_stores(&root).await;
         let doc = parse_rule_file(Path::new("x.mdc"), RULE).unwrap();
-        ws.policy
-            .store
+        seed.policy
             .save_rule(doc.frontmatter, doc.body)
             .await
             .unwrap();
+        seed.close().await;
     }
     let hub = WebHub::open(root, readonly, 7070).await.unwrap();
     let cors = CorsLayer::new()

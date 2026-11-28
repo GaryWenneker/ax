@@ -78,15 +78,17 @@ List routes take `limit` and `offset`. `limit` is kept between 1 and the route's
 | GET, POST | `/api/policy/skills/{name}/audit` | Read or run a skill audit |
 | POST | `/api/policy/rules/{id}/audit` | Run a rule audit |
 | POST | `/api/policy/skills/{name}/publish` | Publish one skill to the publish repository |
+| GET, PUT | `/api/policy/settings` | Policy settings (folder, storage mode) |
 
 Read-only mode (`ax share`, `AX_WEB_READONLY=1`) refuses every catalog route that writes: install, settings, audits and publish. The publish repository must be an `https://` or `ssh://` URL, an scp-style `user@host:path`, or a folder inside the project (relative folders are relative to the project, optionally prefixed with `well-known:`); other values get `400`.
-| GET, PUT | `/api/policy/settings` | Policy settings (folder, storage mode) |
+
+Install and audit from a well-known URL follow the same rule as `ax skill install`: every file the index lists must be relative to the index or on the index's own origin (scheme, host and port). A file on another server, a switch from `https` to `http`, and a redirect that leaves that origin are refused. Every request and redirect is also refused when it points at a local host or a private address, and a download larger than 25 MiB is refused without reading it whole. The Command Center does not read `allowPrivateHosts` from `.ax/skill-catalog.json`; install from an intranet index with the CLI.
 
 ### Remote policy share
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET, PUT | `/api/policy/share/config` | Share source configuration |
+| GET, PUT | `/api/policy/share/config` | Share source configuration; the response never contains the git API token (see below) |
 | GET | `/api/policy/share/status` | Last sync result |
 | POST | `/api/policy/share/sync` | Sync now |
 | POST | `/api/auth/microsoft/device/start` | Start Microsoft device-code sign-in |
@@ -94,6 +96,8 @@ Read-only mode (`ax share`, `AX_WEB_READONLY=1`) refuses every catalog route tha
 | GET | `/api/auth/microsoft/status` | Sign-in status |
 | PUT | `/api/auth/microsoft/config` | Tenant / client settings |
 | DELETE | `/api/auth/microsoft` | Sign out |
+
+`GET` and `PUT /api/policy/share/config` return the share settings with `github.tokenSet` (`true` when a git API token is stored for `github.repoUrl`) and `github.tokenUnreadable` (`true` when the OS credential store refused to read it, for example while it is locked; a git sync then fails until it is unlocked), and never the token itself. The field was called `github.hasToken` before; a client that reads `hasToken` must switch to `tokenSet`. A `PUT` accepts `github.token` to store a new token in the OS credential store (an empty or missing token keeps the stored one) and `github.clearToken: true` to remove it; a clear the credential store refuses (for example while it is locked) returns an error. A `PUT` that changes `github.repoUrl` removes the token stored for the old URL (a store that refuses that delete only logs a warning) and never stores a token for the new URL it did not receive. Neither field is written to `ax.json`. See [Policy sharing](/guides/policy-sharing/) for where the token is kept.
 
 The Microsoft sign-in routes follow the same share-token and sign-in rules as the rest of `/api`. Starting or polling sign-in, changing the client and signing out work only on a writable server, from a browser on this computer at the loopback address; other callers get `403`. While the server's environment sets `AX_MS_CLIENT_ID`, that value is used for sign-in and `PUT /api/auth/microsoft/config` answers `409`.
 
@@ -132,7 +136,7 @@ The list imports finished plans from the plan folders on disk at most once every
 | GET, POST, DELETE | `/api/dav/mount` | Mount status / mount / unmount the vault drive |
 | POST | `/api/dav/mount/open` | Open the mounted drive in the file manager |
 | GET, PUT | `/api/vault/folders` | Extra folders shown under `folders/` |
-| POST | `/api/vault/folders/{name}/sync` | Sync one folder |
+| POST | `/api/vault/folders/{name}/sync` | Sync one folder (`409` when indexing is off for it) |
 | DELETE | `/api/vault/folders/{name}` | Remove a folder |
 | POST | `/api/vault/folder-picker` | Native folder picker |
 
@@ -188,6 +192,8 @@ The `/api/ship/sonar/*` endpoints (discover, install, start, stop, bootstrap, se
 These routes work on folders anywhere on this computer; there is no list of allowed folders. Paths must be absolute. With web sign-in off, they answer only the browser of the person at this computer: a connection from this computer, without a proxy header, to `127.0.0.1`, `localhost` or `[::1]` on the Command Center port, with no `Origin` from another page. Anything else gets 403. With sign-in on, they need an Admin or Owner session. The routes that write, `recent/add` included, are refused in read-only mode.
 
 Purging the database of the project that is open closes it first: its background tasks stop and every connection to `.ax/ax.db` closes, and the reply has `"disconnected": true`. Until another project is opened with `switch`, project routes under `/api` and `/dav` answer 409 with "No project open"; the workspace, access, sign-in and action routes keep working.
+
+Reading `current` leaves the recent-project list alone; opening and switching a project, and a successful `init`, update it. Only one `init/stream` runs per folder at a time; a second one for the same folder gets `"ok": false`. The `ax init` it starts stops when the browser closes the stream, or after one hour, and the final `done` event then carries an `error`. Purging the `globalIndex` group removes the project from the global database that `AX_GLOBAL_DB` names, or `~/.ax/global.db` when it is not set.
 
 ## IDEs and agents
 
@@ -247,7 +253,9 @@ Interactive human sessions use an opaque, HttpOnly, SameSite cookie. Passkeys ar
 
 `GET /api/access/team` returns both `role` (strongest-role compatibility value) and `roles` (authoritative role set). The `POST /api/access/team` and `PATCH /api/access/team/{id}` bodies accept `roles: ["admin", "member"]` and remain compatible with the legacy `role` input. An active member cannot have zero roles; only an Owner may grant or remove ownership, and the final active Owner cannot be demoted or disabled.
 
-Authentication may be disabled for trusted local installations; remote Command Center data access stays protected. Configure `AX_WEB_AUTH_ORIGIN` to the exact stable HTTPS origin used for passkeys; localhost development is supported. Browser clients must not send credentials to a different host.
+Authentication may be disabled for trusted local installations; remote Command Center data access stays protected. Configure `AX_WEB_AUTH_ORIGIN` to the exact stable HTTPS origin used for passkeys; localhost development is supported. Browser clients must not send credentials to a different host. A plain-HTTP `AX_WEB_AUTH_ORIGIN` on `localhost`, `127.0.0.1` or `[::1]` still counts as this computer, so the local owner can turn sign-in on with any of them.
+
+Password and recovery sign-in take a member id, an email or a display name. An exact id wins over an email, and an email over a display name. A display name that more than one active member uses signs in nobody; use the id or email instead. A session's last-seen time is written at most once a minute.
 
 With sign-in on, every `/api` request needs a session, and the gate applies the member's role:
 
@@ -318,7 +326,7 @@ These are host operations, not passive documentation examples. Streaming variant
 | GET | `/api/ship/sonar/ui/info` | Proxy connection information |
 | ANY | `/api/ship/sonar/ui/{*path}` | Proxy a SonarQube UI subpath |
 
-The UI proxy sends each request with the configured SonarQube admin login. Only `GET` and `HEAD` pass in every case. Any other method returns 403 in read-only mode, on a cross-site request (`Sec-Fetch-Site` other than `same-origin`), and when the `Origin` header is missing or names a different host than the request. The SonarQube page opened in the Command Center meets these rules on its own.
+The UI proxy sends each request with the configured SonarQube admin login. Only `GET` and `HEAD` pass in every case. Any other method returns 403 in read-only mode, on a cross-site request (`Sec-Fetch-Site` other than `same-origin`), and when the `Origin` header is missing or names a different host than the request. The SonarQube page opened in the Command Center meets these rules on its own. Of the browser's cookies, only SonarQube's own `JWT-SESSION` and `XSRF-TOKEN` reach the SonarQube host; the Command Center's share token and login session cookies are dropped.
 
 The other `/api/ship` writes follow the same `Origin` rule when they carry no JSON body (for example `sonar/start`, `sonar/stop`, `sonar/regenerate-token` and `sonar/scan` without a body), because another website can send such a request without a CORS preflight. Writes with a `Content-Type: application/json` body are not affected, so scripts and the desktop client can call them without an `Origin` header.
 
@@ -328,6 +336,8 @@ The other `/api/ship` writes follow the same `Origin` rule when they carry no JS
 |---|---|---|
 | GET | `/api/changes` | Shared SSE notifications for graph, memory, policy and usage changes |
 | GET | `/api/graph/recent` | Recently indexed nodes/edges for live graph updates |
+
+`/api/changes` sends a `change` event (`{"topic":…,"version":…}`) per changed area. Once it has recorded the current state it sends the SSE comment `: ready`; a change made after that comment is reported. Browsers using `EventSource` ignore the comment.
 
 ## Project publication and remote host setup
 

@@ -1,49 +1,54 @@
-//! WebHub smoke test against test-smoke fixture.
+//! WebHub open and hot switch between two real projects, under an isolated
+//! home. Separate process: this test sets environment variables.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ax_web::WebHub;
 
-fn smoke_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-smoke")
+mod common;
+
+async fn project(dir: &Path, name: &str) -> PathBuf {
+    let root = dir.join(name);
+    std::fs::create_dir_all(root.join(".ax")).unwrap();
+    ax_db::Database::open(&root.join(".ax").join("ax.db"))
+        .await
+        .unwrap();
+    root.canonicalize().unwrap()
 }
 
-#[tokio::test]
-async fn hub_open_and_hot_switch() {
-    let root = smoke_root();
-    let db = root.join(".ax").join("ax.db");
-    if !db.exists() {
-        eprintln!(
-            "skip hub_open_and_hot_switch: no test-smoke index at {}",
-            db.display()
-        );
-        return;
-    }
+async fn served(hub: &WebHub) -> PathBuf {
+    let ws = hub.read().await;
+    assert!(
+        ws.graph_pool.acquire().await.is_ok(),
+        "graph pool is usable"
+    );
+    ws.project_root
+        .canonicalize()
+        .unwrap_or_else(|_| ws.project_root.clone())
+}
 
-    let hub = WebHub::open(root.clone(), false, 0)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hub_open_and_hot_switch() {
+    let home = common::isolate_home();
+    std::env::set_var("AX_NO_IDE_PANEL", "1");
+    let dir = tempfile::tempdir().unwrap();
+    let first = project(dir.path(), "first").await;
+    let second = project(dir.path(), "second").await;
+
+    let hub = WebHub::open(first.clone(), false, 0)
         .await
         .expect("WebHub::open");
+    assert_eq!(served(&hub).await, first);
 
-    {
-        let ws = hub.read().await;
-        assert!(ws.graph_pool.acquire().await.is_ok());
-        assert_eq!(ws.project_root, root);
-    }
+    let info = hub.switch(second.clone()).await.expect("switch to second");
+    assert!(info.path.contains("second"), "{}", info.path);
+    assert_eq!(info.label, "second");
+    assert_eq!(served(&hub).await, second);
 
-    let target = root.canonicalize().unwrap_or(root.clone());
-    let info = hub.switch(target.clone()).await.expect("hot switch");
-    assert!(info.path.contains(
-        target
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("test-smoke")
-    ));
+    hub.switch(first.clone()).await.expect("switch back");
+    assert_eq!(served(&hub).await, first);
 
-    let ws = hub.read().await;
-    assert_eq!(
-        ws.project_root
-            .canonicalize()
-            .unwrap_or(ws.project_root.clone()),
-        target
-    );
+    // The switch records the project in the isolated home's recent list.
+    let recent = std::fs::read_to_string(home.join(".ax").join("config.json")).unwrap_or_default();
+    assert!(recent.contains("second"), "{recent}");
 }
