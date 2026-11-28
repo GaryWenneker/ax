@@ -2,7 +2,9 @@
 //! A missing definition is added only across an extracted link or a
 //! unique-name link whose ends are in different files.
 
-use crate::code_aware::{hybrid_rank, symbol_key, CodeCandidate, Selection, VerifiedEdge};
+use std::collections::{HashMap, HashSet};
+
+use crate::code_aware::{hybrid_rank_promoted, symbol_key, CodeCandidate, Selection, VerifiedEdge};
 
 #[derive(Clone, Debug)]
 pub struct DiscoveryLink {
@@ -66,20 +68,30 @@ fn node_by_id<'a>(nodes: &'a [CodeCandidate], id: &str) -> Option<&'a CodeCandid
     nodes.iter().find(|node| node.id == id)
 }
 
-fn files_differ(nodes: &[CodeCandidate], source: &str, target: &str) -> bool {
-    let (Some(left), Some(right)) = (node_by_id(nodes, source), node_by_id(nodes, target)) else {
+/// Nodes by id, built once per call so lookups are not linear scans.
+fn node_index(nodes: &[CodeCandidate]) -> HashMap<&str, &CodeCandidate> {
+    let mut index = HashMap::with_capacity(nodes.len());
+    for node in nodes {
+        // The first node with an id wins, as `node_by_id` does.
+        index.entry(node.id.as_str()).or_insert(node);
+    }
+    index
+}
+
+fn files_differ(index: &HashMap<&str, &CodeCandidate>, source: &str, target: &str) -> bool {
+    let (Some(left), Some(right)) = (index.get(source), index.get(target)) else {
         return false;
     };
     !left.file_path.is_empty() && !right.file_path.is_empty() && left.file_path != right.file_path
 }
 
-fn link_allowed(link: &DiscoveryLink, nodes: &[CodeCandidate]) -> bool {
+fn link_allowed(link: &DiscoveryLink, index: &HashMap<&str, &CodeCandidate>) -> bool {
     if !relation_kind(&link.kind) {
         return false;
     }
     match link.proof.as_str() {
         "extracted" => true,
-        "unique-cross-file" => files_differ(nodes, &link.source, &link.target),
+        "unique-cross-file" => files_differ(index, &link.source, &link.target),
         _ => false,
     }
 }
@@ -100,15 +112,22 @@ pub fn discover_candidates(
     budget: &DiscoveryBudget,
 ) -> Discovery {
     let started = std::time::Instant::now();
+    let index = node_index(nodes);
+    let mut by_source: HashMap<&str, Vec<&DiscoveryLink>> = HashMap::new();
+    for link in links {
+        by_source
+            .entry(link.source.as_str())
+            .or_default()
+            .push(link);
+    }
     let mut hits = Vec::new();
     let mut trace = Vec::new();
-    let mut seen = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
     let mut queue = Vec::new();
     for seed in seeds {
-        if seen.iter().any(|id| id == &seed.id) {
+        if !seen.insert(seed.id.clone()) {
             continue;
         }
-        seen.push(seed.id.clone());
         queue.push((seed.id.clone(), 0usize));
     }
     let mut head = 0;
@@ -126,15 +145,22 @@ pub fn discover_candidates(
         if depth >= budget.depth {
             continue;
         }
-        let mut outgoing: Vec<&DiscoveryLink> = links
-            .iter()
-            .filter(|link| link.source == id && link_allowed(link, nodes))
-            .collect();
+        let mut outgoing: Vec<&DiscoveryLink> = by_source
+            .get(id.as_str())
+            .map(|from| {
+                from.iter()
+                    .copied()
+                    .filter(|link| link_allowed(link, &index))
+                    .collect()
+            })
+            .unwrap_or_default();
         outgoing.sort_by(|left, right| {
             proof_rank(&left.proof)
                 .cmp(&proof_rank(&right.proof))
                 .then(left.target.cmp(&right.target))
         });
+        // Fan-out counts the targets this node actually adds; links to
+        // missing, foreign or already seen nodes do not use it up.
         let mut followed = 0usize;
         for link in outgoing {
             if followed >= budget.fan_out {
@@ -148,18 +174,17 @@ pub fn discover_candidates(
                 trace.push("stopped:time".to_string());
                 return Discovery { hits, trace };
             }
-            let Some(target) = node_by_id(nodes, &link.target) else {
+            let Some(target) = index.get(link.target.as_str()).copied() else {
                 continue;
             };
-            followed += 1;
             if !same_project(project_id, target) {
                 trace.push(format!("rejected:{}", target.id));
                 continue;
             }
-            if seen.iter().any(|kept| kept == &target.id) {
+            if !seen.insert(target.id.clone()) {
                 continue;
             }
-            seen.push(target.id.clone());
+            followed += 1;
             let next_depth = depth + 1;
             hits.push(DiscoveryHit {
                 id: target.id.clone(),
@@ -252,29 +277,22 @@ pub fn expand_with_graph(
     let found = discover_candidates(&seeds, nodes, links, &config.project_id, &config.budget);
     trace.extend(found.trace.clone());
     let mut pool = candidates.to_vec();
+    let mut pooled: HashSet<String> = pool.iter().map(|item| item.id.clone()).collect();
     for hit in &found.hits {
-        if pool.iter().any(|item| item.id == hit.id) {
+        if pooled.contains(&hit.id) {
             continue;
         }
         if let Some(node) = node_by_id(nodes, &hit.id) {
+            pooled.insert(node.id.clone());
             pool.push(node.clone());
         }
     }
-    let ranked = hybrid_rank(query, baseline_ids, &pool, rank_edges, 0);
-    let prefix = ranked
-        .ids
-        .iter()
-        .take_while(|id| {
-            ranked
-                .trace
-                .iter()
-                .any(|line| line == &format!("exact:{id}") || line == &format!("edge:{id}"))
-        })
-        .count();
+    let (ranked, prefix) = hybrid_rank_promoted(query, baseline_ids, &pool, rank_edges, 0);
     let mut ids = ranked.ids;
+    let mut present: HashSet<String> = ids.iter().cloned().collect();
     let mut insert_at = prefix;
     for hit in &found.hits {
-        if ids.iter().any(|id| id == &hit.id) {
+        if !present.insert(hit.id.clone()) {
             trace.push(format!("duplicate:{}", hit.id));
             continue;
         }
@@ -294,6 +312,7 @@ pub fn expand_with_graph(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixture::ranked_metrics;
 
     fn node(id: &str, name: &str, file: &str) -> CodeCandidate {
         CodeCandidate {
@@ -469,6 +488,85 @@ mod tests {
     }
 
     #[test]
+    fn fan_out_counts_only_targets_that_are_added() {
+        let nodes = vec![
+            node("seed", "seed", "seed.rs"),
+            node("a", "a", "a.rs"),
+            node("b", "b", "b.rs"),
+            node("c", "c", "c.rs"),
+        ];
+        let mut budget = open_budget();
+        budget.fan_out = 2;
+        // `a` and `b` are seeds already, so only `c` is new.
+        let found = discover_candidates(
+            &nodes[..3],
+            &nodes,
+            &[
+                link("seed", "a", "calls", "extracted"),
+                link("seed", "b", "calls", "extracted"),
+                link("seed", "c", "calls", "extracted"),
+            ],
+            "ax",
+            &budget,
+        );
+        assert_eq!(
+            found
+                .hits
+                .iter()
+                .map(|hit| hit.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["c"]
+        );
+    }
+
+    /// A hub with `count` callees, each in its own file.
+    fn hub_graph(count: usize) -> (Vec<CodeCandidate>, Vec<DiscoveryLink>) {
+        let mut nodes = vec![node("hub", "hub", "hub.rs")];
+        let mut links = Vec::new();
+        for index in 0..count {
+            let id = format!("n{index:05}");
+            nodes.push(node(&id, &id, &format!("{id}.rs")));
+            links.push(link("hub", &id, "calls", "unique-cross-file"));
+        }
+        (nodes, links)
+    }
+
+    fn hub_hits(count: usize, time_ms: u128) -> Vec<String> {
+        let (nodes, links) = hub_graph(count);
+        let budget = DiscoveryBudget {
+            depth: 1,
+            fan_out: 8,
+            max_added: 16,
+            time_ms,
+        };
+        discover_candidates(&nodes[..1], &nodes, &links, "ax", &budget)
+            .hits
+            .into_iter()
+            .map(|hit| hit.id)
+            .collect()
+    }
+
+    #[test]
+    fn a_large_hub_adds_the_same_neighbors_as_a_small_one() {
+        // No time limit, so the result depends only on the graph.
+        let large = hub_hits(20_000, u128::MAX);
+        assert_eq!(large.len(), 8);
+        assert_eq!(large, hub_hits(2_000, u128::MAX));
+    }
+
+    #[test]
+    #[ignore = "wall-clock timing"]
+    fn a_large_hub_is_scanned_within_the_time_budget() {
+        let started = std::time::Instant::now();
+        let hits = hub_hits(20_000, 200);
+        let elapsed = started.elapsed();
+        assert_eq!(hits.len(), 8);
+        // Generous for an unoptimized build: the point is that the scan is
+        // not quadratic in the node count.
+        assert!(elapsed.as_millis() < 1_000, "took {elapsed:?}");
+    }
+
+    #[test]
     fn a_cycle_adds_the_neighbor_once() {
         let left = node("left", "left", "left.rs");
         let right = node("right", "right", "right.rs");
@@ -639,39 +737,6 @@ mod tests {
         );
     }
 
-    fn ranked_metrics(ranked: &[String], gold: &[String]) -> (f64, f64, f64, f64) {
-        let mut reciprocal = 0.0;
-        for (index, id) in ranked.iter().enumerate() {
-            if gold.iter().any(|item| item == id) {
-                reciprocal = 1.0 / (index as f64 + 1.0);
-                break;
-            }
-        }
-        let mut dcg = 0.0;
-        let mut hits = 0.0;
-        for (index, id) in ranked.iter().take(10).enumerate() {
-            if gold.iter().any(|item| item == id) {
-                dcg += 1.0 / ((index as f64) + 2.0).ln();
-                if index < 3 {
-                    hits += 1.0;
-                }
-            }
-        }
-        let ideal_len = gold.len().min(10);
-        let mut ideal = 0.0;
-        for index in 0..ideal_len {
-            ideal += 1.0 / ((index as f64) + 2.0).ln();
-        }
-        let ndcg = if ideal == 0.0 { 0.0 } else { dcg / ideal };
-        let precision = hits / 3.0;
-        let recall = if gold.is_empty() {
-            0.0
-        } else {
-            hits / gold.len() as f64
-        };
-        (reciprocal, ndcg, precision, recall)
-    }
-
     fn pool_recall(pool: &[String], gold: &[String]) -> f64 {
         let hits = gold
             .iter()
@@ -684,6 +749,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn independent_graph_discovery() {
+        let _env = crate::BENCH_ENV.lock().await;
         for name in [
             "AX_MEMORY_BENCH_RAW",
             "AX_MEMORY_BENCH_SKIP_RELATIVE_COVERAGE",
@@ -953,9 +1019,17 @@ mod tests {
             "arms": arms_json,
         });
         let text = serde_json::to_string_pretty(&report).unwrap();
-        let destination = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/specs/ax-neural/GRAPH-DISCOVERY-RESULTS.json");
-        std::fs::write(&destination, text.as_bytes()).unwrap();
+        std::fs::write(
+            crate::measurement_output("graph-discovery-results.json"),
+            text.as_bytes(),
+        )
+        .unwrap();
+        // The checked-in record changes only when asked for explicitly.
+        if std::env::var_os("AX_BENCH_RECORD").is_some() {
+            let destination = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../docs/specs/ax-neural/GRAPH-DISCOVERY-RESULTS.json");
+            std::fs::write(&destination, text.as_bytes()).unwrap();
+        }
         println!("{text}");
     }
 }

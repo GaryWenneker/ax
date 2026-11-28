@@ -53,13 +53,17 @@ fn push_stemmed(out: &mut Vec<String>, token: &str, en: &Stemmer, nl: &Stemmer) 
     if lower.is_empty() {
         return;
     }
-    out.push(lower.clone());
+    // Each word adds its own lowercase form and its distinct stems, so the
+    // result for a word never depends on the rest of the text.
     let en_stem = en.stem(&lower).into_owned();
-    if en_stem != lower {
+    let nl_stem = nl.stem(&lower).into_owned();
+    let add_nl = nl_stem != lower && nl_stem != en_stem;
+    let add_en = en_stem != lower;
+    out.push(lower);
+    if add_en {
         out.push(en_stem);
     }
-    let nl_stem = nl.stem(&lower).into_owned();
-    if nl_stem != lower && !out.iter().any(|t| t == &nl_stem) {
+    if add_nl {
         out.push(nl_stem);
     }
 }
@@ -89,5 +93,41 @@ mod tests {
         assert_eq!(normalize_search_text(""), "");
         let stemmed = normalize_search_text("running runners");
         assert!(stemmed.contains("run"), "{stemmed}");
+    }
+
+    /// Each word's tokens depend only on that word, never on what came before.
+    #[test]
+    fn a_word_normalizes_the_same_wherever_it_appears() {
+        let alone = normalize_search_text("lopen");
+        assert!(alone.split_whitespace().count() > 1, "{alone}");
+        assert_eq!(
+            normalize_search_text("lopen lopen"),
+            format!("{alone} {alone}")
+        );
+    }
+
+    /// Large documents normalize in linear time.
+    #[test]
+    fn a_large_document_normalizes_quickly() {
+        let words: Vec<String> = (0..40_000u32)
+            .map(|mut n| {
+                let mut w = String::from("w");
+                for _ in 0..4 {
+                    w.push((b'a' + (n % 26) as u8) as char);
+                    n /= 26;
+                }
+                w.push_str("ingen");
+                w
+            })
+            .collect();
+        let text = words.join(" ");
+        let started = std::time::Instant::now();
+        let out = normalize_search_text(&text);
+        assert!(out.split_whitespace().count() >= words.len());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "took {:?}",
+            started.elapsed()
+        );
     }
 }

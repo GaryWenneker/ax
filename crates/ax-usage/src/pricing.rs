@@ -174,23 +174,35 @@ fn user_override_for(model: &str) -> Option<ModelPricing> {
     None
 }
 
+/// How well catalog id `catalog_id` matches the lowercased requested model id.
+///
+/// Higher is better. Match kinds rank first: exact id (the full id or the
+/// short id after the last `/`; equal rank, so the caller's source preference
+/// decides between providers), requested id contains the short id (the
+/// longest such id wins), then short id contains the requested id (the
+/// shortest such id wins). `None` when the ids do not match.
+pub(crate) fn catalog_match_score(lowered: &str, catalog_id: &str) -> Option<(u8, usize)> {
+    let key = catalog_id.to_ascii_lowercase();
+    let short = key.rsplit('/').next().unwrap_or(&key);
+    if lowered == key || lowered == short {
+        Some((3, 0))
+    } else if short.len() >= 4 && lowered.contains(short) {
+        Some((2, short.len()))
+    } else if lowered.len() >= 4 && short.contains(lowered) {
+        Some((1, usize::MAX - short.len()))
+    } else {
+        None
+    }
+}
+
 fn match_db_entry(model: &str, entries: &[DbPriceEntry]) -> Option<(ModelPricing, String)> {
     let lowered = model.to_ascii_lowercase();
-    let mut best: Option<(usize, i32, &DbPriceEntry)> = None;
+    let mut best: Option<((u8, usize), i32, &DbPriceEntry)> = None;
     for entry in entries {
-        let key = entry.model_id.to_ascii_lowercase();
-        let short = key.rsplit('/').next().unwrap_or(&key);
         let or_rank = if entry.source == "openrouter" { 0 } else { 1 };
-        let matched = if lowered == key
-            || lowered == short
-            || (lowered.contains(short) && short.len() >= 4)
-            || (short.contains(&lowered) && lowered.len() >= 4)
-        {
-            Some(short.len())
-        } else {
-            None
+        let Some(score) = catalog_match_score(&lowered, &entry.model_id) else {
+            continue;
         };
-        let Some(score) = matched else { continue };
         match best {
             Some((s, r, _)) if s > score || (s == score && r <= or_rank) => {}
             _ => best = Some((score, or_rank, entry)),
@@ -336,12 +348,40 @@ pub async fn price_as_of(model: Option<&str>, date: &str) -> (ModelPricing, Stri
         }
         return price_for_model_with_source(m);
     }
-    // Reference model as-of date.
+    // Reference model as-of date, in the same order as a named model.
     let ref_model = pricing_config().reference_model.clone();
+    if let Some(p) = user_override_for(&ref_model) {
+        return (p, "user".into());
+    }
     if let Ok(Some((p, src))) = crate::pricing_sync::lookup_price_as_of(&ref_model, date).await {
         return (p, src);
     }
     reference_pricing_with_source()
+}
+
+/// Reference-model pricing as of each date in `dates`, the same answer as
+/// [`price_as_of`]`(None, date)` for every date, from one catalog read.
+pub async fn reference_prices_as_of(
+    pool: &sqlx::SqlitePool,
+    dates: &[String],
+) -> Vec<(ModelPricing, String)> {
+    let ref_model = pricing_config().reference_model.clone();
+    if let Some(p) = user_override_for(&ref_model) {
+        return vec![(p, "user".into()); dates.len()];
+    }
+    let Some(last) = dates.iter().max() else {
+        return Vec::new();
+    };
+    let rows = crate::pricing_sync::matching_price_rows(pool, &ref_model, last)
+        .await
+        .unwrap_or_default();
+    dates
+        .iter()
+        .map(|date| {
+            crate::pricing_sync::pick_price_as_of(&ref_model, date, &rows)
+                .unwrap_or_else(reference_pricing_with_source)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -355,6 +395,57 @@ mod tests {
         // gemini-2.5-pro should match the specific key, not the generic "gemini"
         let pro = price_for_model("models/gemini-2.5-pro-latest");
         assert!(pro.input_per_mtok >= 1.0);
+    }
+
+    fn db_entry(model_id: &str, input: f64) -> DbPriceEntry {
+        DbPriceEntry {
+            pricing: ModelPricing::rates(input, input * 4.0),
+            source: "openrouter".into(),
+            model_id: model_id.into(),
+        }
+    }
+
+    #[test]
+    fn exact_catalog_id_beats_longer_superstring_id() {
+        let entries = vec![
+            db_entry("openai/gpt-4o-mini-search-preview", 0.15),
+            db_entry("openai/gpt-4o", 2.5),
+            db_entry("openai/gpt-4o-mini", 0.15),
+        ];
+        let (p, _) = match_db_entry("gpt-4o", &entries).expect("match");
+        assert_eq!(p.input_per_mtok, 2.5);
+
+        let entries = vec![
+            db_entry("anthropic/claude-sonnet-4.5", 9.0),
+            db_entry("anthropic/claude-sonnet-4", 3.0),
+        ];
+        let (p, _) = match_db_entry("claude-sonnet-4", &entries).expect("match");
+        assert_eq!(p.input_per_mtok, 3.0);
+    }
+
+    #[test]
+    fn match_kind_order_contained_longest_then_containing_shortest() {
+        // Requested id contains a catalog id: the longest contained id wins.
+        let entries = vec![
+            db_entry("anthropic/claude-sonnet", 1.0),
+            db_entry("anthropic/claude-sonnet-4-5", 3.0),
+        ];
+        let (p, _) = match_db_entry("claude-sonnet-4-5-20250929", &entries).expect("match");
+        assert_eq!(p.input_per_mtok, 3.0);
+        // Containment of the requested id beats a catalog id that contains it.
+        let entries = vec![
+            db_entry("openai/gpt-4o-mini-2024", 0.15),
+            db_entry("openai/gpt-4o", 2.5),
+        ];
+        let (p, _) = match_db_entry("gpt-4o-2024-08-06", &entries).expect("match");
+        assert_eq!(p.input_per_mtok, 2.5);
+        // Only superstrings: the shortest catalog id wins.
+        let entries = vec![
+            db_entry("openai/o4-mini-high-search", 9.0),
+            db_entry("openai/o4-mini-high", 1.1),
+        ];
+        let (p, _) = match_db_entry("o4-mini", &entries).expect("match");
+        assert_eq!(p.input_per_mtok, 1.1);
     }
 
     #[test]

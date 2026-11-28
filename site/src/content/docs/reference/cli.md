@@ -533,7 +533,7 @@ Store a durable project memory (decision, fix, convention). Flags similar existi
 | `--trigger` | string (repeat) | Exact cue name. Same as `ax_remember` `triggers` |
 | `--confirm` | string | Confirm a candidate memory by id. Same as `ax_remember` `action=confirm` |
 | `--purge` | string | Purge a memory by id (row, cues, links, vectors, tombstone). Same as `ax_remember` `action=purge` |
-| `--when` | string | Prospective trigger (`file:glob` \| `symbol:name` \| `error:pat` \| `command:pat`). Stored as a `when:` tag |
+| `--when` | string | Prospective trigger (`file:glob` \| `symbol:name` \| `error:pat` \| `command:pat`). Stored as a `when:` tag. A file glob matches the whole project-relative path: `*` stays within one folder, `**` spans folders, and a pattern without `/` (`*.sql`, `Cargo.toml`) matches the file name in any folder. For the other kinds, a glob must match the whole value and plain text matches anywhere in it |
 | `--json` | flag | JSON output, including `suggested_triggers` on a saved memory |
 
 ```bash
@@ -601,7 +601,7 @@ ax capture-git --limit 1 --quiet    # same as the post-commit hook
 
 ### `ax memory export`
 
-Export memories that carry a tag (default: `shared`) to `.ax/memory/shared.jsonl` for team git sync.
+Export memories that carry a tag (default: `shared`) to `.ax/memory/shared.jsonl` for team git sync. Memories tagged `local`, `noshare` or `private`, disabled memories, and kinds the import skips (turns, folder docs and kinds ax does not know) are not exported.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -618,6 +618,8 @@ ax memory export --tag team --out ./shared-memories.jsonl
 ### `ax memory import`
 
 Import JSONL memories (upsert by id). Used after `git pull` or via the post-merge hook when `"memorySync": true` is set in `ax.json`.
+
+Imported rows are untrusted data: they get the source `import`, and a row whose text reads like an instruction to the agent waits as a candidate until you confirm it (`ax remember --confirm`). The import skips lines with an unknown kind, turns and folder docs, and ids you purged. An existing memory is replaced only when it is itself shared (imported earlier or tagged `shared`) and the shared line is newer; a local memory you never shared is never overwritten.
 
 ```bash
 ax memory import
@@ -731,7 +733,11 @@ ax durable doc-get --session "$SESSION" --kind brief
 
 ### `ax turn`
 
-Explicit turn lifecycle without IDE hooks. Finish writes a memory with `source=cli-turn`.
+Explicit turn lifecycle without IDE hooks. Finish writes a memory with `source=cli-turn`. When the finish input has `decisions` or `open_questions`, finish also adds them to the session's working context (the notes `ax_session` keeps). That needs an index; when the write fails, the receipt lists the reason in `warnings` and the turn still finishes.
+
+The receipt's `files` are the files git reports as changed during the turn, renames by their new path. Files that were already modified or untracked when the turn began are left out unless they changed again during the turn. At most 200 files are listed; a larger set adds a `warnings` entry with the full count. Each git call stops after 30 seconds.
+
+Snapshots are stored under `.ax/cli-turns/<session>/<turn>.json`. The `--session` and `--turn` values must be 1 to 128 ASCII letters, digits, `-`, `_`, `.` or `:`, and not dots only; any other value is rejected, so a turn cannot read or write files outside that folder.
 
 ```bash
 TURN=$(printf '%s' "$PROMPT" | ax turn begin --session "$SESSION" --prompt-stdin --json | jq -r .turnId)
@@ -1098,7 +1104,7 @@ Daily model price sync from [OpenRouter](https://openrouter.ai/models) (no API k
 | `sync` | Fetch today's prices (`--force` re-fetches even if already synced) |
 | `status` | Last sync, row counts |
 | `list` | Latest OpenRouter rates (`--json`) |
-| `history <model>` | Daily series for a model id/substring (`--days`, `--json`) |
+| `history <model>` | Daily series for the one catalog model that best matches the id or name, over the last `--days` calendar days (`--json`) |
 
 ```bash
 ax pricing sync
@@ -1133,7 +1139,7 @@ ax costs model
 
 ### `ax agent economics`
 
-Estimated tokens and catalog cost for a Pi session recorded by the Ax adapter. Tool output tokens are estimates of what was delivered into context. Tool execution itself is not priced as model tokens. Missing rates stay unknown.
+Estimated tokens and catalog cost for a Pi session recorded by the Ax adapter. Tool output tokens are estimates of what was delivered into context. Tool execution itself is not priced as model tokens. Missing rates stay unknown. Without `--session` the totals cover every recorded session and the report says `(all sessions)`; `--session` limits every figure to that session. Each model is listed once.
 
 ```bash
 ax agent economics
@@ -1254,11 +1260,11 @@ ax cursor auth use enterprise
 
 ### `ax offload`
 
-Configure optional LLM offload for `ax explore` (BYO OpenAI-compatible API). Stored in `~/.ax/config.json`. Offload is off until `set-endpoint` switches it on; `ax init` only prints the command when it finds a provider key in the environment.
+Configure optional LLM offload for `ax explore` (BYO OpenAI-compatible API). Stored in `~/.ax/config.json`. Offload is off until `set-endpoint` saves an endpoint or `AX_OFFLOAD_URL` is set; an API key in the environment alone does not enable it, and `ax init` only prints the command when it finds a provider key.
 
 #### `ax offload status`
 
-Show current endpoint and key env var name.
+Show current endpoint and key env var name. When offload is off and a provider key is in the environment, `suggestion` names the command that would enable it. `last_error` holds the last failed offload request made by the same process (status code and the start of the provider's reply); a separate `ax offload status` run starts with none.
 
 ```bash
 ax offload status
@@ -1289,7 +1295,7 @@ ax offload clear
 
 ### `ax neural`
 
-Neural Intelligence is required. Project `ax.json` cannot turn it off. Memory embeddings stay `hash-v1`. The default binary does not link an ML runtime. Context ranking, prediction, and graph suggestions run in process and do not call a language model. CLI JSON matches the `ax_neural_*` MCP tools, and the flags use the same fields. `--path` and the current directory resolve to the nearest project with `.ax/ax.db`, the same root the MCP server uses.
+Neural Intelligence is required. Project `ax.json` cannot turn it off. Memory embeddings stay `hash-v1`. The default binary does not link an ML runtime. Context ranking, prediction, and graph suggestions run in process and do not call a language model. CLI JSON matches the `ax_neural_*` MCP tools, and the flags use the same fields. A value in the `neural` section of `ax.json` that is invalid keeps its default while every valid setting still applies; each invalid value and each unknown key (for example a misspelled section name) is listed in `configError`, which `explain` shows and a refused `feedback` or `predict` repeats. `--path` and the current directory resolve to the nearest project with `.ax/ax.db`, the same root the MCP server uses.
 
 ```bash
 ax neural status
@@ -1305,10 +1311,11 @@ ax neural export --out neural-feedback.json
 - `benchmark` scores the fused hash-v1 recall pipeline on the built-in coding fixture in a temporary database. It reports hits per question family and the measured query latency. It does not open `.ax/ax.db` and it does not download a model.
 - `evaluate` holds out each coding-fixture question in turn, predicts its memories from the rest, and stores precision, false-positive rate, and coverage for `status`.
 - `feedback` takes `--context-id`, `--skill-id`, and `--rule-id` (repeat each for more), plus `--retry-count`, `--input-tokens`, and `--output-tokens`. It is refused unless `neural.learning.feedback_collection` is true.
+- `learn` trains a ranking prior from this project's stored feedback and never promotes it. It reads stored feedback only while `neural.learning.feedback_collection` is true, and reports `applied: false` with a reason when collection is off or there are no feedback rows. The MCP tool also takes `rows` to train on rows you pass instead.
 - `graph` reads this project's edges and successful feedback and stores suggestions labeled `predicted`. It never writes edges. `--edges '<json array>'` previews suggestions for the edges you pass and stores nothing. It returns nothing while `neural.graph.enabled` is false.
 - `rank <query> --blocks '<json array>'` ranks blocks the way preflight does.
 - `register <model-id> <version> <checksum>` takes `--model-type`, `--dataset-version`, `--platforms`, and `--metrics '<json object>'`. Registering does not promote.
-- `promote` is refused unless you pass `--explicit`, `--beats-baseline`, and `--regressions-clear`.
+- `promote` is refused unless you pass `--explicit` and the version was registered with bake-off evidence in `--metrics`: a `bakeoff.families` object (`{family: {scored, hits}}`) that scores the same questions as the built-in coding fixture, hits every `named_trigger`, `abstention` and `delivery_budget` question, and beats hash-v1 on `paraphrase`. hash-v1 is scored on the fixture during the promote.
 - `export --out <file>` writes feedback rows for an offline trainer. It leaves out the project path, execution ids, and secret-shaped rows. It has no MCP tool and sends nothing.
 
 ---
@@ -1928,6 +1935,12 @@ Not for daily use — invoked by agents, installers, or upgrade helpers.
 
 `ax spec <id>` prints the stored body (`id` or `id@version`). Specifications and plans can also be stored as separate rows. That hierarchy stays off until you turn it on, and turning it off restores the flat list and the previous capture path. Rows already written stay. Nothing is dropped.
 
+When a turn finishes, each changed `docs/specs/*.md` or `docs/plans/*.md` file is stored as a draft. `docs/specs/<id>/SPEC.md` belongs to spec `<id>`. The Markdown copy of an existing spec, such as the `SPEC.md` written on approval, is compared with the approved body instead of being stored as another spec. A body equal to the latest revision adds no draft, and a changed file binds the session only when it has no spec yet. Trailing newlines are ignored when bodies and the Markdown copy are compared.
+
+Preflight also scans the IDE plan folders. A session named in a plan file, and the live session for the newest plan in `~/.cursor/plans`, are bound to that plan only when the session has no spec yet or was bound by an earlier scan. A spec bound by a capture or an edit in the session stays bound.
+
+A plan file's spec id is the slug of its file name. When another plan file already has that id, such as `plan.md` in a second project, the new file's id gets the first 8 hex digits of its path's SHA-256 (`plan-1a2b3c4d`). A file keeps its id when it changes later. Spec ids from a plan request or another file path are a slug of at most 48 characters; a longer one is cut and gets the 8-digit hash of the full text, so two requests that start the same stay two specs. A scan reads at most 400 plan files.
+
 ```bash
 ax spec billing-spec
 ax spec-flag
@@ -1974,7 +1987,7 @@ ax spec-import '{"projectId":"ax","specId":"billing-rules","specTitle":"Billing 
 ax spec-classify '{"allPlanMode":true,"docType":"spec","actor":"owner","reason":"These plan-mode documents are specifications."}'
 ```
 
-Approving a new spec body marks selections of plans written against the previous spec hash as `compatibility_review_required`. Other specs are left alone, and the plan text is not rewritten. `ax spec-compatibility` records that the selection was checked.
+Approving a new spec body marks selections of plans written against the previous spec hash as `compatibility_review_required`. Selecting a plan revision later gets the same mark when that revision was written against another spec body than the approved one. An edited plan revision keeps the spec revision its parent was written against. Other specs are left alone, and the plan text is not rewritten. `ax spec-compatibility` records that the selection was checked. Revising a spec id that does not exist returns `missing spec`.
 
 `ax spec-policy` records which policy revision applies. A `body` field is rejected. The stored link has the revision id and content hash, not the rule text. Sending the same link again keeps the one row.
 
