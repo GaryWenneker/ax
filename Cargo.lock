@@ -912,6 +912,7 @@ dependencies = [
  "ax-memory",
  "blake3",
  "futures-util",
+ "libc",
  "ort",
  "petgraph 0.8.3",
  "serde",

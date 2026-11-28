@@ -52,6 +52,29 @@ async fn models_reply(pool: Option<&SqlitePool>) -> Result<Value, String> {
     Ok(value)
 }
 
+/// Runs CPU-bound work on the blocking pool so it never holds an async
+/// runtime thread.
+async fn off_runtime<T, F>(work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|error| format!("neural task failed: {error}"))
+}
+
+/// Runs a fixture harness on the blocking pool. The harness scores in its own
+/// temporary database and is CPU-bound, so it gets a thread of its own.
+async fn harness<F, Fut>(run: F) -> Result<Value, String>
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<Value, String>>,
+{
+    let runtime = tokio::runtime::Handle::current();
+    off_runtime(move || runtime.block_on(run())).await?
+}
+
 /// Strip optional `ax_neural_` / `ax-neural-` prefix and map hyphenated CLI names to underscores.
 pub(crate) fn normalize_dispatch_tool(tool: &str) -> String {
     let stripped = tool
@@ -129,19 +152,28 @@ pub async fn handle(
             let Some(pool) = pool else {
                 return Ok(json!({ "applied": false, "predictions": [], "reason": "no database" }));
             };
-            let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("");
+            let task = args
+                .get("task")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let rows = observations(pool, &project_id(root)).await?;
-            let (edges, _) = project_edges(pool, EDGE_LIMIT).await?;
-            let edge_pairs: Vec<(String, String)> = edges
-                .into_iter()
-                .map(|edge| (edge.source, edge.target))
-                .collect();
-            let predictions = crate::predict::predict_with_edges(
-                &rows,
-                task,
-                cfg.minimum_confidence,
-                &edge_pairs,
-            );
+            // Edges only add links between ids of matching feedback, so they
+            // are read only when some feedback matches the task.
+            let edge_pairs: Vec<(String, String)> = if crate::predict::any_matches(&rows, &task) {
+                let (edges, _) = project_edges(pool, EDGE_LIMIT).await?;
+                edges
+                    .into_iter()
+                    .map(|edge| (edge.source, edge.target))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let minimum = cfg.minimum_confidence;
+            let predictions = off_runtime(move || {
+                crate::predict::predict_with_edges(&rows, &task, minimum, &edge_pairs)
+            })
+            .await?;
             Ok(json!({
                 "applied": true,
                 "label": "predicted",
@@ -210,7 +242,8 @@ pub async fn handle(
             }
             let passed = input_edges(args);
             if !passed.is_empty() {
-                let report = suggest_report_capped(&passed, &[], EDGE_LIMIT);
+                let report =
+                    off_runtime(move || suggest_report_capped(&passed, &[], EDGE_LIMIT)).await?;
                 return Ok(graph_reply(&report, report.edge_limit_reached, 0, 0));
             }
             let Some(pool) = pool else {
@@ -219,12 +252,14 @@ pub async fn handle(
             let project = project_id(root);
             let (edges, edge_limit_reached) = project_edges(pool, EDGE_LIMIT).await?;
             let rows = success_context_sets(pool, &project, FEEDBACK_ROWS).await?;
-            let report = suggest_report_capped(&edges, &rows, EDGE_LIMIT);
+            let feedback_rows = rows.len();
+            let report =
+                off_runtime(move || suggest_report_capped(&edges, &rows, EDGE_LIMIT)).await?;
             let stored = replace_suggestions(pool, &project, &report.suggestions).await?;
             Ok(graph_reply(
                 &report,
                 edge_limit_reached || report.edge_limit_reached,
-                rows.len(),
+                feedback_rows,
                 stored,
             ))
         }
@@ -245,11 +280,15 @@ pub async fn handle(
                 "promotedChecksum": checksum
             }))
         }
-        "benchmark" => crate::bakeoff::baseline_report(crate::CODING_FIXTURE).await,
-        "benchmark_abc" => crate::benchmark_abc::run_abc(crate::CODING_FIXTURE).await,
-        "embed_bakeoff" => crate::embed_bakeoff::run_embed_bakeoff(crate::CODING_FIXTURE),
-        "path_validate" => crate::path_validate::run_path_validate(crate::CODING_FIXTURE).await,
-        "agent_eval" => crate::agent_eval::run_agent_eval(crate::CODING_FIXTURE).await,
+        "benchmark" => harness(|| crate::bakeoff::baseline_report(crate::CODING_FIXTURE)).await,
+        "benchmark_abc" => harness(|| crate::benchmark_abc::run_abc(crate::CODING_FIXTURE)).await,
+        "embed_bakeoff" => {
+            off_runtime(|| crate::embed_bakeoff::run_embed_bakeoff(crate::CODING_FIXTURE)).await?
+        }
+        "path_validate" => {
+            harness(|| crate::path_validate::run_path_validate(crate::CODING_FIXTURE)).await
+        }
+        "agent_eval" => harness(|| crate::agent_eval::run_agent_eval(crate::CODING_FIXTURE)).await,
         "learn" | "train" => {
             let cfg = load(root);
             let seed = args.get("seed").and_then(|v| v.as_u64()).unwrap_or(1);
@@ -719,6 +758,44 @@ mod tests {
         assert_eq!(stored as usize, found.len());
     }
 
+    /// Runs `tool` on a single-thread runtime and counts how often another
+    /// task got to run before the call returned. Zero means the call held the
+    /// only runtime thread for its whole computation.
+    async fn ticks_while(root: &Path, tool: &str, args: Value) -> usize {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let ticks = Arc::new(AtomicUsize::new(0));
+        let counter = ticks.clone();
+        let ticker = tokio::spawn(async move {
+            loop {
+                counter.fetch_add(1, Ordering::SeqCst);
+                tokio::task::yield_now().await;
+            }
+        });
+        let result = handle(root, tool, &args, None).await;
+        let seen = ticks.load(Ordering::SeqCst);
+        ticker.abort();
+        result.unwrap();
+        seen
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn heavy_neural_work_leaves_the_runtime_thread_free() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("ax.json"),
+            r#"{"neural":{"graph":{"enabled":true}}}"#,
+        )
+        .unwrap();
+        let edges: Vec<Value> = (0..2_000)
+            .map(|i| json!({ "source": format!("n{i}"), "target": format!("hub{}", i % 7) }))
+            .collect();
+        let graph = ticks_while(dir.path(), "graph", json!({ "edges": edges })).await;
+        assert!(graph > 0, "graph ran on the runtime thread");
+        let bakeoff = ticks_while(dir.path(), "embed_bakeoff", json!({})).await;
+        assert!(bakeoff > 0, "embed bake-off ran on the runtime thread");
+    }
+
     #[tokio::test]
     async fn passed_edges_are_a_preview_that_stores_nothing() {
         let dir = tempfile::tempdir().unwrap();
@@ -1070,8 +1147,10 @@ mod tests {
             .unwrap_err();
         assert!(error.contains("neural_model"), "{error}");
 
+        parser_feedback(dir.path(), pool).await;
         sqlx::query("DROP TABLE edges").execute(pool).await.unwrap();
-        let error = handle(dir.path(), "predict", &json!({ "task": "x" }), Some(pool))
+        let task = json!({ "task": "fix the parser" });
+        let error = handle(dir.path(), "predict", &task, Some(pool))
             .await
             .unwrap_err();
         assert!(error.contains("edges"), "{error}");
