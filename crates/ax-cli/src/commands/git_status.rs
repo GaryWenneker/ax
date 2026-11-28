@@ -41,7 +41,9 @@ pub fn parse_porcelain_z(raw: &[u8]) -> Vec<StatusEntry> {
         }
         let (status, path) = entry.split_at(3);
         let status = status[..2].to_string();
-        let source = if status.starts_with('R') || status.starts_with('C') {
+        // Either column can report a rename or copy (a worktree-side rename
+        // shows as ` R`), and both carry the original path as the next field.
+        let source = if status.contains(['R', 'C']) {
             entries.next().map(str::to_string)
         } else {
             None
@@ -84,6 +86,17 @@ mod tests {
         assert_eq!(got[2].path, "new.rs");
         assert_eq!(got[2].source.as_deref(), Some("old.rs"));
         assert!(got[3].is_deleted());
+    }
+
+    #[test]
+    fn parses_a_worktree_side_rename() {
+        let raw = b" R new.rs\0old.rs\0 M other.rs\0";
+        let got = parse_porcelain_z(raw);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].status, " R");
+        assert_eq!(got[0].path, "new.rs");
+        assert_eq!(got[0].source.as_deref(), Some("old.rs"));
+        assert_eq!(got[1].path, "other.rs");
     }
 
     #[test]
