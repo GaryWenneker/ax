@@ -15,7 +15,7 @@ const RULE: &str =
     "---\nid: english-only\nlevel: WARNING\nalwaysApply: true\n---\n\nWrite English.";
 
 mod common;
-use common::isolate_home;
+use common::{isolate_home, seed_stores};
 
 #[test]
 fn the_isolated_home_covers_the_global_database() {
@@ -47,21 +47,15 @@ async fn fixture_with(readonly: bool) -> Fx {
     isolate_home();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("proj");
-    std::fs::create_dir_all(root.join(".ax")).unwrap();
-    ax_db::Database::open(&root.join(".ax").join("ax.db"))
-        .await
-        .unwrap();
     {
-        let seed = WebHub::open(root.clone(), false, 0).await.unwrap();
-        let ws = seed.read().await;
+        let seed = seed_stores(&root).await;
         let doc = parse_rule_file(Path::new("x.mdc"), RULE).unwrap();
-        ws.policy
-            .store
+        seed.policy
             .save_rule(doc.frontmatter, doc.body)
             .await
             .unwrap();
         ax_memory::remember(
-            &ws.graph_pool,
+            seed.graph_pool(),
             ax_memory::RememberInput {
                 title: "Use SQLite".into(),
                 body: "SQLite is the source of truth.".into(),
@@ -73,6 +67,7 @@ async fn fixture_with(readonly: bool) -> Fx {
         )
         .await
         .unwrap();
+        seed.close().await;
     }
     let hub = WebHub::open(root.clone(), readonly, 0).await.unwrap();
     let app = app_for(&hub);

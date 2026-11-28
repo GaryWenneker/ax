@@ -26,19 +26,14 @@ async fn fixture(readonly: bool) -> (TempDir, Router) {
     isolate_home();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("proj");
-    std::fs::create_dir_all(root.join(".ax")).unwrap();
-    ax_db::Database::open(&root.join(".ax").join("ax.db"))
-        .await
-        .unwrap();
     {
-        let seed = WebHub::open(root.clone(), false, 0).await.unwrap();
-        let ws = seed.read().await;
+        let seed = common::seed_stores(&root).await;
         let doc = parse_rule_file(Path::new("x.mdc"), RULE).unwrap();
-        ws.policy
-            .store
+        seed.policy
             .save_rule(doc.frontmatter, doc.body)
             .await
             .unwrap();
+        seed.close().await;
     }
     let hub = WebHub::open(root, readonly, 7070).await.unwrap();
     let cors = CorsLayer::new()
