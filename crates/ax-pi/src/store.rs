@@ -5,7 +5,6 @@
 
 use std::path::Path;
 
-use serde_json::json;
 use sqlx::{sqlite::SqliteConnectOptions, Row, SqlitePool};
 
 use crate::types::{Confidence, ToolAlternative, ToolEconomicsRecord};
@@ -65,17 +64,6 @@ CREATE TABLE IF NOT EXISTS agent_optimizations (
     reason TEXT NOT NULL,
     accepted INTEGER NOT NULL DEFAULT 0
 );
-CREATE TABLE IF NOT EXISTS agent_context_cache (
-    key TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    estimated_tokens INTEGER NOT NULL,
-    source_hashes TEXT NOT NULL,
-    git_revision TEXT,
-    policy_version TEXT,
-    skill_version TEXT,
-    graph_version TEXT
-);
 ";
 
 #[derive(Debug, Clone)]
@@ -85,7 +73,6 @@ pub struct PersistedSnapshot {
     pub tools: Vec<ToolEconomicsRecord>,
     pub models: Vec<ModelRow>,
     pub optimizations: Vec<OptimizationRow>,
-    pub cache_entries: Vec<CacheRow>,
 }
 
 #[derive(Debug, Clone)]
@@ -131,19 +118,6 @@ pub struct OptimizationRow {
     pub tool_call_id: String,
     pub alternative: ToolAlternative,
     pub accepted: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct CacheRow {
-    pub key: String,
-    pub project_id: String,
-    pub created_at: u64,
-    pub estimated_tokens: u32,
-    pub source_hashes: Vec<String>,
-    pub git_revision: Option<String>,
-    pub policy_version: String,
-    pub skill_version: String,
-    pub graph_version: String,
 }
 
 pub async fn flush(path: &Path, snapshot: &PersistedSnapshot) -> Result<(), String> {
@@ -246,26 +220,6 @@ pub async fn flush(path: &Path, snapshot: &PersistedSnapshot) -> Result<(), Stri
         .await
         .map_err(|err| err.to_string())?;
     }
-    for entry in &snapshot.cache_entries {
-        let hashes = json!(entry.source_hashes).to_string();
-        sqlx::query(
-            "INSERT INTO agent_context_cache (key, project_id, created_at, estimated_tokens, source_hashes, git_revision, policy_version, skill_version, graph_version)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(key) DO UPDATE SET estimated_tokens = excluded.estimated_tokens, source_hashes = excluded.source_hashes",
-        )
-        .bind(&entry.key)
-        .bind(&entry.project_id)
-        .bind(entry.created_at as i64)
-        .bind(entry.estimated_tokens as i64)
-        .bind(hashes)
-        .bind(&entry.git_revision)
-        .bind(&entry.policy_version)
-        .bind(&entry.skill_version)
-        .bind(&entry.graph_version)
-        .execute(&mut *tx)
-        .await
-        .map_err(|err| err.to_string())?;
-    }
     tx.commit().await.map_err(|err| err.to_string())?;
     Ok(())
 }
@@ -278,7 +232,6 @@ pub async fn load(path: &Path) -> Result<PersistedSnapshot, String> {
             tools: Vec::new(),
             models: Vec::new(),
             optimizations: Vec::new(),
-            cache_entries: Vec::new(),
         });
     }
     let pool = open(path).await?;
@@ -401,7 +354,6 @@ pub async fn load(path: &Path) -> Result<PersistedSnapshot, String> {
         tools,
         models,
         optimizations,
-        cache_entries: Vec::new(),
     })
 }
 
@@ -567,7 +519,6 @@ mod tests {
                     accepted: false,
                 },
             ],
-            cache_entries: Vec::new(),
         }
     }
 

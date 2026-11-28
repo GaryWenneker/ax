@@ -571,7 +571,6 @@ mod aggregate_tests {
                 model("m4", "s1", "claude"),
             ],
             optimizations: Vec::new(),
-            cache_entries: Vec::new(),
         }
     }
 

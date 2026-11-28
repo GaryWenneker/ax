@@ -24,9 +24,7 @@ use crate::report::{
     apply_display_currency, economics_from, economics_of, format_economics, format_optimization,
     optimization_from, optimization_of, EconomicsReport, OptimizationReport, ReportRows,
 };
-use crate::store::{
-    self, CacheRow, ModelRow, OptimizationRow, PersistedSnapshot, SessionRow, TurnRow,
-};
+use crate::store::{self, ModelRow, OptimizationRow, PersistedSnapshot, SessionRow, TurnRow};
 use crate::types::{
     AxAgentEvent, AxSessionState, BudgetSnapshot, ContextCacheKey, ContextRequest, ContextResult,
     ContextSection, CostSnapshot, OptimizationMode, SectionType, ToolCallAdvice,
@@ -1051,22 +1049,6 @@ fn snapshot_of(state: &State) -> PersistedSnapshot {
         tools: state.tools.clone(),
         models: state.models.clone(),
         optimizations: state.optimizations.clone(),
-        cache_entries: state
-            .cache
-            .entries()
-            .into_iter()
-            .map(|entry| CacheRow {
-                key: entry.key.clone(),
-                project_id: entry.project_id.clone(),
-                created_at: entry.created_at,
-                estimated_tokens: entry.estimated_tokens,
-                source_hashes: entry.source_hashes.clone(),
-                git_revision: entry.git_revision.clone(),
-                policy_version: entry.policy_version.clone(),
-                skill_version: entry.skill_version.clone(),
-                graph_version: entry.graph_version.clone(),
-            })
-            .collect(),
     }
 }
 
