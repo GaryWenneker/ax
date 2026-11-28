@@ -1137,7 +1137,7 @@ ax pricing list --json
 ax pricing history claude-sonnet --days 30
 ```
 
-Optional overrides in `~/.ax/pricing.toml` always win over synced rates.
+Optional overrides in `~/.ax/pricing.toml` always win over synced rates. The file is read once when the process starts, so restart a running `ax web` or MCP server after you edit it.
 
 ### `ax costs`
 
