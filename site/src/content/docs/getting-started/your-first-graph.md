@@ -27,7 +27,7 @@ ax status
 
 This reports the node/edge/file counts, the active SQLite backend, and the journal mode — a quick health check that the index is ready.
 
-![Graph Stats — index summary with node/edge/file counts and language breakdown](/screenshots/cc-stats-dark.png)
+The MCP tool `ax_status` gives your agent the index statistics. In [ax-admin](/guides/remote-admin/), the **Status** page shows index statistics and freshness for the environment it is connected to.
 
 ## Run a query
 

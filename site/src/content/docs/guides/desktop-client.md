@@ -1,6 +1,9 @@
 ---
 title: Desktop Client
 description: Native wgpu Command Center (egui/eframe) that embeds ax-web in-process.
+banner:
+  content: |
+    This page describes part of the full ax, which is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 **ax** ships a browser Command Center via `ax web`. The **desktop client** is a separate native window (`egui` / `eframe` over **wgpu**) that embeds the same `ax-web` server in-process and talks to the identical `/api` JSON + SSE surface — no browser required.

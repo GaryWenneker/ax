@@ -1,6 +1,9 @@
 ---
 title: Standalone server and replicas
 description: Run Ax as a long-lived primary or replica, with authenticated UDP change notifications and resilient HTTPS synchronization.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 Ax can run independently of an IDE. A **primary** maintains an enrolled Ax project; one or more **replicas** contribute their existing knowledge and receive the combined cluster state. Native records remain intact, and received policy stays in review. The optional LAN notification channel makes synchronization responsive, while HTTPS polling catches missed notifications.
@@ -257,7 +260,7 @@ These controls ship in v8.1.0.
 
 Open **Settings → Replication** for the local node ID, Primary/Replica role, the Replica's configured Primary URL, and its last sync state. Use the setup controls above, or start/synchronize a separately configured CLI server, to populate this status. Primary lists authenticated replicas with endpoint, last seen and last successful snapshot. Online means seen within two minutes; older records are marked not seen recently.
 
-A Replica must explicitly configure its Primary and project credential. Successful authenticated registration adds it automatically; no manual approval is needed. **Block node** asks for confirmation and blocks future snapshots and registration for that node ID. **Remove revoked node** removes a blocked entry from the visible list after confirmation, while preserving its revocation marker and synchronized project data. Discovery and shared-key registration cannot restore it. **Allow re-enrollment** explicitly clears the block, but keeps previous node credentials revoked; the Replica must authenticate again with its project enrollment credential. UDP presence never chooses or changes the configured Primary. Client tokens (`axc_`) and node credentials (`axn_`) cannot be used interchangeably. Shared project credentials remain the automatic enrollment mechanism for existing standalone deployments; treat them as enrollment secrets.
+A Replica must explicitly configure its Primary and project credential. Successful authenticated registration adds it automatically; no manual approval is needed. **Block node** asks for confirmation and blocks future snapshots and registration for that node ID. **Remove revoked node** removes a blocked entry from the visible list after confirmation, while preserving its revocation marker and synchronized project data. Discovery and shared-key registration cannot restore it. Revoking a node's access to one project works the same way: the project credential cannot grant that project again, and only an explicit grant from an administrator restores it. **Allow re-enrollment** explicitly clears the block, but keeps previous node credentials revoked; the Replica must authenticate again with its project enrollment credential. UDP presence never chooses or changes the configured Primary. Client tokens (`axc_`) and node credentials (`axn_`) cannot be used interchangeably. A node has one live credential: issuing a new one revokes all earlier credentials for that node. Shared project credentials remain the automatic enrollment mechanism for existing standalone deployments; treat them as enrollment secrets.
 
 Disabling or revoking access does not delete a team member's existing data. These controls govern authorization; export/import and shared/non-shared or active/inactive data selection retain their existing rules.
 

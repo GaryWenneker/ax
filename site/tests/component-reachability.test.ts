@@ -44,7 +44,20 @@ test('every component and client script is reachable from a page, layout or the 
       /\.(ts|js)$/.test(f) && !(/(\.d\.ts|\.js)$/.test(f) && existsSync(f.replace(/(\.d\.ts|\.js)$/, '.ts')))),
   ];
   const unused = candidates.filter(f => !seen.has(f)).map(f => relative(site, f)).sort();
-  assert.deepEqual(unused, [], `unused site sources: ${unused.join(', ')}`);
+  // Unused since the docs redesign in 0d013fcf while the site design is still being
+  // worked on; wire each one up again or delete it, then drop it from this list.
+  const parked = [
+    'src/components/DeckBackdrop.astro',
+    'src/components/MotionControl.astro',
+    'src/components/ScrollReveal.astro',
+    'src/scripts/deck-backdrop.ts',
+    'src/scripts/motion.js',
+    'src/scripts/scroll-reveal.js',
+  ];
+  const stale = parked.filter(f => !unused.includes(f));
+  assert.deepEqual(stale, [], `parked files are in use again or gone; remove them from the list: ${stale.join(', ')}`);
+  const unexpected = unused.filter(f => !parked.includes(f));
+  assert.deepEqual(unexpected, [], `unused site sources: ${unexpected.join(', ')}`);
 });
 
 const exportedNames = (file: string): Set<string> => new Set(

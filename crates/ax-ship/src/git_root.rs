@@ -31,7 +31,13 @@ pub fn discover_git_repos(workspace: &Path) -> Vec<String> {
 }
 
 /// Fill `ship.git_roots` from discovery and merge newly cloned repos into the list.
-/// Persists to `.ax/ship.toml` when roots change.
+///
+/// With no repos configured, `git_roots` becomes the discovered depth-1 repos.
+/// With `git_roots` configured, every entry that is still a git repository on
+/// disk is kept (nested paths such as `services/api` included), in its
+/// configured order, and newly discovered repos are appended. A configuration
+/// that names only the single `git_root` is left as it is. Persists to
+/// `.ax/ship.toml` only when `git_roots` changes.
 pub fn sync_discovered_git_roots(workspace: &Path, config: &mut ShipConfig) -> Vec<String> {
     let discovered = discover_git_repos(workspace);
 
@@ -39,31 +45,27 @@ pub fn sync_discovered_git_roots(workspace: &Path, config: &mut ShipConfig) -> V
         return discovered;
     }
 
-    let has_explicit = !config.ship.git_roots.is_empty()
-        || config
-            .ship
-            .git_root
-            .as_ref()
-            .is_some_and(|s| !s.trim().is_empty());
+    let has_single_root = config
+        .ship
+        .git_root
+        .as_ref()
+        .is_some_and(|s| !s.trim().is_empty());
 
-    if !has_explicit && !discovered.is_empty() {
-        config.ship.git_roots = discovered.clone();
-        let _ = ax_remote::save_ship_config(workspace, config);
-        return discovered;
-    }
-
-    if !discovered.is_empty() {
-        let existing: HashSet<String> = discovered.iter().cloned().collect();
-        config.ship.git_roots.retain(|r| existing.contains(r));
-        let mut changed = false;
+    if config.ship.git_roots.is_empty() {
+        if !has_single_root && !discovered.is_empty() {
+            config.ship.git_roots = discovered.clone();
+            let _ = ax_remote::save_ship_config(workspace, config);
+            return discovered;
+        }
+    } else if !discovered.is_empty() {
+        let before = config.ship.git_roots.clone();
+        config.ship.git_roots.retain(|r| is_git_repo(workspace, r));
         for repo in &discovered {
             if !config.ship.git_roots.contains(repo) {
                 config.ship.git_roots.push(repo.clone());
-                changed = true;
             }
         }
-        if changed || config.ship.git_roots.len() != existing.len() {
-            config.ship.git_roots.sort();
+        if config.ship.git_roots != before {
             let _ = ax_remote::save_ship_config(workspace, config);
         }
     }
@@ -71,11 +73,16 @@ pub fn sync_discovered_git_roots(workspace: &Path, config: &mut ShipConfig) -> V
     resolve_sonar_repo_names(workspace, config)
 }
 
+/// Whether `rel` (relative to `workspace`) is a git repository on disk.
+fn is_git_repo(workspace: &Path, rel: &str) -> bool {
+    let rel = rel.trim();
+    !rel.is_empty() && workspace.join(rel).join(".git").exists()
+}
+
 /// Git repo folder names for Sonar provisioning — configured roots plus any autodiscovered repos.
 /// Repos listed in `sonar.exclude_repos` are filtered out.
 pub fn resolve_sonar_repo_names(workspace: &Path, config: &ShipConfig) -> Vec<String> {
     let discovered = discover_git_repos(workspace);
-    let existing: HashSet<String> = discovered.iter().cloned().collect();
     let mut names = if config.ship.git_roots.is_empty() {
         discovered
     } else {
@@ -83,7 +90,7 @@ pub fn resolve_sonar_repo_names(workspace: &Path, config: &ShipConfig) -> Vec<St
             .ship
             .git_roots
             .iter()
-            .filter(|r| existing.contains(*r))
+            .filter(|r| is_git_repo(workspace, r))
             .cloned()
             .collect();
         for repo in discovered {
@@ -352,5 +359,93 @@ mod tests {
 
         let repos = discover_git_repos(ws);
         assert_eq!(repos, vec!["alpha", "beta"]);
+    }
+
+    fn nested_workspace() -> tempfile::TempDir {
+        let dir = temp_workspace();
+        let ws = dir.path();
+        fs::create_dir_all(ws.join("services/api/.git")).unwrap();
+        fs::create_dir_all(ws.join("services/web/.git")).unwrap();
+        fs::create_dir_all(ws.join("tools/.git")).unwrap();
+        dir
+    }
+
+    #[test]
+    fn sync_keeps_configured_nested_git_roots() {
+        let dir = nested_workspace();
+        let ws = dir.path();
+        let mut config = ShipConfig {
+            ship: ax_remote::ShipSection {
+                git_roots: vec!["services/api".into(), "services/web".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        sync_discovered_git_roots(ws, &mut config);
+        assert_eq!(
+            config.ship.git_roots,
+            vec!["services/api", "services/web", "tools"]
+        );
+        let saved = ax_remote::load_ship_config(ws);
+        assert_eq!(saved.ship.git_roots, config.ship.git_roots);
+        let roots = resolve_git_roots(ws, &config).unwrap();
+        assert!(roots.contains(&ws.join("services/api")));
+    }
+
+    #[test]
+    fn sync_drops_only_configured_roots_that_are_gone() {
+        let dir = nested_workspace();
+        let ws = dir.path();
+        let mut config = ShipConfig {
+            ship: ax_remote::ShipSection {
+                git_roots: vec!["services/api".into(), "removed".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        sync_discovered_git_roots(ws, &mut config);
+        assert_eq!(config.ship.git_roots, vec!["services/api", "tools"]);
+    }
+
+    #[test]
+    fn sync_leaves_a_single_git_root_alone() {
+        let dir = nested_workspace();
+        let ws = dir.path();
+        let mut config = ShipConfig {
+            ship: ax_remote::ShipSection {
+                git_root: Some("services/api".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        sync_discovered_git_roots(ws, &mut config);
+        assert!(
+            config.ship.git_roots.is_empty(),
+            "{:?}",
+            config.ship.git_roots
+        );
+        assert!(!ws.join(".ax/ship.toml").exists());
+        let roots = resolve_git_roots(ws, &config).unwrap();
+        assert_eq!(roots, vec![ws.join("services/api")]);
+    }
+
+    #[test]
+    fn sonar_names_keep_configured_nested_roots() {
+        let dir = nested_workspace();
+        let ws = dir.path();
+        let config = ShipConfig {
+            ship: ax_remote::ShipSection {
+                git_roots: vec!["services/api".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_sonar_repo_names(ws, &config),
+            vec!["services/api", "tools"]
+        );
     }
 }

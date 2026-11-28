@@ -7,6 +7,27 @@ Run `ax <command> --help` for the same information from the installed binary. Gl
 
 The MCP server (`ax serve --mcp`) is started by your agent — you do not run it manually. See [MCP Server](/reference/mcp-server/).
 
+This page describes the CLI of the headless ax: the CLI and the MCP server, without a built-in interface. The visual interface is [`ax-admin`](#ax-admin), a separate program.
+
+## Which build has which command
+
+There are two builds of `ax`. The headless build has the CLI and the MCP server. The full ax adds the Command Center, the desktop client and self-update. The full ax is being phased out; see [Headless ax and ax-admin](/guides/phase-out/). Today the headless build is released for Linux only ([Headless Linux build](/guides/headless-linux/)); on macOS and Windows the released ax is the full ax, and its CLI and MCP server are the same commands.
+
+Every command on this page is in both builds, except these:
+
+| Command | In the headless build |
+|---|---|
+| [`ax web`](#ax-web-path) | Exits with a message that it is not part of this build |
+| [`ax share`](#ax-share-path) | Exits with a message that it is not part of this build |
+| [`ax desktop`](#ax-desktop-path) | Exits with a message that it is not part of this build |
+| [`ax ship --watch`](#ax-ship-path) | Exits with a message that it is not part of this build. `ax ship --evaluate`, `--ci` and `--draft` work |
+| [`ax upgrade`](#ax-upgrade-version) | Exits with a message that self-update is disabled. Run the installer again to upgrade. The update notice after other commands is off too |
+| [`ax server`](#ax-server-sync-apply-and-run) | Removed. The command does not exist |
+
+These commands belong to the full ax. Their sections below are marked "Full ax only".
+
+The headless installer (`install-slim.sh`) installs the binary only. It does not configure agents; run [`ax install`](#ax--ax-install) yourself for that.
+
 ## Global options
 
 | Flag | Description |
@@ -97,7 +118,7 @@ ax uninstall
 
 ### `ax init [path]`
 
-`ax init --all` is what the installer and `ax upgrade` run after the binary is in place. It walks four levels under your home directory, skips hidden folders and dependency folders, and refreshes every directory that already has `.ax/ax.db`. A git repository or other software project without that database is left untouched. It does not prompt. A nested package inside an existing ax project is left to that project. `AX_SKIP_PROJECT_INIT=1` skips the scan. After `ax install`, run `ax init` in each directory where you want to use ax. `--all` does not do that.
+`ax init --all` is what the full ax installer and `ax upgrade` (full ax only) run after the binary is in place. It walks four levels under your home directory, skips hidden folders and dependency folders, and refreshes every directory that already has `.ax/ax.db`. A git repository or other software project without that database is left untouched. It does not prompt. A nested package inside an existing ax project is left to that project. `AX_SKIP_PROJECT_INIT=1` skips the scan. After `ax install`, run `ax init` in each directory where you want to use ax. `--all` does not do that.
 
 Initialize a project: create `.ax/` (database, lock, `ship.toml`), index the project, install git hooks, install the Cursor savings hook (`ax savings hook install`), import Claude and Cursor savings logs (`ax savings import --all`), then offer the agent installer. A workspace init runs the savings steps once, after every member.
 
@@ -210,6 +231,22 @@ Alias for `ax sync --watch`.
 ```bash
 ax watch
 ax watch --quiet
+```
+
+### `ax plugins`
+
+Lists the project's extractor plugins (`.ax/plugins/<name>/plugin.toml`) and controls which ones may run. A plugin can run any command, so `ax index`, `ax sync` and the MCP server skip every plugin until you trust it. Trust is stored in `~/.ax/plugin-trust.json` per plugin folder and is bound to a hash of every file in that folder (`plugin.toml`, the scripts or wasm module it runs, and anything else there); changing, adding or removing any of them needs a new `ax plugins trust`. See [Extractor plugins](/guides/plugins/).
+
+| Subcommand | Description |
+|---|---|
+| `list [path] [--json]` | Each plugin, its extensions, the command it runs, and whether it is trusted |
+| `trust [--path <p>] [names…]` | Trust all plugins of the project, or only the named ones |
+| `untrust [--path <p>] [names…]` | Remove the trust again |
+
+```bash
+ax plugins list
+ax plugins trust terraform
+ax plugins untrust
 ```
 
 ### `ax status [path]`
@@ -397,7 +434,7 @@ ax api crates/ax-share/src --limit 50 --json
 
 ## Architecture insights
 
-Whole-graph analysis built on the same engine as the `ax_insights` / `ax_report` MCP tools and the Command Center **Graph** page. See [Architecture Insights](/guides/architecture-insights/).
+Whole-graph analysis built on the same engine as the `ax_insights` / `ax_report` MCP tools. In ax-admin, the **Insights** page shows the communities and the most connected nodes. See [Architecture Insights](/guides/architecture-insights/).
 
 ### `ax insights [path]`
 
@@ -454,7 +491,7 @@ ax validate --ci
 
 ### `ax export okf [path]` / `ax export concepts [path]`
 
-Export an **Open Knowledge Format (OKF)** Markdown bundle from the indexed graph — one YAML-frontmatter page per concept with Calls / Called by links. Configure the relative output path under `okf` in `ax.json` (default `.ax/knowledge`). The same export can be started from Command Center **Settings → Open Knowledge Format (OKF)**. See [Open Knowledge Format (OKF)](/guides/okf/).
+Export an **Open Knowledge Format (OKF)** Markdown bundle from the indexed graph — one YAML-frontmatter page per concept with Calls / Called by links. Configure the relative output path under `okf` in `ax.json` (default `.ax/knowledge`). See [Open Knowledge Format (OKF)](/guides/okf/).
 
 | Argument / flag | Type | Default | Description |
 |---|---|---|---|
@@ -480,7 +517,7 @@ ax export concepts
 
 ### `ax export graph [path]`
 
-Export the knowledge graph for external tools. Includes Leiden community ids, degree, and god-node flags. Command Center **Graph** can download the same formats (except interactive HTML) via **Export → Download**.
+Export the knowledge graph for external tools. Includes Leiden community ids, degree, and god-node flags.
 
 | Argument / flag | Type | Description |
 |---|---|---|
@@ -645,7 +682,7 @@ ax memory prune-file-changes --apply
 
 ### `ax docs-catalog sync`
 
-Build `documentation-catalog` memories from an optional git wiki, `.docs/`, agent skills, and script READMEs, import them into `ax.db`, and run `ax sync`. The Command Center Memory page (**Sync docs catalog**) uses the same engine.
+Build `documentation-catalog` memories from an optional git wiki, `.docs/`, agent skills, and script READMEs, import them into `ax.db`, and run `ax sync`.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -674,6 +711,10 @@ Configure it in `ax.json` under `docsCatalog`. Every key is optional, and there 
 | `skill` | none | Skill name mentioned in the refresh instructions |
 | `jsonl_path` | `.ax/memory/documentation-catalog.jsonl` | Output file |
 | `docs_root` / `skills_root` / `scripts_root` | `.docs` / `.agents/skills` / `.scripts` | Workspace sources |
+
+Every path key must stay inside the project: absolute paths, `..` and symbolic links that lead out of the project are refused, and the sync stops with an error naming the key. `wiki_apps_subdir`, `wiki_integrations_dir` and `wiki_products_page` must be relative paths inside the wiki. A `wiki_remote` that starts with `-` is refused, because git would read it as an option.
+
+The wiki `git clone` and `git pull` never prompt: they run without a terminal or credential prompt and stop with an error after 10 minutes. A private wiki therefore needs credentials git can use on its own (a credential helper, an SSH key or a token in the URL).
 
 ```json
 {
@@ -783,7 +824,7 @@ ax db repair
 
 `ax db check` exits non-zero when it finds a problem. `ax db repair` writes a `VACUUM INTO` snapshot into `.ax/backups/db/` before it changes a readable database. A file that cannot be vacuumed is copied as bytes, including its write-ahead log. Repair rebuilds indexes and full-text search, removes cues, links, edges, file contents, and unresolved refs that point at a missing parent, extracts again any project file that still has a node on a dangling edge, checkpoints the write-ahead log, and applies migrations that have not run. An embedding that is not 1024 bytes is reported and left for a later re-embed. It does not delete a memory to make a check pass. A file that is not a database is copied aside and left in place.
 
-`--stop-writers` stops the project daemon and retries. A file that is still locked is left unchanged. The lock finding names the process id and command when `lsof` can see who has the file open. It does not stop MCP or `ax web`.
+`--stop-writers` stops the project daemon and retries. A file that is still locked is left unchanged. The lock finding names the process id and command when `lsof` can see who has the file open. It does not stop MCP, or `ax web` in the full ax.
 
 ### Guard mapping (`ax_guard`)
 
@@ -868,34 +909,35 @@ git diff --name-only main | ax affected --stdin
 
 ---
 
-## Command Center
+<a id="command-center"></a>
+
+## Quality gate, LSP and agent hooks
 
 ### `ax ship [path]`
 
-Git-aware quality gates, SSE dashboard, draft PRs. See [Command Center](/guides/command-center/).
+Git-aware quality gate and draft PRs. The MCP tool `ax_ship` runs the same evaluation (`mode`: `evaluate` or `ci`). `--watch`, with `--port` and `--open`, starts the dashboard of the full ax and is not in the headless build; see [Which build has which command](#which-build-has-which-command).
 
 | Argument / flag | Type | Default | Description |
 |---|---|---|---|
 | `path` | optional | cwd | Project root |
-| `--watch` | flag | — | Watch git events and open dashboard |
+| `--watch` | flag | — | Full ax only. Watch git events and open dashboard |
 | `--evaluate` | flag | — | Run one quality-gate evaluation |
 | `--ci` | flag | — | Headless CI: evaluate, print JSON on stdout, summary on stderr, **exit 1** if the gate failed |
 | `--draft` | flag | — | Create draft PR after quality gate |
 | `--title` | string | — | PR title |
-| `--port` | number | `7070` | Dashboard port |
-| `--open` | flag | — | Open browser |
+| `--port` | number | `7070` | Full ax only. Dashboard port for `--watch` |
+| `--open` | flag | — | Full ax only. Open browser for `--watch` |
 | `--auto-commit` | flag | — | Force-enable Aider-style checkpoint commit before this evaluation, overriding `.ax/ship.toml` `[auto_commit]` for this run only |
 | `--revert-on-fail` | flag | — | With `--auto-commit`, `git reset --mixed` the checkpoint if the quality gate fails (file contents stay on disk, uncommitted) |
 | `--quiet` | flag | — | With `--evaluate`: print nothing when the gate passes and one line on stderr (`ax: quality gate failed: <steps>`) when it fails. Exits 0 whether the gate passes or fails. The git hooks ax installs use this. In a directory without `.ax/` it does nothing and exits 0 |
 
 ```bash
-ax ship --watch --open
 ax ship --evaluate
 ax ship --evaluate --quiet       # what the git hooks run
 ax ship --ci                     # CI / GitHub Actions
 ax ship --evaluate --auto-commit --revert-on-fail
 ax ship --draft --title "feat: memory vault"
-ax web --open                    # Command Center without git watch
+ax ship --watch --open           # full ax only
 ```
 
 Example workflows:
@@ -907,6 +949,8 @@ Example workflows:
 ---
 
 ### `ax share [path]`
+
+Full ax only. Not in the headless build. The full ax is being phased out; see [Headless ax and ax-admin](/guides/phase-out/).
 
 Share Command Center on the LAN with a bearer token (read-only session).
 
@@ -984,14 +1028,14 @@ Zed, Continue, Kiro, opencode, Antigravity, and Hermes have no blocking tool hoo
 
 MCP background daemon control (shared index connection per project). IDEs attach as stdio proxies; `restart` clears a stuck daemon and stale locks.
 
-The daemon follows its binary. It checks every 30 seconds (`AX_DAEMON_EXE_CHECK_MS`) whether its `ax` file was replaced, for example by `ax upgrade`, and then stops cleanly. A proxy on a newer `ax` build restarts an older daemon on its own binary; a proxy on an older build attaches to a newer daemon and leaves it running. When the daemon goes away, the proxies reconnect or start a new one without the IDE noticing. A call that was in flight gets the error `ax daemon restarted; retry the call`. If no daemon is back within 15 seconds, the proxy exits with the reason on stderr.
+The daemon follows its binary. It checks every 30 seconds (`AX_DAEMON_EXE_CHECK_MS`) whether its `ax` file was replaced, for example by an upgrade, and then stops cleanly. A proxy on a newer `ax` build restarts an older daemon on its own binary; a proxy on an older build attaches to a newer daemon and leaves it running. When the daemon goes away, the proxies reconnect or start a new one without the IDE noticing. A call that was in flight gets the error `ax daemon restarted; retry the call`. If no daemon is back within 15 seconds, the proxy exits with the reason on stderr.
 
 | Argument / subcommand | Description |
 |---|---|
 | `path` | Optional project root (before subcommand) |
 | `status` | Show pid, port, socket from `.ax/daemon.json` (default) |
 | `stop` | Stop the running daemon. It first checks that the recorded pid is still an ax daemon, sends SIGTERM, waits up to 5 seconds, then sends SIGKILL; it reports "stopped" only once the process is gone and fails otherwise. A pid that now belongs to another program is left running and the stale `.ax/daemon.json` is removed |
-| `restart` | Stop + start a fresh daemon (Command Center **Reload MCP** uses the same path) |
+| `restart` | Stop + start a fresh daemon |
 
 ```bash
 ax daemon status
@@ -1014,6 +1058,10 @@ ax --version
 ```
 
 ### `ax upgrade [version]`
+
+Full ax only. Not in the headless build. The full ax is being phased out; see [Headless ax and ax-admin](/guides/phase-out/).
+
+To upgrade a headless build, run its installer again or pull a newer image; see [Headless Linux build](/guides/headless-linux/#install).
 
 Self-update from GitHub Releases, with [getax.wenneker.io/releases](https://getax.wenneker.io/releases/latest.txt) as the fallback. Non-interactive — no confirmation prompt.
 
@@ -1069,7 +1117,7 @@ ax telemetry off
 
 ### `ax savings`
 
-Estimated context-token savings from graph queries. Stored locally in `~/.ax/usage.db`. Each graph MCP call, and each CLI command with that MCP twin (`ax explore`, `ax query`, `ax node`, and the rest of the graph commands), logs response size and a counterfactual file-read estimate. Commands with no twin, such as `ax install` and `ax web`, are not logged. The combined total is what `ax savings` and the Savings page report.
+Estimated context-token savings from graph queries. Stored locally in `~/.ax/usage.db`. Each graph MCP call, and each CLI command with that MCP twin (`ax explore`, `ax query`, `ax node`, and the rest of the graph commands), logs response size and a counterfactual file-read estimate. Commands with no twin, such as `ax install`, are not logged. The combined total is what `ax savings` reports.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -1093,11 +1141,11 @@ ax savings hook install
 | `tag-session` | Manually record model name for a session id |
 | `hook install` | Install the Cursor sessionStart hook into `~/.cursor/hooks/` (executable) and merge it into `~/.cursor/hooks.json`; a `hooks.json` that is not valid JSON is left untouched with a message |
 
-The **Savings** page in `ax web` (enable in Settings) exposes the same filters. See [Token savings](/guides/token-savings/).
+In ax-admin, the **Usage** page shows cost and savings; it needs the admin grant. See [Token savings](/guides/token-savings/).
 
 ### `ax pricing`
 
-Daily model price sync from [OpenRouter](https://openrouter.ai/models) (no API key). Snapshots land in `~/.ax/usage.db` and drive Savings USD estimates plus the Command Center **Prices** page. `ax web` / MCP auto-sync once per calendar day; use this command to force or inspect.
+Daily model price sync from [OpenRouter](https://openrouter.ai/models) (no API key). Snapshots land in `~/.ax/usage.db` and drive the USD estimates of `ax savings`. The MCP server syncs once per calendar day; use this command to force or inspect.
 
 | Subcommand | Description |
 |---|---|
@@ -1174,7 +1222,7 @@ ax budget set --monthly 60 --currency eur --usd-per-eur 1.08 --working-days 22 -
 
 ### `ax mcp remote`
 
-Run project-scoped MCP behind your existing HTTPS tunnel. The dedicated listener uses an available loopback port; it does not expose the Command Center administration API. Native browser login uses Authorization Code + PKCE and the operating system credential store.
+Run project-scoped MCP behind your existing HTTPS tunnel. The dedicated listener uses an available loopback port; it does not expose the Command Center administration API of the full ax. Native browser login uses Authorization Code + PKCE and the operating system credential store.
 
 ```bash
 ax mcp remote register --config /absolute/path/remote-mcp.json --name "Team Ax"
@@ -1187,11 +1235,11 @@ ax mcp remote proxy --url https://ax.example.com/projects/my-project/mcp
 ax mcp remote logout --url https://ax.example.com/projects/my-project/mcp
 ```
 
-`register` saves validated public project export metadata without starting the server or signing in. Find client presets and copy/download actions in **Settings → Connections → Remote MCP → Share this project**. `serve` registers metadata automatically. The optional Unix socket supports macOS/Linux. `login --write` requests additional memory/policy permissions; the server must also grant them. Configure your OAuth issuer and client registrations before connecting. See [Remote MCP and browser login](/guides/remote-mcp/) for configuration, Cloudflare routing, ChatGPT registration and deployment limits.
+`register` saves validated public project export metadata without starting the server or signing in. `serve` registers metadata automatically. The optional Unix socket supports macOS/Linux. `login --write` requests additional memory/policy permissions; the server must also grant them. Configure your OAuth issuer and client registrations before connecting. See [Remote MCP and browser login](/guides/remote-mcp/) for configuration, Cloudflare routing, ChatGPT registration and deployment limits.
 
 ### `ax mcp audit`
 
-Correlate `<project>/.ax/mcp-verbose-*.log` (daily files) with a Cursor agent transcript and score MCP quality (preflight, enrichment, explore-before-grep, correlation). Same engine powers the Command Center **Quality** status-bar chip and slide-out. Persists a snapshot to `.ax/audit/latest.json`. Exit code `2` when critical findings are present.
+Correlate `<project>/.ax/mcp-verbose-*.log` (daily files) with a Cursor agent transcript and score MCP quality (preflight, enrichment, explore-before-grep, correlation). Persists a snapshot to `.ax/audit/latest.json`. Exit code `2` when critical findings are present.
 
 CLI graph and policy commands (`ax explore`, `ax node`, `ax query`, `ax remember` / `ax recall`, `ax preflight`, `ax policy match|index|guard|skill`, …) append the same inbound/outbound shapes as MCP (branded `[ax]`) from **ax 8.4.4**, plus Internal domain lines. See [MCP Logging & Quality — Directions](/guides/mcp-quality/#directions-inbound-outbound-internal).
 
@@ -1225,7 +1273,7 @@ ax mcp audit --session path/to/transcript.jsonl --json
 
 ### `ax cursor auth`
 
-Save and restore Cursor IDE auth sessions for fast subscription switching. Snapshots `cursorAuth/*` keys from `%APPDATA%\\Cursor\\User\\globalStorage\\state.vscdb` plus `auth.json` into `~/.ax/cursor-auth/`.
+Save and restore Cursor IDE auth sessions for fast subscription switching. Snapshots `cursorAuth/*` keys from `%APPDATA%\\Cursor\\User\\globalStorage\\state.vscdb` plus `auth.json` into `~/.ax/cursor-auth/`. The snapshots hold your Cursor access and refresh tokens, so on macOS and Linux that folder is readable only by you (0700) and each file in it is 0600.
 
 | Subcommand | Description |
 |---|---|
@@ -1322,7 +1370,13 @@ ax neural export --out neural-feedback.json
 
 ## Web UI
 
+Full ax only. Not in the headless build. The full ax is being phased out; see [Headless ax and ax-admin](/guides/phase-out/).
+
+For a visual interface next to the headless build, use [`ax-admin`](#ax-admin).
+
 ### `ax web [path]`
+
+Full ax only. Not in the headless build. The full ax is being phased out; see [Headless ax and ax-admin](/guides/phase-out/).
 
 Local web UI — graph browser, policy editor, token usage dashboard, Command Center tab.
 
@@ -1347,6 +1401,8 @@ ax web ./my-repo --port 8080 --open
 
 ### `ax desktop [path]`
 
+Full ax only. Not in the headless build. The full ax is being phased out; see [Headless ax and ax-admin](/guides/phase-out/).
+
 Native wgpu Command Center (egui/eframe). Embeds `ax-web` in-process — same `/api` as the browser UI, no browser required. See [Desktop Client](/guides/desktop-client/).
 
 | Argument / flag | Type | Default | Description |
@@ -1365,6 +1421,8 @@ ax desktop ./my-repo --port 17070 --bind 127.0.0.1
 ```
 
 ### Desktop client binary (`ax-desktop`)
+
+Full ax only. Not in the headless build. The full ax is being phased out; see [Headless ax and ax-admin](/guides/phase-out/).
 
 Standalone binary from `crates/ax-desktop-client` (same UI as `ax desktop`):
 
@@ -1405,7 +1463,7 @@ ax policy import ./my-project
 
 ### `ax policy dedup [path]`
 
-Remove project rules and skills that `~/.ax/global.db` already holds. A longer project copy is first promoted into the global row as a new version. Every removed body is kept as a revision; files on disk are not touched. This also runs automatically after sync, policy index, `ax global sync`, `ax install`, and in `ax web` every 10 minutes. Exits non-zero when the run stops on an error. `--dry-run` on a `global.db` from before this feature reports that the schema is older; any real run upgrades it.
+Remove project rules and skills that `~/.ax/global.db` already holds. A longer project copy is first promoted into the global row as a new version. Every removed body is kept as a revision; files on disk are not touched. This also runs automatically after sync, policy index, `ax global sync`, `ax install`, and, in the full ax, in `ax web` every 10 minutes. Exits non-zero when the run stops on an error. `--dry-run` on a `global.db` from before this feature reports that the schema is older; any real run upgrades it.
 
 ```bash
 ax policy dedup --dry-run
@@ -1509,7 +1567,7 @@ ax policy quality english-only
 ax skill report-installs --on
 ```
 
-Installed skills are usable immediately. For a well-known URL, every file the index lists must be relative to the index or on the same origin (scheme, host and port); a file on another server is refused, and so is a redirect that leaves that origin. Each download stops at 25 MiB. `ax skill audit` stores a quality report for one skill and does not hide it. `ax skill brief` prints the edits for skills and rules. `ax policy quality <id>` audits one rule file and stores the same kind of report. Preflight includes both, and `ax_rules` returns rule briefs in `audits`. The agent edits the named file and leaves the skill or rule enabled. `--source` audits a catalog candidate without installing it. An agent submits a verdict JSON file with `verdict` (`pass`, `revise`, or `reject`), scores `clarity`, `trigger`, `steps`, `files`, and `safety` from 1 to 5, and findings whose `evidence` quotes the skill text. Reporting an install to skills.sh stays off until `ax skill report-installs --on` or the Report installs switch on the Skills page.
+Installed skills are usable immediately. For a well-known URL, every file the index lists must be relative to the index or on the same origin (scheme, host and port); a file on another server is refused, and so is a redirect that leaves that origin. Each download stops at 25 MiB. `ax skill audit` stores a quality report for one skill and does not hide it. `ax skill brief` prints the edits for skills and rules. `ax policy quality <id>` audits one rule file and stores the same kind of report. Preflight includes both, and `ax_rules` returns rule briefs in `audits`. The agent edits the named file and leaves the skill or rule enabled. `--source` audits a catalog candidate without installing it. An agent submits a verdict JSON file with `verdict` (`pass`, `revise`, or `reject`), scores `clarity`, `trigger`, `steps`, `files`, and `safety` from 1 to 5, and findings whose `evidence` quotes the skill text. Reporting an install to skills.sh stays off until `ax skill report-installs --on`.
 
 ### `ax policy skill <name> [path]`
 
@@ -1778,7 +1836,7 @@ ax policy pack status --json
 
 #### `ax policy pack install [name] [path]`
 
-Install a built-in pack into **project** scope (`.ax/policy/`), then import/re-index so MCP and Command Center see the new items. In **database** storage mode the install force-imports files into `ax.db` (not counts-only). Company/private scopes are not modified.
+Install a built-in pack into **project** scope (`.ax/policy/`), then import/re-index so MCP sees the new items. In **database** storage mode the install force-imports files into `ax.db` (not counts-only). Company/private scopes are not modified.
 
 | Flag | Description |
 |---|---|
@@ -1811,7 +1869,7 @@ ax policy restore --preview team.ax-policy.zip
 ax policy restore team.ax-policy.zip --decisions decisions.json
 ```
 
-`decisions.json` maps `"rule:<id>"` / `"skill:<name>"` to `overwrite`, `skip`, `{ "action": "merge", "acceptHunks": [0] }`, or `{ "action": "merge", "hunks": [{ "index": 0, "take": "both" }] }` (`take` is `local`, `package`, `both`, or `none`). Preview JSON includes `newer` and each packed path may include `contentHash` (blake3). Missing decision keys: **new** → install (`overwrite`), **conflict** → skip. Invalid hunk indexes fail the restore. Accepted writes are recorded in the local hash-on-change revision log (Command Center **History**).
+`decisions.json` maps `"rule:<id>"` / `"skill:<name>"` to `overwrite`, `skip`, `{ "action": "merge", "acceptHunks": [0] }`, or `{ "action": "merge", "hunks": [{ "index": 0, "take": "both" }] }` (`take` is `local`, `package`, `both`, or `none`). Preview JSON includes `newer` and each packed path may include `contentHash` (blake3). Missing decision keys: **new** → install (`overwrite`), **conflict** → skip. Invalid hunk indexes fail the restore. Accepted writes are recorded in the local hash-on-change revision log.
 
 ### `ax policy review`
 
@@ -1835,7 +1893,7 @@ ax policy review reject mobile-first
 
 Remote policy share sync from any git host (GitHub, GitLab, Azure DevOps, on-prem) or OneDrive / SharePoint. See [Remote Policy Share](/guides/policy-sharing/).
 
-Config is stored in **`<project>/ax.json`** under the `"share"` key (per project only). Manage in Command Center Settings.
+Config is stored in **`<project>/ax.json`** under the `"share"` key (per project only). `ax policy share config` shows it.
 
 #### `ax policy share config [path]`
 
@@ -1991,13 +2049,15 @@ Approving a new spec body marks selections of plans written against the previous
 
 `ax spec-policy` records which policy revision applies. A `body` field is rejected. The stored link has the revision id and content hash, not the rule text. Sending the same link again keeps the one row.
 
-A stale `basedOn` on `ax spec-revise` or `ax spec-amend` comes back as an error containing `conflict`, with `base` (the revision you named), `head` (the current revision), and `incoming` (the body that was not stored). Nothing is merged. An empty spec body is rejected. Approval reads the member's role. A `roles` field in the JSON is ignored. The command binds the active owner and forces the actor to be human, so it only runs in an interactive terminal: it shows what will be approved and in whose name, and records the approval only after you type `approve`. Run without a terminal (an agent's shell tool, a script, a pipe), it is refused before anything is read. Approve in the Command Center when you are not at a terminal.
+A stale `basedOn` on `ax spec-revise` or `ax spec-amend` comes back as an error containing `conflict`, with `base` (the revision you named), `head` (the current revision), and `incoming` (the body that was not stored). Nothing is merged. An empty spec body is rejected. Approval reads the member's role. A `roles` field in the JSON is ignored. The command binds the active owner and forces the actor to be human, so it only runs in an interactive terminal: it shows what will be approved and in whose name, and records the approval only after you type `approve`. Run without a terminal (an agent's shell tool, a script, a pipe), it is refused before anything is read. The full ax, which is being phased out, can also approve in its Command Center; see [Command Center](/guides/command-center/).
 
 ```bash
 ax spec-approve '{"projectId":"ax","artifactKind":"plan","artifactId":"ledger","version":1,"reason":"Ready to build."}'
 ```
 
-| Route | CLI |
+The Command Center of the full ax serves the same operations over HTTP. The headless build has no such routes; use the CLI commands.
+
+| Route (full ax only) | CLI |
 |---|---|
 | `POST /api/specs/with-plan` | `ax spec-create` |
 | `POST /api/specs/alternative-plan` | `ax spec-plan` |
@@ -2047,7 +2107,7 @@ ax capture-git
 # Git / ship
 ax diff --base main --json
 ax test-impact --base main
-ax ship --watch --open
+ax ship --evaluate
 
 # Specifications
 ax spec billing-spec
@@ -2061,7 +2121,7 @@ ax policy capture "always validate input"
 ax policy share sync
 ax auth microsoft status
 
-# Upgrade
+# Upgrade (full ax only)
 ax upgrade
 ax upgrade --local
 ```
@@ -2096,6 +2156,8 @@ ax-admin version
 `AX_ADMIN_HOME` selects the folder that holds `connections.json` (default `~/.ax-admin`).
 
 ## `ax server sync`, `apply` and `run`
+
+Full ax only. Not in the headless build. The full ax is being phased out; see [Headless ax and ax-admin](/guides/phase-out/).
 
 An enrolled Replica contributes native and locally edited knowledge to the configured Primary and receives the combined cluster snapshot. Empty peers and omitted records cannot delete existing local data. Conflicting origins use separate IDs; prior accepted revisions remain retained. Both nodes must support protocol 3. Full graph, indexed source, logs and project-scoped conversation history travel in verified chunks alongside the knowledge exchange.
 

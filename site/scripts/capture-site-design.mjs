@@ -74,7 +74,7 @@ try {
     if (route === "/") {
       const hero = await page.evaluate(() => {
         const lines = [...document.querySelectorAll('h1 > span')];
-        const lime = getComputedStyle(document.body).getPropertyValue('--ax-lime').trim();
+        const lime = getComputedStyle(document.body).getPropertyValue('--ax-accent').trim();
         const probe = document.createElement('span');
         probe.style.color = lime;
         document.body.append(probe);
@@ -115,9 +115,9 @@ try {
         wordmark: document.querySelector('.cg-site-title__wordmark')?.textContent?.trim(),
         backdrop: getComputedStyle(document.querySelector('[data-ax-backdrop-root]') ?? document.body).position === 'fixed',
         moire: !!document.querySelector('.ax-doc-moire, .ax-halftone'),
-        lime: getComputedStyle(document.documentElement).getPropertyValue('--ax-lime').trim(),
+        lime: getComputedStyle(document.documentElement).getPropertyValue('--ax-accent').trim(),
       }));
-      if (docsTheme.wordmark !== 'Ax_' || !docsTheme.backdrop || docsTheme.moire || docsTheme.lime !== '#b9ff6a') {
+      if (docsTheme.wordmark !== 'Ax_' || !docsTheme.backdrop || docsTheme.moire || docsTheme.lime !== '#8fbfff') {
         throw new Error(name + ': docs did not inherit landing identity: ' + JSON.stringify(docsTheme));
       }
     }

@@ -3,9 +3,7 @@ title: Token Savings
 description: How ax cuts agent token usage with graph queries, plus a complete playbook for reducing LLM costs by 60-99% in production.
 ---
 
-ax measures how much context its graph queries save compared to blind file reads, and ships a dashboard to track it over time.
-
-![Context savings — tokens saved, cost reduction, graph call metrics, highlights, and daily activity heatmap](/screenshots/cc-savings-dashboard-dark.png)
+ax measures how much context its graph queries save compared to blind file reads. `ax savings` reports it over time. In [ax-admin](/guides/remote-admin/), the **Usage** page shows cost, tool economics, budget, and advice.
 
 A single agent session can consume 50K-100K tokens. Most of that cost comes from reading entire files when the agent only needs a few symbols. ax replaces those broad reads with targeted graph queries and logs exactly how much context each call avoided.
 
@@ -38,7 +36,7 @@ saved(call) = max( counterfactual_tokens - response_tokens, 0 )
 
 Policy tools (`ax_preflight`, `ax_guard`) are logged but excluded from savings totals — they are not Read substitutes.
 
-The same log records CLI commands that have an MCP twin. `ax explore`, `ax query`, `ax node`, `ax context`, `ax callers`, `ax callees`, `ax impact`, `ax path`, and `ax affected` write one row before the process exits (`transport = cli`). Savings use the same graph-tool allowlist, so `ax explore` can save tokens and `ax preflight` is stored but not counted. Commands with no twin (`ax install`, `ax web`, `ax daemon`) write nothing. The Savings page **CLI share** stat is that slice. Hero totals include both transports.
+The same log records CLI commands that have an MCP twin. `ax explore`, `ax query`, `ax node`, `ax context`, `ax callers`, `ax callees`, `ax impact`, `ax path`, and `ax affected` write one row before the process exits (`transport = cli`). Savings use the same graph-tool allowlist, so `ax explore` can save tokens and `ax preflight` is stored but not counted. Commands with no twin (`ax install`, `ax daemon`) write nothing. The totals of `ax savings` include both transports.
 
 ### Lean responses by default
 
@@ -74,7 +72,7 @@ Oversized ax MCP replies, Claude prompts, and Cursor `beforeSubmitPrompt` prompt
 
 Replies at or above 3,000 tokens (override with `AX_CONTEXT_CACHE_TOKENS`; `0` or `AX_CONTEXT_CACHE=off` disables the cache, the index, and the ledger) are replaced with a stub. Graph reads such as `ax_explore` and `ax_node` stay inline up to `AX_GRAPH_INLINE_TOKENS` (default 12,000), and past that they keep their head inline with an `ax_expand` footer. The savings log records the stub size as the response and adds the removed tokens to `tokens_saved_est` for graph tools. Policy tools `ax_preflight`, `ax_guard`, `ax_rules`, `ax_skill`, and `ax_cache_status` are never stubbed. Install the Cursor prompt hook with `ax savings hook install`.
 
-`ax_cache_status` reports both stores at any time: the context-cache counts above, and the in-process file-token cache (how many files are cached, and hit, miss, and eviction counts). The reply has no bodies and no paths. The same two lines are appended to the MCP verbose log and grouped on the Logging page by a shared color. File-token counts live in the MCP process, so the tool is the way to read them.
+`ax_cache_status` reports both stores at any time: the context-cache counts above, and the in-process file-token cache (how many files are cached, and hit, miss, and eviction counts). The reply has no bodies and no paths. The same two lines are appended to the MCP verbose log. File-token counts live in the MCP process, so the tool is the way to read them.
 
 ### Conversation cache
 
@@ -103,15 +101,13 @@ Set `AX_SAVINGS_CF_MODE` to choose the Read baseline per file:
 | `range` | Symbol line span BPE when start+end are known |
 | `max` | Per file: max(whole file, line span) |
 
-### Token view (Command Center)
+### By model and by session
 
-The **Savings** page includes a compact **TokenViz-style path graph**: log-scale weight by token position, a glowing green matched path (with ax), and grey alternate context paths. **Hover** a green node (or **long-press** on mobile) for token details; click/pin keeps the tooltip open.
+`ax savings` prints the totals for the period and a table by tool. After an import it adds a **By model** table and a sample of imported agent sessions. `--json` gives the per-tool and daily breakdown. New MCP graph calls also store short local previews in `~/.ax/usage.db`.
 
-Per-call drill-down also shows color-coded o200k BPE chips for the truncated graph response versus the counterfactual file preview. New MCP graph calls store short local previews in `~/.ax/usage.db`; older rows use a synthetic count-based path until new calls arrive. The **Token playground** tokenizes arbitrary text the same way.
+**By model** rolls up imported Cursor / Claude Code sessions: input tokens, graph savings during each session window, and USD at each model's rate. Rates resolve in order: `~/.ax/pricing.toml` overrides → latest daily OpenRouter snapshot in `~/.ax/usage.db` → built-in defaults. Run `ax savings import --all` first — MCP-only periods without imported transcripts have no model breakdown. Each MCP call counts toward at most one session: when session windows overlap, the call goes to the open session in the call's project, else to the session that started last. So the per-session and per-model savings never add up to more than the period total.
 
-**By model** rolls up imported Cursor / Claude Code sessions: input tokens, graph savings during each session window, and USD at each model's rate. Rates resolve in order: `~/.ax/pricing.toml` overrides → latest daily OpenRouter snapshot in `~/.ax/usage.db` → built-in defaults. Run **Import sessions** on the Savings page (or `ax savings import --all`) first — MCP-only periods without imported transcripts have no model breakdown. Each MCP call counts toward at most one session: when session windows overlap, the call goes to the open session in the call's project, else to the session that started last. So the per-session and per-model savings never add up to more than the period total.
-
-**Agent vs model name:** The **Agent** column is the log source (`cursor` = Cursor Composer chats, `claude` = Claude Code CLI). The **Model** column is normally the provider API id from the transcript (e.g. `claude-opus-4-8`). Cursor Composer transcripts usually omit model metadata — install the **sessionStart hook** (below) so ax records labels like `composer-2.5-fast` when each chat starts.
+**Agent vs model name:** The agent is the log source (`cursor` = Cursor Composer chats, `claude` = Claude Code CLI). The model is normally the provider API id from the transcript (e.g. `claude-opus-4-8`). Cursor Composer transcripts usually omit model metadata — install the **sessionStart hook** (below) so ax records labels like `composer-2.5-fast` when each chat starts.
 
 ### Cursor model tagging
 
@@ -137,7 +133,7 @@ ax savings tag-session --session-id <uuid> --model composer-2.5-fast
 
 ax stores a daily snapshot of model $/MTok rates in `~/.ax/usage.db` from [OpenRouter](https://openrouter.ai/models) (public API, no key).
 
-`ax web` and the MCP server sync **once per calendar day** on startup. Force a refresh anytime:
+The MCP server syncs **once per calendar day** on startup. Force a refresh anytime:
 
 ```bash
 ax pricing sync
@@ -146,7 +142,7 @@ ax pricing list
 ax pricing history claude-sonnet --days 30
 ```
 
-The Command Center **Prices** page shows the OpenRouter catalog and price-over-time charts (after two or more daily syncs). Historical Savings daily bars use that day's rate when a snapshot exists.
+`ax pricing list` prints the latest OpenRouter catalog, and `ax pricing history <model> --days N` the daily series of one model (after two or more daily syncs). ax-admin has no price page. A past day's savings are priced at that day's rate when a snapshot exists.
 
 Resolution order for USD estimates:
 
@@ -171,10 +167,6 @@ For each `composerData:{session_id}` row it merges:
 | Timestamps | First/last bubble `createdAt` in the conversation |
 
 Transcript tool counts (read / grep / ax) are merged without overwriting model or tokens. Override the database path with `AX_CURSOR_STATE_VSCDB` if needed.
-
-Weights are derived from o200k token mass / rarity in saved previews — **not** model logits or sampling temperature.
-
-Command Center settings-style pages (including Savings) use a centered content column by breakpoint: **720 → 800 → 960 → 1024px** on XXL. Full-bleed pages (Files, Graph, split blades) stay unconstrained.
 
 ---
 
@@ -252,8 +244,8 @@ Compress prompts algorithmically before sending them to the LLM.
 | Tool | Approach | Savings |
 |---|---|---|
 | [LLMLingua](https://github.com/microsoft/LLMLingua) | Coarse-to-fine iterative compression | Up to 20x |
-| [Headroom](https://github.com/headroom-ai/headroom) | Compress tool outputs, logs, RAG chunks | 60-95% |
-| [RTK](https://github.com/nicholasgasior/rtk) | Rust CLI proxy for dev-command output | 60-90% |
+| [Headroom](https://github.com/headroomlabs-ai/headroom) | Compress tool outputs, logs, RAG chunks | 60-95% |
+| [RTK](https://github.com/rtk-ai/rtk) | Rust CLI proxy for dev-command output | 60-90% |
 
 Lossless compression principles: strip prose transitions and hedging; preserve numbers, entities, and constraints; transform verbose text into dense bullets; split into 3-5K token self-contained sections.
 
@@ -264,7 +256,7 @@ Lossless compression principles: strip prose transitions and hedging; preserve n
 When using Retrieval-Augmented Generation, send only the top 3-5 most relevant text chunks — not entire documents.
 
 - Optimize chunking strategy (semantic boundaries, not fixed-length splits).
-- Use a reranker to filter before injection: [OpenProvence](https://github.com/openProvence/openProvence) drops ~99% of off-topic sentences.
+- Use a reranker to filter before injection: [OpenProvence](https://github.com/hotchpotch/open_provence) drops ~99% of off-topic sentences.
 - Research shows RAG is [1250x cheaper](https://arxiv.org/abs/2501.01880) than stuffing full documents into context for many query types.
 
 ### 8. Batch APIs
@@ -310,7 +302,7 @@ The highest-impact strategies ranked by effort-to-savings ratio:
 
 ## Model pricing snapshot (July 2026)
 
-For **live** rates, use the Command Center **Prices** page or `ax pricing list` — snapshots update daily from OpenRouter. The table below is a static reference only:
+For **live** rates, use `ax pricing list` — snapshots update daily from OpenRouter. The table below is a static reference only:
 
 | Model | Input /MTok | Output /MTok | Cache discount | Context |
 |---|---|---|---|---|
@@ -328,24 +320,22 @@ At Opus 4.8 pricing, an agent session burning 100K tokens costs **$0.50 input + 
 
 ---
 
-## Command Center dashboard
+## Reports: CLI and ax-admin
 
-The sidebar **Savings** tab (toggle visibility in Settings) shows:
+Every figure on this page comes from a CLI command:
 
-- **Hero stats** — tokens saved, cost reduction percentage, graph call count
-- **Savings over time** — hourly bar chart with day labels on X; 2 / 7 / 30 day windows and Older / Newer within the selected period; Y-axis auto-caps outliers so typical hours stay readable (hover a peak for the real value)
-- **Activity heatmap** — calendar for the selected period (empty days included), Tokens / All / Graph toggles, hover tooltips, streaks
-- **Period filter** — Apply scopes every card (timeline, heatmap, heroes, tables, sessions) to the same range
-- **By model** — session spend and savings with the resolved **$/MTok** rate (from daily sync or `pricing.toml`)
+| Command | What it reports |
+|---|---|
+| `ax savings` | Tokens saved for a period (`--period`, `--from`, `--to`), by tool, by model, and imported sessions; `--json` adds the daily breakdown |
+| `ax costs` | Spend quoted from the price catalog for imported agent turns: `today`, `month`, `session`, `model`, `project` |
+| `ax pricing` | Daily model rates: `sync`, `status`, `list`, `history <model>` |
+| `ax budget` | Monthly budget: `plan`, `simulate`, `set`. See [Agent budget](/guides/budget/) |
+| `ax agent economics`, `ax agent optimize` | Estimated tokens, cost, and avoidable context for a recorded Pi session. See [Pi integration](/guides/pi/) |
+| `ax mcp audit` | MCP quality score and tokens at risk. See [MCP Logging & Quality](/guides/mcp-quality/) |
 
-The sidebar **Prices** tab shows daily OpenRouter rates and price-over-time charts. Sync with **Sync now** or `ax pricing sync`.
-- **Trends** — saved / reduction / compare / weekday / hour / table views
-- **Token path graph** — token-position illustration (not clock time); Alt slider redraws grey path count (including synthetic overview); Matched toggles the green path; Y fits the green path while alts stay visible in-band
-- **Tool audit** — which MCP tools generate the most savings
-- **By-project** — savings breakdown per indexed project
-- **Recent calls** — individual graph calls with counterfactual vs actual
-- **Agent sessions** — correlated with imported session logs
-- **MCP quality chip** — live score + tokens at risk; opens the Quality slide-out. Full loop (Logging inbound/outbound/internal for MCP + CLI, checks, fixpack, session hook): [MCP Logging & Quality](/guides/mcp-quality/). CLI: `ax mcp audit`.
+In [ax-admin](/guides/remote-admin/), the **Usage** page shows cost, tool economics, budget, and advice. It reads the `ax_cost`, `ax_tool_economics`, `ax_budget`, and `ax_optimization_advice` MCP tools and appears only when the connection has the admin grant. The **Logging** page lists the MCP calls handled for the project.
+
+The full ax, which is being phased out, also has Savings and Prices pages in its Command Center, with a savings timeline, an activity heatmap, a token path graph, and price charts; see [Command Center](/guides/command-center/).
 
 ### Agent log import
 
@@ -406,4 +396,5 @@ Data is stored in `~/.ax/usage.db` (local only — no query strings or response 
 
 - [MCP server reference](/reference/mcp-server/) — graph tools that generate savings
 - [`ax savings` CLI](/reference/cli/#ax-savings) — command reference
-- [Command Center](/guides/command-center/) — dashboard and quality gates
+- [Agent budget](/guides/budget/) — spend against a monthly budget
+- [ax-admin](/guides/remote-admin/) — Usage and Logging pages

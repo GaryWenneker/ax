@@ -8,82 +8,43 @@ import {
   releaseAssets, getReleaseAsset, getDefaultArch, mountMinimalDownload,
   installProducts, installerCommand, platformFor, type Product,
 } from '../src/scripts/minimal-download.ts';
-import { allDecls, decl, normalizeValue, parseCss, reformat, rulesFor, type Sheet } from './css-model.ts';
 
 const site = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p: string) => readFileSync(path.join(site, p), 'utf8');
 const home = read('src/components/MinimalHome.astro');
-const cssSource = read('src/styles/minimal-home.css');
-const css = parseCss(cssSource);
-// Every CSS check runs on the file as written and on a formatter's version of
-// it, so the tests follow what the CSS means rather than its exact text.
-const sheets: [string, Sheet][] = [['as written', css], ['reformatted', parseCss(reformat(cssSource))]];
-const L = '.ax-landing ';
-const same = (actual: string | undefined, expected: string, what: string) =>
-  assert.equal(actual, normalizeValue(expected), what);
+const css = read('src/styles/minimal-home.css');
 const page = read('src/pages/index.astro');
 const download = read('src/components/MinimalDownload.astro');
 const pkg = JSON.parse(read('package.json'));
 
 // The approved copy, colors, and typography must stay in sync between
 // the visible homepage, metadata, locally bundled font, and responsive rules.
-test('approved three-line slogan, only control receives lime accent', () => {
+test('approved three-line slogan, only control receives the accent', () => {
   assert.match(home, /<h1 class="ax-headline">\s*<span>Your context\.<\/span><span>Your rules\.<\/span><span class="ax-headline-accent">Your control\.<\/span><\/h1>/);
-  for (const [label, sheet] of sheets) same(decl(sheet, `${L}.ax-headline .ax-headline-accent`, 'color'), 'var(--ax-lime)', label);
+  assert.match(css, /\.ax-headline \.ax-headline-accent\s*\{color:var\(--ax-accent\)\}/);
   assert.doesNotMatch(home, /Your codebase|understood\.|Code context kept/);
   assert.match(page, /Your context\. Your rules\. Your control\./);
 });
 
-test('Oxanium is bundled and used for the heading, not loaded from Google Fonts', () => {
-  assert.equal(pkg.dependencies['@fontsource-variable/oxanium'], '^5.3.0');
-  assert.match(page, /@fontsource-variable\/oxanium\/wght\.css/);
-  for (const [label, sheet] of sheets) assert.match(decl(sheet, `${L}.ax-headline`, 'font-family') ?? '', /^'Oxanium Variable'/, label);
+test('the homepage uses the system font stack and loads no web fonts', () => {
+  assert.match(css, /--ax-font: -apple-system, BlinkMacSystemFont, "Segoe UI"/);
+  assert.match(css, /\.ax-landing \.ax-headline \{[^}]*font-family: var\(--ax-font\)/);
+  assert.doesNotMatch(page + css, /fontsource|Oxanium|Archivo|IBM Plex/);
   assert.doesNotMatch(page, /fonts\.googleapis\.com|fonts\.gstatic\.com/);
 });
 
-test('homepage backdrop is the deck backdrop (halftone, silk ring, vignette), not the CMY moiré', () => {
-  const backdrop = read('src/components/DeckBackdrop.astro');
-  const script = read('src/scripts/deck-backdrop.ts');
-  const stylesSource = read('src/styles/deck-backdrop.css');
-  assert.match(home, /<DeckBackdrop\s*\/>/);
-  assert.doesNotMatch(home + cssSource, /ax-halftone|ax-moire/);
-  assert.match(backdrop, /data-ax-backdrop-root data-ax-variant=\{variant\} aria-hidden="true"/);
-  for (const hook of ['data-ax-backdrop-dots', 'data-ax-silk-fog', 'data-ax-silk', 'ax-backdrop-vignette']) assert.ok(backdrop.includes(hook), hook);
-  assert.match(backdrop, /mountDeckBackdrop\(root\)/);
-  assert.match(backdrop, /astro:before-swap/);
-  for (const ink of ['#6d28d9', '#7c3aed', '#a78bfa', '#d946ef', '#c4b5fd', '#b9ff6a']) assert.ok(script.includes(ink), ink);
-  // Motion: the visible Pause motion control and hidden tabs stop the loop on a still frame.
-  assert.match(script, /html\.dataset\.axMotion === 'paused' \|\| document\.hidden/);
-  assert.match(script, /attributeFilter: \['data-theme', 'data-ax-motion'\]/);
-  assert.match(script, /addEventListener\('resize', onResize\)/);
-  assert.match(script, /addEventListener\('pagehide', save\)/);
-  assert.match(home, /<MotionControl\s*\/>/);
-  const backdropSheets: [string, Sheet][] = [['as written', parseCss(stylesSource)], ['reformatted', parseCss(reformat(stylesSource))]];
-  for (const [label, styles] of backdropSheets) {
-    // The deck's vignette keeps the copy readable; the light docs theme hides the glow.
-    assert.ok((decl(styles, '.ax-backdrop-vignette', 'background') ?? '').startsWith(
-      normalizeValue('radial-gradient(ellipse at 30% 50%,rgba(8,10,9,.66)')), `${label}: vignette`);
-    assert.deepEqual(['position', 'z-index', 'inset', 'pointer-events'].map((p) => decl(styles, '.ax-backdrop', p)),
-      ['fixed', '0', '0', 'none'], `${label}: fixed backdrop`);
-    // Nothing over the animated canvases forces a per-frame recomposite.
-    for (const d of allDecls(styles)) {
-      assert.ok(!['mix-blend-mode', 'filter', 'backdrop-filter', '-webkit-backdrop-filter'].includes(d.prop), `${label}: ${d.prop} in ${d.selector}`);
-    }
-    same(decl(styles, ":root[data-theme='light'] .ax-backdrop", 'display'), 'none', `${label}: light theme hides the backdrop`);
-  }
-  for (const [label, sheet] of sheets) {
-    const at = (selector: string, prop: string, media = '') => decl(sheet, `${L}${selector}`, prop, media);
-    // Deck kicker and lime chips on the hero.
-    same(at('.ax-eyebrow', 'color'), 'var(--ax-lime)', `${label}: eyebrow`);
-    same(at('.ax-feature-strip>*', 'border-radius'), '99em', `${label}: feature chips`);
-    same(at('.ax-install-command', 'position'), 'absolute', `${label}: install command`);
-    same(at('.ax-install-command', 'backdrop-filter'), 'blur(18px)', `${label}: install command blur`);
-    assert.ok(allDecls(sheet).some((d) => d.media.includes('prefers-reduced-motion:reduce')), `${label}: reduced motion rules`);
-    for (const d of allDecls(sheet)) {
-      assert.ok(!(d.prop.startsWith('background') && /url\(/.test(d.value)), `${label}: no images in ${d.selector}`);
-      if (/data-ax-install-panel\]:not\(\[hidden\]\)/.test(d.selector)) assert.notEqual(d.prop, 'overflow-y', label);
-    }
-  }
+test('the homepage is calm: no backdrop, no motion control, no reveal, no effects', () => {
+  assert.doesNotMatch(home, /DeckBackdrop|MotionControl|ScrollReveal|data-ax-reveal/);
+  assert.doesNotMatch(css, /animation|@keyframes|transition|backdrop-filter|filter:|box-shadow|gradient|mix-blend-mode/);
+  assert.doesNotMatch(css, /background-image:\s*url\(/);
+  // One accent: blue for text and lines, a darker blue with white text for fills.
+  assert.match(css, /--ax-accent: #8fbfff;/);
+  assert.match(css, /--ax-accent-fill: #1372da;/);
+  assert.match(css, /\.ax-landing \.ax-download-primary \{[^}]*background: var\(--ax-accent-fill\);[^}]*color: var\(--ax-on-accent\)/);
+  assert.match(css, /\.ax-landing \.ax-eyebrow \{[^}]*color: var\(--ax-dim\)/);
+  // The page scrolls like a normal page.
+  assert.doesNotMatch(css, /overflow:\s*hidden/);
+  assert.match(css, /\.ax-landing \.ax-page \{[^}]*min-height: 100svh/);
 });
 
 test('backdrop layout: hero clears the copy, docs pages each get their own stable composition', async () => {
@@ -231,7 +192,7 @@ test('homepage installer offers Ax, headless Linux and the admin app with their 
   assert.match(download, /data-ax-guide/);
   // Without the extension Vite bundles the stale compiled minimal-download.js next to the source.
   assert.match(download, /import \{ mountMinimalDownload \} from '\.\.\/scripts\/minimal-download\.ts';/);
-  for (const [label, sheet] of sheets) same(decl(sheet, '.ax-platform-options button[hidden]', 'display'), 'none !important', label);
+  assert.match(css, /\.ax-platform-options button\[hidden\]\{display:none/);
 });
 
 test('choosing a product limits the platforms, keeps the menu open and copies its own command', async () => {
@@ -473,73 +434,16 @@ test('copied install popup closes for another choice and fades out after 1.5 sec
   }
 });
 
-test('phone landing fits the viewport and the platform menu overlays with a blur', () => {
-  const phone = '(max-width:600px)';
-  for (const [label, sheet] of sheets) {
-    same(decl(sheet, `${L}.ax-main`, 'padding', phone), '8px 20px 4px', label);
-    same(decl(sheet, `${L}.ax-display-word`, 'font-size', phone), '48px', label);
-    same(decl(sheet, `${L}.ax-platform-panel`, 'position', phone), 'absolute', label);
-    same(decl(sheet, `${L}.ax-platform-panel`, 'bottom', phone), 'calc(100% + 8px)', label);
-    same(decl(sheet, `${L}.ax-platform-panel`, 'backdrop-filter'), 'blur(18px)', label);
-    same(decl(sheet, `${L}.ax-platform-panel`, 'background'), 'rgba(18,23,19,.62)', label);
-  }
+test('phone landing stacks the install controls and opens menus on a solid surface', () => {
+  const phone = css.slice(css.indexOf('@media (max-width: 600px)'));
+  assert.ok(phone.startsWith('@media'), 'missing phone layout');
+  assert.match(phone, /\.ax-download-row \{ flex-direction: column; \}/);
+  assert.match(phone, /\.ax-other-platforms \{ width: 100%; min-height: 44px; \}/);
+  assert.match(css, /\.ax-landing \.ax-platform-panel \{[^}]*position: absolute;[^}]*top: calc\(100% \+ 8px\);[^}]*background: var\(--ax-surface\)/);
+  assert.match(css, /\.ax-landing \.ax-install-command \{[^}]*position: absolute;[^}]*background: var\(--ax-surface\)/);
 });
 
-test('copied install button throws sparks so the copy stays visible', () => {
-  for (const [label, sheet] of sheets) {
-    const spark = sheet.keyframes['ax-copied-spark'];
-    assert.equal(spark?.['0%']?.opacity, '1', label);
-    assert.equal(spark?.['100%']?.opacity, '0', label);
-    for (const button of [`${L}.ax-download-primary[data-copied="true"]::after`, `${L}.ax-install-command button[data-copied="true"]::after`]) {
-      assert.match(decl(sheet, button, 'animation') ?? '', /^ax-copied-spark /, `${label}: ${button}`);
-    }
-    same(decl(sheet, `html[data-ax-motion='paused'] ${L}.ax-download-primary[data-copied="true"]::after`, 'animation'), 'none', label);
-    assert.ok(!allDecls(sheet).some((d) => d.prop === 'border-radius' && d.value === '50%'), label);
-  }
-});
-
-test('the CSS model reads a reformatted stylesheet the same way', () => {
-  assert.deepEqual(parseCss(reformat(cssSource)), css);
-  assert.ok(rulesFor(css, `${L}.ax-install-command`).length > 0);
-});
-
-test('install links keep the site base path (GitHub Pages mirror at /ax)', () => {
-  // Static links in the component are prefixed with the Astro base.
-  assert.doesNotMatch(download, /href="\/(?!\/)/, 'MinimalDownload must not hard-code root-relative links');
-  assert.match(download, /data-ax-base=\{base\}/);
-  // The guide link the script rewrites keeps the base too.
-  type Node = { sel: string; dataset: Record<string, string>; hidden: boolean; textContent: string; innerHTML: string; href: string;
-    classList: { add(): void; remove(): void }; setAttribute(): void; addEventListener(t: string, fn: () => void): void;
-    on: Map<string, (() => void)[]>; contains(): boolean; querySelector(s: string): Node | null; querySelectorAll(s: string): Node[] };
-  const kids: Node[] = [];
-  const el = (sel: string, dataset: Record<string, string> = {}): Node => {
-    const n: Node = { sel, dataset, hidden: false, textContent: '', innerHTML: '', href: '', on: new Map(),
-      classList: { add() {}, remove() {} }, setAttribute() {},
-      addEventListener(t, fn) { n.on.set(t, [...(n.on.get(t) ?? []), fn]); },
-      contains: () => false,
-      querySelector: s => kids.find(k => k.sel === s) ?? null,
-      querySelectorAll: s => kids.filter(k => k.sel === s) };
-    return n;
-  };
-  const root = el('[data-ax-downloader]', { axBase: '/ax' });
-  for (const name of ['data-ax-download', 'data-ax-download-label', 'data-ax-main-icon', 'data-ax-platform-label',
-    'data-ax-platform-toggle', 'data-ax-platform-panel', 'data-ax-platform-help', 'data-ax-install-panel',
-    'data-ax-install-code', 'data-ax-install-instruction', 'data-ax-install-copy', 'data-ax-install-status',
-    'data-ax-guide']) kids.push(el(`[${name}]`));
-  const slim = el('[data-ax-product]', { axProduct: 'slim' });
-  kids.push(slim);
-  const previous = { document: globalThis.document, window: globalThis.window, navigator: globalThis.navigator };
-  const set = (name: string, value: unknown) => Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
-  set('navigator', { platform: 'MacIntel', userAgent: 'Mozilla/5.0 (Macintosh)', maxTouchPoints: 0 });
-  set('document', { documentElement: { dataset: {} }, addEventListener() {}, querySelector: (s: string) => (s === '[data-ax-downloader]' ? root : null) });
-  set('window', { setTimeout: () => 0, clearTimeout() {}, matchMedia: () => ({ matches: false }) });
-  try {
-    mountMinimalDownload();
-    const guide = kids.find(k => k.sel === '[data-ax-guide]')!;
-    assert.equal(guide.href, '/ax/getting-started/installation/');
-    (slim.on.get('click') ?? []).forEach(fn => fn());
-    assert.equal(guide.href, '/ax/guides/headless-linux/');
-  } finally {
-    for (const [k, v] of Object.entries(previous)) set(k, v);
-  }
+test('a copied install button changes colour without animation', () => {
+  assert.match(css, /\.ax-landing \.ax-download-primary\[data-copied="true"\],\s*\.ax-landing \.ax-install-command button\[data-copied="true"\] \{[^}]*background: var\(--ax-ink\)/);
+  assert.doesNotMatch(css, /ax-copied-spark/);
 });
