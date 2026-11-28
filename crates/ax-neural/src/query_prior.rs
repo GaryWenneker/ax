@@ -2,7 +2,7 @@
 //! Trains only on the coding fixture's unlocked questions. Locked families stay
 //! the validation fold. This module is not called from production ranking.
 
-use ax_memory::bench::{load_coding_fixture, CodingFixture, CodingMemory};
+use ax_memory::bench::{load_coding_fixture, CodingFixture, CodingMemory, CodingQuestion};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -200,39 +200,24 @@ fn query_rank(
     weights: &BTreeMap<(String, String), f64>,
     prompt: &str,
 ) -> Vec<String> {
-    let lexical = lexical_scores(fixture, prompt);
-    let prompt_tokens = tokens(prompt);
-    let mut scored: Vec<(f64, f64, String)> = fixture
-        .memories
-        .iter()
-        .filter(|m| m.insert)
-        .map(|memory| {
-            let learned = prompt_tokens
-                .iter()
-                .map(|token| {
-                    weights
-                        .get(&(token.clone(), memory.key.clone()))
-                        .copied()
-                        .unwrap_or(0.0)
-                })
-                .sum();
-            let overlap = lexical.get(&memory.key).copied().unwrap_or(0.0);
-            (learned, overlap, memory.key.clone())
-        })
-        .collect();
-    scored.sort_by(|a, b| {
-        b.0.partial_cmp(&a.0)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
-            .then_with(|| a.2.cmp(&b.2))
-    });
-    scored.into_iter().map(|(_, _, id)| id).collect()
+    blended_rank(fixture, weights, prompt, true)
 }
 
 fn lexical_primary_rank(
     fixture: &CodingFixture,
     weights: &BTreeMap<(String, String), f64>,
     prompt: &str,
+) -> Vec<String> {
+    blended_rank(fixture, weights, prompt, false)
+}
+
+/// Inserted memories ordered by learned weight and lexical overlap, one as the
+/// primary key and the other as the tie-break (`learned_first` picks), then by key.
+fn blended_rank(
+    fixture: &CodingFixture,
+    weights: &BTreeMap<(String, String), f64>,
+    prompt: &str,
+    learned_first: bool,
 ) -> Vec<String> {
     let lexical = lexical_scores(fixture, prompt);
     let prompt_tokens = tokens(prompt);
@@ -251,7 +236,11 @@ fn lexical_primary_rank(
                 })
                 .sum();
             let overlap = lexical.get(&memory.key).copied().unwrap_or(0.0);
-            (overlap, learned, memory.key.clone())
+            if learned_first {
+                (learned, overlap, memory.key.clone())
+            } else {
+                (overlap, learned, memory.key.clone())
+            }
         })
         .collect();
     scored.sort_by(|a, b| {
@@ -261,6 +250,55 @@ fn lexical_primary_rank(
             .then_with(|| a.2.cmp(&b.2))
     });
     scored.into_iter().map(|(_, _, id)| id).collect()
+}
+
+/// Questions with a gold answer, from the locked families or from the others.
+fn answered(fixture: &CodingFixture, locked: bool) -> Vec<&CodingQuestion> {
+    fixture
+        .questions
+        .iter()
+        .filter(|question| {
+            LOCKED.contains(&question.family.as_str()) == locked && !question.relevant.is_empty()
+        })
+        .collect()
+}
+
+/// One prediction observation per question: its family and its gold memories.
+fn observations_of(questions: &[&CodingQuestion]) -> Vec<crate::predict::Observation> {
+    questions
+        .iter()
+        .map(|question| crate::predict::Observation {
+            task_category: question.family.clone(),
+            skills: Vec::new(),
+            rules: Vec::new(),
+            context_ids: question
+                .relevant
+                .iter()
+                .map(|id| format!("memory:{id}"))
+                .collect(),
+        })
+        .collect()
+}
+
+/// Every observation except the one at `index`.
+fn leave_one_out(
+    observations: &[crate::predict::Observation],
+    index: usize,
+) -> Vec<crate::predict::Observation> {
+    observations
+        .iter()
+        .enumerate()
+        .filter(|(other, _)| *other != index)
+        .map(|(_, row)| row.clone())
+        .collect()
+}
+
+/// The pre-specified displacement: take the item at `position` out and put
+/// `id` at position 3 (or last, in a shorter list).
+fn move_to_third(ranked: &mut Vec<String>, position: usize, id: String) {
+    ranked.remove(position);
+    let insert_at = 2.min(ranked.len());
+    ranked.insert(insert_at, id);
 }
 
 fn lexical_rank(fixture: &CodingFixture, prompt: &str) -> Vec<String> {
@@ -339,26 +377,8 @@ fn top3(ranked: &[String]) -> Vec<&str> {
 /// and the live 30-task set are not read.
 pub fn measure_prediction_additions(fixture_text: &str) -> Result<Value, String> {
     let fixture = load_coding_fixture(fixture_text)?;
-    let unlocked: Vec<_> = fixture
-        .questions
-        .iter()
-        .filter(|question| {
-            !LOCKED.contains(&question.family.as_str()) && !question.relevant.is_empty()
-        })
-        .collect();
-    let observations: Vec<crate::predict::Observation> = unlocked
-        .iter()
-        .map(|question| crate::predict::Observation {
-            task_category: question.family.clone(),
-            skills: Vec::new(),
-            rules: Vec::new(),
-            context_ids: question
-                .relevant
-                .iter()
-                .map(|id| format!("memory:{id}"))
-                .collect(),
-        })
-        .collect();
+    let unlocked = answered(&fixture, false);
+    let observations = observations_of(&unlocked);
     let minimum_confidence = 0.8;
     let mut predictions = 0usize;
     let mut relevant_outside_lexical_top3 = 0usize;
@@ -368,12 +388,7 @@ pub fn measure_prediction_additions(fixture_text: &str) -> Result<Value, String>
     let mut with_addition_mrr = 0.0;
     let mut addition_ranks = Vec::new();
     for (index, question) in unlocked.iter().enumerate() {
-        let training: Vec<_> = observations
-            .iter()
-            .enumerate()
-            .filter(|(other, _)| *other != index)
-            .map(|(_, row)| row.clone())
-            .collect();
+        let training = leave_one_out(&observations, index);
         let predicted = crate::predict::predict(&training, &question.family, minimum_confidence);
         let lexical = lexical_rank(&fixture, &question.prompt);
         let top: BTreeSet<&str> = lexical.iter().take(3).map(String::as_str).collect();
@@ -388,9 +403,7 @@ pub fn measure_prediction_additions(fixture_text: &str) -> Result<Value, String>
                 relevant_outside_lexical_top3 += 1;
                 if let Some(position) = ranked.iter().position(|id| id == &item.target_id) {
                     addition_ranks.push(position + 1);
-                    ranked.remove(position);
-                    let insert_at = 2.min(ranked.len());
-                    ranked.insert(insert_at, item.target_id.clone());
+                    move_to_third(&mut ranked, position, item.target_id.clone());
                 }
             } else if !inside {
                 irrelevant_outside_lexical_top3 += 1;
@@ -421,26 +434,8 @@ pub fn measure_prediction_additions(fixture_text: &str) -> Result<Value, String>
 
 pub fn measure_benefit_gate(fixture_text: &str) -> Result<Value, String> {
     let fixture = load_coding_fixture(fixture_text)?;
-    let unlocked: Vec<_> = fixture
-        .questions
-        .iter()
-        .filter(|question| {
-            !LOCKED.contains(&question.family.as_str()) && !question.relevant.is_empty()
-        })
-        .collect();
-    let observations: Vec<crate::predict::Observation> = unlocked
-        .iter()
-        .map(|question| crate::predict::Observation {
-            task_category: question.family.clone(),
-            skills: Vec::new(),
-            rules: Vec::new(),
-            context_ids: question
-                .relevant
-                .iter()
-                .map(|id| format!("memory:{id}"))
-                .collect(),
-        })
-        .collect();
+    let unlocked = answered(&fixture, false);
+    let observations = observations_of(&unlocked);
     let minimum_confidence = 0.8;
     let config = crate::recovery::RecoveryConfig {
         enabled: true,
@@ -455,12 +450,7 @@ pub fn measure_benefit_gate(fixture_text: &str) -> Result<Value, String> {
     let mut baseline_mrr = 0.0;
     let mut gated_mrr = 0.0;
     for (index, question) in unlocked.iter().enumerate() {
-        let training: Vec<_> = observations
-            .iter()
-            .enumerate()
-            .filter(|(other, _)| *other != index)
-            .map(|(_, row)| row.clone())
-            .collect();
+        let training = leave_one_out(&observations, index);
         let predicted = crate::predict::predict(&training, &question.family, minimum_confidence);
         let scores = lexical_scores(&fixture, &question.prompt);
         let lexical = lexical_rank(&fixture, &question.prompt);
@@ -534,9 +524,7 @@ pub fn measure_benefit_gate(fixture_text: &str) -> Result<Value, String> {
         for id in accepted {
             if let Some(position) = ranked.iter().position(|existing| existing == &id) {
                 if position >= 3 {
-                    ranked.remove(position);
-                    let insert_at = 2.min(ranked.len());
-                    ranked.insert(insert_at, id);
+                    move_to_third(&mut ranked, position, id);
                 }
             }
         }
@@ -821,33 +809,9 @@ pub fn measure_top_miss(fixture_text: &str) -> Result<Value, String> {
 /// Same 0.8 floor and same displacement. Locked labels are not training rows.
 pub fn measure_locked_confirmation(fixture_text: &str) -> Result<Value, String> {
     let fixture = load_coding_fixture(fixture_text)?;
-    let unlocked: Vec<_> = fixture
-        .questions
-        .iter()
-        .filter(|question| {
-            !LOCKED.contains(&question.family.as_str()) && !question.relevant.is_empty()
-        })
-        .collect();
-    let locked: Vec<_> = fixture
-        .questions
-        .iter()
-        .filter(|question| {
-            LOCKED.contains(&question.family.as_str()) && !question.relevant.is_empty()
-        })
-        .collect();
-    let training: Vec<crate::predict::Observation> = unlocked
-        .iter()
-        .map(|question| crate::predict::Observation {
-            task_category: question.family.clone(),
-            skills: Vec::new(),
-            rules: Vec::new(),
-            context_ids: question
-                .relevant
-                .iter()
-                .map(|id| format!("memory:{id}"))
-                .collect(),
-        })
-        .collect();
+    let unlocked = answered(&fixture, false);
+    let locked = answered(&fixture, true);
+    let training = observations_of(&unlocked);
     let minimum_confidence = 0.8;
     let mut predictions = 0usize;
     let mut relevant_outside_lexical_top3 = 0usize;
@@ -865,9 +829,7 @@ pub fn measure_locked_confirmation(fixture_text: &str) -> Result<Value, String> 
             if hit && !top.contains(item.target_id.as_str()) {
                 relevant_outside_lexical_top3 += 1;
                 if let Some(position) = ranked.iter().position(|id| id == &item.target_id) {
-                    ranked.remove(position);
-                    let insert_at = 2.min(ranked.len());
-                    ranked.insert(insert_at, item.target_id.clone());
+                    move_to_third(&mut ranked, position, item.target_id.clone());
                 }
             } else if !hit && !top.contains(item.target_id.as_str()) {
                 irrelevant_outside_lexical_top3 += 1;
@@ -900,13 +862,7 @@ pub fn measure_locked_confirmation(fixture_text: &str) -> Result<Value, String> 
 pub fn measure_relationship_expansion(fixture_text: &str) -> Result<Value, String> {
     let fixture = load_coding_fixture(fixture_text)?;
     let edges = relationship_edges(&fixture);
-    let locked: Vec<_> = fixture
-        .questions
-        .iter()
-        .filter(|question| {
-            LOCKED.contains(&question.family.as_str()) && !question.relevant.is_empty()
-        })
-        .collect();
+    let locked = answered(&fixture, true);
     let mut baseline_mrr = 0.0;
     let mut expanded_mrr = 0.0;
     let mut moved = 0usize;
@@ -925,9 +881,7 @@ pub fn measure_relationship_expansion(fixture_text: &str) -> Result<Value, Strin
                     if question.relevant.iter().any(|id| id == neighbor) {
                         moved_relevant += 1;
                     }
-                    ranked.remove(position);
-                    let insert_at = 2.min(ranked.len());
-                    ranked.insert(insert_at, neighbor.clone());
+                    move_to_third(&mut ranked, position, neighbor.clone());
                 }
             }
         }

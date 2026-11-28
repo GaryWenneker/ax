@@ -72,6 +72,7 @@ pub(crate) const PATH_VALIDATE: ObserveProfile = ObserveProfile {
     paraphrase_recall: false,
 };
 
+#[cfg(any(test, feature = "neural-lab"))]
 pub(crate) const LEARN_VALIDATE: ObserveProfile = ObserveProfile {
     precision_at_5: false,
     recall_at_5: false,
@@ -97,6 +98,7 @@ pub(crate) const BENCHMARK_ABC: ObserveProfile = ObserveProfile {
 pub(crate) enum SummaryStyle {
     EmbedBakeoff,
     PathValidate,
+    #[cfg(any(test, feature = "neural-lab"))]
     LearnValidate,
     AgentEval,
     BenchmarkAbc,
@@ -173,6 +175,7 @@ impl Acc {
                     "mrr": self.mrr.len()
                 }
             }),
+            #[cfg(any(test, feature = "neural-lab"))]
             SummaryStyle::LearnValidate => json!({
                 "questionsScored": self.scored,
                 "precisionAt3": mean(&self.p3),

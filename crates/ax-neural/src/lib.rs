@@ -6,13 +6,16 @@
 pub mod agent_eval;
 pub mod bakeoff;
 pub mod benchmark_abc;
+#[cfg(any(test, feature = "neural-lab"))]
 pub mod code_aware;
+#[cfg(any(test, feature = "neural-lab"))]
 pub mod code_discovery;
 pub mod config;
 pub mod dispatch;
 pub mod embed_bakeoff;
 pub mod fixture;
 pub mod graph;
+#[cfg(any(test, feature = "neural-lab"))]
 pub mod learn_validate;
 pub mod learning;
 pub mod lexical;
@@ -21,8 +24,10 @@ mod metrics;
 pub mod onnx_embed;
 pub mod path_validate;
 pub mod predict;
+#[cfg(any(test, feature = "neural-lab"))]
 pub mod query_prior;
 pub mod rank;
+#[cfg(any(test, feature = "neural-lab"))]
 pub mod recovery;
 pub mod rss;
 pub mod runtime;
