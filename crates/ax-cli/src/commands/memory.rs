@@ -474,7 +474,7 @@ pub async fn run_reindex(json: bool) -> Result<(), String> {
 
 /// Remove `file_change` memories whose every path the index excludes.
 pub async fn run_prune_file_changes(apply: bool, json: bool) -> Result<(), String> {
-    let root = resolve_path(None);
+    let root = resolve_project_root(None);
     ax_usage::log_memory(
         Some(&root),
         format!("prune-file-changes start apply={apply}"),
