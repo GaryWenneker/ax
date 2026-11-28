@@ -72,6 +72,24 @@ async fn project_root(hub: &WebHub) -> Result<std::path::PathBuf, (StatusCode, J
     Ok(guard.project_root.clone())
 }
 
+/// Runs share work that can block outside the async workers. Loading or
+/// saving the share config reaches the OS credential store, which may wait
+/// on a Keychain prompt or a D-Bus call, and a sync runs git.
+async fn off_worker<T, F>(work: F) -> Result<T, (StatusCode, Json<ApiError>)>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    tokio::task::spawn_blocking(work).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: format!("share task failed: {e}"),
+            }),
+        )
+    })
+}
+
 fn config_response(root: &std::path::Path, config: ShareConfig) -> ShareConfigResponse {
     ShareConfigResponse {
         config,
@@ -84,7 +102,12 @@ async fn get_share_config(
     State(hub): State<WebHub>,
 ) -> Result<Json<ShareConfigResponse>, (StatusCode, Json<ApiError>)> {
     let root = project_root(&hub).await?;
-    Ok(Json(config_response(&root, share_config_for_api(&root))))
+    let config = off_worker({
+        let root = root.clone();
+        move || share_config_for_api(&root)
+    })
+    .await?;
+    Ok(Json(config_response(&root, config)))
 }
 
 async fn put_share_config(
@@ -100,13 +123,21 @@ async fn put_share_config(
         ));
     }
     let root = project_root(&hub).await?;
-    write_project_share_config(&root, &body).map_err(|e| {
+    let config = off_worker({
+        let root = root.clone();
+        move || {
+            write_project_share_config(&root, &body)?;
+            Ok::<_, String>(share_config_for_api(&root))
+        }
+    })
+    .await?
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiError { error: e }),
         )
     })?;
-    Ok(Json(config_response(&root, share_config_for_api(&root))))
+    Ok(Json(config_response(&root, config)))
 }
 
 async fn get_share_status(
@@ -156,15 +187,23 @@ async fn post_share_sync(
         "both" => SyncDirection::Both,
         _ => SyncDirection::Pull,
     };
-    match run_sync(&root, &pool, direction).await {
-        Ok(r) => Ok(Json(r.status)),
-        Err(e) => {
-            let mut st = share_status_for_api(&root);
-            st.last_error = Some(e.clone());
-            let _ = ax_share::save_share_status(&root, &st);
-            Err((StatusCode::BAD_REQUEST, Json(ApiError { error: e })))
-        }
-    }
+    // A sync loads the token from the credential store and runs git, both
+    // blocking, so the whole run happens on a blocking thread.
+    let runtime = tokio::runtime::Handle::current();
+    let outcome = off_worker(move || {
+        runtime
+            .block_on(run_sync(&root, &pool, direction))
+            .map(|r| r.status)
+            .inspect_err(|e| {
+                let mut st = share_status_for_api(&root);
+                st.last_error = Some(e.clone());
+                let _ = ax_share::save_share_status(&root, &st);
+            })
+    })
+    .await?;
+    outcome
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiError { error: e })))
 }
 
 async fn ms_device_start(
@@ -248,4 +287,30 @@ async fn ms_sign_out(
         )
     })?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// Work that blocks (a Keychain prompt, a D-Bus call, git) must not hold
+    /// the async worker: here the blocked work waits for a task on the same
+    /// single-threaded runtime, which only runs if the worker stays free.
+    #[tokio::test(flavor = "current_thread")]
+    async fn blocking_share_work_leaves_the_async_worker_free() {
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let other_task = tokio::spawn(async move {
+            let _ = tx.send(());
+        });
+        let blocked = off_worker(move || rx.recv_timeout(Duration::from_secs(2)).is_ok());
+        let result = tokio::time::timeout(Duration::from_secs(10), blocked)
+            .await
+            .expect("the blocking work never returned");
+        assert!(
+            result.is_ok_and(|ran_alongside| ran_alongside),
+            "the blocking work held the async worker"
+        );
+        other_task.await.unwrap();
+    }
 }
