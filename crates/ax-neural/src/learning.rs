@@ -76,16 +76,18 @@ pub fn validate_feedback(input: &FeedbackInput) -> Result<FeedbackRow, String> {
             ));
         }
     }
-    let blob = format!(
-        "{} {} {} {} {} {}",
-        input.execution_id,
-        input.task_category,
-        input.context_ids.join(" "),
-        input.skill_ids.join(" "),
-        input.rule_ids.join(" "),
-        input.source_text
-    );
-    if secret_shaped(&blob) {
+    // Each field and each id is screened on its own, so a pattern never
+    // matches across the boundary between two ids.
+    let fields = [
+        &input.execution_id,
+        &input.task_category,
+        &input.source_text,
+    ]
+    .into_iter()
+    .chain(&input.context_ids)
+    .chain(&input.skill_ids)
+    .chain(&input.rule_ids);
+    if any_secret_shaped(fields) {
         return Err("secret-shaped text is excluded from feedback".into());
     }
     if !input.source_text.is_empty() {
@@ -107,10 +109,27 @@ pub fn validate_feedback(input: &FeedbackInput) -> Result<FeedbackRow, String> {
     })
 }
 
+/// True when any of `fields` is [`secret_shaped`] on its own.
+pub fn any_secret_shaped<'a>(fields: impl IntoIterator<Item = &'a String>) -> bool {
+    fields.into_iter().any(|field| secret_shaped(field))
+}
+
+/// True when `text` holds `bearer` followed by a token: at least 12 token
+/// characters with a digit among them. "bearer auth" is a word, not a header.
+fn bearer_token(compact: &str) -> bool {
+    compact.match_indices("bearer ").any(|(at, word)| {
+        let token: String = compact[at + word.len()..]
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || "-._~+/=".contains(*c))
+            .collect();
+        token.len() >= 12 && token.chars().any(|c| c.is_ascii_digit())
+    })
+}
+
 /// True when `text` looks like it holds a credential: a `key=value` or `key: value` pair for a
-/// password, secret, token or API key (spaces around the separator allowed), a bearer header,
-/// a private key block, or a token ax's shared redaction would mask (`sk-…`, GitHub and AWS
-/// keys, long hex or base64 runs).
+/// password, secret, token or API key (spaces around the separator allowed), a bearer header
+/// with a token, a private key block, or a token ax's shared redaction would mask (`sk-…`,
+/// GitHub and AWS keys, long hex or base64 runs). Screen one field at a time.
 pub fn secret_shaped(text: &str) -> bool {
     let compact = text
         .to_ascii_lowercase()
@@ -139,14 +158,13 @@ pub fn secret_shaped(text: &str) -> bool {
         "access_token",
         "refresh_token",
         "auth_token",
-        "bearer ",
         "begin private key",
         "begin rsa private key",
         "begin openssh private key",
     ]
     .iter()
     .any(|pattern| compact.contains(pattern));
-    pattern_hit || ax_memory::redact_secrets(text) != text
+    pattern_hit || bearer_token(&compact) || ax_memory::redact_secrets(text) != text
 }
 
 /// Registered metrics that clear the promotion gate on the built-in fixture.
@@ -472,6 +490,21 @@ mod tests {
         plain.context_ids = vec!["mem:token-budget".into(), "rule:no-secrets".into()];
         plain.task_category = "parser".into();
         assert!(validate_feedback(&plain).is_ok());
+    }
+
+    #[test]
+    fn a_bearer_word_without_a_token_in_the_same_field_passes() {
+        let mut ids = sample();
+        ids.skill_ids = vec!["oauth-bearer".into(), "rule:x".into()];
+        assert!(validate_feedback(&ids).is_ok(), "ids across fields");
+        for category in ["bearer auth", "bearer authentication"] {
+            let mut named = sample();
+            named.task_category = category.into();
+            assert!(validate_feedback(&named).is_ok(), "{category}");
+        }
+        let mut token = sample();
+        token.skill_ids = vec!["Authorization: Bearer abc123def456ghi".into()];
+        assert!(validate_feedback(&token).is_err());
     }
 
     #[test]

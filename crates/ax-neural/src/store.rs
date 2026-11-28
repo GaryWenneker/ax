@@ -1,5 +1,5 @@
 use crate::graph::{InputEdge, Suggestion};
-use crate::learning::{promotion_allowed, secret_shaped, FeedbackRow};
+use crate::learning::{any_secret_shaped, promotion_allowed, secret_shaped, FeedbackRow};
 use crate::predict::Observation;
 use crate::runtime::Backend;
 use serde_json::{json, Value};
@@ -866,7 +866,12 @@ pub async fn training_export(pool: &SqlitePool, project_id: &str) -> Result<Valu
         let context: String = row.get("context_ids");
         let skills: String = row.get("skill_ids");
         let rules: String = row.get("rule_ids");
-        if secret_shaped(&format!("{task} {context} {skills} {rules}")) {
+        // One id at a time; a column that is not an id list is screened whole.
+        let list_shaped = |raw: &String| match serde_json::from_str::<Vec<String>>(raw) {
+            Ok(list) => any_secret_shaped(&list),
+            Err(_) => secret_shaped(raw),
+        };
+        if secret_shaped(&task) || [&context, &skills, &rules].into_iter().any(list_shaped) {
             skipped += 1;
             continue;
         }
