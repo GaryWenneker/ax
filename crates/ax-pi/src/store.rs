@@ -367,6 +367,8 @@ pub async fn record_advice(
     }
     let pool = open(path).await?;
     ensure_schema(&pool).await?;
+    // The three rows are written together or not at all.
+    let mut tx = pool.begin().await.map_err(|err| err.to_string())?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
@@ -379,7 +381,7 @@ pub async fn record_advice(
     .bind(&observation.session_id)
     .bind(now)
     .bind(now)
-    .execute(&pool)
+    .execute(&mut *tx)
     .await
     .map_err(|err| err.to_string())?;
     sqlx::query(
@@ -391,12 +393,13 @@ pub async fn record_advice(
     .bind(&observation.session_id)
     .bind(&observation.turn_id)
     .bind(&observation.tool_name)
-    .execute(&pool)
+    .execute(&mut *tx)
     .await
     .map_err(|err| err.to_string())?;
     sqlx::query(
         "INSERT INTO agent_optimizations (id, tool_call_id, alternative_tool, current_tokens, alternative_tokens, reduction_percent, confidence, reason, accepted)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+         ON CONFLICT(id) DO NOTHING",
     )
     .bind(format!("opt-{}", observation.call_id))
     .bind(&observation.call_id)
@@ -406,9 +409,10 @@ pub async fn record_advice(
     .bind(alternative.estimated_reduction_percent)
     .bind(alternative.confidence.as_str())
     .bind(&alternative.reason)
-    .execute(&pool)
+    .execute(&mut *tx)
     .await
     .map_err(|err| err.to_string())?;
+    tx.commit().await.map_err(|err| err.to_string())?;
     Ok(())
 }
 
@@ -659,5 +663,47 @@ mod tests {
         assert!(loaded.sessions.is_empty(), "sessions were committed");
         assert!(loaded.turns.is_empty() && loaded.tools.is_empty());
         assert!(loaded.models.is_empty());
+    }
+
+    #[tokio::test]
+    async fn record_advice_twice_for_the_same_call_keeps_one_row_and_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("ax.db");
+        flush(&db, &snapshot()).await.unwrap();
+        for _ in 0..2 {
+            record_advice(&db, &observation("g1"), &alternative(Confidence::Low))
+                .await
+                .unwrap();
+        }
+        let loaded = load(&db).await.unwrap();
+        let rows = loaded
+            .optimizations
+            .iter()
+            .filter(|o| o.tool_call_id == "g1")
+            .count();
+        assert_eq!(rows, 1);
+    }
+
+    #[tokio::test]
+    async fn record_advice_that_fails_part_way_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("ax.db");
+        let pool = open(&db).await.unwrap();
+        ensure_schema(&pool).await.unwrap();
+        sqlx::query(
+            "CREATE TRIGGER refuse_optimizations BEFORE INSERT ON agent_optimizations
+             BEGIN SELECT RAISE(ABORT, 'refused'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let err = record_advice(&db, &observation("g1"), &alternative(Confidence::Low))
+            .await
+            .unwrap_err();
+        assert!(err.contains("refused"), "{err}");
+        let loaded = load(&db).await.unwrap();
+        assert!(loaded.sessions.is_empty() && loaded.tools.is_empty());
     }
 }

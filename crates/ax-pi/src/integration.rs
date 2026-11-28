@@ -1108,6 +1108,15 @@ pub fn read_guard_ids(db: &Path, fallback_session: &str) -> (String, String) {
     (session.to_string(), turn.to_string())
 }
 
+/// A tool call id for a read-guard row: the time, the process id and a
+/// per-process counter, so hooks that fire in the same millisecond, in one
+/// process or several, get distinct ids.
+fn read_guard_call_id() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("read-guard-{}-{}-{sequence}", now_ms(), std::process::id())
+}
+
 pub async fn note_read_guard(
     db: &Path,
     session_id: &str,
@@ -1123,7 +1132,7 @@ pub async fn note_read_guard(
     let observation = ToolCallObservation {
         session_id,
         turn_id,
-        call_id: format!("read-guard-{}", now_ms()),
+        call_id: read_guard_call_id(),
         tool_name: tool_name.to_string(),
         arguments,
         repository_state: String::new(),
@@ -1292,5 +1301,18 @@ mod tests {
             .unwrap();
         pi.ingest(&json!({"type": "turn_end"})).unwrap();
         assert_eq!(pending_count(&pi), 1);
+    }
+}
+
+#[cfg(test)]
+mod read_guard_call_id_tests {
+    use super::read_guard_call_id;
+
+    #[test]
+    fn read_guard_call_ids_are_distinct_within_one_millisecond() {
+        let ids: std::collections::HashSet<String> =
+            (0..1000).map(|_| read_guard_call_id()).collect();
+        assert_eq!(ids.len(), 1000);
+        assert!(ids.iter().all(|id| id.starts_with("read-guard-")));
     }
 }
