@@ -1,6 +1,9 @@
 ---
 title: Share Command Center
 description: LAN share with a token, PWA install, and live action stream.
+banner:
+  content: |
+    This page describes part of the full ax, which is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 ## `ax share`

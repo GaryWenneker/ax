@@ -37,7 +37,7 @@ sha2 = "0.11"
 hex = "0.4"
 axum = "0.8"
 reqwest = { workspace = true }
-jsonwebtoken = "10.3.0"
+jsonwebtoken = { version = "12.0.0", features = ["aws_lc_rs"] }
 oauth2 = { version = "5", default-features = false, features = ["reqwest", "rustls-tls", "timing-resistant-secret-traits"] }
 url = "2"
 subtle = "2"
