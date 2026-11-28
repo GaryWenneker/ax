@@ -240,7 +240,7 @@ async fn install_one(
             &name,
             dest,
             replace,
-            |file| http_bytes_same_origin(&well_known_file_url(&base, &name, file)?),
+            |file| well_known_file(&base, &name, file),
         )?]
     } else {
         let tree = only_path(source, &fetched.tree);
@@ -576,7 +576,7 @@ fn audit_candidate(source_text: &str, name: &str) -> Result<SkillAuditReport, St
         let dest = temp.path().join("skills");
         let base = fetched.file_base.clone();
         materialize_well_known(&index, name, &dest, true, |file| {
-            http_bytes_same_origin(&well_known_file_url(&base, name, file)?)
+            well_known_file(&base, name, file)
         })?;
         let mut report = audit_directory(&dest.join(name))?;
         report.candidate = true;
@@ -807,100 +807,26 @@ fn git_publish(repo: &Path, name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The URL of one file listed in a well-known skill index. A relative entry
-/// resolves under the index; an absolute entry must share the index's origin
-/// (scheme, host and port), so an index cannot point the download at another
-/// server or downgrade it from https to http.
-fn well_known_file_url(base: &str, name: &str, file: &str) -> Result<String, String> {
-    if !(file.starts_with("http://") || file.starts_with("https://")) {
-        return Ok(format!("{base}/{name}/{file}"));
-    }
-    let index = reqwest::Url::parse(base).map_err(|e| format!("bad index URL {base}: {e}"))?;
-    let target = reqwest::Url::parse(file).map_err(|e| format!("bad file URL {file}: {e}"))?;
-    if index.origin() != target.origin() {
-        return Err(format!(
-            "skill file {file} is not on the index origin {}",
-            index.origin().ascii_serialization()
-        ));
-    }
-    Ok(file.to_string())
+/// GET one file listed in a well-known skill index, with the same rule the
+/// Command Center uses: the file stays on the index's origin, every redirect
+/// stays there and is vetted against private and local addresses, and the
+/// body is read up to 25 MiB.
+fn well_known_file(base: &str, name: &str, file: &str) -> Result<Vec<u8>, String> {
+    let url = ax_skill_catalog::well_known_file_url(base, name, file)?;
+    blocking(|| ax_skill_catalog::http_bytes_same_origin(&url))
 }
 
 fn http_text(url: &str) -> Result<String, String> {
-    let bytes = http_bytes(url)?;
-    String::from_utf8(bytes).map_err(|e| e.to_string())
+    blocking(|| ax_skill_catalog::http_text(url))
 }
 
-/// The largest download a skill command accepts.
-const MAX_DOWNLOAD: u64 = 25 * 1024 * 1024;
-
-/// GET `url`, reading at most [`MAX_DOWNLOAD`] bytes of body.
-fn http_bytes(url: &str) -> Result<Vec<u8>, String> {
-    fetch_bounded(url, reqwest::redirect::Policy::default())
-}
-
-/// GET a file listed in a well-known skill index. Redirects are followed only
-/// while they stay on the origin (scheme, host and port) of the request, so a
-/// same-origin entry cannot hand the download to another server or to http.
-fn http_bytes_same_origin(url: &str) -> Result<Vec<u8>, String> {
-    let policy = reqwest::redirect::Policy::custom(|attempt| {
-        if attempt.previous().len() >= 10 {
-            return attempt.error("too many redirects");
-        }
-        let same = attempt
-            .previous()
-            .first()
-            .is_some_and(|first| first.origin() == attempt.url().origin());
-        if same {
-            attempt.follow()
-        } else {
-            let to = attempt.url().origin().ascii_serialization();
-            attempt.error(format!("redirect to {to} leaves the index origin"))
-        }
-    });
-    fetch_bounded(url, policy)
-}
-
-/// GET `url` with `policy` for redirects, reading at most [`MAX_DOWNLOAD`]
-/// bytes of body.
-fn fetch_bounded(url: &str, policy: reqwest::redirect::Policy) -> Result<Vec<u8>, String> {
-    let fetch = move |url: &str| {
-        let client = reqwest::blocking::Client::builder()
-            .redirect(policy)
-            .build()
-            .map_err(|e| e.to_string())?;
-        let response = client.get(url).send().map_err(|e| {
-            let mut msg = e.to_string();
-            let mut source = std::error::Error::source(&e);
-            while let Some(inner) = source {
-                msg.push_str(": ");
-                msg.push_str(&inner.to_string());
-                source = inner.source();
-            }
-            msg
-        })?;
-        if !response.status().is_success() {
-            return Err(format!("GET {url} returned {}", response.status()));
-        }
-        let too_large = || "download is larger than 25 MiB".to_string();
-        if response
-            .content_length()
-            .is_some_and(|len| len > MAX_DOWNLOAD)
-        {
-            return Err(too_large());
-        }
-        ax_utils::read_to_end_bounded(response, MAX_DOWNLOAD).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::InvalidData {
-                too_large()
-            } else {
-                e.to_string()
-            }
-        })
-    };
+/// Runs a blocking HTTP call; inside the async CLI runtime it moves off the
+/// worker thread first, as blocking `reqwest` must.
+fn blocking<T>(call: impl FnOnce() -> T) -> T {
     if tokio::runtime::Handle::try_current().is_ok() {
-        tokio::task::block_in_place(|| fetch(url))
+        tokio::task::block_in_place(call)
     } else {
-        fetch(url)
+        call()
     }
 }
 
@@ -922,52 +848,6 @@ fn encode(value: &str) -> String {
 mod tests {
     use super::*;
 
-    /// Serve one HTTP response: `head` (status line and headers), then
-    /// `body_len` bytes of body, then keep the connection open for 40 s.
-    fn stalling_server(head: &'static str, body_len: usize) -> String {
-        use std::io::{Read as _, Write as _};
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut buf = [0u8; 4096];
-            let _ = stream.read(&mut buf);
-            let _ = stream.write_all(head.as_bytes());
-            let chunk = vec![b'a'; 64 * 1024];
-            let mut sent = 0;
-            while sent < body_len {
-                let n = chunk.len().min(body_len - sent);
-                if stream.write_all(&chunk[..n]).is_err() {
-                    return;
-                }
-                sent += n;
-            }
-            std::thread::sleep(std::time::Duration::from_secs(40));
-        });
-        format!("http://{addr}/file")
-    }
-
-    #[test]
-    fn http_bytes_rejects_a_declared_oversize_body_without_reading_it() {
-        let url = stalling_server("HTTP/1.1 200 OK\r\nContent-Length: 104857600\r\n\r\n", 1024);
-        let started = std::time::Instant::now();
-        let err = http_bytes(&url).unwrap_err();
-        assert!(err.contains("25 MiB"), "{err}");
-        assert!(started.elapsed() < std::time::Duration::from_secs(10));
-    }
-
-    #[test]
-    fn http_bytes_stops_reading_an_endless_body_at_the_limit() {
-        let url = stalling_server(
-            "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n",
-            26 * 1024 * 1024,
-        );
-        let started = std::time::Instant::now();
-        let err = http_bytes(&url).unwrap_err();
-        assert!(err.contains("25 MiB"), "{err}");
-        assert!(started.elapsed() < std::time::Duration::from_secs(10));
-    }
-
     /// Answer one request with `response`, return the server's base URL.
     fn one_shot_server(response: String) -> String {
         use std::io::{Read as _, Write as _};
@@ -984,54 +864,13 @@ mod tests {
     }
 
     #[test]
-    fn well_known_file_fetch_refuses_a_redirect_to_another_origin() {
-        let other = one_shot_server(
-            "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nevil!".to_string(),
+    fn well_known_file_downloads_refuse_a_private_address() {
+        let base = one_shot_server(
+            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_string(),
         );
-        let start = one_shot_server(format!(
-            "HTTP/1.1 302 Found\r\nLocation: {other}/SKILL.md\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-        ));
-        let err = http_bytes_same_origin(&format!("{start}/x/SKILL.md")).unwrap_err();
-        assert!(err.contains("origin"), "{err}");
-    }
-
-    #[test]
-    fn well_known_file_fetch_follows_a_same_origin_redirect() {
-        use std::io::{Read as _, Write as _};
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        std::thread::spawn(move || {
-            let replies = [
-                "HTTP/1.1 302 Found\r\nLocation: /moved/SKILL.md\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
-            ];
-            for reply in replies {
-                let (mut stream, _) = listener.accept().unwrap();
-                let mut buf = [0u8; 4096];
-                let _ = stream.read(&mut buf);
-                let _ = stream.write_all(reply.as_bytes());
-            }
-        });
-        let got = http_bytes_same_origin(&format!("http://{addr}/x/SKILL.md")).unwrap();
-        assert_eq!(got, b"ok");
-    }
-
-    #[test]
-    fn well_known_file_urls_stay_on_the_index_origin() {
-        let base = "https://skills.example.org/.well-known/agent-skills";
-        assert_eq!(
-            well_known_file_url(base, "x", "SKILL.md").unwrap(),
-            "https://skills.example.org/.well-known/agent-skills/x/SKILL.md"
-        );
-        assert_eq!(
-            well_known_file_url(base, "x", "https://skills.example.org/cdn/x/SKILL.md").unwrap(),
-            "https://skills.example.org/cdn/x/SKILL.md"
-        );
-        let err = well_known_file_url(base, "x", "https://evil.example.net/SKILL.md").unwrap_err();
-        assert!(err.contains("origin"), "{err}");
-        let err =
-            well_known_file_url(base, "x", "http://skills.example.org/x/SKILL.md").unwrap_err();
-        assert!(err.contains("origin"), "{err}");
+        let err = well_known_file(&format!("{base}/.well-known/agent-skills"), "x", "SKILL.md")
+            .unwrap_err();
+        assert!(err.contains("private address"), "{err}");
     }
 
     #[test]

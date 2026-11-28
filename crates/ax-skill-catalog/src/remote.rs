@@ -1,4 +1,5 @@
 use crate::source::{GitHost, SkillSource};
+use std::io::Read as _;
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -236,7 +237,17 @@ pub fn http_bytes_same_origin(url: &str) -> Result<Vec<u8>, String> {
 }
 
 fn fetch_vetted(url: &str, same_origin: bool) -> Result<Vec<u8>, String> {
-    let target = vetted_download(url)?;
+    fetch_with(url, same_origin, vetted_download)
+}
+
+/// GET `url` after `vet` approves it and every redirect target; with
+/// `same_origin`, redirects must also stay on the request's origin.
+fn fetch_with(
+    url: &str,
+    same_origin: bool,
+    vet: fn(&str) -> Result<reqwest::Url, String>,
+) -> Result<Vec<u8>, String> {
+    let target = vet(url)?;
     let client = reqwest::blocking::Client::builder()
         .redirect(reqwest::redirect::Policy::custom(move |attempt| {
             if same_origin
@@ -253,22 +264,49 @@ fn fetch_vetted(url: &str, same_origin: bool) -> Result<Vec<u8>, String> {
             if attempt.previous().len() >= 10 {
                 return attempt.error(std::io::Error::other("too many redirects"));
             }
-            match vetted_download(attempt.url().as_str()) {
+            match vet(attempt.url().as_str()) {
                 Ok(_) => attempt.follow(),
                 Err(error) => attempt.error(std::io::Error::other(error)),
             }
         }))
         .build()
         .map_err(|e| e.to_string())?;
-    let response = client.get(target).send().map_err(|e| e.to_string())?;
+    let response = client.get(target).send().map_err(|e| error_chain(&e))?;
     if !response.status().is_success() {
         return Err(format!("GET {url} returned {}", response.status()));
     }
-    let bytes = response.bytes().map_err(|e| e.to_string())?;
-    if bytes.len() > 25 * 1024 * 1024 {
-        return Err("download is larger than 25 MiB".into());
+    let too_large = || "download is larger than 25 MiB".to_string();
+    if response
+        .content_length()
+        .is_some_and(|len| len > MAX_DOWNLOAD)
+    {
+        return Err(too_large());
     }
-    Ok(bytes.to_vec())
+    // Read at most one byte past the limit, so an endless or understated
+    // body is never held in memory whole.
+    let mut body = Vec::new();
+    std::io::Read::take(response, MAX_DOWNLOAD + 1)
+        .read_to_end(&mut body)
+        .map_err(|e| e.to_string())?;
+    if body.len() as u64 > MAX_DOWNLOAD {
+        return Err(too_large());
+    }
+    Ok(body)
+}
+
+/// The largest skill download accepted.
+const MAX_DOWNLOAD: u64 = 25 * 1024 * 1024;
+
+/// `error` with its sources, so a refused redirect says why.
+fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut msg = error.to_string();
+    let mut source = error.source();
+    while let Some(inner) = source {
+        msg.push_str(": ");
+        msg.push_str(&inner.to_string());
+        source = inner.source();
+    }
+    msg
 }
 
 fn vetted_download(url: &str) -> Result<reqwest::Url, String> {
@@ -344,7 +382,107 @@ pub fn encode(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{vetted_download, well_known_file_url};
+    use super::{fetch_with, vetted_download, well_known_file_url};
+
+    /// Lets the loopback test servers through; the real vetting is tested
+    /// on its own below.
+    fn any_url(url: &str) -> Result<reqwest::Url, String> {
+        reqwest::Url::parse(url).map_err(|e| e.to_string())
+    }
+
+    /// Serve one HTTP response: `head` (status line and headers), then
+    /// `body_len` bytes of body, then keep the connection open for 40 s.
+    fn stalling_server(head: &'static str, body_len: usize) -> String {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(head.as_bytes());
+            let chunk = vec![b'a'; 64 * 1024];
+            let mut sent = 0;
+            while sent < body_len {
+                let n = chunk.len().min(body_len - sent);
+                if stream.write_all(&chunk[..n]).is_err() {
+                    return;
+                }
+                sent += n;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(40));
+        });
+        format!("http://{addr}/file")
+    }
+
+    #[test]
+    fn a_declared_oversize_body_is_refused_without_reading_it() {
+        let url = stalling_server("HTTP/1.1 200 OK\r\nContent-Length: 104857600\r\n\r\n", 1024);
+        let started = std::time::Instant::now();
+        let err = fetch_with(&url, true, any_url).unwrap_err();
+        assert!(err.contains("25 MiB"), "{err}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    }
+
+    #[test]
+    fn an_endless_body_stops_at_the_limit() {
+        let url = stalling_server(
+            "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n",
+            26 * 1024 * 1024,
+        );
+        let started = std::time::Instant::now();
+        let err = fetch_with(&url, true, any_url).unwrap_err();
+        assert!(err.contains("25 MiB"), "{err}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    }
+
+    /// Answer one request with `response`, return the server's base URL.
+    fn one_shot_server(response: String) -> String {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[test]
+    fn a_same_origin_fetch_refuses_a_redirect_to_another_origin() {
+        let other = one_shot_server(
+            "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nevil!".to_string(),
+        );
+        let start = one_shot_server(format!(
+            "HTTP/1.1 302 Found\r\nLocation: {other}/SKILL.md\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        ));
+        let err = fetch_with(&format!("{start}/x/SKILL.md"), true, any_url).unwrap_err();
+        assert!(err.contains("origin"), "{err}");
+    }
+
+    #[test]
+    fn a_same_origin_fetch_follows_a_same_origin_redirect() {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let replies = [
+                "HTTP/1.1 302 Found\r\nLocation: /moved/SKILL.md\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+            ];
+            for reply in replies {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+        let got = fetch_with(&format!("http://{addr}/x/SKILL.md"), true, any_url).unwrap();
+        assert_eq!(got, b"ok");
+    }
 
     #[test]
     fn well_known_file_urls_stay_on_the_index_origin() {
