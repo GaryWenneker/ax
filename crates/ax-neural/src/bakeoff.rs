@@ -14,11 +14,15 @@ pub(crate) const FAMILIES: [(&str, &str); 4] = [
     ),
 ];
 
-/// True when `neural-runtime` is on and the lexical challenger beats the known
-/// hash-v1 locked-family hits on the embedded coding fixture (ADR 002).
-/// Deterministic and sync. The fixture is embedded, so the answer cannot change
-/// within a process: it is computed once and kept. The bake-off report data is
-/// not cached.
+/// True when `neural-runtime` is on and the lexical challenger beats hash-v1
+/// on the locked families of the embedded coding fixture (ADR 002). Both sides
+/// are scored on that fixture: hash-v1 through the memory bench in a temporary
+/// database, the challenger in memory.
+///
+/// The fixture is compiled in, so the answer is fixed for a build: it is
+/// computed once per process and kept. The synonym table in `lexical.rs` was
+/// written for the fixture's paraphrase question, so this admission says the
+/// challenger answers the questions it was tuned on, not that it generalizes.
 pub fn challenger_admitted() -> bool {
     static ADMITTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ADMITTED.get_or_init(compute_challenger_admitted)
@@ -31,15 +35,60 @@ static ADMISSION_COMPUTATIONS: std::sync::atomic::AtomicUsize =
 fn compute_challenger_admitted() -> bool {
     #[cfg(test)]
     ADMISSION_COMPUTATIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    if !crate::runtime_built() {
-        return false;
-    }
-    let Ok(fixture) = load_coding_fixture(crate::CODING_FIXTURE) else {
-        return false;
-    };
-    let baseline = known_hash_v1_family_hits();
+    crate::runtime_built()
+        && challenger_beats_measured_baseline(crate::CODING_FIXTURE).unwrap_or(false)
+}
+
+/// Scores hash-v1 and the lexical challenger on the fixture `text` and applies
+/// the ADR 002 pass rule. hash-v1 is scored on a thread with its own runtime,
+/// so sync callers and callers inside an async runtime both work.
+fn challenger_beats_measured_baseline(text: &str) -> Result<bool, String> {
+    let fixture = load_coding_fixture(text)?;
+    let baseline = std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|error| error.to_string())?
+                    .block_on(hash_v1_families(&fixture))
+            })
+            .join()
+            .map_err(|_| "hash-v1 scoring panicked".to_string())
+    })??;
     let challenger = lexical_challenger_families(&fixture);
-    crate::lexical::beats_baseline(&baseline, &challenger)
+    Ok(crate::lexical::beats_baseline(&baseline, &challenger))
+}
+
+/// hash-v1 family scores on the fixture, measured in a temporary database.
+async fn hash_v1_families(fixture: &CodingFixture) -> Result<Value, String> {
+    let (report, _) = score_in_temporary_database(fixture).await?;
+    Ok(Value::Object(
+        FAMILIES
+            .iter()
+            .map(|(family, rule)| {
+                let summary = family_summary(fixture, &report, family, rule);
+                (family.to_string(), summary)
+            })
+            .collect(),
+    ))
+}
+
+/// Runs the memory bench on the fixture in a fresh temporary database and
+/// returns the report with the scoring time in milliseconds.
+async fn score_in_temporary_database(
+    fixture: &CodingFixture,
+) -> Result<(CodingReport, f64), String> {
+    let dir = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = ax_db::Database::open(&dir.path().join("bakeoff.db"))
+        .await
+        .map_err(|error| error.to_string())?;
+    let started = Instant::now();
+    let scored = score_coding(database.pool(), fixture).await;
+    let score_millis = millis(started.elapsed());
+    database.pool().close().await;
+    let report = scored.map_err(|error| error.to_string())?;
+    Ok((report, score_millis))
 }
 
 /// Locked-family scores of the lexical challenger on the fixture.
@@ -52,29 +101,11 @@ fn lexical_challenger_families(
     )
 }
 
-/// Measured hash-v1 hits on the coding fixture (bakeoff-results / baseline_report).
-fn known_hash_v1_family_hits() -> Value {
-    json!({
-        "named_trigger": { "scored": 1, "hits": 1 },
-        "paraphrase": { "scored": 1, "hits": 0 },
-        "abstention": { "scored": 1, "hits": 1 },
-        "delivery_budget": { "scored": 1, "hits": 1 }
-    })
-}
-
 /// Scores hash-v1 with the locked fusion through the memory bench, in a temporary database.
 /// When `neural-runtime` is on, also scores the pure-Rust lexical challenger and may admit it.
 pub async fn baseline_report(text: &str) -> Result<Value, String> {
     let fixture = load_coding_fixture(text)?;
-    let dir = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let database = ax_db::Database::open(&dir.path().join("bakeoff.db"))
-        .await
-        .map_err(|error| error.to_string())?;
-    let started = Instant::now();
-    let scored = score_coding(database.pool(), &fixture).await;
-    let score_millis = millis(started.elapsed());
-    database.pool().close().await;
-    let report = scored.map_err(|error| error.to_string())?;
+    let (report, score_millis) = score_in_temporary_database(&fixture).await?;
     let mut families = serde_json::Map::new();
     let mut without_ax = serde_json::Map::new();
     for (family, rule) in FAMILIES {
@@ -243,6 +274,37 @@ fn micros(elapsed: Duration) -> f64 {
 mod tests {
     use super::*;
     use ax_memory::bench::QuestionScore;
+
+    #[test]
+    fn admission_compares_with_hash_v1_measured_on_the_same_fixture() {
+        assert_eq!(
+            challenger_beats_measured_baseline(crate::CODING_FIXTURE),
+            Ok(true)
+        );
+        // A paraphrase question that hash-v1 also answers: the measured
+        // baseline now hits it, so the challenger no longer beats it.
+        let paraphrase = "the representation chosen for similarity in all releases";
+        assert!(crate::CODING_FIXTURE.contains(paraphrase));
+        let easy = crate::CODING_FIXTURE.replace(paraphrase, "Hash vectors are the only embedding");
+        let fixture = load_coding_fixture(&easy).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let baseline = runtime.block_on(hash_v1_families(&fixture)).unwrap();
+        assert_eq!(baseline["paraphrase"]["hits"], 1, "{baseline}");
+        let challenger = lexical_challenger_families(&fixture);
+        assert_eq!(challenger["paraphrase"]["hits"], 1, "{challenger:?}");
+        assert_eq!(challenger_beats_measured_baseline(&easy), Ok(false));
+    }
+
+    #[tokio::test]
+    async fn admission_can_be_computed_inside_an_async_runtime() {
+        assert_eq!(
+            challenger_beats_measured_baseline(crate::CODING_FIXTURE),
+            Ok(true)
+        );
+    }
 
     #[test]
     fn challenger_admission_is_computed_once_per_process() {
