@@ -38,13 +38,15 @@ async fn has_symbol(ax: &ax_core::Ax, name: &str) -> bool {
         .is_empty()
 }
 
+/// An unreadable file is skipped (index-core review fix), so it no longer makes a
+/// forced rebuild fail; the rebuild still keeps every other symbol. A rebuild that does
+/// fail drops nothing, because stale rows are removed only after a successful scan.
 #[cfg(unix)]
 #[tokio::test]
-async fn failed_forced_rebuild_keeps_the_previous_graph() {
+async fn forced_rebuild_with_an_unreadable_file_keeps_the_graph() {
     use std::os::unix::fs::PermissionsExt;
     let (dir, mut ax) = indexed_project().await;
     assert!(has_symbol(&ax, "kept_symbol_survives").await);
-    // A file that cannot be read makes the rebuild fail halfway.
     let unreadable = dir.path().join("unreadable.rs");
     std::fs::write(&unreadable, "pub fn locked() {}\n").unwrap();
     std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
@@ -54,11 +56,12 @@ async fn failed_forced_rebuild_keeps_the_previous_graph() {
     }
     let result = ToolHandler::call_tool(&mut ax, "ax_index", json!({"force": true})).await;
     std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o644)).unwrap();
-    assert!(result.is_err(), "the rebuild must report the failure");
+    assert!(result.is_ok(), "an unreadable file is skipped: {result:?}");
     assert!(
         has_symbol(&ax, "kept_symbol_survives").await,
-        "a failed forced rebuild must not leave the graph empty"
+        "a forced rebuild must not leave the graph empty"
     );
+    assert!(!has_symbol(&ax, "locked").await);
 }
 
 #[tokio::test]
