@@ -67,9 +67,12 @@ pub fn resolve_period(
     };
 
     if end_date < from_date {
-        return Err(format!(
-            "invalid period: --to {end_date} is before --from {from_date}"
-        ));
+        // Without --to the range ends today; do not name a flag the user did not pass.
+        return Err(if period == UsagePeriod::Custom && custom_to.is_none() {
+            format!("invalid period: --from {from_date} is after today ({end_date})")
+        } else {
+            format!("invalid period: --to {end_date} is before --from {from_date}")
+        });
     }
 
     let from_ms = local_start_ms(from_date)?;
@@ -189,5 +192,12 @@ mod tests {
         assert!(
             resolve_period(UsagePeriod::Custom, Some("2026-03-01"), Some("2026-03-01")).is_ok()
         );
+    }
+
+    #[test]
+    fn a_future_from_without_to_does_not_name_a_to_flag() {
+        let err = resolve_period(UsagePeriod::Custom, Some("2999-01-01"), None).unwrap_err();
+        assert!(!err.contains("--to"), "{err}");
+        assert!(err.contains("--from 2999-01-01 is after today"), "{err}");
     }
 }
