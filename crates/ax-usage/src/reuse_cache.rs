@@ -4,7 +4,7 @@
 //! reference instead of the full answer. Every entry records the files its reply
 //! cites with their content hash; any difference makes the entry a miss.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path};
 use std::sync::OnceLock;
 
@@ -161,10 +161,38 @@ pub(crate) fn cited_files(body: &str, root: &Path) -> Vec<String> {
     found.into_iter().collect()
 }
 
+/// Files read by `hash_file`, per project root, so tests can count disk work.
+#[cfg(test)]
+pub(crate) mod hash_reads {
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    static READS: Mutex<Option<HashMap<PathBuf, usize>>> = Mutex::new(None);
+
+    pub(crate) fn bump(root: &Path) {
+        let mut guard = READS.lock().unwrap();
+        *guard
+            .get_or_insert_with(HashMap::new)
+            .entry(root.to_path_buf())
+            .or_default() += 1;
+    }
+
+    pub(crate) fn take(root: &Path) -> usize {
+        let mut guard = READS.lock().unwrap();
+        guard
+            .get_or_insert_with(HashMap::new)
+            .remove(root)
+            .unwrap_or(0)
+    }
+}
+
 fn hash_file(root: &Path, path: &str) -> Option<String> {
     if !safe_relative(path) {
         return None;
     }
+    #[cfg(test)]
+    hash_reads::bump(root);
     let bytes = std::fs::read(root.join(path)).ok()?;
     Some(hex(&Sha256::digest(&bytes)[..16]))
 }
@@ -197,6 +225,21 @@ fn disk_unchanged(root: &Path, files: &Snapshot) -> bool {
         && files
             .iter()
             .all(|(path, hash, _)| hash_file(root, path).as_deref() == Some(hash.as_str()))
+}
+
+/// `disk_unchanged`, reusing the hashes in `memo` across calls.
+fn disk_unchanged_memo(
+    root: &Path,
+    files: &Snapshot,
+    memo: &mut HashMap<String, Option<String>>,
+) -> bool {
+    !files.is_empty()
+        && files.iter().all(|(path, hash, _)| {
+            memo.entry(path.clone())
+                .or_insert_with(|| hash_file(root, path))
+                .as_deref()
+                == Some(hash.as_str())
+        })
 }
 
 /// Each cited file has the indexed hash it had when the reply was stored.
@@ -363,11 +406,22 @@ pub(crate) async fn store_reply(
     if !reuse_enabled() || !reuse_cacheable(tool) || body.len() as i64 > cap_bytes {
         return Ok(None);
     }
-    let cited = cited_files(body, root);
-    if cited.len() > MAX_CITED_FILES {
-        return Ok(None);
-    }
-    let Some(snapshot) = snapshot_files(root, &cited) else {
+    // Finding and hashing the cited files reads the disk: run it off the
+    // async worker.
+    let snapshot = {
+        let root = root.to_path_buf();
+        let body = body.to_string();
+        tokio::task::spawn_blocking(move || {
+            let cited = cited_files(&body, &root);
+            if cited.len() > MAX_CITED_FILES {
+                return None;
+            }
+            snapshot_files(&root, &cited)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    };
+    let Some(snapshot) = snapshot else {
         return Ok(None);
     };
     let tokens = count_tokens(body) as i64;
@@ -448,7 +502,16 @@ pub async fn lookup(
     .await
     .ok()??;
     let files = parse_snapshot(&files_json)?;
-    if !disk_unchanged(root, &files) || load_project_body(pool, root, &id).await.is_err() {
+    let (files, unchanged) = {
+        let root = root.to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            let unchanged = disk_unchanged(&root, &files);
+            (files, unchanged)
+        })
+        .await
+        .ok()?
+    };
+    if !unchanged || load_project_body(pool, root, &id).await.is_err() {
         return None;
     }
     Some(ReuseCandidate {
@@ -510,22 +573,40 @@ pub(crate) async fn session_entries(
     .fetch_all(pool)
     .await
     .ok()?;
-    let entries: Vec<ContextEntry> = rows
+    // Cheap checks first: a row the index already rejects is never hashed.
+    let candidates: Vec<(String, String, Snapshot, String)> = rows
         .into_iter()
         .filter_map(|(tool, args_summary, files_json, fingerprint, id)| {
             let files = parse_snapshot(&files_json)?;
-            let fresh = fingerprint == current
-                && disk_unchanged(root, &files)
-                && index_unchanged(&indexed_of(&files), index);
-            fresh.then(|| ContextEntry {
+            (fingerprint == current && index_unchanged(&indexed_of(&files), index)).then_some((
+                tool,
+                args_summary,
+                files,
+                id,
+            ))
+        })
+        .collect();
+    if candidates.is_empty() {
+        return Some(Vec::new());
+    }
+    // Hashing reads files from disk: keep it off the async worker, and hash a
+    // file cited by many entries only once per call.
+    let root = root.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let mut memo: HashMap<String, Option<String>> = HashMap::new();
+        candidates
+            .into_iter()
+            .filter(|(_, _, files, _)| disk_unchanged_memo(&root, files, &mut memo))
+            .map(|(tool, args_summary, files, id)| ContextEntry {
                 tool,
                 args_summary,
                 files: files.into_iter().map(|(p, _, _)| p).collect(),
                 id,
             })
-        })
-        .collect();
-    Some(entries)
+            .collect()
+    })
+    .await
+    .ok()
 }
 
 pub async fn reuse_lookup(

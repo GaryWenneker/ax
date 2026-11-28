@@ -743,6 +743,41 @@ async fn session_context_lists_only_fresh_entries_of_this_conversation() {
 }
 
 #[tokio::test]
+async fn session_context_hashes_a_file_cited_by_many_entries_once() {
+    let f = Fixture::new().await;
+    for n in 0..6 {
+        f.store(
+            "c1",
+            "ax_node",
+            &json!({ "symbol": format!("alpha{n}") }),
+            &node_body(),
+        )
+        .await
+        .unwrap();
+    }
+    hash_reads::take(f.root());
+    let text = f.context("c1").await.expect("block");
+    assert!(text.contains("alpha"), "{text}");
+    assert_eq!(
+        hash_reads::take(f.root()),
+        1,
+        "src/lib.rs is cited by six entries and must be hashed once"
+    );
+}
+
+#[tokio::test]
+async fn session_context_skips_disk_work_for_index_stale_entries() {
+    let f = Fixture::new().await;
+    f.store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
+    f.set_index("src/lib.rs", "idx2");
+    hash_reads::take(f.root());
+    assert!(f.context("c1").await.is_none(), "index-stale entry listed");
+    assert_eq!(hash_reads::take(f.root()), 0, "stale rows were hashed");
+}
+
+#[tokio::test]
 async fn reindexed_cited_file_invalidates_even_when_disk_is_unchanged() {
     let f = Fixture::new().await;
     f.store("c1", "ax_node", &args(), &node_body())
