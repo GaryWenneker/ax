@@ -25,6 +25,30 @@ fn violated(result: &Value) -> bool {
     result["allowed"] == false
 }
 
+fn rule_ids(violations: &Value) -> Vec<String> {
+    violations
+        .as_array()
+        .map(|list| {
+            list.iter()
+                .filter_map(|v| v["rule_id"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The marker rule fired, so the file content was read.
+fn read_marker(result: &Value) -> bool {
+    rule_ids(&result["violations"])
+        .iter()
+        .any(|id| id == "no-marker")
+}
+
+/// The path was refused as outside the project before anything was read.
+fn refused_as_outside(result: &Value) -> bool {
+    let ids = rule_ids(&result["violations"]);
+    result["allowed"] == false && !ids.is_empty() && ids.iter().all(|id| id == "outside-project")
+}
+
 #[tokio::test]
 async fn guard_reads_project_files_but_not_files_outside_the_project() {
     let (dir, mut ax) = project_with_marker_rule().await;
@@ -42,7 +66,7 @@ async fn guard_reads_project_files_but_not_files_outside_the_project() {
         let inside = ToolHandler::call_tool(&mut ax, "ax_guard", json!({ "path": path }))
             .await
             .expect("guard inside");
-        assert!(violated(&inside), "{path}: {inside}");
+        assert!(read_marker(&inside), "{path}: {inside}");
     }
 
     // A path outside the project is never read, so its content cannot leak
@@ -54,7 +78,11 @@ async fn guard_reads_project_files_but_not_files_outside_the_project() {
         let result = ToolHandler::call_tool(&mut ax, "ax_guard", json!({ "path": path }))
             .await
             .expect("guard outside");
-        assert!(!violated(&result), "{path} was read: {result}");
+        assert!(!read_marker(&result), "{path} was read: {result}");
+        assert!(
+            refused_as_outside(&result),
+            "{path} was not refused: {result}"
+        );
         let multi = ToolHandler::call_tool(
             &mut ax,
             "ax_guard",
@@ -62,7 +90,7 @@ async fn guard_reads_project_files_but_not_files_outside_the_project() {
         )
         .await
         .expect("guard outside multi");
-        assert!(!violated(&multi), "{path} was read: {multi}");
+        assert!(!read_marker(&multi), "{path} was read: {multi}");
     }
 }
 
@@ -77,7 +105,11 @@ async fn guard_does_not_follow_a_symlink_out_of_the_project() {
     let result = ToolHandler::call_tool(&mut ax, "ax_guard", json!({ "path": "src/link.rs" }))
         .await
         .expect("guard link");
-    assert!(!violated(&result), "symlink target was read: {result}");
+    assert!(!read_marker(&result), "symlink target was read: {result}");
+    assert!(
+        refused_as_outside(&result),
+        "symlink was not refused: {result}"
+    );
 }
 
 #[tokio::test]
@@ -137,13 +169,25 @@ async fn diagnostics_does_not_read_files_outside_the_project() {
     .expect("diagnostics");
     let text = result.to_string();
     assert!(text.contains("src/inside.rs"), "{text}");
-    let guarded: Vec<String> = result["guardedPaths"]
+    let guarded = result["guardedPaths"]
         .as_array()
         .or_else(|| result["guarded"].as_array())
         .cloned()
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|g| g["path"].as_str().map(str::to_string))
-        .collect();
-    assert_eq!(guarded, vec!["src/inside.rs".to_string()], "{result}");
+        .unwrap_or_default();
+    // Only the project file is read: the marker rule fires there and nowhere
+    // else, and both outside paths are refused before any read.
+    let mut read = Vec::new();
+    for entry in &guarded {
+        let path = entry["path"].as_str().unwrap_or_default().to_string();
+        let ids = rule_ids(&entry["violations"]);
+        if ids.iter().any(|id| id == "no-marker") {
+            read.push(path);
+        } else if path != "src/inside.rs" {
+            assert!(
+                !ids.is_empty() && ids.iter().all(|id| id == "outside-project"),
+                "{path} was not refused as outside: {result}"
+            );
+        }
+    }
+    assert_eq!(read, vec!["src/inside.rs".to_string()], "{result}");
 }
