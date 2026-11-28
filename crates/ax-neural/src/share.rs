@@ -123,8 +123,11 @@ pub fn packet(allow: bool, models: &[ModelManifest], outcome_counts: &[(String, 
 }
 
 pub fn checksum_matches(bytes: &[u8], expected_hex: &str) -> bool {
-    let digest = blake3::hash(bytes).to_hex();
-    digest.as_str() == expected_hex
+    let Ok(expected) = blake3::Hash::from_hex(expected_hex.trim()) else {
+        return false;
+    };
+    // `blake3::Hash` compares in constant time and `from_hex` accepts either case.
+    blake3::hash(bytes) == expected
 }
 
 #[cfg(test)]
@@ -289,6 +292,16 @@ mod tests {
         let digest = blake3::hash(b"model").to_hex().to_string();
         assert!(checksum_matches(b"model", &digest));
         assert!(!checksum_matches(b"modeL", &digest));
+    }
+
+    #[test]
+    fn checksum_accepts_uppercase_hex_and_a_trailing_newline() {
+        let digest = blake3::hash(b"model").to_hex().to_string();
+        assert!(checksum_matches(b"model", &digest.to_ascii_uppercase()));
+        assert!(checksum_matches(b"model", &format!("{digest}\n")));
+        assert!(!checksum_matches(b"modeL", &digest.to_ascii_uppercase()));
+        assert!(!checksum_matches(b"model", ""));
+        assert!(!checksum_matches(b"model", "not hex"));
     }
 
     #[derive(Default)]

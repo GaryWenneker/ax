@@ -57,69 +57,135 @@ pub struct GlobalAxConfig {
     pub workspace: WorkspaceConfig,
 }
 
-fn read_config_root(path: &Path) -> serde_json::Value {
-    if !path.exists() {
-        return serde_json::json!({});
+type ConfigRoot = serde_json::Map<String, serde_json::Value>;
+
+/// Parses the bytes of `~/.ax/config.json`. A missing, empty or `null` file
+/// is an empty object; anything else that is not a JSON object is an error,
+/// so a hand-edited file with a typo is never replaced by a save.
+fn parse_config_root(path: &Path, bytes: Option<&[u8]>) -> Result<ConfigRoot, String> {
+    let Some(bytes) = bytes else {
+        return Ok(ConfigRoot::new());
+    };
+    if bytes.iter().all(u8::is_ascii_whitespace) {
+        return Ok(ConfigRoot::new());
     }
-    let text = fs::read_to_string(path).unwrap_or_default();
-    let value: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
-    if value.is_object() {
-        value
-    } else {
-        serde_json::json!({})
+    match serde_json::from_slice::<serde_json::Value>(bytes) {
+        Ok(serde_json::Value::Object(map)) => Ok(map),
+        Ok(serde_json::Value::Null) => Ok(ConfigRoot::new()),
+        Ok(_) => Err(format!(
+            "{} does not hold a JSON object; fix it before ax can save settings",
+            path.display()
+        )),
+        Err(e) => Err(format!(
+            "{} is not valid JSON ({e}); fix it before ax can save settings",
+            path.display()
+        )),
     }
+}
+
+fn read_config_root(path: &Path) -> Result<ConfigRoot, String> {
+    match fs::read(path) {
+        Ok(b) => parse_config_root(path, Some(&b)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(ConfigRoot::new()),
+        Err(e) => Err(format!("cannot read {}: {e}", path.display())),
+    }
+}
+
+/// Read-modify-write of `~/.ax/config.json` under a file lock with an atomic
+/// replace, so parallel writers (CLI, Command Center) do not lose each
+/// other's changes and a crash never leaves a half-written file. Every key
+/// `edit` does not touch is kept. A file that does not parse is left alone
+/// and reported as an error.
+fn update_config_root(
+    edit: impl FnOnce(&mut ConfigRoot) -> Result<(), String>,
+) -> Result<(), String> {
+    let path = config_path().ok_or("no home dir")?;
+    let mut failure: Option<String> = None;
+    let result = ax_utils::update_locked(&path, |current| {
+        let mut root = match parse_config_root(&path, current.as_deref()) {
+            Ok(r) => r,
+            Err(e) => {
+                failure = Some(e);
+                return Ok(None);
+            }
+        };
+        if let Err(e) = edit(&mut root) {
+            failure = Some(e);
+            return Ok(None);
+        }
+        let body = serde_json::to_string_pretty(&root)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        Ok(Some((body + "\n").into_bytes()))
+    });
+    if let Some(e) = failure {
+        return Err(e);
+    }
+    result.map(|_| ()).map_err(|e| e.to_string())
+}
+
+fn section<T: serde::de::DeserializeOwned + Default>(root: &ConfigRoot, key: &str) -> T {
+    root.get(key)
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default()
+}
+
+fn set_section<T: Serialize>(root: &mut ConfigRoot, key: &str, value: &T) -> Result<(), String> {
+    root.insert(
+        key.into(),
+        serde_json::to_value(value).map_err(|e| e.to_string())?,
+    );
+    Ok(())
 }
 
 pub fn load_global_config() -> GlobalAxConfig {
     let Some(path) = config_path() else {
         return GlobalAxConfig::default();
     };
-    if !path.exists() {
-        return GlobalAxConfig::default();
+    match read_config_root(&path) {
+        Ok(root) => GlobalAxConfig {
+            agents: section(&root, "agents"),
+            workspace: section(&root, "workspace"),
+        },
+        Err(e) => {
+            tracing::warn!("{e}; using default agent and workspace settings");
+            GlobalAxConfig::default()
+        }
     }
-    let value = read_config_root(&path);
-    serde_json::from_value(value).unwrap_or_default()
 }
 
 pub fn save_global_config(cfg: &GlobalAxConfig) -> Result<(), String> {
-    let path = config_path().ok_or("no home dir")?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    // Merge with existing to preserve index/policy keys
-    let mut merged = read_config_root(&path);
-    let agents = serde_json::to_value(&cfg.agents).map_err(|e| e.to_string())?;
-    let workspace = serde_json::to_value(&cfg.workspace).map_err(|e| e.to_string())?;
-    let obj = merged
-        .as_object_mut()
-        .expect("read_config_root always returns an object");
-    obj.insert("agents".into(), agents);
-    obj.insert("workspace".into(), workspace);
-    fs::write(
-        &path,
-        serde_json::to_string_pretty(&merged).map_err(|e| e.to_string())? + "\n",
-    )
-    .map_err(|e| e.to_string())
+    update_config_root(|root| {
+        set_section(root, "agents", &cfg.agents)?;
+        set_section(root, "workspace", &cfg.workspace)
+    })
 }
 
 pub fn load_agents_config() -> AgentsConfig {
     load_global_config().agents
 }
 
+/// Replaces only the `agents` section; other sections stay as they are on disk.
 pub fn save_agents_config(agents: &AgentsConfig) -> Result<(), String> {
-    let mut cfg = load_global_config();
-    cfg.agents = agents.clone();
-    save_global_config(&cfg)
+    update_config_root(|root| set_section(root, "agents", agents))
 }
 
 pub fn load_workspace_config() -> WorkspaceConfig {
     load_global_config().workspace
 }
 
+/// Replaces only the `workspace` section; other sections stay as they are on disk.
 pub fn save_workspace_config(workspace: &WorkspaceConfig) -> Result<(), String> {
-    let mut cfg = load_global_config();
-    cfg.workspace = workspace.clone();
-    save_global_config(&cfg)
+    update_config_root(|root| set_section(root, "workspace", workspace))
+}
+
+/// Changes the `workspace` section in one locked read-modify-write.
+fn update_workspace(edit: impl FnOnce(&mut WorkspaceConfig)) -> Result<(), String> {
+    update_config_root(|root| {
+        let mut ws: WorkspaceConfig = section(root, "workspace");
+        edit(&mut ws);
+        set_section(root, "workspace", &ws)
+    })
 }
 
 pub fn touch_recent_project(path: &Path, initialized: bool) -> Result<(), String> {
@@ -135,37 +201,45 @@ pub fn touch_recent_project(path: &Path, initialized: bool) -> Result<(), String
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    let mut cfg = load_global_config();
-    cfg.workspace.recent.retain(|p| p.path != path_str);
-    cfg.workspace.recent.insert(
-        0,
-        RecentProject {
-            path: path_str,
-            label,
-            last_opened: now,
-            initialized,
-        },
-    );
-    cfg.workspace.recent.truncate(20);
-    save_global_config(&cfg)
+    update_workspace(|ws| {
+        ws.recent.retain(|p| p.path != path_str);
+        ws.recent.insert(
+            0,
+            RecentProject {
+                path: path_str,
+                label,
+                last_opened: now,
+                initialized,
+            },
+        );
+        ws.recent.truncate(20);
+    })
 }
 
 /// Drop one project from the global recent list. Returns whether a row was removed.
 pub fn forget_recent_project(path: &Path) -> Result<bool, String> {
     let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let path_str = abs.to_string_lossy().into_owned();
-    let mut cfg = load_global_config();
-    let before = cfg.workspace.recent.len();
-    cfg.workspace.recent.retain(|p| {
-        let other = PathBuf::from(&p.path);
-        let other_abs = other.canonicalize().unwrap_or(other);
-        other_abs != abs && p.path != path_str
-    });
-    let removed = cfg.workspace.recent.len() != before;
-    if removed {
-        save_global_config(&cfg)?;
+    if !load_workspace_config()
+        .recent
+        .iter()
+        .any(|p| recent_matches(p, &abs, &path_str))
+    {
+        return Ok(false);
     }
+    let mut removed = false;
+    update_workspace(|ws| {
+        let before = ws.recent.len();
+        ws.recent.retain(|p| !recent_matches(p, &abs, &path_str));
+        removed = ws.recent.len() != before;
+    })?;
     Ok(removed)
+}
+
+fn recent_matches(p: &RecentProject, abs: &Path, path_str: &str) -> bool {
+    let other = PathBuf::from(&p.path);
+    let other_abs = other.canonicalize().unwrap_or(other);
+    other_abs == abs || p.path == path_str
 }
 
 pub fn default_browse_roots() -> Vec<PathBuf> {
@@ -353,12 +427,64 @@ mod tests {
     }
 
     #[test]
+    fn malformed_config_is_never_overwritten() {
+        let home = crate::test_home::fresh("malformed-config");
+        let path = home.dir.join(".ax").join("config.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let original = "{\n  \"offload\": { \"endpoint\": \"https://x\" },\n  \"index\": {},\n}\n";
+        fs::write(&path, original).unwrap();
+        let _ = save_agents_config(&AgentsConfig::default());
+        let _ = touch_recent_project(&home.dir, true);
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        assert!(save_agents_config(&AgentsConfig::default()).is_err());
+    }
+
+    #[test]
+    fn saving_keeps_every_other_top_level_key() {
+        let home = crate::test_home::fresh("keep-keys");
+        let path = home.dir.join(".ax").join("config.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"{"offload":{"endpoint":"https://x"},"index":{"a":1}}"#,
+        )
+        .unwrap();
+        save_agents_config(&AgentsConfig::default()).unwrap();
+        touch_recent_project(&home.dir, true).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["offload"]["endpoint"], "https://x");
+        assert_eq!(v["index"]["a"], 1);
+        assert_eq!(v["workspace"]["recent"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn concurrent_recent_project_updates_are_not_lost() {
+        let home = crate::test_home::fresh("concurrent-recent");
+        let dirs: Vec<PathBuf> = (0..16)
+            .map(|i| {
+                let d = home.dir.join(format!("p{i}"));
+                fs::create_dir_all(&d).unwrap();
+                d
+            })
+            .collect();
+        let threads: Vec<_> = dirs
+            .iter()
+            .cloned()
+            .map(|d| std::thread::spawn(move || touch_recent_project(&d, true).unwrap()))
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert_eq!(load_workspace_config().recent.len(), 16);
+    }
+
+    #[test]
     fn read_config_root_treats_null_as_empty_object() {
         let path = std::env::temp_dir().join(format!("ax-config-test-{}.json", std::process::id()));
         std::fs::write(&path, "null").unwrap();
-        let root = read_config_root(&path);
-        assert!(root.is_object());
-        assert!(root.as_object().unwrap().is_empty());
+        let root = read_config_root(&path).unwrap();
+        assert!(root.is_empty());
         let _ = std::fs::remove_file(path);
     }
 

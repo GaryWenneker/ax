@@ -241,7 +241,7 @@ fn config_has_ax(path: &Path, bin: &str, project_root: &Path) -> bool {
             && content.contains(bin);
     }
     // Zed / VS Code settings files may contain JSONC comments — strip before parsing.
-    let val = read_json_lenient(path);
+    let val = read_json_lenient(path).unwrap_or_default();
     if val.get("mcpServers").and_then(|v| v.get("ax")).is_some() {
         return val
             .get("mcpServers")
@@ -435,71 +435,96 @@ fn replace_toml_section(content: &str, section: &str, block: &str) -> String {
 }
 
 fn codex_ax_block(bin: &str) -> String {
-    let path = mcp_path_token("codex");
+    // Values go through the TOML encoder: a Windows path such as
+    // `C:\Users\...` inside a hand-quoted basic string reads `\U` as an
+    // escape and makes the whole config.toml unparsable.
+    let quote = |value: &str| toml::Value::String(value.to_string()).to_string();
+    let bin = quote(bin);
+    let path = quote(mcp_path_token("codex"));
     format!(
-        "[mcp_servers.ax]\ncommand = \"{bin}\"\nargs = [\"serve\", \"--mcp\", \"--path\", \"{path}\"]\ncwd = \"{path}\"\n",
+        "[mcp_servers.ax]\ncommand = {bin}\nargs = [\"serve\", \"--mcp\", \"--path\", {path}]\ncwd = {path}\n",
     )
 }
 
+#[cfg(test)]
 fn hermes_ax_block(bin: &str) -> String {
-    let path = mcp_path_token("hermes");
-    format!(
-        "mcp_servers:\n  ax:\n    command: {bin}\n    args:\n      - serve\n      - --mcp\n      - --path\n      - {path}\n    cwd: {path}\n    timeout: 120\n    connect_timeout: 60\n    enabled: true\nplatform_toolsets:\n  cli:\n    - mcp-ax\n",
-    )
-}
-
-fn replace_hermes_ax_block(content: &str, block: &str) -> String {
-    let lines: Vec<&str> = content.lines().collect();
-    let mut out = Vec::new();
-    let mut skip = false;
-    for line in lines {
-        let trimmed = line.trim();
-        if trimmed == "mcp_servers:" || trimmed == "  ax:" {
-            skip = true;
-            continue;
-        }
-        if skip {
-            if trimmed == "platform_toolsets:" {
-                skip = false;
-                continue;
-            }
-            if !line.starts_with(' ') && !line.is_empty() {
-                skip = false;
-                out.push(line);
-            }
-            continue;
-        }
-        if trimmed == "platform_toolsets:" {
-            continue;
-        }
-        if trimmed == "cli:" || trimmed == "- mcp-ax" {
-            continue;
-        }
-        out.push(line);
-    }
-    while out.last().is_some_and(|l| l.trim().is_empty()) {
-        out.pop();
-    }
-    let mut result = out.join("\n");
-    if !result.is_empty() {
-        result.push('\n');
-    }
-    result.push('\n');
-    result.push_str(block);
-    result
+    crate::hermes_yaml::ax_entry(bin, mcp_path_token("hermes"), 0)
 }
 
 fn home_dir() -> Result<PathBuf, String> {
     ax_utils::paths::home_dir().ok_or_else(|| "no home dir".to_string())
 }
 
-fn read_json(path: &Path) -> Value {
-    if path.exists() {
-        let content = fs::read_to_string(path).unwrap_or_default();
-        serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
-    } else {
-        serde_json::json!({})
+/// Reads an IDE config file for a read-modify-write. A missing or empty file
+/// is `{}`. A file that does not parse, or whose root is not an object, is an
+/// error naming the file, so the caller leaves it untouched instead of
+/// replacing it. `.jsonc` files also accept comments and trailing commas.
+fn read_json(path: &Path) -> Result<Value, String> {
+    let jsonc = path.extension().and_then(|e| e.to_str()) == Some("jsonc");
+    read_json_file(path, jsonc)
+}
+
+/// Like [`read_json`], but always accepts JSONC (comments and trailing
+/// commas), for Zed and VS Code settings files.
+fn read_json_lenient(path: &Path) -> Result<Value, String> {
+    read_json_file(path, true)
+}
+
+fn read_json_file(path: &Path, jsonc: bool) -> Result<Value, String> {
+    let content = match fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(serde_json::json!({})),
+        Err(e) => {
+            return Err(format!(
+                "cannot read {}: {e}; left unchanged",
+                path.display()
+            ))
+        }
+    };
+    let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
+    if content.trim().is_empty() {
+        return Ok(serde_json::json!({}));
     }
+    let parsed = match serde_json::from_str::<Value>(content) {
+        Ok(v) => Ok(v),
+        Err(e) if jsonc => serde_json::from_str::<Value>(&strip_jsonc(content)).map_err(|_| e),
+        Err(e) => Err(e),
+    };
+    match parsed {
+        Ok(Value::Object(map)) => Ok(Value::Object(map)),
+        Ok(Value::Null) => Ok(serde_json::json!({})),
+        Ok(_) => Err(format!(
+            "{} does not hold a JSON object; left unchanged",
+            path.display()
+        )),
+        Err(e) => Err(format!(
+            "{} is not valid JSON ({e}); left unchanged",
+            path.display()
+        )),
+    }
+}
+
+/// The object under `key` in `config` (created when missing or null). Any
+/// other value is an error naming the file, instead of a panic on indexing.
+fn object_entry<'a>(
+    config: &'a mut Value,
+    key: &str,
+    path: &Path,
+) -> Result<&'a mut serde_json::Map<String, Value>, String> {
+    let not_object = || {
+        format!(
+            "{}: \"{key}\" is not a JSON object; left unchanged",
+            path.display()
+        )
+    };
+    let root = config.as_object_mut().ok_or_else(not_object)?;
+    let slot = root
+        .entry(key.to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if slot.is_null() {
+        *slot = serde_json::json!({});
+    }
+    slot.as_object_mut().ok_or_else(not_object)
 }
 
 fn json_equal(a: &Value, b: &Value) -> bool {
@@ -511,15 +536,15 @@ fn write_json_action(path: &Path, value: &Value) -> Result<FileAction, String> {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let existed = path.exists();
-    let before = read_json(path);
-    if existed && json_equal(&before, value) {
+    if existed && read_json_lenient(path).is_ok_and(|before| json_equal(&before, value)) {
         return Ok(FileAction::Unchanged);
     }
-    fs::write(
-        path,
-        serde_json::to_string_pretty(value).unwrap_or_default(),
-    )
-    .map_err(|e| e.to_string())?;
+    let body = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    if existed {
+        backup_if_comments_lost(path)?;
+    }
+    ax_utils::atomic_write(path, body.as_bytes())
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     Ok(if existed {
         FileAction::Updated
     } else {
@@ -527,12 +552,26 @@ fn write_json_action(path: &Path, value: &Value) -> Result<FileAction, String> {
     })
 }
 
-fn upsert_mcp_servers(path: &Path, target: &str) -> Result<FileAction, String> {
-    let mut config = read_json(path);
-    if config.get("mcpServers").is_none() {
-        config["mcpServers"] = serde_json::json!({});
+/// Rewriting a JSONC file as JSON drops its comments. Before that happens the
+/// original is copied to `<file>.ax-backup`, so nothing the user wrote is lost.
+fn backup_if_comments_lost(path: &Path) -> Result<(), String> {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return Ok(());
+    };
+    let text = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
+    if text.trim().is_empty() || serde_json::from_str::<Value>(text).is_ok() {
+        return Ok(());
     }
-    config["mcpServers"]["ax"] = mcp_config_entry(target);
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".ax-backup");
+    let backup = path.with_file_name(name);
+    ax_utils::atomic_write(&backup, raw.as_bytes())
+        .map_err(|e| format!("cannot write {}: {e}", backup.display()))
+}
+
+fn upsert_mcp_servers(path: &Path, target: &str) -> Result<FileAction, String> {
+    let mut config = read_json(path)?;
+    object_entry(&mut config, "mcpServers", path)?.insert("ax".into(), mcp_config_entry(target));
     write_json_action(path, &config)
 }
 
@@ -540,7 +579,7 @@ fn remove_mcp_servers(path: &Path) -> Result<Option<FileAction>, String> {
     if !path.exists() {
         return Ok(None);
     }
-    let mut config = read_json(path);
+    let mut config = read_json(path)?;
     let had = config.get("mcpServers").and_then(|v| v.get("ax")).is_some();
     if !had {
         return Ok(None);
@@ -647,7 +686,8 @@ const CLAUDE_HOOKS: [(&str, &str); 4] = [
 
 /// Register `ax <hook_subcommand>` under `hooks.<event>` in Claude's `settings.json`.
 /// A command that already runs this binary for that subcommand is left as written.
-/// A command that names the subcommand but points at another binary is replaced in place.
+/// An ax hook for the same subcommand that points at another `ax` binary is replaced in
+/// place. Other commands are never changed, even when their text mentions the subcommand.
 fn install_claude_hook(
     settings_path: &Path,
     event: &str,
@@ -657,11 +697,8 @@ fn install_claude_hook(
     let bin = crate::hooks::shell_bin(&raw_bin);
     let hook_cmd = format!("{bin} {hook_subcommand}");
     let plain_cmd = format!("{raw_bin} {hook_subcommand}");
-    let mut settings = read_json(settings_path);
-    if settings.get("hooks").is_none() {
-        settings["hooks"] = serde_json::json!({});
-    }
-    let hooks = settings["hooks"].as_object_mut().ok_or("invalid hooks")?;
+    let mut settings = read_json(settings_path)?;
+    let hooks = object_entry(&mut settings, "hooks", settings_path)?;
     if hooks.get(event).is_none() {
         hooks.insert(event.to_string(), serde_json::json!([]));
     }
@@ -687,7 +724,7 @@ fn install_claude_hook(
         .iter_mut()
         .filter_map(|g| g.get_mut("hooks").and_then(|h| h.as_array_mut()))
         .flatten()
-        .find(|e| command_of(e).is_some_and(|s| s.contains(hook_subcommand)));
+        .find(|e| command_of(e).is_some_and(|s| is_ax_hook_command(s, hook_subcommand)));
     match stale {
         Some(entry) => entry["command"] = Value::String(hook_cmd),
         None => groups.push(serde_json::json!({
@@ -706,36 +743,68 @@ fn remove_claude_hook(
     if !settings_path.exists() {
         return Ok(false);
     }
-    let mut settings = read_json(settings_path);
+    let mut settings = read_json(settings_path)?;
     let Some(hooks) = settings.get_mut("hooks").and_then(|v| v.as_object_mut()) else {
         return Ok(false);
     };
     let Some(groups) = hooks.get_mut(event).and_then(|v| v.as_array_mut()) else {
         return Ok(false);
     };
-    let before = groups.len();
-    groups.retain(|g| !hook_group_matches(std::slice::from_ref(g), hook_subcommand));
-    if groups.len() == before {
+    // Drop only the ax entries; a group is removed when nothing else is left in it.
+    let mut changed = false;
+    groups.retain_mut(|group| {
+        let Some(list) = group.get_mut("hooks").and_then(|h| h.as_array_mut()) else {
+            return true;
+        };
+        let before = list.len();
+        list.retain(|e| {
+            !e.get("command")
+                .and_then(|c| c.as_str())
+                .is_some_and(|s| is_ax_hook_command(s, hook_subcommand))
+        });
+        if list.len() == before {
+            return true;
+        }
+        changed = true;
+        !list.is_empty()
+    });
+    if !changed {
         return Ok(false);
     }
     write_json_action(settings_path, &settings)?;
     Ok(true)
 }
 
-fn hook_group_matches(groups: &[Value], hook_subcommand: &str) -> bool {
-    groups.iter().any(|g| {
-        g.get("hooks")
-            .and_then(|h| h.as_array())
-            .map(|arr| {
-                arr.iter().any(|e| {
-                    e.get("command")
-                        .and_then(|c| c.as_str())
-                        .map(|s| s.contains(hook_subcommand))
-                        .unwrap_or(false)
-                })
-            })
-            .unwrap_or(false)
-    })
+/// Whether `command` runs an ax binary (basename `ax` or `ax.exe`, quoted or
+/// not) with exactly the tokens of `hook_subcommand` and nothing else.
+fn is_ax_hook_command(command: &str, hook_subcommand: &str) -> bool {
+    is_hook_command_of(command, hook_subcommand, &ax_bin())
+}
+
+/// As [`is_ax_hook_command`], but the program may also be `this_bin`, the exact path
+/// install writes. Without that, a hook written by a binary not named `ax` (no `ax` on
+/// PATH, so the running binary is used) could never be removed again.
+fn is_hook_command_of(command: &str, hook_subcommand: &str, this_bin: &str) -> bool {
+    let command = command.trim();
+    let (program, rest) = match command.strip_prefix('"') {
+        Some(quoted) => match quoted.split_once('"') {
+            Some((program, rest)) => (program, rest),
+            None => return false,
+        },
+        None => command
+            .split_once(char::is_whitespace)
+            .unwrap_or((command, "")),
+    };
+    let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    let is_ax = name.eq_ignore_ascii_case("ax")
+        || name.eq_ignore_ascii_case("ax.exe")
+        || (!this_bin.is_empty()
+            && (program == this_bin
+                || program == crate::hooks::shell_bin(this_bin).trim_matches('"')));
+    is_ax
+        && rest
+            .split_whitespace()
+            .eq(hook_subcommand.split_whitespace())
 }
 
 fn install_codex_mcp(_project_root: &Path) -> Result<TargetReport, String> {
@@ -837,26 +906,32 @@ fn install_opencode_mcp(_project_root: &Path) -> Result<TargetReport, String> {
     let path = opencode_config_path()?;
     let bin = ax_bin();
     let path_token = mcp_path_token("opencode");
-    let mut config = read_json(&path);
-    if config.get("mcp").is_none() {
-        config["mcp"] = serde_json::json!({});
-    }
+    let mut config = read_json(&path)?;
     let args: Vec<String> = std::iter::once(bin)
         .chain(mcp_serve_args(path_token))
         .collect();
-    config["mcp"]["ax"] = serde_json::json!({
-        "type": "local",
-        "command": args,
-        "enabled": true,
-        "cwd": path_token,
-    });
+    object_entry(&mut config, "mcp", &path)?.insert(
+        "ax".into(),
+        serde_json::json!({
+            "type": "local",
+            "command": args,
+            "enabled": true,
+            "cwd": path_token,
+        }),
+    );
     report.push_file(path.clone(), write_json_action(&path, &config)?);
     if let Ok(app_data) = std::env::var("APPDATA") {
         let legacy = PathBuf::from(app_data)
             .join("opencode")
             .join("opencode.jsonc");
         if legacy.exists() && legacy != path {
-            let mut legacy_cfg = read_json(&legacy);
+            let mut legacy_cfg = match read_json(&legacy) {
+                Ok(v) => v,
+                Err(e) => {
+                    report.note(format!("Old ax entry not removed: {e}"));
+                    return Ok(report);
+                }
+            };
             if legacy_cfg.get("mcp").and_then(|v| v.get("ax")).is_some() {
                 if let Some(mcp) = legacy_cfg.get_mut("mcp").and_then(|v| v.as_object_mut()) {
                     mcp.remove("ax");
@@ -872,7 +947,7 @@ fn uninstall_opencode_mcp() -> Result<TargetReport, String> {
     let mut report = TargetReport::new("opencode", display_name("opencode"));
     let path = opencode_config_path()?;
     if path.exists() {
-        let mut config = read_json(&path);
+        let mut config = read_json(&path)?;
         if config.get("mcp").and_then(|v| v.get("ax")).is_some() {
             if let Some(mcp) = config.get_mut("mcp").and_then(|v| v.as_object_mut()) {
                 mcp.remove("ax");
@@ -922,11 +997,8 @@ fn antigravity_mcp_path() -> Result<PathBuf, String> {
 fn install_antigravity_mcp(_project_root: &Path) -> Result<TargetReport, String> {
     let mut report = TargetReport::new("antigravity", display_name("antigravity"));
     let path = antigravity_mcp_path()?;
-    let mut config = read_json(&path);
-    if config.get("mcpServers").is_none() {
-        config["mcpServers"] = serde_json::json!({});
-    }
-    config["mcpServers"]["ax"] = antigravity_mcp_entry();
+    let mut config = read_json(&path)?;
+    object_entry(&mut config, "mcpServers", &path)?.insert("ax".into(), antigravity_mcp_entry());
     report.push_file(path.clone(), write_json_action(&path, &config)?);
     report.note("Restart Antigravity for MCP changes to take effect.");
     Ok(report)
@@ -990,11 +1062,8 @@ fn install_vscode_lineage_mcp(
 ) -> Result<TargetReport, String> {
     let mut report = TargetReport::new(target, display_name(target));
     let path = vscode_mcp_path(project_root);
-    let mut config = read_json(&path);
-    if config.get("servers").is_none() {
-        config["servers"] = serde_json::json!({});
-    }
-    config["servers"]["ax"] = vscode_mcp_entry();
+    let mut config = read_json_lenient(&path)?;
+    object_entry(&mut config, "servers", &path)?.insert("ax".into(), vscode_mcp_entry());
     report.push_file(path.clone(), write_json_action(&path, &config)?);
     report.note(note);
     Ok(report)
@@ -1087,7 +1156,7 @@ fn uninstall_vscode_lineage_mcp(target: &'static str) -> Result<TargetReport, St
     if let Ok(cwd) = std::env::current_dir() {
         let path = vscode_mcp_path(&cwd);
         if path.exists() {
-            let mut config = read_json(&path);
+            let mut config = read_json_lenient(&path)?;
             if config.get("servers").and_then(|v| v.get("ax")).is_some() {
                 if let Some(servers) = config.get_mut("servers").and_then(|v| v.as_object_mut()) {
                     servers.remove("ax");
@@ -1169,26 +1238,12 @@ fn zed_context_server_entry() -> Value {
     })
 }
 
-fn read_json_lenient(path: &Path) -> Value {
-    if !path.exists() {
-        return serde_json::json!({});
-    }
-    let content = fs::read_to_string(path).unwrap_or_default();
-    if content.contains("//") || content.contains("/*") {
-        serde_json::from_str(&strip_json_comments(&content)).unwrap_or_else(|_| read_json(path))
-    } else {
-        read_json(path)
-    }
-}
-
 fn install_zed_mcp(_project_root: &Path) -> Result<TargetReport, String> {
     let mut report = TargetReport::new("zed", display_name("zed"));
     let path = zed_settings_path()?;
-    let mut config = read_json_lenient(&path);
-    if config.get("context_servers").is_none() {
-        config["context_servers"] = serde_json::json!({});
-    }
-    config["context_servers"]["ax"] = zed_context_server_entry();
+    let mut config = read_json_lenient(&path)?;
+    object_entry(&mut config, "context_servers", &path)?
+        .insert("ax".into(), zed_context_server_entry());
     report.push_file(path.clone(), write_json_action(&path, &config)?);
     report.note("Reopen the Agent Panel in Zed for the new context server to connect.");
     Ok(report)
@@ -1198,7 +1253,7 @@ fn uninstall_zed_mcp() -> Result<TargetReport, String> {
     let mut report = TargetReport::new("zed", display_name("zed"));
     let path = zed_settings_path()?;
     if path.exists() {
-        let mut config = read_json_lenient(&path);
+        let mut config = read_json_lenient(&path)?;
         if config
             .get("context_servers")
             .and_then(|v| v.get("ax"))
@@ -1216,28 +1271,33 @@ fn uninstall_zed_mcp() -> Result<TargetReport, String> {
     Ok(report)
 }
 
-/// Strip `//` and `/* */` JSON comments (JSONC) without disturbing string content.
-/// Ported from `ax-resolution::import_resolver::strip_json_comments`.
-fn strip_json_comments(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
+/// Turns JSONC into JSON: drops `//` and `/* */` comments and commas that
+/// come right before `}` or `]`, without touching string content. Works on
+/// bytes and copies them unchanged, so non-ASCII text stays intact.
+fn strip_jsonc(input: &str) -> String {
     let bytes = input.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    // Index in `out` of a comma that may turn out to be trailing.
+    let mut pending_comma: Option<usize> = None;
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'"' {
-            out.push('"');
+        let b = bytes[i];
+        if b == b'"' {
+            pending_comma = None;
+            let start = i;
             i += 1;
             while i < bytes.len() {
-                let c = bytes[i];
-                out.push(c as char);
-                if c == b'\\' && i + 1 < bytes.len() {
+                if bytes[i] == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == b'"' {
                     i += 1;
-                    out.push(bytes[i] as char);
-                } else if c == b'"' {
                     break;
                 }
                 i += 1;
             }
-            i += 1;
+            out.extend_from_slice(&bytes[start..i.min(bytes.len())]);
         } else if bytes.get(i..i + 2) == Some(b"//") {
             while i < bytes.len() && bytes[i] != b'\n' {
                 i += 1;
@@ -1247,13 +1307,27 @@ fn strip_json_comments(input: &str) -> String {
             while i < bytes.len() && bytes.get(i..i + 2) != Some(b"*/") {
                 i += 1;
             }
-            i += 2;
+            i = (i + 2).min(bytes.len());
+        } else if b == b',' {
+            pending_comma = Some(out.len());
+            out.push(b);
+            i += 1;
+        } else if b == b'}' || b == b']' {
+            if let Some(at) = pending_comma.take() {
+                out.remove(at);
+            }
+            out.push(b);
+            i += 1;
         } else {
-            out.push(bytes[i] as char);
+            if !b.is_ascii_whitespace() {
+                pending_comma = None;
+            }
+            out.push(b);
             i += 1;
         }
     }
-    out
+    // Only whole UTF-8 sequences were copied, so this cannot fail.
+    String::from_utf8(out).unwrap_or_default()
 }
 
 fn hermes_config_path() -> Result<PathBuf, String> {
@@ -1267,12 +1341,9 @@ fn hermes_config_path() -> Result<PathBuf, String> {
 fn install_hermes_mcp(_project_root: &Path) -> Result<TargetReport, String> {
     let mut report = TargetReport::new("hermes", display_name("hermes"));
     let path = hermes_config_path()?;
-    let content = if path.exists() {
-        fs::read_to_string(&path).unwrap_or_default()
-    } else {
-        String::new()
-    };
-    let out = replace_hermes_ax_block(&content, &hermes_ax_block(&ax_bin()));
+    let content = read_text_for_edit(&path)?;
+    let out = hermes_upsert(&content, &ax_bin())
+        .map_err(|e| format!("{} {e}; left unchanged", path.display()))?;
     report.push_file(path.clone(), write_text_action(&path, &out)?);
     report.note("Start a new Hermes session for MCP changes to take effect.");
     Ok(report)
@@ -1281,34 +1352,37 @@ fn install_hermes_mcp(_project_root: &Path) -> Result<TargetReport, String> {
 fn uninstall_hermes_mcp() -> Result<TargetReport, String> {
     let mut report = TargetReport::new("hermes", display_name("hermes"));
     let path = hermes_config_path()?;
-    if !path.exists()
-        || !fs::read_to_string(&path)
-            .unwrap_or_default()
-            .contains("  ax:")
-    {
+    if !path.exists() {
         return Ok(report);
     }
-    let content = fs::read_to_string(&path).unwrap_or_default();
-    let filtered: Vec<&str> = content
-        .lines()
-        .filter(|l| {
-            !l.contains("mcp-ax")
-                && l.trim() != "  ax:"
-                && !l.trim().starts_with("command:")
-                && !l.trim().starts_with("- serve")
-                && !l.trim().starts_with("- --mcp")
-                && !l.trim().starts_with("- --path")
-                && l.trim() != "cwd: ."
-                && l.trim() != "timeout: 120"
-                && l.trim() != "connect_timeout: 60"
-                && l.trim() != "enabled: true"
-        })
-        .collect();
-    report.push_file(
-        path.clone(),
-        write_text_action(&path, &(filtered.join("\n") + "\n"))?,
-    );
+    let content = read_text_for_edit(&path)?;
+    let removed =
+        hermes_remove(&content).map_err(|e| format!("{} {e}; left unchanged", path.display()))?;
+    if let Some(out) = removed {
+        report.push_file(path.clone(), write_text_action(&path, &out)?);
+    }
     Ok(report)
+}
+
+/// The text of a config file about to be edited; missing is empty, any other
+/// read error is reported so the file is not replaced.
+fn read_text_for_edit(path: &Path) -> Result<String, String> {
+    match fs::read_to_string(path) {
+        Ok(c) => Ok(c),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(format!(
+            "cannot read {}: {e}; left unchanged",
+            path.display()
+        )),
+    }
+}
+
+fn hermes_upsert(content: &str, bin: &str) -> Result<String, String> {
+    crate::hermes_yaml::upsert(content, bin, mcp_path_token("hermes"))
+}
+
+fn hermes_remove(content: &str) -> Result<Option<String>, String> {
+    crate::hermes_yaml::remove(content)
 }
 
 fn zed_tasks_path() -> Result<PathBuf, String> {
@@ -1422,6 +1496,23 @@ mod mcp_path_tests {
         );
         assert!(merged.contains("command = \"ax\""));
         assert!(!merged.contains("command = \"old\""));
+    }
+
+    #[test]
+    fn codex_block_is_valid_toml_for_a_windows_path() {
+        for bin in [
+            r"C:\Users\gary\AppData\Local\ax\bin\ax.exe",
+            r#"/opt/odd "dir"/ax"#,
+        ] {
+            let block = codex_ax_block(bin);
+            let parsed: toml::Table =
+                toml::from_str(&block).unwrap_or_else(|e| panic!("{e}\n{block}"));
+            assert_eq!(parsed["mcp_servers"]["ax"]["command"].as_str(), Some(bin));
+            assert_eq!(
+                parsed["mcp_servers"]["ax"]["cwd"].as_str(),
+                Some(PROCESS_CWD)
+            );
+        }
     }
 
     #[test]
@@ -1585,6 +1676,98 @@ mod mcp_path_tests {
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 
+    #[test]
+    fn a_user_hook_that_only_mentions_the_subcommand_is_not_touched() {
+        let path = temp_settings_path("user-hook-substring");
+        let user_group = serde_json::json!({ "hooks": [
+            { "type": "command", "command": "~/bin/notify-stop-hook.sh" },
+            { "type": "command", "command": "say done" }
+        ]});
+        let before = serde_json::json!({ "hooks": { "Stop": [user_group.clone()] } });
+        fs::write(&path, serde_json::to_string_pretty(&before).unwrap()).unwrap();
+
+        install_claude_hook(&path, "Stop", "stop-hook").unwrap();
+        let value: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let groups = value["hooks"]["Stop"].as_array().unwrap();
+        assert_eq!(groups[0], user_group, "user group was rewritten");
+        assert_eq!(groups.len(), 2, "the ax hook gets its own group");
+
+        remove_claude_hook(&path, "Stop", "stop-hook").unwrap();
+        let value: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(value["hooks"]["Stop"], serde_json::json!([user_group]));
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn uninstall_keeps_user_hooks_that_share_a_group_with_the_ax_hook() {
+        let path = temp_settings_path("shared-group");
+        let before = serde_json::json!({ "hooks": { "Stop": [{ "hooks": [
+            { "type": "command", "command": "/usr/local/bin/ax stop-hook" },
+            { "type": "command", "command": "say done" }
+        ]}]}});
+        fs::write(&path, serde_json::to_string_pretty(&before).unwrap()).unwrap();
+        assert!(remove_claude_hook(&path, "Stop", "stop-hook").unwrap());
+        let value: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            value["hooks"]["Stop"],
+            serde_json::json!([{ "hooks": [{ "type": "command", "command": "say done" }] }])
+        );
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn ax_hook_commands_are_recognised_by_binary_and_exact_subcommand() {
+        for ours in [
+            "ax stop-hook",
+            "/tmp/ax-gone/bin/ax stop-hook",
+            "\"C:/Program Files/ax/ax.exe\" stop-hook",
+            r"C:\ax\bin\AX.EXE stop-hook",
+        ] {
+            assert!(is_ax_hook_command(ours, "stop-hook"), "{ours}");
+        }
+        for theirs in [
+            "~/bin/notify-stop-hook.sh",
+            "ax stop-hook --extra",
+            "max stop-hook",
+            "ax prompt-hook",
+            "echo ax stop-hook",
+        ] {
+            assert!(!is_ax_hook_command(theirs, "stop-hook"), "{theirs}");
+        }
+        assert!(is_ax_hook_command("ax turn-hook start", "turn-hook start"));
+        assert!(!is_ax_hook_command("ax turn-hook stop", "turn-hook start"));
+    }
+
+    #[test]
+    fn a_hook_written_by_a_binary_not_named_ax_is_still_recognised() {
+        let bin = "/opt/build/ax_installer-1234";
+        assert!(is_hook_command_of(
+            "/opt/build/ax_installer-1234 stop-hook",
+            "stop-hook",
+            bin
+        ));
+        assert!(is_hook_command_of(
+            "\"/opt/my build/ax-dev\" stop-hook",
+            "stop-hook",
+            "/opt/my build/ax-dev"
+        ));
+        assert!(!is_hook_command_of(
+            "/opt/build/ax_installer-1234 stop-hook --extra",
+            "stop-hook",
+            bin
+        ));
+        assert!(!is_hook_command_of(
+            "/opt/other/ax_installer-1234 stop-hook",
+            "stop-hook",
+            bin
+        ));
+        assert!(!is_hook_command_of(
+            "~/bin/notify stop-hook",
+            "stop-hook",
+            ""
+        ));
+    }
+
     fn event_commands(value: &Value, event: &str) -> Vec<String> {
         value["hooks"][event]
             .as_array()
@@ -1625,5 +1808,261 @@ mod mcp_path_tests {
         assert_eq!(prompt, vec!["./my-prompt.sh".to_string()]);
 
         let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+}
+
+#[cfg(test)]
+mod unparsable_config_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "ax-installer-parse-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn assert_refused_and_untouched(path: &Path, original: &str) {
+        let result = std::panic::catch_unwind(|| upsert_mcp_servers(path, "cursor"));
+        match result {
+            Ok(Err(msg)) => assert!(
+                msg.contains(&path.display().to_string()),
+                "message must name the file: {msg}"
+            ),
+            Ok(Ok(action)) => panic!("unparsable config was rewritten ({action:?})"),
+            Err(_) => panic!("installer panicked on {original:?}"),
+        }
+        assert_eq!(fs::read_to_string(path).unwrap(), original);
+    }
+
+    #[test]
+    fn invalid_json_is_left_untouched() {
+        let dir = scratch("invalid");
+        let path = dir.join("mcp.json");
+        let original =
+            "{\n  \"mcpServers\": { \"other\": { \"command\": \"x\" }, },\n  \"history\": [1],\n}\n";
+        fs::write(&path, original).unwrap();
+        assert_refused_and_untouched(&path, original);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn non_object_server_map_is_refused_without_panic() {
+        let dir = scratch("array-map");
+        let path = dir.join("mcp.json");
+        for original in [
+            "{\"mcpServers\": []}",
+            "{\"mcpServers\": \"x\"}",
+            "[1, 2]",
+            "\"s\"",
+        ] {
+            fs::write(&path, original).unwrap();
+            assert_refused_and_untouched(&path, original);
+        }
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn valid_json_keeps_every_other_key() {
+        let dir = scratch("valid");
+        let path = dir.join("mcp.json");
+        fs::write(
+            &path,
+            "{\"mcpServers\":{\"other\":{\"command\":\"x\"}},\"projects\":{\"a\":1}}",
+        )
+        .unwrap();
+        upsert_mcp_servers(&path, "cursor").unwrap();
+        let v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["mcpServers"]["other"]["command"], "x");
+        assert_eq!(v["projects"]["a"], 1);
+        assert!(v["mcpServers"]["ax"].is_object());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn vscode_jsonc_with_trailing_commas_keeps_other_servers() {
+        let dir = scratch("vscode");
+        let vscode = dir.join(".vscode");
+        fs::create_dir_all(&vscode).unwrap();
+        let path = vscode.join("mcp.json");
+        fs::write(
+            &path,
+            "{\n  // mine\n  \"servers\": {\n    \"other\": { \"command\": \"caf\u{e9}\" },\n  },\n}\n",
+        )
+        .unwrap();
+        install_vscode_lineage_mcp("vscode", &dir, "note").unwrap();
+        let v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["servers"]["other"]["command"], "caf\u{e9}");
+        assert!(v["servers"]["ax"].is_object());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn jsonc_that_still_does_not_parse_is_left_untouched() {
+        let dir = scratch("vscode-bad");
+        let vscode = dir.join(".vscode");
+        fs::create_dir_all(&vscode).unwrap();
+        let path = vscode.join("mcp.json");
+        let original = "{ \"servers\": { \"other\": } }";
+        fs::write(&path, original).unwrap();
+        assert!(install_vscode_lineage_mcp("vscode", &dir, "note").is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn missing_or_empty_file_starts_from_an_empty_object() {
+        let dir = scratch("empty");
+        let path = dir.join("mcp.json");
+        upsert_mcp_servers(&path, "cursor").unwrap();
+        fs::write(&path, "  \n").unwrap();
+        upsert_mcp_servers(&path, "cursor").unwrap();
+        let v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(v["mcpServers"]["ax"].is_object());
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod strip_jsonc_tests {
+    use super::*;
+
+    #[test]
+    fn keeps_strings_and_removes_comments_and_trailing_commas() {
+        let input = "{\n  // c\n  \"url\": \"http://x/*y*/\", /* b */\n  \"t\": \",}\", \"a\": [1, 2, ],\n  \"\u{e9}\": \"\u{1f600}\",\n}";
+        let v: Value = serde_json::from_str(&strip_jsonc(input)).unwrap();
+        assert_eq!(v["url"], "http://x/*y*/");
+        assert_eq!(v["t"], ",}");
+        assert_eq!(v["a"], serde_json::json!([1, 2]));
+        assert_eq!(v["\u{e9}"], "\u{1f600}");
+    }
+}
+
+#[cfg(test)]
+mod hermes_yaml_tests {
+    use super::*;
+
+    const USER_CONFIG: &str = "\
+model: anthropic/claude
+# my servers
+mcp_servers:
+  github:
+    command: npx
+    args:
+      - -y
+      - github-mcp
+    enabled: true
+    timeout: 120
+platform_toolsets:
+  cli:
+    - hermes-cli
+    - mcp-github
+  telegram:
+    - hermes-telegram
+display:
+  enabled: true
+";
+
+    fn yaml(text: &str) -> serde_yaml::Value {
+        serde_yaml::from_str(text).unwrap_or_else(|e| panic!("{e}\n{text}"))
+    }
+
+    #[test]
+    fn install_keeps_other_servers_and_toolsets() {
+        let out = hermes_upsert(USER_CONFIG, "/opt/ax").unwrap();
+        let v = yaml(&out);
+        assert_eq!(v["mcp_servers"]["github"]["command"], "npx");
+        assert_eq!(v["mcp_servers"]["github"]["enabled"], true);
+        assert_eq!(v["mcp_servers"]["ax"]["command"], "/opt/ax");
+        assert_eq!(v["mcp_servers"]["ax"]["enabled"], true);
+        let cli: Vec<&str> = v["platform_toolsets"]["cli"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap())
+            .collect();
+        assert_eq!(cli, ["hermes-cli", "mcp-github", "mcp-ax"]);
+        assert_eq!(v["platform_toolsets"]["telegram"][0], "hermes-telegram");
+        assert_eq!(v["display"]["enabled"], true);
+        assert_eq!(v["model"], "anthropic/claude");
+        assert!(out.contains("# my servers\n"), "{out}");
+        // A second install changes nothing.
+        assert_eq!(hermes_upsert(&out, "/opt/ax").unwrap(), out);
+    }
+
+    #[test]
+    fn uninstall_removes_only_the_ax_entries() {
+        let installed = hermes_upsert(USER_CONFIG, "/opt/ax").unwrap();
+        let out = hermes_remove(&installed).unwrap().expect("changed");
+        assert_eq!(yaml(&out), yaml(USER_CONFIG));
+        // Nothing to remove: no rewrite.
+        assert_eq!(hermes_remove(USER_CONFIG).unwrap(), None);
+    }
+
+    #[test]
+    fn install_into_an_empty_file_creates_both_blocks() {
+        let out = hermes_upsert("", "ax").unwrap();
+        let v = yaml(&out);
+        assert_eq!(v["mcp_servers"]["ax"]["args"][0], "serve");
+        assert_eq!(v["platform_toolsets"]["cli"][0], "mcp-ax");
+        let removed = hermes_remove(&out).unwrap().expect("changed");
+        assert!(yaml(&removed).get("mcp_servers").is_none(), "{removed}");
+    }
+
+    #[test]
+    fn unparsable_yaml_is_refused() {
+        let bad = "mcp_servers:\n  github: [unclosed\n";
+        assert!(hermes_upsert(bad, "ax").is_err());
+        assert!(hermes_remove(bad).is_err());
+    }
+}
+
+#[cfg(test)]
+mod jsonc_rewrite_tests {
+    use super::*;
+
+    #[test]
+    fn rewriting_a_commented_settings_file_keeps_text_and_a_backup_of_the_comments() {
+        let dir = std::env::temp_dir().join(format!(
+            "ax-installer-jsonc-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        let original = "// Zed settings\n{\n  \"buffer_font_family\": \"Zed Mono \u{2014} Nerd\", // font\n  \"theme\": \"Caf\u{e9} \u{1f600}\",\n}\n";
+        fs::write(&path, original).unwrap();
+
+        let mut config = read_json_lenient(&path).unwrap();
+        object_entry(&mut config, "context_servers", &path)
+            .unwrap()
+            .insert("ax".into(), zed_context_server_entry());
+        assert_eq!(
+            write_json_action(&path, &config).unwrap(),
+            FileAction::Updated
+        );
+
+        let v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["buffer_font_family"], "Zed Mono \u{2014} Nerd");
+        assert_eq!(v["theme"], "Caf\u{e9} \u{1f600}");
+        assert!(v["context_servers"]["ax"].is_object());
+        let backup = dir.join("settings.json.ax-backup");
+        assert_eq!(fs::read_to_string(&backup).unwrap(), original);
+
+        // A plain JSON file gets no backup.
+        let plain = dir.join("plain.json");
+        fs::write(&plain, "{\"a\": 1}").unwrap();
+        write_json_action(&plain, &serde_json::json!({"a": 2})).unwrap();
+        assert!(!dir.join("plain.json.ax-backup").exists());
+        let _ = fs::remove_dir_all(dir);
     }
 }

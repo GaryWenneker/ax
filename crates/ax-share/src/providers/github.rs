@@ -1,6 +1,6 @@
 //! Pull shared policy pack from a GitHub git repository.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::config::GithubShareConfig;
@@ -12,6 +12,8 @@ pub fn pull_github(config: &GithubShareConfig, dest_root: &Path) -> Result<PullR
     if url.is_empty() {
         return Err("GitHub repo URL is not configured".into());
     }
+    validate_repo_url(url)?;
+    let branch = checked_branch(&config.branch)?;
 
     std::fs::create_dir_all(dest_root).map_err(|e| e.to_string())?;
     let cache_key = blake3::hash(url.as_bytes()).to_hex()[..16].to_string();
@@ -27,10 +29,11 @@ pub fn pull_github(config: &GithubShareConfig, dest_root: &Path) -> Result<PullR
         "1".to_string(),
         "--quiet".to_string(),
     ];
-    if config.branch != "main" && !config.branch.is_empty() {
+    if branch != "main" {
         args.push("--branch".to_string());
-        args.push(config.branch.clone());
+        args.push(branch.to_string());
     }
+    args.push("--".to_string());
     args.push(url.to_string());
     args.push(clone_dir.to_string_lossy().to_string());
 
@@ -42,15 +45,8 @@ pub fn pull_github(config: &GithubShareConfig, dest_root: &Path) -> Result<PullR
         return Err(format!("git clone failed for {url}"));
     }
 
-    let sub = config.subpath.trim().trim_matches('/');
-    let base = if sub.is_empty() {
-        clone_dir.clone()
-    } else {
-        clone_dir.join(sub)
-    };
-
-    let pack_src = base.join("policy").join("shared");
-    let memory_src = base.join("memory").join("shared.jsonl");
+    let pack_src = share_path(&clone_dir, &config.subpath, "policy/shared")?;
+    let memory_src = share_path(&clone_dir, &config.subpath, "memory/shared.jsonl")?;
     let pull_dir = dest_root.join("pull");
     if pull_dir.exists() {
         std::fs::remove_dir_all(&pull_dir).map_err(|e| e.to_string())?;
@@ -80,8 +76,8 @@ pub fn pull_github(config: &GithubShareConfig, dest_root: &Path) -> Result<PullR
 
     if pack_dir.is_none() && memory_file.is_none() {
         return Err(format!(
-            "No policy/shared or memory/shared.jsonl found under {} in repo",
-            base.display()
+            "No policy/shared or memory/shared.jsonl found under {:?} in repo",
+            config.subpath.trim()
         ));
     }
 
@@ -90,6 +86,73 @@ pub fn pull_github(config: &GithubShareConfig, dest_root: &Path) -> Result<PullR
         memory_file,
         files_copied: files,
     })
+}
+
+/// Accepts the repository forms git understands as plain locations: an
+/// `https`, `http`, `ssh`, `git` or `file` URL, an scp-like `user@host:path`,
+/// or an absolute local path. Anything git could read as an option (a leading
+/// `-`) or as a remote helper (`ext::…`, other schemes) is refused.
+fn validate_repo_url(url: &str) -> Result<(), String> {
+    let refuse = |why: &str| Err(format!("repo URL {url:?} is not allowed: {why}"));
+    if url.starts_with('-') {
+        return refuse("it starts with '-'");
+    }
+    if url.chars().any(char::is_control) {
+        return refuse("it contains control characters");
+    }
+    if let Some((scheme, _)) = url.split_once("://") {
+        return match scheme.to_ascii_lowercase().as_str() {
+            "https" | "http" | "ssh" | "git" | "file" => Ok(()),
+            _ => refuse("use https, http, ssh, git or file"),
+        };
+    }
+    if url.contains("::") {
+        return refuse("remote helper transports are not supported");
+    }
+    let bytes = url.as_bytes();
+    let windows_drive = bytes.len() > 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'/' | b'\\');
+    if url.starts_with('/') || url.starts_with("\\\\") || windows_drive {
+        return Ok(());
+    }
+    match (url.find(':'), url.find('/')) {
+        (Some(colon), slash) if colon > 0 && slash.is_none_or(|s| colon < s) => Ok(()),
+        _ => refuse("use a URL, user@host:path, or an absolute path"),
+    }
+}
+
+/// The branch to use (`main` when empty). Refuses names git could read as an
+/// option or that are not valid ref names.
+fn checked_branch(branch: &str) -> Result<&str, String> {
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return Ok("main");
+    }
+    let bad = branch.starts_with('-')
+        || branch.contains("..")
+        || branch
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || "~^:?*[\\".contains(c));
+    if bad {
+        return Err(format!("branch {branch:?} is not allowed"));
+    }
+    Ok(branch)
+}
+
+/// `<clone_dir>/<subpath>/<leaf>`, refusing a subpath that is absolute, has
+/// `..`, or reaches outside the clone through a link.
+fn share_path(clone_dir: &Path, subpath: &str, leaf: &str) -> Result<PathBuf, String> {
+    let sub = subpath.trim().trim_end_matches('/');
+    let rel = if sub.is_empty() {
+        leaf.to_string()
+    } else {
+        ax_utils::safe_relative(sub).map_err(|e| format!("subpath {sub:?} is not allowed: {e}"))?;
+        format!("{sub}/{leaf}")
+    };
+    ax_utils::contained_join(clone_dir, &rel)
+        .map_err(|e| format!("subpath {sub:?} is not allowed: {e}"))
 }
 
 fn count_files(dir: &Path) -> usize {
@@ -115,11 +178,8 @@ pub fn push_github(
     if url.is_empty() {
         return Err("GitHub repo URL is not configured".into());
     }
-    let branch = if config.branch.trim().is_empty() {
-        "main"
-    } else {
-        config.branch.trim()
-    };
+    validate_repo_url(url)?;
+    let branch = checked_branch(&config.branch)?;
 
     let cache_root = crate::paths::share_cache_dir().join("push-git");
     std::fs::create_dir_all(&cache_root).map_err(|e| e.to_string())?;
@@ -132,7 +192,7 @@ pub fn push_github(
     // Full (non-shallow) clone: pushing needs real history for the rebase
     // retry below, unlike the shallow read-only pull above.
     let status = Command::new("git")
-        .args(["clone", "--quiet", url, &clone_dir.to_string_lossy()])
+        .args(["clone", "--quiet", "--", url, &clone_dir.to_string_lossy()])
         .status()
         .map_err(|e| format!("failed to run git: {e}"))?;
     if !status.success() {
@@ -143,16 +203,12 @@ pub fn push_github(
         run_git(&clone_dir, &["checkout", "-b", branch])?;
     }
 
-    let sub = config.subpath.trim().trim_matches('/');
-    let base = if sub.is_empty() {
-        clone_dir.clone()
-    } else {
-        clone_dir.join(sub)
-    };
+    let sub = config.subpath.trim().trim_end_matches('/');
+    let pack_dest = share_path(&clone_dir, sub, "policy/shared")?;
+    let mem_dest = share_path(&clone_dir, sub, "memory/shared.jsonl")?;
 
     let mut written = 0usize;
     if pack_dir.is_dir() {
-        let pack_dest = base.join("policy").join("shared");
         if pack_dest.exists() {
             std::fs::remove_dir_all(&pack_dest).map_err(|e| e.to_string())?;
         }
@@ -161,7 +217,6 @@ pub fn push_github(
     }
     if let Some(mem) = memory_file {
         if mem.is_file() {
-            let mem_dest = base.join("memory").join("shared.jsonl");
             if let Some(parent) = mem_dest.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
@@ -266,6 +321,7 @@ mod tests {
             branch: "main".to_string(),
             subpath: ".ax".to_string(),
             token: String::new(),
+            ..Default::default()
         };
 
         let pack_src = TempDir::new().unwrap();
@@ -297,6 +353,7 @@ mod tests {
             branch: "main".to_string(),
             subpath: ".ax".to_string(),
             token: String::new(),
+            ..Default::default()
         };
 
         let pack_src = TempDir::new().unwrap();
@@ -320,9 +377,103 @@ mod tests {
             branch: "main".to_string(),
             subpath: ".ax".to_string(),
             token: String::new(),
+            ..Default::default()
         };
         let pack_src = TempDir::new().unwrap();
         let err = push_github(&config, pack_src.path(), None).unwrap_err();
         assert!(err.contains("not configured"));
+    }
+
+    fn config_for(repo_url: &str, subpath: &str) -> GithubShareConfig {
+        GithubShareConfig {
+            repo_url: repo_url.to_string(),
+            branch: "main".to_string(),
+            subpath: subpath.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn pull_refuses_a_subpath_that_leaves_the_clone() {
+        let remote = init_bare_remote();
+        let pack_src = TempDir::new().unwrap();
+        write_file(&pack_src.path().join("manifest.json"), "{}");
+        let url = remote.path().to_string_lossy().to_string();
+        push_github(&config_for(&url, ".ax"), pack_src.path(), None).unwrap();
+
+        let dest = TempDir::new().unwrap();
+        // dest/github/<key>/../../outside == dest/outside
+        write_file(
+            &dest.path().join("outside/policy/shared/manifest.json"),
+            "{\"stolen\":true}",
+        );
+        for sub in ["../../outside", "/etc", "a/../../../outside"] {
+            let err = pull_github(&config_for(&url, sub), dest.path())
+                .err()
+                .unwrap_or_else(|| panic!("pull accepted subpath {sub}"));
+            assert!(err.contains("subpath"), "{sub}: {err}");
+        }
+    }
+
+    #[test]
+    fn push_refuses_a_subpath_that_would_delete_outside_the_clone() {
+        let remote = init_bare_remote();
+        let url = remote.path().to_string_lossy().to_string();
+        let cache_root = crate::paths::share_cache_dir().join("push-git");
+        let victim_name = format!("victim-{}", blake3::hash(url.as_bytes()).to_hex());
+        let victim = cache_root.join(&victim_name).join("policy/shared/keep.txt");
+        write_file(&victim, "keep");
+        let pack_src = TempDir::new().unwrap();
+        write_file(&pack_src.path().join("manifest.json"), "{}");
+
+        let res = push_github(
+            &config_for(&url, &format!("../{victim_name}")),
+            pack_src.path(),
+            None,
+        );
+        let kept = victim.is_file();
+        let _ = std::fs::remove_dir_all(cache_root.join(&victim_name));
+        assert!(kept, "push deleted a folder outside its clone");
+        assert!(res.unwrap_err().contains("subpath"));
+    }
+
+    #[test]
+    fn repo_urls_and_branches_that_git_would_read_as_options_are_refused() {
+        let dest = TempDir::new().unwrap();
+        let pack_src = TempDir::new().unwrap();
+        for url in [
+            "--upload-pack=touch /tmp/ax-pwned",
+            "-u",
+            "ext::sh -c touch% /tmp/ax-pwned",
+        ] {
+            let cfg = config_for(url, ".ax");
+            let err = pull_github(&cfg, dest.path()).unwrap_err();
+            assert!(err.contains("repo URL"), "{url}: {err}");
+            let err = push_github(&cfg, pack_src.path(), None).unwrap_err();
+            assert!(err.contains("repo URL"), "{url}: {err}");
+        }
+        let mut cfg = config_for("https://example.com/team/policy.git", ".ax");
+        cfg.branch = "--upload-pack=x".into();
+        assert!(pull_github(&cfg, dest.path())
+            .unwrap_err()
+            .contains("branch"));
+        assert!(push_github(&cfg, pack_src.path(), None)
+            .unwrap_err()
+            .contains("branch"));
+    }
+
+    #[test]
+    fn accepted_repo_url_forms() {
+        for url in [
+            "https://github.com/acme/policy.git",
+            "http://gitlab.local/team/policy",
+            "ssh://git@example.com/team/policy.git",
+            "git@example.com:team/policy.git",
+            "git://example.com/policy.git",
+            "file:///srv/git/policy.git",
+            "/srv/git/policy.git",
+        ] {
+            assert!(validate_repo_url(url).is_ok(), "{url}");
+        }
     }
 }

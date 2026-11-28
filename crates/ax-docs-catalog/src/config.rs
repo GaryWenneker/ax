@@ -45,10 +45,30 @@ struct DocsCatalogJson {
 }
 
 impl DocsCatalogConfig {
+    /// Reads `docsCatalog` from ax.json. Every configured path must stay inside
+    /// `project_root` (no absolute paths, no `..`, no symbolic link out of the
+    /// project), and `wiki_remote` must not look like a git option, because the
+    /// file usually comes from the repository being synced.
     pub fn load(project_root: &Path) -> Result<Self, String> {
         let j = read_ax_json(project_root).unwrap_or_default();
-        let path_or =
-            |v: &Option<String>, default: &str| project_root.join(v.as_deref().unwrap_or(default));
+        let path_or = |key: &str, v: &Option<String>, default: &str| {
+            project_path(project_root, key, v.as_deref().unwrap_or(default))
+        };
+        if let Some(remote) = j.wiki_remote.as_deref() {
+            check_remote(remote)?;
+        }
+        // These are joined onto wiki_local, so they must stay relative too.
+        for (key, value) in [
+            ("wiki_apps_subdir", &j.wiki_apps_subdir),
+            ("wiki_integrations_dir", &j.wiki_integrations_dir),
+            ("wiki_products_page", &j.wiki_products_page),
+        ] {
+            if let Some(v) = value.as_deref().filter(|v| !v.trim().is_empty()) {
+                ax_utils::safe_relative(v).map_err(|e| {
+                    format!("docsCatalog.{key} must be a path inside the wiki: {e}")
+                })?;
+            }
+        }
         let folder_name = project_root
             .file_name()
             .and_then(|n| n.to_str())
@@ -57,7 +77,7 @@ impl DocsCatalogConfig {
         Ok(Self {
             name: j.name.clone().unwrap_or(folder_name),
             wiki_remote: j.wiki_remote.clone(),
-            wiki_local: path_or(&j.wiki_local, ".current/wiki"),
+            wiki_local: path_or("wiki_local", &j.wiki_local, ".current/wiki")?,
             wiki_apps_subdir: j.wiki_apps_subdir.clone().unwrap_or_default(),
             wiki_root_url: j
                 .wiki_root_url
@@ -71,12 +91,36 @@ impl DocsCatalogConfig {
             wiki_products_page: j.wiki_products_page.clone(),
             wiki_products_skip: j.wiki_products_skip.clone().unwrap_or_default(),
             skill: j.skill.clone(),
-            jsonl_path: path_or(&j.jsonl_path, ".ax/memory/documentation-catalog.jsonl"),
-            docs_root: path_or(&j.docs_root, ".docs"),
-            skills_root: path_or(&j.skills_root, ".agents/skills"),
-            scripts_root: path_or(&j.scripts_root, ".scripts"),
+            jsonl_path: path_or(
+                "jsonl_path",
+                &j.jsonl_path,
+                ".ax/memory/documentation-catalog.jsonl",
+            )?,
+            docs_root: path_or("docs_root", &j.docs_root, ".docs")?,
+            skills_root: path_or("skills_root", &j.skills_root, ".agents/skills")?,
+            scripts_root: path_or("scripts_root", &j.scripts_root, ".scripts")?,
         })
     }
+}
+
+/// Resolves a configured path under `project_root`; `.` means the root itself.
+fn project_path(project_root: &Path, key: &str, value: &str) -> Result<PathBuf, String> {
+    if value.trim().trim_end_matches('/') == "." {
+        return Ok(project_root.to_path_buf());
+    }
+    ax_utils::contained_join(project_root, value)
+        .map_err(|e| format!("docsCatalog.{key} must stay inside the project: {e}"))
+}
+
+/// Refuses a remote git would read as a command-line option.
+fn check_remote(remote: &str) -> Result<(), String> {
+    let r = remote.trim();
+    if r.is_empty() || r.starts_with('-') {
+        return Err(format!(
+            "docsCatalog.wiki_remote is not a repository URL: {remote:?}"
+        ));
+    }
+    Ok(())
 }
 
 fn read_ax_json(project_root: &Path) -> Option<DocsCatalogJson> {
@@ -172,6 +216,88 @@ mod tests {
         .unwrap();
         let cfg = DocsCatalogConfig::load(&root).unwrap();
         assert_eq!(cfg.wiki_root_url, "https://example.com/wiki");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn load_with(tag: &str, catalog: &str) -> Result<DocsCatalogConfig, String> {
+        let root = temp_root(tag);
+        std::fs::write(
+            root.join("ax.json"),
+            format!(r#"{{"docsCatalog":{catalog}}}"#),
+        )
+        .unwrap();
+        let res = DocsCatalogConfig::load(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        res
+    }
+
+    #[test]
+    fn absolute_jsonl_path_is_rejected() {
+        let err = load_with("abs-jsonl", r#"{"jsonl_path":"/tmp/ax-victim-rc"}"#).unwrap_err();
+        assert!(err.contains("jsonl_path"), "{err}");
+    }
+
+    #[test]
+    fn parent_dir_wiki_local_is_rejected() {
+        let err = load_with("dotdot-wiki", r#"{"wiki_local":"../../elsewhere"}"#).unwrap_err();
+        assert!(err.contains("wiki_local"), "{err}");
+    }
+
+    #[test]
+    fn every_configured_path_must_stay_inside_the_project() {
+        for key in ["docs_root", "skills_root", "scripts_root"] {
+            let catalog = format!(r#"{{"{key}":"/etc"}}"#);
+            let err = load_with(&format!("abs-{key}"), &catalog).unwrap_err();
+            assert!(err.contains(key), "{err}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_out_of_the_project_is_rejected() {
+        let root = temp_root("symlink");
+        let outside = temp_root("symlink-target");
+        std::os::unix::fs::symlink(&outside, root.join("out")).unwrap();
+        std::fs::write(
+            root.join("ax.json"),
+            r#"{"docsCatalog":{"jsonl_path":"out/catalog.jsonl"}}"#,
+        )
+        .unwrap();
+        let err = DocsCatalogConfig::load(&root).unwrap_err();
+        assert!(err.contains("jsonl_path"), "{err}");
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn wiki_sub_paths_must_stay_relative() {
+        for key in [
+            "wiki_apps_subdir",
+            "wiki_integrations_dir",
+            "wiki_products_page",
+        ] {
+            let catalog = format!(r#"{{"{key}":"/etc/passwd"}}"#);
+            let err = load_with(&format!("wiki-{key}"), &catalog).unwrap_err();
+            assert!(err.contains(key), "{err}");
+        }
+    }
+
+    #[test]
+    fn remote_that_looks_like_an_option_is_rejected() {
+        let err = load_with(
+            "dash-remote",
+            r#"{"wiki_remote":"--upload-pack=touch /tmp/pwned"}"#,
+        )
+        .unwrap_err();
+        assert!(err.contains("wiki_remote"), "{err}");
+    }
+
+    #[test]
+    fn dot_means_the_project_root() {
+        let root = temp_root("dot");
+        std::fs::write(root.join("ax.json"), r#"{"docsCatalog":{"docs_root":"."}}"#).unwrap();
+        let cfg = DocsCatalogConfig::load(&root).unwrap();
+        assert_eq!(cfg.docs_root, root);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

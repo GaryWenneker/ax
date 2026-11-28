@@ -95,7 +95,8 @@ async fn graph_capture_skips_build_output() {
     .await
     .unwrap();
     assert_eq!(capture_graph_episodes(db.pool()).await.unwrap(), 0);
-    sqlx::query("UPDATE nodes SET start_line = 4")
+    // A signature change (line moves alone are not a change).
+    sqlx::query("UPDATE nodes SET signature = 'fn changed()'")
         .execute(db.pool())
         .await
         .unwrap();

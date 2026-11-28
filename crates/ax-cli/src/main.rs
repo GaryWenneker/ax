@@ -742,6 +742,11 @@ enum Commands {
         #[command(subcommand)]
         action: DocsCatalogAction,
     },
+    /// List project extractor plugins (.ax/plugins) and trust them to run
+    Plugins {
+        #[command(subcommand)]
+        action: PluginsAction,
+    },
     /// Configure and inspect a standalone Ax node
     #[cfg(feature = "web")]
     Server {
@@ -818,6 +823,28 @@ enum Commands {
         daemon: bool,
         #[arg(long, hide = true)]
         path: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum PluginsAction {
+    /// Show each plugin, what it runs, and whether it is trusted
+    List {
+        path: Option<String>,
+        #[arg(long, help = "JSON output")]
+        json: bool,
+    },
+    /// Allow plugins to run during indexing (all, or the named ones)
+    Trust {
+        #[arg(long)]
+        path: Option<String>,
+        names: Vec<String>,
+    },
+    /// Stop plugins from running (all, or the named ones)
+    Untrust {
+        #[arg(long)]
+        path: Option<String>,
+        names: Vec<String>,
     },
 }
 
@@ -1447,16 +1474,13 @@ enum NeuralCommands {
         #[arg(long, help = "File to write")]
         out: std::path::PathBuf,
     },
-    /// Promote a registered model. Requires an explicit flag and a bake-off win.
+    /// Promote a registered model. Requires --explicit and bake-off evidence
+    /// registered with the version (metrics.bakeoff.families) that beats hash-v1.
     Promote {
         model_id: String,
         version: String,
         #[arg(long)]
         explicit: bool,
-        #[arg(long)]
-        beats_baseline: bool,
-        #[arg(long)]
-        regressions_clear: bool,
     },
     /// Select the previous promoted checksum.
     Rollback { model_id: String },
@@ -1549,16 +1573,12 @@ fn neural_request(
             model_id,
             version,
             explicit,
-            beats_baseline,
-            regressions_clear,
         }) => Ok((
             "promote",
             json!({
                 "modelId": model_id,
                 "version": version,
-                "explicit": explicit,
-                "beatsBaseline": beats_baseline,
-                "regressionsClear": regressions_clear
+                "explicit": explicit
             }),
         )),
         Some(NeuralCommands::Rollback { model_id }) => {
@@ -2912,6 +2932,15 @@ async fn async_main() {
                 json,
             } => commands::docs_catalog::run_sync(skip_wiki_pull, dry_run, json).await,
         },
+        Some(Commands::Plugins { action }) => match action {
+            PluginsAction::List { path, json } => commands::plugins_cmd::run_list(path, json),
+            PluginsAction::Trust { path, names } => {
+                commands::plugins_cmd::run_trust(path, names, false)
+            }
+            PluginsAction::Untrust { path, names } => {
+                commands::plugins_cmd::run_trust(path, names, true)
+            }
+        },
         #[cfg(feature = "web")]
         Some(Commands::Server { action }) => match action {
             ServerAction::Init {
@@ -3203,6 +3232,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Agent { .. }) => Some("agent".into()),
         Some(Commands::Bootstrap { .. }) => Some("bootstrap".into()),
         Some(Commands::DocsCatalog { .. }) => Some("docs-catalog".into()),
+        Some(Commands::Plugins { .. }) => Some("plugins".into()),
         #[cfg(feature = "web")]
         Some(Commands::Server { .. }) => Some("server".into()),
         Some(Commands::Global { .. }) => Some("global".into()),
@@ -3482,21 +3512,12 @@ mod neural_request_tests {
             (&["evaluate"], "evaluate", json!({})),
             (&["share"], "share", json!({})),
             (
-                &[
-                    "promote",
-                    "m",
-                    "2",
-                    "--explicit",
-                    "--beats-baseline",
-                    "--regressions-clear",
-                ],
+                &["promote", "m", "2", "--explicit"],
                 "promote",
                 json!({
                     "modelId": "m",
                     "version": "2",
-                    "explicit": true,
-                    "beatsBaseline": true,
-                    "regressionsClear": true
+                    "explicit": true
                 }),
             ),
             (&["rollback", "m"], "rollback", json!({ "modelId": "m" })),
@@ -3528,15 +3549,12 @@ mod neural_request_tests {
         let db = ax_db::Database::open(&root.join("neural-test.db"))
             .await
             .unwrap();
-        let metrics = r#"{"precision":0.8}"#;
-        let flags = ["--explicit", "--beats-baseline", "--regressions-clear"];
-        send(
-            root,
-            &db,
-            &["register", "m", "1", "aaa", "--metrics", metrics],
-        )
-        .await;
-        send(root, &db, &["register", "m", "2", "bbb"]).await;
+        let metrics = r#"{"precision":0.8,"bakeoff":{"families":{"named_trigger":{"scored":1,"hits":1},"paraphrase":{"scored":1,"hits":1},"abstention":{"scored":1,"hits":1},"delivery_budget":{"scored":1,"hits":1}}}}"#;
+        let flags = ["--explicit"];
+        for (version, checksum) in [("1", "aaa"), ("2", "bbb")] {
+            let words = ["register", "m", version, checksum, "--metrics", metrics];
+            send(root, &db, &words).await;
+        }
         send(root, &db, &[&["promote", "m", "1"][..], &flags].concat()).await;
         send(root, &db, &[&["promote", "m", "2"][..], &flags].concat()).await;
         let status = send(root, &db, &["model-status", "m"]).await;

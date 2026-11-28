@@ -109,7 +109,7 @@ The **Savings** page includes a compact **TokenViz-style path graph**: log-scale
 
 Per-call drill-down also shows color-coded o200k BPE chips for the truncated graph response versus the counterfactual file preview. New MCP graph calls store short local previews in `~/.ax/usage.db`; older rows use a synthetic count-based path until new calls arrive. The **Token playground** tokenizes arbitrary text the same way.
 
-**By model** rolls up imported Cursor / Claude Code sessions: input tokens, graph savings during each session window, and USD at each model's rate. Rates resolve in order: `~/.ax/pricing.toml` overrides → latest daily OpenRouter snapshot in `~/.ax/usage.db` → built-in defaults. Run **Import sessions** on the Savings page (or `ax savings import --all`) first — MCP-only periods without imported transcripts have no model breakdown.
+**By model** rolls up imported Cursor / Claude Code sessions: input tokens, graph savings during each session window, and USD at each model's rate. Rates resolve in order: `~/.ax/pricing.toml` overrides → latest daily OpenRouter snapshot in `~/.ax/usage.db` → built-in defaults. Run **Import sessions** on the Savings page (or `ax savings import --all`) first — MCP-only periods without imported transcripts have no model breakdown. Each MCP call counts toward at most one session: when session windows overlap, the call goes to the open session in the call's project, else to the session that started last. So the per-session and per-model savings never add up to more than the period total.
 
 **Agent vs model name:** The **Agent** column is the log source (`cursor` = Cursor Composer chats, `claude` = Claude Code CLI). The **Model** column is normally the provider API id from the transcript (e.g. `claude-opus-4-8`). Cursor Composer transcripts usually omit model metadata — install the **sessionStart hook** (below) so ax records labels like `composer-2.5-fast` when each chat starts.
 
@@ -153,6 +153,8 @@ Resolution order for USD estimates:
 1. Exact / longest-substring match in `~/.ax/pricing.toml` (user override)
 2. Latest OpenRouter snapshot in `~/.ax/usage.db`
 3. Built-in defaults
+
+In the snapshot an exact model id wins (with or without the `provider/` prefix). Otherwise the longest catalog id contained in the requested id wins, and only then the shortest catalog id that contains the requested id. So `gpt-4o` is priced as `openai/gpt-4o`, not `openai/gpt-4o-mini`.
 
 ### Cursor state.vscdb (automatic on import)
 
@@ -250,8 +252,8 @@ Compress prompts algorithmically before sending them to the LLM.
 | Tool | Approach | Savings |
 |---|---|---|
 | [LLMLingua](https://github.com/microsoft/LLMLingua) | Coarse-to-fine iterative compression | Up to 20x |
-| [Headroom](https://github.com/headroom-ai/headroom) | Compress tool outputs, logs, RAG chunks | 60-95% |
-| [RTK](https://github.com/nicholasgasior/rtk) | Rust CLI proxy for dev-command output | 60-90% |
+| [Headroom](https://github.com/headroomlabs-ai/headroom) | Compress tool outputs, logs, RAG chunks | 60-95% |
+| [RTK](https://github.com/rtk-ai/rtk) | Rust CLI proxy for dev-command output | 60-90% |
 
 Lossless compression principles: strip prose transitions and hedging; preserve numbers, entities, and constraints; transform verbose text into dense bullets; split into 3-5K token self-contained sections.
 
@@ -262,7 +264,7 @@ Lossless compression principles: strip prose transitions and hedging; preserve n
 When using Retrieval-Augmented Generation, send only the top 3-5 most relevant text chunks — not entire documents.
 
 - Optimize chunking strategy (semantic boundaries, not fixed-length splits).
-- Use a reranker to filter before injection: [OpenProvence](https://github.com/openProvence/openProvence) drops ~99% of off-topic sentences.
+- Use a reranker to filter before injection: [OpenProvence](https://github.com/hotchpotch/open_provence) drops ~99% of off-topic sentences.
 - Research shows RAG is [1250x cheaper](https://arxiv.org/abs/2501.01880) than stuffing full documents into context for many query types.
 
 ### 8. Batch APIs
@@ -359,6 +361,8 @@ ax savings import --all             # auto-detect and import all agent logs
 ax savings import --cursor          # Cursor only
 ax savings import --claude          # Claude Code only
 ```
+
+Each transcript's usage is stored under its project. The agent's project folder name (for example `-Users-me-app` or `users-me-app`) is mapped back to the one project path ax has logged calls for with that folder name; without a single match the folder name is kept. Only rows stored under a project path are included in that project's history export. One API response counts once, even when the transcript repeats its usage on every content-block line.
 
 ---
 

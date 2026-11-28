@@ -136,7 +136,13 @@ async fn only_the_local_browser_uses_workspace_routes_without_sign_in() {
 
     // Any folder may be browsed: the picker walks the whole disk. The root is
     // `/` on Unix and the drive (`C:\`) on Windows.
-    let root = fx.dir.ancestors().last().expect("a root").display().to_string();
+    let root = fx
+        .dir
+        .ancestors()
+        .last()
+        .expect("a root")
+        .display()
+        .to_string();
     let (_, text) = send(
         &fx.app,
         "GET",

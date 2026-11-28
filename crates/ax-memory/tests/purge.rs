@@ -2,8 +2,8 @@ use ax_memory::{link_memories, purge_memory, remember, RememberInput};
 
 #[tokio::test]
 async fn purging_a_memory_removes_cues_links_and_writes_a_tombstone() {
-    let root = std::env::temp_dir().join(format!("ax-purge-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
@@ -83,7 +83,6 @@ async fn purging_a_memory_removes_cues_links_and_writes_a_tombstone() {
         .await
         .unwrap();
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
 
     assert_eq!(memories, 0);
     assert_eq!(cues, 0);

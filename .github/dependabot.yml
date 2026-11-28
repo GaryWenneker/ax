@@ -33,6 +33,12 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 10
+    # Every @tiptap package pins its peers to the exact same version, so one
+    # package alone can never be updated: they come as one pull request.
+    groups:
+      tiptap:
+        patterns:
+          - "@tiptap/*"
 
   - package-ecosystem: "github-actions"
     directory: "/"

@@ -8,13 +8,15 @@ pub use config::DocsCatalogConfig;
 pub use memories::MemorySummary;
 
 use std::path::Path;
-use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use ax_extraction::orchestrator::IndexOptions;
 use ax_memory::{import_shared, MemoryImportResult, MemoryRow};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+/// Longest a wiki `git clone` or `git pull` may run before it is stopped.
+const GIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 #[derive(Debug, Error)]
 pub enum SyncError {
@@ -99,7 +101,7 @@ pub async fn sync_catalog(
         if opts.skip_wiki_pull {
             skip_wiki_pull(&cfg.wiki_local, &mut emit)?
         } else {
-            sync_wiki_repo(remote, &cfg.wiki_local, &mut emit)?
+            sync_wiki_repo(remote, &cfg.wiki_local, GIT_TIMEOUT, &mut emit).await?
         }
     } else {
         emit(SyncEvent::Warn(
@@ -329,41 +331,81 @@ fn skip_wiki_pull(local: &Path, emit: &mut impl FnMut(SyncEvent)) -> Result<Stri
     Ok("skipped".into())
 }
 
-fn sync_wiki_repo(
+async fn sync_wiki_repo(
     remote: &str,
     local: &Path,
+    limit: std::time::Duration,
     emit: &mut impl FnMut(SyncEvent),
 ) -> Result<String, SyncError> {
     if !local.exists() {
-        if let Some(parent) = local.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| SyncError::msg(e.to_string()))?;
-        }
-        let status = Command::new("git")
-            .args(["clone", remote])
-            .arg(local)
-            .status()
-            .map_err(|e| SyncError::msg(format!("git clone failed: {e}")))?;
-        if !status.success() {
-            return Err(SyncError::msg(format!("git clone failed for {remote}")));
-        }
+        let parent = local
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let name = local
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .ok_or_else(|| SyncError::msg(format!("bad wiki path {}", local.display())))?;
+        std::fs::create_dir_all(parent).map_err(|e| SyncError::msg(e.to_string()))?;
+        // Clone from the parent folder so a relative wiki path is not applied twice.
+        run_git(
+            git_command(parent, &["clone", "--", remote, &name]),
+            "git clone",
+            limit,
+        )
+        .await?;
         emit(SyncEvent::Ok("Cloned wiki".into()));
         emit(SyncEvent::Dim(local.display().to_string()));
         return Ok("cloned".into());
     }
 
-    let output = Command::new("git")
-        .current_dir(local)
-        .args(["pull", "--ff-only"])
-        .output()
-        .map_err(|e| SyncError::msg(format!("git pull failed: {e}")))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(SyncError::msg(format!("git pull failed: {stdout}{stderr}")));
-    }
+    run_git(
+        git_command(local, &["pull", "--ff-only"]),
+        "git pull",
+        limit,
+    )
+    .await?;
     emit(SyncEvent::Ok("Pulled latest wiki changes".into()));
     emit(SyncEvent::Dim(local.display().to_string()));
     Ok("pulled".into())
+}
+
+/// A non-interactive git command: no terminal or credential prompts, no
+/// stdin, and the process is killed when the caller stops waiting for it.
+fn git_command(dir: &Path, args: &[&str]) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.current_dir(dir)
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GCM_INTERACTIVE", "never")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    cmd
+}
+
+/// Runs `cmd` without blocking the async runtime and stops it after `limit`.
+async fn run_git(
+    mut cmd: tokio::process::Command,
+    what: &str,
+    limit: std::time::Duration,
+) -> Result<(), SyncError> {
+    let output = match tokio::time::timeout(limit, cmd.output()).await {
+        Ok(res) => res.map_err(|e| SyncError::msg(format!("{what} failed: {e}")))?,
+        Err(_) => {
+            return Err(SyncError::msg(format!(
+                "{what} timed out after {}s",
+                limit.as_secs()
+            )))
+        }
+    };
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(SyncError::msg(format!("{what} failed: {stdout}{stderr}")));
+    }
+    Ok(())
 }
 
 fn write_jsonl(path: &Path, rows: &[MemoryRow]) -> Result<(), SyncError> {
@@ -379,6 +421,110 @@ fn write_jsonl(path: &Path, rows: &[MemoryRow]) -> Result<(), SyncError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A git HTTP server that accepts connections and never answers.
+    fn silent_server() -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for stream in listener.incoming().flatten() {
+                held.push(stream);
+            }
+        });
+        format!("http://{addr}/wiki.git")
+    }
+
+    #[test]
+    fn stalled_clone_stops_at_the_time_limit() {
+        let remote = silent_server();
+        let local = std::env::temp_dir().join(format!(
+            "ax-docs-catalog-stalled-{}/wiki",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(local.parent().unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let target = local.clone();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let res = rt.block_on(async {
+                sync_wiki_repo(
+                    &remote,
+                    &target,
+                    std::time::Duration::from_secs(2),
+                    &mut |_| {},
+                )
+                .await
+            });
+            let _ = tx.send(res.map_err(|e| e.to_string()));
+        });
+        let res = rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("git clone still running after the time limit");
+        let err = res.expect_err("a stalled clone cannot succeed");
+        assert!(err.contains("timed out"), "{err}");
+        let _ = std::fs::remove_dir_all(local.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn clones_and_pulls_a_local_wiki() {
+        let base =
+            std::env::temp_dir().join(format!("ax-docs-catalog-clone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let src = base.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let git = |dir: &Path, args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .current_dir(dir)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        git(&src, &["init", "-q"]);
+        std::fs::write(src.join("Home.md"), "# Home\n").unwrap();
+        git(&src, &["add", "."]);
+        git(
+            &src,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-qm",
+                "init",
+            ],
+        );
+        let local = base.join("work/wiki");
+        let limit = std::time::Duration::from_secs(60);
+        let remote = src.to_string_lossy().into_owned();
+        let first = sync_wiki_repo(&remote, &local, limit, &mut |_| {})
+            .await
+            .unwrap();
+        assert_eq!(first, "cloned");
+        assert!(local.join("Home.md").is_file());
+        let second = sync_wiki_repo(&remote, &local, limit, &mut |_| {})
+            .await
+            .unwrap();
+        assert_eq!(second, "pulled");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn git_runs_without_prompts_or_stdin() {
+        let cmd = git_command(Path::new("."), &["status"]);
+        let envs: Vec<_> = cmd.as_std().get_envs().collect();
+        assert!(envs.contains(&(
+            std::ffi::OsStr::new("GIT_TERMINAL_PROMPT"),
+            Some(std::ffi::OsStr::new("0"))
+        )));
+    }
 
     fn workspace(tag: &str) -> std::path::PathBuf {
         let root =
