@@ -295,6 +295,36 @@ fn euro_economics_without_a_rate_stay_in_usd_and_compare_no_budget() {
 }
 
 #[test]
+fn a_monthly_budget_in_another_currency_is_left_out_and_says_why() {
+    let pi = create_pi_integration(PiOptions {
+        currency: "GBP".into(),
+        usd_per_eur: Some(1.08),
+        ..priced(OptimizationMode::Advise)
+    });
+    spend_one_point_zero_eight_usd(&pi);
+    let report = pi.economics(Some("abc123")).unwrap();
+    assert_eq!(report.currency, "USD");
+    assert!(report.budget.is_none(), "{:?}", report.budget);
+    let reason = report.budget_omitted.clone().expect("omission reason");
+    assert!(reason.contains("GBP"), "{reason}");
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["budget_omitted"], reason.as_str());
+    let text = pi.format_economics_text(Some("abc123")).unwrap();
+    assert!(text.contains(&reason), "{text}");
+}
+
+#[test]
+fn a_budget_that_is_compared_has_no_omission_reason() {
+    let pi = create_pi_integration(priced(OptimizationMode::Advise));
+    spend_one_point_zero_eight_usd(&pi);
+    let report = pi.economics(Some("abc123")).unwrap();
+    assert!(report.budget.is_some());
+    assert!(report.budget_omitted.is_none());
+    let json = serde_json::to_value(&report).unwrap();
+    assert!(json.get("budget_omitted").is_none(), "{json}");
+}
+
+#[test]
 fn usd_per_eur_is_read_from_the_budget_settings() {
     let options = PiOptions::from_config_value(&json!({
         "budget": {"monthly": 60, "currency": "EUR", "usdPerEur": 1.08}

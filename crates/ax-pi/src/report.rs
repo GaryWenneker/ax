@@ -21,6 +21,10 @@ pub struct EconomicsReport {
     pub largest_tool: Option<String>,
     pub currency: String,
     pub budget: Option<BudgetSnapshot>,
+    /// Why a configured monthly budget is not in `budget`; absent when there
+    /// is no monthly budget or it is compared.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget_omitted: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -111,6 +115,7 @@ pub(crate) fn economics_of(
         largest_tool,
         currency: currency.to_string(),
         budget,
+        budget_omitted: None,
     }
 }
 
@@ -255,6 +260,9 @@ pub fn format_economics(report: &EconomicsReport) -> String {
             plain(budget.remaining),
             plain(budget.projected)
         ));
+    } else if let Some(reason) = &report.budget_omitted {
+        lines.push(String::new());
+        lines.push(format!("Budget:\n{reason}"));
     }
     lines.join("\n")
 }
@@ -403,6 +411,7 @@ mod tests {
             largest_tool: None,
             currency: "USD".into(),
             budget: None,
+            budget_omitted: None,
         };
         apply_display_currency(&mut report, "EUR", Some(1.08));
         assert_eq!(report.currency, "EUR");
@@ -428,6 +437,7 @@ mod tests {
             largest_tool: None,
             currency: "EUR".into(),
             budget: None,
+            budget_omitted: None,
         };
         apply_display_currency(&mut report, "EUR", None);
         assert_eq!(report.currency, "USD");
@@ -456,6 +466,7 @@ mod tests {
                 days_elapsed: 10,
                 days_remaining: 20,
             }),
+            budget_omitted: None,
         }
     }
 

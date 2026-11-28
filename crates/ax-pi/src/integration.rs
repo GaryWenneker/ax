@@ -463,7 +463,10 @@ impl PiIntegration {
                     models: &state.models,
                     optimizations: &state.optimizations,
                 };
-                let mut report = economics_of(&rows, session_id, "USD", self.budget_of(&state));
+                let budget = self.budget_of(&state);
+                let budget_omitted = self.budget_omitted(budget.is_some());
+                let mut report = economics_of(&rows, session_id, "USD", budget);
+                report.budget_omitted = budget_omitted;
                 apply_display_currency(&mut report, currency, usd_per_eur);
                 Ok(report)
             },
@@ -566,6 +569,18 @@ impl PiIntegration {
         );
         snapshot.currency = "USD".into();
         Some(snapshot)
+    }
+
+    /// Why a configured monthly budget is left out of the report: only a USD
+    /// budget, or a EUR budget with `usdPerEur`, can be compared with spend.
+    fn budget_omitted(&self, compared: bool) -> Option<String> {
+        if compared || self.options.monthly_budget.is_none() {
+            return None;
+        }
+        Some(format!(
+            "monthly budget in {} left out: only a USD budget, or a EUR budget with budget.usdPerEur, is compared with spend",
+            self.options.currency
+        ))
     }
 
     fn guard(&self, body: impl FnOnce() -> Result<(), String>) -> Result<(), PiError> {
@@ -680,6 +695,7 @@ fn empty_report(currency: &str) -> EconomicsReport {
         largest_tool: None,
         currency: currency.into(),
         budget: None,
+        budget_omitted: None,
     }
 }
 
