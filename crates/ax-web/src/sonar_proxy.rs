@@ -642,11 +642,7 @@ async fn send_upstream(
     let mut upstream = client.request(method.clone(), upstream_url);
     upstream = upstream.header("Authorization", auth_header);
 
-    for (name, value) in &parts.headers {
-        let n = name.as_str();
-        if should_skip_request_header(n) {
-            continue;
-        }
+    for (name, value) in upstream_request_headers(&parts.headers) {
         upstream = upstream.header(name, value);
     }
 
@@ -680,6 +676,42 @@ fn upstream_path_from_uri(path: &str) -> String {
 
 fn basic_auth(user: &str, password: &str) -> String {
     format!("Basic {}", STANDARD.encode(format!("{user}:{password}")))
+}
+
+/// Cookies SonarQube sets for its own UI. The browser sends every cookie of
+/// the Command Center origin, including the share token (`ax_share`) and the
+/// web-login session, so only these are passed on.
+const SONAR_COOKIES: &[&str] = &["JWT-SESSION", "XSRF-TOKEN"];
+
+/// The browser request headers that go to the SonarQube host.
+fn upstream_request_headers(headers: &HeaderMap) -> Vec<(axum::http::HeaderName, HeaderValue)> {
+    let mut out = Vec::new();
+    let mut cookies = Vec::new();
+    for (name, value) in headers {
+        if name == header::COOKIE {
+            let Ok(text) = value.to_str() else { continue };
+            cookies.extend(
+                text.split(';')
+                    .map(str::trim)
+                    .filter(|pair| {
+                        pair.split_once('=')
+                            .is_some_and(|(key, _)| SONAR_COOKIES.contains(&key.trim()))
+                    })
+                    .map(str::to_string),
+            );
+            continue;
+        }
+        if should_skip_request_header(name.as_str()) {
+            continue;
+        }
+        out.push((name.clone(), value.clone()));
+    }
+    if let Ok(value) = HeaderValue::from_str(&cookies.join("; ")) {
+        if !cookies.is_empty() {
+            out.push((header::COOKIE, value));
+        }
+    }
+    out
 }
 
 fn should_skip_request_header(name: &str) -> bool {
@@ -1007,6 +1039,39 @@ fn rewrite_location(location: &str, sonar_host: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_sonarqube_cookies_reach_the_sonarqube_host() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            "ax_share=share-secret; JWT-SESSION=jwt; ax_web_session=session-secret; XSRF-TOKEN=xsrf"
+                .parse()
+                .unwrap(),
+        );
+        headers.append(
+            header::COOKIE,
+            "other=1; JWT-SESSION=again".parse().unwrap(),
+        );
+        headers.insert(header::ACCEPT, "text/html".parse().unwrap());
+        let sent = upstream_request_headers(&headers);
+        let cookies: Vec<String> = sent
+            .iter()
+            .filter(|(n, _)| *n == header::COOKIE)
+            .map(|(_, v)| v.to_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            cookies,
+            vec!["JWT-SESSION=jwt; XSRF-TOKEN=xsrf; JWT-SESSION=again".to_string()]
+        );
+        assert!(sent.iter().any(|(n, _)| *n == header::ACCEPT));
+
+        let mut none = axum::http::HeaderMap::new();
+        none.insert(header::COOKIE, "ax_share=s".parse().unwrap());
+        assert!(upstream_request_headers(&none)
+            .iter()
+            .all(|(n, _)| *n != header::COOKIE));
+    }
 
     #[test]
     fn a_host_fallback_after_invalidate_does_not_mark_the_cache_ready() {
