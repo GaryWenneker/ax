@@ -2,7 +2,7 @@ use crate::config::load;
 use crate::graph::{suggest_report_capped, GraphReport, InputEdge, EDGE_LIMIT};
 use crate::learning::{validate_feedback, FeedbackInput};
 use crate::share::{packet_for, ModelManifest, SharePolicy};
-use crate::status::status_report;
+use crate::status::status_report_with;
 use crate::store::{
     feedback_count, insert_feedback, last_evaluation, list_models, observations, outcome_counts,
     project_edges, promote, promoted_checksum, promoted_models, rank_totals, record_evaluation,
@@ -95,10 +95,11 @@ pub async fn handle(
     }
     match name.as_str() {
         "status" => {
-            // status_report reads the admission synchronously; compute it on
-            // the blocking pool first so that read is a cached lookup.
-            crate::bakeoff::challenger_admitted_async().await;
-            let mut value = status_report(root);
+            // The admission is computed on the blocking pool and passed in,
+            // so the report never scores the fixture on the runtime thread,
+            // even when that computation failed and was not cached.
+            let admitted = crate::bakeoff::challenger_admitted_async().await;
+            let mut value = status_report_with(root, admitted);
             if let Some(pool) = pool {
                 add_measured(&mut value, pool, &project_id(root)).await;
             }
@@ -822,6 +823,16 @@ mod tests {
     /// task got to run before the call returned. Zero means the call held the
     /// only runtime thread for its whole computation.
     async fn ticks_while(root: &Path, tool: &str, args: Value) -> usize {
+        ticks_while_on(root, tool, args, None).await
+    }
+
+    /// [`ticks_while`] with a database for commands that need one.
+    async fn ticks_while_on(
+        root: &Path,
+        tool: &str,
+        args: Value,
+        pool: Option<&SqlitePool>,
+    ) -> usize {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
         let ticks = Arc::new(AtomicUsize::new(0));
@@ -832,7 +843,7 @@ mod tests {
                 tokio::task::yield_now().await;
             }
         });
-        let result = handle(root, tool, &args, None).await;
+        let result = handle(root, tool, &args, pool).await;
         let seen = ticks.load(Ordering::SeqCst);
         ticker.abort();
         result.unwrap();
@@ -854,6 +865,22 @@ mod tests {
         assert!(graph > 0, "graph ran on the runtime thread");
         let bakeoff = ticks_while(dir.path(), "embed_bakeoff", json!({})).await;
         assert!(bakeoff > 0, "embed bake-off ran on the runtime thread");
+        let database = open(dir.path()).await;
+        let pool = database.pool();
+        let evidence: Value = serde_json::from_str(crate::learning::PASSING_EVIDENCE).unwrap();
+        let model = json!({ "modelId": "x", "version": "1", "checksum": "c", "metrics": evidence });
+        handle(dir.path(), "register", &model, Some(pool))
+            .await
+            .unwrap();
+        let args = json!({ "modelId": "x", "version": "1", "explicit": true });
+        crate::bakeoff::SCORED_ON_THIS_THREAD.with(|count| count.set(0));
+        let promote = ticks_while_on(dir.path(), "promote", args, Some(pool)).await;
+        assert!(promote > 0, "promote held the runtime thread");
+        let scored_here = crate::bakeoff::SCORED_ON_THIS_THREAD.with(|count| count.get());
+        assert_eq!(
+            scored_here, 0,
+            "promotion scored the baseline on the runtime thread"
+        );
     }
 
     #[tokio::test]

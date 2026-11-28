@@ -151,9 +151,29 @@ fn lexical_challenger_families(
     )
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many times [`baseline_report`] started on the current thread, so
+    /// a test can tell whether a call scored the fixture on its runtime thread.
+    pub(crate) static SCORED_ON_THIS_THREAD: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// [`baseline_report`] on the built-in coding fixture, scored on the blocking
+/// pool so it never holds an async runtime thread. Must be called inside a
+/// Tokio runtime.
+pub async fn baseline_report_off_runtime() -> Result<Value, String> {
+    let runtime = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || runtime.block_on(baseline_report(crate::CODING_FIXTURE)))
+        .await
+        .map_err(|error| format!("neural task failed: {error}"))?
+}
+
 /// Scores hash-v1 with the locked fusion through the memory bench, in a temporary database.
 /// When `neural-runtime` is on, also scores the pure-Rust lexical challenger and may admit it.
 pub async fn baseline_report(text: &str) -> Result<Value, String> {
+    #[cfg(test)]
+    SCORED_ON_THIS_THREAD.with(|count| count.set(count.get() + 1));
     let fixture = load_coding_fixture(text)?;
     let (report, score_millis) = score_in_temporary_database(&fixture).await?;
     let mut families = serde_json::Map::new();

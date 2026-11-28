@@ -178,7 +178,8 @@ pub(crate) const PASSING_EVIDENCE: &str = r#"{"bakeoff":{"families":{"named_trig
 /// The evidence must score the same questions per family as the built-in
 /// coding fixture, keep every locked family fully hit, and beat hash-v1 on
 /// paraphrase. hash-v1 is scored on the fixture in this call, not read from a
-/// stored constant.
+/// stored constant, on the blocking pool so the call never holds an async
+/// runtime thread.
 pub async fn promotion_allowed(explicit: bool, metrics_json: &str) -> Result<(), String> {
     if !explicit {
         return Err("promotion requires an explicit command".into());
@@ -189,7 +190,7 @@ pub async fn promotion_allowed(explicit: bool, metrics_json: &str) -> Result<(),
             "promotion refused: the model version has no bake-off evidence; register it with metrics.bakeoff.families".into(),
         );
     };
-    let report = crate::bakeoff::baseline_report(crate::CODING_FIXTURE).await?;
+    let report = crate::bakeoff::baseline_report_off_runtime().await?;
     let baseline = &report["families"];
     for (family, _) in crate::bakeoff::FAMILIES {
         let expected = baseline[family]["scored"].as_u64().unwrap_or(0);

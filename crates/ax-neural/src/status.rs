@@ -2,13 +2,27 @@ use crate::config::{load, NeuralConfig};
 use serde_json::{json, Value};
 use std::path::Path;
 
+/// The status report for `root`. The first call may score the bake-off
+/// fixture and block; async callers compute the admission with
+/// [`crate::bakeoff::challenger_admitted_async`] and call
+/// [`status_report_with`].
 pub fn status_report(root: &Path) -> Value {
-    let cfg = load(root);
-    report(&cfg)
+    status_report_with(root, crate::bakeoff::challenger_admitted())
+}
+
+/// The status report for `root` with the lexical challenger admission
+/// already known, so it never scores the fixture itself.
+pub fn status_report_with(root: &Path, lexical_admitted: bool) -> Value {
+    report_with(&load(root), lexical_admitted)
 }
 
 pub fn report(cfg: &NeuralConfig) -> Value {
-    let capabilities = capabilities(cfg);
+    report_with(cfg, crate::bakeoff::challenger_admitted())
+}
+
+/// [`report`] with the lexical challenger admission already known.
+pub fn report_with(cfg: &NeuralConfig, lexical_admitted: bool) -> Value {
+    let capabilities = capabilities_with(cfg, lexical_admitted);
     json!({
         "enabled": cfg.enabled,
         "mode": cfg.mode,
@@ -63,7 +77,11 @@ fn neural_embedding_capability() -> (&'static str, &'static str, String) {
 }
 
 pub fn capabilities(cfg: &NeuralConfig) -> Value {
-    let lexical_admitted = crate::bakeoff::challenger_admitted();
+    capabilities_with(cfg, crate::bakeoff::challenger_admitted())
+}
+
+/// [`capabilities`] with the lexical challenger admission already known.
+pub fn capabilities_with(cfg: &NeuralConfig, lexical_admitted: bool) -> Value {
     let lexical = if cfg.semantic_enabled && lexical_admitted {
         cap(
             "active",
@@ -216,6 +234,28 @@ mod tests {
         assert_eq!(
             value["productionDefaultsUnchanged"],
             crate::PRODUCTION_DEFAULTS_UNCHANGED
+        );
+    }
+
+    #[test]
+    fn the_report_uses_the_admission_it_is_given() {
+        let mut cfg = NeuralConfig::required();
+        cfg.semantic_enabled = true;
+        let admitted = report_with(&cfg, true);
+        assert_eq!(
+            admitted["capabilities"]["lexicalRetrieval"]["status"],
+            "active"
+        );
+        let refused = report_with(&cfg, false);
+        assert_eq!(
+            refused["capabilities"]["lexicalRetrieval"]["status"],
+            "implemented"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let from_root = status_report_with(dir.path(), true);
+        assert_eq!(
+            from_root["capabilities"]["lexicalRetrieval"]["status"],
+            "active"
         );
     }
 
