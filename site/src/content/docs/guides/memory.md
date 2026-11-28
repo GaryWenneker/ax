@@ -5,7 +5,7 @@ description: Brain-style memory for ax — working notes, named long-term decisi
 
 ax keeps a brain-style memory in the same local SQLite database as the code graph.
 
-Current vault behavior (schema 44+): FTS ranks over normalized `search_text` with BM25F field weights; recall can expand with a bilingual lexicon and PMI associations and returns a `why` signal per hit. Memories auto-anchor to graph node versions; sync captures file changes and graph history. Full backups are zstd-compressed JSONL under `.ax/backups/memory/`. Prospective `--when` tags fire on guard. The Command Center Memory page has a review inbox; the Graph page has an as-of time slider. A name fetches the exact memory. The raw episode stays. Recall is bound to the live graph. MCP and the CLI call one function, so neither surface is a subset.
+Current vault behavior (schema 44+): FTS ranks over normalized `search_text` with BM25F field weights; recall can expand with a bilingual lexicon and PMI associations and returns a `why` signal per hit. PMI learns only from the newest 2,000 active long-term memories (decisions, notes, conventions; not turns, docs, or archive rows), so the same vault always expands a query the same way. Memories auto-anchor to graph node versions. A node gets a new version when its source text changes, even with the same signature, and anchors on an older version are flagged stale. Sync captures file changes and graph history: one file-change memory per new content of a file, kept in the recent tier and moved to the archive by the same retention as turns. Full backups are zstd-compressed JSONL under `.ax/backups/memory/`. Prospective `--when` tags fire on guard. The Command Center Memory page has a review inbox; the Graph page has an as-of time slider. A name fetches the exact memory. The raw episode stays. Recall is bound to the live graph. MCP and the CLI call one function, so neither surface is a subset.
 
 ## What ax remembers
 
@@ -15,7 +15,7 @@ There are five tiers. Forgetting moves a memory down. It does not erase it.
 
 **Recent turns** are the last 90 days of agent work. Preflight can show related turn history. A turn is not a durable decision.
 
-**Long-term memory** is a decision, a bug fix, an architecture note, a convention, or a note. Store it with a trigger name. Preflight injects at most three titles, and that block stops at 6000 characters. If the prompt contains a registered name, that memory comes first. An unknown name returns nothing. Free text is only the fallback, for a paraphrase. Automatic cues come from the title, tags, file name, and symbols. They skip change verbs, node kinds, and primitive type names, and a word already used by 32 memories is not added again. A graph change cues only the symbol that changed. An explicit trigger is kept either way, and it still ranks ahead of a title cue. Among title cues, a rarer word ranks ahead of a common one. Schema 30 drops the old automatic cues that match those rules. The indexer and the pending file list both skip paths named by `.gitignore`. A code change under `target`, `target-dev`, `node_modules`, or `dist` is kept and marked noise: search skips it, and a fetch by id still returns it. A path such as `target-design` stays a normal memory.
+**Long-term memory** is a decision, a bug fix, an architecture note, a convention, or a note. Store it with a trigger name. Preflight injects at most three titles, and that block stops at 6000 characters. If the prompt contains a registered name, that memory comes first. An unknown name returns nothing. Free text is only the fallback, for a paraphrase. Automatic cues come from the title, tags, file name, and symbols. They skip change verbs, node kinds, and primitive type names, and a word already used by 32 memories is not added again. A graph change cues only the symbol that changed. An explicit trigger is kept either way, and it still ranks ahead of a title cue. Editing a memory keeps its triggers and rebuilds its search text, instruction flag, and file anchors from the new text. Among title cues, a rarer word ranks ahead of a common one. Schema 30 drops the old automatic cues that match those rules. The indexer and the pending file list both skip paths named by `.gitignore`. A code change under `target`, `target-dev`, `node_modules`, or `dist` is kept and marked noise: search skips it, and a fetch by id still returns it. A path such as `target-design` stays a normal memory.
 
 **The archive** is permanent. These rows are never injected:
 
@@ -282,7 +282,7 @@ Everything is stored locally in `.ax/ax.db` (SQLite):
 | `memory_links` | `source` and `supersedes` links between a candidate and the episode it came from |
 | `memory_vec` | sqlite-vec index used only for archive search |
 
-Triggers keep the FTS5 index in sync automatically on INSERT, UPDATE, and DELETE — no manual reindexing needed.
+Triggers keep the FTS5 index in sync automatically on INSERT, UPDATE, and DELETE — no manual reindexing needed. Deleting a memory also removes its cues, links, anchors, access log, and archive vector in one transaction.
 
 ### Source field values
 
@@ -330,9 +330,9 @@ Rules:
 - **Subagents don't end the turn.** Claude Code's `SubagentStop` still runs the policy check, but the turn memory waits for the main agent's `Stop`.
 - **Given back while you work.** `ax_preflight` adds an `<ax_turn_history>` block with at most 3 related past turns, newest first: turns that changed a file passed in `files`, or turns that `ax_recall` finds for the prompt *and* that share at least 2 words of 4+ letters with it. Each line has the date, the prompt, the first 800 characters of the outcome, and up to 6 files. The block is at most 1,200 characters.
 - **Local.** `turn` memories are still skipped by the `<ax_memories>` block, the memory titles list, and `ax memory export`.
-- **Demoted after 90 days, backed up first.** Every turn end that writes moves `turn` memories older than 90 days to the archive. They are first appended to `.ax/backups/turn-memories-YYYY-MM-DD.jsonl`. If that write fails, nothing changes. The archived turn stays fetchable by id and by cue. Other kinds are never demoted by this job.
+- **Demoted after 90 days, backed up first.** Every turn end that writes moves `turn` and `file_change` memories older than 90 days to the archive. They are first appended to `.ax/backups/turn-memories-YYYY-MM-DD.jsonl`. If that write fails, nothing changes. The archived memory stays fetchable by id and by cue. No other kind is demoted by this job.
 - **Change kind per file.** The memory body ends with a `Changes:` section (`A path`, `M path`, `D path`) so Command Center can color each file. Turns captured before this section existed only have `Files:` and show their files without a color.
-- **Secrets redacted.** API keys (`sk-…`, `ghp_…`, `AKIA…`), `password=…` values, and long hex or base64 runs are stored as `[redacted]`.
+- **Secrets redacted.** API keys and tokens (`sk-…`, `ghp_…`, `AKIA…`, Slack `xox…`, Stripe, GitLab, npm and Google keys), JWTs, values of secret-named keys (`password=…`, `db_password=…`, `"api_key": "…"`, `client_secret: …`, `token = …`), `Authorization: Bearer …` values, the password in `scheme://user:password@host`, and long hex or base64 runs are stored as `[redacted]`. Git commit titles are redacted the same way as their bodies.
 - **Never blocks.** The hooks print nothing and always exit 0; outside a git repository or an ax project they do nothing.
 
 The memory says *what* changed and what the agent reported, not *why*. Save the why with `ax_remember`.
@@ -368,7 +368,7 @@ To switch it off for a project, set this in `ax.json`:
 
 ## Benchmark
 
-`scripts/memory-bench.sh` scores a fixed coding fixture and a plain BM25 baseline, then writes `benchmarks/memory/results/<commit>.json`. The bundled LongMemEval and LoCoMo files are shape samples, not the public datasets. A missing dataset is recorded as skipped. The harness does not open the project vault.
+`scripts/memory-bench.sh` scores a fixed coding fixture and a plain BM25 baseline, then writes `benchmarks/memory/results/<commit>.json`. The bundled LongMemEval and LoCoMo files are shape samples, not the public datasets. A missing dataset is recorded as skipped. The harness does not open the project vault. When `AX_LONGMEMEVAL_PATH` or `AX_LOCOMO_PATH` points at a real dataset, the result's `scorer` is `text_stack`: an in-memory copy of ax's text ranking (normalization, stemming, a BM25 mix and a sibling boost) whose constants were tuned on those same sets. It does not run `ax recall`, so it does not measure FTS weights, fusion, the vector leg or abstention, and it is not a held-out score. The shape samples use `scorer: bm25`.
 
 ## CLI
 

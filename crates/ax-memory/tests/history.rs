@@ -2,7 +2,10 @@
 //! "when did I change X" (H1-H4).
 
 use std::path::Path;
-use std::process::Command;
+
+mod common;
+
+use common::git;
 
 use ax_memory::{
     continuation_turns, format_history, format_turn_history_block, format_when, history,
@@ -368,26 +371,6 @@ fn format_when_is_date_and_minutes() {
         "{text}"
     );
     assert!(text.starts_with("2026-09-2"), "{text}");
-}
-
-fn git(root: &Path, envs: &[(&str, &str)], args: &[&str]) {
-    let status = Command::new("git")
-        .current_dir(root)
-        .envs(envs.iter().copied())
-        .args([
-            "-c",
-            "user.email=t@example.com",
-            "-c",
-            "user.name=t",
-            "-c",
-            "commit.gpgsign=false",
-            "-c",
-            "core.hooksPath=/dev/null",
-        ])
-        .args(args)
-        .status()
-        .unwrap();
-    assert!(status.success(), "git {args:?}");
 }
 
 const LANG_FILE: &str = "crates/ax-core/src/review_language.rs";

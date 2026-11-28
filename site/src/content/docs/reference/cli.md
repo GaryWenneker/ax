@@ -533,7 +533,7 @@ Store a durable project memory (decision, fix, convention). Flags similar existi
 | `--trigger` | string (repeat) | Exact cue name. Same as `ax_remember` `triggers` |
 | `--confirm` | string | Confirm a candidate memory by id. Same as `ax_remember` `action=confirm` |
 | `--purge` | string | Purge a memory by id (row, cues, links, vectors, tombstone). Same as `ax_remember` `action=purge` |
-| `--when` | string | Prospective trigger (`file:glob` \| `symbol:name` \| `error:pat` \| `command:pat`). Stored as a `when:` tag |
+| `--when` | string | Prospective trigger (`file:glob` \| `symbol:name` \| `error:pat` \| `command:pat`). Stored as a `when:` tag. A file glob matches the whole project-relative path: `*` stays within one folder, `**` spans folders, and a pattern without `/` (`*.sql`, `Cargo.toml`) matches the file name in any folder. For the other kinds, a glob must match the whole value and plain text matches anywhere in it |
 | `--json` | flag | JSON output, including `suggested_triggers` on a saved memory |
 
 ```bash
@@ -601,7 +601,7 @@ ax capture-git --limit 1 --quiet    # same as the post-commit hook
 
 ### `ax memory export`
 
-Export memories that carry a tag (default: `shared`) to `.ax/memory/shared.jsonl` for team git sync.
+Export memories that carry a tag (default: `shared`) to `.ax/memory/shared.jsonl` for team git sync. Memories tagged `local`, `noshare` or `private`, disabled memories, and kinds the import skips (turns, folder docs and kinds ax does not know) are not exported.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -618,6 +618,8 @@ ax memory export --tag team --out ./shared-memories.jsonl
 ### `ax memory import`
 
 Import JSONL memories (upsert by id). Used after `git pull` or via the post-merge hook when `"memorySync": true` is set in `ax.json`.
+
+Imported rows are untrusted data: they get the source `import`, and a row whose text reads like an instruction to the agent waits as a candidate until you confirm it (`ax remember --confirm`). The import skips lines with an unknown kind, turns and folder docs, and ids you purged. An existing memory is replaced only when it is itself shared (imported earlier or tagged `shared`) and the shared line is newer; a local memory you never shared is never overwritten.
 
 ```bash
 ax memory import
@@ -1254,11 +1256,11 @@ ax cursor auth use enterprise
 
 ### `ax offload`
 
-Configure optional LLM offload for `ax explore` (BYO OpenAI-compatible API). Stored in `~/.ax/config.json`. Offload is off until `set-endpoint` switches it on; `ax init` only prints the command when it finds a provider key in the environment.
+Configure optional LLM offload for `ax explore` (BYO OpenAI-compatible API). Stored in `~/.ax/config.json`. Offload is off until `set-endpoint` saves an endpoint or `AX_OFFLOAD_URL` is set; an API key in the environment alone does not enable it, and `ax init` only prints the command when it finds a provider key.
 
 #### `ax offload status`
 
-Show current endpoint and key env var name.
+Show current endpoint and key env var name. When offload is off and a provider key is in the environment, `suggestion` names the command that would enable it. `last_error` holds the last failed offload request made by the same process (status code and the start of the provider's reply); a separate `ax offload status` run starts with none.
 
 ```bash
 ax offload status

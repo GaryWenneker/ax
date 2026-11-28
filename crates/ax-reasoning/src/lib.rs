@@ -9,6 +9,6 @@ pub use config::{
     OffloadProviderEntry, OFFLOAD_PROVIDERS,
 };
 pub use reasoner::{
-    maybe_synthesize_explore, offload_status, strip_agent_directives, synthesize_offload,
-    ExploreOffloadMeta,
+    last_offload_error, maybe_synthesize_explore, offload_status, strip_agent_directives,
+    synthesize_offload, ExploreOffloadMeta,
 };
