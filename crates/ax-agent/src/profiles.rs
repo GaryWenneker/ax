@@ -41,6 +41,48 @@ pub fn profile_data_dir(agent: &str, profile_id: &str) -> Option<PathBuf> {
     profiles_base().map(|b| b.join(agent).join(profile_id))
 }
 
+/// Agent and profile ids become folder names under `profiles_base()`, so they
+/// must be one plain path segment: 1-64 letters, digits, `-` or `_`.
+fn validate_segment(kind: &str, value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 64
+        || value
+            .chars()
+            .any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+    {
+        return Err(format!(
+            "{kind} must be 1-64 letters, numbers, hyphens, or underscores"
+        ));
+    }
+    Ok(())
+}
+
+/// A stored profile folder may only be deleted when it sits at least two
+/// levels inside `profiles_base()` (`<base>/<agent>/<id>`), also after
+/// following links. Anything else (an old or hand-edited config pointing at
+/// `~/Documents` or at a whole agent folder) is refused.
+fn deletable_profile_dir(data_dir: &Path) -> Result<(), String> {
+    let base = profiles_base().ok_or("no home dir")?;
+    let refuse = || {
+        format!(
+            "Refusing to delete {} because it is not a profile folder under {}; remove the profile with keep_dir to keep the folder",
+            data_dir.display(),
+            base.display()
+        )
+    };
+    let rel = data_dir.strip_prefix(&base).map_err(|_| refuse())?;
+    if rel.components().count() < 2 {
+        return Err(refuse());
+    }
+    ax_utils::ensure_within(&base, data_dir).map_err(|_| refuse())?;
+    let real_base = base.canonicalize().map_err(|_| refuse())?;
+    let real = data_dir.canonicalize().map_err(|_| refuse())?;
+    match real.strip_prefix(&real_base) {
+        Ok(r) if r.components().count() >= 2 => Ok(()),
+        _ => Err(refuse()),
+    }
+}
+
 pub fn list_profiles(agent: &str) -> Vec<ProfileEntry> {
     load_agents_config()
         .profiles
@@ -74,14 +116,8 @@ pub fn create_profile(
     key_env: Option<&str>,
     model: Option<&str>,
 ) -> Result<ProfileEntry, String> {
-    if id
-        .chars()
-        .any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
-    {
-        return Err(
-            "Profile id may only contain letters, numbers, hyphens, and underscores".into(),
-        );
-    }
+    validate_segment("Agent id", agent)?;
+    validate_segment("Profile id", id)?;
     let mut cfg = load_agents_config();
     let list = cfg.profiles.entry(agent.to_string()).or_default();
     if list.iter().any(|p| p.id == id) {
@@ -124,6 +160,12 @@ pub fn remove_profile(agent: &str, id: &str, keep_dir: bool) -> Result<(), Strin
     let Some(idx) = idx else {
         return Err(format!("Profile '{id}' not found"));
     };
+    if !keep_dir && !list[idx].data_dir.is_empty() {
+        let path = PathBuf::from(&list[idx].data_dir);
+        if path.exists() {
+            deletable_profile_dir(&path)?;
+        }
+    }
     let entry = list.remove(idx);
     if cfg.active_profile.get(agent) == Some(&id.to_string()) {
         cfg.active_profile.remove(agent);
@@ -273,4 +315,93 @@ pub fn refresh_auth_statuses() -> Result<AgentsConfig, String> {
     }
     save_agents_config(&cfg)?;
     Ok(cfg)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_home;
+
+    #[test]
+    fn create_profile_refuses_an_empty_id() {
+        let _home = test_home::fresh("empty-id");
+        assert!(create_profile("claude", "", "x", None, None, None).is_err());
+        assert!(create_profile("claude", "  ", "x", None, None, None).is_err());
+    }
+
+    #[test]
+    fn create_profile_refuses_an_agent_that_leaves_the_profiles_folder() {
+        let home = test_home::fresh("bad-agent");
+        let victim = home.dir.join("Documents");
+        fs::create_dir_all(&victim).unwrap();
+        for agent in ["../..", "..", "", "a/b", "/abs", "c\\d"] {
+            assert!(
+                create_profile(agent, "Documents", "x", None, None, None).is_err(),
+                "agent {agent:?} must be refused"
+            );
+        }
+        assert!(list_profiles("../..").is_empty());
+    }
+
+    #[test]
+    fn remove_profile_never_deletes_a_folder_outside_the_profiles_base() {
+        let home = test_home::fresh("remove-outside");
+        let victim = home.dir.join("Documents");
+        fs::create_dir_all(&victim).unwrap();
+        fs::write(victim.join("keep.txt"), b"keep").unwrap();
+        // A config written by an older version (or by hand) that points a
+        // profile at a folder outside ~/.ax/agent-profiles.
+        let mut cfg = load_agents_config();
+        cfg.profiles.insert(
+            "claude".into(),
+            vec![ProfileEntry {
+                id: "evil".into(),
+                label: "evil".into(),
+                data_dir: victim.to_string_lossy().into_owned(),
+                auth_status: AuthStatus::NeedsAuth,
+                provider: None,
+                key_env: None,
+                model: None,
+            }],
+        );
+        save_agents_config(&cfg).unwrap();
+        let _ = remove_profile("claude", "evil", false);
+        assert!(
+            victim.join("keep.txt").exists(),
+            "outside folder was deleted"
+        );
+    }
+
+    #[test]
+    fn remove_profile_never_deletes_the_agent_folder_itself() {
+        let _home = test_home::fresh("remove-agent-dir");
+        create_profile("claude", "work", "Work", None, None, None).unwrap();
+        let agent_dir = profiles_base().unwrap().join("claude");
+        let mut cfg = load_agents_config();
+        cfg.profiles.get_mut("claude").unwrap().push(ProfileEntry {
+            id: "whole".into(),
+            label: "whole".into(),
+            data_dir: agent_dir.to_string_lossy().into_owned(),
+            auth_status: AuthStatus::NeedsAuth,
+            provider: None,
+            key_env: None,
+            model: None,
+        });
+        save_agents_config(&cfg).unwrap();
+        let _ = remove_profile("claude", "whole", false);
+        assert!(
+            agent_dir.join("work").exists(),
+            "sibling profile was deleted"
+        );
+    }
+
+    #[test]
+    fn remove_profile_deletes_its_own_folder() {
+        let _home = test_home::fresh("remove-own");
+        let entry = create_profile("claude", "work", "Work", None, None, None).unwrap();
+        assert!(Path::new(&entry.data_dir).exists());
+        remove_profile("claude", "work", false).unwrap();
+        assert!(!Path::new(&entry.data_dir).exists());
+        assert!(list_profiles("claude").is_empty());
+    }
 }
