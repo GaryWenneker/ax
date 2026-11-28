@@ -1159,7 +1159,15 @@ mod tests {
             .unwrap();
         assert_eq!(status["metrics"]["feedbackCount"]["value"], 0);
         let canonical = std::fs::canonicalize(first.path()).unwrap();
-        assert_eq!(project_id(first.path()), canonical.to_string_lossy());
+        let canonical = canonical.to_string_lossy();
+        // On Windows `canonicalize` returns a verbatim `\\?\C:\...` path; the
+        // project id drops that prefix and uses forward slashes.
+        #[cfg(windows)]
+        let canonical = canonical
+            .strip_prefix(r"\\?\")
+            .unwrap_or(&canonical)
+            .replace('\\', "/");
+        assert_eq!(project_id(first.path()), canonical);
         assert_ne!(project_id(first.path()), project_id(second.path()));
     }
 
