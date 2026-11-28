@@ -31,7 +31,7 @@ Each finding was checked again against current `main` before it was fixed. RED m
 - **usage-056.** `PricingConfig.user_models` holds the models pricing.toml sets. `user_override_for` matches against that map and no longer reads the disk.
 - **usage-057.** The dead AA, benchmark and coding-agent types, parsers and upserts are removed. The catalog reads benchmark scores in one joined query instead of one query per row. `list_coding_agents` uses its `days` window. The comments and the same-day ordering now name OpenRouter. The report's AA count fields stay, always 0, so the web API shape does not change. Documented in `reference/web-api.md`.
 - **usage-058.** Rows the index rejects are dropped before any disk work. Within one call, hashes are memoised per file. The disk pass runs in `spawn_blocking`, and `store_reply` and `lookup` move their disk reads there too.
-- **usage-059.** A transcript that is not newer than the stored `source_mtime` is skipped before it is read, and the upsert needs a strictly newer mtime. Parsing streams lines in `spawn_blocking`, and one session's events are written in one transaction. Documented in `guides/token-savings.md`.
+- **usage-059.** A transcript that is not newer than the stored `source_mtime` is skipped before it is read, and the upsert needs a strictly newer mtime. Parsing streams lines in `spawn_blocking`, and one session's events are written in one transaction. Review round 1 changed this: the session row and its events now share one transaction and the upsert accepts an equal mtime again (see below). Documented in `guides/token-savings.md`.
 - **usage-060.** `UsageDbEnv` sets `AX_USAGE_DB` under the shared lock and restores it on drop, also on panic. The counterfactual mode and the reuse cap are passed as values in tests. Scratch files use `tempfile`. The pricing tests load built-in defaults from an empty folder.
 
 ### Deferred: memory-029 (remaining part)
@@ -43,6 +43,18 @@ Pass 1 fixed the user-visible part (empty `search_text`, wrong `trust_level`, on
 Both need `stamp_memory`, `register_cues`, `index_archive_vector`, `stamp_current_turn` and `link_follows_in_session` made generic over `sqlx::Executor`, across store, brain, turns, sync and capture. That is the L-sized refactor the finding describes, with no change in behavior beyond the crash window.
 
 A cheaper "repair on rerun" check, which treats a row with an empty `search_text` as unstamped, was considered and rejected. It would run `link_follows_in_session` again and could add duplicate links. `folder_sync::is_recall_only` stays as pass 1 left it, because widening it changes what shared export sends.
+
+## Review rounds
+
+| Round | Finding | State | Test | RED seen | Change |
+|---|---|---|---|---|---|
+| 1 | savings.rs:2256 (medium) import not atomic, never retried; mtime 0 skipped forever | fixed | `savings::tests::a_failed_event_write_is_retried_on_the_next_import`, `savings::tests::a_transcript_without_a_readable_mtime_is_never_skipped` | yes (first); no for the mtime unit test, written with the fix | `import_transcript` writes the session row and its usage events in one transaction; the upsert guard is `>=` again. `file_mtime_ms` returns `Option`; an unknown mtime is always imported and keeps the stored mtime. |
+| 1 | savings.rs:2242 (low) project mapping frozen for unchanged transcripts | fixed | `savings::tests::an_unchanged_transcript_moves_to_a_project_found_later` | yes | A skipped transcript's usage events move to the project its folder maps to now (`remap_usage_event_project`). Documented in `guides/token-savings.md`. |
+| 1 | durable.rs:102 (low) cleanup ran on read-only actions | fixed | `durable::tests::a_read_only_durable_call_does_not_prune`, `durable::tests::only_writing_durable_actions_trigger_cleanup` | yes (first) | `maybe_prune_durable` runs only when `durable_action_writes(action)`; `read`, `search`, `doc_get`, `task_resume` do not start it. `command-center.md` says so. |
+| 1 | retention.rs:82 (low) one invalid key disabled every limit | fixed | `retention::tests::one_invalid_key_leaves_the_other_limits_in_place` | yes | Each key is read from a `toml::Table` on its own; a bad key is ignored with a warning naming it. Module doc and `command-center.md` updated. |
+| 1 | period.rs:71 (nit) error named an unpassed `--to` | fixed | `period::tests::a_future_from_without_to_does_not_name_a_to_flag` | yes | Without `--to` the error reads `--from <date> is after today (<today>)`. |
+
+Round 1 commands: `cargo test -p ax-usage` 525 passed, 0 failed, 1 ignored (lib 524 + 1 integration); `cargo clippy -p ax-usage --all-targets -- -D warnings` clean; `cargo fmt --check` clean.
 
 ## Commands run
 
