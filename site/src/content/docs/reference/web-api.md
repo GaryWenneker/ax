@@ -82,13 +82,13 @@ List routes take `limit` and `offset`. `limit` is kept between 1 and the route's
 
 Read-only mode (`ax share`, `AX_WEB_READONLY=1`) refuses every catalog route that writes: install, settings, audits and publish. The publish repository must be an `https://` or `ssh://` URL, an scp-style `user@host:path`, or a folder inside the project (relative folders are relative to the project, optionally prefixed with `well-known:`); other values get `400`.
 
-Install and audit from a well-known URL follow the same rule as `ax skill install`: every file the index lists must be relative to the index or on the index's own origin (scheme, host and port). A file on another server, a switch from `https` to `http`, and a redirect that leaves that origin are refused. Every request and redirect is also refused when it points at a local host or a private address, and a download larger than 25 MiB is refused without reading it whole.
+Install and audit from a well-known URL follow the same rule as `ax skill install`: every file the index lists must be relative to the index or on the index's own origin (scheme, host and port). A file on another server, a switch from `https` to `http`, and a redirect that leaves that origin are refused. Every request and redirect is also refused when it points at a local host or a private address, and a download larger than 25 MiB is refused without reading it whole. The Command Center does not read `allowPrivateHosts` from `.ax/skill-catalog.json`; install from an intranet index with the CLI.
 
 ### Remote policy share
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET, PUT | `/api/policy/share/config` | Share source configuration |
+| GET, PUT | `/api/policy/share/config` | Share source configuration; the response never contains the git API token (see below) |
 | GET | `/api/policy/share/status` | Last sync result |
 | POST | `/api/policy/share/sync` | Sync now |
 | POST | `/api/auth/microsoft/device/start` | Start Microsoft device-code sign-in |
@@ -96,6 +96,8 @@ Install and audit from a well-known URL follow the same rule as `ax skill instal
 | GET | `/api/auth/microsoft/status` | Sign-in status |
 | PUT | `/api/auth/microsoft/config` | Tenant / client settings |
 | DELETE | `/api/auth/microsoft` | Sign out |
+
+`GET` and `PUT /api/policy/share/config` return the share settings with `github.tokenSet` (`true` when a git API token is stored for `github.repoUrl`) and never the token itself. The field was called `github.hasToken` before; a client that reads `hasToken` must switch to `tokenSet`. A `PUT` accepts `github.token` to store a new token in the OS credential store (an empty or missing token keeps the stored one) and `github.clearToken: true` to remove it. Neither field is written to `ax.json`. See [Policy sharing](/guides/policy-sharing/) for where the token is kept.
 
 The Microsoft sign-in routes follow the same share-token and sign-in rules as the rest of `/api`. Starting or polling sign-in, changing the client and signing out work only on a writable server, from a browser on this computer at the loopback address; other callers get `403`. While the server's environment sets `AX_MS_CLIENT_ID`, that value is used for sign-in and `PUT /api/auth/microsoft/config` answers `409`.
 
