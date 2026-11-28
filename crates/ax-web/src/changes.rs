@@ -3,6 +3,8 @@
 //! Pages subscribe once and reload only their own topic. The feed checks the
 //! database files every second and runs its fingerprint queries only when a
 //! file (or its WAL) changed, so an idle project costs one `stat` per file.
+//! Once the first fingerprints are recorded the feed sends the comment
+//! `: ready`; changes after that point produce events.
 
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
@@ -203,7 +205,9 @@ async fn handle_changes(
                         yield Ok(change_event(topic, &next[topic]));
                     }
                 }
-                None => {}
+                // The baseline is recorded; changes from here on are sent.
+                // An SSE comment, so EventSource clients ignore it.
+                None => yield Ok(Event::default().comment("ready")),
             }
             prev = Some((root, next));
         }

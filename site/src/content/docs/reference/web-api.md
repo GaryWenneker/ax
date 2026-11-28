@@ -335,6 +335,8 @@ The other `/api/ship` writes follow the same `Origin` rule when they carry no JS
 | GET | `/api/changes` | Shared SSE notifications for graph, memory, policy and usage changes |
 | GET | `/api/graph/recent` | Recently indexed nodes/edges for live graph updates |
 
+`/api/changes` sends a `change` event (`{"topic":…,"version":…}`) per changed area. Once it has recorded the current state it sends the SSE comment `: ready`; a change made after that comment is reported. Browsers using `EventSource` ignore the comment.
+
 ## Project publication and remote host setup
 
 These local-owner endpoints live under `/api/remote-mcp/publications`. They require local Command Center access; mutations use `X-Ax-Csrf`. Export requests bind the active workspace and configuration fingerprint, so switching projects or changing configuration can reject stale requests. Exports contain public connection metadata; local exports can contain this computer's paths. Host actions manage the hosted service, while deleting a publication removes only its export registration.

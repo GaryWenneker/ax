@@ -38,19 +38,49 @@ async fn subscribe(hub: &WebHub) -> BodyDataStream {
     res.into_body().into_data_stream()
 }
 
-/// Collect `change` event payloads for `window`, ignoring keep-alive comments.
-async fn collect(stream: &mut BodyDataStream, window: Duration) -> Vec<String> {
-    let mut out = Vec::new();
-    let deadline = tokio::time::Instant::now() + window;
-    while let Ok(Some(chunk)) = tokio::time::timeout_at(deadline, stream.next()).await {
-        let text = String::from_utf8_lossy(&chunk.unwrap()).to_string();
-        for line in text.lines() {
-            if let Some(data) = line.strip_prefix("data: ") {
-                out.push(data.to_string());
+/// The longest the tests wait for something the feed must send.
+const PATIENCE: Duration = Duration::from_secs(30);
+
+/// Data lines and comments of the next chunks until `done` says stop.
+async fn read_until(
+    stream: &mut BodyDataStream,
+    within: Duration,
+    mut done: impl FnMut(&[String], &[String]) -> bool,
+) -> (Vec<String>, Vec<String>) {
+    let (mut data, mut comments) = (Vec::new(), Vec::new());
+    let deadline = tokio::time::Instant::now() + within;
+    while !done(&data, &comments) {
+        match tokio::time::timeout_at(deadline, stream.next()).await {
+            Ok(Some(chunk)) => {
+                let text = String::from_utf8_lossy(&chunk.unwrap()).to_string();
+                for line in text.lines() {
+                    if let Some(d) = line.strip_prefix("data: ") {
+                        data.push(d.to_string());
+                    } else if let Some(c) = line.strip_prefix(':') {
+                        comments.push(c.trim().to_string());
+                    }
+                }
             }
+            _ => break,
         }
     }
-    out
+    (data, comments)
+}
+
+/// Waits until the feed says it recorded its baseline.
+async fn wait_ready(stream: &mut BodyDataStream) {
+    let (_, comments) = read_until(stream, PATIENCE, |_, c| c.iter().any(|c| c == "ready")).await;
+    assert!(
+        comments.iter().any(|c| c == "ready"),
+        "the feed never reported its baseline: {comments:?}"
+    );
+}
+
+fn memory_events(data: &[String]) -> Vec<serde_json::Value> {
+    data.iter()
+        .map(|d| serde_json::from_str::<serde_json::Value>(d).unwrap())
+        .filter(|ev| ev["topic"] == "memory")
+        .collect()
 }
 
 async fn remember(hub: &WebHub, title: &str) {
@@ -74,22 +104,24 @@ async fn remember(hub: &WebHub, title: &str) {
 async fn a_new_memory_produces_one_memory_event() {
     let (_dir, hub) = open_hub().await;
     let mut stream = subscribe(&hub).await;
-    // Let the feed record its baseline before the write.
-    collect(&mut stream, Duration::from_millis(1500)).await;
+    wait_ready(&mut stream).await;
 
     remember(&hub, "first").await;
-    let events = collect(&mut stream, Duration::from_millis(2500)).await;
+    let (data, _) = read_until(&mut stream, PATIENCE, |d, _| !memory_events(d).is_empty()).await;
+    // A second event for the same write would show within two feed ticks.
+    let (more, _) = read_until(&mut stream, Duration::from_millis(2500), |_, _| false).await;
+    let events = memory_events(&[data, more].concat());
 
     assert_eq!(events.len(), 1, "events: {events:?}");
-    let ev: serde_json::Value = serde_json::from_str(&events[0]).unwrap();
-    assert_eq!(ev["topic"], "memory");
-    assert!(ev["version"].as_str().is_some_and(|v| !v.is_empty()));
+    assert!(events[0]["version"].as_str().is_some_and(|v| !v.is_empty()));
 }
 
 #[tokio::test]
 async fn an_idle_project_sends_no_events() {
     let (_dir, hub) = open_hub().await;
     let mut stream = subscribe(&hub).await;
-    let events = collect(&mut stream, Duration::from_secs(5)).await;
-    assert!(events.is_empty(), "events: {events:?}");
+    wait_ready(&mut stream).await;
+    // Two feed ticks after the baseline.
+    let (data, _) = read_until(&mut stream, Duration::from_millis(2500), |_, _| false).await;
+    assert!(data.is_empty(), "events: {data:?}");
 }

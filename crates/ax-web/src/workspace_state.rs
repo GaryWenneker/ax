@@ -463,11 +463,19 @@ fn spawn_policy_dedup(
         let mut interval = tokio::time::interval(POLICY_DEDUP_EVERY);
         loop {
             interval.tick().await;
-            ax_core::policy_dedup::run(&global_path, Some((&pool, &root)), true)
-                .await
-                .log();
+            dedup_once(&pool, &root, &global_path).await.log();
         }
     }))
+}
+
+/// One dedup check of the project against `global.db`. It only reports
+/// (a dry run): the Command Center never removes project policy on its own.
+async fn dedup_once(
+    pool: &SqlitePool,
+    root: &Path,
+    global_path: &Path,
+) -> ax_core::policy_dedup::DedupReport {
+    ax_core::policy_dedup::run(global_path, Some((pool, root)), true).await
 }
 
 async fn spawn_unresolved_cleanup_inner(pool: SqlitePool) {
@@ -557,9 +565,7 @@ mod policy_dedup_tests {
     async fn readonly_web_does_not_dedup() {
         let dir = tempfile::tempdir().unwrap();
         let (pool, root, global_path) = fixture(dir.path()).await;
-        let task = spawn_policy_dedup(pool.clone(), root, true, Some(global_path));
-        assert!(task.is_none());
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(spawn_policy_dedup(pool.clone(), root, true, Some(global_path)).is_none());
         assert_eq!(project_skills(&pool).await, 1);
     }
 
@@ -567,17 +573,15 @@ mod policy_dedup_tests {
     async fn writable_web_reports_dedup_without_mutating_project() {
         let dir = tempfile::tempdir().unwrap();
         let (pool, root, global_path) = fixture(dir.path()).await;
-        let task = spawn_policy_dedup(pool.clone(), root, false, Some(global_path)).expect("task");
-        let mut remaining = 1;
-        for _ in 0..50 {
-            remaining = project_skills(&pool).await;
-            if remaining == 0 {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-        task.abort();
-        assert_eq!(remaining, 1);
+        let report = dedup_once(&pool, &root, &global_path).await;
+        assert!(report.dry_run);
+        assert_eq!(report.error, None, "{report:?}");
+        assert!(
+            report.actions.iter().any(|a| a.name == "noti"
+                && a.action == ax_core::policy_dedup::Action::RemovedFromProject),
+            "the duplicate is reported: {report:?}"
+        );
+        assert_eq!(project_skills(&pool).await, 1, "a dry run changes nothing");
     }
 }
 
