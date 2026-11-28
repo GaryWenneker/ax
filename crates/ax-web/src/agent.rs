@@ -308,9 +308,13 @@ async fn handle_update_profile(
 }
 
 async fn handle_delete_profile(
+    State(hub): State<WebHub>,
     AxPath((agent, id)): AxPath<(String, String)>,
     Query(keep): Query<QueryKeep>,
 ) -> impl IntoResponse {
+    if hub.readonly {
+        return Json(serde_json::json!({ "ok": false, "error": "Read-only mode" })).into_response();
+    }
     match remove_profile(&agent, &id, keep.keep_dir) {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(e) => Json(serde_json::json!({ "ok": false, "error": e })).into_response(),

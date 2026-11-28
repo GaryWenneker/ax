@@ -32,6 +32,8 @@ Per-project values always win. Lists (`exclude`, `includeIgnored`) are **unioned
 }
 ```
 
+When the file already exists, ax only adds missing scaffold keys and keeps everything else. If the file is not valid JSON (for example after a hand edit left a trailing comma) or its root is not an object, ax leaves it unchanged and prints a warning naming the file. Saving share settings, in `~/.ax/config.json` or in a project `ax.json`, likewise refuses to rewrite a file it cannot parse and reports the error instead.
+
 Edit it to apply defaults to **every project** on your machine. For example, always map `.vue` files and always exclude coverage output:
 
 ```json

@@ -251,6 +251,17 @@ fn write_file(report: &mut TargetReport, path: PathBuf, body: &str) -> Result<()
     Ok(())
 }
 
+/// Byte range of a well-formed managed block: an END marker that follows a
+/// START marker, paired with the START closest before it. Stray or reversed
+/// markers (a hand edit, a merge conflict, a quoted marker) are not a block.
+fn managed_block_range(content: &str) -> Option<(usize, usize)> {
+    let first_start = content.find(AX_CLI_START)?;
+    let after_start = first_start + AX_CLI_START.len();
+    let e = after_start + content[after_start..].find(AX_CLI_END)?;
+    let s = content[..e].rfind(AX_CLI_START)?;
+    Some((s, e + AX_CLI_END.len()))
+}
+
 fn upsert_marked_file(path: PathBuf, block: &str, report: &mut TargetReport) -> Result<(), String> {
     let block = if block.ends_with('\n') {
         block.to_string()
@@ -259,8 +270,7 @@ fn upsert_marked_file(path: PathBuf, block: &str, report: &mut TargetReport) -> 
     };
     if path.exists() {
         let mut content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        if let (Some(s), Some(e)) = (content.find(AX_CLI_START), content.find(AX_CLI_END)) {
-            let end = e + AX_CLI_END.len();
+        if let Some((s, end)) = managed_block_range(&content) {
             content.replace_range(s..end, block.trim_end());
             if !content.ends_with('\n') {
                 content.push('\n');
@@ -522,6 +532,20 @@ mod tests {
                 MISSING_MEMORY_PROCEDURE.to_string()
             )]
         );
+    }
+
+    #[test]
+    fn install_with_reversed_markers_adds_a_block_and_keeps_the_text() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let original = format!("{AX_CLI_END}\n## AX CLI-only\nold block\n{AX_CLI_START}\n");
+        fs::write(root.join("AGENTS.md"), &original).unwrap();
+        install_cli_only(root, &[]).unwrap();
+        let first = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        assert!(first.starts_with(&original), "{first}");
+        assert!(verify_cli_only(root).is_empty(), "{first}");
+        install_cli_only(root, &[]).unwrap();
+        assert_eq!(fs::read_to_string(root.join("AGENTS.md")).unwrap(), first);
     }
 
     #[test]
