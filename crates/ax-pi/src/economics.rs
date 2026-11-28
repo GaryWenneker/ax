@@ -82,9 +82,11 @@ impl RepeatDetector {
         context_cost: Option<f64>,
     ) -> (bool, RepeatRecord) {
         if let Some(prior) = self.seen.get_mut(identity) {
-            prior.count += 1;
+            prior.count = prior.count.saturating_add(1);
             prior.latest_call_id = call_id.to_string();
-            prior.tokens_repeated += u64::from(output_tokens);
+            prior.tokens_repeated = prior
+                .tokens_repeated
+                .saturating_add(u64::from(output_tokens));
             if let Some(cost) = context_cost {
                 prior.repeated_cost = Some(prior.repeated_cost.unwrap_or(0.0) + cost);
             }

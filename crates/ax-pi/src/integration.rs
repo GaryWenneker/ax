@@ -646,8 +646,12 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
                 .or_else(|| state.active_turn.get(&model.base.session_id).cloned());
             if let Some(turn_id) = &turn_id {
                 if let Some(turn) = state.turns.iter_mut().find(|turn| &turn.id == turn_id) {
-                    turn.input_tokens += model.usage.input_tokens.unwrap_or(0);
-                    turn.output_tokens += model.usage.output_tokens.unwrap_or(0);
+                    turn.input_tokens = turn
+                        .input_tokens
+                        .saturating_add(model.usage.input_tokens.unwrap_or(0));
+                    turn.output_tokens = turn
+                        .output_tokens
+                        .saturating_add(model.usage.output_tokens.unwrap_or(0));
                     if let Some(cost) = cost {
                         turn.estimated_cost = Some(turn.estimated_cost.unwrap_or(0.0) + cost);
                     }

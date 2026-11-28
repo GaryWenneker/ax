@@ -150,14 +150,23 @@ pub struct UsageSnapshot {
 
 impl UsageSnapshot {
     pub fn add_model(&mut self, usage: &AxModelUsage) {
-        self.input_tokens += usage.input_tokens.unwrap_or(0);
-        self.output_tokens += usage.output_tokens.unwrap_or(0);
-        self.cached_input_tokens += usage.cached_input_tokens.unwrap_or(0);
-        self.total_tokens += usage.total_tokens.unwrap_or_else(|| {
-            usage.input_tokens.unwrap_or(0)
-                + usage.output_tokens.unwrap_or(0)
-                + usage.cached_input_tokens.unwrap_or(0)
+        self.input_tokens = self
+            .input_tokens
+            .saturating_add(usage.input_tokens.unwrap_or(0));
+        self.output_tokens = self
+            .output_tokens
+            .saturating_add(usage.output_tokens.unwrap_or(0));
+        self.cached_input_tokens = self
+            .cached_input_tokens
+            .saturating_add(usage.cached_input_tokens.unwrap_or(0));
+        let total = usage.total_tokens.unwrap_or_else(|| {
+            usage
+                .input_tokens
+                .unwrap_or(0)
+                .saturating_add(usage.output_tokens.unwrap_or(0))
+                .saturating_add(usage.cached_input_tokens.unwrap_or(0))
         });
+        self.total_tokens = self.total_tokens.saturating_add(total);
     }
 }
 
@@ -336,4 +345,34 @@ pub struct BudgetSnapshot {
     pub currency: String,
     pub days_elapsed: u32,
     pub days_remaining: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usage_counters_saturate_instead_of_overflowing() {
+        let mut usage = UsageSnapshot {
+            input_tokens: u64::MAX - 1,
+            output_tokens: u64::MAX,
+            cached_input_tokens: u64::MAX,
+            total_tokens: u64::MAX - 1,
+        };
+        usage.add_model(&AxModelUsage {
+            input_tokens: Some(10),
+            output_tokens: Some(10),
+            cached_input_tokens: Some(10),
+            total_tokens: None,
+        });
+        assert_eq!(usage.input_tokens, u64::MAX);
+        assert_eq!(usage.total_tokens, u64::MAX);
+        usage.add_model(&AxModelUsage {
+            input_tokens: Some(u64::MAX),
+            output_tokens: Some(u64::MAX),
+            cached_input_tokens: None,
+            total_tokens: None,
+        });
+        assert_eq!(usage.total_tokens, u64::MAX);
+    }
 }
