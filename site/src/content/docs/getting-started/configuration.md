@@ -252,6 +252,7 @@ ax seeds `.ax/ship.toml` on `ax init` when missing. It configures the ship quali
 | `[remote]` | GitHub or Azure DevOps draft PR provider |
 | `[sonar]` | Optional local SonarQube via Podman |
 | `[reviewers]` | Map git blame emails to reviewer identities |
+| `[retention]` | Opt-in deletion of old activity events, durable transcripts and MCP verbose logs (off by default) |
 
 If `.ax/ship.toml` cannot be read or parsed (for example `web_port = "7070"` with quotes, or an unclosed string), ax logs the error with the file name and runs with default ship settings. While the file is broken, ax never writes to it: saving settings from the Command Center and the automatic update of `git_roots` are refused with that error, so your `[remote]`, `[sonar]` and other settings stay on disk. Fix or remove the file to save again.
 

@@ -330,7 +330,11 @@ fn conversation_key_prefers_active_session() {
 
 #[test]
 fn cap_defaults_to_two_megabytes() {
-    assert_eq!(reuse_cap_bytes(), 2 * 1024 * 1024);
+    // Parsed from a value, so a developer's own AX_REUSE_CACHE_BYTES does not
+    // change the result.
+    assert_eq!(reuse_cap_from(None), 2 * 1024 * 1024);
+    assert_eq!(reuse_cap_from(Some("not a number")), 2 * 1024 * 1024);
+    assert_eq!(reuse_cap_from(Some(" 4096 ")), 4096);
 }
 
 // ---------- L2: store ----------
@@ -740,6 +744,41 @@ async fn session_context_lists_only_fresh_entries_of_this_conversation() {
     assert!(!text.contains("beta"), "stale entry listed: {text}");
     assert!(!text.contains("zeta"), "other conversation listed: {text}");
     assert!(f.context("c9").await.is_none());
+}
+
+#[tokio::test]
+async fn session_context_hashes_a_file_cited_by_many_entries_once() {
+    let f = Fixture::new().await;
+    for n in 0..6 {
+        f.store(
+            "c1",
+            "ax_node",
+            &json!({ "symbol": format!("alpha{n}") }),
+            &node_body(),
+        )
+        .await
+        .unwrap();
+    }
+    hash_reads::take(f.root());
+    let text = f.context("c1").await.expect("block");
+    assert!(text.contains("alpha"), "{text}");
+    assert_eq!(
+        hash_reads::take(f.root()),
+        1,
+        "src/lib.rs is cited by six entries and must be hashed once"
+    );
+}
+
+#[tokio::test]
+async fn session_context_skips_disk_work_for_index_stale_entries() {
+    let f = Fixture::new().await;
+    f.store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
+    f.set_index("src/lib.rs", "idx2");
+    hash_reads::take(f.root());
+    assert!(f.context("c1").await.is_none(), "index-stale entry listed");
+    assert_eq!(hash_reads::take(f.root()), 0, "stale rows were hashed");
 }
 
 #[tokio::test]

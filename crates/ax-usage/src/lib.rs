@@ -24,6 +24,7 @@ mod pricing_sync;
 mod redact;
 pub mod replay_validation;
 pub mod replication;
+mod retention;
 mod reuse_cache;
 mod savings;
 mod spec_documents;
@@ -118,6 +119,10 @@ pub use pricing_sync::{
     ensure_daily_pricing_sync, list_coding_agents, list_latest_prices, price_history,
     pricing_status, spawn_ensure_daily_pricing_sync, sync_pricing, CodingAgentRow,
     PricingCatalogRow, PricingHistoryPoint, PricingStatus, PricingSyncReport, SourceSyncStatus,
+};
+pub use retention::{
+    parse_retention_settings, prune_verbose_logs, read_retention_settings, RetentionLimit,
+    RetentionSettings,
 };
 pub use reuse_cache::{
     conversation_key, format_session_context, index_fingerprint, index_matches, render_hit,

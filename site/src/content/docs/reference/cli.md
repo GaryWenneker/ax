@@ -1123,8 +1123,10 @@ Estimated context-token savings from graph queries. Stored locally in `~/.ax/usa
 |---|---|---|---|
 | `--period` | string | `month_to_date` | `week` \| `month_to_date` \| `month` \| `year` \| `custom` |
 | `--from` | `YYYY-MM-DD` | — | Start date (required for `custom`) |
-| `--to` | `YYYY-MM-DD` | — | End date (optional for `custom`) |
+| `--to` | `YYYY-MM-DD` | — | End date (optional for `custom`); a `--to` before `--from` is rejected |
 | `--json` | flag | — | JSON summary with per-tool and daily breakdown |
+
+Days are bounded in your local time zone. On a day whose midnight does not exist (clocks jump forward at 00:00) the day starts at the first valid local time; on a day whose midnight happens twice it starts at the first one.
 
 ```bash
 ax savings
@@ -1163,7 +1165,7 @@ ax pricing list --json
 ax pricing history claude-sonnet --days 30
 ```
 
-Optional overrides in `~/.ax/pricing.toml` always win over synced rates.
+Optional overrides in `~/.ax/pricing.toml` always win over synced rates. The file is read once when the process starts, so restart a running `ax web` or MCP server after you edit it.
 
 ### `ax costs`
 

@@ -234,6 +234,7 @@ fn counterfactual_tokens_for_file(
     span: &FileSpan,
     tpl: i64,
     fallback: i64,
+    mode: CounterfactualMode,
 ) -> (i64, bool) {
     let full = count_file_tokens(resolved);
     let range = if span.has_line_span() {
@@ -259,7 +260,7 @@ fn counterfactual_tokens_for_file(
         (heuristic, false)
     };
 
-    match counterfactual_mode() {
+    match mode {
         CounterfactualMode::Full => pick(false),
         CounterfactualMode::Range => pick(true),
         CounterfactualMode::Max => {
@@ -374,6 +375,24 @@ pub fn estimate_savings(
     response_text: &str,
     project_root: Option<&Path>,
 ) -> SavingsEstimate {
+    estimate_savings_in_mode(
+        tool,
+        structured,
+        response_text,
+        project_root,
+        counterfactual_mode(),
+    )
+}
+
+/// `estimate_savings` with an explicit counterfactual mode instead of the
+/// `AX_SAVINGS_CF_MODE` environment variable.
+fn estimate_savings_in_mode(
+    tool: &str,
+    structured: &Value,
+    response_text: &str,
+    project_root: Option<&Path>,
+    mode: CounterfactualMode,
+) -> SavingsEstimate {
     let response_tokens_est = count_tokens(response_text) as i64;
     let savings_eligible = is_savings_eligible_tool(tool);
     let response_preview = if response_text.is_empty() {
@@ -400,7 +419,7 @@ pub fn estimate_savings(
     let mut counterfactual_exact_files: i64 = 0;
     for (file, span) in &files {
         let resolved = resolve_file_path(file, project_root);
-        let (tokens, exact) = counterfactual_tokens_for_file(&resolved, span, tpl, fallback);
+        let (tokens, exact) = counterfactual_tokens_for_file(&resolved, span, tpl, fallback, mode);
         counterfactual_tokens_est += tokens;
         if exact {
             counterfactual_exact_files += 1;
@@ -1935,15 +1954,16 @@ fn parse_iso_ms(s: &str) -> Option<i64> {
         .map(|dt| dt.timestamp_millis())
 }
 
-fn file_mtime_ms(path: &Path) -> i64 {
+/// The file's modification time in ms, or `None` when it cannot be read.
+fn file_mtime_ms(path: &Path) -> Option<i64> {
     std::fs::metadata(path)
         .and_then(|m| m.modified())
         .ok()
         .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
 }
 
+#[cfg(test)]
 async fn upsert_agent_session(
     agent: &str,
     session_id: &str,
@@ -1951,6 +1971,20 @@ async fn upsert_agent_session(
     source_mtime: i64,
 ) -> Result<bool, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
+    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+    upsert_agent_session_in(&mut conn, agent, session_id, acc, Some(source_mtime)).await
+}
+
+/// Write one session row. A row is replaced when the transcript is at least as
+/// new as the stored one, so a re-import after a failed write redoes it. An
+/// unknown mtime (`None`) always writes and keeps the stored mtime.
+async fn upsert_agent_session_in(
+    conn: &mut sqlx::SqliteConnection,
+    agent: &str,
+    session_id: &str,
+    acc: &SessionAccum,
+    source_mtime: Option<i64>,
+) -> Result<bool, String> {
     let input = if acc.session_input_tokens > 0 {
         Some(acc.session_input_tokens)
     } else {
@@ -1975,10 +2009,10 @@ async fn upsert_agent_session(
            cache_read_tokens = COALESCE(excluded.cache_read_tokens, agent_session_log.cache_read_tokens),
            cache_write_tokens = COALESCE(excluded.cache_write_tokens, agent_session_log.cache_write_tokens),
            model = COALESCE(excluded.model, agent_session_log.model),
-           source_mtime = excluded.source_mtime,
+           source_mtime = MAX(excluded.source_mtime, COALESCE(agent_session_log.source_mtime, 0)),
            started_at = COALESCE(excluded.started_at, agent_session_log.started_at),
            ended_at = COALESCE(excluded.ended_at, agent_session_log.ended_at)
-         WHERE excluded.source_mtime >= agent_session_log.source_mtime",
+         WHERE ?14 OR excluded.source_mtime >= COALESCE(agent_session_log.source_mtime, 0)",
     )
     .bind(agent)
     .bind(session_id)
@@ -1990,10 +2024,11 @@ async fn upsert_agent_session(
     .bind(if acc.saw_usage { Some(acc.cache_read_tokens) } else { None })
     .bind(if acc.saw_usage { Some(acc.cache_write_tokens) } else { None })
     .bind(&acc.model)
-    .bind(source_mtime)
+    .bind(source_mtime.unwrap_or(0))
     .bind(acc.started_at)
     .bind(acc.ended_at)
-    .execute(&pool)
+    .bind(source_mtime.is_none())
+    .execute(&mut *conn)
     .await
     .map_err(|e| e.to_string())?;
     Ok(result.rows_affected() > 0)
@@ -2175,37 +2210,103 @@ fn process_cursor_line(line: &str, acc: &mut SessionAccum) {
     }
 }
 
+/// True when a transcript must be read: it was never imported, its mtime or
+/// the stored one is unknown, or the file changed since the last import.
+fn transcript_needs_import(stored: Option<i64>, mtime: Option<i64>) -> bool {
+    match (stored, mtime) {
+        (Some(stored), Some(mtime)) => mtime > stored,
+        _ => true,
+    }
+}
+
+/// The mtime stored at the last import of this session, if any.
+///
+/// A session that has transcript usage but no per-turn usage events was
+/// imported by a version without those events (before v10.0.0). It reports no
+/// stored mtime, so its unchanged transcript is read once more and the events
+/// are backfilled. The current import writes an event for every usage it
+/// counts, so this does not repeat.
+///
+/// Only output and cache tokens mark such a session. Input tokens alone do
+/// not: Cursor `state.vscdb` stores them for sessions whose transcripts have
+/// no usage lines, and those sessions never get usage events, so counting
+/// them would read the same transcript on every import.
+async fn stored_source_mtime(agent: &str, session_id: &str) -> Result<Option<i64>, String> {
+    let pool = open_pool().await.map_err(|e| e.to_string())?;
+    let stored: Option<(Option<i64>, bool)> = sqlx::query_as(
+        "SELECT s.source_mtime,
+           COALESCE(s.session_output_tokens, 0)
+             + COALESCE(s.cache_read_tokens, 0) + COALESCE(s.cache_write_tokens, 0) > 0
+           AND NOT EXISTS (
+             SELECT 1 FROM agent_usage_event e
+             WHERE e.agent = s.agent AND e.session_id = s.session_id
+           )
+         FROM agent_session_log s WHERE s.agent = ? AND s.session_id = ?",
+    )
+    .bind(agent)
+    .bind(session_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(match stored {
+        Some((_, true)) | None => None,
+        Some((mtime, false)) => mtime,
+    })
+}
+
+/// Move the usage events of an unchanged transcript to the project it maps to
+/// now. A session imported before its project path was known keeps the folder
+/// name until a later import finds the path.
+async fn remap_usage_event_project(
+    agent: &str,
+    session_id: &str,
+    project: Option<&str>,
+) -> Result<(), String> {
+    let pool = open_pool().await.map_err(|e| e.to_string())?;
+    sqlx::query(
+        "UPDATE agent_usage_event SET project = ?
+         WHERE agent = ? AND session_id = ? AND project IS NOT ?",
+    )
+    .bind(project)
+    .bind(agent)
+    .bind(session_id)
+    .bind(project)
+    .execute(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Read and parse one JSONL transcript off the async worker.
+async fn parse_transcript(
+    path: &Path,
+    process_line: fn(&str, &mut SessionAccum),
+) -> Result<SessionAccum, String> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        use std::io::BufRead;
+        let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+        let mut acc = SessionAccum::default();
+        for line in std::io::BufReader::new(file).lines() {
+            let line = line.map_err(|e| e.to_string())?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            process_line(&line, &mut acc);
+        }
+        Ok(acc)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 async fn import_claude_file(path: &Path, roots: &[String]) -> Result<bool, String> {
     let session_id = path
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("unknown")
         .to_string();
-    let mtime = file_mtime_ms(path);
-    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let mut acc = SessionAccum::default();
-    for line in content.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        process_claude_line(line, &mut acc);
-    }
-    if acc.read_calls == 0
-        && acc.grep_calls == 0
-        && acc.ax_calls == 0
-        && acc.session_input_tokens == 0
-        && acc.session_output_tokens == 0
-        && acc.cache_read_tokens == 0
-        && acc.cache_write_tokens == 0
-    {
-        return Ok(false);
-    }
-    let wrote = upsert_agent_session("claude", &session_id, &acc, mtime).await?;
-    if wrote {
-        let project = transcript_project("claude", path, roots);
-        persist_usage_events("claude", &session_id, project.as_deref(), &acc.events).await?;
-    }
-    Ok(wrote)
+    import_transcript("claude", &session_id, path, roots, process_claude_line).await
 }
 
 async fn import_cursor_file(path: &Path, roots: &[String]) -> Result<bool, String> {
@@ -2216,15 +2317,28 @@ async fn import_cursor_file(path: &Path, roots: &[String]) -> Result<bool, Strin
         .and_then(|s| s.to_str())
         .unwrap_or("unknown")
         .to_string();
+    import_transcript("cursor", &session_id, path, roots, process_cursor_line).await
+}
+
+/// Import one transcript. The session row and its per-turn usage events are
+/// written in one transaction, so a failed write leaves nothing behind and the
+/// next import redoes both. An unchanged file is not read again; only its
+/// project is updated when the known project paths now map it elsewhere.
+async fn import_transcript(
+    agent: &str,
+    session_id: &str,
+    path: &Path,
+    roots: &[String],
+    process_line: fn(&str, &mut SessionAccum),
+) -> Result<bool, String> {
     let mtime = file_mtime_ms(path);
-    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let mut acc = SessionAccum::default();
-    for line in content.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        process_cursor_line(line, &mut acc);
+    let project = transcript_project(agent, path, roots);
+    let stored = stored_source_mtime(agent, session_id).await?;
+    if !transcript_needs_import(stored, mtime) {
+        remap_usage_event_project(agent, session_id, project.as_deref()).await?;
+        return Ok(false);
     }
+    let acc = parse_transcript(path, process_line).await?;
     if acc.read_calls == 0
         && acc.grep_calls == 0
         && acc.ax_calls == 0
@@ -2235,24 +2349,26 @@ async fn import_cursor_file(path: &Path, roots: &[String]) -> Result<bool, Strin
     {
         return Ok(false);
     }
-    let wrote = upsert_agent_session("cursor", &session_id, &acc, mtime).await?;
+    let pool = open_pool().await.map_err(|e| e.to_string())?;
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    let wrote = upsert_agent_session_in(&mut tx, agent, session_id, &acc, mtime).await?;
     if wrote {
-        let project = transcript_project("cursor", path, roots);
-        persist_usage_events("cursor", &session_id, project.as_deref(), &acc.events).await?;
+        persist_usage_events_in(&mut tx, agent, session_id, project.as_deref(), &acc.events)
+            .await?;
     }
+    tx.commit().await.map_err(|e| e.to_string())?;
     Ok(wrote)
 }
 
-async fn persist_usage_events(
+/// Write a session's per-turn usage events on the caller's connection, which
+/// holds the import transaction.
+async fn persist_usage_events_in(
+    conn: &mut sqlx::SqliteConnection,
     agent: &str,
     session_id: &str,
     project: Option<&str>,
     events: &[crate::cost::CostUsage],
 ) -> Result<(), String> {
-    if events.is_empty() {
-        return Ok(());
-    }
-    let pool = open_pool().await.map_err(|e| e.to_string())?;
     for event in events {
         let turn_id = event.turn_id.clone().unwrap_or_default();
         sqlx::query(
@@ -2288,7 +2404,7 @@ async fn persist_usage_events(
             crate::cost::CostConfidence::Unknown => "unknown",
         })
         .bind(event.timestamp_ms.unwrap_or(0))
-        .execute(&pool)
+        .execute(&mut *conn)
         .await
         .map_err(|e| e.to_string())?;
     }
@@ -2446,7 +2562,7 @@ mod tests {
     use crate::tokenizer::count_file_tokens;
     use serde_json::json;
 
-    use crate::store::USAGE_ENV_LOCK;
+    use crate::store::UsageDbEnv;
 
     fn long_response(chars: usize) -> String {
         "response text ".repeat(chars / 14 + 1)
@@ -2598,8 +2714,8 @@ mod tests {
 
     #[test]
     fn readable_file_counterfactual_is_measured_exactly() {
-        let dir = std::env::temp_dir().join("ax-usage-savings-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let file = dir.join("measured.rs");
         std::fs::write(&file, "fn alpha() {}\nfn beta() {}\nfn gamma() {}\n").unwrap();
 
@@ -2640,9 +2756,8 @@ mod tests {
 
     #[test]
     fn range_mode_uses_line_span_when_set() {
-        let dir = std::env::temp_dir().join("ax-usage-savings-range-mode");
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("span.rs");
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("span.rs");
         std::fs::write(
             &file,
             (1..=50)
@@ -2652,14 +2767,18 @@ mod tests {
         )
         .unwrap();
 
-        std::env::set_var("AX_SAVINGS_CF_MODE", "range");
+        // The mode is passed in, not set in the shared process environment,
+        // so parallel tests that expect the default `full` mode are unaffected.
         let structured = json!({ "node": { "filePath": "span.rs", "startLine": 2, "endLine": 4 } });
-        let est = estimate_savings("ax_node", &structured, "", Some(&dir));
+        let est = estimate_savings_in_mode(
+            "ax_node",
+            &structured,
+            "",
+            Some(dir.path()),
+            CounterfactualMode::Range,
+        );
         let full_only = count_file_tokens(&file).unwrap();
         assert!(est.counterfactual_tokens_est < full_only);
-        std::env::remove_var("AX_SAVINGS_CF_MODE");
-
-        let _ = std::fs::remove_file(&file);
     }
 
     #[test]
@@ -2819,10 +2938,7 @@ mod tests {
 
     #[tokio::test]
     async fn savings_summary_reads_the_price_catalog_once_for_all_days() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_usage_db_path("daily-prices");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
         let pool = open_pool().await.expect("pool");
         let day = |n: i64| {
             (chrono::Local::now().date_naive() - chrono::Duration::days(n))
@@ -2863,20 +2979,11 @@ mod tests {
                 crate::pricing::price_as_of(None, &d.date).await.0,
             ));
         }
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(&db);
 
         assert!(summary.daily.len() >= 4, "{:?}", summary.daily);
         let got: Vec<f64> = summary.daily.iter().map(|d| d.cost_saved_usd_est).collect();
         assert_eq!(got, expected);
         assert!(scans <= 1, "{scans} catalog reads for {} days", got.len());
-    }
-
-    fn temp_usage_db_path(label: &str) -> PathBuf {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static SEQ: AtomicU64 = AtomicU64::new(0);
-        let n = SEQ.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("ax-usage-{label}-{n}.db"))
     }
 
     async fn session_counts(session_id: &str) -> (Option<String>, i64, i64, i64) {
@@ -2893,10 +3000,7 @@ mod tests {
 
     #[tokio::test]
     async fn tag_session_model_merge() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_usage_db_path("merge");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
 
         record_session_model_tag("cursor", "sess-1", "composer-2.5-fast")
             .await
@@ -2929,17 +3033,11 @@ mod tests {
         let (model2, read2, grep2, ax2) = session_counts("sess-2").await;
         assert_eq!(model2.as_deref(), Some("composer-2.5-fast"));
         assert_eq!((read2, grep2, ax2), (7, 4, 3));
-
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(db);
     }
 
     #[tokio::test]
     async fn transcript_import_does_not_wipe_state_tokens() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_usage_db_path("vscdb-merge");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
 
         let state_row = crate::cursor_state::ComposerStateRow {
             session_id: "sess-vscdb".to_string(),
@@ -2975,17 +3073,11 @@ mod tests {
         assert_eq!(model.as_deref(), Some("composer-2.5-fast"));
         assert_eq!(input, Some(126_877));
         assert_eq!(read, 5);
-
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(db);
     }
 
     #[tokio::test]
     async fn cli_flush_records_graph_savings_and_skips_install() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_usage_db_path("cli-flush");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
         let _ = take_cli_stash();
 
         stash_cli_result(
@@ -3080,17 +3172,11 @@ mod tests {
             summary.cli_tokens_saved_est + 9,
             "combined total includes the CLI explore row and the MCP row"
         );
-
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(db);
     }
 
     #[tokio::test]
     async fn cli_flush_measures_a_markdown_file_exactly() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_usage_db_path("cli-md");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
         let _ = take_cli_stash();
 
         let dir = std::env::temp_dir().join(format!("ax-md-savings-{}", std::process::id()));
@@ -3139,8 +3225,6 @@ mod tests {
             "file tokens {file_tokens}, response {response_tokens}"
         );
 
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(&db);
         let _ = std::fs::remove_file(&file);
     }
 
@@ -3172,25 +3256,136 @@ mod tests {
 
     #[tokio::test]
     async fn savings_insert_reports_a_database_that_cannot_be_opened() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let parent =
-            std::env::temp_dir().join(format!("ax-usage-not-a-dir-{}", std::process::id()));
+        let tmp = tempfile::tempdir().unwrap();
+        let parent = tmp.path().join("not-a-dir");
         std::fs::write(&parent, b"not a directory").unwrap();
-        let db = parent.join("usage.db");
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::at(parent.join("usage.db")).await;
         let result = record_mcp_call(sample_record()).await;
-        std::env::remove_var("AX_USAGE_DB");
-        std::fs::remove_file(&parent).ok();
         let err = result.expect_err("a file is not a directory for the usage database");
         assert!(!err.is_empty(), "{err}");
     }
 
+    const IMPORT_LINE: &str = r#"{"timestamp":"2026-10-03T12:00:00Z","role":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"tool_use","name":"Read","input":{}}],"usage":{"input_tokens":10,"output_tokens":1}}}"#;
+
+    async fn usage_event_projects(pool: &sqlx::SqlitePool) -> Vec<Option<String>> {
+        sqlx::query_scalar("SELECT project FROM agent_usage_event ORDER BY session_id")
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_failed_event_write_is_retried_on_the_next_import() {
+        let _env = UsageDbEnv::new().await;
+        let pool = open_pool().await.expect("pool");
+        let tmp = tempfile::tempdir().unwrap();
+        let claude = tmp.path().join("claude/-p-app/sess-1.jsonl");
+        std::fs::create_dir_all(claude.parent().unwrap()).unwrap();
+        std::fs::write(&claude, format!("{IMPORT_LINE}\n")).unwrap();
+        // The per-turn event write fails, as on a busy database or a full disk.
+        sqlx::query(
+            "CREATE TRIGGER fail_usage_event BEFORE INSERT ON agent_usage_event
+             BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(import_claude_file(&claude, &[]).await.is_err());
+        sqlx::query("DROP TRIGGER fail_usage_event")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // The unchanged file is imported again, events included.
+        assert!(import_claude_file(&claude, &[]).await.unwrap());
+        assert_eq!(usage_event_projects(&pool).await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_session_imported_before_usage_events_gets_them_backfilled() {
+        let _env = UsageDbEnv::new().await;
+        let pool = open_pool().await.expect("pool");
+        let tmp = tempfile::tempdir().unwrap();
+        let claude = tmp.path().join("claude/-p-app/sess-1.jsonl");
+        std::fs::create_dir_all(claude.parent().unwrap()).unwrap();
+        std::fs::write(&claude, format!("{IMPORT_LINE}\n")).unwrap();
+        assert!(import_claude_file(&claude, &[]).await.unwrap());
+        // A version without per-turn events stored the session row and its
+        // mtime but no event rows.
+        sqlx::query("DELETE FROM agent_usage_event")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // The unchanged file is imported once more to backfill its events.
+        assert!(import_claude_file(&claude, &[]).await.unwrap());
+        assert_eq!(usage_event_projects(&pool).await.len(), 1);
+        // With the events in place, the unchanged file is skipped again.
+        assert!(!import_claude_file(&claude, &[]).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_cursor_transcript_with_state_tokens_is_imported_once() {
+        let _env = UsageDbEnv::new().await;
+        let pool = open_pool().await.expect("pool");
+        // state.vscdb gives the session input tokens; the transcript has no
+        // usage lines, so the import stores no usage events for it.
+        let state_row = crate::cursor_state::ComposerStateRow {
+            session_id: "chat-1".to_string(),
+            model: Some("composer-2.5-fast".to_string()),
+            input_tokens: Some(126_877),
+            started_at: Some(1_000),
+            ended_at: Some(2_000),
+        };
+        crate::cursor_state::upsert_composer_state_row(&pool, &state_row)
+            .await
+            .expect("state");
+        let tmp = tempfile::tempdir().unwrap();
+        let cursor = tmp
+            .path()
+            .join("cursor/p-app/agent-transcripts/chat-1/chat-1.jsonl");
+        std::fs::create_dir_all(cursor.parent().unwrap()).unwrap();
+        let line = r#"{"role":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{}}]}}"#;
+        std::fs::write(&cursor, format!("{line}\n")).unwrap();
+        assert!(import_cursor_file(&cursor, &[]).await.unwrap());
+        // The second import of the unchanged file is skipped.
+        assert!(!import_cursor_file(&cursor, &[]).await.unwrap());
+        assert!(!import_cursor_file(&cursor, &[]).await.unwrap());
+    }
+
+    #[test]
+    fn a_transcript_without_a_readable_mtime_is_never_skipped() {
+        assert!(transcript_needs_import(None, None));
+        assert!(transcript_needs_import(Some(5), None));
+        assert!(transcript_needs_import(None, Some(5)));
+        assert!(transcript_needs_import(Some(5), Some(6)));
+        assert!(!transcript_needs_import(Some(5), Some(5)));
+        assert!(!transcript_needs_import(Some(5), Some(4)));
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_transcript_moves_to_a_project_found_later() {
+        let _env = UsageDbEnv::new().await;
+        let pool = open_pool().await.expect("pool");
+        let tmp = tempfile::tempdir().unwrap();
+        let claude = tmp.path().join("claude/-Users-me-later/sess-1.jsonl");
+        std::fs::create_dir_all(claude.parent().unwrap()).unwrap();
+        std::fs::write(&claude, format!("{IMPORT_LINE}\n")).unwrap();
+        assert!(import_claude_file(&claude, &[]).await.unwrap());
+        assert_eq!(
+            usage_event_projects(&pool).await,
+            vec![Some("-Users-me-later".to_string())]
+        );
+        // The project path becomes known after the first import.
+        let roots = vec!["/Users/me/later".to_string()];
+        import_claude_file(&claude, &roots).await.unwrap();
+        assert_eq!(
+            usage_event_projects(&pool).await,
+            vec![Some("/Users/me/later".to_string())]
+        );
+    }
+
     #[tokio::test]
     async fn imported_transcripts_store_the_project_path() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_usage_db_path("transcript-project");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
         let pool = open_pool().await.expect("pool");
         let project = "/Users/me/work/my_app";
         sqlx::query("INSERT INTO mcp_call_log(tool,project,response_chars,response_tokens_est,ok,created_at) VALUES ('ax_node',?,1,1,1,1)")
@@ -3215,14 +3410,23 @@ mod tests {
         assert!(import_cursor_file(&cursor, &roots).await.unwrap());
         assert!(import_cursor_file(&unknown, &roots).await.unwrap());
         assert!(import_claude_file(&claude, &roots).await.unwrap());
+        // A second import of unchanged files reads and writes nothing.
+        let marker = "UPDATE agent_session_log SET read_calls = 99";
+        sqlx::query(marker).execute(&pool).await.unwrap();
+        assert!(!import_cursor_file(&cursor, &roots).await.unwrap());
+        assert!(!import_claude_file(&claude, &roots).await.unwrap());
+        let untouched: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM agent_session_log WHERE read_calls = 99")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(untouched, 3, "an unchanged transcript was re-imported");
         let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
             "SELECT agent, session_id, project FROM agent_usage_event ORDER BY agent, session_id",
         )
         .fetch_all(&pool)
         .await
         .unwrap();
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(&db);
         assert_eq!(
             rows,
             vec![
@@ -3235,10 +3439,7 @@ mod tests {
 
     #[tokio::test]
     async fn overlapping_sessions_do_not_share_mcp_calls() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_usage_db_path("overlap");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
         let pool = open_pool().await.expect("pool");
         let now = chrono::Utc::now().timestamp_millis();
         let hour = 3_600_000;
@@ -3272,8 +3473,6 @@ mod tests {
         })
         .await
         .expect("summary");
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(&db);
         let by_id = |id: &str| {
             summary
                 .agent_sessions
@@ -3291,10 +3490,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_session_that_started_before_the_period_still_owns_its_calls() {
-        let _guard = USAGE_ENV_LOCK.lock().await;
-        let db = temp_usage_db_path("overlap-early");
-        let _ = std::fs::remove_file(&db);
-        std::env::set_var("AX_USAGE_DB", &db);
+        let _env = UsageDbEnv::new().await;
         let pool = open_pool().await.expect("pool");
         let now = chrono::Utc::now().timestamp_millis();
         let hour = 3_600_000;
@@ -3334,8 +3530,6 @@ mod tests {
         })
         .await
         .expect("summary");
-        std::env::remove_var("AX_USAGE_DB");
-        let _ = std::fs::remove_file(&db);
         let late = summary
             .agent_sessions
             .iter()
