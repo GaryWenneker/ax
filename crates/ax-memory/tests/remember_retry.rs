@@ -18,31 +18,36 @@ fn input(title: &str) -> RememberInput {
 /// transient error SQLite returns while the FTS table is being rebuilt.
 /// `RAISE(FAIL)` keeps the counter decrement, so the fault clears by itself.
 async fn inject_transient_update_fault(pool: &sqlx::SqlitePool, column: &str, failures: i64) {
+    // Test-only: `column` is a literal column name from the tests below.
     let table = format!("fault_{column}");
-    sqlx::query(&format!("CREATE TABLE {table} (n INTEGER NOT NULL)"))
-        .execute(pool)
-        .await
-        .unwrap();
-    sqlx::query(&format!("INSERT INTO {table} VALUES (?)"))
-        .bind(failures)
-        .execute(pool)
-        .await
-        .unwrap();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE TABLE {table} (n INTEGER NOT NULL)"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO {table} VALUES (?)"
+    )))
+    .bind(failures)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE TRIGGER {table}_trigger BEFORE UPDATE OF {column} ON memories
          WHEN (SELECT n FROM {table}) > 0
          BEGIN
            UPDATE {table} SET n = n - 1;
            SELECT RAISE(FAIL, 'vtable constructor failed: memories_fts');
          END"
-    ))
+    )))
     .execute(pool)
     .await
     .unwrap();
 }
 
 async fn remaining(pool: &sqlx::SqlitePool, column: &str) -> i64 {
-    sqlx::query_scalar(&format!("SELECT n FROM fault_{column}"))
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT n FROM fault_{column}")))
         .fetch_one(pool)
         .await
         .unwrap()

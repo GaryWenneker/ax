@@ -169,7 +169,7 @@ pub(crate) async fn prune_activity(
                ) WHERE running > ? AND position > 1 AND event_id <> ?
              )"
         );
-        deleted += sqlx::query(&sql)
+        deleted += sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(project_id)
             .bind(i64::try_from(max_bytes).unwrap_or(i64::MAX))
             .bind(keep)
@@ -196,6 +196,8 @@ pub(crate) async fn prune_durable(
     now_secs: i64,
     keep: Option<DurableKeep<'_>>,
 ) -> Result<u64, String> {
+    // SCOPED and ACTIVITY_ROW_BYTES are literal SQL fragments; every value is bound,
+    // so the queries below are wrapped in AssertSqlSafe.
     const SCOPED: &str =
         "conversation_id IN (SELECT conversation FROM ax_durable_scope WHERE project = ?)";
     // An empty conversation id never matches a real conversation.
@@ -203,10 +205,10 @@ pub(crate) async fn prune_durable(
         keep.map_or(("", i64::MAX), |k| (k.conversation, k.after_id));
     let mut deleted = 0;
     if let Some(days) = limit.days {
-        deleted += sqlx::query(&format!(
+        deleted += sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM ax_durable_entry WHERE {SCOPED} AND created_at < ?
                AND NOT (conversation_id = ? AND id > ?)"
-        ))
+        )))
         .bind(project)
         .bind(now_secs - i64::from(days) * DAY_SECS)
         .bind(keep_conversation)
@@ -217,7 +219,7 @@ pub(crate) async fn prune_durable(
         .rows_affected();
     }
     if let Some(max_bytes) = limit.max_bytes {
-        deleted += sqlx::query(&format!(
+        deleted += sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM ax_durable_entry WHERE id IN (
                SELECT id FROM (
                  SELECT id, conversation_id,
@@ -228,7 +230,7 @@ pub(crate) async fn prune_durable(
                ) WHERE running > ? AND position > 1
                    AND NOT (conversation_id = ? AND id > ?)
              )"
-        ))
+        )))
         .bind(project)
         .bind(i64::try_from(max_bytes).unwrap_or(i64::MAX))
         .bind(keep_conversation)
