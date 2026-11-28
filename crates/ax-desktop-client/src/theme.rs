@@ -1,7 +1,7 @@
 //! Dark theme aligned with Command Center accents.
 
 pub fn apply_dark_theme(ctx: &egui::Context) {
-    let mut style = (*ctx.style()).clone();
+    let mut style = (*ctx.global_style()).clone();
     let accent = egui::Color32::from_rgb(0x3e, 0xe4, 0xb2);
     let bg = egui::Color32::from_rgb(0x1e, 0x1e, 0x1e);
     let panel = egui::Color32::from_rgb(0x25, 0x25, 0x26);
@@ -21,7 +21,7 @@ pub fn apply_dark_theme(ctx: &egui::Context) {
     style.visuals.widgets.noninteractive.fg_stroke.color = muted;
     style.spacing.item_spacing = egui::vec2(8.0, 6.0);
     style.spacing.button_padding = egui::vec2(10.0, 5.0);
-    ctx.set_style(style);
+    ctx.set_global_style(style);
 }
 
 pub const ACCENT: egui::Color32 = egui::Color32::from_rgb(0x3e, 0xe4, 0xb2);
