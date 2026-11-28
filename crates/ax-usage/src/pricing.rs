@@ -63,6 +63,8 @@ pub struct PricingConfig {
     pub models: HashMap<String, ModelPricing>,
     /// "default" or "user" (loaded from pricing.toml).
     pub source: &'static str,
+    /// Only the models pricing.toml sets; they win over the synced catalog.
+    pub user_models: HashMap<String, ModelPricing>,
 }
 
 /// Pricing metadata surfaced in API responses.
@@ -116,20 +118,25 @@ pub fn pricing_config_path() -> PathBuf {
 }
 
 fn load_config() -> PricingConfig {
+    load_config_from(&pricing_config_path())
+}
+
+fn load_config_from(path: &std::path::Path) -> PricingConfig {
     let mut config = PricingConfig {
         reference_model: "claude-sonnet".to_string(),
         models: default_models(),
         source: "default",
+        user_models: HashMap::new(),
     };
-    let path = pricing_config_path();
-    if let Ok(text) = std::fs::read_to_string(&path) {
+    if let Ok(text) = std::fs::read_to_string(path) {
         if let Ok(file) = toml::from_str::<PricingFile>(&text) {
             if let Some(reference) = file.reference_model {
                 config.reference_model = reference;
             }
-            for (k, v) in file.models {
-                config.models.insert(k, v);
+            for (k, v) in &file.models {
+                config.models.insert(k.clone(), *v);
             }
+            config.user_models = file.models;
             config.source = "user";
         }
     }
@@ -157,21 +164,12 @@ fn match_in_map(model: &str, models: &HashMap<String, ModelPricing>) -> Option<M
 }
 
 fn user_override_for(model: &str) -> Option<ModelPricing> {
-    let config = pricing_config();
-    if config.source != "user" {
-        return None;
-    }
-    // Only treat as override when the key came from the toml file.
-    // We re-read keys that exist in defaults too if the user set them — simplest:
-    // if source is user, any match in the merged map that the user could have set wins
-    // for known keys. Prefer loading toml-only keys.
-    let path = pricing_config_path();
-    if let Ok(text) = std::fs::read_to_string(&path) {
-        if let Ok(file) = toml::from_str::<PricingFile>(&text) {
-            return match_in_map(model, &file.models);
-        }
-    }
-    None
+    user_override_in(pricing_config(), model)
+}
+
+/// The pricing.toml entry for `model`, from the file as loaded at start.
+fn user_override_in(config: &PricingConfig, model: &str) -> Option<ModelPricing> {
+    match_in_map(model, &config.user_models)
 }
 
 /// How well catalog id `catalog_id` matches the lowercased requested model id.
@@ -387,6 +385,26 @@ pub async fn reference_prices_as_of(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn user_override_comes_from_the_loaded_file_without_rereading_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(PRICING_FILENAME);
+        std::fs::write(
+            &path,
+            "[models.my-private-model]\ninput_per_mtok = 7.0\noutput_per_mtok = 9.0\n",
+        )
+        .unwrap();
+        let config = load_config_from(&path);
+        assert_eq!(config.source, "user");
+        // The file goes away (or changes) after start: the loaded config,
+        // which also holds reference_model, stays the single source.
+        std::fs::remove_file(&path).unwrap();
+        let p = user_override_in(&config, "vendor/my-private-model-v2").expect("override");
+        assert_eq!(p.input_per_mtok, 7.0);
+        // A default-only key is not a user override.
+        assert!(user_override_in(&config, "claude-sonnet-4-5").is_none());
+    }
 
     #[test]
     fn model_substring_match_prefers_longest_key() {
