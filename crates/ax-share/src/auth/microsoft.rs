@@ -67,28 +67,21 @@ pub fn write_ms_client_id_to_config(client_id: &str) -> Result<(), String> {
     if trimmed.is_empty() {
         return Err("client ID cannot be empty".into());
     }
-    let path = crate::paths::ax_home().join("config.json");
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let mut root: serde_json::Value = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    let obj = root
-        .as_object_mut()
-        .ok_or_else(|| "config root must be a JSON object".to_string())?;
-    let share = obj.entry("share").or_insert_with(|| serde_json::json!({}));
-    let share_obj = share
-        .as_object_mut()
-        .ok_or_else(|| "share must be a JSON object".to_string())?;
-    share_obj.insert(
-        "microsoftClientId".into(),
-        serde_json::Value::String(trimmed.to_string()),
-    );
-    let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n";
-    std::fs::write(&path, text.as_bytes()).map_err(|e| e.to_string())?;
-    Ok(())
+    write_ms_client_id_at(&crate::paths::ax_home().join("config.json"), trimmed)
+}
+
+fn write_ms_client_id_at(path: &std::path::Path, trimmed: &str) -> Result<(), String> {
+    crate::config::update_json_object(path, |obj| {
+        let share = obj.entry("share").or_insert_with(|| serde_json::json!({}));
+        let share_obj = share
+            .as_object_mut()
+            .ok_or_else(|| "share must be a JSON object".to_string())?;
+        share_obj.insert(
+            "microsoftClientId".into(),
+            serde_json::Value::String(trimmed.to_string()),
+        );
+        Ok(())
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -370,6 +363,29 @@ pub fn encode_share_id(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn client_id_is_merged_into_an_existing_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, r#"{"index":{"exclude":["target"]}}"#).unwrap();
+        write_ms_client_id_at(&path, "abc").unwrap();
+        let root: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(root["share"]["microsoftClientId"], "abc");
+        assert_eq!(root["index"]["exclude"][0], "target");
+    }
+
+    #[test]
+    fn an_unparsable_config_is_not_overwritten_with_the_client_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let broken = "{\"index\": {\"exclude\": [\"target\"],},}\n";
+        std::fs::write(&path, broken).unwrap();
+        let error = write_ms_client_id_at(&path, "abc").unwrap_err();
+        assert!(error.contains("config.json"), "{error}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), broken);
+    }
 
     #[test]
     fn encode_share_id_format() {
