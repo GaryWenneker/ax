@@ -277,7 +277,10 @@ fn merge_hooks_json(path: &Path, script_name: &str) -> Result<(), String> {
     }
 
     let pretty = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
-    ax_utils::atomic_write(path, (pretty + "\n").as_bytes())
+    // A symlinked hooks.json (a dotfiles setup) is written through to its
+    // target, so the rename does not replace the link with a regular file.
+    let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    ax_utils::atomic_write(&target, (pretty + "\n").as_bytes())
         .map_err(|e| format!("{}: {e}", path.display()))
 }
 
@@ -343,6 +346,36 @@ mod hook_install_tests {
             mode & 0o111,
             0o111,
             "script mode {mode:o} is not executable"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_hooks_json_keeps_its_link() {
+        let dir = temp_cursor_dir("symlink");
+        let dotfiles = dir.join("dotfiles");
+        fs::create_dir_all(&dotfiles).unwrap();
+        let target = dotfiles.join("hooks.json");
+        fs::write(
+            &target,
+            "{\"version\":1,\"hooks\":{\"preToolUse\":[{\"command\":\"./hooks/mine.sh\"}]}}",
+        )
+        .unwrap();
+        let link = dir.join("hooks.json");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        install_cursor_hook(&dir).unwrap();
+
+        assert!(
+            fs::symlink_metadata(&link).unwrap().file_type().is_symlink(),
+            "hooks.json is still a symlink"
+        );
+        let merged: Value = serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
+        assert_eq!(merged["hooks"]["preToolUse"][0]["command"], "./hooks/mine.sh");
+        assert_eq!(
+            merged["hooks"]["sessionStart"][0]["command"],
+            "./hooks/ax-session-model.sh"
         );
         let _ = fs::remove_dir_all(&dir);
     }

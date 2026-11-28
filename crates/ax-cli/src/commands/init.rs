@@ -396,7 +396,6 @@ async fn run_inner(
     Ok(())
 }
 
-/// Ask for the on-disk rules/skills folder when `policy.agentsDir` is unset.
 /// What `ax init` says about LLM offload. Init never switches offload on: it sends explore
 /// text (project source) to an outside model, so the user turns it on with
 /// `ax offload set-endpoint`. An API key in the environment only produces that hint.
@@ -427,6 +426,7 @@ fn offload_init_lines(configured_url: Option<&str>, has_key: impl Fn(&str) -> bo
     lines
 }
 
+/// Ask for the on-disk rules/skills folder when `policy.agentsDir` is unset.
 /// A non-interactive run saves the default `.agents`.
 fn choose_agents_dir_for_init(root: &std::path::Path, interactive: bool) -> Result<(), String> {
     if ax_policy::configured_agents_dir(root).is_some() {
