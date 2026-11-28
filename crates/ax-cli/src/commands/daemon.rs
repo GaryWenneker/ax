@@ -148,7 +148,9 @@ fn is_ax_daemon(pid: u32, info: &DaemonInfo, hello_pid: Option<u32>) -> bool {
     if hello_pid == Some(pid) {
         return true;
     }
-    let mut sys = sysinfo::System::new();
+    let Ok(mut sys) = sysinfo::System::new() else {
+        return false;
+    };
     let spid = sysinfo::Pid::from_u32(pid);
     sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[spid]), true);
     let Some(process) = sys.process(spid) else {
@@ -207,7 +209,7 @@ mod tests {
     }
 
     fn exe_of(pid: u32) -> std::path::PathBuf {
-        let mut sys = sysinfo::System::new();
+        let mut sys = sysinfo::System::new().expect("sysinfo System");
         let spid = sysinfo::Pid::from_u32(pid);
         sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[spid]), true);
         sys.process(spid)
@@ -219,7 +221,7 @@ mod tests {
     /// Waits until `pid` runs `sleep`: the orphan starts as `sh` and only then execs.
     async fn wait_running(pid: u32) {
         for _ in 0..250 {
-            let mut sys = sysinfo::System::new();
+            let mut sys = sysinfo::System::new().expect("sysinfo System");
             let spid = sysinfo::Pid::from_u32(pid);
             sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[spid]), true);
             let is_sleep = sys
