@@ -67,4 +67,6 @@ See [Limits](/guides/remote-admin/#limits) in the `ax-admin` guide for the curre
 
 ## Documentation
 
-Pages that describe the Command Center, the desktop client or `ax share` describe the full ax. They carry a notice at the top and stay available while releases ship the full ax. New documentation is written for headless ax and `ax-admin`.
+This documentation is written for headless ax and `ax-admin`: each guide leads with the CLI command or MCP tool and names the `ax-admin` page where there is one.
+
+The pages under **Full ax (phasing out)** in the sidebar describe what only the full ax has: the Command Center, the desktop client, `ax share`, the Cloudflare tunnel for the Command Center, the Obsidian vault and the standalone server with replicas. They carry a notice at the top and stay available while releases ship the full ax.

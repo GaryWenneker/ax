@@ -1,9 +1,6 @@
 ---
 title: Troubleshooting
 description: Fixes for the most common ax issues.
-banner:
-  content: |
-    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 ## "ax not initialized"
@@ -30,7 +27,7 @@ Healthy path: each IDE attaches as a thin **stdio proxy** to one **shared per-pr
 
 Mitigations:
 
-1. **Reload the shared daemon** (preferred) — Command Center hamburger / sidebar → **Reload MCP**, or:
+1. **Reload the shared daemon** (preferred):
 
 ```bash
 ax daemon restart
@@ -40,17 +37,17 @@ ax daemon restart
 3. **Stale lock after a crash** — `ax unlock` clears the lock. When a live process still holds it, only that process is stopped, and only if it is an ax process (SIGTERM first, SIGKILL after 5 seconds). Other ax processes keep running.
 4. Avoid starting a second long `ax index` / `ax init` while one is already running (the second will wait, then proceed).
 5. **Network filesystem** — WAL may not work reliably on SMB/NFS or WSL2 `/mnt`. Keep the project (with `.ax/`) on a local disk.
-6. Prefer **one primary IDE MCP client** for a workspace when the daemon keeps failing; use Command Center Logging (or the **Logging** page of [ax-admin](/guides/remote-admin/)) to confirm `attached to ax daemon`.
+6. Prefer **one primary IDE MCP client** for a workspace when the daemon keeps failing; search today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` for `attached to ax daemon`.
 
 ## MCP server not connecting
 
-Your agent starts the server itself (proxy → shared daemon). Verify the project is indexed (`ax status`), check `ax daemon status`, use **Reload MCP** / `ax daemon restart`, and re-run `ax install` to rewrite MCP config if needed.
+Your agent starts the server itself (proxy → shared daemon). Verify the project is indexed (`ax status`), check `ax daemon status`, run `ax daemon restart`, and re-run `ax install` to rewrite MCP config if needed.
 
 ## MCP Logging empty / Quality score stuck
 
 1. Logging is always enabled. Confirm the MCP project path and reconnect MCP.
 2. Confirm today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` grows after an agent turn.
-3. Open Command Center **Logging**; use the project switcher if you are on the wrong workspace.
+3. Read the log file directly, and check that it is the file of the project the agent is connected to: the log is per project. For a remote Ax, the **Logging** page of [ax-admin](/guides/remote-admin/) lists the MCP calls that environment handled (it needs the admin grant).
 4. Install `ax savings hook install` so sessions tag `session=` for tighter `ax mcp audit` correlation.
 
 Full playbook: [MCP Logging & Quality](/guides/mcp-quality/#troubleshooting).
@@ -59,9 +56,9 @@ Full playbook: [MCP Logging & Quality](/guides/mcp-quality/#troubleshooting).
 
 Domain rows such as **Internal · CLI** or **Internal · Policy** are expected for lifecycle detail. **Inbound** and **Outbound** appear when the CLI emits `ToolTrace` lines (`inbound tool=ax_…` / `outbound tool=ax_…`), which shipped in **ax 8.4.4**.
 
-1. Check `ax --version` — upgrade if below 8.4.4 (`ax upgrade`, or re-run `install.ps1` / `install.sh`).
+1. Check `ax --version` — upgrade if below 8.4.4. Headless ax: run `install-slim.sh` again. Full ax: `ax upgrade`, or re-run `install.ps1` / `install.sh`.
 2. In the project that Logging is watching, run for example `ax explore "auth"` or `ax policy match "deploy"`.
-3. Refresh Logging — status bar **in** / **out** should increase; kind chips for Inbound and Outbound appear when counts are non-zero.
+3. Look at the log again — today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` should now hold `inbound tool=` and `outbound tool=` lines for that command.
 
 See [Directions: Inbound, Outbound, Internal](/guides/mcp-quality/#directions-inbound-outbound-internal).
 
@@ -76,6 +73,8 @@ A phrase, a CSS class, a regex, or a name that is not in the graph is not blocke
 The MCP server auto-syncs on save (wait a couple of seconds). Run `ax sync` manually if needed. Check that the file's language is [supported](/reference/languages/) and isn't excluded via `.gitignore`, built-in skip dirs (`node_modules`, `target`, …), or `ax.json` `exclude`.
 
 ## `ax upgrade` hangs on "Do you want to continue? [Y/n]"
+
+This applies to the full ax. The headless build has no `ax upgrade`: the command exits with a message, and you upgrade by running `install-slim.sh` again.
 
 You are on **ax 0.1.x** installed via `cargo install`. That version uses the `self_update` crate, which waits for keyboard input and looks stuck on `Checking for updates…`.
 
@@ -103,10 +102,12 @@ Quick check:
 
 ```bash
 ax version
-ax upgrade --check
+ax upgrade --check      # full ax only
 ```
 
-Pin and reinstall when you need a specific release:
+For headless ax, compare `ax version` with [latest.txt](https://getax.wenneker.io/releases/latest.txt) and run `install-slim.sh` again to upgrade; `--version vX.Y.Z` (or `AX_VERSION`) pins a release. See [Headless Linux build](/guides/headless-linux/#install).
+
+For the full ax, pin and reinstall when you need a specific release:
 
 ```bash
 # macOS / Linux / WSL2
@@ -120,7 +121,7 @@ Compare with [latest.txt](https://getax.wenneker.io/releases/latest.txt).
 
 ## Existing installations
 
-You already have ax installed but `ax version` shows an old release (e.g. **2.0.10** while [latest.txt](https://getax.wenneker.io/releases/latest.txt) says **v2.0.14**), or `irm …/install.ps1 | iex` prints `Installing ax v2.0.10 — latest available`. This section covers diagnosis and fix.
+You already have ax installed but `ax version` shows an old release (e.g. **2.0.10** while [latest.txt](https://getax.wenneker.io/releases/latest.txt) says **v2.0.14**), or `irm …/install.ps1 | iex` prints `Installing ax v2.0.10 — latest available`. This section covers diagnosis and fix. It describes the full ax from `install.sh` / `install.ps1`. Headless ax is one binary in `/usr/local/bin` or `~/.local/bin`; `which -a ax` shows which copy runs, and running `install-slim.sh` again replaces it.
 
 ### Symptoms
 
@@ -130,7 +131,7 @@ You already have ax installed but `ax version` shows an old release (e.g. **2.0.
 | `ax upgrade --check` shows `2.0.10 → 2.0.14` but install still picks 2.0.10 | Same — asset probe failed on your network; use schema 2 script or pin `AX_VERSION` |
 | Multiple paths under “Synced local instances” | Normal on Windows — see [Which binary is active](#which-binary-is-active) |
 | `cargo install` build overwritten after `install.ps1` | Installer syncs to `~/.cargo/bin/ax` by default |
-| `cargo install` → **Access is denied** replacing `ax.exe` | Cursor MCP / `ax web` respawned during the long rebuild — use `.\scripts\release-local.ps1` (copy-sync; no second cargo install) |
+| `cargo install` → **Access is denied** replacing `ax.exe` | Cursor MCP (or `ax web` in the full ax) respawned during the long rebuild — use `.\scripts\release-local.ps1` (copy-sync; no second cargo install) |
 
 ### Which binary is active
 
@@ -160,7 +161,7 @@ Open a **new terminal** after install so PATH picks up the updated entry (`%LOCA
 
 ### Fix: reinstall latest (recommended)
 
-1. Close ax MCP, `ax web`, and terminals running ax.
+1. Close ax MCP, terminals running ax, and `ax web` if it is running.
 2. Confirm you fetch the **current** install script (schema 2):
 
 ```powershell
@@ -204,7 +205,7 @@ AX_VERSION=v2.0.14 curl -fsSL https://getax.wenneker.io/install.sh | sh
 
 ### Fix: upgrade in place (`ax upgrade`)
 
-On **ax 2.0.0+** (non-interactive, no prompts):
+Full ax only. On **ax 2.0.0+** (non-interactive, no prompts):
 
 ```bash
 ax upgrade              # latest installable release
@@ -237,15 +238,20 @@ Use `.\scripts\release-local.ps1` (build + copy-sync) or `.\scripts\reinstall-cl
 ## Reinstall the CLI
 
 ```bash
-# macOS / Linux
+# Linux, headless ax
+curl -fsSL https://getax.wenneker.io/install-slim.sh | sh
+
+# macOS / Linux, full ax
 curl -fsSL https://getax.wenneker.io/install.sh | sh
 
-# Windows
+# Windows, full ax
 irm https://getax.wenneker.io/install.ps1 | iex
 
-# npm
+# npm, full ax
 npm i -g @garywenneker/ax@latest
 ```
+
+`install-slim.sh` refuses to replace a full ax at the same path unless you pass `--force`. Reinstall `ax-admin` with its own installer; see [ax-admin](/guides/remote-admin/#install).
 
 ## Sharing one checkout between Windows and WSL
 

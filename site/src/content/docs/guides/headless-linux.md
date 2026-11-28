@@ -1,12 +1,12 @@
 ---
 title: Headless Linux build
-description: Install or build a smaller ax binary without the Command Center, desktop client or self-update, for Linux sandboxes and containers.
+description: Install or build headless ax, the CLI and MCP server without a built-in interface, for Linux servers, sandboxes and containers.
 ---
 
-The headless build is the same `ax` binary without its graphical parts. It is meant for places with no screen and no browser: a Vercel Sandbox, an Azure Container Apps job, a CI runner. The regular ax download is still the full build.
+The headless build is ax going forward: the CLI and the MCP server, without a built-in interface. It runs anywhere, including places with no screen and no browser: a server, a Vercel Sandbox, an Azure Container Apps job, a CI runner. Its interface is [ax-admin](/guides/remote-admin/), a separate application on your own computer.
 
 :::note[Direction]
-The full ax is being phased out. This headless build becomes ax on every platform, with [ax-admin](/guides/remote-admin/) as the only visual interface. Today it is released for Linux only. See [Headless ax and ax-admin](/guides/phase-out/).
+The full ax is being phased out. This headless build becomes ax on every platform, with [ax-admin](/guides/remote-admin/) as the only visual interface. Today it is released for Linux x86_64 and arm64 only. On macOS and Windows the only released ax is still the full ax from `install.sh` / `install.ps1`; its CLI and MCP server are the same commands. See [Headless ax and ax-admin](/guides/phase-out/).
 :::
 
 It keeps the CLI, MCP over stdio (`ax serve --mcp`), `ax mcp remote serve`, indexing, graph queries, policy, specs, sessions and the memory vault. It leaves out `ax web`, `ax share`, `ax desktop`, `ax ship --watch`, `ax upgrade` and `ax server`. The first five still parse and exit with a message that they are not part of this build; `ax server` is removed entirely.
@@ -15,7 +15,7 @@ It keeps the CLI, MCP over stdio (`ax serve --mcp`), `ax mcp remote serve`, inde
 
 | Included | Left out |
 |---|---|
-| CLI: `init`, `index`, `sync`, `watch`, `status`, `query`, `explore`, `node`, `callers`, `impact`, `report`, `insights`, … | `ax web` and `ax share` (embedded Command Center and its web assets) |
+| CLI: `init`, `index`, `sync`, `watch`, `status`, `query`, `explore`, `node`, `callers`, `impact`, `report`, `insights`, … | `ax web` and `ax share` (the built-in web interface of the full ax and its web assets) |
 | MCP over stdio (`ax serve --mcp`) and `ax mcp remote serve` (HTTP) | `ax desktop` (native desktop client) |
 | Policy, skills, specs, memory vault, sessions, `preflight` | `ax ship --watch` (dashboard) |
 | `ax ship --evaluate` / `--ci`, `diff`, `affected` (need `git`) | `ax upgrade` and the update notice |
@@ -35,9 +35,9 @@ The headless binary is about five times smaller than the full ax. Sizes in megab
 | Container image, distroless (`ax-slim:<version>`) | about 41 MB |
 | Container image, Ubuntu 26.04 with `git` (`ax-slim:<version>-ubuntu`) | about 268 MB |
 
-Most of the saving comes from leaving out the Command Center, the desktop client and the less common language grammars. Grammar parse tables make up most of a binary's data, so a headless build with every language (`AX_FEATURES=mimalloc slim/build.sh`) is about 71 MB.
+Most of the saving comes from leaving out the built-in web interface, the desktop client and the less common language grammars. Grammar parse tables make up most of a binary's data, so a headless build with every language (`AX_FEATURES=mimalloc slim/build.sh`) is about 71 MB.
 
-Indexing is as fast as with the full build; see [Speed](#speed).
+Indexing is as fast as with the full ax; see [Speed](#speed).
 
 ## Install
 
@@ -131,7 +131,7 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/workspace" "ax
 
 ## Speed
 
-The headless build indexes as fast as the full build. In ax 10.1.1, a 660-file Rust project took 20.6 seconds on a 14-core Apple silicon Mac (20.4 seconds with the full build). Since then, reference resolution batches its database writes and caches node lookups, which brings the same index to 7.0 seconds, with the same graph. A one-file `ax sync` takes about half a second.
+The headless build indexes as fast as the full ax. In ax 10.1.1, a 660-file Rust project took 20.6 seconds on a 14-core Apple silicon Mac (20.4 seconds with the full ax). Since then, reference resolution batches its database writes and caches node lookups, which brings the same index to 7.0 seconds, with the same graph. A one-file `ax sync` takes about half a second.
 
 Keep the project's `.ax/` folder on the container's own disk or a volume. A bind mount from a macOS host made the same index take over two minutes, and network filesystems such as Azure Files do not give SQLite reliable locks. `slim/README.md` has the measurements.
 
@@ -281,7 +281,7 @@ Every deployment asks for:
 
 Optional variables: `AX_REPO_REF` (branch or tag), `AX_API_KEY_WRITE=1` (let the key write memories and policy; read-only otherwise), `AX_PROJECT_ID` (the `project` part of the URL) and `AX_PUBLIC_URL`. The public URL is detected on Azure Container Apps, Render, Koyeb and Railway; set it yourself anywhere else.
 
-The checkout and index live on the container's disk. A restart or redeploy clones and indexes again, so the first requests after a start wait for `ax init`. In this headless build nobody can approve browser (OAuth) sign-ins, because that happens in the Command Center: the API key is the only way in.
+The checkout and index live on the container's disk. A restart or redeploy clones and indexes again, so the first requests after a start wait for `ax init`. Nobody can approve a browser (OAuth) sign-in on this server: approving one is done in the Command Center of the full ax, which the headless build does not have. The API key is the only way in.
 
 The container pulls `ghcr.io/garywenneker/ax-slim:<version>-server`; Render and Koyeb use the `latest-server` tag, and Azure lets you pick a version.
 
@@ -350,13 +350,13 @@ Clients connect to `https://<your domain>/projects/project/mcp` with `Authorizat
 
 ## An interface for the headless build
 
-This build has no `ax web`. [ax-admin](/guides/remote-admin/) is a separate application that runs on your own computer and manages the environment through `ax mcp remote serve`. Install it there, not in the container:
+[ax-admin](/guides/remote-admin/) is the interface of the headless build, and the only visual interface of Ax. It is a separate application that runs on your own computer and manages the environment through `ax mcp remote serve`. Install it there, not in the container:
 
 ```bash
 curl -fsSL https://getax.wenneker.io/install-admin.sh | sh
 ```
 
-It connects to a hosted server from the section above with that server's address and `AX_API_KEY`. To re-index, sync and read the MCP call log from it, the key needs the [admin grant](/guides/remote-mcp/#admin-access) in the server's remote MCP configuration; the configuration that `ax-serve-repo` writes does not grant it.
+It runs on Windows, macOS and Linux; on Windows use `install-admin.ps1` (see [Install](/guides/remote-admin/#install)). It connects to a hosted server from the section above with that server's address and `AX_API_KEY`. Its pages cover status, search, nodes, explore, insights, rules, skills, memory and sessions. To re-index, sync and read the MCP call log from it, the key needs the [admin grant](/guides/remote-mcp/#admin-access) in the server's remote MCP configuration; the configuration that `ax-serve-repo` writes does not grant it.
 
 ## Limits
 

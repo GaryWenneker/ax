@@ -1,20 +1,66 @@
 ---
 title: Installation
-description: Install ax from the shell, then run ax install and ax init in your project.
-banner:
-  content: |
-    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
+description: Install headless ax on Linux, ax-admin on any system, and the full ax on macOS and Windows; then run ax install and ax init in your project.
 ---
 
-Install ax from your terminal. The shell installer downloads the published binary for your operating system and CPU. That is the regular install. You do not clone the repository or build ax for this.
-
-## 1. Install with the shell
-
-:::caution[The full ax is being phased out]
-The installers on this page install the full ax, with the built-in Command Center. It is being phased out. The headless build becomes ax on every platform, and `ax-admin` becomes the only visual interface. No date is set, and today the headless build is released for Linux only. See [Headless ax and ax-admin](/guides/phase-out/).
-:::
+Ax is two programs. `ax` is headless: the CLI and the MCP server. `ax-admin` is the visual interface, a separate application with its own installer. Each installer downloads a published binary for your operating system and CPU. You do not clone the repository or build ax for this.
 
 ax is a **native Rust binary**. No Node.js and no Rust toolchain are required.
+
+| You have | Install | Section |
+|---|---|---|
+| Linux, a container, a sandbox or CI | headless `ax` with `install-slim.sh` | [1](#1-install-ax-headless-on-linux) |
+| Any system, and you want the visual interface | `ax-admin` with `install-admin.sh` / `install-admin.ps1` | [2](#2-install-ax-admin-on-windows-macos-and-linux) |
+| macOS or Windows | the full ax with `install.sh` / `install.ps1` / Homebrew | [3](#3-macos-and-windows-ax-today) |
+
+<a id="1-install-with-the-shell"></a>
+<a id="linux-sandboxes-and-containers-headless"></a>
+
+## 1. Install ax headless on Linux
+
+The headless build is `ax` going forward: CLI and MCP server, without a built-in interface, desktop client or self-update. It is released for Linux x86_64 and arm64, from v10.1.1. Use it on a workstation, a server, a Vercel Sandbox, an Azure Container Apps job, a CI runner or another machine without a screen.
+
+```bash
+curl -fsSL https://getax.wenneker.io/install-slim.sh | sh
+```
+
+The installer puts one static binary in `/usr/local/bin` as root, otherwise in `~/.local/bin`. It does not configure agents and does not create an `~/.ax` install tree. The headless build never updates itself: run the installer again to upgrade. It refuses to replace a full ax at the same path unless you pass `--force`. Options such as `--version`, `--bin-dir` and `--uninstall` are in [Headless Linux build](/guides/headless-linux/#install).
+
+### Containers and the cloud
+
+To run it in the cloud without installing anything locally, deploy it as a hosted remote MCP server for one repository:
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fgetax.wenneker.io%2Fdeploy%2Fazure-slim-server.json) [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/GaryWenneker/ax) [![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?type=docker&name=ax-mcp&image=ghcr.io%2Fgarywenneker%2Fax-slim%3Alatest-server&ports=8080%3Bhttp%3B%2F&env%5BPORT%5D=8080&env%5BAX_REPO_URL%5D=https%3A%2F%2Fgithub.com%2FOWNER%2FREPO&env%5BAX_API_KEY%5D=CHANGE_ME&env%5BAX_PROJECT_ID%5D=project)
+
+See [Deploy to the cloud](/guides/headless-linux/#deploy-to-the-cloud) for what each button creates and the API key it needs, and [Headless Linux build](/guides/headless-linux/) for options, container images, an Azure job that indexes once, and Vercel Sandbox.
+
+<a id="ax-admin-separate-application"></a>
+
+## 2. Install ax-admin on Windows, macOS and Linux
+
+`ax-admin` is the visual interface. It manages a remote Ax, including the headless build, from your own computer. It has its own installer and does not need `ax` on that computer. It is released for Windows, macOS and Linux, on x64 and arm64, from v10.1.2.
+
+macOS and Linux:
+
+```bash
+curl -fsSL https://getax.wenneker.io/install-admin.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://getax.wenneker.io/install-admin.ps1 | iex
+```
+
+`ax-admin` connects to an Ax through its remote MCP address, so that Ax must run `ax mcp remote serve`. See [ax-admin](/guides/remote-admin/) for installer options, the connect screen and the pages, and [Remote MCP](/guides/remote-mcp/) for the server side.
+
+## 3. macOS and Windows: ax today
+
+There is no released headless build for macOS or Windows yet. On those systems you install the full ax with `install.sh`, `install.ps1` or Homebrew. Its CLI and MCP server are the same commands as in the headless build, so everything in this documentation about the CLI and MCP applies.
+
+:::caution[The full ax is being phased out]
+The installers in this section install the full ax, with the built-in Command Center. It is being phased out. The headless build becomes ax on every platform, and `ax-admin` becomes the only visual interface. No date is set. See [Headless ax and ax-admin](/guides/phase-out/).
+:::
 
 The homepage copies the same shell command. Open **Other platforms** there to choose macOS, Linux, Windows, or WSL2.
 
@@ -68,62 +114,6 @@ ax version
 
 If you downloaded an archive manually, `./ax version` runs the executable from its extracted directory. `ax` alone searches PATH. Executable files can appear red in a terminal listing; their color is not a diagnostic error. If running the full path returns an error, diagnose that error before changing PATH. The PATH steps do not address an incompatible architecture or a blocked binary.
 
-### Linux
-
-#### Homebrew on Linux (optional)
-
-```bash
-brew tap GaryWenneker/tap
-brew trust GaryWenneker/tap   # Homebrew 7+
-brew install ax
-```
-
-Supported archives are `ax-linux-x64.tar.gz` and `ax-linux-arm64.tar.gz`. Upgrade with `brew upgrade ax`.
-
-#### Shell installer
-
-Run in your Linux shell:
-
-```bash
-curl -fsSL https://getax.wenneker.io/install.sh | sh
-```
-
-For Bash, the installer updates `.bashrc` and the first applicable login file (`.bash_profile`, `.bash_login`, or `.profile`). For sh/dash it updates `.profile`. Other shells receive a manual setup notice. A startup-file write failure leaves the verified binary installed and prints recovery guidance instead of claiming that future terminals are configured. `AX_BIN_DIR` values containing a colon or newline are rejected before installation because these characters are separators in PATH or the install-target list.
-
-### WSL2
-
-Open your WSL2 Linux terminal and install the Linux binary inside that distribution:
-
-```bash
-curl -fsSL https://getax.wenneker.io/install.sh | sh
-```
-
-Windows browsers identify Windows, rather than your WSL distribution. Select **WSL2** in the homepage installer when this is your development environment.
-
-### Linux sandboxes and containers (headless)
-
-For a Vercel Sandbox, an Azure Container Apps job, a CI runner or another machine without a screen, install the smaller headless build: CLI and MCP server, without the Command Center, desktop client or self-update.
-
-```bash
-curl -fsSL https://getax.wenneker.io/install-slim.sh | sh
-```
-
-To run it in the cloud without installing anything locally, deploy it as a hosted remote MCP server for one repository:
-
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fgetax.wenneker.io%2Fdeploy%2Fazure-slim-server.json) [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/GaryWenneker/ax) [![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?type=docker&name=ax-mcp&image=ghcr.io%2Fgarywenneker%2Fax-slim%3Alatest-server&ports=8080%3Bhttp%3B%2F&env%5BPORT%5D=8080&env%5BAX_REPO_URL%5D=https%3A%2F%2Fgithub.com%2FOWNER%2FREPO&env%5BAX_API_KEY%5D=CHANGE_ME&env%5BAX_PROJECT_ID%5D=project)
-
-See [Deploy to the cloud](/guides/headless-linux/#deploy-to-the-cloud) for what each button creates and the API key it needs, and [Headless Linux build](/guides/headless-linux/) for options, container images, an Azure job that indexes once, and Vercel Sandbox.
-
-### ax-admin (separate application)
-
-`ax-admin` is the interface going forward. It manages a remote Ax, including the headless build, from your own computer. It has its own installer and does not need `ax`:
-
-```bash
-curl -fsSL https://getax.wenneker.io/install-admin.sh | sh
-```
-
-On Windows use `irm https://getax.wenneker.io/install-admin.ps1 | iex`. See [ax-admin](/guides/remote-admin/).
-
 ### Windows
 
 Run in PowerShell:
@@ -155,7 +145,45 @@ If the website still serves an older installer, use the repository copy (still i
 irm https://raw.githubusercontent.com/GaryWenneker/ax/main/install.ps1 | iex
 ```
 
-## 2. Run ax install
+<a id="linux"></a>
+
+### Full ax on Linux
+
+The headless build in [section 1](#1-install-ax-headless-on-linux) is the ax to install on Linux. Releases still ship the full ax for Linux as well, with the installers below.
+
+#### Homebrew on Linux (optional)
+
+```bash
+brew tap GaryWenneker/tap
+brew trust GaryWenneker/tap   # Homebrew 7+
+brew install ax
+```
+
+Supported archives are `ax-linux-x64.tar.gz` and `ax-linux-arm64.tar.gz`. Upgrade with `brew upgrade ax`.
+
+#### Shell installer
+
+Run in your Linux shell:
+
+```bash
+curl -fsSL https://getax.wenneker.io/install.sh | sh
+```
+
+For Bash, the installer updates `.bashrc` and the first applicable login file (`.bash_profile`, `.bash_login`, or `.profile`). For sh/dash it updates `.profile`. Other shells receive a manual setup notice. A startup-file write failure leaves the verified binary installed and prints recovery guidance instead of claiming that future terminals are configured. `AX_BIN_DIR` values containing a colon or newline are rejected before installation because these characters are separators in PATH or the install-target list.
+
+### WSL2
+
+Open your WSL2 Linux terminal and install the Linux binary inside that distribution. This is the full ax for Linux:
+
+```bash
+curl -fsSL https://getax.wenneker.io/install.sh | sh
+```
+
+Windows browsers identify Windows, rather than your WSL distribution. Select **WSL2** in the homepage installer when this is your development environment.
+
+<a id="2-run-ax-install"></a>
+
+## 4. Run ax install
 
 Connect ax to the editor or agent you already use:
 
@@ -163,7 +191,7 @@ Connect ax to the editor or agent you already use:
 ax install
 ```
 
-This is the step that wires ax in. The command:
+This is the step that wires ax in. It is the same command in the headless build and in the full ax. `install-slim.sh` only installs the binary, so on Linux you run `ax install` yourself. The command:
 
 - Detects **Claude Code**, **Cursor**, **Codex CLI**, **opencode**, **Hermes Agent**, **Gemini CLI**, **Antigravity IDE**, and **Kiro**.
 - Writes each agent's MCP config (`ax serve --mcp`).
@@ -184,18 +212,18 @@ ax install --mode cli-only
 
 That seeds Cursor, VS Code/Copilot, Windsurf, Continue, Claude, Gemini, Cline/Antigravity, and shared `AGENTS.md` rules/skills. It does **not** write MCP JSON, plugins, daemons, or IDE hooks. See [CLI-only mode](/guides/cli-only/).
 
-### From the Command Center
+<a id="from-the-command-center"></a>
 
-Run `ax web` and open **Settings → IDEs & agents**.
+### One agent at a time
 
-![Settings — IDEs and coding agents found on this machine, with Connect and Disconnect](/screenshots/cc-settings-dark.png)
+To connect one IDE or agent, name it with `--target`:
 
-It lists every IDE and agent ax supports (Claude Code, Cursor, Codex CLI, opencode, Hermes, Gemini CLI, Antigravity, Kiro, VS Code, Windsurf, Zed, Continue) as **Connected**, **Found** (installed, ax not connected yet), or **Not found**. "Installed" means the CLI is on PATH or the app (or, for Continue, the extension) is present; a leftover config folder does not count.
+```bash
+ax install --target cursor
+ax install --target vscode
+```
 
-- **Connect** writes the same config as `ax install --target=<id>`. **Disconnect** removes it, like `ax uninstall`.
-- **Connect all found** connects every IDE that is installed but not connected yet.
-- After each action it shows the files it changed and any follow-up, such as reloading the VS Code window.
-- It works the same on macOS, Linux, and Windows. Only the browser on your own machine can use it; it is off in read-only mode and in share sessions.
+Ids are case-insensitive and the flag can be repeated. `ax install --all` configures every supported agent, not only the detected ones. `ax uninstall` removes the ax entries from the agent MCP configuration files again. After each run the command reports what it wrote; reload the IDE window or restart the agent so it picks up the change. See [`ax install`](/reference/cli/#ax--ax-install) for every flag and [Integrations](/reference/integrations/) for the file each agent uses.
 
 ### Non-interactive (scripting / CI)
 
@@ -213,7 +241,9 @@ ax install --yes --path ~/code/my-app         # workspace MCP files for that pro
 | `--target <id>` | Wire one agent (repeatable), e.g. `cursor`, `vscode` | — |
 | `--path <dir>` | Project root for workspace MCP files | current directory |
 
-## 3. Run ax init
+<a id="3-run-ax-init"></a>
+
+## 5. Run ax init
 
 After `ax install`, run `ax init` in each directory where you want to use ax:
 
@@ -228,16 +258,16 @@ Do this again in every other directory where you want ax. You do not run `ax ini
 
 ## Supported platforms
 
-Every release ships **six** prebuilt binaries. The shell installer picks the match for your OS and CPU. From v10.1.1, releases also ship two headless Linux binaries for sandboxes and containers. From v10.1.2, releases also ship `ax-admin` for the same six platforms.
+From v10.1.1, releases ship two headless Linux binaries (x64 and arm64) and container images. From v10.1.2, releases ship `ax-admin` for six platforms. Every release also still ships **six** prebuilt binaries of the full ax; its shell installer picks the match for your OS and CPU.
 
-| Platform | Architectures | Install |
+| Program and platform | Architectures | Install |
 |---|---|---|
-| Windows | x64, arm64 | PowerShell installer (`install.ps1`) or [GitHub Releases](https://github.com/GaryWenneker/ax/releases) |
-| macOS | x64 (Intel), arm64 (Apple Silicon) | shell installer (`install.sh`) or GitHub Releases |
-| Linux | x64, arm64 | shell installer or GitHub Releases |
+| ax, headless: Linux (workstations, servers, sandboxes, containers) | x64, arm64 | `install-slim.sh` or `ghcr.io/garywenneker/ax-slim` images ([guide](/guides/headless-linux/)) |
 | ax-admin (separate application) | Windows, macOS, Linux; x64 and arm64 | `install-admin.sh` / `install-admin.ps1` or GitHub Releases ([guide](/guides/remote-admin/#install)) |
-| WSL2 | x64, arm64 | **Use the Linux installer** inside WSL — `curl -fsSL https://getax.wenneker.io/install.sh \| sh` |
-| Linux, headless (sandboxes, containers) | x64, arm64 | `install-slim.sh` or `ghcr.io/garywenneker/ax-slim` images ([guide](/guides/headless-linux/)) |
+| Full ax: Windows | x64, arm64 | PowerShell installer (`install.ps1`) or [GitHub Releases](https://github.com/GaryWenneker/ax/releases) |
+| Full ax: macOS | x64 (Intel), arm64 (Apple Silicon) | shell installer (`install.sh`), Homebrew or GitHub Releases |
+| Full ax: Linux | x64, arm64 | shell installer (`install.sh`) or GitHub Releases |
+| Full ax: WSL2 | x64, arm64 | **Use the Linux installer** inside WSL — `curl -fsSL https://getax.wenneker.io/install.sh \| sh` |
 
 WSL2 notes:
 
@@ -252,13 +282,21 @@ ax uninstall          # remove MCP config from agents
 ax uninit [path]      # remove .ax/ from a project (asks first; --yes in scripts)
 ```
 
+To remove the headless binary itself, run its installer with `--uninstall`:
+
+```bash
+curl -fsSL https://getax.wenneker.io/install-slim.sh | sh -s -- --uninstall
+```
+
+`ax-admin` is removed the same way with its own installer; see [ax-admin](/guides/remote-admin/#install).
+
 ## Build ax yourself
 
-Building from source is for when you need the current `main` tree instead of the published binary. A beginning install does not need this.
+Building from source is for when you need the current `main` tree instead of the published binary. A beginning install does not need this. The steps below build the full ax. To build the headless binary, see [Build a static Linux binary](/guides/headless-linux/#build-a-static-linux-binary).
 
 ## Source and download versions
 
-The website documents the CLI version in the current `main` source. The download installer and `ax upgrade` install published GitHub releases. A source build does not need a release tag; a download does need published binaries.
+The website documents the CLI version in the current `main` source. The download installers install published GitHub releases. So does `ax upgrade`, which only the full ax has; the headless build is upgraded by running `install-slim.sh` again. A source build does not need a release tag; a download does need published binaries.
 
 ## Build from main
 
@@ -280,11 +318,11 @@ On macOS, the script builds `target-dev/release/ax` and installs a PATH shim at 
 type -a ax
 ```
 
-Both versions must match the source manifest. If your terminal resolves a different installation, refresh its command cache with `hash -r` and check again. Configure your IDE's MCP command to use this checkout's `target-dev/release/ax`, then restart its MCP server and any running `ax web` process to load the new build.
+Both versions must match the source manifest. If your terminal resolves a different installation, refresh its command cache with `hash -r` and check again. Configure your IDE's MCP command to use this checkout's `target-dev/release/ax`, then restart its MCP server to load the new build.
 
 ### Published downloads
 
-**Latest published release:** [getax.wenneker.io/releases/latest.txt](https://getax.wenneker.io/releases/latest.txt). Install scripts and `ax upgrade` resolve the published tag independently of your local source checkout. Check your install:
+**Latest published release:** [getax.wenneker.io/releases/latest.txt](https://getax.wenneker.io/releases/latest.txt). Install scripts, and `ax upgrade` in the full ax, resolve the published tag independently of your local source checkout. Check your install:
 
 ```bash
 ax version
@@ -315,7 +353,7 @@ The npm package is a thin launcher: it fetches the prebuilt `ax` binary from [Gi
 
 ### Local dev upgrade (maintainers)
 
-After building from source, package and install without publishing:
+After building the full ax from source, package and install without publishing. `ax upgrade` is not part of the headless build:
 
 ```powershell
 # Windows — from repo root

@@ -1,17 +1,13 @@
 ---
 title: Remote Policy Share
 description: Sync team rules, skills, and shared memories from any git host (GitHub, GitLab, Azure DevOps, on-prem) or OneDrive via Microsoft Graph — per-project ax.json config and bootstrap seeding.
-banner:
-  content: |
-    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 **Remote policy share** lets teams distribute `.ax/policy/shared/` packs and optional `memory/shared.jsonl` from a central location without committing policy to every repo. ax pulls and pushes from **any git host** (GitHub, GitLab, Azure DevOps, on-prem) or **OneDrive / SharePoint** using `ax policy share sync`.
 
-This is separate from:
+This is separate from **`ax policy pack export/import`**, the git-based sync inside the same project repo.
 
-- **`ax policy pack export/import`** — git-based sync inside the same project repo
-- **`ax share`** — LAN read-only Command Center sharing
+Remote share is set up in `ax.json` and run from the CLI. [ax-admin](/guides/remote-admin/) has no policy sync page and no policy review page.
 
 See also [Policy Engine](/guides/policy-engine/) for rules, skills, and review gates.
 
@@ -53,7 +49,7 @@ client ID (Microsoft Graph Command Line Tools) for device code sign-in.
 # 1. Sign in (device code flow) — works out of the box
 ax auth microsoft login
 
-# 2. Configure share URL in this project's ax.json (or use Command Center Settings → Remote policy share)
+# 2. Set the share URL in this project's ax.json (see Configuration below), then check it
 ax policy share config
 
 # 3. Pull remote pack + optional memory
@@ -97,13 +93,23 @@ Some managed/SSO-fronted GitLab instances (e.g. `gitlab.hosted-tools.com`) don't
 1. Generate an SSH key with a genuinely empty passphrase (`ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_gitlab -N ""` — on PowerShell, `-N ""` not `-N '""'`, the latter sets a literal `""` passphrase and hangs later auth silently).
 2. Upload the **public** key at the instance's identity/Bridge portal (for `gitlab.hosted-tools.com`, that's [bridge.hosted-tools.com/myprofile/settings](https://bridge.hosted-tools.com/myprofile/settings)) — not GitLab's own SSH Keys page.
 3. Wire `~/.ssh/config` so the host resolves to that key (`IdentitiesOnly yes`), and verify with `ssh -T git@<host>`.
-4. Use the **SSH** `repoUrl` (`git@host:group/repo.git`), and leave `github.token` **blank** — Command Center hides the API token field automatically once it detects `gitlab.hosted-tools.com` in the repo URL.
+4. Use the **SSH** `repoUrl` (`git@host:group/repo.git`), and do not store an API token for this repo URL.
 
 #### GitLab behind an SSO gate (no Bridge-style portal, no working git/SSH)
 
-If your GitLab instance forces SSH and git-HTTP through a browser SSO login (so a plain `git clone`/`push` can never authenticate headlessly) and has no separate SSH key portal like the above, add a personal or project access token instead: enter it in Command Center **Settings → Remote policy share → API token**. The token is stored on your machine in `~/.ax/auth/git-share.json` (readable by you only), keyed by `repoUrl`. It is never written to `ax.json`, which is usually committed, and the settings API never returns it: it only reports `hasToken: true`. Saving with an empty token keeps the stored one; **Remove token** (API: `"clearToken": true`) deletes it.
+If your GitLab instance forces SSH and git-HTTP through a browser SSO login (so a plain `git clone`/`push` can never authenticate headlessly) and has no separate SSH key portal like the above, add a personal or project access token instead. The token is kept on your machine in `~/.ax/auth/git-share.json`, keyed by the exact `repoUrl` from `ax.json`:
 
-A `token` left in an older `ax.json` still works; the next save from Command Center moves it to `~/.ax/auth/git-share.json` and removes it from `ax.json`.
+```json
+{
+  "tokens": {
+    "https://gitlab.example.com/group/ax-org-policy.git": "<access token>"
+  }
+}
+```
+
+Create the file yourself and make it readable by you only (`chmod 600 ~/.ax/auth/git-share.json`). ax never writes the token to `ax.json`, which is usually committed. To remove the token, delete its line from the file.
+
+A `token` under `share.github` in `ax.json` still works and wins over the stored one, but it then sits in a file that is usually committed. Prefer `~/.ax/auth/git-share.json`.
 
 When `token` is set (and `repoUrl` is http/https), ax uses GitLab's `/api/v4` REST API instead of raw git — no SSH key or git credential needed.
 
@@ -113,7 +119,7 @@ When `token` is set (and `repoUrl` is http/https), ax uses GitLab's `/api/v4` RE
 
 Share settings live under the `"share"` key in **`<project>/ax.json` only** — each project has its own remote source, import mode, and sync interval. There is no global share config.
 
-Manage in Command Center **Settings → Remote policy share** (auto-saves to `ax.json`).
+Edit the `share` block in `ax.json` with any editor. `ax policy share config` shows the result.
 
 ```json
 {
@@ -143,9 +149,9 @@ Manage in Command Center **Settings → Remote policy share** (auto-saves to `ax
 | `provider` | `onedrive` (default) or `github` (any git host, despite the name — kept for config-schema stability) |
 | `onedrive.shareUrl` | Required for the OneDrive provider; there is no default. Without it, sync fails with `onedrive.shareUrl is not set in ax.json` |
 | `importMode` | `review` (stage pending), `merge` (apply without review), or `force` (overwrite conflicts) |
-| `autoSyncMinutes` | Hint for Command Center auto-sync interval (default `15`) |
+| `autoSyncMinutes` | Sync interval hint in minutes (default `15`). The CLI does not sync on a timer: run `ax policy share sync` yourself or from a scheduler |
 | `content.rules` / `skills` / `memory` | Which remote artifacts to import |
-| `github.token` | Optional, write-only. GitLab personal/project access token, stored in `~/.ax/auth/git-share.json` and never in `ax.json`. When set on an http(s) `repoUrl`, sync uses that host's `/api/v4` REST API instead of raw `git` — for instances where SSH/git-HTTP is forced through SSO **and there's no separate SSH key/identity portal**. Leave blank to use normal `git` credentials. Command Center hides this field when `repoUrl` matches `gitlab.hosted-tools.com`, since that instance requires Bridge-managed SSH instead. |
+| `github.token` | Optional. GitLab personal/project access token, read from `~/.ax/auth/git-share.json`. When set on an http(s) `repoUrl`, sync uses that host's `/api/v4` REST API instead of raw `git` — for instances where SSH/git-HTTP is forced through SSO **and there's no separate SSH key/identity portal**. Leave it out to use normal `git` credentials. Do not set it for `gitlab.hosted-tools.com`, since that instance requires Bridge-managed SSH instead. |
 
 Show this project's config:
 
@@ -163,11 +169,11 @@ Sync status is stored per project in `.ax/share/status.json`.
 
 | Mode | `requireReview` | `force` | Use when |
 |---|---|---|---|
-| `review` | yes | no | Team wants approve/reject queue ([Policy → Review](/guides/policy-engine/#optional-review-gate)) |
+| `review` | yes | no | Team wants approve/reject queue (`ax policy review`, see [Optional review gate](/guides/policy-engine/#optional-review-gate)) |
 | `merge` | no | no | Safe default for trusted shared packs |
 | `force` | no | yes | Overwrite local conflicts without staging |
 
-CLI mapping is implemented in `ShareImportMode::import_flags()` — same semantics as Command Center **Policy → Sync**.
+CLI mapping is implemented in `ShareImportMode::import_flags()`.
 
 ---
 
@@ -239,8 +245,8 @@ Set the client ID for every teammate:
 export AX_MS_CLIENT_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 ```
 
-Add to shell profile or CI secret store. Command Center can also save the client ID
-to `share.microsoftClientId` in `~/.ax/config.json`; when `AX_MS_CLIENT_ID` is set, it
+Add to shell profile or CI secret store. The client ID can also be saved as
+`share.microsoftClientId` in `~/.ax/config.json`; when `AX_MS_CLIENT_ID` is set, it
 takes precedence over the saved value. Never commit client secrets (public client apps
 do not use one).
 
@@ -296,7 +302,7 @@ ax policy share sync
 ax policy review list           # if importMode is review
 ```
 
-Command Center: **Policy → Sync** shows last sync time, provider, and errors.
+`ax policy share config` shows the provider, the last sync time and the last error. `ax policy share sync --json` prints the sync status.
 
 ---
 
@@ -334,23 +340,21 @@ Combine with `"policySync": true` in the project repo for git-hook pack sync ins
 
 ## Review incoming policy sources
 
-Policy Review shows whether an incoming rule or skill is new, duplicates current
-content, or replaces it. Expand an item to compare the complete incoming and
-current text and see changed fields. Filter by type and effect, select several
-items, and confirm a bulk accept or reject operation.
+With `importMode: review`, pulled rules and skills wait in a queue and are not matched until you decide:
 
-New pack and remote-share imports record their source and export time. Replication
-records the contributing node, project, policy identity and snapshot revision.
+```bash
+ax policy review list
+ax policy review show <id>
+ax policy review approve <id>
+ax policy review reject <id>
+```
+
+`list` prints the pending rules and skills. `show` prints the complete incoming text and the current local copy, or says that there is no local counterpart, so you can see whether an item is new, duplicates current content, or replaces it. `list --json` and `show --json` give the same data for scripts. `approve` moves an item into active policy and `reject` drops it. ax-admin has no policy review page.
+
+New pack and remote-share imports record their source and export time.
 Source records persist with the queue and apply only to the exact incoming text;
-editing that text invalidates old attribution. Older items without source records
-show an explicit unknown origin. Accepting or rejecting clears the source record
-for that item. A source label is context for review, never permission to activate
-policy automatically.
+editing that text invalidates old attribution. Accepting or rejecting clears the
+source record for that item. A source label is context for review, never
+permission to activate policy automatically.
 
-### Missing comparisons
-
-Open **Inspect content and source** on a compact review row to see its full Current and Incoming content. A preview is not a verified comparison. If the page reports missing comparisons, update the Ax process serving Command Center and restart it, then refresh the queue. Updating only a remote Primary cannot add comparison support to an older local web server. The version label alone may match across unreleased builds; review capability is checked from the response fields. Approval stays disabled until comparison data is available.
-
-![Compact review queue with full comparisons available per row](/screenshots/cc-review-compact-desktop.png)
-
-![Current and incoming policy content shown after opening Inspect](/screenshots/cc-review-comparison.png)
+The full ax, which is being phased out, also has a Policy Review page with side-by-side comparison and bulk accept or reject in its Command Center; see [Command Center](/guides/command-center/).

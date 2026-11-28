@@ -1,9 +1,6 @@
 ---
 title: Workspaces (monorepo)
 description: Discover and sync multiple ax projects from one root with ax.json members.
-banner:
-  content: |
-    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 # Workspaces (monorepo)
@@ -130,4 +127,4 @@ See the [CLI reference](/reference/cli/) for all formats.
 
 ## Further reading
 
-Monorepo federation, `ship --ci`, plugins, LSP enrich, and `ax share` are all available. Memory embeddings are the local hash model `hash-v1`. See [`docs/ROADMAP.md`](https://github.com/GaryWenneker/ax/blob/main/docs/ROADMAP.md).
+Monorepo federation, `ship --ci`, plugins, and LSP enrich are all available. Memory embeddings are the local hash model `hash-v1`. See [`docs/ROADMAP.md`](https://github.com/GaryWenneker/ax/blob/main/docs/ROADMAP.md).

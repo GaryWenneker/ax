@@ -1,9 +1,6 @@
 ---
 title: Agent budget
 description: Quote local agent usage, plan a monthly budget, and simulate cycles without blocking provider calls.
-banner:
-  content: |
-    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 Ax reads Claude Code and Cursor session logs already on disk, quotes each turn from the price catalog, and compares the known total with a budget in `~/.ax/config.json`. A missing price stays **unknown**. Catalog quotes are **estimated**. **Actual** is a provider invoice, which Ax does not receive.
@@ -11,6 +8,8 @@ Ax reads Claude Code and Cursor session logs already on disk, quotes each turn f
 Spend known only from imported sessions (for example Cursor sessions without per-turn usage) is merged per session with the quoted turns: a session whose turns have a catalog price counts once, from those turns, and every other imported session adds its catalog spend. `ax costs` prints how many imported sessions it added and how many it left out.
 
 `ax savings` is a separate counterfactual: tokens avoided versus opening whole files, priced on the reference input rate.
+
+Everything here is a CLI command or the `ax_budget` MCP tool. In [ax-admin](/guides/remote-admin/), the **Usage** page shows cost, tool economics, budget, and advice; it appears only when the connection has the admin grant.
 
 ## Set a budget
 
@@ -31,7 +30,7 @@ Each setting is read on its own. A number written as a string (`"monthly": "60"`
 - `workingDays` is a whole number from 0 to 31. `hoursPerDay` is above 0 and at most 24.
 - `monthly` is 0 or more. `usdPerEur` is above 0.
 
-`ax budget set` and the Command Center context-budget setting change only their own keys. They refuse to write a config file that is not valid JSON and leave it as it is, so fix that file first. A leading byte order mark is accepted. The file is written to a temporary file and renamed into place, so a crash never leaves it half written.
+`ax budget set` changes only its own keys. It refuses to write a config file that is not valid JSON and leaves it as it is, so fix that file first. A leading byte order mark is accepted. The file is written to a temporary file and renamed into place, so a crash never leaves it half written.
 
 ## See spend
 

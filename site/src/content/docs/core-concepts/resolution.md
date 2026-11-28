@@ -1,9 +1,6 @@
 ---
 title: Resolution & Frameworks
 description: How ax connects references and links routes to handlers.
-banner:
-  content: |
-    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 Extraction produces nodes and raw edges; **resolution** turns names into real connections.
@@ -32,6 +29,8 @@ Static parsing misses computed and indirect calls, so flows can break at dynamic
 
 Every synthesized edge is marked `provenance: 'heuristic'` with the site that wired it, and is shown inline wherever a path crosses it.
 
-![Unresolved references — browse, filter, and reconcile symbol links the indexer could not resolve](/screenshots/cc-unresolved-dark.png)
+## Unresolved references
 
-Use the **Unresolved references** page in the Command Center to inspect and reconcile symbol links that could not be resolved to a target in the graph.
+A reference that cannot be resolved to a target in the graph stays in the index as an unresolved reference. `ax status` and `ax_status` report how many there are, and `ax report` includes an unresolved-refs summary. `ax lsp enrich` asks a language server for the definition of unresolved references and writes the edges it finds; see [`ax lsp status` / `ax lsp enrich`](/reference/cli/#ax-lsp-status--ax-lsp-enrich).
+
+The full ax, which is being phased out, also has an **Unresolved references** page in its Command Center to browse and reconcile them; see [Command Center](/guides/command-center/). `ax-admin` has no such list.

@@ -1,12 +1,9 @@
 ---
 title: Smart Output
 description: Compact agent context, structured metadata, project-bound expansion and honest token measurements.
-banner:
-  content: |
-    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
-Ax Smart Output is the default MCP response architecture. Ax chooses the representation; there is no XML/JSON/Markdown selector. Settings shows **MCP Output: Smart Output** as information, without claiming runtime cache status or token savings it cannot verify.
+Ax Smart Output is the default MCP response architecture. Ax chooses the representation; there is no XML/JSON/Markdown selector.
 
 The remote MCP HTTP connection reuses this same dispatcher and output contract. Authentication and project selection happen before the tool executes. See [Remote MCP and browser login](/guides/remote-mcp/) for running Ax on one computer and retrieving its context from ChatGPT or another IDE.
 
@@ -91,7 +88,7 @@ Missing, disabled or foreign-project IDs fail explicitly. The old `query` and `l
 
 ## Compatibility and release
 
-All tools and the MCP envelope remain. `AX_MCP_FULL=1` remains an explicit legacy structured-payload escape hatch, rather than a format selector. It does not disable ownership checks or change the new agent-facing text. This change does not alter graph export formats in the CLI or Command Center.
+All tools and the MCP envelope remain. `AX_MCP_FULL=1` remains an explicit legacy structured-payload escape hatch, rather than a format selector. It does not disable ownership checks or change the new agent-facing text. This change does not alter graph export formats in the CLI.
 
 Consumers that parse policy XML wrappers, depend on full default recall bodies, or resume unscoped durable records must migrate. The implementation report recommends a major release for these default-contract changes; no tag or deployment is performed by the change itself.
 

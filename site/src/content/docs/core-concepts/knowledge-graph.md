@@ -1,14 +1,9 @@
 ---
 title: The Knowledge Graph
 description: The node and edge kinds the graph is built from.
-banner:
-  content: |
-    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 ax stores three things: **nodes** (symbols and files), **edges** (relationships between them), and **files**. Every node and edge carries an exact `kind`, drawn from a fixed vocabulary so queries are consistent across languages.
-
-![Nodes — browse indexed symbols with kind/language filters, caller/callee detail, and pagination](/screenshots/cc-nodes-dark.png)
 
 ## Node kinds
 
@@ -30,7 +25,7 @@ Where provenance records *how* an edge was created, **confidence** records *how 
 - **`inferred`** — resolved by a heuristic, name-matching, or framework pass. Rendered **dashed**.
 - **`ambiguous`** — several candidate targets existed and the resolver picked one. Rendered **dotted**.
 
-Confidence is surfaced as a badge in the Command Center edge lists and in `ax_node` / `ax_callers` / `ax_callees` output, so an agent can weigh a relationship before acting on it.
+Confidence is surfaced in `ax_node` / `ax_callers` / `ax_callees` output, so an agent can weigh a relationship before acting on it.
 
 ## Documentation nodes
 
@@ -42,11 +37,9 @@ Doc inventory (counts by extension, grouped into markdown / office / PDF) is **a
 
 ## Querying it
 
-![Search — symbol results for the example Settings query](/screenshots/cc-search-dark.png)
-
 - **Search** symbols by name (FTS5).
 - **Callers / callees** walk the call graph one hop at a time.
 - **Impact** computes the transitive radius affected by a change.
 - **Explore** returns source for several related symbols grouped by file, plus the call path among them, in one call.
 
-See the [CLI](/reference/cli/) and [MCP Server](/reference/mcp-server/) references for how to run these.
+See the [CLI](/reference/cli/) and [MCP Server](/reference/mcp-server/) references for how to run these. In [ax-admin](/guides/remote-admin/), the **Search**, **Nodes** and **Explore** pages do the same for a connected environment.

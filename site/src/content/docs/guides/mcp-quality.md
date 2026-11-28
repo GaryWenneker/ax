@@ -1,38 +1,29 @@
 ---
 title: MCP Logging & Quality
-description: End-to-end guide to verbose MCP and CLI traces, the Logging page, Quality slide-out, session hooks, and ax mcp audit.
-banner:
-  content: |
-    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
+description: End-to-end guide to verbose MCP and CLI traces, ax mcp audit, quality checks, session hooks, and the Logging page in ax-admin.
 ---
 
-ax ships an **observability loop** for both MCP and CLI: record what agents send and receive, score how well they use ax tools, and turn waste into a fixpack you can paste back into chat.
-
-![MCP Logging — live verbose stream with kind filters and Call Inspector](/screenshots/cc-logging-dark.png)
-
-![MCP Quality — correlation, enrichment, tool mix, findings, and Copy fixpack](/screenshots/cc-mcp-quality-dark.png)
+ax ships an **observability loop** for both MCP and CLI: record what agents send and receive, score how well they use ax tools, and turn the findings into fixes for policy and habits.
 
 ## What the loop is
 
 ```text
-Agent turns write `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` (always on; one file per calendar day; boundary = Settings timezone)
-        ↓
-Command Center Logging page (live SSE table + Call Inspector)
-        ↓
-Q chip / Quality slide-out (score, findings, tokens at risk)
+Agent turns write `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` (always on; one file per calendar day)
         ↓
 Optional: Cursor sessionStart hook tags session= + model
         ↓
-ax mcp audit  (same engine; exit 2 on critical findings)
+ax mcp audit  (score, findings, tokens at risk; exit 2 on critical findings)
         ↓
-Copy fixpack → paste into agent chat to improve policy / habits
+ax-admin Logging page / ax_logs  (MCP calls handled for the project; admin grant)
+        ↓
+Paste the findings into agent chat to improve policy / habits
 ```
 
 Traces **never** alter agent-facing tool responses (`content.text` / `structuredContent`). Logging is side-channel only.
 
 ## Directions: Inbound, Outbound, Internal
 
-The Logging status bar and kind chips use three directions:
+Each line in the verbose log has one of three directions:
 
 | Direction | Log shape | Typical source |
 |-----------|-----------|----------------|
@@ -40,11 +31,7 @@ The Logging status bar and kind chips use three directions:
 | **Outbound** | `outbound tool=ax_…` (+ optional preview) | MCP tool response, or CLI `ToolTrace` finish |
 | **Internal** | domain / activity lines (`cli`, `policy`, `memory`, …) | Lifecycle detail that is not a request/response pair |
 
-The same legend includes **Neural**. That mark is the context ranker. It stays still. The latest preflight sparkle is what moves. The motion means context ranking ran during this turn. It does not mean a neural-network embedding was produced. With reduced motion the sparkle stays still, and the page announces “Context ranking ran.”
-
-Each preflight row shows a sparkle at the start of its title. Only the latest preflight row keeps moving while its turn is still receiving log lines, and for one minute after the last line. When a newer preflight row arrives, that sparkle animates and the earlier ones stay still. A line from a different turn stops it. With reduced motion it never moves.
-
-MCP brands those lines `[ax-mcp]`. CLI brands the same body with `[ax]` so provenance stays honest — Command Center still classifies them as inbound/outbound.
+MCP brands those lines `[ax-mcp]`. CLI brands the same body with `[ax]` so provenance stays honest. The direction is the same.
 
 **CLI commands that emit inbound + outbound** (same tool ids agents use over MCP):
 
@@ -60,9 +47,9 @@ MCP brands those lines `[ax-mcp]`. CLI brands the same body with `[ax]` so prove
 | `ax policy guard` | `ax_guard` |
 | `ax policy skill` / `ax policy skills` | `ax_skill` |
 
-Domain lines (`Internal · CLI` / `Internal · Policy` / `Internal · Memory`) still appear for the same runs. A CLI-only session can therefore show all three directions after a single `ax explore` or `ax policy match`.
+Domain lines (`cli`, `policy`, `memory`) still appear for the same runs. A CLI-only session can therefore write all three directions after a single `ax explore` or `ax policy match`.
 
-If Logging shows **0 in / 0 out** and only Internal rows while you use the CLI, upgrade to **ax 8.4.4+** (`ax upgrade` or re-run the shell installer). Older builds wrote domain/activity lines only.
+If the log holds no inbound or outbound lines and only domain lines while you use the CLI, the build is older than **ax 8.4.4**. Older builds wrote domain/activity lines only. Install a current build: the headless build is upgraded by running its installer again (see [Headless Linux build](/guides/headless-linux/#install)).
 
 ## Domain events
 
@@ -71,30 +58,28 @@ The same daily log also receives domain lines for:
 | Prefix | Source |
 |--------|--------|
 | `plugin` | Extractor plugins during index/sync |
-| `lsp` | `ax lsp enrich` / Unresolved → Enrich with LSP |
+| `lsp` | `ax lsp enrich` |
 | `ship-ci` | `ax ship --ci` |
-| `ship` | `ax ship --evaluate` / `--draft` / `--watch` |
-| `share` | `ax share` / token gate |
+| `ship` | `ax ship --evaluate` / `--draft` (and `--watch`, full ax only) |
+| `share` | `ax share` / token gate (full ax only) |
 | `workspace` | `ax index` / `ax sync` (incl. `--all`) / workspace switch |
 | `memory` | `ax remember` / `ax recall` / memory export·import / capture-git |
 | `policy` | `ax policy index|import|match|guard|…` |
 | `cli` | Graph readouts: `explore` / `impact` / `insights` / `report` / `context` / `status` |
 | `embed` | memory embedding backend |
-| `action` | Command Center live activity bus |
+| `action` | Command Center live activity bus (full ax only) |
 
 Domain lines are always written to the project’s dated verbose log.
 
-Filter these on the Logging page kind chips (also via `/logging?kind=lsp`). Quality / `ax mcp audit` can raise:
+`ax mcp audit` can raise these findings from domain lines:
 
 | Check | When |
 |-------|------|
 | `ShipCiFailed` | `ship-ci status=failed` in window |
 | `PluginExtractErrors` | `plugin … fail` lines |
 | `LspAvailableUnused` | Runnable language server on PATH (`--version` succeeds within 2 seconds), no `lsp enrich` while MCP is active. The PATH check runs only when the window has MCP calls and no `lsp enrich`, and its result is reused for 10 minutes |
-| `ShareReadonlyWrite` | Mutating API blocked in share/read-only |
+| `ShareReadonlyWrite` | Mutating API blocked in share/read-only (full ax only) |
 | `EmbedBackend` | Informational: `embed backend=…` line |
-
-Activity StatusBar rows deep-link to Logging with the matching kind filter.
 
 ## 1. Confirm the project log
 
@@ -102,8 +87,10 @@ Verbose MCP logging is always enabled. Reconnect the MCP server after changing i
 
 Lines go to:
 
-- `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` (authoritative for Logging + audit; legacy `mcp-verbose.log` is migrated on first access)
+- `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` (authoritative for the audit; legacy `mcp-verbose.log` is migrated on first access)
 - Optionally Cursor **Output → MCP** (stderr)
+
+A new file starts at midnight in the timezone set as `timezone` under `[ui]` in `<project>/.ax/ship.toml` (an IANA name such as `Europe/Amsterdam`). When it is empty or `local`, the host timezone is used. Timestamps inside lines stay UTC.
 
 When a Cursor session id is known, lines include `session=<uuid>` for tighter correlation.
 
@@ -111,51 +98,40 @@ CLI tool lines (`[ax] inbound`, `outbound preview`, `error`) are redacted before
 
 The audit reads only the dated files that can overlap what it checks: for a rolling window, the files from the day before the window start onward; for `--session`, the files from the day before the transcript's first timed event (all files when the transcript has no timestamps). Older files stay on disk and are not pruned automatically; remove them by hand if you do not want to keep the prompts they contain.
 
-## 2. Logging page (`ax web` → Logging)
+## 2. Logging page in ax-admin
 
-Open via the status-bar **Logging** chip, or navigate to `/logging`.
+The **Logging** page in [ax-admin](/guides/remote-admin/) lists the MCP calls the environment handled for the project, newest first: time, tool, result, duration, and size. It shows what the environment was asked, never the content: there are no arguments and no result bodies.
 
-Rows summarize routine activity as readable actions: **Workspace sync completed** with **19 files · 162 ms**, or **Git history captured** with **20 scanned · 2 captured**. A small marker sits in its own gutter. Only related call groups are connected; unrelated events have no dotted timeline. The Context column keeps kind/tool filters and avoids repeating an identical domain/tool label.
+![The MCP call log of an environment](/screenshots/ax-admin-logging.png)
 
-The original entry is preserved. Search the complete message or filter Event by a raw field such as `duration_ms=162`; select the row and expand **Raw line** to inspect or copy exactly what Ax logged. Unrecognized or failed domain messages retain their text.
+Logging is a management page. It appears only when the connection has the admin grant; see [Give a key the admin grant](/guides/remote-admin/#give-a-key-the-admin-grant).
 
-| Control | Purpose |
+The page reads the `ax_logs` MCP tool, which a credential with the admin grant can also call directly. `limit` (default 100, maximum 500), `before` (the previous page's `nextBefore`), and `tool` (only that tool) are optional:
+
+```text
+ax_logs({ "limit": 50, "tool": "ax_explore" })
+```
+
+For the full lines, with arguments, previews, and domain events, read the dated log file on the machine that runs ax:
+
+```bash
+grep "inbound tool=ax_explore" .ax/mcp-verbose-*.log
+```
+
+The full ax, which is being phased out, also has a live Logging page with kind filters, a Call Inspector, and a Quality slide-out in its Command Center; see [Command Center](/guides/command-center/).
+
+## 3. Audit with `ax mcp audit`
+
+`ax mcp audit` correlates the verbose log with a Cursor agent transcript and scores the window:
+
+| Part of the report | Meaning |
 |---|---|
-| **Kind chips** | Filter Inbound / Outbound / Preview / Error / Internal / Enrich / plugin / lsp / ship / share / workspace / memory / policy / cli / embed / action |
-| **Has text chip** | Show only events with a human-readable text payload (`prompt`, `query`, `text`, `message`, or `q` — including nested JSON paths and flat `key=value` fields). Matching rows show direction markers and a key badge (`prompt` / `query` / …) in Context; the Call Inspector opens with a **Prompt / text** hero section. URL alias: `?hasQuery=1` still works. |
-| **Date dropdown** | Filter by calendar day (`YYYY-MM-DD` in the configured timezone); Time column shows date + clock |
-| **Timezone** | Set under **Settings → Appearance → Timezone** (IANA, e.g. `Europe/Amsterdam`). Controls Logging display and the configured daily rotation zone. Timestamps inside lines stay UTC. With an empty/local setting, display uses the browser timezone and file rotation uses the host timezone; these can differ when accessed remotely. |
-| **Tool dropdown** | Filter by tool name (`ax_preflight`, `ax_explore`, …). Domain/CLI lines also fill TOOL: `memory`, `policy`, `workspace`, `lsp`, `ship-ci`, `cli:explore`, … (from `tool=` on the log line or inferred from `[ax] …` / `cli cmd=`). |
-| **Text search** | Free-text over summary / meta |
-| **Project switcher** | Use the app header or status bar to switch workspace and its verbose log |
-| **Newest / Scroll to new** | Table is **newest-first**. Stay pinned to the top for live updates, or use **Scroll to new** (toolbar + floating chip) after scrolling into history |
-| **Older days** | Scroll toward the bottom to load previous dated log files |
-| **Status bar** | Live in / out / prev / err / event counts; muted danger tint when offline |
-| **Quality** | Opens the quality panel; the button includes the current score |
-| **Call Inspector** | Tap a row (or Enter) for pretty-printed JSON/XML and `key=value` fields |
-
-![Logging inspector with readable call steps and the original raw line](/screenshots/cc-logging-inspector-dark.png)
-
-Keyboard: `↑↓` / `j` `k` to move (down = older), Home = newest, End = oldest, Enter to inspect, Esc / `b` to back.
-
-Offline / reconnecting: existing log rows remain readable while Ax reconnects. The live indicator and status bar show connection state.
-
-## 3. Quality slide-out (Q chip)
-
-The status-bar **Q** chip shows a live score (and a critical badge when needed). Click it (or the Logging **Quality** button) for:
-
-| Section | Meaning |
-|---|---|
+| **Score and grade** | Starts at 100 and drops per finding (see [Quality checks](#5-quality-checks-scoring)) |
 | **Correlation** | How well verbose lines match the Cursor transcript window |
 | **Enrichment** | Inject size p50/p95, empty enrich rate, matched-rules rate, preflight count |
 | **Tool mix** | Preflight / Explore / Guard / Graph / Read / Grep counts |
-| **Token waste** | Estimated tokens at risk this window |
+| **Tokens at risk** | Estimated tokens at risk this window |
 | **Findings** | Ranked checks with severity and waste hints |
-| **Actions** | **Copy fixpack**, Run full session audit, Open Logging, Refresh |
-
-The live score reruns the audit only when the project's verbose log changes, and at most once every 5 seconds; when there is no verbose log it keeps the last result. Once the Q chip or the quality stream has been opened, a background check looks for log changes every 5 seconds. **Run full session audit** always runs a new audit.
-
-CLI equivalent:
 
 ```bash
 ax mcp audit
@@ -184,7 +160,7 @@ This installs hooks under `~/.cursor/hooks/` and merges `sessionStart` into `~/.
 - `ax savings import --all` keeps the tagged model for by-model rollups (when model is present)
 - `ax mcp audit` prefers the ax-heaviest transcript and aligns windows more accurately
 
-If correlation stays near 0%: confirm the hook ran (`type %USERPROFILE%\.ax\active-cursor-session`), reconnect ax MCP with the intended project path, and pass `--session <uuid>` when auditing a specific chat.
+If correlation stays near 0%: confirm the hook ran (`cat ~/.ax/active-cursor-session`, or `type %USERPROFILE%\.ax\active-cursor-session` on Windows), reconnect ax MCP with the intended project path, and pass `--session <uuid>` when auditing a specific chat.
 
 Manual debug tag:
 
@@ -208,9 +184,9 @@ Score starts at **100** and drops when findings fire. Main checks:
 
 Auditor softens false positives when possible: recovered MCP errors (same-tool success within 60s), untimed whole-session Read/Grep tails while verbose is idle, enrich side-channels attached to preflight clusters, domain `[ax] workspace|lsp|…` lines (not counted as MCP tool clusters), preferring the transcript with the most ax activity (not the newest empty chat), and skipping ExploreBeforeGrep / LspAvailableUnused when there is no MCP inbound in the window.
 
-## 6. Copy fixpack
+## 6. Act on findings
 
-**Copy fixpack** builds a Markdown brief from the current findings (what failed, why it wastes tokens, suggested policy / habit fixes). Paste it into an agent chat so the agent can update rules, strengthen Explore-before-Grep, or fix guard coverage.
+Each finding says what failed and why it wastes tokens. Paste the `ax mcp audit` report into an agent chat so the agent can update rules, strengthen Explore-before-Grep, or fix guard coverage. `--json` gives the same findings in machine-readable form.
 
 ## 7. End-to-end playbook
 
@@ -221,15 +197,15 @@ ax savings hook install
 # Restart ax MCP in Cursor
 
 # During / after a session
-ax web --open                    # Logging page + Q chip
 ax mcp audit                     # CLI report; exit 2 if critical
 ax mcp audit --json              # machine-readable
+# ax-admin → Logging             # MCP calls handled for the project (admin grant)
 ```
 
 Related surfaces:
 
-- [Token savings](/guides/token-savings/) — heatmap, TokenViz path graph, import, pricing
-- [Command Center](/guides/command-center/) — Logging page in the page table
+- [Token savings](/guides/token-savings/) — savings formula, import, pricing
+- [ax-admin](/guides/remote-admin/) — Logging page and the admin grant
 - [MCP Server](/reference/mcp-server/) — lean responses + logging and stderr options
 - [CLI](/reference/cli/#ax-mcp-audit) — `ax mcp audit` flags
 - [Policy Engine](/guides/policy-engine/) — rules that raise Explore-before-Grep / guard scores
@@ -238,11 +214,12 @@ Related surfaces:
 
 | Symptom | Fix |
 |---|---|
-| Logging empty | Reconnect MCP with the intended project path; confirm today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` grows. CLI-only: run `ax explore "…"` or `ax policy match "…"` in that project |
-| 0 inbound / 0 outbound with CLI-only Internal rows | Need **ax 8.4.4+** for CLI `ToolTrace`. Upgrade, then run a graph or policy command and refresh Logging |
-| Q score stuck / muted | Need inbound traffic + verbose file; open Logging and trigger a preflight (MCP) or `ax preflight` / `ax explore` (CLI) |
+| Log empty | Reconnect MCP with the intended project path; confirm today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` grows. CLI-only: run `ax explore "…"` or `ax policy match "…"` in that project |
+| No inbound or outbound lines, only domain lines from the CLI | Need **ax 8.4.4+** for CLI `ToolTrace`. Install a current build, then run a graph or policy command |
+| Score does not change | Need inbound traffic + verbose file; trigger a preflight (MCP) or `ax preflight` / `ax explore` (CLI), then run `ax mcp audit` again |
 | ExploreBeforeGrep false alarm | Install session hook; prefer timed transcripts; re-run audit after a real ax-heavy chat; quiet/DEGRADED MCP should not flag this |
 | Correlation near 0% | Wrong project; MCP disconnected; missing `session=` (reinstall hook / restart MCP); or audit without matching transcript — pass `--session` |
 | UncorrelatedTool (medium) despite a project log | Usually ax MCP is offline after a reinstall — reconnect MCP; a rolling-window audit with no MCP calls in the window ignores the transcript calls, because verbose logging is always on |
-| LspAvailableUnused | Run `ax lsp enrich` (or Unresolved → Enrich with LSP) while MCP is active; only `[ax] lsp enrich …` log lines count, not prompts that mention it |
-| Fixpack empty | No findings in window — widen `--window-minutes` or run a fuller agent turn first |
+| LspAvailableUnused | Run `ax lsp enrich` while MCP is active; only `[ax] lsp enrich …` log lines count, not prompts that mention it |
+| No findings | Nothing fired in the window — widen `--window-minutes` or run a fuller agent turn first |
+| ax-admin shows no Logging page | The connection lacks the admin grant; see [Give a key the admin grant](/guides/remote-admin/#give-a-key-the-admin-grant) |

@@ -1,14 +1,11 @@
 ---
 title: Memory
 description: Brain-style memory for ax — working notes, named long-term decisions, and a permanent archive bound to the code graph.
-banner:
-  content: |
-    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 ax keeps a brain-style memory in the same local SQLite database as the code graph.
 
-Current vault behavior (schema 44+): FTS ranks over normalized `search_text` with BM25F field weights; recall can expand with a bilingual lexicon and PMI associations and returns a `why` signal per hit. PMI learns only from the newest 2,000 active long-term memories (decisions, notes, conventions; not turns, docs, or archive rows), so the same vault always expands a query the same way. Memories auto-anchor to graph node versions. A node gets a new version when its source text changes, even with the same signature, and anchors on an older version are flagged stale. Sync captures file changes and graph history: one file-change memory per new content of a file, kept in the recent tier and moved to the archive by the same retention as turns. Full backups are zstd-compressed JSONL under `.ax/backups/memory/`. Prospective `--when` tags fire on guard. The Command Center Memory page has a review inbox; the Graph page has an as-of time slider. A name fetches the exact memory. The raw episode stays. Recall is bound to the live graph. MCP and the CLI call one function, so neither surface is a subset.
+Current vault behavior (schema 44+): FTS ranks over normalized `search_text` with BM25F field weights; recall can expand with a bilingual lexicon and PMI associations and returns a `why` signal per hit. PMI learns only from the newest 2,000 active long-term memories (decisions, notes, conventions; not turns, docs, or archive rows), so the same vault always expands a query the same way. Memories auto-anchor to graph node versions. A node gets a new version when its source text changes, even with the same signature, and anchors on an older version are flagged stale. Sync captures file changes and graph history: one file-change memory per new content of a file, kept in the recent tier and moved to the archive by the same retention as turns. Full backups are zstd-compressed JSONL under `.ax/backups/memory/`. Prospective `--when` tags fire on guard. A name fetches the exact memory. The raw episode stays. Recall is bound to the live graph. MCP and the CLI call one function, so neither surface is a subset.
 
 ## What ax remembers
 
@@ -48,11 +45,7 @@ Embeddings stay on this machine. Every build stores one local hash model, `hash-
 4. For an old graph change, a log, or a past turn, use `ax recall --depth archive` and `ax history --depth archive` (MCP: `depth=archive` on both). Preflight will not contain those hits. To search zstd/JSONL memory snapshots under `.ax/backups/memory/` (including a purged row that still exists in a snapshot), use `ax recall --depth backup` (MCP: `depth=backup`). That path is recall-only and is never injected. `ax recall --id ID` returns the full body and its cues.
 5. Confirm a candidate with `ax remember --confirm ID` (MCP: `action=confirm` and `id`). The old episode stays.
 
-On the Command Center Memory page, every row shows its tier: working, recent, long-term, or archive. Turn on Archive to search the permanent tier. A hit from that search is also marked recalled from archive.
-
-![Memory vault — browse, search, and inspect stored memories with hybrid recall](/screenshots/cc-memory-vault-dark.png)
-
-![Archive search on the Memory page: the hit carries the archive tier and is marked recalled from archive](/screenshots/cc-memory-archive-dark.png)
+In [ax-admin](/guides/remote-admin/), the **Memory** page searches memories and history with the same tools (`ax_recall`, `ax_history`). **Add memory** appears there when the connection has write access. See [ax-admin](#ax-admin) below.
 
 ## Tiers
 
@@ -131,7 +124,7 @@ A turn older than 90 days leaves the hot set. It is not deleted. Preflight does 
 
 ax also keeps decisions, bug fixes, architecture notes, and conventions that agents should not re-discover from scratch. Memories live in `.ax/ax.db`, work fully offline, and the current tier is what preflight may inject.
 
-You can also read and edit memories, rules, and skills in Obsidian: `ax web` serves them as a WebDAV drive. See [Obsidian Vault](/guides/obsidian-vault/).
+The full ax, which is being phased out, also serves memories, rules, and skills as a WebDAV drive that Obsidian can open; see [Obsidian Vault](/guides/obsidian-vault/). The headless build has no such drive.
 
 ## Why Memory matters
 
@@ -147,7 +140,7 @@ git post-merge  ──► ax capture-git ──┤              │
 agent turn end  ──► ax turn-hook ────┤              │
 CLI: ax remember ────────────────────┤              ▼
 MCP: ax_remember ────────────────────┤  embed()   recall_for_prompt(prompt, 3)
-UI: "New memory" ────────────────────┼──────►       │
+ax-admin: Add memory ────────────────┼──────►       │
                                      │            ┌─┴─────────────────────┐
                                   ax.db           │ FTS5 BM25 leg         │
                                   memories +      │ Vector cosine leg     │
@@ -166,7 +159,7 @@ UI: "New memory" ────────────────────┼
 
 2. **Automatic — agent turns.** In Cursor and Claude Code, every agent turn that changed files or made a commit becomes a local `kind: turn` memory with the prompt, the agent's final reply (the outcome), the files, and the commit subjects. Preflight gives related past turns back to the agent, and `ax_history` answers "when did I change X". See [Per-turn memories](#per-turn-memories).
 
-3. **Manual — you or your agent.** Click "New memory" in the Command Center, run `ax remember` from the CLI, or let agents store knowledge by calling `ax_remember` via MCP. All three paths run duplicate detection after saving.
+3. **Manual — you or your agent.** Run `ax remember` from the CLI, let agents store knowledge by calling `ax_remember` via MCP, or use **Add memory** on the ax-admin Memory page (it calls `ax_remember` and needs write access). All three paths run duplicate detection after saving.
 
 4. **Injected — every agent turn.** When an agent calls `ax_preflight` (mandatory at the start of every turn per ax policy), the user's prompt is matched against long-term memories. The top 3 titles are injected, and the block stops at 6000 characters. Archive rows stay out. An open file raises a long-term memory whose cue is a symbol in that file. `depth=archive` then takes one hop over a memory link, a shared file, or a shared symbol cue. A changed embedding model is rewritten in the background on sync.
 
@@ -249,7 +242,7 @@ Besides automatic injection, agents can explicitly search memories when they nee
 - **By id.** `ax_recall` with `id`, or `ax recall --id ID`. Returns that row and its cues.
 - **Free text.** `ax_recall` with `query` and `depth` (`hot`, `archive`, or `backup`), or `ax recall QUERY --depth hot|archive|backup`. Hot skips the archive. Archive is only the archive, then one hop. Backup scans `.ax/backups/memory/` snapshots (`.zst` / `.jsonl`) and is not injected. Default depth is hot. `limit` defaults to 5.
 - **History.** `ax_history` and `ax history --depth archive` list old turns, graph changes, and selected logs.
-- **Command Center.** The Memory search box runs the same hot search. The Archive checkbox switches it to archive depth.
+- **ax-admin.** The Memory page searches memories and history through `ax_recall` and `ax_history`.
 
 Use explicit recall when you want to check "have we solved this before?" with more results than preflight delivers.
 
@@ -259,7 +252,6 @@ When a new memory is stored (via any path), ax runs `find_similar` with a cosine
 
 - **MCP:** The response includes `similar[]` with the matching memories and a note asking the agent to check for contradictions.
 - **CLI:** Prints "Similar existing memories (possible duplicate/contradiction)" with similarity percentages.
-- **Command Center:** Shows a toast warning with the count of similar memories.
 
 A near-duplicate is not deleted. Consolidation does not turn a turn or a commit into a decision because the body contains "because", "decided", or "decision", and it does not write a `supersedes` link from a similar memory. A decision is stored when a person confirms it. Schema 31 marks an old consolidation candidate rejected. Confirm restores that row and any similarity link that was revoked with it.
 
@@ -271,7 +263,7 @@ The embedding model is entirely local — no API calls, no model files to downlo
 - **Sign randomization:** A second hash bit determines the sign of each feature, reducing collision bias.
 - **L2 normalization:** The final vector is normalized to unit length, so cosine similarity equals the dot product.
 
-Feature-hash embeddings give deterministic, typo-tolerant similarity that fuses well with FTS5. The stored model name is `hash-v1`. Command Center **Settings → Embeddings** shows that one memory model (`GET /api/memory/embed-status` returns `backend` `hash` and `model` `hash-v1`) and a Neural status row (`GET /api/neural/status`) with the measured token delta, rank latency per preflight, last evaluated precision, and promoted models. A number that was not measured reads as unavailable. Neural is required and stays on. `ax neural` and the `ax_neural_*` MCP tools return the same JSON. See [CLI](/reference/cli/#ax-neural) and [MCP](/reference/mcp-server/).
+Feature-hash embeddings give deterministic, typo-tolerant similarity that fuses well with FTS5. The stored model name is `hash-v1`. `ax neural status` (MCP: `ax_neural_status`) shows the Neural status: feedback rows, the measured token delta, rank latency per preflight, last evaluated precision, and promoted models. A number that was not measured reads as unavailable. Neural is required and stays on. `ax neural` and the `ax_neural_*` MCP tools return the same JSON. See [CLI](/reference/cli/#ax-neural) and [MCP](/reference/mcp-server/).
 
 ## Storage schema
 
@@ -291,7 +283,7 @@ Triggers keep the FTS5 index in sync automatically on INSERT, UPDATE, and DELETE
 
 | Source | Created by |
 |---|---|
-| `manual` | CLI `ax remember` or Command Center "New memory" |
+| `manual` | CLI `ax remember` |
 | `mcp` | Agent calling `ax_remember` via MCP |
 | `git` | `ax capture-git` (hooks or manual) |
 | `turn-hook` | `ax turn-hook` (Cursor / Claude Code agent turn hooks) |
@@ -312,7 +304,7 @@ The capture process:
 4. Uses `INSERT OR IGNORE` with deterministic IDs (`git-{first 12 chars of hash}`), so re-running is idempotent
 5. Git memories start at confidence 0.8 and are stored in the archive. Preflight does not inject them. A commit that states a decision becomes a candidate until you confirm it.
 
-You can also run `ax capture-git` manually or click "Capture from git" in the Command Center to backfill history.
+You can also run `ax capture-git` manually to backfill history.
 
 ## Per-turn memories
 
@@ -334,7 +326,7 @@ Rules:
 - **Given back while you work.** `ax_preflight` adds an `<ax_turn_history>` block with at most 3 related past turns, newest first: turns that changed a file passed in `files`, or turns that `ax_recall` finds for the prompt *and* that share at least 2 words of 4+ letters with it. Each line has the date, the prompt, the first 800 characters of the outcome, and up to 6 files. The block is at most 1,200 characters.
 - **Local.** `turn` memories are still skipped by the `<ax_memories>` block, the memory titles list, and `ax memory export`.
 - **Demoted after 90 days, backed up first.** Every turn end that writes moves `turn` and `file_change` memories older than 90 days to the archive. They are first appended to `.ax/backups/turn-memories-YYYY-MM-DD.jsonl`. If that write fails, nothing changes. The archived memory stays fetchable by id and by cue. No other kind is demoted by this job.
-- **Change kind per file.** The memory body ends with a `Changes:` section (`A path`, `M path`, `D path`) so Command Center can color each file. Turns captured before this section existed only have `Files:` and show their files without a color.
+- **Change kind per file.** The memory body ends with a `Changes:` section (`A path`, `M path`, `D path`) so each file carries its change kind (added, modified, or deleted). Turns captured before this section existed only have `Files:`, without a change kind.
 - **Secrets redacted.** API keys and tokens (`sk-…`, `ghp_…`, `AKIA…`, Slack `xox…`, Stripe, GitLab, npm and Google keys), JWTs, values of secret-named keys (`password=…`, `db_password=…`, `"api_key": "…"`, `client_secret: …`, `token = …`), `Authorization: Bearer …` values, the password in `scheme://user:password@host`, and long hex or base64 runs are stored as `[redacted]`. Git commit titles are redacted the same way as their bodies.
 - **Never blocks.** The hooks print nothing and always exit 0; outside a git repository or an ax project they do nothing.
 
@@ -408,16 +400,17 @@ The MCP server's `initialize` response includes guidance for agents:
 
 > *Memory vault: when you make a durable decision, fix a tricky bug, or establish a convention, store it with `ax_remember`. Use `ax_recall` to search past decisions before re-deriving them. Relevant memories are auto-injected via `ax_preflight`.*
 
-## Command Center
+## ax-admin
 
-The **Memory** page in the Command Center (`ax ship --watch` or `ax web`) provides:
+[ax-admin](/guides/remote-admin/) is the visual interface for a headless ax. It connects to the remote MCP address of an Ax (`ax mcp remote serve`) and uses the same memory tools as an agent:
 
-- **Overview strip** — one compact row for how memories arrive (git, you or an agent, every turn) and the counts (total, git, manual/agent, search mode)
-- **Memory vault list** — the main view: memories sorted by recency, with kind icons, age, tags, and source badges
-- **Live hybrid search** — the search box runs the same recall algorithm agents use; scores shown per result
-- **Detail blade** — click a memory to slide a panel in from the right. It scrolls on its own and shows the id, kind, source, enabled state, created and updated times, confidence, recall score, tags, the full text, linked files, commits, and outcome when those were stored. `[[links]]` in the text are clickable, and **Linked from** lists the rules, skills, and memories that link to this one
-- **New memory modal** — composer with title, body, kind selector, and duplicate warning on save
-- **Capture from git** — one-click button to mine recent git history
+- **Memory page** — search memories and history. It is shown when the server offers `ax_recall`, `ax_history`, and `ax_remember`.
+- **Add memory** — stores a memory through `ax_remember`. It appears only when the connection has write access.
+- **Tools page** — runs any tool the server offers, including `ax_recall` with `cue`, `id`, or `depth`, from a form built from the tool's input schema.
+
+Everything else on this page is done from the CLI or through MCP: `ax remember --confirm`, `ax remember --purge`, `ax capture-git`, `ax memory export`, and `ax memory import`.
+
+The full ax, which is being phased out, also has a Memory page in its Command Center, with a detail panel, file diffs, a review inbox, and a "Capture from git" button; see [Command Center](/guides/command-center/).
 
 ## Best practices
 
@@ -434,15 +427,11 @@ The **Memory** page in the Command Center (`ax ship --watch` or `ax web`) provid
 - [MCP server reference](/reference/mcp-server/) — `ax_remember` and `ax_recall` tool schemas
 - [CLI reference](/reference/cli/#memory-vault) — `ax remember`, `ax recall`, `ax capture-git`
 
-## Files, diffs, and images in Command Center
-
-Open a memory on the **Memory** page to see its files and commits. A file row is green when the memory added it, orange when it edited it, and red when it deleted it. For git memories the kind comes from the commit; for turns it comes from the `Changes:` section. Hovering a row shows nothing. Click a file or a commit to open its diff with line numbers: added lines are green, removed lines red. **Close**, **Esc**, or a click outside the popup dismisses it; **Esc** closes only the popup, not the memory. The arrow icon at the end of a file row opens the file in your git host.
-
-Images in the memory text render in the preview. An absolute local path such as `![shot](/Users/me/repo/docs/shot.png)` is served through `GET /api/memory/{id}/image`; click an image to zoom in.
-
 ## Folder docs
 
-Folders added under **Settings → Vault connection → Folders** with **Index into memory** on are imported as `doc` memories: one per `.md`, `.markdown`, or `.txt` file, tagged `folder:<name>`, with source `folder`. `ax_recall` finds them. Like turns, they are left out of preflight's memory titles and the git-shared memory export. See [Obsidian vault → Folders](/guides/obsidian-vault/#folders).
+A `doc` memory is a file imported from a folder on disk: one per `.md`, `.markdown`, or `.txt` file, tagged `folder:<name>`, with source `folder`. `ax_recall` and `ax recall` find them. Like turns, they are left out of preflight's memory titles and the git-shared memory export.
+
+Adding a folder and syncing it is done in the Command Center of the full ax, which is being phased out. The headless build has no command or MCP tool for it. See [Obsidian vault → Folders](/guides/obsidian-vault/#folders).
 
 ## Project boundaries and linked context
 

@@ -1,9 +1,6 @@
 ---
 title: Dependency lifecycle security
 description: How Ax uses automated vulnerability audits, a seven-day package release-age gate, and review-only remediation pull requests.
-banner:
-  content: |
-    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 Ax maintains third-party supply-chain hygiene with GitHub Actions and
@@ -16,7 +13,7 @@ displays both the LCM policy badge and the status of the monitor.
 [Dependency Auto-Remediation](https://github.com/GaryWenneker/ax/actions/workflows/dependency-autofix.yml)
 runs daily and after npm lockfile changes on `main`.
 
-For the website, Command Center and telemetry worker, each run:
+For the website, the telemetry worker and the web interface of the full ax (`crates/ax-web/web-ui`), each run:
 
 1. Executes `npm audit` before and after a non-breaking `npm audit fix`
    against the checked-in lockfile.

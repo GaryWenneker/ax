@@ -1,18 +1,6 @@
 ---
 /** Shared, quiet documentation chrome; search and mobile navigation stay native. */
-import DeckBackdrop from './DeckBackdrop.astro';
 import Default from "@astrojs/starlight/components/Header.astro";
 ---
 
-<DeckBackdrop variant="page" />
-<script is:inline>
-  // Starlight renders the header inside its own layout; park the fixed backdrop on <body> so it
-  // sits behind the whole page instead of inside the header's stacking context.
-  function axParkDocBackdrop() {
-    var field = document.querySelector('[data-ax-backdrop-root]');
-    if (field && field.parentElement !== document.body) document.body.prepend(field);
-  }
-  axParkDocBackdrop();
-  document.addEventListener('astro:page-load', axParkDocBackdrop);
-</script>
 <Default {...Astro.props} />

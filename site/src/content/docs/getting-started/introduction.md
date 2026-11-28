@@ -1,26 +1,27 @@
 ---
 title: Introduction
-description: What ax is — knowledge graph, memory vault, policy engine, and an admin interface for AI coding agents.
-banner:
-  content: |
-    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
+description: What ax is — a headless knowledge graph, memory vault and policy engine for AI coding agents, with ax-admin as the visual interface.
 ---
-
-![ax Command Center — Rules page with the Policy, Code, Activity, and System sidebar](/screenshots/cc-policy-rules-dark.png)
 
 **ax** is **local-first intelligence for AI coding agents** — written in Rust, installed as a single binary, with no cloud index and no API keys.
 
-Ax is moving to a headless `ax` on every platform with `ax-admin` as the only visual interface. The full ax and its built-in Command Center are being phased out; see [Headless ax and ax-admin](/guides/phase-out/).
+Ax is two programs:
 
-These layers work together in every project:
+- **`ax`** is headless. It holds the knowledge graph, the memory and the policy engine, and serves them through the CLI and the MCP server. It has no built-in interface.
+- **`ax-admin`** is the visual interface. It is a separate application that connects to an Ax through its [remote MCP](/guides/remote-mcp/) address.
+
+![ax-admin — the Operations page with sync, rebuild index and reload policy](/screenshots/ax-admin-operations.png)
+
+The full ax, with its built-in Command Center, is being phased out; see [Headless ax and ax-admin](/guides/phase-out/). The headless build is released for Linux today. On macOS and Windows you install the full ax, whose CLI and MCP server are the same commands. See [Installation](/getting-started/installation/).
+
+The first three layers are in `ax` and work together in every project. The fourth is `ax-admin`:
 
 | Layer | What it does |
 |---|---|
 | **Knowledge graph** | Tree-sitter parsing → SQLite index of symbols, calls, imports, and routes |
 | **Memory** | Five tiers in one local database: this chat's notes, recent turns, named long-term decisions, a permanent archive, and the live code graph. A name fetches the exact memory. Preflight injects at most three current titles and never the archive. MCP and the CLI do the same thing. |
 | **Policy engine** | IDE-agnostic rules and skills in `.agents/`, matched and injected per turn |
-| **ax-admin** | A separate application and the interface going forward: status, search, symbols, insights, rules, skills, memory, sessions, operations, files, usage and logging of any Ax, through its remote MCP address. See [ax-admin](/guides/remote-admin/) |
-| **Command Center** (being phased out) | Policy editors, memory vault, graph, quality gates, token savings, Logging / Quality (MCP + CLI inbound/outbound/internal), SSE dashboard, draft PRs |
+| **ax-admin** | A separate application and the visual interface: status, search, symbols, insights, rules, skills, memory, sessions, operations, files, usage and logging of any Ax, through its remote MCP address. See [ax-admin](/guides/remote-admin/) |
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 

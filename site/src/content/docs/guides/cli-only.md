@@ -1,9 +1,6 @@
 ---
 title: CLI-only mode
 description: Run the same ax preflight, session, turn, and graph engines without MCP, plugins, IDE hooks, or daemons.
-banner:
-  content: |
-    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 Use ax when your agent cannot (or must not) load an MCP server. The CLI talks to the **same shared engines** MCP uses: preflight, sessions, turns, memory, graph explore, and activity logging.
@@ -49,7 +46,7 @@ printf '%s' '{"outcome":"…","decisions":[]}' \
   | ax turn finish --session "$SESSION" --turn "$TURN" --outcome-stdin --json
 ```
 
-Research turns with no file changes still finish and write a Memory row with `source=cli-turn` (Command Center shows a **cli** badge).
+Research turns with no file changes still finish and write a Memory row with `source=cli-turn`. Find it with `ax recall`, or on the **Memory** page of [ax-admin](/guides/remote-admin/).
 
 | Need | CLI |
 |---|---|
@@ -69,7 +66,7 @@ Team rules (`prefer-mcp-ops`, `explore-before-grep`, `startup`, `subagents`) and
 
 ## Logging parity with MCP
 
-CLI graph and policy commands write the **same inbound / outbound shapes** MCP uses (branded `[ax]`, not `[ax-mcp]`), plus Internal domain lines (`cli` / `policy` / `memory`). After `ax explore`, `ax remember` / `ax recall`, `ax preflight`, or `ax policy match|index|guard|skill`, open Command Center **Logging** for the project — you should see non-zero **in** and **out** counts as well as Internal rows.
+CLI graph and policy commands write the **same inbound / outbound shapes** MCP uses (branded `[ax]`, not `[ax-mcp]`), plus Internal domain lines (`cli` / `policy` / `memory`). After `ax explore`, `ax remember` / `ax recall`, `ax preflight`, or `ax policy match|index|guard|skill`, open today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` — you should see inbound and outbound lines as well as Internal lines.
 
 Requires **ax 8.4.4+**. Details: [MCP Logging & Quality — Directions](/guides/mcp-quality/#directions-inbound-outbound-internal).
 

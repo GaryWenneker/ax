@@ -1,14 +1,9 @@
 ---
 title: Architecture Insights
-description: Communities, god nodes, surprising connections, the architecture report, and the interactive graph — from one analysis engine.
-banner:
-  content: |
-    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
+description: Communities, god nodes, surprising connections, the architecture report, and graph exports — from one analysis engine.
 ---
 
-ax turns the knowledge graph into a map of your architecture. One analysis engine powers three surfaces: the `ax insights` / `ax report` CLI commands, the `ax_insights` / `ax_report` MCP tools, and the Command Center **Graph** page. It works entirely on your local index — no LLM calls required.
-
-![Interactive Graph — Leiden communities, god nodes, confidence-tagged edges, and doc nodes](/screenshots/cc-graph-dark.png)
+ax turns the knowledge graph into a map of your architecture. One analysis engine powers three surfaces: the `ax insights` / `ax report` CLI commands, the `ax_insights` / `ax_report` MCP tools, and the **Insights** page of [ax-admin](/guides/remote-admin/). It works entirely on your local index — no LLM calls required.
 
 ## What it computes
 
@@ -55,62 +50,42 @@ Agents get the same analysis without shelling out:
 
 Use `ax_insights` for a fast architectural overview before diving into a large unfamiliar codebase, and `ax_report` when you want a durable, shareable summary.
 
+## ax-admin
+
+The **Insights** page of [ax-admin](/guides/remote-admin/) shows the same analysis for the environment it is connected to: the subsystems, the most connected symbols and the architecture report. It appears when the connected server offers `ax_insights` and `ax_report`. From there, the **Nodes** page opens the source, callers, callees and impact of one symbol.
+
+`ax-admin` has no graph canvas. To look at the graph itself, export it; see [Visual graph](#visual-graph).
+
 ## Visual graph
 
-The Command Center **Graph** page renders the graph as an interactive force-directed layout:
+`ax export graph-html` writes the graph as one self-contained, interactive HTML file with a force-directed layout:
 
 - **Node color = community** — subsystems separate visually.
 - **Node size = degree** — god nodes pop.
 - **Edge style = confidence** — solid `extracted`, dashed `inferred`, dotted `ambiguous`.
 - **Docs = squares** — `.md`/`.mdx` files stand apart from code (circles).
-- Click any node to open the existing detail panel; pan, zoom, and drag to explore.
-
-Open it with `ax web --open` and pick **Graph** in the sidebar.
-
-**Obsidian-style layout.** The Structure view uses a d3-force simulation, like the Obsidian graph. All nodes start in one tight cluster at the center and spread out. Nodes, links, and shapes are drawn in world space, so zooming in makes them bigger; labels fade in once you zoom past the **Text fade threshold**. Hovering a node colors it and its direct links in the theme accent color and dims everything else. Drag a node to pull its neighbors along. The node that is open in the blade gets a pulsing ring in the accent color, and **Show selection** on the canvas centers the view on it again.
-
-**Graph settings panel.** It is closed by default. Click **Settings** on the canvas to open it; click anywhere outside it to close it. It has the same sections as Obsidian, and settings are saved in the browser:
-
-- **Filters** — search files, Labels (always show labels), Attachments (doc nodes), Existing files only, Orphans (nodes without links)
-- **Groups** — **New group** adds a query and a color; matching nodes use that color
-- **Display** — Arrows, Text fade threshold, Node size, Link thickness, **Animate** (restart from the single cluster)
-- **Forces** — Center force, Repel force, Link force, Link distance (changes reheat the layout live)
-- The reset button restores the defaults.
-
-**Insights (onboarding, no LLM).** The **Insights** button on the canvas opens the left panel. It lists Leiden **subsystems**, a **god-node tour** (Prev/Next), and **Ask the graph** prompts (the same templates as `ax report`). Click a subsystem to hide the rest of the canvas. These clusters are code coupling, not business processes.
-
-**Domain view (opt-in overlay).** Toggle **Structure / Domain** in the Graph toolbar. Domain is a horizontal graph of `domain` → `flow` → `step` read from `.ax/domain-graph.json`. It does **not** change `ax.db`. Ask an agent to run the `domain` skill (or write the JSON yourself). `GET`/`PUT /api/domain-graph` load and save the file. Empty overlay → empty canvas plus a hint. The skill is seeded on `ax init` as `.ax/policy/skills/domain/SKILL.md`.
-
-Controls:
-
-- **Structure / Domain** toggle
-- **Search / Kind / Community** filters — focus a subsystem or symbol kind
-- **Density** slider — how many top-degree nodes to load (structure view)
-- **Node-count selector** — cap large graphs (e.g. 100 of N nodes)
-- **Recompute communities** — re-run Leiden detection after index changes
-- **Reload overlay** — re-read `.ax/domain-graph.json` in Domain view
-
-![Interactive Graph — Leiden communities, god nodes, confidence-tagged edges, and doc nodes](/screenshots/cc-graph-dark.png)
-
-### Policy graph (rules, skills, and memories)
-
-The **Graph** button in the header of the Rules and Skills pages opens a full-screen graph of every rule, skill, and memory, connected by their `[[wikilinks]]`, like the Obsidian graph. It behaves like the Structure view: one start cluster, accent-colored hover links, and the same **Settings** panel (closed until you open it; a click outside closes it), stored separately from the code graph. The legend shows the colors for rules, skills, and memories; global items have an accent ring. Turn memories (raw chat prompts) are left out.
-
-The item open on the page is preselected with the pulsing ring. Clicking a rule or skill node opens its edit blade, the same editor as on the Rules and Skills pages, so you can change and save it without leaving the graph; saving redraws the graph. Clicking a memory node opens a blade with its links, backlinks, and **Open**, which goes to the memory. **Esc** closes the blade first, then the graph. The data comes from `GET /api/links/graph`.
-
-### Portable export
-
-**Command Center → Graph:** use the toolbar **Export** format + **Download** (and **Copy** for Mermaid / PlantUML / DOT / Cypher text) to save the current density slice as JSON, DOT, GraphML, GEXF, Cypher, Mermaid, or PlantUML (`GET /api/graph/export?format=…&limit=…`). The control shows node/edge counts and notes when the slice is truncated vs the full CLI HTML export.
-
-For a self-contained interactive HTML file (PR attachment, wiki, or committed artifact) use the CLI:
+- Hover a node for its name, kind, file and degree; pan, zoom, and drag to explore.
 
 ```bash
 ax export graph-html --out graph.html
 ax export graph-html --limit 1500 --resolution 1.2
-ax export graph --format graphml --out graph.graphml
 ```
 
-The HTML export inlines the graph data and a small renderer, so it opens in any browser with no server.
+The HTML export inlines the graph data and a small renderer, so it opens in any browser with no server. Use it as a PR attachment, in a wiki, or as a committed artifact. `--limit` caps the file at the top nodes by degree (default 3000).
+
+The full ax, which is being phased out, also has an interactive **Graph** page in its Command Center, with a settings panel, an insights panel, a Domain view read from `.ax/domain-graph.json` and a graph of rules, skills and memories; see [Command Center](/guides/command-center/).
+
+### Portable export
+
+For other graph tools, `ax export graph` writes the graph, with Leiden community ids, degree and god-node flags, as JSON, DOT, GraphML, GEXF, Cypher, Mermaid or PlantUML:
+
+```bash
+ax export graph --format graphml --out graph.graphml
+ax export graph --format cypher --out import.cypher
+ax export graph --format mermaid --out graph.mmd
+```
+
+See [`ax export graph`](/reference/cli/#ax-export-graph-path) for every format and flag.
 
 ## Edge confidence
 
@@ -122,7 +97,7 @@ Every edge carries a confidence tag alongside its provenance:
 | `inferred` | Resolved by a heuristic / name-matching / framework pass | dashed |
 | `ambiguous` | Several candidate targets existed; the resolver picked one | dotted |
 
-It shows up as a badge in the Command Center edge lists and in `ax_node` / `ax_callers` / `ax_callees` output, so you can weigh how certain a relationship is before acting on it. See [The Knowledge Graph](/core-concepts/knowledge-graph/#edge-confidence).
+It shows up in `ax_node` / `ax_callers` / `ax_callees` output, so you can weigh how certain a relationship is before acting on it. See [The Knowledge Graph](/core-concepts/knowledge-graph/#edge-confidence).
 
 ## Docs in the graph
 
