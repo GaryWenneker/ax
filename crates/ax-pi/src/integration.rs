@@ -9,15 +9,15 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use ax_usage::ModelPricing;
 use serde_json::Value;
 
 use crate::context::{cache_key_string, AxContextEngine, ContextCache};
 use crate::economics::{
-    advise_observation, context_token_cost, estimate_text, identity_hash, may_change_state,
-    model_cost, replayable, RepeatDetector,
+    advise_observation, advise_with, context_token_cost, estimate_text, identity_hash,
+    may_change_state, model_cost, replayable, RepeatDetector,
 };
 use crate::events::{self, arguments_for_hash, output_text_for_estimate};
 use crate::report::{
@@ -128,8 +128,11 @@ struct State {
     active_turn: HashMap<String, String>,
     turn_seq: HashMap<String, u32>,
     knowledge: Vec<ContextSection>,
-    entities: Vec<String>,
-    indexed_paths: Vec<String>,
+    /// Shared so a tool event can lend them to the advice without a copy.
+    entities: Arc<[String]>,
+    /// Content hash of `entities`, part of the context cache key.
+    entities_version: String,
+    indexed_paths: Arc<[String]>,
     repository_state: String,
     output_cache: OutputCache,
     pending_tools: PendingTools,
@@ -322,7 +325,7 @@ impl PiIntegration {
                     ),
                     graph_version: format!(
                         "{}|{}",
-                        state.entities.join(","),
+                        state.entities_version,
                         knowledge_version(&state.knowledge, |kind| !matches!(
                             kind,
                             SectionType::Rule | SectionType::Constraint | SectionType::Skill
@@ -415,7 +418,13 @@ impl PiIntegration {
     pub fn record_tool_result(&self, observation: &ToolCallObservation) -> Result<(), PiError> {
         self.guard(|| {
             let mut state = self.state.lock().map_err(|err| err.to_string())?;
-            record_tool(&mut state, &self.options, observation);
+            record_tool(
+                &mut state,
+                &self.options,
+                observation,
+                &observation.known_graph_entities,
+                &observation.indexed_paths,
+            );
             Ok(())
         })
     }
@@ -502,7 +511,10 @@ impl PiIntegration {
 
     pub fn set_graph_entities(&self, entities: Vec<String>) -> Result<(), PiError> {
         self.guard(|| {
-            self.state.lock().map_err(|err| err.to_string())?.entities = entities;
+            let version = list_version(&entities);
+            let mut state = self.state.lock().map_err(|err| err.to_string())?;
+            state.entities = Arc::from(entities);
+            state.entities_version = version;
             Ok(())
         })
     }
@@ -512,7 +524,7 @@ impl PiIntegration {
             self.state
                 .lock()
                 .map_err(|err| err.to_string())?
-                .indexed_paths = paths;
+                .indexed_paths = Arc::from(paths);
             Ok(())
         })
     }
@@ -619,6 +631,18 @@ impl PiIntegration {
     }
 }
 
+/// Content hash of a list, with each item length-prefixed so `["a,b"]` and
+/// `["a", "b"]` differ.
+fn list_version(items: &[String]) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&(items.len() as u64).to_le_bytes());
+    for item in items {
+        hasher.update(&(item.len() as u64).to_le_bytes());
+        hasher.update(item.as_bytes());
+    }
+    hasher.finalize().to_hex().to_string()
+}
+
 /// Content hash of the knowledge sections whose kind `include` accepts, so a
 /// changed rule, skill, memory or source section gives a new cache key.
 fn knowledge_version(
@@ -684,8 +708,9 @@ pub fn create_pi_integration(options: PiOptions) -> PiIntegration {
             active_turn: HashMap::new(),
             turn_seq: HashMap::new(),
             knowledge: Vec::new(),
-            entities: Vec::new(),
-            indexed_paths: Vec::new(),
+            entities: Arc::from(Vec::new()),
+            entities_version: list_version(&[]),
+            indexed_paths: Arc::from(Vec::new()),
             repository_state: "unknown".into(),
             output_cache: OutputCache::default(),
             pending_tools: PendingTools::default(),
@@ -844,9 +869,12 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
                 .clone()
                 .or_else(|| state.active_turn.get(&end.base.session_id).cloned())
                 .unwrap_or_else(|| "turn".into());
+            let output_text = output_text_for_estimate(raw);
             let tokens = end
                 .output_token_estimate
-                .or_else(|| output_text_for_estimate(raw).as_deref().map(estimate_text));
+                .or_else(|| output_text.as_deref().map(estimate_text));
+            let entities = Arc::clone(&state.entities);
+            let indexed_paths = Arc::clone(&state.indexed_paths);
             record_tool(
                 state,
                 options,
@@ -857,14 +885,16 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
                     tool_name: end.tool_name,
                     arguments,
                     repository_state: state.repository_state.clone(),
-                    known_graph_entities: state.entities.clone(),
-                    indexed_paths: state.indexed_paths.clone(),
-                    output_text_for_estimate: output_text_for_estimate(raw),
+                    known_graph_entities: Vec::new(),
+                    indexed_paths: Vec::new(),
+                    output_text_for_estimate: output_text,
                     output_token_estimate: tokens,
                     output_bytes: end.output_bytes,
                     duration_ms: end.duration_ms,
                     success: end.success,
                 },
+                &entities,
+                &indexed_paths,
             );
         }
         AxAgentEvent::ModelRequest(_)
@@ -874,7 +904,13 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
     }
 }
 
-fn record_tool(state: &mut State, options: &PiOptions, observation: &ToolCallObservation) {
+fn record_tool(
+    state: &mut State,
+    options: &PiOptions,
+    observation: &ToolCallObservation,
+    entities: &[String],
+    indexed_paths: &[String],
+) {
     let identity = identity_hash(
         &observation.tool_name,
         &observation.arguments,
@@ -893,10 +929,17 @@ fn record_tool(state: &mut State, options: &PiOptions, observation: &ToolCallObs
         state
             .repeats
             .observe(&identity, &observation.call_id, output_tokens, context_cost);
-    let advice = advise_observation(
+    // Observe mode shows no advice but still records what it would have said.
+    let recorded_mode = match options.mode {
+        OptimizationMode::Observe => OptimizationMode::Advise,
+        mode => mode,
+    };
+    let advice = advise_with(
         observation,
+        entities,
+        indexed_paths,
         already,
-        options.mode,
+        recorded_mode,
         options.oversized_token_threshold,
         true,
     );
@@ -921,22 +964,6 @@ fn record_tool(state: &mut State, options: &PiOptions, observation: &ToolCallObs
             accepted: advice.apply.is_some(),
             alternative,
         });
-    } else if options.mode == OptimizationMode::Observe {
-        let hidden = advise_observation(
-            observation,
-            already,
-            OptimizationMode::Advise,
-            options.oversized_token_threshold,
-            true,
-        );
-        if let Some(alternative) = hidden.alternatives.into_iter().next() {
-            state.optimizations.push(OptimizationRow {
-                id: format!("opt-{}", observation.call_id),
-                tool_call_id: observation.call_id.clone(),
-                accepted: false,
-                alternative,
-            });
-        }
     }
     if let Some(cost) = context_cost {
         if let Some(session) = state.sessions.get_mut(&observation.session_id) {
@@ -1199,6 +1226,25 @@ mod tests {
         let held: usize = state.output_cache.values().map(String::len).sum();
         assert!(held <= MAX_OUTPUT_CACHE_BYTES, "{held} bytes held");
         assert!(held > 0, "recent outputs stay cached");
+    }
+
+    #[test]
+    fn different_entity_lists_never_share_a_context_cache_entry() {
+        let pi = integration();
+        let request = ContextRequest {
+            session_id: "s".into(),
+            turn_id: "t".into(),
+            user_intent: Some("task".into()),
+            repository_root: None,
+            changed_files: Vec::new(),
+            previous_tool_names: Vec::new(),
+        };
+        pi.set_graph_entities(vec!["Alpha,Beta".into()]).unwrap();
+        assert!(!pi.get_session_context(&request).unwrap().cache_hit);
+        pi.set_graph_entities(vec!["Alpha".into(), "Beta".into()])
+            .unwrap();
+        assert!(!pi.get_session_context(&request).unwrap().cache_hit);
+        assert!(pi.get_session_context(&request).unwrap().cache_hit);
     }
 
     #[test]

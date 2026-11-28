@@ -272,6 +272,29 @@ pub fn advise_observation(
     oversized_tokens: u32,
     expose: bool,
 ) -> ToolCallAdvice {
+    advise_with(
+        observation,
+        &observation.known_graph_entities,
+        &observation.indexed_paths,
+        already_seen,
+        mode,
+        oversized_tokens,
+        expose,
+    )
+}
+
+/// [`advise_observation`] with the graph entities and indexed paths passed
+/// separately, so a caller that keeps them can lend them instead of copying
+/// them into every observation.
+pub(crate) fn advise_with(
+    observation: &ToolCallObservation,
+    known_graph_entities: &[String],
+    indexed_paths: &[String],
+    already_seen: bool,
+    mode: OptimizationMode,
+    oversized_tokens: u32,
+    expose: bool,
+) -> ToolCallAdvice {
     let current = observation.output_token_estimate.unwrap_or_else(|| {
         observation
             .output_text_for_estimate
@@ -283,9 +306,7 @@ pub fn advise_observation(
 
     if search_tool(&observation.tool_name) {
         let query = query_text(&observation.arguments);
-        if let Some((entity, confidence)) =
-            known_entity_in(&query, &observation.known_graph_entities)
-        {
+        if let Some((entity, confidence)) = known_entity_in(&query, known_graph_entities) {
             let alternative_tokens = if current > GRAPH_EXPLORE_TOKEN_ESTIMATE {
                 GRAPH_EXPLORE_TOKEN_ESTIMATE
             } else {
@@ -305,8 +326,7 @@ pub fn advise_observation(
 
     if found.is_none() && read_tool(&observation.tool_name) {
         if let Some(path) = target_path(&observation.arguments) {
-            let indexed = observation
-                .indexed_paths
+            let indexed = indexed_paths
                 .iter()
                 .any(|known| path_ends_with(&path, known));
             if indexed {
