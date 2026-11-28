@@ -28,6 +28,11 @@ export interface GithubShareConfig {
   token: string;
   /** Set by the server: a token is stored for this repo URL. */
   tokenSet?: boolean;
+  /**
+   * Set by the server: the OS credential store refused to read the token (locked or busy), so
+   * whether one is stored is unknown. Git sync fails until the store is unlocked.
+   */
+  tokenUnreadable?: boolean;
   /** Send `true` on save to remove the stored token. */
   clearToken?: boolean;
 }

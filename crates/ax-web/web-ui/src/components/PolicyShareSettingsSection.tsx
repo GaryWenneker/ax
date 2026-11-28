@@ -551,10 +551,12 @@ export default function PolicyShareSettingsSection() {
                   placeholder={
                     config.github.tokenSet
                       ? 'Token set (type to replace)'
-                      : 'glpat-… / personal or project access token'
+                      : config.github.tokenUnreadable
+                        ? 'Credential store locked; unlock it to use the stored token'
+                        : 'glpat-… / personal or project access token'
                   }
                 />
-                {config.github.tokenSet ? (
+                {config.github.tokenSet || config.github.tokenUnreadable ? (
                   <button
                     type="button"
                     className="btn btn-subtle"

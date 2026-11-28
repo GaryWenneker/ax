@@ -29,6 +29,7 @@ pub async fn run_sync(
     direction: SyncDirection,
 ) -> Result<SyncRunResult, String> {
     let config = load_share_config(project_root);
+    require_readable_token(&config)?;
     let mut status = ShareSyncStatus {
         provider: Some(config.provider.as_str().to_string()),
         ..Default::default()
@@ -144,6 +145,18 @@ async fn push_to_remote(
     Ok(())
 }
 
+/// Fails a git sync while the credential store refuses to read the API token:
+/// running without it would switch the transport to plain git.
+fn require_readable_token(config: &ShareConfig) -> Result<(), String> {
+    if config.provider == ShareProvider::Github && config.github.token_unreadable {
+        return Err(
+            "Cannot read the git API token from the OS credential store; unlock it and try again"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 /// The share config as shown to API clients: `github.tokenSet` tells whether
 /// a git API token is stored; the token itself is never included.
 pub fn share_config_for_api(project_root: &Path) -> ShareConfig {
@@ -229,5 +242,25 @@ mod provenance_tests {
             share_origin(&config),
             "OneDrive policy share configured remote"
         );
+    }
+}
+
+#[cfg(test)]
+mod token_tests {
+    use super::*;
+
+    #[test]
+    fn a_git_sync_fails_while_the_token_cannot_be_read() {
+        let mut config = ShareConfig {
+            provider: ShareProvider::Github,
+            ..Default::default()
+        };
+        assert!(require_readable_token(&config).is_ok());
+        config.github.token_unreadable = true;
+        let err = require_readable_token(&config).expect_err("must not sync without the token");
+        assert!(err.contains("credential store"), "{err}");
+        // OneDrive does not use the git token.
+        config.provider = ShareProvider::Onedrive;
+        assert!(require_readable_token(&config).is_ok());
     }
 }

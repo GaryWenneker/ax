@@ -75,14 +75,51 @@ fn classify(err: keyring::Error, refused: &str) -> SecretError {
         // process.
         #[cfg(target_os = "windows")]
         keyring::Error::NoStorageAccess(_) => SecretError::Absent(UNAVAILABLE.into()),
-        // Linux and BSD: the Secret Service is reached over the D-Bus session
-        // bus, so without a session bus there is no store.
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-        keyring::Error::PlatformFailure(_) if !session_bus_present() => {
+        err @ keyring::Error::PlatformFailure(_) => {
+            classify_secret_service(err, refused, session_bus_present())
+        }
+        _ => SecretError::Refused(refused.into()),
+    }
+}
+
+/// Linux and BSD: sorts a Secret Service error. The Secret Service is reached
+/// over the D-Bus session bus, so without a session bus there is no store.
+/// Neither is there one on a bus where no program provides
+/// `org.freedesktop.secrets` (containers, WSL, minimal desktops).
+#[cfg_attr(any(target_os = "macos", target_os = "windows"), allow(dead_code))]
+fn classify_secret_service(err: keyring::Error, refused: &str, bus_present: bool) -> SecretError {
+    match err {
+        keyring::Error::PlatformFailure(inner)
+            if !bus_present || no_secret_service(inner.as_ref()) =>
+        {
             SecretError::Absent(UNAVAILABLE.into())
         }
         _ => SecretError::Refused(refused.into()),
     }
+}
+
+/// Whether a Secret Service error (or one it wraps) says nothing on the bus
+/// provides the service. keyring passes the `secret-service` crate's error on
+/// as a boxed error, so this reads the D-Bus error names in its text: zbus
+/// prints them as `<name>: <detail>`, and `secret-service` reports a missing
+/// provider as "no secret service provider or dbus session found".
+#[cfg_attr(any(target_os = "macos", target_os = "windows"), allow(dead_code))]
+fn no_secret_service(err: &(dyn std::error::Error + 'static)) -> bool {
+    const MARKERS: [&str; 3] = [
+        "org.freedesktop.DBus.Error.ServiceUnknown",
+        "org.freedesktop.DBus.Error.NameHasNoOwner",
+        "no secret service provider or dbus session found",
+    ];
+    let mut next = Some(err);
+    while let Some(e) = next {
+        let text = e.to_string();
+        if MARKERS.iter().any(|m| text.contains(m)) {
+            return true;
+        }
+        next = e.source();
+    }
+    false
 }
 
 /// Whether a keychain error keyring wrapped is `errSecReadOnly` (-25292).
@@ -191,6 +228,49 @@ pub(crate) fn warn_unavailable_once(error: &SecretError) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An error shaped like the one keyring wraps from the `secret-service`
+    /// crate (its `Display` is what this test controls).
+    #[derive(Debug)]
+    struct Wrapped(&'static str);
+    impl std::fmt::Display for Wrapped {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.0)
+        }
+    }
+    impl std::error::Error for Wrapped {}
+
+    fn platform_failure(text: &'static str) -> keyring::Error {
+        keyring::Error::PlatformFailure(Box::new(Wrapped(text)))
+    }
+
+    /// A session bus with no Secret Service on it (containers, WSL, minimal
+    /// desktops) has no store that could hold a token, so it is absent, not
+    /// refusing: otherwise clearing a token there fails forever.
+    #[test]
+    fn a_session_bus_without_a_secret_service_is_an_absent_store() {
+        for text in [
+            "zbus error: org.freedesktop.DBus.Error.ServiceUnknown: The name \
+             org.freedesktop.secrets was not provided by any .service files",
+            "zbus error: org.freedesktop.DBus.Error.NameHasNoOwner: Could not get owner of \
+             name 'org.freedesktop.secrets': no such name",
+            "no secret service provider or dbus session found",
+        ] {
+            let err = classify_secret_service(platform_failure(text), "no", true);
+            assert!(err.is_absent(), "{text}: {err:?}");
+        }
+        // No session bus at all: absent too.
+        let err = classify_secret_service(platform_failure("zbus error: I/O"), "no", false);
+        assert!(err.is_absent(), "{err:?}");
+        // A Secret Service that is there but fails a call refuses.
+        for err in [
+            platform_failure("zbus error: org.freedesktop.DBus.Error.NoReply: timed out"),
+            keyring::Error::NoStorageAccess(Box::new(Wrapped("SS Error: object locked"))),
+        ] {
+            let err = classify_secret_service(err, "no", true);
+            assert!(!err.is_absent(), "{err:?}");
+        }
+    }
 
     /// A read-only macOS keychain (`errSecReadOnly`) still holds and returns
     /// its tokens, so a refused delete there is a refusal, not "no store".

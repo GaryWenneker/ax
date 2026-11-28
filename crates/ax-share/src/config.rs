@@ -131,6 +131,12 @@ pub struct GithubShareConfig {
     /// Output only: a token is stored for `repo_url`.
     #[serde(default, skip_deserializing, rename = "tokenSet")]
     pub token_set: bool,
+    /// Output only: the credential store refused to read the token for
+    /// `repo_url` (locked or busy), so whether one is stored is unknown. Sync
+    /// fails instead of running without it or with a token from an older
+    /// location that may have been replaced since.
+    #[serde(default, skip_deserializing, rename = "tokenUnreadable")]
+    pub token_unreadable: bool,
     /// Input only: remove the stored token for `repo_url` on save.
     #[serde(default, skip_serializing)]
     pub clear_token: bool,
@@ -144,6 +150,7 @@ impl Default for GithubShareConfig {
             subpath: default_subpath(),
             token: String::new(),
             token_set: false,
+            token_unreadable: false,
             clear_token: false,
         }
     }
@@ -248,13 +255,19 @@ pub fn load_share_config_with(
         None => cfg,
     };
     cfg.github.clear_token = false;
-    cfg.github.token = load_git_token(
+    match load_git_token(
         project_root,
         &cfg.github.repo_url,
         cfg.github.token.trim(),
         secrets,
         token_store,
-    );
+    ) {
+        Some(token) => cfg.github.token = token,
+        None => {
+            cfg.github.token.clear();
+            cfg.github.token_unreadable = true;
+        }
+    }
     cfg.github.token_set = !cfg.github.token.is_empty();
     cfg
 }
@@ -264,23 +277,32 @@ pub fn load_share_config_with(
 /// mode). The credential store comes first; a token still in `ax.json`
 /// (`inline`) or in the old token file is used as it is until the next save
 /// moves it (see [`migrate_old_token`]).
+///
+/// The old token file is only read when the credential store has no entry,
+/// or when this machine has no store at all. A store that refuses the read
+/// (locked or busy) may hold a token that replaced the one in that file, so
+/// the result is `None`: the token is unreadable for now, not missing.
 fn load_git_token(
     project_root: &Path,
     repo_url: &str,
     inline: &str,
     secrets: &dyn ShareTokenStore,
     token_store: &Path,
-) -> String {
+) -> Option<String> {
     if !inline.is_empty() {
-        return inline.to_string();
+        return Some(inline.to_string());
     }
     let key = crate::secret::token_key(project_root, repo_url);
     match secrets.get(&key) {
-        Ok(Some(token)) => token,
-        Ok(None) => read_git_token(token_store, repo_url).unwrap_or_default(),
-        Err(e) => {
+        Ok(Some(token)) => Some(token),
+        Ok(None) => Some(read_git_token(token_store, repo_url).unwrap_or_default()),
+        Err(e) if e.is_absent() => {
             crate::secret::warn_unavailable_once(&e);
-            read_git_token(token_store, repo_url).unwrap_or_default()
+            Some(read_git_token(token_store, repo_url).unwrap_or_default())
+        }
+        Err(e) => {
+            tracing::warn!("ax share: the git API token could not be read: {e}");
+            None
         }
     }
 }
@@ -295,7 +317,8 @@ fn load_git_token(
 /// the token sync has been using. A token in the old token file is copied but
 /// the file entry stays, because that file is keyed by repo URL only and
 /// other projects on the same URL may still read it; an explicit
-/// `clearToken` removes it.
+/// `clearToken` removes it. It is not copied when the store refuses the read,
+/// since the store may already hold a token that replaced it.
 ///
 /// A token in `ax.json` belongs to the repo URL saved next to it there. When
 /// this save changes that URL, the token is dropped, never stored for the new
@@ -319,8 +342,12 @@ fn migrate_old_token(
         }
         return secrets.set(key, &inline).map_err(String::from);
     }
-    if let Ok(Some(_)) = stored {
-        return Ok(());
+    match stored {
+        Ok(Some(_)) => return Ok(()),
+        // The store may hold a newer token it would not show: never write the
+        // old file's token over it.
+        Err(e) if !e.is_absent() => return Ok(()),
+        _ => {}
     }
     if let Some(token) = read_git_token(token_store, repo_url) {
         if let Err(e) = secrets.set(key, &token) {
@@ -458,8 +485,8 @@ pub fn write_project_share_config_with(
     write_share_at(&path, config)?;
     // The old URL's token goes only after the new configuration is saved, so
     // a save that fails above leaves the active configuration with its token.
-    // Without a clear, a store that refuses to delete it (locked, or a
-    // session bus without a Secret Service) does not block the URL change:
+    // Without a clear, a store that refuses to delete it (locked or
+    // busy) does not block the URL change:
     // no lookup uses the old URL's entry any more, and the token there is
     // never moved to the new URL.
     if let Err(e) = remove_previous() {
@@ -495,6 +522,7 @@ fn write_share_at(path: &Path, config: &ShareConfig) -> Result<(), String> {
     let mut share = serde_json::to_value(config).map_err(|e| e.to_string())?;
     if let Some(github) = share.get_mut("github").and_then(|g| g.as_object_mut()) {
         github.remove("tokenSet");
+        github.remove("tokenUnreadable");
     }
     // The project's ax.json sits in the repository root next to committed
     // files, so it is written atomically without the sibling `.lock` file
@@ -615,7 +643,14 @@ mod tests {
         let path = tmp.path().join(CONFIG_FILENAME);
         let broken = "{\"index\": {\"exclude\": [\"target\"],},}\n";
         fs::write(&path, broken).unwrap();
-        let error = write_project_share_config(tmp.path(), &ShareConfig::default()).unwrap_err();
+        let home = TempDir::new().unwrap();
+        let error = write_project_share_config_with(
+            tmp.path(),
+            &ShareConfig::default(),
+            &MemoryStore::default(),
+            &home.path().join("git-share.json"),
+        )
+        .unwrap_err();
         assert!(error.contains(CONFIG_FILENAME), "{error}");
         assert_eq!(fs::read_to_string(&path).unwrap(), broken);
     }
@@ -625,7 +660,14 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join(CONFIG_FILENAME);
         fs::write(&path, r#"{"index":{"exclude":["target"]}}"#).unwrap();
-        write_project_share_config(tmp.path(), &ShareConfig::default()).unwrap();
+        let home = TempDir::new().unwrap();
+        write_project_share_config_with(
+            tmp.path(),
+            &ShareConfig::default(),
+            &MemoryStore::default(),
+            &home.path().join("git-share.json"),
+        )
+        .unwrap();
         let root: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(root["index"]["exclude"][0], "target");
@@ -1208,6 +1250,79 @@ mod tests {
         assert!(!cfg.github.token_set);
     }
 
+    /// While the store refuses reads, a token from the old token file must
+    /// not stand in for the stored one: the user may have replaced (and
+    /// revoked) it since. The load reports the token as unreadable instead of
+    /// silently empty, so sync does not fall back to plain git either.
+    #[test]
+    fn a_locked_store_never_hands_back_a_replaced_old_file_token() {
+        let project = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let store = home.path().join("auth/git-share.json");
+        let url = "https://gitlab.example.com/team/policy.git";
+        write_git_token(&store, url, Some("glpat-old")).unwrap();
+        let secrets = Lockable::default();
+        write_project_share_config_with(
+            project.path(),
+            &github_with_token("glpat-new"),
+            &secrets,
+            &store,
+        )
+        .unwrap();
+
+        secrets.set_locked(true);
+        let cfg = load_share_config_with(project.path(), &secrets, &store);
+        assert_eq!(cfg.github.token, "", "a possibly replaced token came back");
+        assert!(!cfg.github.token_set);
+        assert!(cfg.github.token_unreadable);
+
+        // Without an old-file token it is unreadable too, not "no token".
+        let empty = home.path().join("auth/none.json");
+        let cfg = load_share_config_with(project.path(), &secrets, &empty);
+        assert_eq!(cfg.github.token, "");
+        assert!(cfg.github.token_unreadable);
+
+        secrets.set_locked(false);
+        let cfg = load_share_config_with(project.path(), &secrets, &store);
+        assert_eq!(cfg.github.token, "glpat-new");
+        assert!(cfg.github.token_set);
+        assert!(!cfg.github.token_unreadable);
+    }
+
+    /// A store that refuses the read but accepts the write (a busy Secret
+    /// Service) must not get the old file's token written over its own.
+    #[derive(Default)]
+    struct ReadRefused(MemoryStore);
+    impl ShareTokenStore for ReadRefused {
+        fn get(&self, _: &str) -> Result<Option<String>, SecretError> {
+            Err(SecretError::Refused(
+                "Cannot read the OS credential store; unlock it and try again".into(),
+            ))
+        }
+        fn set(&self, key: &str, token: &str) -> Result<(), SecretError> {
+            self.0.set(key, token)
+        }
+        fn delete(&self, key: &str) -> Result<(), SecretError> {
+            self.0.delete(key)
+        }
+    }
+
+    #[test]
+    fn a_save_never_copies_the_old_file_token_over_a_store_it_could_not_read() {
+        let project = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let store = home.path().join("auth/git-share.json");
+        let url = "https://gitlab.example.com/team/policy.git";
+        write_git_token(&store, url, Some("glpat-old")).unwrap();
+        let secrets = ReadRefused::default();
+        let key = crate::secret::token_key(project.path(), url);
+        secrets.0.set(&key, "glpat-new").unwrap();
+
+        write_project_share_config_with(project.path(), &github_with_token(""), &secrets, &store)
+            .unwrap();
+        assert_eq!(secrets.0.get(&key).unwrap().as_deref(), Some("glpat-new"));
+    }
+
     #[test]
     fn changing_the_repo_url_removes_the_token_stored_for_the_old_url() {
         let project = TempDir::new().unwrap();
@@ -1284,7 +1399,7 @@ mod tests {
 
     /// Changing the repo URL must not depend on deleting a token for the old
     /// URL: when nothing is stored there, or the store refuses (locked
-    /// keychain, a session bus without a Secret Service), the save still
+    /// keychain, a busy Secret Service), the save still
     /// goes through. Only an explicit clear insists on the delete.
     #[test]
     fn changing_the_repo_url_works_when_the_store_cannot_delete() {
