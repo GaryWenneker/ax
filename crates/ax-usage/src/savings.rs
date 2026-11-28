@@ -2221,16 +2221,21 @@ fn transcript_needs_import(stored: Option<i64>, mtime: Option<i64>) -> bool {
 
 /// The mtime stored at the last import of this session, if any.
 ///
-/// A session that has token usage but no per-turn usage events was imported
-/// by a version without those events (before v10.0.0). It reports no stored
-/// mtime, so its unchanged transcript is read once more and the events are
-/// backfilled. The current import writes an event for every usage it counts,
-/// so this does not repeat.
+/// A session that has transcript usage but no per-turn usage events was
+/// imported by a version without those events (before v10.0.0). It reports no
+/// stored mtime, so its unchanged transcript is read once more and the events
+/// are backfilled. The current import writes an event for every usage it
+/// counts, so this does not repeat.
+///
+/// Only output and cache tokens mark such a session. Input tokens alone do
+/// not: Cursor `state.vscdb` stores them for sessions whose transcripts have
+/// no usage lines, and those sessions never get usage events, so counting
+/// them would read the same transcript on every import.
 async fn stored_source_mtime(agent: &str, session_id: &str) -> Result<Option<i64>, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
     let stored: Option<(Option<i64>, bool)> = sqlx::query_as(
         "SELECT s.source_mtime,
-           COALESCE(s.session_input_tokens, 0) + COALESCE(s.session_output_tokens, 0)
+           COALESCE(s.session_output_tokens, 0)
              + COALESCE(s.cache_read_tokens, 0) + COALESCE(s.cache_write_tokens, 0) > 0
            AND NOT EXISTS (
              SELECT 1 FROM agent_usage_event e
@@ -3315,6 +3320,35 @@ mod tests {
         assert_eq!(usage_event_projects(&pool).await.len(), 1);
         // With the events in place, the unchanged file is skipped again.
         assert!(!import_claude_file(&claude, &[]).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_cursor_transcript_with_state_tokens_is_imported_once() {
+        let _env = UsageDbEnv::new().await;
+        let pool = open_pool().await.expect("pool");
+        // state.vscdb gives the session input tokens; the transcript has no
+        // usage lines, so the import stores no usage events for it.
+        let state_row = crate::cursor_state::ComposerStateRow {
+            session_id: "chat-1".to_string(),
+            model: Some("composer-2.5-fast".to_string()),
+            input_tokens: Some(126_877),
+            started_at: Some(1_000),
+            ended_at: Some(2_000),
+        };
+        crate::cursor_state::upsert_composer_state_row(&pool, &state_row)
+            .await
+            .expect("state");
+        let tmp = tempfile::tempdir().unwrap();
+        let cursor = tmp
+            .path()
+            .join("cursor/p-app/agent-transcripts/chat-1/chat-1.jsonl");
+        std::fs::create_dir_all(cursor.parent().unwrap()).unwrap();
+        let line = r#"{"role":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{}}]}}"#;
+        std::fs::write(&cursor, format!("{line}\n")).unwrap();
+        assert!(import_cursor_file(&cursor, &[]).await.unwrap());
+        // The second import of the unchanged file is skipped.
+        assert!(!import_cursor_file(&cursor, &[]).await.unwrap());
+        assert!(!import_cursor_file(&cursor, &[]).await.unwrap());
     }
 
     #[test]
