@@ -114,8 +114,7 @@ pub async fn run_agent_eval(fixture_text: &str) -> Result<Value, String> {
     let mut arm_learn = Acc::default(); // E: ranking-prior after leave-one-out feedback
 
     let lexical_on = crate::bakeoff::challenger_admitted();
-    let pred_report =
-        crate::predict::evaluate_fixture(fixture_text, 0.75).unwrap_or_else(|_| json!({}));
+    let pred_report = crate::predict::evaluate_fixture(fixture_text, 0.75)?;
     let mut learn_train_reports = Vec::new();
 
     for question in fixture

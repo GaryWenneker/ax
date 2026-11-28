@@ -131,13 +131,11 @@ pub async fn handle(
             };
             let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("");
             let rows = observations(pool, &project_id(root)).await?;
-            let edge_pairs: Vec<(String, String)> = match project_edges(pool, EDGE_LIMIT).await {
-                Ok((edges, _)) => edges
-                    .into_iter()
-                    .map(|edge| (edge.source, edge.target))
-                    .collect(),
-                Err(_) => Vec::new(),
-            };
+            let (edges, _) = project_edges(pool, EDGE_LIMIT).await?;
+            let edge_pairs: Vec<(String, String)> = edges
+                .into_iter()
+                .map(|edge| (edge.source, edge.target))
+                .collect();
             let predictions = crate::predict::predict_with_edges(
                 &rows,
                 task,
@@ -299,7 +297,7 @@ pub async fn handle(
         "share" => {
             let cfg = load(root);
             let (models, counts) = if let Some(pool) = pool {
-                let rows = list_models(pool).await.unwrap_or_default();
+                let rows = list_models(pool).await?;
                 let models = rows
                     .into_iter()
                     .map(|row| ModelManifest {
@@ -309,9 +307,7 @@ pub async fn handle(
                         platforms: vec![row.get::<String, _>("platforms")],
                     })
                     .collect::<Vec<_>>();
-                let counts = outcome_counts(pool, &project_id(root))
-                    .await
-                    .unwrap_or_default();
+                let counts = outcome_counts(pool, &project_id(root)).await?;
                 (models, counts)
             } else {
                 (Vec::new(), Vec::new())
@@ -1035,6 +1031,32 @@ mod tests {
         )
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn share_and_predict_report_a_failed_database_read() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("ax.json"),
+            r#"{"neural":{"prediction":{"enabled":true},"distribution":{"enabled":true,"share_learning_data":true},"learning":{"feedback_collection":true}}}"#,
+        )
+        .unwrap();
+        let database = open(dir.path()).await;
+        let pool = database.pool();
+        sqlx::query("DROP TABLE neural_model")
+            .execute(pool)
+            .await
+            .unwrap();
+        let error = handle(dir.path(), "share", &json!({}), Some(pool))
+            .await
+            .unwrap_err();
+        assert!(error.contains("neural_model"), "{error}");
+
+        sqlx::query("DROP TABLE edges").execute(pool).await.unwrap();
+        let error = handle(dir.path(), "predict", &json!({ "task": "x" }), Some(pool))
+            .await
+            .unwrap_err();
+        assert!(error.contains("edges"), "{error}");
     }
 
     #[tokio::test]
