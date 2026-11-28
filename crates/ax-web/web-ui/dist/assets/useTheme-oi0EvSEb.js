@@ -1,1 +1,0 @@
-import{r as e}from"./rolldown-runtime-XKyaHtl9.js";import{Rt as t}from"./PageLayout-CwDPSPQF.js";import{D as n,F as r,M as i}from"./index-C43nSld9.js";var a=e(t(),1);function o(){let[e,t]=(0,a.useState)(i);return(0,a.useEffect)(()=>{let e=e=>t(e.detail.id);return window.addEventListener(n,e),()=>window.removeEventListener(n,e)},[]),r(e)}export{o as t};

@@ -20,8 +20,16 @@ export interface GithubShareConfig {
   repoUrl: string;
   branch: string;
   subpath: string;
-  /** Optional API token (e.g. GitLab PAT) for hosts that gate raw git behind SSO. */
+  /**
+   * Optional API token (e.g. GitLab PAT) for hosts that gate raw git behind SSO.
+   * Write-only: the server stores it in ~/.ax/auth and never returns it. An empty
+   * value on save keeps the stored token.
+   */
   token: string;
+  /** Set by the server: a token is stored for this repo URL. */
+  hasToken?: boolean;
+  /** Send `true` on save to remove the stored token. */
+  clearToken?: boolean;
 }
 
 export interface ShareConfig {
