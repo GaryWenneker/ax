@@ -200,6 +200,37 @@ fn scenario_repository_change_keeps_unrelated_context() {
 }
 
 #[test]
+fn changed_knowledge_for_the_same_task_is_not_served_from_the_cache() {
+    let pi = create_pi_integration(priced(OptimizationMode::Advise));
+    let rule = |id: &str, content: &str| ContextSection {
+        id: id.into(),
+        kind: SectionType::Rule,
+        priority: 10,
+        token_estimate: 4,
+        content: content.into(),
+        mandatory: false,
+        source_paths: Vec::new(),
+    };
+    let request = ContextRequest {
+        session_id: "abc123".into(),
+        turn_id: "t".into(),
+        user_intent: Some("fix the parser".into()),
+        repository_root: None,
+        changed_files: Vec::new(),
+        previous_tool_names: Vec::new(),
+    };
+    pi.set_knowledge(vec![rule("r1", "old rule text")]).unwrap();
+    let first = pi.get_session_context(&request).unwrap();
+    assert!(!first.cache_hit);
+    pi.set_knowledge(vec![rule("r1", "new rule text")]).unwrap();
+    let second = pi.get_session_context(&request).unwrap();
+    assert!(!second.cache_hit);
+    assert_eq!(second.sections[0].content, "new rule text");
+    let third = pi.get_session_context(&request).unwrap();
+    assert!(third.cache_hit, "unchanged knowledge still hits the cache");
+}
+
+#[test]
 fn scenario_mandatory_rule_is_kept() {
     let pi = create_pi_integration(PiOptions {
         context_max_tokens: 1,

@@ -29,8 +29,9 @@ use crate::store::{
 };
 use crate::types::{
     AxAgentEvent, AxSessionState, BudgetSnapshot, ContextCacheKey, ContextRequest, ContextResult,
-    ContextSection, CostSnapshot, OptimizationMode, ToolCallAdvice, ToolCallObservation,
-    ToolEconomicsRecord, UsageSnapshot, DEFAULT_CONTEXT_MAX_TOKENS, DEFAULT_OVERSIZED_TOKENS,
+    ContextSection, CostSnapshot, OptimizationMode, SectionType, ToolCallAdvice,
+    ToolCallObservation, ToolEconomicsRecord, UsageSnapshot, DEFAULT_CONTEXT_MAX_TOKENS,
+    DEFAULT_OVERSIZED_TOKENS,
 };
 
 const LOG_TAG: &str = "AX_PI_INTEGRATION_ERROR";
@@ -191,9 +192,20 @@ impl PiIntegration {
                     intent_hash: crate::context::intent_hash(
                         request.user_intent.as_deref().unwrap_or(""),
                     ),
-                    graph_version: state.entities.join(","),
-                    policy_version: "policy".into(),
-                    skill_version: "skill".into(),
+                    graph_version: format!(
+                        "{}|{}",
+                        state.entities.join(","),
+                        knowledge_version(&state.knowledge, |kind| !matches!(
+                            kind,
+                            SectionType::Rule | SectionType::Constraint | SectionType::Skill
+                        ))
+                    ),
+                    policy_version: knowledge_version(&state.knowledge, |kind| {
+                        matches!(kind, SectionType::Rule | SectionType::Constraint)
+                    }),
+                    skill_version: knowledge_version(&state.knowledge, |kind| {
+                        matches!(kind, SectionType::Skill)
+                    }),
                 };
                 if let Some(hit) = state.cache.get(&key) {
                     return Ok(ContextResult {
@@ -454,6 +466,28 @@ impl PiIntegration {
             Ok(())
         }
     }
+}
+
+/// Content hash of the knowledge sections whose kind `include` accepts, so a
+/// changed rule, skill, memory or source section gives a new cache key.
+fn knowledge_version(
+    sections: &[ContextSection],
+    include: impl Fn(&SectionType) -> bool,
+) -> String {
+    let mut hasher = blake3::Hasher::new();
+    for section in sections.iter().filter(|section| include(&section.kind)) {
+        for part in [section.id.as_str(), section.content.as_str()] {
+            hasher.update(&(part.len() as u64).to_le_bytes());
+            hasher.update(part.as_bytes());
+        }
+        hasher.update(&section.priority.to_le_bytes());
+        hasher.update(&[u8::from(section.mandatory)]);
+        for path in &section.source_paths {
+            hasher.update(&(path.len() as u64).to_le_bytes());
+            hasher.update(path.as_bytes());
+        }
+    }
+    hasher.finalize().to_hex().to_string()
 }
 
 fn empty_advice(mode: OptimizationMode) -> ToolCallAdvice {
