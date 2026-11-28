@@ -6,8 +6,8 @@ async fn count(db: &ax_db::Database, sql: &str) -> i64 {
 
 #[tokio::test]
 async fn prune_removes_only_file_changes_whose_paths_are_all_excluded() {
-    let root = std::env::temp_dir().join(format!("ax-fc-prune-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
@@ -120,7 +120,6 @@ async fn prune_removes_only_file_changes_whose_paths_are_all_excluded() {
     )
     .await;
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
 
     assert_eq!(left.len(), 2);
     assert!(left.contains(&"mixed".to_string()));
@@ -133,8 +132,8 @@ async fn prune_removes_only_file_changes_whose_paths_are_all_excluded() {
 
 #[tokio::test]
 async fn purge_waits_for_another_writer_instead_of_failing() {
-    let root = std::env::temp_dir().join(format!("ax-fc-purge-lock-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
@@ -174,7 +173,6 @@ async fn purge_waits_for_another_writer_instead_of_failing() {
     )
     .await;
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
     assert_eq!(purged, 1200);
     assert_eq!(left, 0);
 }

@@ -338,10 +338,12 @@ fn cluster_verbose_lines(lines: &[VerboseLine]) -> Vec<VerboseCluster> {
         let is_inbound = line.kind == "inbound";
         // Enrich side-channel lines have no tool= — keep them on the open preflight cluster.
         let is_enrich = line.kind == "enrich" || line.body.starts_with("enrich ");
+        // `outbound preview` follows its call's `outbound` line and belongs to that call.
+        let is_preview = line.body.starts_with("outbound preview ");
         let same_tool = clusters
             .last()
             .map(|c| {
-                !c.has_outbound
+                (!c.has_outbound || is_preview)
                     && ((!line.tool.is_empty() && c.tool == line.tool)
                         || (is_enrich && c.tool == "ax_preflight"))
             })
@@ -386,12 +388,32 @@ fn cluster_verbose_lines(lines: &[VerboseLine]) -> Vec<VerboseCluster> {
     clusters
 }
 
+/// Domain `[ax] 🪓 <domain> <message>` lines, one `<domain> <message>` per line.
+///
+/// MCP trace lines are left out: their tool arguments and reply previews carry
+/// free text (prompts) that must not trigger or hide domain findings.
 fn domain_blob_from(lines: &[VerboseLine]) -> String {
     lines
         .iter()
-        .map(|l| l.body.as_str())
+        .filter(|l| !l.is_mcp)
+        .filter_map(|l| {
+            let rest = l.body.strip_prefix("[ax]")?.trim_start();
+            let rest = rest
+                .strip_prefix(crate::log_brand::AX_LOG_ICON)
+                .unwrap_or(rest)
+                .trim_start();
+            Some(rest)
+        })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// True when a line of the domain blob is `<domain> <rest>` and `pred(rest)` holds.
+fn domain_line_matches(blob: &str, domain: &str, pred: impl Fn(&str) -> bool) -> bool {
+    blob.lines().any(|line| {
+        let (d, rest) = line.split_once(' ').unwrap_or((line, ""));
+        d == domain && pred(rest)
+    })
 }
 
 fn parse_verbose_log(text: &str, since_ms: i64) -> (Vec<VerboseLine>, Vec<VerboseCluster>) {
@@ -531,7 +553,8 @@ pub fn find_cursor_transcripts(project_root: &Path) -> Vec<PathBuf> {
         .join(&slug)
         .join("agent-transcripts");
     if !dir.is_dir() {
-        // Fallback: scan all projects for matching slug substring
+        // Fallback: a project folder whose name normalises to the same slug
+        // (case or punctuation differences only).
         return find_transcripts_fallback(&home.join(".cursor").join("projects"), &slug);
     }
     collect_transcripts(&dir)
@@ -550,8 +573,11 @@ fn find_transcripts_fallback(projects: &Path, slug: &str) -> Vec<PathBuf> {
         if !entry.file_type().is_dir() {
             continue;
         }
+        if entry.depth() == 0 {
+            continue;
+        }
         let name = entry.file_name().to_string_lossy();
-        if name.contains(slug) || slug.contains(name.as_ref()) {
+        if cursor_project_slug(Path::new(name.as_ref())) == slug {
             let transcripts = entry.path().join("agent-transcripts");
             if transcripts.is_dir() {
                 best.extend(collect_transcripts(&transcripts));
@@ -568,18 +594,20 @@ fn collect_transcripts(dir: &Path) -> Vec<PathBuf> {
         .filter(|e| e.file_type().is_file())
         .filter(|e| {
             let p = e.path();
-            let s = p.to_string_lossy();
-            s.contains("agent-transcripts")
-                && !s.contains("subagents")
-                && p.extension().and_then(|x| x.to_str()) == Some("jsonl")
-                && {
-                    let parent = p
-                        .parent()
-                        .and_then(|x| x.file_name())
-                        .and_then(|n| n.to_str());
-                    let stem = p.file_stem().and_then(|n| n.to_str());
-                    parent.is_some() && parent == stem
-                }
+            // Subagent chats live in a `subagents` folder below the
+            // transcripts folder; names above it (the project slug) do not count.
+            let in_subagents = p.strip_prefix(dir).is_ok_and(|rel| {
+                rel.components()
+                    .any(|c| c.as_os_str() == std::ffi::OsStr::new("subagents"))
+            });
+            !in_subagents && p.extension().and_then(|x| x.to_str()) == Some("jsonl") && {
+                let parent = p
+                    .parent()
+                    .and_then(|x| x.file_name())
+                    .and_then(|n| n.to_str());
+                let stem = p.file_stem().and_then(|n| n.to_str());
+                parent.is_some() && parent == stem
+            }
         })
         .map(|e| {
             let mtime = e
@@ -641,15 +669,7 @@ fn pick_best_transcript(paths: Vec<PathBuf>) -> Option<PathBuf> {
     }
     let mut best: Option<(i64, PathBuf)> = None;
     for (idx, path) in paths.into_iter().take(10).enumerate() {
-        let events = load_transcript_events(&path, 0).unwrap_or_default();
-        let ax = events
-            .iter()
-            .filter(|e| e.kind == TranscriptKind::AxTool)
-            .count() as i64;
-        let read_grep = events
-            .iter()
-            .filter(|e| matches!(e.kind, TranscriptKind::Read | TranscriptKind::Grep))
-            .count() as i64;
+        let (ax, read_grep) = transcript_activity(&path);
         // Newest-first list: small idx is fresher. Prefer ax activity heavily.
         let score = ax.saturating_mul(100) + read_grep.min(40) + (20 - idx as i64).max(0);
         if best.as_ref().map(|(s, _)| score > *s).unwrap_or(true) {
@@ -657,6 +677,43 @@ fn pick_best_transcript(paths: Vec<PathBuf>) -> Option<PathBuf> {
         }
     }
     best.map(|(_, p)| p)
+}
+
+/// ax tool calls and Read/Grep calls in one transcript. Counts are cached by
+/// path, size and modification time, so repeated audits (the live quality
+/// poll) parse a transcript again only after it changed.
+fn transcript_activity(path: &Path) -> (i64, i64) {
+    type Key = (PathBuf, Option<SystemTime>, u64);
+    static CACHE: std::sync::Mutex<Option<std::collections::HashMap<Key, (i64, i64)>>> =
+        std::sync::Mutex::new(None);
+    let meta = fs::metadata(path).ok();
+    let key: Key = (
+        path.to_path_buf(),
+        meta.as_ref().and_then(|m| m.modified().ok()),
+        meta.as_ref().map(|m| m.len()).unwrap_or(0),
+    );
+    if let Ok(cache) = CACHE.lock() {
+        if let Some(hit) = cache.as_ref().and_then(|m| m.get(&key)) {
+            return *hit;
+        }
+    }
+    let events = load_transcript_events(path, 0).unwrap_or_default();
+    let ax = events
+        .iter()
+        .filter(|e| e.kind == TranscriptKind::AxTool)
+        .count() as i64;
+    let read_grep = events
+        .iter()
+        .filter(|e| matches!(e.kind, TranscriptKind::Read | TranscriptKind::Grep))
+        .count() as i64;
+    if let Ok(mut cache) = CACHE.lock() {
+        let map = cache.get_or_insert_with(Default::default);
+        if map.len() >= 256 {
+            map.clear();
+        }
+        map.insert(key, (ax, read_grep));
+    }
+    (ax, read_grep)
 }
 
 fn percentile(sorted: &[i64], p: f64) -> i64 {
@@ -1018,9 +1075,10 @@ fn score_and_findings(
         tokens_at_risk += 500;
     }
 
-    // v4 domain lines (workspace/lsp/ship-ci/…) — scanned separately from MCP clusters
+    // Domain lines (workspace/lsp/ship-ci/…), matched per line on the domain prefix.
     let joined = domain_blob;
-    if joined.contains("ship-ci") && joined.contains("status=failed") {
+    let has_word = |rest: &str, word: &str| rest.split_whitespace().any(|t| t == word);
+    if domain_line_matches(joined, "ship-ci", |rest| has_word(rest, "status=failed")) {
         score -= 15;
         findings.push(Finding {
             id: "ship-ci-failed".into(),
@@ -1035,7 +1093,7 @@ fn score_and_findings(
             log_line_hint: Some("ship-ci status=failed".into()),
         });
     }
-    if joined.contains("plugin") && joined.contains("fail") {
+    if domain_line_matches(joined, "plugin", |rest| has_word(rest, "fail")) {
         score -= 8;
         findings.push(Finding {
             id: "plugin-extract-errors".into(),
@@ -1053,15 +1111,12 @@ fn score_and_findings(
     }
 
     // LspAvailableUnused — only when MCP is active (not domain-only noise)
-    let lsp_on_path = [
-        "rust-analyzer",
-        "typescript-language-server",
-        "pyright-langserver",
-        "gopls",
-    ]
-    .iter()
-    .any(|bin| command_on_path(bin));
-    if lsp_on_path && enrichment.inbound_count > 0 && !joined.contains("lsp enrich") {
+    let lsp_enrich_ran = domain_line_matches(joined, "lsp", |rest| rest.starts_with("enrich"));
+    if lsp_available_unused(
+        enrichment.inbound_count,
+        lsp_enrich_ran,
+        language_server_on_path,
+    ) {
         score -= 5;
         findings.push(Finding {
             id: "lsp-available-unused".into(),
@@ -1080,7 +1135,9 @@ fn score_and_findings(
     }
 
     // ShareReadonlyWrite
-    if joined.contains("readonly write denied") {
+    if domain_line_matches(joined, "share", |rest| {
+        rest.contains("readonly write denied")
+    }) {
         score -= 4;
         findings.push(Finding {
             id: "share-readonly-write".into(),
@@ -1097,7 +1154,10 @@ fn score_and_findings(
     }
 
     // EmbedBackend — informational only
-    if let Some(backend_line) = joined.lines().find(|l| l.contains("embed backend=")) {
+    if let Some(backend_line) = joined
+        .lines()
+        .find(|l| l.starts_with("embed ") && l.contains("backend="))
+    {
         let backend = backend_line
             .split("backend=")
             .nth(1)
@@ -1301,6 +1361,47 @@ fn truncate_hint(s: &str, max_chars: usize) -> String {
     format!("{trimmed}…")
 }
 
+/// The LspAvailableUnused check. The PATH probe starts processes, so it
+/// runs only when the cheap conditions already hold.
+fn lsp_available_unused(
+    inbound_count: usize,
+    lsp_enrich_ran: bool,
+    probe: impl FnOnce() -> bool,
+) -> bool {
+    inbound_count > 0 && !lsp_enrich_ran && probe()
+}
+
+/// How long a PATH probe result stays valid. The live quality poll audits
+/// repeatedly; probing once per interval keeps it from starting language
+/// servers on every poll while still noticing a server installed later.
+const LSP_PROBE_TTL: std::time::Duration = std::time::Duration::from_secs(600);
+
+fn language_server_on_path() -> bool {
+    static CACHE: std::sync::Mutex<Option<(std::time::Instant, bool)>> =
+        std::sync::Mutex::new(None);
+    if let Ok(cache) = CACHE.lock() {
+        if let Some((at, found)) = *cache {
+            if at.elapsed() < LSP_PROBE_TTL {
+                return found;
+            }
+        }
+    }
+    let found = [
+        "rust-analyzer",
+        "typescript-language-server",
+        "pyright-langserver",
+        "gopls",
+    ]
+    .iter()
+    .any(|bin| command_on_path(bin));
+    if let Ok(mut cache) = CACHE.lock() {
+        *cache = Some((std::time::Instant::now(), found));
+    }
+    found
+}
+
+const VERSION_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 fn command_on_path(bin: &str) -> bool {
     #[cfg(windows)]
     let lookup = format!("{bin}.exe");
@@ -1313,14 +1414,35 @@ fn command_on_path(bin: &str) -> bool {
     }) else {
         return false;
     };
-    // rustup shims exist on PATH but exit non-zero until `rustup component add …`.
-    std::process::Command::new(&path)
+    version_check_ok(&path, VERSION_CHECK_TIMEOUT)
+}
+
+/// Run `<binary> --version`. rustup shims exist on PATH but exit non-zero
+/// until `rustup component add …`.
+fn version_check_ok(path: &Path, timeout: std::time::Duration) -> bool {
+    let Ok(mut child) = std::process::Command::new(path)
         .arg("--version")
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .spawn()
+    else {
+        return false;
+    };
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
 }
 
 fn grade_for(score: u8) -> String {
@@ -1333,25 +1455,9 @@ fn grade_for(score: u8) -> String {
     }
 }
 
+/// Whether verbose MCP file logging is on, as decided by the log writer itself.
 fn verbose_enabled_for(project_root: &Path) -> bool {
-    if std::env::var("AX_MCP_VERBOSE")
-        .map(|v| {
-            let v = v.trim();
-            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
-        })
-        .unwrap_or(false)
-    {
-        return true;
-    }
-    let path = project_root.join(".ax").join("ship.toml");
-    let Ok(text) = fs::read_to_string(path) else {
-        return false;
-    };
-    text.lines().any(|l| {
-        let t = l.trim();
-        t.starts_with("verbose_mcp")
-            && (t.contains("true") || t.ends_with("=1") || t.contains("= true"))
-    })
+    crate::mcp_verbose_log::verbose_enabled(Some(project_root))
 }
 
 fn enrichment_from(clusters: &[VerboseCluster]) -> EnrichmentMetrics {
@@ -1414,6 +1520,29 @@ fn enrichment_from(clusters: &[VerboseCluster]) -> EnrichmentMetrics {
     }
 }
 
+/// Earliest time (Unix ms) whose log files the audit must read; 0 reads all.
+///
+/// A rolling window reads from its start. An explicit session reads from its
+/// first timed transcript event, or everything when the transcript is untimed.
+fn log_read_bound_ms(explicit_session: bool, since_ms: i64, events: &[TranscriptEvent]) -> i64 {
+    if !explicit_session {
+        return since_ms;
+    }
+    events
+        .iter()
+        .map(|e| e.ts_ms)
+        .filter(|ts| *ts > 0)
+        .min()
+        .unwrap_or(0)
+}
+
+/// Whether any non-empty verbose log file exists, without reading it.
+fn any_verbose_log_on_disk(project_root: &Path) -> bool {
+    crate::mcp_verbose_log::list_dated_log_files(project_root)
+        .iter()
+        .any(|(_, p)| fs::metadata(p).is_ok_and(|m| m.len() > 0))
+}
+
 /// Run a quality audit for a project (rolling window or full session).
 pub fn audit_project(project_root: &Path, opts: &AuditOptions) -> Result<QualitySnapshot, String> {
     let window = opts.window_minutes.unwrap_or(DEFAULT_WINDOW_MINUTES);
@@ -1423,13 +1552,6 @@ pub fn audit_project(project_root: &Path, opts: &AuditOptions) -> Result<Quality
     } else {
         now_ms().saturating_sub((window as i64) * 60_000)
     };
-
-    let verbose_enabled = verbose_enabled_for(project_root);
-    let log_path = crate::mcp_verbose_log::current_log_path(Some(project_root));
-    let verbose_text = crate::mcp_verbose_log::read_merged_verbose_log(project_root);
-    let verbose_present = !verbose_text.trim().is_empty();
-    let (lines, mut clusters) = parse_verbose_log(&verbose_text, since_ms);
-    let domain_blob = domain_blob_from(&lines);
 
     let session_path = resolve_session_path(opts, project_root);
     let mut events = Vec::new();
@@ -1442,6 +1564,16 @@ pub fn audit_project(project_root: &Path, opts: &AuditOptions) -> Result<Quality
             .and_then(|n| n.to_str())
             .map(|s| s.to_string());
     }
+
+    let verbose_enabled = verbose_enabled_for(project_root);
+    let log_path = crate::mcp_verbose_log::current_log_path(Some(project_root));
+    let verbose_text = crate::mcp_verbose_log::read_merged_verbose_log_since(
+        project_root,
+        log_read_bound_ms(explicit_session, since_ms, &events),
+    );
+    let verbose_present = !verbose_text.trim().is_empty() || any_verbose_log_on_disk(project_root);
+    let (lines, mut clusters) = parse_verbose_log(&verbose_text, since_ms);
+    let domain_blob = domain_blob_from(&lines);
 
     // Rolling-window + untimed transcript: if verbose is quiet in-window, drop the
     // whole-session transcript tail so we don't false-flag UncorrelatedTool /
@@ -1603,6 +1735,98 @@ pub fn format_markdown_report(snap: &QualitySnapshot) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn write_transcript(transcripts: &Path, id: &str) -> PathBuf {
+        let dir = transcripts.join(id);
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join(format!("{id}.jsonl"));
+        fs::write(&file, "{}\n").unwrap();
+        file
+    }
+
+    #[test]
+    fn transcript_fallback_ignores_parent_and_sibling_workspaces() {
+        let projects = tempfile::tempdir().unwrap();
+        write_transcript(
+            &projects
+                .path()
+                .join("users-me-io")
+                .join("agent-transcripts"),
+            "parent",
+        );
+        write_transcript(
+            &projects
+                .path()
+                .join("users-me-io-ax-site")
+                .join("agent-transcripts"),
+            "sibling",
+        );
+        let own = write_transcript(
+            &projects
+                .path()
+                .join("Users-Me-IO-AX")
+                .join("agent-transcripts"),
+            "own",
+        );
+        let found = find_transcripts_fallback(projects.path(), "users-me-io-ax");
+        assert_eq!(found, vec![own]);
+    }
+
+    #[test]
+    fn subagents_in_the_project_slug_does_not_hide_transcripts() {
+        let projects = tempfile::tempdir().unwrap();
+        let transcripts = projects
+            .path()
+            .join("users-me-subagents-lab")
+            .join("agent-transcripts");
+        let main = write_transcript(&transcripts, "chat");
+        write_transcript(&transcripts.join("chat").join("subagents"), "child");
+        assert_eq!(collect_transcripts(&transcripts), vec![main]);
+    }
+
+    #[test]
+    fn lsp_probe_runs_only_when_the_cheap_conditions_hold() {
+        let never = || -> bool { panic!("PATH probe ran although it could not change the result") };
+        assert!(!lsp_available_unused(0, false, never));
+        assert!(!lsp_available_unused(3, true, never));
+        assert!(lsp_available_unused(3, false, || true));
+        assert!(!lsp_available_unused(3, false, || false));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn version_check_gives_up_on_a_hanging_binary() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("hangs");
+        fs::write(&bin, "#!/bin/sh\nsleep 6\nexit 0\n").unwrap();
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        let started = std::time::Instant::now();
+        let ok = version_check_ok(&bin, std::time::Duration::from_millis(300));
+        assert!(
+            !ok,
+            "a binary that does not answer in time is not a working server"
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(4));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn version_check_accepts_a_quick_success() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let ok_bin = dir.path().join("ok");
+        fs::write(&ok_bin, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&ok_bin, fs::Permissions::from_mode(0o755)).unwrap();
+        let bad_bin = dir.path().join("bad");
+        fs::write(&bad_bin, "#!/bin/sh\nexit 1\n").unwrap();
+        fs::set_permissions(&bad_bin, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(version_check_ok(&ok_bin, std::time::Duration::from_secs(5)));
+        assert!(!version_check_ok(
+            &bad_bin,
+            std::time::Duration::from_secs(5)
+        ));
+    }
 
     #[test]
     fn slug_sanitizes_windows_path() {
@@ -1885,6 +2109,24 @@ mod tests {
     }
 
     #[test]
+    fn outbound_preview_stays_in_its_call_cluster() {
+        let text = "\
+2026-07-21T19:07:03.100Z [ax-mcp] inbound tool=ax_explore args={}\n\
+2026-07-21T19:07:03.200Z [ax-mcp] outbound tool=ax_explore mode=lean text_chars=10 structured=false duration_ms=1\n\
+2026-07-21T19:07:03.201Z [ax-mcp] outbound preview tool=ax_explore text=hello\n\
+2026-07-21T19:07:04.100Z [ax-mcp] inbound tool=ax_explore args={}\n\
+2026-07-21T19:07:04.200Z [ax-mcp] outbound tool=ax_explore mode=lean text_chars=10 structured=false duration_ms=1\n\
+2026-07-21T19:07:04.201Z [ax-mcp] outbound preview tool=ax_explore text=again\n";
+        let (_l, clusters) = parse_verbose_log(text, 0);
+        assert_eq!(clusters.len(), 2, "{clusters:?}");
+        assert!(clusters.iter().all(|c| c.has_inbound && c.has_outbound));
+        assert_eq!(clusters[0].lines.len(), 3);
+        let mix = tool_mix_from(&clusters, &[]);
+        assert_eq!(mix.explore, 2);
+        assert_eq!(mix.graph, 2);
+    }
+
+    #[test]
     fn domain_lines_do_not_form_tool_clusters() {
         let text = "\
 2026-07-26T13:02:14.805Z [ax] workspace switch path=C:\\gary\\ax\n\
@@ -1898,6 +2140,132 @@ mod tests {
         let blob = domain_blob_from(&lines);
         assert!(blob.contains("lsp enrich"));
         assert!(blob.contains("workspace switch"));
+    }
+
+    fn domain_findings(text: &str) -> Vec<String> {
+        let (lines, _) = parse_verbose_log(text, 0);
+        let blob = domain_blob_from(&lines);
+        let (_, findings, _) = score_and_findings(
+            &[],
+            &[],
+            &ToolMix::default(),
+            &EnrichmentMetrics::default(),
+            100.0,
+            ScoreMode {
+                mode: "verbose_only",
+                verbose_present: true,
+                verbose_enabled: true,
+            },
+            &blob,
+        );
+        findings.into_iter().map(|f| f.check).collect()
+    }
+
+    #[test]
+    fn log_read_bound_follows_window_or_first_timed_session_event() {
+        let ev = |ts_ms| TranscriptEvent {
+            ts_ms,
+            kind: TranscriptKind::AxTool,
+            name: "ax_preflight".into(),
+            ax_tool: Some("ax_preflight".into()),
+        };
+        assert_eq!(log_read_bound_ms(false, 5_000, &[ev(10)]), 5_000);
+        assert_eq!(log_read_bound_ms(true, 0, &[ev(0), ev(900), ev(700)]), 700);
+        assert_eq!(log_read_bound_ms(true, 0, &[ev(0)]), 0, "untimed reads all");
+        assert_eq!(log_read_bound_ms(true, 0, &[]), 0);
+    }
+
+    #[test]
+    fn any_verbose_log_on_disk_sees_old_files_outside_the_window() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!any_verbose_log_on_disk(dir.path()));
+        std::fs::create_dir_all(dir.path().join(".ax")).unwrap();
+        std::fs::write(
+            dir.path().join(".ax/mcp-verbose-2020-01-01.log"),
+            "2020-01-01T10:00:00.000Z [ax-mcp] inbound tool=ax_preflight\n",
+        )
+        .unwrap();
+        assert!(any_verbose_log_on_disk(dir.path()));
+    }
+
+    #[test]
+    fn audit_treats_verbose_logging_as_on_without_ship_toml_key() {
+        // File logging is always on; the audit must agree with mcp_verbose_log.
+        let dir = tempfile::tempdir().unwrap();
+        assert!(crate::mcp_verbose_log::verbose_enabled(Some(dir.path())));
+        assert!(verbose_enabled_for(dir.path()));
+        std::fs::create_dir_all(dir.path().join(".ax")).unwrap();
+        std::fs::write(dir.path().join(".ax/ship.toml"), "verbose_mcp = false\n").unwrap();
+        assert!(verbose_enabled_for(dir.path()));
+    }
+
+    #[test]
+    fn domain_checks_ignore_keywords_inside_tool_arguments() {
+        let text = "\
+2026-07-26T13:02:14.805Z [ax-mcp] 🪓 inbound tool=ax_preflight args={\"prompt\":\"why does the plugin loader fail? ship-ci status=failed readonly write denied embed backend=onnx lsp enrich\"}\n\
+2026-07-26T13:02:14.900Z [ax-mcp] 🪓 outbound preview tool=ax_preflight text=plugin fail ship-ci status=failed\n";
+        let checks = domain_findings(text);
+        for check in [
+            "PluginExtractErrors",
+            "ShipCiFailed",
+            "ShareReadonlyWrite",
+            "EmbedBackend",
+        ] {
+            assert!(
+                !checks.iter().any(|c| c == check),
+                "{check} must not fire from MCP args: {checks:?}"
+            );
+        }
+        let (lines, _) = parse_verbose_log(text, 0);
+        assert!(
+            !domain_line_matches(&domain_blob_from(&lines), "lsp", |rest| rest
+                .starts_with("enrich")),
+            "a prompt mentioning `lsp enrich` must not count as an enrich run"
+        );
+    }
+
+    #[test]
+    fn domain_checks_need_both_halves_on_one_domain_line() {
+        // `plugin … ok` on one line and `fail` on another must not combine.
+        let text = "\
+2026-07-26T13:02:14.805Z [ax] 🪓 plugin extract name=echo ext=.rs path=src/a.rs ok tool=plugin\n\
+2026-07-26T13:02:15.000Z [ax] 🪓 lsp enrich fail via=mcp tool=lsp\n\
+2026-07-26T13:02:16.000Z [ax] 🪓 ship-ci start tool=ship-ci\n\
+2026-07-26T13:02:17.000Z [ax] 🪓 ship status=failed tool=ship\n";
+        let checks = domain_findings(text);
+        assert!(
+            !checks.iter().any(|c| c == "PluginExtractErrors"),
+            "{checks:?}"
+        );
+        assert!(!checks.iter().any(|c| c == "ShipCiFailed"), "{checks:?}");
+    }
+
+    #[test]
+    fn domain_checks_fire_on_real_domain_lines() {
+        let text = "\
+2026-07-26T13:02:14.805Z [ax] 🪓 plugin extract name=echo ext=.rs path=src/a.rs fail tool=plugin\n\
+2026-07-26T13:02:15.000Z [ax] 🪓 ship-ci status=failed steps=3 tool=ship-ci\n\
+2026-07-26T13:02:16.000Z [ax] 🪓 share readonly write denied tool=share\n\
+2026-07-26T13:02:17.000Z [ax] 🪓 embed backend=onnx model=m tool=embed\n\
+2026-07-26T13:02:18.000Z [ax] 🪓 lsp enrich start limit=200 tool=lsp\n";
+        let checks = domain_findings(text);
+        for check in [
+            "PluginExtractErrors",
+            "ShipCiFailed",
+            "ShareReadonlyWrite",
+            "EmbedBackend",
+        ] {
+            assert!(
+                checks.iter().any(|c| c == check),
+                "{check} missing: {checks:?}"
+            );
+        }
+        let (lines, _) = parse_verbose_log(text, 0);
+        assert!(domain_line_matches(
+            &domain_blob_from(&lines),
+            "lsp",
+            |rest| rest.starts_with("enrich")
+        ));
     }
 
     #[test]

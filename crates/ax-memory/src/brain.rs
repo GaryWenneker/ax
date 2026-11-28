@@ -22,9 +22,10 @@ pub fn is_build_output_path(path: &str) -> bool {
         .any(|segment| matches!(segment, "target" | "target-dev" | "node_modules" | "dist"))
 }
 
-/// Tier for a memory kind. Git captures and folder docs stay in the archive.
+/// Tier for a memory kind. Turns and file changes are recent (t1) until turn
+/// retention archives them; git captures and folder docs stay in the archive.
 pub fn tier_for_kind(kind: &str) -> &'static str {
-    if kind == crate::turns::TURN_KIND {
+    if kind == crate::turns::TURN_KIND || kind == crate::turns::FILE_CHANGE_KIND {
         TIER_EPISODIC
     } else if kind == "graph_diff"
         || kind == "activity"
@@ -360,12 +361,17 @@ fn cue_tokens(text: &str) -> Vec<String> {
     cues
 }
 
+/// Rebuild the automatic cues of `memory` and add `triggers`.
+///
+/// Explicit triggers (`source = 'trigger'`) already stored for the memory are
+/// kept: only automatic cues are derived from content, so rewriting a memory
+/// never drops the names a user gave it. Triggers go away with the memory.
 pub async fn register_cues(
     pool: &SqlitePool,
     memory: &MemoryRow,
     triggers: &[String],
 ) -> Result<(), AxError> {
-    sqlx::query("DELETE FROM memory_cues WHERE memory_id = ?")
+    sqlx::query("DELETE FROM memory_cues WHERE memory_id = ? AND source != 'trigger'")
         .bind(&memory.id)
         .execute(pool)
         .await
@@ -740,30 +746,34 @@ pub async fn prompt_cues(
         return Ok(Vec::new());
     }
     let json = serde_json::to_string(&tokens).unwrap_or_else(|_| "[]".into());
-    let rows: Vec<(String, String, String)> = sqlx::query_as(
+    let rows: Vec<(String, String, String)> = sqlx::query_as(concat!(
         "SELECT c.memory_id, c.source, c.cue FROM memory_cues c
          JOIN memories m ON m.id = c.memory_id
          WHERE c.cue IN (SELECT value FROM json_each(?))
            AND m.enabled = 1
            AND m.tier IN ('t1', 't2')
            AND COALESCE(m.status, 'active') = 'active'
-           AND m.kind NOT IN ('turn', 'doc', 'graph_diff', 'activity')",
-    )
+           AND m.kind NOT IN ",
+        crate::types::recall_only_kinds_sql!()
+    ))
     .bind(&json)
     .fetch_all(pool)
     .await
     .map_err(|e| db_err_pub(pool, e))?;
     // Count only hot/active memories so a large archive cue table does not
     // dominate document-frequency work on the preflight path.
-    let counts: Vec<(String, i64)> = sqlx::query_as(
+    let counts: Vec<(String, i64)> = sqlx::query_as(concat!(
         "SELECT c.cue, COUNT(DISTINCT c.memory_id) FROM memory_cues c
          JOIN memories m ON m.id = c.memory_id
          WHERE c.cue IN (SELECT value FROM json_each(?))
            AND m.enabled = 1
            AND m.tier IN ('t1', 't2')
            AND COALESCE(m.status, 'active') = 'active'
-         GROUP BY c.cue",
-    )
+           AND m.kind NOT IN ",
+        crate::types::recall_only_kinds_sql!(),
+        "
+         GROUP BY c.cue"
+    ))
     .bind(&json)
     .fetch_all(pool)
     .await
@@ -1080,7 +1090,7 @@ pub async fn consolidate(_pool: &SqlitePool) -> Result<usize, AxError> {
     Ok(0)
 }
 
-type GraphSymbolRow = (String, String, String, String, Option<String>, i64, i64);
+type GraphSymbolRow = (String, String, String, String, Option<String>);
 
 async fn connection_db_path(conn: &mut sqlx::SqliteConnection) -> Option<std::path::PathBuf> {
     let file: Result<Option<String>, sqlx::Error> =
@@ -1093,36 +1103,66 @@ async fn connection_db_path(conn: &mut sqlx::SqliteConnection) -> Option<std::pa
         .map(std::path::PathBuf::from)
 }
 
+/// What makes a symbol "changed": name, kind, file and signature. Line numbers are
+/// left out so that inserting a line above a symbol does not count as a change.
+fn graph_fingerprint(name: &str, kind: &str, file_path: &str, signature: &str) -> String {
+    format!("{name}|{kind}|{file_path}|{signature}")
+}
+
+/// Fingerprints stored before line numbers were dropped end in `|<start>|<end>`.
+/// Such a fingerprint matches when the part before those numbers is the current one.
+fn same_fingerprint(stored: &str, current: &str) -> bool {
+    if stored == current {
+        return true;
+    }
+    let Some(rest) = stored.strip_prefix(current) else {
+        return false;
+    };
+    let mut parts = rest.split('|');
+    parts.next() == Some("")
+        && matches!(
+            (parts.next(), parts.next(), parts.next()),
+            (Some(a), Some(b), None)
+                if !a.is_empty() && !b.is_empty()
+                    && a.bytes().chain(b.bytes()).all(|c| c.is_ascii_digit() || c == b'-')
+        )
+}
+
+/// Record a graph_diff episode for each symbol that was added, changed or removed
+/// since the last call, and remember the current fingerprints.
+///
+/// The stored fingerprints are read in one query; only rows whose fingerprint
+/// differs are written.
 pub async fn capture_graph_episodes_on(
     conn: &mut sqlx::SqliteConnection,
 ) -> Result<usize, AxError> {
     let db_path = connection_db_path(conn).await;
-    let nodes: Vec<GraphSymbolRow> = sqlx::query_as(
-        "SELECT id, name, kind, file_path, signature, start_line, end_line FROM nodes",
+    let nodes: Vec<GraphSymbolRow> =
+        sqlx::query_as("SELECT id, name, kind, file_path, signature FROM nodes")
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(|e| db_err_at(db_path.as_deref(), e))?;
+    let state: std::collections::HashMap<String, String> = sqlx::query_as::<_, (String, String)>(
+        "SELECT symbol_id, fingerprint FROM graph_symbol_state",
     )
     .fetch_all(&mut *conn)
     .await
-    .map_err(|e| db_err_at(db_path.as_deref(), e))?;
-    let known: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_symbol_state")
-        .fetch_one(&mut *conn)
-        .await
-        .map_err(|e| db_err_at(db_path.as_deref(), e))?;
+    .map_err(|e| db_err_at(db_path.as_deref(), e))?
+    .into_iter()
+    .collect();
+    let known = state.len();
     let mut written = 0usize;
-    for (id, name, kind, file_path, signature, start, end) in nodes {
-        let fingerprint = format!(
-            "{name}|{kind}|{file_path}|{}|{start}|{end}",
-            signature.unwrap_or_default()
-        );
-        let previous: Option<String> =
-            sqlx::query_scalar("SELECT fingerprint FROM graph_symbol_state WHERE symbol_id = ?")
-                .bind(&id)
-                .fetch_optional(&mut *conn)
-                .await
-                .map_err(|e| db_err_at(db_path.as_deref(), e))?;
-        let change = match &previous {
+    for (id, name, kind, file_path, signature) in nodes {
+        let fingerprint =
+            graph_fingerprint(&name, &kind, &file_path, &signature.unwrap_or_default());
+        let previous = state.get(&id);
+        if previous.is_some_and(|old| old == &fingerprint) {
+            continue;
+        }
+        let change = match previous {
             None if known == 0 => None,
             None => Some("added"),
-            Some(old) if old == &fingerprint => None,
+            Some(old) if same_fingerprint(old, &fingerprint) => None,
             Some(_) => Some("changed"),
         };
         if let Some(change) = change {
@@ -1191,24 +1231,12 @@ pub async fn capture_graph_episodes(pool: &SqlitePool) -> Result<usize, AxError>
     // The vector table is created outside the transaction. sqlite-vec rejects that
     // create inside an open write transaction.
     ensure_vec_table(pool).await?;
-    let mut conn = pool.acquire().await.map_err(|e| db_err_pub(pool, e))?;
-    sqlx::query("BEGIN")
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| db_err_pub(pool, e))?;
-    match capture_graph_episodes_on(&mut conn).await {
-        Ok(written) => {
-            sqlx::query("COMMIT")
-                .execute(&mut *conn)
-                .await
-                .map_err(|e| db_err_pub(pool, e))?;
-            Ok(written)
-        }
-        Err(err) => {
-            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
-            Err(err)
-        }
-    }
+    // sqlx's Transaction rolls back when it is dropped, so a cancelled capture
+    // never returns its pooled connection with the transaction still open.
+    let mut tx = pool.begin().await.map_err(|e| db_err_pub(pool, e))?;
+    let written = capture_graph_episodes_on(&mut tx).await?;
+    tx.commit().await.map_err(|e| db_err_pub(pool, e))?;
+    Ok(written)
 }
 
 async fn write_graph_episode(
@@ -1295,6 +1323,9 @@ async fn write_graph_episode(
         updated_at: now,
         tier: tier_for_kind("graph_diff").into(),
     };
+    crate::store::write_derived_columns(&mut *conn, &row)
+        .await
+        .map_err(|e| db_err_at(db_path.as_deref(), e))?;
     register_cues_on(&mut *conn, &row).await?;
     Ok(())
 }
@@ -1347,7 +1378,7 @@ async fn register_cues_on(
     memory: &MemoryRow,
 ) -> Result<(), AxError> {
     let db_path = connection_db_path(conn).await;
-    sqlx::query("DELETE FROM memory_cues WHERE memory_id = ?")
+    sqlx::query("DELETE FROM memory_cues WHERE memory_id = ? AND source != 'trigger'")
         .bind(&memory.id)
         .execute(&mut *conn)
         .await

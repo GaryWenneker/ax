@@ -200,6 +200,186 @@ fn scenario_repository_change_keeps_unrelated_context() {
 }
 
 #[test]
+fn changed_knowledge_for_the_same_task_is_not_served_from_the_cache() {
+    let pi = create_pi_integration(priced(OptimizationMode::Advise));
+    let rule = |id: &str, content: &str| ContextSection {
+        id: id.into(),
+        kind: SectionType::Rule,
+        priority: 10,
+        token_estimate: 4,
+        content: content.into(),
+        mandatory: false,
+        source_paths: Vec::new(),
+    };
+    let request = ContextRequest {
+        session_id: "abc123".into(),
+        turn_id: "t".into(),
+        user_intent: Some("fix the parser".into()),
+        repository_root: None,
+        changed_files: Vec::new(),
+        previous_tool_names: Vec::new(),
+    };
+    pi.set_knowledge(vec![rule("r1", "old rule text")]).unwrap();
+    let first = pi.get_session_context(&request).unwrap();
+    assert!(!first.cache_hit);
+    pi.set_knowledge(vec![rule("r1", "new rule text")]).unwrap();
+    let second = pi.get_session_context(&request).unwrap();
+    assert!(!second.cache_hit);
+    assert_eq!(second.sections[0].content, "new rule text");
+    let third = pi.get_session_context(&request).unwrap();
+    assert!(third.cache_hit, "unchanged knowledge still hits the cache");
+}
+
+fn spend_one_point_zero_eight_usd(pi: &ax_pi::PiIntegration) {
+    // 360,000 input tokens at 3 USD per million tokens.
+    for event in [
+        json!({"type": "agent_start", "sessionId": "abc123"}),
+        json!({"type": "turn_start", "sessionId": "abc123"}),
+        json!({
+            "type": "message_end",
+            "sessionId": "abc123",
+            "message": {
+                "role": "assistant",
+                "content": [],
+                "provider": "anthropic",
+                "model": "claude",
+                "usage": {"input": 360000, "output": 0, "cacheRead": 0}
+            }
+        }),
+        json!({"type": "turn_end", "sessionId": "abc123"}),
+    ] {
+        pi.ingest(&event).unwrap();
+    }
+}
+
+#[test]
+fn euro_economics_convert_usd_spend_with_the_configured_rate() {
+    let pi = create_pi_integration(PiOptions {
+        currency: "EUR".into(),
+        usd_per_eur: Some(1.08),
+        ..priced(OptimizationMode::Advise)
+    });
+    spend_one_point_zero_eight_usd(&pi);
+    let report = pi.economics(Some("abc123")).unwrap();
+    assert_eq!(report.currency, "EUR");
+    assert!((report.estimated_model_cost.unwrap() - 1.0).abs() < 1e-6);
+    let budget = report.budget.clone().expect("budget");
+    assert_eq!(budget.currency, "EUR");
+    assert!((budget.spent - 1.0).abs() < 1e-6, "{budget:?}");
+    assert!((budget.remaining - 59.0).abs() < 1e-6, "{budget:?}");
+    assert!(pi
+        .format_economics_text(Some("abc123"))
+        .unwrap()
+        .contains("€1.00"));
+    let cost = pi.get_cost("abc123").unwrap();
+    assert_eq!(cost.currency, "USD", "model_usd is a USD figure");
+    assert!((cost.model_usd.unwrap() - 1.08).abs() < 1e-6);
+}
+
+#[test]
+fn euro_economics_without_a_rate_stay_in_usd_and_compare_no_budget() {
+    let pi = create_pi_integration(PiOptions {
+        currency: "EUR".into(),
+        usd_per_eur: None,
+        ..priced(OptimizationMode::Advise)
+    });
+    spend_one_point_zero_eight_usd(&pi);
+    let report = pi.economics(Some("abc123")).unwrap();
+    assert_eq!(report.currency, "USD");
+    assert!((report.estimated_model_cost.unwrap() - 1.08).abs() < 1e-6);
+    assert!(report.budget.is_none(), "{:?}", report.budget);
+    assert!(!pi
+        .format_economics_text(Some("abc123"))
+        .unwrap()
+        .contains('€'));
+}
+
+#[test]
+fn a_monthly_budget_in_another_currency_is_left_out_and_says_why() {
+    let pi = create_pi_integration(PiOptions {
+        currency: "GBP".into(),
+        usd_per_eur: Some(1.08),
+        ..priced(OptimizationMode::Advise)
+    });
+    spend_one_point_zero_eight_usd(&pi);
+    let report = pi.economics(Some("abc123")).unwrap();
+    assert_eq!(report.currency, "USD");
+    assert!(report.budget.is_none(), "{:?}", report.budget);
+    let reason = report.budget_omitted.clone().expect("omission reason");
+    assert!(reason.contains("GBP"), "{reason}");
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["budget_omitted"], reason.as_str());
+    let text = pi.format_economics_text(Some("abc123")).unwrap();
+    assert!(text.contains(&reason), "{text}");
+}
+
+#[test]
+fn a_budget_that_is_compared_has_no_omission_reason() {
+    let pi = create_pi_integration(priced(OptimizationMode::Advise));
+    spend_one_point_zero_eight_usd(&pi);
+    let report = pi.economics(Some("abc123")).unwrap();
+    assert!(report.budget.is_some());
+    assert!(report.budget_omitted.is_none());
+    let json = serde_json::to_value(&report).unwrap();
+    assert!(json.get("budget_omitted").is_none(), "{json}");
+}
+
+#[test]
+fn usd_per_eur_is_read_from_the_budget_settings() {
+    let options = PiOptions::from_config_value(&json!({
+        "budget": {"monthly": 60, "currency": "EUR", "usdPerEur": 1.08}
+    }));
+    assert_eq!(options.usd_per_eur, Some(1.08));
+}
+
+#[tokio::test]
+async fn a_second_run_on_the_same_database_keeps_the_first_runs_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("ax.db");
+    for input in [1000, 2000] {
+        let pi = create_pi_integration(PiOptions {
+            db_path: Some(db.clone()),
+            ..priced(OptimizationMode::Advise)
+        });
+        pi.start().unwrap();
+        for event in [
+            json!({"type": "agent_start"}),
+            json!({"type": "turn_start"}),
+            json!({"type": "tool_execution_start", "toolName": "rg", "args": {"q": "x"}}),
+            json!({
+                "type": "tool_execution_end",
+                "toolName": "rg",
+                "isError": false,
+                "outputTokens": input,
+                "durationMs": 1,
+                "args": {"q": "x"}
+            }),
+            json!({
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "content": [],
+                    "provider": "anthropic",
+                    "model": "claude",
+                    "usage": {"input": input, "output": 10, "cacheRead": 0}
+                }
+            }),
+            json!({"type": "turn_end"}),
+        ] {
+            pi.ingest(&event).unwrap();
+        }
+        pi.stop().await.unwrap();
+    }
+    let (_, json) = ax_pi::read_economics(&db, Some("abc123"), "USD", None)
+        .await
+        .unwrap();
+    assert_eq!(json["turns"], 2, "{json}");
+    assert_eq!(json["input_tokens"], 3000, "{json}");
+    assert_eq!(json["output_tokens"], 20, "{json}");
+    assert_eq!(json["tool_output_tokens"]["rg"], 3000, "{json}");
+}
+
+#[test]
 fn scenario_mandatory_rule_is_kept() {
     let pi = create_pi_integration(PiOptions {
         context_max_tokens: 1,
@@ -324,6 +504,26 @@ fn disabled_integration_accepts_events() {
 }
 
 #[test]
+fn ingesting_events_does_no_database_io_before_stop() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("ax.db");
+    let pi = create_pi_integration(PiOptions {
+        db_path: Some(db.clone()),
+        ..priced(OptimizationMode::Observe)
+    });
+    pi.start().unwrap();
+    let event = json!({"type": "turn_start", "sessionId": "abc123"});
+    for _ in 0..200 {
+        pi.ingest(&event).unwrap();
+    }
+    assert!(!db.exists(), "ingest touched the database");
+    assert_eq!(pi.economics(None).unwrap().turns, 200);
+}
+
+/// Wall-clock bound: a loaded machine can fail it with nothing wrong, so it
+/// runs only on request (`cargo test -p ax-pi -- --ignored`).
+#[test]
+#[ignore = "wall-clock timing; run with --ignored"]
 fn event_processing_stays_under_five_milliseconds_average() {
     let pi = create_pi_integration(priced(OptimizationMode::Observe));
     let event = json!({"type": "turn_start", "sessionId": "abc123"});
@@ -363,8 +563,8 @@ fn optimize_mode_approves_explore_and_can_replay_a_repeat_from_memory() {
         session_id: "abc123".into(),
         turn_id: "t".into(),
         call_id: "r1".into(),
-        tool_name: "bash".into(),
-        arguments: json!({"cmd": "same"}),
+        tool_name: "read".into(),
+        arguments: json!({"path": "notes.txt"}),
         repository_state: "head".into(),
         known_graph_entities: Vec::new(),
         indexed_paths: Vec::new(),
@@ -384,6 +584,79 @@ fn optimize_mode_approves_explore_and_can_replay_a_repeat_from_memory() {
         advice.apply.as_ref().map(|item| item.rule.as_str()),
         Some("exact-repeat")
     );
+}
+
+fn repeat_observation(
+    tool: &str,
+    arguments: serde_json::Value,
+    call_id: &str,
+) -> ToolCallObservation {
+    ToolCallObservation {
+        session_id: "abc123".into(),
+        turn_id: "t".into(),
+        call_id: call_id.into(),
+        tool_name: tool.into(),
+        arguments,
+        repository_state: "head".into(),
+        known_graph_entities: Vec::new(),
+        indexed_paths: Vec::new(),
+        output_text_for_estimate: Some(format!("{call_id}-body")),
+        output_token_estimate: Some(3),
+        output_bytes: None,
+        duration_ms: 1,
+        success: true,
+    }
+}
+
+fn assert_not_replayed(advice: &ax_pi::ToolCallAdvice) {
+    assert_eq!(advice.cached_output, None);
+    assert_ne!(
+        advice.apply.as_ref().map(|item| item.rule.as_str()),
+        Some("exact-repeat")
+    );
+}
+
+#[test]
+fn optimize_mode_never_replays_a_command_that_can_change_state() {
+    let pi = create_pi_integration(priced(OptimizationMode::Optimize));
+    let first = repeat_observation("bash", json!({"cmd": "cargo test"}), "b1");
+    pi.record_tool_result(&first).unwrap();
+    let again = repeat_observation("bash", json!({"cmd": "cargo test"}), "b2");
+    assert_not_replayed(&pi.advise_tool_call(&again).unwrap());
+}
+
+#[test]
+fn optimize_mode_never_replays_a_failed_call() {
+    let pi = create_pi_integration(priced(OptimizationMode::Optimize));
+    let mut first = repeat_observation("read", json!({"path": "notes.txt"}), "f1");
+    first.success = false;
+    pi.record_tool_result(&first).unwrap();
+    let again = repeat_observation("read", json!({"path": "notes.txt"}), "f2");
+    assert_not_replayed(&pi.advise_tool_call(&again).unwrap());
+}
+
+#[test]
+fn optimize_mode_never_replays_when_the_repository_state_is_unknown() {
+    for state in ["", "unknown"] {
+        let pi = create_pi_integration(priced(OptimizationMode::Optimize));
+        let mut first = repeat_observation("read", json!({"path": "notes.txt"}), "u1");
+        first.repository_state = state.into();
+        pi.record_tool_result(&first).unwrap();
+        let mut again = repeat_observation("read", json!({"path": "notes.txt"}), "u2");
+        again.repository_state = state.into();
+        assert_not_replayed(&pi.advise_tool_call(&again).unwrap());
+    }
+}
+
+#[test]
+fn optimize_mode_forgets_cached_reads_after_a_state_changing_call() {
+    let pi = create_pi_integration(priced(OptimizationMode::Optimize));
+    let read = repeat_observation("read", json!({"path": "notes.txt"}), "w1");
+    pi.record_tool_result(&read).unwrap();
+    let edit = repeat_observation("edit", json!({"path": "notes.txt", "text": "new"}), "w2");
+    pi.record_tool_result(&edit).unwrap();
+    let again = repeat_observation("read", json!({"path": "notes.txt"}), "w3");
+    assert_not_replayed(&pi.advise_tool_call(&again).unwrap());
 }
 
 #[test]

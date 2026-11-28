@@ -2,8 +2,8 @@ use ax_memory::{record_episode, EpisodeInput};
 
 #[tokio::test]
 async fn recording_an_episode_is_idempotent() {
-    let root = std::env::temp_dir().join(format!("ax-ep-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
@@ -23,6 +23,5 @@ async fn recording_an_episode_is_idempotent() {
         .await
         .unwrap();
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
     assert_eq!(count, 1);
 }

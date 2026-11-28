@@ -3,7 +3,8 @@
 use ax_memory::bench::{ndcg_at, recall_at};
 use serde_json::{json, Value};
 
-/// Precision@k: fraction of the top-k that are relevant. None when there is no relevant set.
+/// Precision@k: relevant hits in the top k, divided by k. A ranker that returns fewer than
+/// k items is scored as if the missing slots were misses. None when there is no relevant set.
 pub fn precision_at(relevant: &[String], ranked: &[String], k: usize) -> Option<f64> {
     if relevant.is_empty() {
         return None;
@@ -12,12 +13,12 @@ pub fn precision_at(relevant: &[String], ranked: &[String], k: usize) -> Option<
         return None;
     }
     let want: std::collections::BTreeSet<&str> = relevant.iter().map(String::as_str).collect();
-    let top: Vec<&str> = ranked.iter().take(k).map(String::as_str).collect();
-    if top.is_empty() {
-        return Some(0.0);
-    }
-    let hits = top.iter().filter(|id| want.contains(*id)).count();
-    Some(hits as f64 / top.len() as f64)
+    let hits = ranked
+        .iter()
+        .take(k)
+        .filter(|id| want.contains(id.as_str()))
+        .count();
+    Some(hits as f64 / k as f64)
 }
 
 /// Mean reciprocal rank of the first relevant hit. None when there is no relevant set.
@@ -71,6 +72,7 @@ pub(crate) const PATH_VALIDATE: ObserveProfile = ObserveProfile {
     paraphrase_recall: false,
 };
 
+#[cfg(any(test, feature = "neural-lab"))]
 pub(crate) const LEARN_VALIDATE: ObserveProfile = ObserveProfile {
     precision_at_5: false,
     recall_at_5: false,
@@ -96,6 +98,7 @@ pub(crate) const BENCHMARK_ABC: ObserveProfile = ObserveProfile {
 pub(crate) enum SummaryStyle {
     EmbedBakeoff,
     PathValidate,
+    #[cfg(any(test, feature = "neural-lab"))]
     LearnValidate,
     AgentEval,
     BenchmarkAbc,
@@ -110,13 +113,14 @@ pub(crate) struct Acc {
     mrr: Vec<f64>,
     ndcg5: Vec<f64>,
     ndcg10: Vec<f64>,
-    paraphrase_r3: Option<f64>,
+    paraphrase_r3: Vec<f64>,
     scored: u64,
 }
 
 impl Acc {
+    /// Mean recall@3 over every paraphrase question; None when none was scored.
     pub(crate) fn paraphrase_recall_at_3(&self) -> Option<f64> {
-        self.paraphrase_r3
+        mean(&self.paraphrase_r3)
     }
 
     pub(crate) fn observe(
@@ -144,7 +148,7 @@ impl Acc {
             self.ndcg10.push(ndcg_at(relevant, ranked, 10));
         }
         if profile.paraphrase_recall && family == Some("paraphrase") {
-            self.paraphrase_r3 = recall_at(relevant, ranked, 3);
+            push_opt(&mut self.paraphrase_r3, recall_at(relevant, ranked, 3));
         }
     }
 
@@ -156,7 +160,7 @@ impl Acc {
                 "recallAt3": mean(&self.r3),
                 "mrr": mean(&self.mrr),
                 "ndcgAt5": mean(&self.ndcg5),
-                "paraphraseRecallAt3": self.paraphrase_r3
+                "paraphraseRecallAt3": self.paraphrase_recall_at_3()
             }),
             SummaryStyle::PathValidate => json!({
                 "questionsScored": self.scored,
@@ -171,6 +175,7 @@ impl Acc {
                     "mrr": self.mrr.len()
                 }
             }),
+            #[cfg(any(test, feature = "neural-lab"))]
             SummaryStyle::LearnValidate => json!({
                 "questionsScored": self.scored,
                 "precisionAt3": mean(&self.p3),
@@ -237,5 +242,33 @@ mod tests {
         assert_eq!(mrr(&relevant, &["m1".into()]), Some(1.0));
         assert_eq!(mrr(&[], &["m1".into()]), None);
         assert_eq!(precision_at(&[], &["m1".into()], 3), None);
+    }
+
+    #[test]
+    fn precision_divides_by_k_even_for_short_lists() {
+        let relevant = vec!["m1".into()];
+        // A short list does not earn a higher score than a full list with the same hit.
+        assert_eq!(precision_at(&relevant, &["m1".into()], 3), Some(1.0 / 3.0));
+        assert_eq!(
+            precision_at(&relevant, &["m1".into(), "x".into(), "y".into()], 3),
+            precision_at(&relevant, &["m1".into()], 3)
+        );
+        assert_eq!(precision_at(&relevant, &[], 3), Some(0.0));
+    }
+
+    #[test]
+    fn paraphrase_recall_is_the_mean_over_all_paraphrase_questions() {
+        let mut acc = Acc::default();
+        let miss = vec!["m1".to_string()];
+        let hit = vec!["m2".to_string()];
+        let ranked = vec!["m2".to_string(), "x".to_string(), "y".to_string()];
+        acc.observe(EMBED_BAKEOFF, Some("paraphrase"), &miss, &ranked);
+        acc.observe(EMBED_BAKEOFF, Some("paraphrase"), &hit, &ranked);
+        acc.observe(EMBED_BAKEOFF, Some("exact"), &hit, &ranked);
+        assert_eq!(acc.paraphrase_recall_at_3(), Some(0.5));
+        assert_eq!(
+            acc.summary(SummaryStyle::EmbedBakeoff)["paraphraseRecallAt3"],
+            json!(0.5)
+        );
     }
 }

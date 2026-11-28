@@ -5,6 +5,8 @@ description: Quote local agent usage, plan a monthly budget, and simulate cycles
 
 Ax reads Claude Code and Cursor session logs already on disk, quotes each turn from the price catalog, and compares the known total with a budget in `~/.ax/config.json`. A missing price stays **unknown**. Catalog quotes are **estimated**. **Actual** is a provider invoice, which Ax does not receive.
 
+Spend known only from imported sessions (for example Cursor sessions without per-turn usage) is merged per session with the quoted turns: a session whose turns have a catalog price counts once, from those turns, and every other imported session adds its catalog spend. `ax costs` prints how many imported sessions it added and how many it left out.
+
 `ax savings` is a separate counterfactual: tokens avoided versus opening whole files, priced on the reference input rate.
 
 ## Set a budget
@@ -17,6 +19,16 @@ ax budget plan
 EUR converts only when `usdPerEur` is set (how many USD equal 1 EUR). Leave it unset and Ax will not invent an exchange rate.
 
 Warning, critical, and hard thresholds default to 75, 90, and 100 percent. Crossing the hard limit returns **deny** from `ax_budget`. That tool sets `enforced: false`. Ax does not block the provider HTTP call. An integration can refuse to start a turn when it sees deny.
+
+### How the settings are checked
+
+Each setting is read on its own. A number written as a string (`"monthly": "60"`) is accepted. A value of the wrong type or out of range is ignored and the rest of the file still applies; `ax budget plan` prints a warning that names the key. The limits are:
+
+- Percent thresholds must be above 0 and in order: `warningPercent <= criticalPercent <= hardLimitPercent`. A threshold above a higher one is lowered to it, so the hard limit is never raised. Setting only `hardLimitPercent: 80` also lowers the default critical threshold (90) to 80. `ax budget set` refuses values that would leave the set thresholds out of order.
+- `workingDays` is a whole number from 0 to 31. `hoursPerDay` is above 0 and at most 24.
+- `monthly` is 0 or more. `usdPerEur` is above 0.
+
+`ax budget set` and the Command Center context-budget setting change only their own keys. They refuse to write a config file that is not valid JSON and leave it as it is, so fix that file first. A leading byte order mark is accepted. The file is written to a temporary file and renamed into place, so a crash never leaves it half written.
 
 ## See spend
 

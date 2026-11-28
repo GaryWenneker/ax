@@ -13,6 +13,7 @@ use crate::advanced::{check_business_rules, detect_breaking_changes, find_affect
 use crate::auto_commit::{self, Checkpoint};
 use crate::events::{ShipEvent, ShipEventBus};
 use crate::git_root::{diff_all_repos, resolve_git_root, resolve_git_roots};
+use crate::git_watcher::{git_fingerprint, OwnGit};
 use crate::run_log::RunLogger;
 use crate::state::{AutoCommitOutcome, GateStepStatus, QualityGateSummary, ShipReport};
 
@@ -33,6 +34,9 @@ pub struct ShipPipeline {
     project_root: PathBuf,
     config: ShipConfig,
     bus: ShipEventBus,
+    /// The git roots and what this pipeline's runs did to git, for the
+    /// watcher (see [`OwnGit`]).
+    own_git: std::sync::Mutex<(Vec<PathBuf>, OwnGit)>,
 }
 
 impl ShipPipeline {
@@ -41,11 +45,55 @@ impl ShipPipeline {
             project_root,
             config,
             bus,
+            own_git: std::sync::Mutex::new((Vec::new(), OwnGit::Untouched)),
+        }
+    }
+
+    /// What the last run did to git itself.
+    pub(crate) fn own_git(&self) -> OwnGit {
+        self.own_git
+            .lock()
+            .map(|g| g.1.clone())
+            .unwrap_or(OwnGit::Disturbed)
+    }
+
+    fn set_own_git(&self, roots: &[PathBuf], own: OwnGit) {
+        if let Ok(mut g) = self.own_git.lock() {
+            *g = (roots.to_vec(), own);
         }
     }
 
     pub async fn run_evaluate(&self) -> Result<ShipReport, String> {
         let mut logger = RunLogger::start(&self.project_root, Some(self.bus.clone()));
+        let mut checkpoint_roots: Vec<(PathBuf, Checkpoint)> = Vec::new();
+        match self
+            .evaluate_steps(&mut logger, &mut checkpoint_roots)
+            .await
+        {
+            Ok((report, passed)) => {
+                logger.finish(passed);
+                Ok(report)
+            }
+            Err(e) => {
+                // A step failed after the checkpoints were made: treat the run
+                // as failed so `revert_on_fail` undoes them, and close the log.
+                if !checkpoint_roots.is_empty() {
+                    self.resolve_auto_commit_outcome(&checkpoint_roots, false, &mut logger);
+                }
+                logger.line(format!("Evaluate failed: {e}"));
+                logger.finish(false);
+                Err(e)
+            }
+        }
+    }
+
+    /// The gate steps. Returns the report and whether the gate passed; the
+    /// caller closes the run log and handles checkpoints on an error.
+    async fn evaluate_steps(
+        &self,
+        logger: &mut RunLogger,
+        checkpoint_roots: &mut Vec<(PathBuf, Checkpoint)>,
+    ) -> Result<(ShipReport, bool), String> {
         logger.line("Evaluate started");
         let mut steps = Vec::new();
         let base = self.config.ship.target_branch.clone();
@@ -71,7 +119,6 @@ impl ShipPipeline {
         if let Err(ref e) = index_result {
             self.step_fail("index", e);
             logger.step_fail("index", e);
-            logger.finish(false);
             return Err(e.clone());
         }
         let index_detail = index_result.ok().map(|r| {
@@ -92,7 +139,6 @@ impl ShipPipeline {
 
         let git_roots = resolve_git_roots(&self.project_root, &self.config)?;
 
-        let mut checkpoint_roots: Vec<(PathBuf, Checkpoint)> = Vec::new();
         if self.config.auto_commit.enabled {
             logger.line(
                 "Auto-commit enabled — checkpointing uncommitted changes before the gate runs",
@@ -116,6 +162,9 @@ impl ShipPipeline {
                     Err(e) => logger.line(format!("Checkpoint skipped in {label}: {e}")),
                 }
             }
+            if !checkpoint_roots.is_empty() {
+                self.set_own_git(&git_roots, OwnGit::LeftAt(git_fingerprint(&git_roots)));
+            }
         }
 
         self.step_start("diff");
@@ -129,13 +178,11 @@ impl ShipPipeline {
                 let detail = "base ref not found — skipping".to_string();
                 self.step_ok("diff", Some(detail.clone()));
                 logger.step_ok("diff", Some(&detail));
-                logger.finish(true);
-                return Ok(empty_report());
+                return Ok((empty_report(), true));
             }
             Err(e) => {
                 self.step_fail("diff", &e);
                 logger.step_fail("diff", &e);
-                logger.finish(false);
                 return Err(e);
             }
         };
@@ -268,7 +315,7 @@ impl ShipPipeline {
                     },
                     full_sonar,
                     bus,
-                    &mut logger,
+                    logger,
                 )
                 .await;
                 let scan_ok = sonar_scan.is_ok();
@@ -359,7 +406,7 @@ impl ShipPipeline {
         let passed = tests_ok && sonar_passed;
 
         let auto_commit_outcome = if self.config.auto_commit.enabled {
-            Some(self.resolve_auto_commit_outcome(&checkpoint_roots, passed, &mut logger))
+            Some(self.resolve_auto_commit_outcome(checkpoint_roots, passed, logger))
         } else {
             None
         };
@@ -385,8 +432,7 @@ impl ShipPipeline {
         } else {
             "Quality gate failed"
         });
-        logger.finish(passed);
-        Ok(ShipReport::from_pipeline(result))
+        Ok((ShipReport::from_pipeline(result), passed))
     }
 
     pub async fn create_draft_pr(
@@ -453,12 +499,29 @@ impl ShipPipeline {
                         .into(),
             };
         }
+        // Git changed since the checkpoint by someone else: the watcher must
+        // evaluate again whatever the rollback leaves.
+        let (roots, own) = self
+            .own_git
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or((Vec::new(), OwnGit::Disturbed));
+        let disturbed = match &own {
+            OwnGit::LeftAt(left) => git_fingerprint(&roots) != *left,
+            _ => true,
+        };
         let mut errors = Vec::new();
         for (root, cp) in checkpoint_roots.iter().rev() {
             if let Err(e) = auto_commit::revert_checkpoint(root, cp) {
                 errors.push(e);
             }
         }
+        let after = if disturbed {
+            OwnGit::Disturbed
+        } else {
+            OwnGit::LeftAt(git_fingerprint(&roots))
+        };
+        self.set_own_git(&roots, after);
         if errors.is_empty() {
             logger.line("Quality gate failed — checkpoint(s) reverted (changes kept, uncommitted)");
             AutoCommitOutcome {
