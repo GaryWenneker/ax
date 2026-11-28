@@ -40,6 +40,15 @@ web-server-057 deferred: the concrete defects were fixed in the first pass. What
 
 ## Review rounds
 
+Review loop of this finishing run (rounds 1 to 4 of the loop are rounds 5 to 8 in the detailed table below):
+
+| Loop round | Table round | Findings |
+|---|---|---|
+| 1 | 5 | 2 |
+| 2 | 6 | 3 |
+| 3 | 7 | 2 |
+| 4 | 8 | 3 |
+
 | Round | Finding | State | RED seen | Test(s) | Commit |
 |---|---|---|---|---|---|
 | 1 | ax-share config.rs:316, old token file entry deleted for every project but the first | Fixed: the shared entry stays until `clearToken`; a project without its own entry reads it | yes | `ax-share config::tests::two_projects_on_one_repo_url_both_keep_the_old_file_token` | dfec6958 |
