@@ -192,6 +192,9 @@ fn n1_origin_must_be_command_center() {
     assert!(!origin_allowed("http://evil.example:7070", 7070, true));
 }
 
+// The folder check guards the macOS home-folder mount; Windows mounts a drive
+// letter, and its `is_mount_root` treats any existing folder as a mount root.
+#[cfg(unix)]
 #[test]
 fn n2_mount_dir_must_not_hide_files() {
     let dir = tempfile::tempdir().unwrap();

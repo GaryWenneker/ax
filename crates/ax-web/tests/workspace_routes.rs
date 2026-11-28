@@ -134,11 +134,13 @@ async fn only_the_local_browser_uses_workspace_routes_without_sign_in() {
     assert_eq!(status, StatusCode::OK, "{text}");
     assert!(fx.dir.join("made").is_dir());
 
-    // Any folder may be browsed: the picker walks the whole disk.
+    // Any folder may be browsed: the picker walks the whole disk. The root is
+    // `/` on Unix and the drive (`C:\`) on Windows.
+    let root = fx.dir.ancestors().last().expect("a root").display().to_string();
     let (_, text) = send(
         &fx.app,
         "GET",
-        "/api/workspace/browse?path=/",
+        &format!("/api/workspace/browse?path={root}"),
         LOOPBACK,
         &[],
         "",
