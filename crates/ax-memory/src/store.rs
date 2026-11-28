@@ -113,15 +113,17 @@ fn row_from_db(
 const MEMORY_SELECT: &str = r#"SELECT id, kind, title, body, tags, files, confidence, source, created_at, updated_at, enabled, COALESCE(tier, 't2')
            FROM memories"#;
 
-/// `turn` memories created before `before`, enabled or not, oldest first; at most 10,000 per call.
+/// `turn` and `file_change` memories created before `before`, enabled or not,
+/// oldest first; at most 10,000 per call.
 pub(crate) async fn expired_turn_rows(
     pool: &SqlitePool,
     before: i64,
 ) -> Result<Vec<MemoryRow>, AxError> {
     let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
-        "{MEMORY_SELECT} WHERE kind = ? AND created_at < ? AND COALESCE(tier, 't1') != 't3' ORDER BY created_at, id LIMIT 10000"
+        "{MEMORY_SELECT} WHERE kind IN (?, ?) AND created_at < ? AND COALESCE(tier, 't1') != 't3' ORDER BY created_at, id LIMIT 10000"
     ))
     .bind(crate::turns::TURN_KIND)
+    .bind(crate::turns::FILE_CHANGE_KIND)
     .bind(before)
     .fetch_all(pool)
     .await
@@ -260,25 +262,30 @@ pub const MEMORY_LINK_KINDS: &[&str] = &[
     "derived_from",
     "supersedes",
     "source",
+    "renamed",
+    "corroborates",
 ];
 
+/// Store a link of a known kind. Returns whether a new link row was written
+/// (false when the same link already existed).
 pub async fn link_memories(
     pool: &SqlitePool,
     from_id: &str,
     to_id: &str,
     kind: &str,
-) -> Result<(), AxError> {
+) -> Result<bool, AxError> {
     if !MEMORY_LINK_KINDS.contains(&kind) {
         return Err(AxError::Other(format!("unknown memory link kind: {kind}")));
     }
-    sqlx::query("INSERT OR IGNORE INTO memory_links (from_id, to_id, kind) VALUES (?, ?, ?)")
-        .bind(from_id)
-        .bind(to_id)
-        .bind(kind)
-        .execute(pool)
-        .await
-        .map_err(|e| db_err(pool, e))?;
-    Ok(())
+    let result =
+        sqlx::query("INSERT OR IGNORE INTO memory_links (from_id, to_id, kind) VALUES (?, ?, ?)")
+            .bind(from_id)
+            .bind(to_id)
+            .bind(kind)
+            .execute(pool)
+            .await
+            .map_err(|e| db_err(pool, e))?;
+    Ok(result.rows_affected() > 0)
 }
 
 pub(crate) async fn link_follows_in_session(pool: &SqlitePool, id: &str) -> Result<(), AxError> {
@@ -309,7 +316,8 @@ pub(crate) async fn link_follows_in_session(pool: &SqlitePool, id: &str) -> Resu
     let Some(previous) = previous else {
         return Ok(());
     };
-    link_memories(pool, id, &previous, "follows").await
+    link_memories(pool, id, &previous, "follows").await?;
+    Ok(())
 }
 
 pub(crate) async fn stamp_current_turn(pool: &SqlitePool, id: &str) -> Result<(), AxError> {
@@ -358,6 +366,70 @@ pub(crate) async fn stamp_current_turn(pool: &SqlitePool, id: &str) -> Result<()
     Ok(())
 }
 
+/// Columns derived from a memory's content. `remember_with_id` and `update`
+/// both write them, so an edited memory is searched, flagged and trusted by
+/// what it says now.
+struct DerivedColumns {
+    origin: String,
+    trust_level: &'static str,
+    search_text: String,
+    instruction_like: i64,
+}
+
+impl DerivedColumns {
+    fn of(row: &MemoryRow) -> Self {
+        let search_text = crate::search_text::normalize_search_text(&format!(
+            "{} {} {} {}",
+            row.title,
+            row.body,
+            row.tags.join(" "),
+            row.files.join(" ")
+        ));
+        let instruction =
+            crate::instruction_like::is_instruction_like(&format!("{} {}", row.title, row.body));
+        Self {
+            origin: crate::provenance::origin_for(&row.source),
+            trust_level: crate::provenance::trust_level_for(&row.source, &row.kind),
+            search_text,
+            instruction_like: i64::from(instruction),
+        }
+    }
+}
+
+/// Write the columns derived from `row`'s content (search_text, origin,
+/// trust_level, instruction_like). Every path that inserts a memory calls it,
+/// so turn, file-change, git and graph rows are searched and trusted like
+/// remembered ones.
+pub(crate) async fn write_derived_columns<'e, E>(
+    exec: E,
+    row: &MemoryRow,
+) -> Result<(), sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    let derived = DerivedColumns::of(row);
+    sqlx::query(
+        "UPDATE memories SET origin = ?, trust_level = ?, search_text = ?, instruction_like = ? WHERE id = ?",
+    )
+    .bind(&derived.origin)
+    .bind(derived.trust_level)
+    .bind(&derived.search_text)
+    .bind(derived.instruction_like)
+    .bind(&row.id)
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
+/// `foreign` when the memory points outside the project, else `active`.
+fn content_status(row: &MemoryRow) -> &'static str {
+    if crate::brain::memory_is_foreign(&row.source, &row.tags, &row.files) {
+        "foreign"
+    } else {
+        "active"
+    }
+}
+
 pub(crate) async fn remember_with_id(
     pool: &SqlitePool,
     id: String,
@@ -402,11 +474,7 @@ pub(crate) async fn remember_with_id(
     let embedding = crate::embed::embedding_to_blob(&vector);
     let tags = serde_json::to_string(&row.tags).unwrap_or_else(|_| "[]".into());
     let files = serde_json::to_string(&row.files).unwrap_or_else(|_| "[]".into());
-    let status = if crate::brain::memory_is_foreign(&row.source, &row.tags, &row.files) {
-        "foreign"
-    } else {
-        "active"
-    };
+    let status = content_status(&row);
     retry_locked(|| {
         sqlx::query(
             r#"INSERT INTO memories (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, embedding, enabled, status)
@@ -428,28 +496,9 @@ pub(crate) async fn remember_with_id(
     })
     .await
     .map_err(|e| db_err(pool, e))?;
-    let origin = crate::provenance::origin_for(&row.source);
-    let trust = crate::provenance::trust_level_for(&row.source, &row.kind);
-    let search = crate::search_text::normalize_search_text(&format!(
-        "{} {} {} {}",
-        row.title,
-        row.body,
-        row.tags.join(" "),
-        row.files.join(" ")
-    ));
-    let instruction =
-        crate::instruction_like::is_instruction_like(&format!("{} {}", row.title, row.body));
-    sqlx::query(
-        "UPDATE memories SET origin = ?, trust_level = ?, search_text = ?, instruction_like = ? WHERE id = ?",
-    )
-    .bind(&origin)
-    .bind(trust)
-    .bind(&search)
-    .bind(if instruction { 1 } else { 0 })
-    .bind(&row.id)
-    .execute(pool)
-    .await
-    .map_err(|e| db_err(pool, e))?;
+    write_derived_columns(pool, &row)
+        .await
+        .map_err(|e| db_err(pool, e))?;
     stamp_current_turn(pool, &row.id).await?;
     crate::brain::stamp_memory(pool, &row.id, &row.kind, model).await?;
     crate::brain::register_cues(pool, &row, &[]).await?;
@@ -693,55 +742,18 @@ async fn fts_ranking(
     let kind_gate = if include_recall_only {
         "AND m.title NOT LIKE 'Candidate:%'"
     } else {
-        "AND m.kind NOT IN ('turn', 'doc', 'graph_diff', 'activity', 'file_change') \
-         AND m.title NOT LIKE 'Candidate:%'"
-    };
-    // Hot path: constrain FTS5 to hot rowids first. Without that, MATCH walks
-    // archive postings for common terms and only then drops every t3 hit.
-    if !archive {
-        // Include `foreign` and `active` for explicit recall. Preflight still
-        // filters via `is_injectable` (active only). Candidates stay out.
-        let rowids: Vec<i64> = sqlx::query_scalar(
-            "SELECT rowid FROM memories
-             WHERE enabled = 1
-               AND tier IN ('t1', 't2')
-               AND COALESCE(status, 'active') IN ('active', 'foreign')
-             ORDER BY rowid
-             LIMIT 20000",
+        concat!(
+            "AND m.kind NOT IN ",
+            crate::types::recall_only_kinds_sql!(),
+            " AND m.title NOT LIKE 'Candidate:%'"
         )
-        .fetch_all(pool)
-        .await
-        .map_err(|e| db_err(pool, e))?;
-        if rowids.is_empty() {
-            return Ok(Vec::new());
-        }
-        if rowids.len() < 20_000 {
-            let list = rowids
-                .iter()
-                .map(i64::to_string)
-                .collect::<Vec<_>>()
-                .join(",");
-            // Hot inject must not spend its LIMIT on turns/graph_diff/docs — those
-            // kinds are recall-only and would crowd durable memories out of overfetch.
-            let sql = format!(
-                r#"SELECT m.id
-                   FROM memories_fts
-                   JOIN memories m ON m.rowid = memories_fts.rowid
-                   WHERE memories_fts MATCH ?
-                     AND memories_fts.rowid IN ({list})
-                     AND m.enabled = 1
-                     {kind_gate}
-                   ORDER BY bm25(memories_fts, 0.0, 3.0, 1.0, 1.5, 2.0), m.id
-                   LIMIT ?"#
-            );
-            return sqlx::query_scalar::<_, String>(&sql)
-                .bind(&fts_query)
-                .bind(overfetch as i64)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| db_err(pool, e));
-        }
-    }
+    };
+    // Archive recall ranks only t3 rows. Hot recall constrains FTS5 to hot
+    // rowids through a subquery, so MATCH skips archive postings, and the SQL
+    // text stays the same whatever the hot set holds (one cached statement).
+    // Hot recall includes `foreign` rows for explicit recall; preflight still
+    // filters via `is_injectable` (active only). Candidates stay out. The kind
+    // gate keeps turns, graph diffs and docs from spending preflight's LIMIT.
     let sql = if archive {
         r#"SELECT m.id
            FROM memories_fts
@@ -756,9 +768,13 @@ async fn fts_ranking(
            FROM memories_fts
            JOIN memories m ON m.rowid = memories_fts.rowid
            WHERE memories_fts MATCH ?
+             AND memories_fts.rowid IN (
+                 SELECT rowid FROM memories
+                 WHERE enabled = 1
+                   AND tier IN ('t1', 't2')
+                   AND COALESCE(status, 'active') IN ('active', 'foreign')
+             )
              AND m.enabled = 1
-             AND m.tier IN ('t1', 't2')
-             AND COALESCE(m.status, 'active') IN ('active', 'foreign')
              {kind_gate}
            ORDER BY bm25(memories_fts, 0.0, 3.0, 1.0, 1.5, 2.0), m.id
            LIMIT ?"#
@@ -788,30 +804,61 @@ async fn vector_ranking(
     let kind_gate = if include_recall_only {
         "AND title NOT LIKE 'Candidate:%'"
     } else {
-        "AND kind NOT IN ('turn', 'doc', 'graph_diff', 'activity', 'file_change') \
-         AND title NOT LIKE 'Candidate:%'"
+        concat!(
+            "AND kind NOT IN ",
+            crate::types::recall_only_kinds_sql!(),
+            " AND title NOT LIKE 'Candidate:%'"
+        )
     };
-    let embedding_rows = sqlx::query_as::<_, (String, Vec<u8>)>(&format!(
+    let sql = format!(
         "SELECT id, embedding FROM memories
          WHERE embedding IS NOT NULL AND enabled = 1
            AND tier IN ('t1', 't2')
            AND COALESCE(status, 'active') IN ('active', 'foreign')
            {kind_gate}"
-    ))
-    .fetch_all(pool)
-    .await
-    .map_err(|e| db_err(pool, e))?;
-    let mut vector_scored: Vec<(String, f32)> = embedding_rows
-        .into_iter()
-        .filter_map(|(id, blob)| {
-            let e = crate::embed::blob_to_embedding(&blob)?;
-            Some((id, crate::embed::cosine(&query_embedding, &e)))
-        })
-        .filter(|(_, sim)| *sim > crate::embed::MIN_VECTOR_SIMILARITY)
-        .collect();
-    vector_scored.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    vector_scored.truncate(overfetch);
-    Ok(vector_scored.into_iter().map(|(id, _)| id).collect())
+    );
+    let best = top_by_cosine(pool, &sql, &query_embedding, overfetch, |_, sim| {
+        sim > crate::embed::MIN_VECTOR_SIMILARITY
+    })
+    .await?;
+    Ok(best.into_iter().map(|(id, _)| id).collect())
+}
+
+/// Stream `(id, embedding)` rows from `sql` and keep the `keep` most similar to
+/// `query_embedding` that `accept` lets through, best first (ties by id).
+/// Rows are scored as they arrive, so memory stays bounded by `keep` rather
+/// than by the number of rows.
+async fn top_by_cosine(
+    pool: &SqlitePool,
+    sql: &str,
+    query_embedding: &[f32],
+    keep: usize,
+    accept: impl Fn(&str, f32) -> bool,
+) -> Result<Vec<(String, f32)>, AxError> {
+    use futures_util::TryStreamExt;
+
+    fn best_first(best: &mut Vec<(String, f32)>, keep: usize) {
+        best.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        best.truncate(keep);
+    }
+
+    let flush_at = keep.saturating_mul(2).max(64);
+    let mut best: Vec<(String, f32)> = Vec::new();
+    let mut rows = sqlx::query_as::<_, (String, Vec<u8>)>(sql).fetch(pool);
+    while let Some((id, blob)) = rows.try_next().await.map_err(|e| db_err(pool, e))? {
+        let Some(embedding) = crate::embed::blob_to_embedding(&blob) else {
+            continue;
+        };
+        let sim = crate::embed::cosine(query_embedding, &embedding);
+        if accept(&id, sim) {
+            best.push((id, sim));
+            if best.len() >= flush_at {
+                best_first(&mut best, keep);
+            }
+        }
+    }
+    best_first(&mut best, keep);
+    Ok(best)
 }
 
 /// Hot recall skips the archive and inactive rows. Archive recall uses FTS
@@ -833,7 +880,7 @@ pub(crate) async fn recall_scoped(
     let expanded = if archive {
         query.to_string()
     } else {
-        // PMI samples up to 2000 rows; skip it when the hot set is already tiny.
+        // PMI samples up to 2000 durable rows; skip it when the hot set is already tiny.
         let hot = hot_memory_count(pool).await.unwrap_or(0);
         if hot <= 64 {
             query.to_string()
@@ -934,9 +981,17 @@ pub(crate) async fn recall_scoped(
         crate::pagerank::personalized_pagerank(&seeds, &edges, 0.85, 8)
     };
     let query_terms: Vec<String> = query_terms(query);
+    let mut rows = get_many(pool, &ids).await?;
+    let access_by_id = if archive {
+        HashMap::new()
+    } else {
+        crate::access::access_times_many(pool, &ids)
+            .await
+            .unwrap_or_default()
+    };
     let mut matches = Vec::with_capacity(ids.len());
     for id in &ids {
-        if let Some(memory) = get(pool, id).await? {
+        if let Some(memory) = rows.remove(id) {
             // The archive exists for old memories, so age must not rank them down there.
             // Same-day memories share one decay bucket so insert-order milliseconds
             // cannot reshuffle otherwise-equal hybrid ranks.
@@ -955,10 +1010,8 @@ pub(crate) async fn recall_scoped(
             let act = if archive {
                 0.0
             } else {
-                let access = crate::access::access_times(pool, id)
-                    .await
-                    .unwrap_or_default();
-                let act_raw = crate::act_r::base_level_activation(now, &access, 0.5);
+                let access = access_by_id.get(id).map(Vec::as_slice).unwrap_or(&[]);
+                let act_raw = crate::act_r::base_level_activation(now, access, 0.5);
                 if act_raw.is_finite() {
                     act_raw.max(0.0)
                 } else {
@@ -976,12 +1029,10 @@ pub(crate) async fn recall_scoped(
             let why = if archive {
                 None
             } else {
+                let text = format!("{} {}", memory.title, memory.body).to_lowercase();
                 let matched: Vec<String> = query_terms
                     .iter()
-                    .filter(|t| {
-                        let text = format!("{} {}", memory.title, memory.body).to_lowercase();
-                        text.contains(t.as_str())
-                    })
+                    .filter(|t| text.contains(t.as_str()))
                     .cloned()
                     .collect();
                 Some(crate::fusion::why_from_hits(
@@ -1332,6 +1383,26 @@ fn drop_weak_term_matches_with_relative(
     });
 }
 
+/// Enabled memories carrying `tag` (ASCII case-insensitive), ordered by id.
+/// No row cap: the shared export must see every tagged memory, however many
+/// automatic rows the vault holds.
+pub(crate) async fn enabled_with_tag(
+    pool: &SqlitePool,
+    tag: &str,
+) -> Result<Vec<MemoryRow>, AxError> {
+    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+        "{MEMORY_SELECT} WHERE enabled = 1 AND EXISTS (
+             SELECT 1 FROM json_each(CASE WHEN json_valid(memories.tags) THEN memories.tags ELSE '[]' END) t
+             WHERE lower(t.value) = lower(?))
+         ORDER BY id"
+    ))
+    .bind(tag)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| db_err(pool, e))?;
+    Ok(rows.into_iter().map(row_from_db).collect())
+}
+
 pub async fn list(
     pool: &SqlitePool,
     limit: usize,
@@ -1342,7 +1413,7 @@ pub async fn list(
         .await
         .map_err(|e| db_err(pool, e))?;
     let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
-        "{MEMORY_SELECT} ORDER BY updated_at DESC LIMIT ? OFFSET ?"
+        "{MEMORY_SELECT} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?"
     ))
     .bind(limit as i64)
     .bind(offset as i64)
@@ -1351,6 +1422,40 @@ pub async fn list(
     .map_err(|e| db_err(pool, e))?;
     let memories = rows.into_iter().map(row_from_db).collect();
     Ok((memories, total))
+}
+
+/// One page of memories for a backup: newest first with `id` breaking ties,
+/// strictly after `after` (the `updated_at` and `id` of the previous page's
+/// last row) and, when `since` is set, updated after it. Keyset paging keeps
+/// the page boundaries stable when rows share a timestamp or one is updated
+/// while the backup runs.
+pub(crate) async fn backup_page(
+    conn: &mut sqlx::SqliteConnection,
+    after: Option<(i64, &str)>,
+    since: Option<i64>,
+    limit: usize,
+) -> Result<Vec<MemoryRow>, AxError> {
+    let mut sql = format!("{MEMORY_SELECT} WHERE 1 = 1");
+    if after.is_some() {
+        sql.push_str(" AND (updated_at < ? OR (updated_at = ? AND id < ?))");
+    }
+    if since.is_some() {
+        sql.push_str(" AND updated_at > ?");
+    }
+    sql.push_str(" ORDER BY updated_at DESC, id DESC LIMIT ?");
+    let mut query = sqlx::query_as::<_, MemoryDbRow>(&sql);
+    if let Some((updated_at, id)) = after {
+        query = query.bind(updated_at).bind(updated_at).bind(id.to_string());
+    }
+    if let Some(since) = since {
+        query = query.bind(since);
+    }
+    let rows = query
+        .bind(limit as i64)
+        .fetch_all(conn)
+        .await
+        .map_err(|e| db_err_at(None, e))?;
+    Ok(rows.into_iter().map(row_from_db).collect())
 }
 
 /// Memories stored for one session, newest first.
@@ -1438,6 +1543,29 @@ pub async fn get(pool: &SqlitePool, id: &str) -> Result<Option<MemoryRow>, AxErr
     Ok(row.map(row_from_db))
 }
 
+/// Many memories by id in one query. Unknown ids are absent from the map.
+pub(crate) async fn get_many(
+    pool: &SqlitePool,
+    ids: &[String],
+) -> Result<std::collections::HashMap<String, MemoryRow>, AxError> {
+    if ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let ids = serde_json::to_string(ids).unwrap_or_else(|_| "[]".into());
+    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+        "{MEMORY_SELECT} WHERE id IN (SELECT value FROM json_each(?))"
+    ))
+    .bind(ids)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| db_err(pool, e))?;
+    Ok(rows
+        .into_iter()
+        .map(row_from_db)
+        .map(|row| (row.id.clone(), row))
+        .collect())
+}
+
 pub async fn set_enabled(pool: &SqlitePool, id: &str, enabled: bool) -> Result<bool, AxError> {
     let result = sqlx::query("UPDATE memories SET enabled = ? WHERE id = ?")
         .bind(if enabled { 1 } else { 0 })
@@ -1449,6 +1577,9 @@ pub async fn set_enabled(pool: &SqlitePool, id: &str, enabled: bool) -> Result<b
 }
 
 pub async fn update(pool: &SqlitePool, id: &str, input: RememberInput) -> Result<bool, AxError> {
+    let Some(existing) = get(pool, id).await? else {
+        return Ok(false);
+    };
     let (vector, model) = crate::embed::embed_labeled(&format!(
         "{} {} {}",
         input.title,
@@ -1456,41 +1587,84 @@ pub async fn update(pool: &SqlitePool, id: &str, input: RememberInput) -> Result
         input.tags.join(" ")
     ));
     let embedding = crate::embed::embedding_to_blob(&vector);
-    let title = input.title.trim().to_string();
-    let kind = input.kind.unwrap_or_default();
-    let tags = serde_json::to_string(&input.tags).unwrap_or_else(|_| "[]".into());
-    let files = serde_json::to_string(&input.files).unwrap_or_else(|_| "[]".into());
-    let updated_at = now_ms();
+    let kind = input
+        .kind
+        .filter(|kind| !kind.is_empty())
+        .unwrap_or_else(|| existing.kind.clone());
+    let row = MemoryRow {
+        title: input.title.trim().to_string(),
+        body: input.body,
+        kind,
+        tags: input.tags,
+        files: input.files,
+        confidence: 1.0,
+        updated_at: now_ms(),
+        ..existing.clone()
+    };
+    let derived = DerivedColumns::of(&row);
+    let status = content_status(&row);
+    let tags = serde_json::to_string(&row.tags).unwrap_or_else(|_| "[]".into());
+    let files = serde_json::to_string(&row.files).unwrap_or_else(|_| "[]".into());
     let result = retry_locked(|| {
         sqlx::query(
             r#"UPDATE memories
-               SET title = ?, body = ?, kind = COALESCE(NULLIF(?, ''), kind),
-                   tags = ?, files = ?, confidence = 1.0, updated_at = ?,
-                   embedding = ?, embedding_model = ?
+               SET title = ?, body = ?, kind = ?, tags = ?, files = ?,
+                   confidence = 1.0, updated_at = ?,
+                   embedding = ?, embedding_model = ?,
+                   origin = ?, trust_level = ?, search_text = ?, instruction_like = ?,
+                   status = CASE WHEN status IN ('active', 'foreign') THEN ? ELSE status END
                WHERE id = ?"#,
         )
-        .bind(&title)
-        .bind(&input.body)
-        .bind(&kind)
+        .bind(&row.title)
+        .bind(&row.body)
+        .bind(&row.kind)
         .bind(&tags)
         .bind(&files)
-        .bind(updated_at)
+        .bind(row.updated_at)
         .bind(embedding.clone())
         .bind(model)
+        .bind(&derived.origin)
+        .bind(derived.trust_level)
+        .bind(&derived.search_text)
+        .bind(derived.instruction_like)
+        .bind(status)
         .bind(id)
         .execute(pool)
     })
     .await
     .map_err(|e| db_err(pool, e))?;
-    if result.rows_affected() > 0 {
-        if let Some(row) = get(pool, id).await? {
-            crate::brain::register_cues(pool, &row, &[]).await?;
-            if row.tier == crate::brain::TIER_ARCHIVE {
-                crate::brain::index_archive_vector(pool, id).await?;
-            }
-        }
+    if result.rows_affected() == 0 {
+        return Ok(false);
     }
-    Ok(result.rows_affected() > 0)
+    drop_anchors_for_removed_files(pool, id, &existing.files, &row.files).await?;
+    crate::brain::register_cues(pool, &row, &[]).await?;
+    let _ = crate::anchors::auto_attach_memory(pool, id).await;
+    if row.tier == crate::brain::TIER_ARCHIVE {
+        crate::brain::index_archive_vector(pool, id).await?;
+    }
+    Ok(true)
+}
+
+/// Remove the anchors a memory holds on nodes of files it no longer lists.
+async fn drop_anchors_for_removed_files(
+    pool: &SqlitePool,
+    id: &str,
+    before: &[String],
+    after: &[String],
+) -> Result<(), AxError> {
+    for file in before.iter().filter(|file| !after.contains(file)) {
+        sqlx::query(
+            "DELETE FROM memory_anchors WHERE memory_id = ?1 AND node_key IN (
+                 SELECT id FROM nodes WHERE file_path = ?2
+                 UNION SELECT node_key FROM graph_node_versions WHERE file_path = ?2)",
+        )
+        .bind(id)
+        .bind(file)
+        .execute(pool)
+        .await
+        .map_err(|e| db_err(pool, e))?;
+    }
+    Ok(())
 }
 
 /// Memories whose embedding is very close to `text` — used to flag possible
@@ -1503,26 +1677,16 @@ pub async fn find_similar(
     limit: usize,
 ) -> Result<Vec<MemoryMatch>, AxError> {
     let (query_embedding, _) = crate::embed::embed_labeled(text);
-    let rows = sqlx::query_as::<_, (String, Vec<u8>)>(
+    let scored = top_by_cosine(
+        pool,
         "SELECT id, embedding FROM memories
          WHERE embedding IS NOT NULL AND enabled = 1
            AND COALESCE(tier, 't2') != 't3'",
+        &query_embedding,
+        limit,
+        |id, sim| exclude_id != Some(id) && sim >= threshold,
     )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| db_err(pool, e))?;
-
-    let mut scored: Vec<(String, f32)> = rows
-        .into_iter()
-        .filter(|(id, _)| exclude_id != Some(id.as_str()))
-        .filter_map(|(id, blob)| {
-            let e = crate::embed::blob_to_embedding(&blob)?;
-            Some((id, crate::embed::cosine(&query_embedding, &e)))
-        })
-        .filter(|(_, sim)| *sim >= threshold)
-        .collect();
-    scored.sort_by(|a, b| b.1.total_cmp(&a.1));
-    scored.truncate(limit);
+    .await?;
 
     let mut out = Vec::with_capacity(scored.len());
     for (id, sim) in scored {
@@ -1537,14 +1701,49 @@ pub async fn find_similar(
     Ok(out)
 }
 
+/// Remove a memory and every row that points at it: cues, links, anchors,
+/// access log and its archive vector. All in one transaction.
 pub async fn delete(pool: &SqlitePool, id: &str) -> Result<bool, AxError> {
-    let result = retry_locked(|| {
-        sqlx::query("DELETE FROM memories WHERE id = ?")
+    retry_locked(|| delete_with_dependents(pool, id))
+        .await
+        .map_err(|e| db_err(pool, e))
+}
+
+async fn delete_with_dependents(pool: &SqlitePool, id: &str) -> Result<bool, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let vec_rowid: Option<i64> =
+        match sqlx::query_scalar("SELECT rowid FROM memory_vec_map WHERE memory_id = ?")
             .bind(id)
-            .execute(pool)
-    })
-    .await
-    .map_err(|e| db_err(pool, e))?;
+            .fetch_optional(&mut *tx)
+            .await
+        {
+            Ok(row) => row,
+            Err(error) if error.to_string().contains("no such table") => None,
+            Err(error) => return Err(error),
+        };
+    if let Some(rowid) = vec_rowid {
+        sqlx::query("DELETE FROM memory_vec WHERE rowid = ?")
+            .bind(rowid)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM memory_vec_map WHERE memory_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    for sql in [
+        "DELETE FROM memory_cues WHERE memory_id = ?1",
+        "DELETE FROM memory_links WHERE from_id = ?1 OR to_id = ?1",
+        "DELETE FROM memory_anchors WHERE memory_id = ?1",
+        "DELETE FROM memory_access WHERE memory_id = ?1",
+    ] {
+        sqlx::query(sql).bind(id).execute(&mut *tx).await?;
+    }
+    let result = sqlx::query("DELETE FROM memories WHERE id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(result.rows_affected() > 0)
 }
 
@@ -1555,53 +1754,9 @@ pub async fn purge_memory(pool: &SqlitePool, id: &str) -> Result<bool, AxError> 
     if id.is_empty() {
         return Ok(false);
     }
-    let existing: Option<String> = sqlx::query_scalar("SELECT id FROM memories WHERE id = ?")
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| db_err(pool, e))?;
-    if existing.is_none() {
+    if !delete(pool, id).await? {
         return Ok(false);
     }
-
-    let vec_rowid: Option<i64> =
-        match sqlx::query_scalar("SELECT rowid FROM memory_vec_map WHERE memory_id = ?")
-            .bind(id)
-            .fetch_optional(pool)
-            .await
-        {
-            Ok(row) => row,
-            Err(error) if error.to_string().contains("no such table") => None,
-            Err(error) => return Err(db_err(pool, error)),
-        };
-    if let Some(rowid) = vec_rowid {
-        let _ = sqlx::query("DELETE FROM memory_vec WHERE rowid = ?")
-            .bind(rowid)
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("DELETE FROM memory_vec_map WHERE memory_id = ?")
-            .bind(id)
-            .execute(pool)
-            .await;
-    }
-
-    sqlx::query("DELETE FROM memory_cues WHERE memory_id = ?")
-        .bind(id)
-        .execute(pool)
-        .await
-        .map_err(|e| db_err(pool, e))?;
-    sqlx::query("DELETE FROM memory_links WHERE from_id = ? OR to_id = ?")
-        .bind(id)
-        .bind(id)
-        .execute(pool)
-        .await
-        .map_err(|e| db_err(pool, e))?;
-
-    let deleted = delete(pool, id).await?;
-    if !deleted {
-        return Ok(false);
-    }
-
     let now = now_ms();
     sqlx::query("INSERT OR IGNORE INTO memory_tombstones (memory_id, purged_at) VALUES (?, ?)")
         .bind(id)
@@ -1610,6 +1765,90 @@ pub async fn purge_memory(pool: &SqlitePool, id: &str) -> Result<bool, AxError> 
         .await
         .map_err(|e| db_err(pool, e))?;
     Ok(true)
+}
+
+/// Ids purged per transaction by [`purge_memories`].
+pub const PURGE_BATCH: usize = 500;
+
+/// [`purge_memory`] for many ids: the same rows go and the same tombstones are
+/// written, one transaction per [`PURGE_BATCH`] ids. `memory_cues` has no index
+/// on `memory_id`, so a per-id delete scans the whole cue table once per id; a
+/// batch scans it once. Each batch takes the write lock up front
+/// (`BEGIN IMMEDIATE`) and is retried while another ax process holds it, so it
+/// runs next to a live MCP server or watcher. Returns how many memories were
+/// removed. `on_batch(done, total)` runs after each committed batch.
+pub async fn purge_memories(
+    pool: &SqlitePool,
+    ids: &[String],
+    on_batch: &mut dyn FnMut(usize, usize),
+) -> Result<usize, AxError> {
+    let ids: Vec<&str> = ids
+        .iter()
+        .map(|id| id.trim())
+        .filter(|id| !id.is_empty())
+        .collect();
+    let total = ids.len();
+    let mut purged = 0usize;
+    let mut done = 0usize;
+    for chunk in ids.chunks(PURGE_BATCH) {
+        let json = serde_json::to_string(chunk).map_err(|e| AxError::Other(e.to_string()))?;
+        purged += ax_db::with_busy_retry(|| purge_batch(pool, &json))
+            .await
+            .map_err(|e| db_err(pool, e))?;
+        done += chunk.len();
+        on_batch(done, total);
+    }
+    Ok(purged)
+}
+
+/// One [`purge_memories`] batch; `ids_json` is a JSON array of ids.
+async fn purge_batch(pool: &SqlitePool, ids_json: &str) -> Result<usize, sqlx::Error> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let existing: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM memories WHERE id IN (SELECT value FROM json_each(?))")
+            .bind(ids_json)
+            .fetch_all(&mut *tx)
+            .await?;
+    if existing.is_empty() {
+        tx.commit().await?;
+        return Ok(0);
+    }
+    let json = serde_json::to_string(&existing).unwrap_or_else(|_| "[]".into());
+    // The vector tables are optional (no such table on some builds), as in purge_memory.
+    let _ = sqlx::query(
+        "DELETE FROM memory_vec WHERE rowid IN
+         (SELECT rowid FROM memory_vec_map WHERE memory_id IN (SELECT value FROM json_each(?)))",
+    )
+    .bind(&json)
+    .execute(&mut *tx)
+    .await;
+    let _ = sqlx::query(
+        "DELETE FROM memory_vec_map WHERE memory_id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(&json)
+    .execute(&mut *tx)
+    .await;
+    for sql in [
+        "DELETE FROM memory_cues WHERE memory_id IN (SELECT value FROM json_each(?1))",
+        "DELETE FROM memory_links WHERE from_id IN (SELECT value FROM json_each(?1))
+            OR to_id IN (SELECT value FROM json_each(?1))",
+    ] {
+        sqlx::query(sql).bind(&json).execute(&mut *tx).await?;
+    }
+    let deleted = sqlx::query("DELETE FROM memories WHERE id IN (SELECT value FROM json_each(?))")
+        .bind(&json)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO memory_tombstones (memory_id, purged_at)
+         SELECT value, ? FROM json_each(?)",
+    )
+    .bind(now_ms())
+    .bind(&json)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(deleted.rows_affected() as usize)
 }
 
 /// Backfill empty `search_text` and rebuild `memories_fts` from the memories table.

@@ -2,7 +2,7 @@
 
 use ax_policy::{apply, verify, BootstrapReport};
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_target_dir;
 
 pub fn run(
     path: Option<String>,
@@ -10,7 +10,7 @@ pub fn run(
     verify_only: bool,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_target_dir(path);
     if verify_only {
         verify(&root)?;
         if json {

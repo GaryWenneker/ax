@@ -96,6 +96,10 @@ pub struct CoverageReport {
     pub decisions: String,
     pub rules_and_skills: String,
     pub unresolved_references: usize,
+    /// `Verified` when the exported documents match the `ExportInput` they were
+    /// built from (turn hashes, prompt and outcome values, decisions, and no
+    /// redacted value in any string). It does not re-read the store, so it says
+    /// nothing about whether that input is the whole session.
     pub source_integrity: String,
     pub context_relevance: String,
     pub cross_chat_continuity: String,
@@ -151,18 +155,25 @@ pub fn coverage_markdown(report: &CoverageReport) -> String {
 
 /// Read the turns Ax actually stored for one session.
 /// Decisions, rules, and the provider chat id are `not_captured` because this
-/// table does not store them. A failed query is an error, not an empty session.
+/// table does not store them. A failed query is an error, not an empty session,
+/// and a session id with no `agent_sessions` row is an error too.
+///
+/// The inventory is never reported closed: the store records no session end
+/// and cannot rule out a turn that was never written, so the turns line of the
+/// coverage report stays `unverified` and the export stays partial.
 pub async fn load_export_input(pool: &SqlitePool, session_id: &str) -> Result<ExportInput, String> {
     let session_id = session_id.trim();
     if session_id.is_empty() {
         return Err("session id is required".into());
     }
-    let project_id: Option<String> =
+    let project_id: String =
         sqlx::query_scalar("SELECT project_id FROM agent_sessions WHERE id = ?")
             .bind(session_id)
             .fetch_optional(pool)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("no stored session {session_id}"))?;
+    let spec_pointer = crate::spec_registry::spec_pointer_for(pool, session_id).await?;
     let rows: Vec<(String, i64, String, Option<String>, String, String)> = sqlx::query_as(
         "SELECT id, sequence, prompt, outcome, files, commits
          FROM agent_turns WHERE session_id = ? ORDER BY sequence, id",
@@ -191,12 +202,12 @@ pub async fn load_export_input(pool: &SqlitePool, session_id: &str) -> Result<Ex
         .collect();
 
     Ok(ExportInput {
-        inventory_closed: true,
+        inventory_closed: false,
         identity: IdentityInput {
             agent_provider: Section::NotCaptured,
             agent_chat_id: Section::NotCaptured,
             ax_session_id: session_id.to_string(),
-            project_id: non_empty(project_id),
+            project_id: non_empty(Some(project_id)),
             linked_session_ids: Section::NotCaptured,
         },
         objective: Section::NotCaptured,
@@ -213,10 +224,7 @@ pub async fn load_export_input(pool: &SqlitePool, session_id: &str) -> Result<Ex
         repository_commit: Section::NotCaptured,
         model: Section::NotCaptured,
         redacted_fields: Vec::new(),
-        spec_pointer: crate::spec_registry::spec_pointer_for(pool, session_id)
-            .await
-            .ok()
-            .flatten(),
+        spec_pointer,
     })
 }
 
@@ -448,11 +456,11 @@ fn build_ready(input: &ExportInput, full: &Value) -> Value {
             json!({
                 "axTurnId": turn.ax_turn_id,
                 "sequence": turn.sequence,
-                "sha256": turn_hash(turn),
+                "sha256": exported_turn_hash(input, turn),
                 "prompt": if include_prompt {
                     json!({"state": "present", "value": turn.prompt})
                 } else {
-                    json!({"state": "referenced", "sha256": turn_hash(turn)})
+                    json!({"state": "referenced", "sha256": exported_turn_hash(input, turn)})
                 },
                 "decisionIds": turn.decision_ids,
             })
@@ -474,7 +482,7 @@ fn full_turn(input: &ExportInput, turn: &TurnInput) -> Value {
             None => json!({"state": "not_captured"}),
         },
         "sequence": turn.sequence,
-        "sha256": turn_hash(turn),
+        "sha256": exported_turn_hash(input, turn),
         "prompt": text_state(input, &format!("turns/{}/prompt", turn.ax_turn_id), &turn.prompt, prompt_truncated(turn)),
         "outcome": match &turn.outcome {
             Some(text) => text_state(input, &format!("turns/{}/outcome", turn.ax_turn_id), text, outcome_truncated(turn)),
@@ -683,8 +691,32 @@ fn turn_fingerprints(input: &ExportInput) -> Vec<String> {
             .cmp(&right.sequence)
             .then(left.ax_turn_id.cmp(&right.ax_turn_id))
     });
-    turns.iter().map(turn_hash).collect()
+    turns
+        .iter()
+        .map(|turn| exported_turn_hash(input, turn))
+        .collect()
 }
+
+/// The turn hash that goes into the export. When the prompt or the outcome of
+/// the turn is redacted, that field is hashed as a fixed marker instead of its
+/// value, so the export carries no hash a short secret could be guessed from.
+fn exported_turn_hash(input: &ExportInput, turn: &TurnInput) -> String {
+    let prompt_redacted = is_redacted(input, &format!("turns/{}/prompt", turn.ax_turn_id));
+    let outcome_redacted = is_redacted(input, &format!("turns/{}/outcome", turn.ax_turn_id));
+    if !prompt_redacted && !outcome_redacted {
+        return turn_hash(turn);
+    }
+    let mut masked = turn.clone();
+    if prompt_redacted {
+        masked.prompt = REDACTED_MARKER.into();
+    }
+    if outcome_redacted && masked.outcome.is_some() {
+        masked.outcome = Some(REDACTED_MARKER.into());
+    }
+    turn_hash(&masked)
+}
+
+const REDACTED_MARKER: &str = "\u{0}redacted";
 
 fn turn_hash(turn: &TurnInput) -> String {
     let files = match &turn.changed_files {
@@ -749,7 +781,7 @@ fn verify(input: &ExportInput, full: &Value, ready: &Value) -> Vec<String> {
         if exported_turn["sequence"] != json!(turn.sequence) {
             errors.push(format!("turn {} sequence was altered", turn.ax_turn_id));
         }
-        if exported_turn["sha256"] != json!(turn_hash(turn)) {
+        if exported_turn["sha256"] != json!(exported_turn_hash(input, turn)) {
             errors.push(format!("turn {} hash was altered", turn.ax_turn_id));
         }
         check_text_field(
@@ -785,12 +817,20 @@ fn verify(input: &ExportInput, full: &Value, ready: &Value) -> Vec<String> {
         "rejected approaches",
         &mut errors,
     );
-    let serialized = full.to_string() + &ready.to_string();
     for turn in &input.turns {
-        let path = format!("turns/{}/prompt", turn.ax_turn_id);
-        if is_redacted(input, &path) && serialized.contains(&turn.prompt) && !turn.prompt.is_empty()
-        {
-            errors.push(format!("{path} still contains the redacted value"));
+        let fields = [
+            ("prompt", Some(turn.prompt.as_str())),
+            ("outcome", turn.outcome.as_deref()),
+        ];
+        for (name, raw) in fields {
+            let path = format!("turns/{}/{name}", turn.ax_turn_id);
+            let Some(raw) = raw.filter(|raw| !raw.is_empty()) else {
+                continue;
+            };
+            if is_redacted(input, &path) && (contains_text(full, raw) || contains_text(ready, raw))
+            {
+                errors.push(format!("{path} still contains the redacted value"));
+            }
         }
     }
     let ready_turns = ready["turns"].as_array().cloned().unwrap_or_default();
@@ -834,6 +874,19 @@ fn verify(input: &ExportInput, full: &Value, ready: &Value) -> Vec<String> {
         }
     }
     errors
+}
+
+/// True when any string in `value` (an object key or a string leaf) contains
+/// `needle`. Strings are compared unescaped, so quotes and newlines match.
+fn contains_text(value: &Value, needle: &str) -> bool {
+    match value {
+        Value::String(text) => text.contains(needle),
+        Value::Array(items) => items.iter().any(|item| contains_text(item, needle)),
+        Value::Object(map) => map
+            .iter()
+            .any(|(key, item)| key.contains(needle) || contains_text(item, needle)),
+        Value::Null | Value::Bool(_) | Value::Number(_) => false,
+    }
 }
 
 fn check_text_field(
@@ -1238,14 +1291,15 @@ mod tests {
         database.close().await;
         let _ = std::fs::remove_dir_all(&root);
 
-        assert!(input.inventory_closed);
+        assert!(!input.inventory_closed);
         assert_eq!(input.turns.len(), 2);
         assert_eq!(input.turns[0].prompt, "hello");
         assert_eq!(input.turns[1].prompt.chars().count(), PROMPT_CAPTURE_CAP);
         assert!(matches!(input.decisions, Section::NotCaptured));
         let bundle = validate_context_export(&input);
         assert!(bundle.errors.is_empty(), "{:?}", bundle.errors);
-        assert_eq!(bundle.coverage.turns, "2 / 2");
+        assert_eq!(bundle.coverage.turns, "unverified");
+        assert_eq!(bundle.full["session"]["capturedTurns"], 2);
         assert_eq!(bundle.coverage.decisions, "not captured");
         assert_eq!(bundle.full["provenance"]["completeness"], "partial");
         assert_eq!(bundle.full["turns"][1]["prompt"]["state"], "truncated");
@@ -1301,6 +1355,120 @@ mod tests {
         assert_eq!(
             bundle.ready["spec"]["availability"],
             bundle.full["spec"]["availability"]
+        );
+    }
+
+    async fn temp_database() -> (tempfile::TempDir, ax_db::Database) {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".ax")).unwrap();
+        let database = ax_db::Database::open(&dir.path().join(".ax/ax.db"))
+            .await
+            .unwrap();
+        (dir, database)
+    }
+
+    async fn record(database: &ax_db::Database, session: &str, turn: &str) {
+        ax_db::hook_turns::record_hook_turn(
+            database.pool(),
+            &ax_db::hook_turns::HookTurn {
+                project_id: "ax".into(),
+                session_id: session.into(),
+                turn_id: turn.into(),
+                prompt: "hello".into(),
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_unknown_session_is_an_error_not_an_empty_export() {
+        let (_dir, database) = temp_database().await;
+        record(&database, "conv-1", "gen-1").await;
+        let error = load_export_input(database.pool(), "conv-typo")
+            .await
+            .unwrap_err();
+        database.close().await;
+        assert!(error.contains("conv-typo"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_failed_spec_lookup_is_an_error() {
+        let (_dir, database) = temp_database().await;
+        record(&database, "conv-1", "gen-1").await;
+        sqlx::query("CREATE TABLE spec_bindings (unrelated TEXT)")
+            .execute(database.pool())
+            .await
+            .unwrap();
+        let result = load_export_input(database.pool(), "conv-1").await;
+        database.close().await;
+        assert!(result.is_err(), "spec lookup failure was hidden");
+    }
+
+    #[tokio::test]
+    async fn the_loader_never_claims_a_closed_inventory() {
+        let (_dir, database) = temp_database().await;
+        record(&database, "conv-1", "gen-1").await;
+        let input = load_export_input(database.pool(), "conv-1").await.unwrap();
+        database.close().await;
+        assert!(!input.inventory_closed);
+        let bundle = validate_context_export(&input);
+        assert_eq!(bundle.coverage.turns, "unverified");
+        assert!(bundle
+            .coverage
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("inventory")));
+    }
+
+    #[test]
+    fn a_leaked_multi_line_redacted_prompt_is_caught() {
+        let secret = "token:\n\"sk-abc\"";
+        let mut input = closed_input(vec![turn(1, secret)]);
+        input.redacted_fields = vec!["turns/turn-1/prompt".into()];
+        let bundle = validate_context_export(&input);
+        assert!(bundle.errors.is_empty(), "{:?}", bundle.errors);
+        let mut forged = bundle.full.clone();
+        forged["session"]["objective"] = json!({"state": "present", "value": secret});
+        let errors = verify(&input, &forged, &bundle.ready);
+        assert!(
+            errors.iter().any(|error| error.contains("redacted value")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn a_leaked_redacted_outcome_is_caught() {
+        let mut turns = vec![turn(1, "ask")];
+        turns[0].outcome = Some("password=hunter2".into());
+        let mut input = closed_input(turns);
+        input.redacted_fields = vec!["turns/turn-1/outcome".into()];
+        let bundle = validate_context_export(&input);
+        assert!(bundle.errors.is_empty(), "{:?}", bundle.errors);
+        assert!(!bundle.full.to_string().contains("hunter2"));
+        let mut forged = bundle.ready.clone();
+        forged["turns"][0]["note"] = json!("password=hunter2");
+        let errors = verify(&input, &bundle.full, &forged);
+        assert!(
+            errors.iter().any(|error| error.contains("redacted value")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn a_redacted_turn_exports_no_hash_of_the_secret() {
+        let original = turn(1, "sk-short");
+        let mut input = closed_input(vec![original.clone()]);
+        input.redacted_fields = vec!["turns/turn-1/prompt".into()];
+        let bundle = validate_context_export(&input);
+        assert!(bundle.errors.is_empty(), "{:?}", bundle.errors);
+        let serialized = bundle.full.to_string() + &bundle.ready.to_string();
+        let raw_hash = turn_hash(&original);
+        assert!(!serialized.contains(&raw_hash), "raw turn hash exported");
+        let raw_set_hash = sha256_hex(raw_hash.as_bytes());
+        assert!(
+            !serialized.contains(&raw_set_hash[..12]),
+            "source hash derived from the secret"
         );
     }
 }

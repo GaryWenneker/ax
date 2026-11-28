@@ -6,10 +6,10 @@ use ax_share::{
     SyncDirection,
 };
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 
 pub async fn run_config(path: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let cfg = load_share_config(&root);
     let config_path = project_config_path(&root);
     if json {
@@ -63,7 +63,7 @@ pub async fn run_sync(
     push: bool,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let pool = ax_share::open_policy_pool(&root).await?;
     let direction = if push && pull {
         SyncDirection::Both

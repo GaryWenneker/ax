@@ -8,7 +8,7 @@ use ax_share::{
 };
 use axum::{
     extract::State,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::Json,
     routing::{delete, get, post, put},
     Router,
@@ -39,13 +39,32 @@ pub fn policy_share_router(hub: WebHub) -> Router {
         .with_state(hub)
 }
 
-pub fn microsoft_auth_router() -> Router {
+pub fn microsoft_auth_router(hub: WebHub) -> Router {
     Router::new()
         .route("/device/start", post(ms_device_start))
         .route("/device/poll", post(ms_device_poll))
         .route("/status", get(ms_auth_status))
         .route("/config", put(ms_set_config))
         .route("/", delete(ms_sign_out))
+        .with_state(hub)
+}
+
+/// Microsoft sign-in changes the owner's own account and config file, so
+/// only the local owner's browser on a writable server may do it.
+fn refuse_ms_change(hub: &WebHub, headers: &HeaderMap) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let error = if hub.readonly {
+        "Read-only mode"
+    } else if !crate::local_owner::browser_serves(headers, hub.port) {
+        "Microsoft sign-in can only be changed in the Command Center on this computer"
+    } else {
+        return Ok(());
+    };
+    Err((
+        StatusCode::FORBIDDEN,
+        Json(ApiError {
+            error: error.into(),
+        }),
+    ))
 }
 
 async fn project_root(hub: &WebHub) -> Result<std::path::PathBuf, (StatusCode, Json<ApiError>)> {
@@ -148,15 +167,22 @@ async fn post_share_sync(
     }
 }
 
-async fn ms_device_start() -> Result<Json<ax_share::DeviceFlowStart>, (StatusCode, Json<ApiError>)>
-{
+async fn ms_device_start(
+    State(hub): State<WebHub>,
+    headers: HeaderMap,
+) -> Result<Json<ax_share::DeviceFlowStart>, (StatusCode, Json<ApiError>)> {
+    refuse_ms_change(&hub, &headers)?;
     start_device_flow()
         .await
         .map(Json)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiError { error: e })))
 }
 
-async fn ms_device_poll() -> Result<Json<DevicePollResponse>, (StatusCode, Json<ApiError>)> {
+async fn ms_device_poll(
+    State(hub): State<WebHub>,
+    headers: HeaderMap,
+) -> Result<Json<DevicePollResponse>, (StatusCode, Json<ApiError>)> {
+    refuse_ms_change(&hub, &headers)?;
     match poll_device_flow_once().await {
         Ok(Some(_)) => Ok(Json(DevicePollResponse {
             complete: true,
@@ -188,15 +214,33 @@ struct MsClientConfigBody {
 }
 
 async fn ms_set_config(
+    State(hub): State<WebHub>,
+    headers: HeaderMap,
     Json(body): Json<MsClientConfigBody>,
 ) -> Result<Json<ax_share::MicrosoftAuthStatus>, (StatusCode, Json<ApiError>)> {
+    refuse_ms_change(&hub, &headers)?;
+    // Sign-in reads AX_MS_CLIENT_ID before the config file, so a saved id
+    // would have no effect while the variable is set.
+    if std::env::var("AX_MS_CLIENT_ID").is_ok_and(|value| !value.trim().is_empty()) {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiError {
+                error: "AX_MS_CLIENT_ID is set in the server's environment and overrides a saved client id; change or unset it and restart the server".into(),
+            }),
+        ));
+    }
     write_ms_client_id_to_config(&body.client_id)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiError { error: e })))?;
-    std::env::set_var("AX_MS_CLIENT_ID", body.client_id.trim());
+    // The new id is read back from the config file. The process environment
+    // is not changed: other request threads read it at the same time.
     Ok(Json(microsoft_auth_status()))
 }
 
-async fn ms_sign_out() -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+async fn ms_sign_out(
+    State(hub): State<WebHub>,
+    headers: HeaderMap,
+) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+    refuse_ms_change(&hub, &headers)?;
     microsoft_clear_tokens().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,

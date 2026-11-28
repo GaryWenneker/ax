@@ -91,9 +91,17 @@ struct Content {
     modified_ms: i64,
 }
 
+/// A file in a vault folder: where it is and its metadata, never its contents.
+struct DiskNode {
+    path: std::path::PathBuf,
+    len: u64,
+    modified_ms: i64,
+}
+
 enum Node {
     Dir(i64),
     File(Content),
+    Disk(DiskNode),
 }
 
 impl Node {
@@ -101,6 +109,11 @@ impl Node {
         match self {
             Node::Dir(ms) => Meta::dir(*ms),
             Node::File(c) => Meta::file(c.bytes.len(), c.modified_ms),
+            Node::Disk(d) => Meta {
+                len: d.len,
+                modified: at_ms(d.modified_ms),
+                dir: false,
+            },
         }
     }
 }
@@ -123,32 +136,29 @@ struct StoredRow {
     path: String,
     is_dir: bool,
     content: Vec<u8>,
-    draft_error: Option<String>,
     updated_at: i64,
 }
 
-type RawRow = (String, i64, Vec<u8>, Option<String>, i64);
+type RawRow = (String, i64, Vec<u8>, i64);
 
 impl From<RawRow> for StoredRow {
-    fn from((path, is_dir, content, draft_error, updated_at): RawRow) -> Self {
+    fn from((path, is_dir, content, updated_at): RawRow) -> Self {
         StoredRow {
             path,
             is_dir: is_dir != 0,
             content,
-            draft_error,
             updated_at,
         }
     }
 }
 
 async fn stored_get(pool: &SqlitePool, path: &str) -> FsResult<Option<StoredRow>> {
-    let row: Option<RawRow> = sqlx::query_as(
-        "SELECT path, is_dir, content, draft_error, updated_at FROM dav_files WHERE path = ?",
-    )
-    .bind(path)
-    .fetch_optional(pool)
-    .await
-    .map_err(db_err)?;
+    let row: Option<RawRow> =
+        sqlx::query_as("SELECT path, is_dir, content, updated_at FROM dav_files WHERE path = ?")
+            .bind(path)
+            .fetch_optional(pool)
+            .await
+            .map_err(db_err)?;
     Ok(row.map(StoredRow::from))
 }
 
@@ -207,6 +217,14 @@ fn like_prefix(dir: &str) -> String {
     format!("{escaped}/%")
 }
 
+/// `path` is `dir` itself or lies below it.
+fn is_within(path: &str, dir: &str) -> bool {
+    path == dir
+        || path
+            .strip_prefix(dir)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
 /// Delete `path` and, when it is a folder, everything below it.
 async fn stored_delete_tree(pool: &SqlitePool, path: &str) -> FsResult<u64> {
     let res = sqlx::query("DELETE FROM dav_files WHERE path = ? OR path LIKE ? ESCAPE '\\'")
@@ -218,48 +236,111 @@ async fn stored_delete_tree(pool: &SqlitePool, path: &str) -> FsResult<u64> {
     Ok(res.rows_affected())
 }
 
-async fn stored_below(pool: &SqlitePool, dir: &str) -> FsResult<Vec<StoredRow>> {
-    let rows: Vec<RawRow> = if dir.is_empty() {
-        sqlx::query_as(
-            "SELECT path, is_dir, content, draft_error, updated_at FROM dav_files WHERE draft_error IS NULL",
-        )
+/// The most memories the vault shows as pages (newest first).
+const MEMORY_PAGE_LIMIT: i64 = 100_000;
+
+/// `key -> updated_at` from a two-column query. A failed query reads as no
+/// times (pages then show time 0), as a single lookup does.
+async fn updated_by_key(
+    pool: &SqlitePool,
+    sql: &'static str,
+) -> FsResult<std::collections::HashMap<String, i64>> {
+    let rows: Vec<(String, i64)> = sqlx::query_as(sql)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+    Ok(rows.into_iter().collect())
+}
+
+/// A `dav_files` row without its contents.
+struct StoredMeta {
+    path: String,
+    is_dir: bool,
+    len: u64,
+    draft_error: Option<String>,
+    updated_at: i64,
+}
+
+type RawMeta = (String, i64, i64, Option<String>, i64);
+
+impl From<RawMeta> for StoredMeta {
+    fn from((path, is_dir, len, draft_error, updated_at): RawMeta) -> Self {
+        StoredMeta {
+            path,
+            is_dir: is_dir != 0,
+            len: len.max(0) as u64,
+            draft_error,
+            updated_at,
+        }
+    }
+}
+
+const META_COLUMNS: &str = "path, is_dir, length(content), draft_error, updated_at";
+
+/// One row's metadata, without loading its contents.
+async fn stored_meta(pool: &SqlitePool, path: &str) -> FsResult<Option<StoredMeta>> {
+    let row: Option<RawMeta> = sqlx::query_as(&format!(
+        "SELECT {META_COLUMNS} FROM dav_files WHERE path = ?"
+    ))
+    .bind(path)
+    .fetch_optional(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(row.map(StoredMeta::from))
+}
+
+/// Saved rows below `dir` (every saved row for the root), without contents.
+async fn stored_below(pool: &SqlitePool, dir: &str) -> FsResult<Vec<StoredMeta>> {
+    let rows: Vec<RawMeta> = if dir.is_empty() {
+        sqlx::query_as(&format!(
+            "SELECT {META_COLUMNS} FROM dav_files WHERE draft_error IS NULL"
+        ))
         .fetch_all(pool)
         .await
     } else {
-        sqlx::query_as(
-            "SELECT path, is_dir, content, draft_error, updated_at FROM dav_files
-             WHERE draft_error IS NULL AND path LIKE ? ESCAPE '\\'",
-        )
+        sqlx::query_as(&format!(
+            "SELECT {META_COLUMNS} FROM dav_files
+             WHERE draft_error IS NULL AND path LIKE ? ESCAPE '\\'"
+        ))
         .bind(like_prefix(dir))
         .fetch_all(pool)
         .await
     }
     .map_err(db_err)?;
-    Ok(rows.into_iter().map(StoredRow::from).collect())
+    Ok(rows.into_iter().map(StoredMeta::from).collect())
 }
 
-async fn drafts(pool: &SqlitePool) -> FsResult<Vec<StoredRow>> {
-    let rows: Vec<(String, Vec<u8>, String, i64)> = sqlx::query_as(
-        "SELECT path, content, draft_error, updated_at FROM dav_files
-         WHERE draft_error IS NOT NULL ORDER BY path",
+/// When some saved row lies below `dir`, the time of one of them: `dir` is then an implied folder.
+async fn stored_dir_updated(pool: &SqlitePool, dir: &str) -> FsResult<Option<i64>> {
+    sqlx::query_scalar(
+        "SELECT updated_at FROM dav_files
+         WHERE draft_error IS NULL AND path LIKE ? ESCAPE '\\' LIMIT 1",
     )
+    .bind(like_prefix(dir))
+    .fetch_optional(pool)
+    .await
+    .map_err(db_err)
+}
+
+async fn drafts(pool: &SqlitePool) -> FsResult<Vec<StoredMeta>> {
+    let rows: Vec<RawMeta> = sqlx::query_as(&format!(
+        "SELECT {META_COLUMNS} FROM dav_files WHERE draft_error IS NOT NULL ORDER BY path"
+    ))
     .fetch_all(pool)
     .await
     .map_err(db_err)?;
     Ok(rows
         .into_iter()
-        .map(|(path, content, err, updated_at)| StoredRow {
-            path,
+        .map(StoredMeta::from)
+        .map(|row| StoredMeta {
             is_dir: false,
-            content,
-            draft_error: Some(err),
-            updated_at,
+            ..row
         })
         .collect())
 }
 
 /// Direct children of `dir` implied by stored rows (a nested file implies its folders).
-fn stored_children(dir: &str, rows: &[StoredRow]) -> BTreeMap<String, Meta> {
+fn stored_children(dir: &str, rows: &[StoredMeta]) -> BTreeMap<String, Meta> {
     let prefix = if dir.is_empty() {
         String::new()
     } else {
@@ -281,7 +362,11 @@ fn stored_children(dir: &str, rows: &[StoredRow]) -> BTreeMap<String, Meta> {
             None => {
                 out.insert(
                     rest.to_string(),
-                    Meta::file(row.content.len(), row.updated_at),
+                    Meta {
+                        len: row.len,
+                        modified: at_ms(row.updated_at),
+                        dir: false,
+                    },
                 );
             }
         }
@@ -339,7 +424,11 @@ impl DavVault {
         Ok(
             match folders::blocking(move || folders::lookup(&folder.path, &rest)).await? {
                 Found::Dir(ms) => Node::Dir(ms),
-                Found::File(bytes, modified_ms) => Node::File(Content { bytes, modified_ms }),
+                Found::File(path, len, modified_ms) => Node::Disk(DiskNode {
+                    path,
+                    len,
+                    modified_ms,
+                }),
             },
         )
     }
@@ -374,19 +463,46 @@ impl DavVault {
             .unwrap_or(0)
     }
 
+    async fn policy_pool_and_root(&self) -> (SqlitePool, std::path::PathBuf) {
+        let ws = self.hub.read().await;
+        (
+            ws.policy.store.pool().clone(),
+            ws.policy.store.project_root().to_path_buf(),
+        )
+    }
+
     async fn memories(&self) -> FsResult<Vec<ax_memory::MemoryRow>> {
         let pool = self.memory_pool().await;
-        let (rows, _) = ax_memory::list(&pool, 100_000, 0).await.map_err(db_err)?;
+        let (rows, _) = ax_memory::list(&pool, MEMORY_PAGE_LIMIT as usize, 0)
+            .await
+            .map_err(db_err)?;
         Ok(rows)
     }
 
+    /// The memory a page stem names. A stem depends on every title, so this
+    /// reads the titles of the rows [`Self::memories`] lists but loads only
+    /// the matching memory in full.
     async fn memory_for_stem(&self, stem: &str) -> FsResult<Option<ax_memory::MemoryRow>> {
-        let rows = self.memories().await?;
-        let id = pages::memory_stems(&rows)
+        let pool = self.memory_pool().await;
+        let keys: Vec<(String, String, i64)> = sqlx::query_as(
+            "SELECT id, title, created_at FROM memories ORDER BY updated_at DESC LIMIT ?",
+        )
+        .bind(MEMORY_PAGE_LIMIT)
+        .fetch_all(&pool)
+        .await
+        .map_err(db_err)?;
+        let entries: Vec<(&str, &str, i64)> = keys
+            .iter()
+            .map(|(id, title, created)| (id.as_str(), title.as_str(), *created))
+            .collect();
+        let Some(id) = ax_policy::links::unique_stems(&entries)
             .into_iter()
             .find(|(_, s)| s == stem)
-            .map(|(id, _)| id);
-        Ok(id.and_then(|id| rows.into_iter().find(|m| m.id == id)))
+            .map(|(id, _)| id)
+        else {
+            return Ok(None);
+        };
+        ax_memory::get(&pool, &id).await.map_err(db_err)
     }
 
     async fn global_item(&self, area: Area, stem: &str) -> FsResult<Option<GlobalItem>> {
@@ -501,10 +617,9 @@ impl DavVault {
                         })
                     });
                 }
-                let below = stored_below(&pool, path).await?;
-                below
-                    .first()
-                    .map(|r| Node::Dir(r.updated_at))
+                stored_dir_updated(&pool, path)
+                    .await?
+                    .map(Node::Dir)
                     .ok_or(FsError::NotFound)
             }
         }
@@ -514,40 +629,41 @@ impl DavVault {
         let mut out = BTreeMap::new();
         let stems: Vec<String> = match area {
             Area::Rules => {
-                let ws = self.hub.read().await;
-                ws.policy
-                    .store
-                    .list_rules()
-                    .await
-                    .map_err(db_err)?
-                    .into_iter()
-                    .map(|r| r.id)
-                    .collect()
+                // One list query and one timestamp query build every page,
+                // the same pages `saved_page` serves for an indexed rule.
+                let (pool, root) = self.policy_pool_and_root().await;
+                let rows = ax_policy::index::list_rules(&pool).await.map_err(db_err)?;
+                let updated =
+                    updated_by_key(&pool, "SELECT id, updated_at FROM policy_rules").await?;
+                for row in &rows {
+                    let len = pages::rule_page(&ax_policy::rule_row_to_doc(row, &root)).len();
+                    let ms = updated.get(&row.id).copied().unwrap_or(0);
+                    out.insert(format!("{}.md", row.id), Meta::file(len, ms));
+                }
+                Vec::new()
             }
             Area::Skills => {
-                let ws = self.hub.read().await;
-                let mut names: Vec<String> = ws
-                    .policy
-                    .store
-                    .list_skills()
-                    .await
-                    .map_err(db_err)?
-                    .into_iter()
-                    .map(|s| s.name)
-                    .collect();
-                let root = ws.policy.store.project_root().to_path_buf();
-                drop(ws);
-                for name in disk_skill_names(&root) {
-                    if !names.iter().any(|existing| existing == &name) {
-                        names.push(name);
-                    }
+                let (pool, root) = self.policy_pool_and_root().await;
+                let rows = ax_policy::index::list_skills(&pool).await.map_err(db_err)?;
+                let updated =
+                    updated_by_key(&pool, "SELECT name, updated_at FROM policy_skills").await?;
+                for row in &rows {
+                    let len = pages::skill_page(&ax_policy::skill_row_to_doc(row, &root)).len();
+                    let ms = updated.get(&row.name).copied().unwrap_or(0);
+                    out.insert(format!("{}.md", row.name), Meta::file(len, ms));
                 }
-                names
+                // Skill folders on disk without a database row are read one by one.
+                disk_skill_names(&root)
+                    .into_iter()
+                    .filter(|name| !rows.iter().any(|r| &r.name == name))
+                    .collect()
             }
             Area::Memories => {
                 let rows = self.memories().await?;
+                let by_id: std::collections::HashMap<&str, &ax_memory::MemoryRow> =
+                    rows.iter().map(|m| (m.id.as_str(), m)).collect();
                 for (id, stem) in pages::memory_stems(&rows) {
-                    if let Some(m) = rows.iter().find(|m| m.id == id) {
+                    if let Some(m) = by_id.get(id.as_str()) {
                         let len = pages::memory_page(m).len();
                         out.insert(format!("{stem}.md"), Meta::file(len, m.updated_at));
                     }
@@ -582,7 +698,11 @@ impl DavVault {
             if let Some(name) = row.path.strip_prefix(&prefix) {
                 out.insert(
                     name.to_string(),
-                    Meta::file(row.content.len(), row.updated_at),
+                    Meta {
+                        len: row.len,
+                        modified: at_ms(row.updated_at),
+                        dir: false,
+                    },
                 );
             }
         }
@@ -634,7 +754,7 @@ impl DavVault {
                     }
                     Ok(out)
                 }
-                Node::File(_) => Err(FsError::Forbidden),
+                Node::File(_) | Node::Disk(_) => Err(FsError::Forbidden),
             },
             Target::FoldersDir => Ok(vault_folders::load(&self.project_root().await)
                 .into_iter()
@@ -963,22 +1083,36 @@ impl DavVault {
         }
     }
 
+    /// Move `from` and everything below it to `to` in one transaction, replacing
+    /// whatever was at `to`. A destination inside the source is refused.
     async fn rename_stored(&self, from: &str, to: &str) -> FsResult<()> {
+        if is_within(to, from) {
+            return Err(FsError::Forbidden);
+        }
         let pool = self.pool().await;
-        let rows: Vec<StoredRow> = {
-            let mut rows = stored_below(&pool, from).await?;
-            rows.extend(stored_get(&pool, from).await?);
-            rows
-        };
-        if rows.is_empty() {
+        let mut tx = pool.begin().await.map_err(db_err)?;
+        sqlx::query("DELETE FROM dav_files WHERE path = ? OR path LIKE ? ESCAPE '\\'")
+            .bind(to)
+            .bind(like_prefix(to))
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        let moved = sqlx::query(
+            "UPDATE dav_files SET path = ? || substr(path, ?), updated_at = ?
+             WHERE path = ? OR path LIKE ? ESCAPE '\\'",
+        )
+        .bind(to)
+        .bind(from.chars().count() as i64 + 1)
+        .bind(now_ms())
+        .bind(from)
+        .bind(like_prefix(from))
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        if moved.rows_affected() == 0 {
             return Err(FsError::NotFound);
         }
-        stored_delete_tree(&pool, to).await?;
-        for row in rows {
-            let new_path = format!("{to}{}", &row.path[from.len()..]);
-            stored_put(&pool, &new_path, row.is_dir, &row.content, None).await?;
-        }
-        stored_delete_tree(&pool, from).await.map(|_| ())
+        tx.commit().await.map_err(db_err)
     }
 }
 
@@ -1012,6 +1146,9 @@ struct VaultFile {
     pos: usize,
     modified_ms: i64,
     write: Option<WriteTarget>,
+    /// Bytes not yet committed. A file opened for writing starts dirty, so
+    /// creating an empty file commits it; a later flush with no new writes does not.
+    dirty: bool,
 }
 
 struct WriteTarget {
@@ -1038,6 +1175,7 @@ impl VaultFile {
         }
         self.data[self.pos..end].copy_from_slice(buf);
         self.pos = end;
+        self.dirty = true;
         Ok(())
     }
 }
@@ -1088,16 +1226,90 @@ impl DavFile for VaultFile {
     fn flush(&mut self) -> FsFuture<'_, ()> {
         async move {
             match &self.write {
-                Some(target) => {
-                    target
-                        .vault
-                        .commit(&target.path, std::mem::take(&mut self.data))
-                        .await
+                Some(target) if self.dirty => {
+                    target.vault.commit(&target.path, self.data.clone()).await?;
+                    self.dirty = false;
+                    Ok(())
                 }
-                None => Ok(()),
+                _ => Ok(()),
             }
         }
         .boxed()
+    }
+}
+
+/// A read-only handle on a vault folder file that reads from disk as the
+/// client asks, so serving a large file never holds all of it in memory.
+#[derive(Debug)]
+struct DiskFile {
+    file: tokio::fs::File,
+    len: u64,
+    modified_ms: i64,
+}
+
+impl DiskFile {
+    async fn open(disk: DiskNode) -> FsResult<Box<dyn DavFile>> {
+        let file = tokio::fs::File::open(&disk.path)
+            .await
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => FsError::NotFound,
+                std::io::ErrorKind::PermissionDenied => FsError::Forbidden,
+                _ => FsError::GeneralFailure,
+            })?;
+        Ok(Box::new(DiskFile {
+            file,
+            len: disk.len,
+            modified_ms: disk.modified_ms,
+        }) as Box<dyn DavFile>)
+    }
+}
+
+impl DavFile for DiskFile {
+    fn metadata(&mut self) -> FsFuture<'_, Box<dyn DavMetaData>> {
+        let meta = Meta {
+            len: self.len,
+            modified: at_ms(self.modified_ms),
+            dir: false,
+        };
+        async move { Ok(Box::new(meta) as Box<dyn DavMetaData>) }.boxed()
+    }
+
+    fn write_buf(&mut self, _buf: Box<dyn Buf + Send>) -> FsFuture<'_, ()> {
+        async { Err(FsError::Forbidden) }.boxed()
+    }
+
+    fn write_bytes(&mut self, _buf: Bytes) -> FsFuture<'_, ()> {
+        async { Err(FsError::Forbidden) }.boxed()
+    }
+
+    fn read_bytes(&mut self, count: usize) -> FsFuture<'_, Bytes> {
+        async move {
+            use tokio::io::AsyncReadExt;
+            let mut buf = vec![0u8; count];
+            let n = self
+                .file
+                .read(&mut buf)
+                .await
+                .map_err(|_| FsError::GeneralFailure)?;
+            buf.truncate(n);
+            Ok(Bytes::from(buf))
+        }
+        .boxed()
+    }
+
+    fn seek(&mut self, pos: SeekFrom) -> FsFuture<'_, u64> {
+        async move {
+            use tokio::io::AsyncSeekExt;
+            self.file
+                .seek(pos)
+                .await
+                .map_err(|_| FsError::GeneralFailure)
+        }
+        .boxed()
+    }
+
+    fn flush(&mut self) -> FsFuture<'_, ()> {
+        async { Ok(()) }.boxed()
     }
 }
 
@@ -1110,13 +1322,24 @@ impl DavFileSystem for DavVault {
         async move {
             let path = rel(path)?;
             let target = pages::classify(&path);
+            let writing = options.write || options.append || options.create || options.create_new;
             let current = match self.lookup(&target).await {
                 Ok(Node::Dir(_)) => return Err(FsError::Forbidden),
                 Ok(Node::File(c)) => Some(c),
+                Ok(Node::Disk(disk)) if !writing => return DiskFile::open(disk).await,
+                Ok(Node::Disk(disk)) => Some(Content {
+                    bytes: if options.truncate {
+                        Vec::new()
+                    } else {
+                        let path = disk.path;
+                        folders::blocking(move || folders::read_limited(&path, MAX_PUT_BYTES))
+                            .await?
+                    },
+                    modified_ms: disk.modified_ms,
+                }),
                 Err(FsError::NotFound) => None,
                 Err(e) => return Err(e),
             };
-            let writing = options.write || options.append || options.create || options.create_new;
             if writing {
                 self.writable()?;
                 if current.is_some() && options.create_new {
@@ -1152,6 +1375,7 @@ impl DavFileSystem for DavVault {
                 data,
                 pos,
                 modified_ms: current.modified_ms,
+                dirty: write.is_some(),
                 write,
             }) as Box<dyn DavFile>)
         }
@@ -1176,7 +1400,24 @@ impl DavFileSystem for DavVault {
 
     fn metadata<'a>(&'a self, path: &'a DavPath) -> FsFuture<'a, Box<dyn DavMetaData>> {
         async move {
-            let node = self.lookup(&pages::classify(&rel(path)?)).await?;
+            let target = pages::classify(&rel(path)?);
+            if let Target::Stored(p) = &target {
+                if p != pages::APP_JSON {
+                    if let Some(row) = stored_meta(&self.pool().await, p).await? {
+                        let meta = if row.is_dir {
+                            Meta::dir(row.updated_at)
+                        } else {
+                            Meta {
+                                len: row.len,
+                                modified: at_ms(row.updated_at),
+                                dir: false,
+                            }
+                        };
+                        return Ok(Box::new(meta) as Box<dyn DavMetaData>);
+                    }
+                }
+            }
+            let node = self.lookup(&target).await?;
             Ok(Box::new(node.meta()) as Box<dyn DavMetaData>)
         }
         .boxed()

@@ -1,7 +1,7 @@
 use ax_types::SearchOptions;
 use serde_json::json;
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 use crate::ui::{accent, dim, SpinnerGuard};
 
 pub async fn run(
@@ -10,7 +10,7 @@ pub async fn run(
     limit: Option<u32>,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(None);
+    let root = resolve_project_root(None);
     let trace = ax_usage::ToolTrace::begin(
         Some(&root),
         "ax_search",

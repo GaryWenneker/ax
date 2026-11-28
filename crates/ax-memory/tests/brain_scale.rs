@@ -1,6 +1,8 @@
 //! Brain-scale latency: cue lookup, preflight, recall, and archive search.
 //!
-//! 100k (default) and 1e6 (release proof bar) ignored benches.
+//! 100k (default) and 1e6 (release proof bar) ignored benches. The wall-clock budgets are a
+//! manual release check on a quiet machine; the default test run only checks the percentile
+//! math below.
 //!
 //! Run 100k:
 //! `cargo test -p ax-memory --release --test brain_scale cue_and_archive_search_stay_inside_budget_at_100k_rows -- --ignored --nocapture`
@@ -18,7 +20,8 @@ use ax_memory::{
 
 const ROWS_100K: usize = 100_000;
 const ROWS_1M: usize = 1_000_000;
-const RUNS: usize = 5;
+/// Enough samples that p95 drops the slowest two instead of reporting the maximum.
+const RUNS: usize = 50;
 const CUE_BUDGET: Duration = Duration::from_millis(5);
 const PREFLIGHT_P95_BUDGET: Duration = Duration::from_millis(30);
 const RECALL_P95_BUDGET: Duration = Duration::from_millis(80);
@@ -147,10 +150,11 @@ async fn seed(pool: &sqlx::SqlitePool, rows: usize) {
     tx.commit().await.unwrap();
 }
 
+/// Nearest-rank percentile: the smallest sample with at least `pct`% of samples at or below it.
 fn percentile(mut times: Vec<Duration>, pct: usize) -> Duration {
     times.sort();
-    let idx = ((times.len() * pct) / 100).min(times.len() - 1);
-    times[idx]
+    let rank = (times.len() * pct).div_ceil(100).max(1);
+    times[rank.min(times.len()) - 1]
 }
 
 async fn median_of_runs(
@@ -267,4 +271,16 @@ async fn cue_and_archive_search_stay_inside_budget_at_100k_rows() {
 #[ignore = "seeds 1,000,000 rows; run in release with --ignored"]
 async fn speed_budgets_hold_at_1e6_rows() {
     run_scale_budgets(ROWS_1M, 777_777).await;
+}
+
+#[test]
+fn p95_is_the_nearest_rank_value_not_the_slowest_sample() {
+    let ms = |n: u64| Duration::from_millis(n);
+    let hundred: Vec<Duration> = (1..=100).rev().map(ms).collect();
+    assert_eq!(percentile(hundred, 95), ms(95));
+    let runs: Vec<Duration> = (1..=RUNS as u64).map(ms).collect();
+    assert!(
+        percentile(runs, 95) < ms(RUNS as u64),
+        "with {RUNS} runs the p95 budget would only check the slowest sample"
+    );
 }

@@ -375,46 +375,64 @@ async fn handle_file_changes(
     State(hub): State<WebHub>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let ws = hub.read().await;
-    let row = match ax_memory::get(&ws.graph_pool, &id).await {
-        Ok(Some(row)) => row,
-        Ok(None) => return err(StatusCode::NOT_FOUND, "memory not found"),
-        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    let (row, root) = match memory_and_root(&hub, &id).await {
+        Ok(v) => v,
+        Err(r) => return *r,
     };
-    let mut files: std::collections::BTreeMap<String, &'static str> =
-        ax_memory::file_changes_from_body(&row.body)
-            .into_iter()
-            .map(|(path, kind)| (path, kind.as_str()))
-            .collect();
-    if files.is_empty() {
-        for rev in ax_memory::commit_revs(&row.body, &row.id) {
-            for (path, kind) in git_name_status(&ws.project_root, &rev) {
-                files.insert(path, kind.as_str());
+    let files = blocking(move || {
+        let mut files: std::collections::BTreeMap<String, &'static str> =
+            ax_memory::file_changes_from_body(&row.body)
+                .into_iter()
+                .map(|(path, kind)| (path, kind.as_str()))
+                .collect();
+        if files.is_empty() {
+            for rev in ax_memory::commit_revs(&row.body, &row.id) {
+                for (path, kind) in git_name_status(&root, &rev) {
+                    files.insert(path, kind.as_str());
+                }
             }
         }
+        files
+    })
+    .await;
+    match files {
+        Ok(files) => (StatusCode::OK, Json(serde_json::json!({ "files": files }))).into_response(),
+        Err(r) => *r,
     }
-    (StatusCode::OK, Json(serde_json::json!({ "files": files }))).into_response()
 }
 
 async fn handle_file_links(State(hub): State<WebHub>, Path(id): Path<String>) -> impl IntoResponse {
-    let ws = hub.read().await;
-    let row = match ax_memory::get(&ws.graph_pool, &id).await {
-        Ok(Some(row)) => row,
-        Ok(None) => return err(StatusCode::NOT_FOUND, "memory not found"),
-        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    let (row, root) = match memory_and_root(&hub, &id).await {
+        Ok(v) => v,
+        Err(r) => return *r,
     };
-    let Some(remote) = git_remote_url(&ws.project_root) else {
-        return (StatusCode::OK, Json(serde_json::json!({ "files": {} }))).into_response();
+    match blocking(move || file_links(&root, row)).await {
+        Ok(links) => (StatusCode::OK, Json(serde_json::json!({ "files": links }))).into_response(),
+        Err(r) => *r,
+    }
+}
+
+/// Web links for the files of one memory. Runs git, so call it off the
+/// async runtime.
+fn file_links(
+    root: &std::path::Path,
+    row: ax_memory::MemoryRow,
+) -> std::collections::BTreeMap<String, String> {
+    let mut links = std::collections::BTreeMap::new();
+    let Some(remote) = git_remote_url(root) else {
+        return links;
     };
     let revs = ax_memory::commit_revs(&row.body, &row.id);
-    let newest = revs.last().cloned();
+    let Some(newest) = revs.last().cloned() else {
+        return links;
+    };
     let mut kinds: std::collections::BTreeMap<String, ax_memory::FileChangeKind> =
         ax_memory::file_changes_from_body(&row.body)
             .into_iter()
             .collect();
     if kinds.is_empty() {
         for rev in &revs {
-            for (path, kind) in git_name_status(&ws.project_root, rev) {
+            for (path, kind) in git_name_status(root, rev) {
                 kinds.insert(path, kind);
             }
         }
@@ -424,22 +442,52 @@ async fn handle_file_links(State(hub): State<WebHub>, Path(id): Path<String>) ->
     } else {
         row.files
     };
-    let mut links = std::collections::BTreeMap::new();
+    // A deleted file links to the parent commit. Every path shares the same
+    // newest commit, so its parent is looked up at most once.
+    let mut parent: Option<String> = None;
     for path in paths {
         if !ax_memory::safe_diff_path(&path) {
             continue;
         }
-        let Some(rev) = newest.clone() else { continue };
         let rev = if kinds.get(&path) == Some(&ax_memory::FileChangeKind::Deleted) {
-            git_parent(&ws.project_root, &rev).unwrap_or(rev)
+            parent
+                .get_or_insert_with(|| git_parent(root, &newest).unwrap_or_else(|| newest.clone()))
+                .clone()
         } else {
-            rev
+            newest.clone()
         };
         if let Some(url) = ax_memory::git_web_file_url(&remote, &rev, &path) {
             links.insert(path, url);
         }
     }
-    (StatusCode::OK, Json(serde_json::json!({ "files": links }))).into_response()
+    links
+}
+
+/// The memory `id` and the project root, read under the workspace lock that
+/// is released before the caller runs git.
+async fn memory_and_root(
+    hub: &WebHub,
+    id: &str,
+) -> Result<(ax_memory::MemoryRow, std::path::PathBuf), Box<axum::response::Response>> {
+    let ws = hub.read().await;
+    match ax_memory::get(&ws.graph_pool, id).await {
+        Ok(Some(row)) => Ok((row, ws.project_root.clone())),
+        Ok(None) => Err(Box::new(err(StatusCode::NOT_FOUND, "memory not found"))),
+        Err(e) => Err(Box::new(err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            e.to_string(),
+        ))),
+    }
+}
+
+/// Runs synchronous work (git, file reads) on the blocking thread pool so it
+/// never stalls the async workers.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, Box<axum::response::Response>> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|e| Box::new(err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())))
 }
 
 fn files_from_body(body: &str) -> Vec<String> {
@@ -503,11 +551,9 @@ async fn handle_diff(
     Path(id): Path<String>,
     Query(q): Query<DiffQuery>,
 ) -> impl IntoResponse {
-    let ws = hub.read().await;
-    let row = match ax_memory::get(&ws.graph_pool, &id).await {
-        Ok(Some(row)) => row,
-        Ok(None) => return err(StatusCode::NOT_FOUND, "memory not found"),
-        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    let (row, root) = match memory_and_root(&hub, &id).await {
+        Ok(v) => v,
+        Err(r) => return *r,
     };
     if let Some(path) = q.path.as_deref() {
         if !ax_memory::safe_diff_path(path) {
@@ -515,18 +561,33 @@ async fn handle_diff(
         }
     }
     let known = ax_memory::commit_revs(&row.body, &row.id);
-    let revs: Vec<&str> = if let Some(commit) = q.commit.as_deref().filter(|c| !c.is_empty()) {
-        if !known.iter().any(|rev| rev == commit) {
+    let revs: Vec<String> = if let Some(commit) = q.commit.filter(|c| !c.is_empty()) {
+        if !known.contains(&commit) {
             return err(StatusCode::NOT_FOUND, "commit is not part of this memory");
         }
         vec![commit]
     } else {
-        known.iter().map(String::as_str).collect()
+        known
     };
+    let path = q.path;
+    match blocking(move || memory_diff(&root, &row, &revs, path.as_deref())).await {
+        Ok(parsed) => (StatusCode::OK, Json(diff_json(&parsed))).into_response(),
+        Err(r) => *r,
+    }
+}
+
+/// The parsed patch of `revs`, limited to `path` when given. Runs git, so
+/// call it off the async runtime.
+fn memory_diff(
+    root: &std::path::Path,
+    row: &ax_memory::MemoryRow,
+    revs: &[String],
+    path: Option<&str>,
+) -> ax_memory::ParsedDiff {
     let mut raw = Vec::new();
     let mut cut = false;
     for rev in revs {
-        let Some(chunk) = git_show_patch(&ws.project_root, rev, q.path.as_deref()) else {
+        let Some(chunk) = git_show_patch(root, rev, path) else {
             continue;
         };
         if raw.len() + chunk.len() > DIFF_BYTE_CAP {
@@ -541,9 +602,9 @@ async fn handle_diff(
     // A captured turn often has no commit. Show the working tree for a file
     // that belongs to this memory, instead of an empty diff.
     if raw.is_empty() {
-        if let Some(path) = q.path.as_deref() {
-            if memory_owns_path(&row, path) {
-                if let Some(chunk) = git_worktree_patch(&ws.project_root, path) {
+        if let Some(path) = path {
+            if memory_owns_path(row, path) {
+                if let Some(chunk) = git_worktree_patch(root, path) {
                     if chunk.len() > DIFF_BYTE_CAP {
                         raw.extend_from_slice(&chunk[..DIFF_BYTE_CAP]);
                         cut = true;
@@ -559,7 +620,7 @@ async fn handle_diff(
     if cut {
         parsed.truncated = true;
     }
-    (StatusCode::OK, Json(diff_json(&parsed))).into_response()
+    parsed
 }
 
 fn diff_json(parsed: &ax_memory::ParsedDiff) -> serde_json::Value {

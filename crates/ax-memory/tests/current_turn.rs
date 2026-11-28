@@ -21,8 +21,8 @@ fn note(title: &str) -> RememberInput {
 
 #[tokio::test]
 async fn a_saved_memory_and_turn_keep_the_current_ids() {
-    let root = std::env::temp_dir().join(format!("ax-mem-turn-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax/turns")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
@@ -52,7 +52,6 @@ async fn a_saved_memory_and_turn_keep_the_current_ids() {
     let stamped_ids = ids(db.pool(), &stamped.id).await;
     let turn_ids = ids(db.pool(), "turn-1").await;
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
 
     assert_eq!(plain_ids, (String::new(), String::new()));
     assert_eq!(stamped_ids, ("conv-1".to_string(), "gen-1".to_string()));

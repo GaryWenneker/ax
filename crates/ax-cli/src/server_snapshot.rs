@@ -68,6 +68,12 @@ fn decode<T: for<'de> Deserialize<'de>>(snapshot: &Snapshot, path: &str) -> Resu
     serde_json::from_str(body).map_err(|e| format!("invalid {path}: {e}"))
 }
 
+/// A memory file reference stays inside the project on every OS: it is
+/// relative, has no `..`, no leading `/` or `\` and no drive prefix.
+fn safe_file_reference(reference: &str) -> bool {
+    ax_utils::safe_relative(reference).is_ok()
+}
+
 /// Fully validate a remote payload before creating any replica directories.
 /// Internal enabled and shared/local/private flags are data to replicate,
 /// not export filters. Only the registered project and cluster are accepted.
@@ -129,12 +135,8 @@ pub fn validate(
         if !valid_record_key(&item.id) || !ids.insert(&item.id) {
             return Err("duplicate or invalid memory ID".into());
         }
-        if item
-            .files
-            .iter()
-            .any(|f| std::path::Path::new(f).is_absolute())
-        {
-            return Err("memory file references must be relative".into());
+        if item.files.iter().any(|f| !safe_file_reference(f)) {
+            return Err("memory file references must be relative paths inside the project".into());
         }
     }
     ids.clear();
@@ -210,8 +212,7 @@ pub async fn export_native(config: &ServerConfig, project_id: &str) -> Result<Sn
     // Never transmit host-absolute file paths, even if an imported memory
     // contains them. The memory body is data controlled by the enrolled owner.
     for item in &mut memories {
-        item.files
-            .retain(|f| !std::path::Path::new(f).is_absolute());
+        item.files.retain(|f| safe_file_reference(f));
     }
 
     let mut rules = ax_policy::list_rules(pool)
@@ -263,7 +264,12 @@ pub async fn export_native(config: &ServerConfig, project_id: &str) -> Result<Sn
         item.storage_is_override = false;
     }
 
-    ax_usage::migrate_legacy_log(Some(&project.path)).map_err(|e| e.to_string())?;
+    // The migration reads and rewrites log files; keep it off the async workers.
+    let log_root = project.path.clone();
+    tokio::task::spawn_blocking(move || ax_usage::migrate_legacy_log(Some(&log_root)))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
     let mut dataset = ax_db::replication::export(&project.path, &config.node_id, pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -354,6 +360,53 @@ mod tests {
             .insert("memory/shared.jsonl".into(), String::new());
         item.revision = revision(&item).unwrap();
         assert!(validate(&item, "cluster", "project").is_err());
+    }
+
+    #[test]
+    fn rejects_memory_file_references_that_leave_the_project() {
+        let row = |files: Vec<String>| MemoryRow {
+            id: "m-1".into(),
+            kind: "note".into(),
+            title: "T".into(),
+            body: "B".into(),
+            tags: vec![],
+            files,
+            confidence: 1.0,
+            source: "manual".into(),
+            enabled: true,
+            created_at: 1,
+            updated_at: 1,
+            tier: "t2".into(),
+        };
+        let check = |reference: &str| {
+            let mut item = empty_snapshot();
+            item.files.insert(
+                MEMORY_PATH.into(),
+                serialize(&[row(vec![reference.into()])]).unwrap(),
+            );
+            item.revision = revision(&item).unwrap();
+            validate(&item, "cluster", "project")
+        };
+        for bad in [
+            "../../.ssh/id_rsa",
+            "src/../../secret",
+            "/etc/passwd",
+            "\\\\host\\share\\file",
+            "C:\\Users\\x\\secret",
+            "c:relative",
+            "\\rooted",
+        ] {
+            assert!(check(bad).is_err(), "accepted {bad:?}");
+        }
+        check("src/main.rs").unwrap();
+        check("./docs/guide.md").unwrap();
+        let mut kept = vec![
+            "src/lib.rs".to_string(),
+            "../up".to_string(),
+            "C:\\x".to_string(),
+        ];
+        kept.retain(|f| safe_file_reference(f));
+        assert_eq!(kept, vec!["src/lib.rs".to_string()]);
     }
 
     #[test]

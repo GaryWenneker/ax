@@ -15,6 +15,7 @@ pub mod capture;
 pub mod embed;
 pub mod episodes;
 pub mod extract;
+pub mod file_change_prune;
 pub mod folder_sync;
 pub mod format;
 pub mod fusion;
@@ -51,6 +52,7 @@ pub use episodes::{record_episode, EpisodeInput};
 pub use extract::{
     extract_bug_fix_lesson, extract_commit_decision, extract_revert_lesson, remember_lesson, Lesson,
 };
+pub use file_change_prune::{prune_excluded_file_changes, FileChangeArea, FileChangePruneReport};
 pub use folder_sync::{
     doc_memory_id, is_recall_only, remove_folder_memories, sync_folder, FolderSyncReport, DOC_KIND,
     FOLDER_SOURCE, MAX_FOLDER_FILES, MAX_FOLDER_FILE_BYTES,
@@ -71,8 +73,9 @@ pub use scope::{assert_scope, scope_paths};
 pub use search_text::normalize_search_text;
 pub use store::{
     apply_memory_filter, delete, effective_confidence, find_similar, fts_query_from_text, get,
-    link_catalog, link_memories, list, list_for_session, purge_memory, recall, recall_filtered,
-    reindex_memory_fts, remember, session_ids, set_enabled, turn_rows, update, MEMORY_LINK_KINDS,
+    link_catalog, link_memories, list, list_for_session, purge_memories, purge_memory, recall,
+    recall_filtered, reindex_memory_fts, remember, session_ids, set_enabled, turn_rows, update,
+    MEMORY_LINK_KINDS,
 };
 pub use sync::{
     default_shared_path, export_shared, import_shared, memory_sync_enabled, MemoryExportResult,
@@ -80,7 +83,7 @@ pub use sync::{
 };
 pub use sync_capture::{
     capture_affected_paths, capture_sync_file_change, current_session_turn,
-    record_versions_for_paths,
+    record_versions_for_paths, FILE_CHANGE_BURST_LIMIT, FILE_CHANGE_BURST_LISTED,
 };
 pub use turns::{
     commit_revs, compress_hunk, conversation_from_body, conversation_key, file_changes_from_body,
@@ -91,7 +94,9 @@ pub use turns::{
     DIFF_LINE_CAP, FILE_CHANGE_KIND, HUNK_CAP_BYTES, OUTCOME_MARKER, TURN_KIND,
     TURN_RETENTION_DAYS, TURN_SOURCE,
 };
-pub use types::{MemoryFilter, MemoryMatch, MemoryRow, RememberInput, MEMORY_KINDS};
+pub use types::{
+    MemoryFilter, MemoryMatch, MemoryRow, RememberInput, MEMORY_KINDS, RECALL_ONLY_KINDS,
+};
 
 use ax_utils::errors::{AxError, DatabaseError};
 use sqlx::SqlitePool;

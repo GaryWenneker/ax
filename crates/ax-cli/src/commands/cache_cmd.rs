@@ -4,7 +4,7 @@ use std::io::Read;
 
 use serde_json::json;
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 
 #[derive(Debug, Clone)]
 pub enum CacheAction {
@@ -28,7 +28,7 @@ pub struct CacheArgs {
 }
 
 pub async fn run(args: CacheArgs) -> Result<(), String> {
-    let root = resolve_path(args.path);
+    let root = resolve_project_root(args.path);
     match args.action {
         CacheAction::Stash { label } => {
             let text = if args.text_stdin {
@@ -117,4 +117,88 @@ fn read_stdin() -> Result<String, String> {
         .read_to_string(&mut buf)
         .map_err(|e| e.to_string())?;
     Ok(buf)
+}
+
+/// Command-line form of `ax cache`, mapped onto [`CacheArgs`].
+#[derive(clap::Subcommand)]
+pub enum CacheCliAction {
+    Stash {
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long = "text-stdin", action = clap::ArgAction::SetTrue)]
+        text_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Expand {
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        id: String,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        #[arg(long)]
+        limit: Option<usize>,
+        #[arg(long)]
+        json: bool,
+    },
+    Status {
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+impl From<CacheCliAction> for CacheArgs {
+    fn from(action: CacheCliAction) -> Self {
+        match action {
+            CacheCliAction::Stash {
+                session,
+                path,
+                label,
+                text_stdin,
+                json,
+            } => CacheArgs {
+                action: CacheAction::Stash { label },
+                session,
+                path,
+                text_stdin,
+                json,
+            },
+            CacheCliAction::Expand {
+                session,
+                path,
+                id,
+                offset,
+                limit,
+                json,
+            } => CacheArgs {
+                action: CacheAction::Expand { id, offset, limit },
+                session,
+                path,
+                text_stdin: false,
+                json,
+            },
+            CacheCliAction::Status {
+                session,
+                path,
+                json,
+            } => CacheArgs {
+                action: CacheAction::Status,
+                session,
+                path,
+                text_stdin: false,
+                json,
+            },
+        }
+    }
 }

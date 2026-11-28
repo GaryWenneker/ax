@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 pub const AX_DIR: &str = ".ax";
 pub const DB_FILENAME: &str = "ax.db";
@@ -68,22 +69,27 @@ pub fn find_nearest_ax_root(cwd: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Why `path` must not be indexed: it is a filesystem root (`/`, `C:\`, any
+/// drive) or the home directory. Paths are compared after canonicalizing both
+/// sides, so a symlinked HOME, a trailing slash or a Windows `\\?\` prefix
+/// does not hide a match.
 pub fn unsafe_index_root_reason(path: &Path) -> Option<String> {
-    let canonical = path.canonicalize().ok();
-    let path_str = canonical
-        .as_ref()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.to_string_lossy().to_string());
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
-    let unsafe_roots = ["/", "C:\\", "C:/"];
-    for root in unsafe_roots {
-        if path_str == root || path_str == root.trim_end_matches('\\') {
-            return Some(format!("refusing to index unsafe root: {}", path_str));
-        }
+    if canonical.has_root() && canonical.parent().is_none() {
+        return Some(format!(
+            "refusing to index unsafe root: {}",
+            canonical.display()
+        ));
     }
 
-    if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
-        if path_str == home {
+    let home = std::env::var_os("USERPROFILE")
+        .filter(|h| !h.is_empty())
+        .or_else(|| std::env::var_os("HOME").filter(|h| !h.is_empty()));
+    if let Some(home) = home {
+        let home = PathBuf::from(home);
+        let home = home.canonicalize().unwrap_or(home);
+        if canonical == home {
             return Some("refusing to index home directory".to_string());
         }
     }
@@ -119,27 +125,82 @@ pub fn has_structural_keyword(prompt: &str) -> bool {
     if keywords.iter().any(|k| lower.contains(k)) {
         return true;
     }
-    let structural_en = regex::Regex::new(
-        r"\b(how|where|trace|flow|path|reach(?:es|ed)?|call(?:s|ed|er|ers|ee)?|depend|impact|affect|wired?|connect|implement|architect|structure|breaks?|what calls|why does)\b",
-    )
-    .unwrap();
-    let structural_cjk = regex::Regex::new(
-        r"如何|怎么|在哪|哪里|追踪|跟踪|流程|流向|路径|调用|依赖|影响|实现|架构|结构|介绍|解析|分析|原理|机制",
-    )
-    .unwrap();
+    static STRUCTURAL_EN: OnceLock<regex::Regex> = OnceLock::new();
+    static STRUCTURAL_CJK: OnceLock<regex::Regex> = OnceLock::new();
+    let structural_en = STRUCTURAL_EN.get_or_init(|| {
+        regex::Regex::new(
+            r"\b(how|where|trace|flow|path|reach(?:es|ed)?|call(?:s|ed|er|ers|ee)?|depend|impact|affect|wired?|connect|implement|architect|structure|breaks?|what calls|why does)\b",
+        )
+        .expect("structural regex")
+    });
+    let structural_cjk = STRUCTURAL_CJK.get_or_init(|| {
+        regex::Regex::new(
+            r"如何|怎么|在哪|哪里|追踪|跟踪|流程|流向|路径|调用|依赖|影响|实现|架构|结构|介绍|解析|分析|原理|机制",
+        )
+        .expect("structural CJK regex")
+    });
     structural_en.is_match(prompt) || structural_cjk.is_match(prompt)
+}
+
+const HARNESS_BLOCK_OPEN: &str = "<system-reminder>";
+const HARNESS_BLOCK_CLOSE: &str = "</system-reminder>";
+/// Prompts that are one harness message: a finished background task, or an event
+/// the desktop app sends about a pull request or a side session.
+const HARNESS_NOTIFICATIONS: &[&str] = &[
+    "<task-notification>",
+    "<ci-monitor-event>",
+    "<side-sessions-event>",
+];
+
+/// The part of a hook prompt the user wrote.
+///
+/// Agent harnesses append `<system-reminder>` blocks to the prompt and deliver
+/// background-task results and app events as a prompt that is one block
+/// (`<task-notification>`, `<ci-monitor-event>`, `<side-sessions-event>`).
+/// None of these is a question about the code, so matching or exploring them injects
+/// context for text nobody asked about. Reminder blocks are cut out (an unclosed
+/// one hides the rest), and a prompt that is only such a block becomes empty.
+pub fn user_prompt_text(prompt: &str) -> String {
+    let mut text = String::with_capacity(prompt.len());
+    let mut rest = prompt;
+    while let Some(open) = rest.find(HARNESS_BLOCK_OPEN) {
+        text.push_str(&rest[..open]);
+        rest = match rest[open..].find(HARNESS_BLOCK_CLOSE) {
+            Some(close) => &rest[open + close + HARNESS_BLOCK_CLOSE.len()..],
+            None => "",
+        };
+    }
+    text.push_str(rest);
+    let text = text.trim();
+    if HARNESS_NOTIFICATIONS
+        .iter()
+        .any(|tag| text.starts_with(tag))
+    {
+        return String::new();
+    }
+    text.to_string()
 }
 
 pub fn extract_code_tokens(prompt: &str) -> Vec<String> {
     let mut tokens = Vec::new();
-    let re_camel =
-        regex::Regex::new(r"\b([A-Z][a-z]+(?:[A-Z][a-z]*)*|[a-z]+(?:[A-Z][a-z]*)+)\b").unwrap();
+    // Two humps or more: `IndexPathFilter`, `getUser`. One capitalized word
+    // ("Ok", "You") is ordinary language, and half the index has a node by that name.
+    static RE_CAMEL: OnceLock<regex::Regex> = OnceLock::new();
+    static RE_SNAKE: OnceLock<regex::Regex> = OnceLock::new();
+    let re_camel = RE_CAMEL.get_or_init(|| {
+        regex::Regex::new(
+            r"\b([A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+|[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+)\b",
+        )
+        .expect("camel regex")
+    });
     for cap in re_camel.captures_iter(prompt) {
         if let Some(m) = cap.get(1) {
             tokens.push(m.as_str().to_string());
         }
     }
-    let re_snake = regex::Regex::new(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b").unwrap();
+    let re_snake = RE_SNAKE.get_or_init(|| {
+        regex::Regex::new(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b").expect("snake regex")
+    });
     for cap in re_snake.captures_iter(prompt) {
         if let Some(m) = cap.get(1) {
             tokens.push(m.as_str().to_string());
@@ -547,5 +608,60 @@ mod discover_tests {
         }
         assert_eq!(names(&found), vec!["app".to_string()]);
         let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(test)]
+mod prompt_tests {
+    use super::*;
+
+    #[test]
+    fn e1_harness_blocks_are_removed_from_the_prompt() {
+        let prompt = "<system-reminder>how does the call graph work</system-reminder>\nYes";
+        assert_eq!(user_prompt_text(prompt), "Yes");
+        let two = "<system-reminder>a</system-reminder>fix getUser<system-reminder>\nb\n</system-reminder>";
+        assert_eq!(user_prompt_text(two), "fix getUser");
+        // An unclosed block hides everything after it: it is not the user's text.
+        assert_eq!(user_prompt_text("go <system-reminder>trace the flow"), "go");
+        assert_eq!(
+            user_prompt_text("  how does sync work  "),
+            "how does sync work"
+        );
+    }
+
+    #[test]
+    fn e2_an_app_event_only_prompt_is_empty() {
+        for tag in ["ci-monitor-event", "side-sessions-event"] {
+            let prompt = format!("<{tag}>how does the build flow</{tag}>");
+            assert_eq!(user_prompt_text(&prompt), "", "{tag}");
+        }
+        assert_eq!(
+            user_prompt_text("why did <ci-monitor-event> fire, how does it flow"),
+            "why did <ci-monitor-event> fire, how does it flow"
+        );
+    }
+
+    #[test]
+    fn e2_a_notification_only_prompt_is_empty() {
+        let prompt = "<system-reminder>x</system-reminder>\n<task-notification>\n<summary>how does the build flow</summary>\n</task-notification>";
+        assert_eq!(user_prompt_text(prompt), "");
+        assert_eq!(
+            user_prompt_text("see <task-notification> in the docs, how does it flow"),
+            "see <task-notification> in the docs, how does it flow"
+        );
+    }
+
+    #[test]
+    fn e3_a_plain_capitalized_word_is_not_a_code_token() {
+        assert!(extract_code_tokens("Ok").is_empty());
+        assert!(extract_code_tokens("You choose. It must work perfectly").is_empty());
+        assert_eq!(
+            extract_code_tokens("fix capture_affected_paths and IndexPathFilter and getUser"),
+            vec!["IndexPathFilter", "getUser", "capture_affected_paths"]
+        );
+        assert_eq!(
+            extract_code_tokens("the Sha256Hasher type"),
+            vec!["Sha256Hasher"]
+        );
     }
 }

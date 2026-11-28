@@ -1,4 +1,5 @@
-//! Per-turn memories (docs/specs/per-turn-memory.md): dedup, retention, recall-only, local-only, redaction.
+//! Per-turn memories (docs/specs/per-turn-memory.md): dedup, retention (old turns are backed up
+//! and demoted to the archive tier, never deleted), recall-only, local-only, redaction.
 
 use ax_memory::{
     export_shared, list, prune_turns, recall, recall_for_prompt, redact_secrets, remember,
@@ -69,7 +70,7 @@ async fn saving_the_same_turn_twice_keeps_one_memory() {
 }
 
 #[tokio::test]
-async fn prune_removes_only_old_turn_memories() {
+async fn prune_demotes_only_old_turn_memories() {
     let dir = tempfile::tempdir().unwrap();
     let db = open_db(dir.path()).await;
     save_turn(db.pool(), &turn("turn-old", "Old turn"), NOW - 31 * DAY_MS)
@@ -168,7 +169,7 @@ fn retention_is_90_days() {
 }
 
 #[tokio::test]
-async fn p1_p2_turn_older_than_retention_is_backed_up_then_deleted() {
+async fn p1_p2_turn_older_than_retention_is_backed_up_then_archived() {
     let dir = tempfile::tempdir().unwrap();
     let db = open_db(dir.path()).await;
     save_turn(
@@ -260,7 +261,7 @@ async fn nothing_to_prune_writes_no_backup_file() {
 }
 
 #[tokio::test]
-async fn p3_failed_backup_deletes_nothing() {
+async fn p3_failed_backup_demotes_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let db = open_db(dir.path()).await;
     save_turn(db.pool(), &turn("turn-old", "Old"), NOW - 100 * DAY_MS)
@@ -272,10 +273,11 @@ async fn p3_failed_backup_deletes_nothing() {
     assert!(prune_turns(db.pool(), NOW, TURN_RETENTION_DAYS, &not_a_dir)
         .await
         .is_err());
-    assert!(ax_memory::get(db.pool(), "turn-old")
+    let kept = ax_memory::get(db.pool(), "turn-old")
         .await
         .unwrap()
-        .is_some());
+        .expect("the turn is still stored");
+    assert_ne!(kept.tier, "t3", "a failed backup must not archive the turn");
 }
 
 #[test]
@@ -532,4 +534,64 @@ async fn list_and_archive_recall_show_the_demoted_tier() {
 fn leaves_ordinary_text_alone() {
     let text = "fix crates/ax-sync/src/git_hooks.rs, commit b92f459, ask about sk-learn and the password field";
     assert_eq!(redact_secrets(text), text);
+}
+
+#[test]
+fn redacts_common_secret_shapes() {
+    let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.abc-DEF_ghi";
+    let cases: Vec<(String, String)> = vec![
+        (
+            r#"{"password": "hunter2"}"#.into(),
+            r#"{"password": "[redacted]"}"#.into(),
+        ),
+        (
+            "db_password=hunter2".into(),
+            "db_password=[redacted]".into(),
+        ),
+        ("api_key=abc123".into(), "api_key=[redacted]".into()),
+        ("SECRET=abc123 rest".into(), "SECRET=[redacted] rest".into()),
+        ("token=abc123".into(), "token=[redacted]".into()),
+        (
+            "client_secret: abc123".into(),
+            "client_secret: [redacted]".into(),
+        ),
+        ("password = hunter2".into(), "password = [redacted]".into()),
+        (
+            "Authorization: Bearer abc123opaque".into(),
+            "Authorization: Bearer [redacted]".into(),
+        ),
+        (
+            "curl -H 'Authorization: Basic dXNlcjpwdw=='".into(),
+            "curl -H 'Authorization: Basic [redacted]'".into(),
+        ),
+        (format!("jwt {jwt} end"), "jwt [redacted] end".into()),
+        (
+            "slack xoxb-1234-5678-abcdefghij end".into(),
+            "slack [redacted] end".into(),
+        ),
+        (
+            "DATABASE_URL=postgres://app:hunter2@db/prod".into(),
+            "DATABASE_URL=postgres://app:[redacted]@db/prod".into(),
+        ),
+        (
+            "see https://user:pa55@example.com/x".into(),
+            "see https://user:[redacted]@example.com/x".into(),
+        ),
+    ];
+    for (input, expected) in cases {
+        assert_eq!(redact_secrets(&input), expected, "input: {input}");
+    }
+}
+
+#[test]
+fn ordinary_text_is_not_redacted() {
+    for text in [
+        "max_tokens=100 and author=Gary",
+        "the token count is low",
+        "see https://example.com/path:8080 and http://host:80/",
+        "Keep sqlite-vec because the archive stays local",
+        "user@example.com wrote it",
+    ] {
+        assert_eq!(redact_secrets(text), text);
+    }
 }

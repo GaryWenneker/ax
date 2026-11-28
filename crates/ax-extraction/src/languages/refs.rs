@@ -55,6 +55,66 @@ pub fn append_lang_call_refs(
     link_local_calls(result, ctx.file_path, &local);
 }
 
+/// Calls written inside Rust macro arguments, such as `println!("{}", total(items))`.
+///
+/// tree-sitter leaves macro arguments unparsed: a `token_tree` of raw tokens with no
+/// `call_expression` in it. An identifier directly followed by a parenthesized token
+/// tree is a call. Macros are not expanded, so calls a macro generates are not found.
+/// A call through another object (`v.len()`) gets no same-file edge, as elsewhere.
+pub fn append_rust_macro_call_refs(
+    result: &mut ax_types::ExtractionResult,
+    tree: &Tree,
+    ctx: &RefCtx,
+) {
+    let mut local = Vec::new();
+    for_each_node(tree.root_node(), |node| {
+        if node.kind() != "macro_invocation" {
+            return;
+        }
+        for i in 0..node.child_count() {
+            let Some(args) = node.child(i).filter(|c| c.kind() == "token_tree") else {
+                continue;
+            };
+            for_each_node(args, |tokens| {
+                if tokens.kind() == "token_tree" {
+                    push_token_tree_calls(tokens, ctx, result, &mut local);
+                }
+            });
+        }
+    });
+    link_local_calls(result, ctx.file_path, &local);
+}
+
+/// The calls among the direct children of one token tree.
+fn push_token_tree_calls(
+    tokens: TsNode,
+    ctx: &RefCtx,
+    result: &mut ax_types::ExtractionResult,
+    local: &mut LocalCalls,
+) {
+    let token = |at: usize| tokens.child(at);
+    for i in 1..tokens.child_count() {
+        let Some(args) = token(i).filter(|n| n.kind() == "token_tree") else {
+            continue;
+        };
+        let Some(callee) = token(i - 1).filter(|n| n.kind() == "identifier") else {
+            continue;
+        };
+        if ctx.source.get(args.start_byte()) != Some(&b'(') {
+            continue;
+        }
+        let before = |back: usize| i.checked_sub(back).and_then(token);
+        // `fn name(...)` is an item defined inside the macro, not a call.
+        if before(2).is_some_and(|n| n.kind() == "fn") {
+            continue;
+        }
+        let via_receiver = before(2).is_some_and(|n| n.kind() == ".")
+            && !before(3).is_some_and(|n| node_text(n, ctx.source) == "self");
+        let name = node_text(callee, ctx.source);
+        push_call_ref(callee, ctx, &name, via_receiver, result, local);
+    }
+}
+
 /// Indices into `unresolved_references` of calls made without a foreign
 /// receiver: only these may name a function of the same file.
 type LocalCalls = Vec<usize>;

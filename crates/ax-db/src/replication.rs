@@ -127,7 +127,7 @@ fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut f = tempfile::NamedTempFile::new_in(path.parent().context("missing parent")?)?;
     f.write_all(bytes)?;
     f.as_file().sync_all()?;
-    f.persist(path).map_err(|e| e.error)?;
+    ax_utils::fs_safe::persist_temp(f, path)?;
     Ok(())
 }
 pub fn read_chunk(root: &Path, hash: &str) -> Result<Vec<u8>> {
@@ -320,7 +320,7 @@ pub fn assemble(root: &Path, manifest: &FileManifest, path: &Path) -> Result<()>
         regular(path, MAX_DATA_BYTES)?;
     }
     output.as_file().sync_all()?;
-    output.persist(path).map_err(|e| e.error)?;
+    ax_utils::fs_safe::persist_temp(output, path)?;
     Ok(())
 }
 pub fn pin(root: &Path, item: &Dataset) -> Result<()> {

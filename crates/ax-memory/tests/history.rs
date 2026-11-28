@@ -2,7 +2,10 @@
 //! "when did I change X" (H1-H4).
 
 use std::path::Path;
-use std::process::Command;
+
+mod common;
+
+use common::git;
 
 use ax_memory::{
     continuation_turns, format_history, format_turn_history_block, format_when, history,
@@ -370,26 +373,6 @@ fn format_when_is_date_and_minutes() {
     assert!(text.starts_with("2026-09-2"), "{text}");
 }
 
-fn git(root: &Path, envs: &[(&str, &str)], args: &[&str]) {
-    let status = Command::new("git")
-        .current_dir(root)
-        .envs(envs.iter().copied())
-        .args([
-            "-c",
-            "user.email=t@example.com",
-            "-c",
-            "user.name=t",
-            "-c",
-            "commit.gpgsign=false",
-            "-c",
-            "core.hooksPath=/dev/null",
-        ])
-        .args(args)
-        .status()
-        .unwrap();
-    assert!(status.success(), "git {args:?}");
-}
-
 const LANG_FILE: &str = "crates/ax-core/src/review_language.rs";
 /// 2026-09-20T10:00:00Z, one day before `NOW`.
 const COMMIT_DATE: &str = "2026-09-20T10:00:00Z";
@@ -622,6 +605,86 @@ async fn r3_newer_turns_that_fail_the_word_rule_do_not_crowd_out_file_matches() 
     assert_eq!(
         ids(&rows),
         vec!["turn-file-0", "turn-file-1", "turn-file-2"]
+    );
+}
+
+#[tokio::test]
+async fn h5_a_topic_lists_the_commit_whose_message_has_every_word() {
+    let (dir, db) = project().await;
+    let entries = history(db.pool(), dir.path(), &query("COMMENT language"))
+        .await
+        .unwrap();
+    let commit = entries
+        .iter()
+        .find(|e| e.kind == "commit")
+        .unwrap_or_else(|| panic!("no commit in {entries:?}"));
+    assert_eq!(commit.title, "Add review comment language setting");
+    assert_eq!(commit.at_ms, COMMIT_MS);
+    assert_eq!(commit.files, vec![LANG_FILE.to_string()]);
+    assert_eq!(entries.iter().filter(|e| e.kind == "commit").count(), 1);
+}
+
+#[tokio::test]
+async fn h6_a_commit_lacking_one_of_the_words_is_not_listed() {
+    let (dir, db) = project().await;
+    let entries = history(db.pool(), dir.path(), &query("comment dropdown"))
+        .await
+        .unwrap();
+    assert!(!entries.iter().any(|e| e.kind == "commit"), "{entries:?}");
+}
+
+#[tokio::test]
+async fn h7_since_and_limit_apply_to_topic_commits() {
+    let (dir, db) = project().await;
+    let mut q = query("comment language");
+    q.since_ms = Some(COMMIT_MS + 1);
+    let entries = history(db.pool(), dir.path(), &q).await.unwrap();
+    assert!(!entries.iter().any(|e| e.kind == "commit"), "{entries:?}");
+
+    let root = dir.path();
+    for n in 0..3 {
+        std::fs::write(root.join(format!("note{n}.txt")), "x\n").unwrap();
+        git(root, &[], &["add", "."]);
+        git(
+            root,
+            &[],
+            &["commit", "-q", "-m", &format!("Widget polish {n}")],
+        );
+    }
+    let mut q = query("widget polish");
+    q.limit = 2;
+    let entries = history(db.pool(), root, &q).await.unwrap();
+    let titles: Vec<&str> = entries.iter().map(|e| e.title.as_str()).collect();
+    assert_eq!(titles.len(), 2, "{titles:?}");
+    assert!(
+        titles.iter().all(|t| t.starts_with("Widget polish")),
+        "{titles:?}"
+    );
+}
+
+#[tokio::test]
+async fn h8_no_significant_word_or_no_repository_lists_no_commit() {
+    let (dir, db) = project().await;
+    // "add" is too short to be a significant word; every commit here contains it or not.
+    let entries = history(db.pool(), dir.path(), &query("add the"))
+        .await
+        .unwrap();
+    assert!(!entries.iter().any(|e| e.kind == "commit"), "{entries:?}");
+
+    let plain = tempfile::tempdir().unwrap();
+    let db = open_db(plain.path()).await;
+    save(
+        &db,
+        &record("turn-topic", "Widget polish", "Polished.", &["src/w.rs"]),
+        NOW,
+    )
+    .await;
+    let entries = history(db.pool(), plain.path(), &query("widget polish"))
+        .await
+        .unwrap();
+    assert_eq!(
+        kinds_and_ids(&entries),
+        vec![("turn".to_string(), "turn-topic".to_string())]
     );
 }
 

@@ -513,3 +513,53 @@ async fn scoped_index_of_a_doc_file_relinks_docs() {
     assert!(doc_links_to(&ax, "greetUser").await.is_empty());
     ax.destroy().await.unwrap();
 }
+
+async fn file_change_titles(ax: &Ax) -> Vec<String> {
+    sqlx::query_scalar("SELECT title FROM memories WHERE kind = 'file_change' ORDER BY title")
+        .fetch_all(ax.db_pool())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn excluded_paths_write_no_file_change_memory() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join(".git/info")).unwrap();
+    std::fs::write(root.join(".git/info/exclude"), ".claude/worktrees/\n").unwrap();
+    write(root, ".gitignore", "/target-dev/\n");
+    write(root, "web/.gitignore", "test-results/\n");
+    let mut ax = init_project(root).await;
+    let before = file_change_titles(&ax).await;
+
+    let junk = [
+        "target-dev/release/build/x/out.rs",
+        "target/debug/build/y/lib.rs",
+        "web/test-results/.playwright-artifacts-0/trace.ts",
+        "site/node_modules/pkg/index.js",
+        ".claude/worktrees/wt/src/app.ts",
+    ];
+    for rel in junk {
+        write(root, rel, "export function junk() { return 0; }\n");
+    }
+    write(
+        root,
+        "src/app.ts",
+        "export function edited() { return 3; }\n",
+    );
+    let mut paths: Vec<String> = junk.iter().map(|rel| rel.to_string()).collect();
+    paths.push("src/app.ts".into());
+    ax.index_files(&paths, quiet_opts(), &mut None)
+        .await
+        .unwrap();
+
+    let after = file_change_titles(&ax).await;
+    let new: Vec<&String> = after.iter().filter(|t| !before.contains(t)).collect();
+    assert_eq!(
+        new,
+        vec!["changed src/app.ts"],
+        "only the source edit is captured"
+    );
+
+    ax.destroy().await.unwrap();
+}

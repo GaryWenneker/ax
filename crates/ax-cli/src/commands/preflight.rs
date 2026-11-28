@@ -5,7 +5,7 @@ use std::path::Path;
 
 use serde_json::{json, Value};
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 
 pub struct PreflightArgs {
     pub path: Option<String>,
@@ -20,7 +20,7 @@ pub struct PreflightArgs {
 }
 
 pub async fn run(args: PreflightArgs) -> Result<(), String> {
-    let root = resolve_path(args.path);
+    let root = resolve_project_root(args.path);
     let prompt = if args.prompt_stdin {
         read_stdin()?
     } else {

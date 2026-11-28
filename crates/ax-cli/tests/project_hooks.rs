@@ -35,7 +35,14 @@ async fn nested_hook_cwd_is_bound_to_the_initialized_project_and_window() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let text = std::fs::read_to_string(home.path().join(".ax/active-cursor-session")).unwrap();
+    let marker = std::fs::read_to_string(home.path().join(".ax/active-cursor-session")).unwrap();
+    assert_eq!(marker, "hook-chat\n");
+    let bindings: Vec<_> = std::fs::read_dir(home.path().join(".ax/cursor-sessions"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(bindings.len(), 1, "{bindings:?}");
+    let text = std::fs::read_to_string(&bindings[0]).unwrap();
     let record: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(record["session_id"], "hook-chat");
     assert_eq!(record["window_id"], "window-a");

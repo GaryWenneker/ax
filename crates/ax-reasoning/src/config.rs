@@ -45,13 +45,22 @@ pub struct ResolvedOffload {
     pub model: String,
     pub api_key: Option<String>,
     pub key_source: Option<String>,
-    pub effort: String,
+    /// `reasoning_effort` to send; `None` unless the user set one, because
+    /// non-reasoning models reject the parameter.
+    pub effort: Option<String>,
     pub style: String,
     pub timeout_ms: u64,
+    /// How long offload is skipped after the endpoint could not be reached or
+    /// dropped the connection without a reply; a request that only times out
+    /// does not start it (`AX_OFFLOAD_BACKOFF_MS`, default 30 s; `0` retries
+    /// every time).
+    pub backoff_ms: u64,
     pub max_tokens: u32,
     pub strip: bool,
     pub debug: bool,
     pub origin: String,
+    /// Why offload is off although an endpoint is set (for status output).
+    pub problem: Option<String>,
 }
 
 pub fn config_dir() -> PathBuf {
@@ -77,25 +86,59 @@ pub fn read_offload_config() -> OffloadConfig {
 }
 
 pub fn write_offload_config(offload: Option<OffloadConfig>) -> Result<(), String> {
-    let path = config_path();
-    let mut root: serde_json::Value = fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    if offload.is_none() {
-        if let Some(obj) = root.as_object_mut() {
-            obj.remove("offload");
+    let value = offload
+        .map(|cfg| serde_json::to_value(cfg).map_err(|e| e.to_string()))
+        .transpose()?;
+    update_config(|root| {
+        match value {
+            Some(value) => {
+                root.insert("offload".into(), value);
+            }
+            None => {
+                root.remove("offload");
+            }
         }
-    } else if let Some(cfg) = offload {
-        root["offload"] = serde_json::to_value(cfg).map_err(|e| e.to_string())?;
-    }
-    fs::create_dir_all(config_dir()).map_err(|e| e.to_string())?;
-    fs::write(
-        path,
-        serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n",
-    )
-    .map_err(|e| e.to_string())?;
+        Ok(true)
+    })?;
     Ok(())
+}
+
+/// Read-modify-write of `~/.ax/config.json` under an advisory lock, replaced
+/// atomically. A missing or empty file starts as `{}`. A file that does not
+/// parse, or whose root is not a JSON object, is an error naming the file and
+/// is left untouched, so the user's other sections are never lost. `edit`
+/// returns whether anything changed; nothing is written when it did not.
+fn update_config(
+    edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> Result<bool, String>,
+) -> Result<bool, String> {
+    let path = config_path();
+    let shown = path.display().to_string();
+    ax_utils::update_locked(&path, |current| {
+        let mut root = match current {
+            None => serde_json::Map::new(),
+            Some(bytes) if bytes.iter().all(u8::is_ascii_whitespace) => serde_json::Map::new(),
+            Some(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
+                Ok(serde_json::Value::Object(map)) => map,
+                Ok(_) => {
+                    return Err(std::io::Error::other(
+                        "the top level is not a JSON object; fix or remove the file",
+                    ))
+                }
+                Err(e) => {
+                    return Err(std::io::Error::other(format!(
+                        "not valid JSON ({e}); fix or remove the file"
+                    )))
+                }
+            },
+        };
+        if !edit(&mut root).map_err(std::io::Error::other)? {
+            return Ok(None);
+        }
+        let text = serde_json::to_string_pretty(&serde_json::Value::Object(root))
+            .map_err(std::io::Error::other)?;
+        Ok(Some((text + "\n").into_bytes()))
+    })
+    .map_err(|e| format!("{shown}: {e}"))
 }
 
 fn trimmed(s: Option<&str>) -> Option<String> {
@@ -182,6 +225,9 @@ pub struct OffloadInitReport {
     pub catalog_written: bool,
     pub active: Option<OffloadProviderEntry>,
     pub discovered: Vec<String>,
+    /// First provider whose API key is in the environment. Offload stays off until
+    /// the user saves an endpoint (`ax offload set-endpoint`); this is only a hint.
+    pub suggested: Option<OffloadProviderEntry>,
     pub skipped_existing: bool,
 }
 
@@ -226,6 +272,8 @@ async fn ollama_reachable() -> bool {
         .unwrap_or(false)
 }
 
+/// First provider whose API key is set in the environment: `(url, key, key_env)`.
+/// Used only to suggest an endpoint; it never enables offload on its own.
 fn detect_provider() -> (Option<String>, Option<String>, Option<String>) {
     for spec in OFFLOAD_PROVIDERS {
         if let Some(key_env) = spec.key_env {
@@ -242,28 +290,21 @@ fn detect_provider() -> (Option<String>, Option<String>, Option<String>) {
 }
 
 fn write_provider_catalog() -> Result<bool, String> {
-    let path = config_path();
-    let mut root: serde_json::Value = fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-
-    if root.get("offload_catalog").is_some() {
-        return Ok(false);
-    }
-
-    root["offload_catalog"] =
-        serde_json::to_value(provider_catalog_entries()).map_err(|e| e.to_string())?;
-    fs::create_dir_all(config_dir()).map_err(|e| e.to_string())?;
-    fs::write(
-        path,
-        serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n",
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(true)
+    let catalog = serde_json::to_value(provider_catalog_entries()).map_err(|e| e.to_string())?;
+    update_config(|root| {
+        if root.contains_key("offload_catalog") {
+            return Ok(false);
+        }
+        root.insert("offload_catalog".into(), catalog);
+        Ok(true)
+    })
 }
 
-/// Seed provider catalog and wire active offload during `ax init`.
+/// Seed the provider catalog during `ax init` and report which providers have a key.
+///
+/// This never writes an active `offload` section: offload stays off until the user
+/// saves an endpoint with `ax offload set-endpoint`. A discovered provider is
+/// returned as `suggested`.
 pub async fn seed_offload_on_init() -> Result<OffloadInitReport, String> {
     let catalog_written = write_provider_catalog()?;
     let mut discovered: Vec<String> = discover_providers_from_env()
@@ -298,58 +339,88 @@ pub async fn seed_offload_on_init() -> Result<OffloadInitReport, String> {
             catalog_written,
             active,
             discovered,
+            suggested: None,
             skipped_existing: true,
         });
     }
 
-    let mut active = None;
-    let discovered_set: std::collections::HashSet<&str> =
-        discovered.iter().map(|s| s.as_str()).collect();
-    for spec in OFFLOAD_PROVIDERS {
-        if !discovered_set.contains(spec.id) {
-            continue;
-        }
-        let cfg = OffloadConfig {
-            url: Some(spec.url.to_string()),
-            model: spec.default_model.map(str::to_string),
-            key_env: spec.key_env.map(str::to_string),
-            effort: None,
-            style: None,
-        };
-        write_offload_config(Some(cfg))?;
-        active = Some(OffloadProviderEntry {
+    let suggested = OFFLOAD_PROVIDERS
+        .iter()
+        .find(|spec| discovered.iter().any(|d| d == spec.id))
+        .map(|spec| OffloadProviderEntry {
             id: spec.id.to_string(),
             name: spec.name.to_string(),
             url: spec.url.to_string(),
             key_env: spec.key_env.map(str::to_string),
             model: spec.default_model.map(str::to_string),
         });
-        break;
-    }
 
     Ok(OffloadInitReport {
         catalog_written,
-        active,
+        active: None,
         discovered,
+        suggested,
         skipped_existing: false,
     })
 }
 
+/// Model used for an endpoint that is not in [`OFFLOAD_PROVIDERS`] when no
+/// model is set.
+const FALLBACK_MODEL: &str = "gpt-oss-120b";
+
+/// The known provider whose base URL is `url` (a trailing `/` is ignored).
+fn provider_for_url(url: &str) -> Option<&'static OffloadProviderSpec> {
+    let url = url.trim().trim_end_matches('/');
+    OFFLOAD_PROVIDERS
+        .iter()
+        .find(|spec| spec.url.eq_ignore_ascii_case(url))
+}
+
+const DEFAULT_TIMEOUT_MS: u64 = 20_000;
+const DEFAULT_BACKOFF_MS: u64 = 30_000;
+const DEFAULT_MAX_TOKENS: u32 = 12_000;
+
+/// A positive number from env var `name`; zero, negative or unparsable
+/// values count as unset.
+fn positive_env<T: std::str::FromStr + PartialOrd + Default>(name: &str) -> Option<T> {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.trim().parse::<T>().ok())
+        .filter(|n| *n > T::default())
+}
+
+/// Whether two base URLs name the same endpoint (case and a trailing `/` ignored).
+fn same_endpoint(a: &str, b: &str) -> bool {
+    a.trim()
+        .trim_end_matches('/')
+        .eq_ignore_ascii_case(b.trim().trim_end_matches('/'))
+}
+
+/// Resolve the offload settings. The API key is `AX_OFFLOAD_KEY`, else the
+/// variable named by the configured `key_env`; that variable is used only for
+/// the configured endpoint, never for a different `AX_OFFLOAD_URL`, and no key
+/// is used without an endpoint. The model is `AX_OFFLOAD_MODEL`, else the
+/// configured `model`, else the default model of the known provider at the
+/// endpoint. A known provider without a default model leaves offload off with
+/// a `problem` until a model is set; an unknown endpoint falls back to
+/// `gpt-oss-120b`.
 pub fn resolve_offload() -> ResolvedOffload {
     if std::env::var("AX_OFFLOAD_DISABLE").ok().as_deref() == Some("1") {
         return ResolvedOffload {
             enabled: false,
             url: None,
-            model: "gpt-oss-120b".into(),
+            model: FALLBACK_MODEL.into(),
             api_key: None,
             key_source: None,
-            effort: "low".into(),
+            effort: None,
             style: "plain".into(),
-            timeout_ms: 20000,
-            max_tokens: 12000,
+            timeout_ms: DEFAULT_TIMEOUT_MS,
+            backoff_ms: DEFAULT_BACKOFF_MS,
+            max_tokens: DEFAULT_MAX_TOKENS,
             strip: false,
             debug: std::env::var("AX_OFFLOAD_DEBUG").ok().as_deref() == Some("1"),
             origin: "none".into(),
+            problem: None,
         };
     }
 
@@ -357,11 +428,34 @@ pub fn resolve_offload() -> ResolvedOffload {
     let env_url = trimmed(std::env::var("AX_OFFLOAD_URL").ok().as_deref());
     let env_key = trimmed(std::env::var("AX_OFFLOAD_KEY").ok().as_deref());
     let had_env_url = env_url.is_some();
+    let config_url = trimmed(c.url.as_deref());
+    // The configured `key_env` belongs to the configured endpoint. When
+    // AX_OFFLOAD_URL points somewhere else, that key is not sent there.
+    let config_key_fits = match (&env_url, &config_url) {
+        (Some(env), Some(conf)) => same_endpoint(env, conf),
+        _ => true,
+    };
 
-    let mut url = env_url.or_else(|| trimmed(c.url.as_deref()));
-    let model = trimmed(std::env::var("AX_OFFLOAD_MODEL").ok().as_deref())
-        .or_else(|| trimmed(c.model.as_deref()))
-        .unwrap_or_else(|| "gpt-oss-120b".into());
+    let url = env_url.or(config_url);
+    let set_model = trimmed(std::env::var("AX_OFFLOAD_MODEL").ok().as_deref())
+        .or_else(|| trimmed(c.model.as_deref()));
+    let provider = url.as_deref().and_then(provider_for_url);
+    let mut problem = None;
+    let model = match (set_model, provider) {
+        (Some(model), _) => model,
+        (None, Some(spec)) => match spec.default_model {
+            Some(model) => model.to_string(),
+            None => {
+                problem = Some(format!(
+                    "{} has no default model; set \"model\" in the offload section of ~/.ax/config.json or AX_OFFLOAD_MODEL",
+                    spec.name
+                ));
+                String::new()
+            }
+        },
+        // An endpoint ax does not know: keep the historical default.
+        (None, None) => FALLBACK_MODEL.into(),
+    };
 
     let mut api_key = None;
     let mut key_source = None;
@@ -369,57 +463,55 @@ pub fn resolve_offload() -> ResolvedOffload {
     if let Some(k) = env_key {
         api_key = Some(k);
         key_source = Some("AX_OFFLOAD_KEY".into());
-    } else if let Some(key_env) = trimmed(c.key_env.as_deref()) {
+    } else if let Some(key_env) = trimmed(c.key_env.as_deref()).filter(|_| config_key_fits) {
         if let Some(k) = trimmed(std::env::var(&key_env).ok().as_deref()) {
             api_key = Some(k);
             key_source = Some(key_env);
         }
     }
 
-    let mut origin = if had_env_url {
+    // Offload is opt-in: only an endpoint saved in config or AX_OFFLOAD_URL turns it on.
+    // A provider API key in the environment alone never sends source anywhere.
+    let origin = if had_env_url {
         "env"
-    } else if trimmed(c.url.as_deref()).is_some() {
+    } else if url.is_some() {
         "config"
     } else {
         "none"
     };
-
     if url.is_none() {
-        let (auto_url, auto_key, auto_src) = detect_provider();
-        if let Some(u) = auto_url {
-            url = Some(u);
-            if api_key.is_none() {
-                api_key = auto_key;
-                key_source = auto_src;
-            }
-            origin = "auto";
-        }
+        api_key = None;
+        key_source = None;
     }
 
     ResolvedOffload {
-        enabled: url.is_some(),
+        enabled: url.is_some() && problem.is_none(),
         url,
         model,
         api_key,
         key_source,
         effort: trimmed(std::env::var("AX_OFFLOAD_EFFORT").ok().as_deref())
-            .or_else(|| trimmed(c.effort.as_deref()))
-            .unwrap_or_else(|| "low".into()),
+            .or_else(|| trimmed(c.effort.as_deref())),
         style: trimmed(std::env::var("AX_OFFLOAD_STYLE").ok().as_deref())
             .or_else(|| trimmed(c.style.as_deref()))
             .unwrap_or_else(|| "plain".into()),
-        timeout_ms: std::env::var("AX_OFFLOAD_TIMEOUT_MS")
+        timeout_ms: positive_env("AX_OFFLOAD_TIMEOUT_MS").unwrap_or(DEFAULT_TIMEOUT_MS),
+        backoff_ms: std::env::var("AX_OFFLOAD_BACKOFF_MS")
             .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(20000),
-        max_tokens: std::env::var("AX_OFFLOAD_MAXTOKENS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(12000),
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(DEFAULT_BACKOFF_MS),
+        max_tokens: positive_env("AX_OFFLOAD_MAXTOKENS").unwrap_or(DEFAULT_MAX_TOKENS),
         strip: std::env::var("AX_OFFLOAD_STRIP").ok().as_deref() == Some("1"),
         debug: std::env::var("AX_OFFLOAD_DEBUG").ok().as_deref() == Some("1"),
         origin: origin.to_string(),
+        problem,
     }
+}
+
+/// Env var of the first provider whose API key is set, when offload is not configured.
+/// For status output only: offload stays off until an endpoint is saved.
+pub fn suggested_key_env() -> Option<String> {
+    detect_provider().2
 }
 
 pub fn is_offload_enabled() -> bool {
@@ -427,7 +519,7 @@ pub fn is_offload_enabled() -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -437,17 +529,435 @@ mod tests {
         assert!(OFFLOAD_PROVIDERS.iter().any(|p| p.id == "ollama"));
     }
 
+    /// Tests in this module change process-wide env vars; run them one at a time.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    const OFFLOAD_ENV: &[&str] = &[
+        "AX_HOME_DIR",
+        "AX_OFFLOAD_DISABLE",
+        "AX_OFFLOAD_URL",
+        "AX_OFFLOAD_KEY",
+        "AX_OFFLOAD_MODEL",
+        "AX_OFFLOAD_EFFORT",
+        "AX_OFFLOAD_STYLE",
+        "AX_OFFLOAD_DEBUG",
+        "AX_OFFLOAD_STRIP",
+        "AX_OFFLOAD_TIMEOUT_MS",
+        "AX_OFFLOAD_MAXTOKENS",
+        "AX_OFFLOAD_BACKOFF_MS",
+        "OPENAI_API_KEY",
+        "CEREBRAS_API_KEY",
+        "GROQ_API_KEY",
+        "TOGETHER_API_KEY",
+        "FIREWORKS_API_KEY",
+        "OPENROUTER_API_KEY",
+    ];
+
+    /// Runs `f` with a fresh home dir, no offload env, then `vars` set; restores the env after.
+    pub(crate) fn with_env<T>(vars: &[(&str, &str)], f: impl FnOnce(&std::path::Path) -> T) -> T {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved: Vec<(&str, Option<String>)> = OFFLOAD_ENV
+            .iter()
+            .map(|k| (*k, std::env::var(k).ok()))
+            .collect();
+        for k in OFFLOAD_ENV {
+            std::env::remove_var(k);
+        }
+        let home = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("AX_HOME_DIR", home.path());
+        for (k, v) in vars {
+            std::env::set_var(k, v);
+        }
+        let out = f(home.path());
+        for (k, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+        out
+    }
+
     #[test]
     fn auto_detect_openai_key() {
-        let prev = std::env::var("OPENAI_API_KEY").ok();
-        std::env::set_var("OPENAI_API_KEY", "sk-test-key");
-        let (url, key, src) = detect_provider();
-        std::env::remove_var("OPENAI_API_KEY");
-        if let Some(v) = prev {
-            std::env::set_var("OPENAI_API_KEY", v);
-        }
+        let (url, key, src) = with_env(&[("OPENAI_API_KEY", "sk-test-key")], |_| detect_provider());
         assert_eq!(url.as_deref(), Some("https://api.openai.com/v1"));
         assert_eq!(key.as_deref(), Some("sk-test-key"));
         assert_eq!(src.as_deref(), Some("OPENAI_API_KEY"));
+    }
+
+    #[test]
+    fn provider_key_alone_does_not_enable_offload() {
+        let r = with_env(&[("CEREBRAS_API_KEY", "csk-test")], |_| resolve_offload());
+        assert!(!r.enabled, "an API key in the env must not turn offload on");
+        assert_eq!(r.url, None);
+        assert_eq!(r.api_key, None);
+        assert_eq!(r.origin, "none");
+    }
+
+    #[test]
+    fn configured_url_enables_offload() {
+        let r = with_env(&[("OPENAI_API_KEY", "sk-test")], |_| {
+            write_offload_config(Some(OffloadConfig {
+                url: Some("https://api.openai.com/v1".into()),
+                key_env: Some("OPENAI_API_KEY".into()),
+                ..OffloadConfig::default()
+            }))
+            .unwrap();
+            resolve_offload()
+        });
+        assert!(r.enabled);
+        assert_eq!(r.origin, "config");
+        assert_eq!(r.api_key.as_deref(), Some("sk-test"));
+    }
+
+    #[test]
+    fn env_url_enables_offload() {
+        let r = with_env(&[("AX_OFFLOAD_URL", "http://localhost:11434/v1")], |_| {
+            resolve_offload()
+        });
+        assert!(r.enabled);
+        assert_eq!(r.origin, "env");
+    }
+
+    #[test]
+    fn init_does_not_activate_offload_from_env_key() {
+        let (report, cfg, text) = with_env(&[("OPENAI_API_KEY", "sk-test")], |home| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let report = rt.block_on(seed_offload_on_init()).unwrap();
+            let text = std::fs::read_to_string(home.join(".ax/config.json")).unwrap();
+            (report, read_offload_config(), text)
+        });
+        assert!(report.active.is_none(), "init must not activate offload");
+        assert_eq!(
+            report.suggested.as_ref().map(|p| p.id.as_str()),
+            Some("openai")
+        );
+        assert!(cfg.url.is_none());
+        assert!(text.contains("offload_catalog"));
+        assert!(
+            !text.contains("\"offload\""),
+            "no active offload section: {text}"
+        );
+    }
+
+    #[test]
+    fn a_config_that_does_not_parse_is_never_overwritten() {
+        let bad = "{\n  \"index\": { \"exclude\": [\"**/coverage/**\"] },\n}\n";
+        let (offload, catalog, after) = with_env(&[], |home| {
+            let path = home.join(".ax/config.json");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, bad).unwrap();
+            let offload = write_offload_config(Some(OffloadConfig {
+                url: Some("https://api.openai.com/v1".into()),
+                ..OffloadConfig::default()
+            }));
+            let catalog = write_provider_catalog();
+            (offload, catalog, std::fs::read_to_string(&path).unwrap())
+        });
+        let err = offload.expect_err("a broken config must not be replaced");
+        assert!(err.contains("config.json"), "{err}");
+        assert!(catalog.is_err());
+        assert_eq!(after, bad, "the file is left as the user wrote it");
+    }
+
+    #[test]
+    fn a_config_whose_root_is_not_an_object_is_an_error_not_a_panic() {
+        for root in ["[]", "\"text\"", "42"] {
+            let (offload, catalog, after) = with_env(&[], |home| {
+                let path = home.join(".ax/config.json");
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, root).unwrap();
+                let offload = std::panic::catch_unwind(|| {
+                    write_offload_config(Some(OffloadConfig::default()))
+                });
+                let catalog = std::panic::catch_unwind(write_provider_catalog);
+                (offload, catalog, std::fs::read_to_string(&path).unwrap())
+            });
+            assert!(matches!(offload, Ok(Err(_))), "root {root}: offload write");
+            assert!(matches!(catalog, Ok(Err(_))), "root {root}: catalog write");
+            assert_eq!(after, root);
+        }
+    }
+
+    #[test]
+    fn writing_offload_keeps_the_index_section() {
+        let after = with_env(&[], |home| {
+            let path = home.join(".ax/config.json");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, r#"{"index":{"exclude":["**/coverage/**"]}}"#).unwrap();
+            write_offload_config(Some(OffloadConfig {
+                url: Some("http://localhost:11434/v1".into()),
+                ..OffloadConfig::default()
+            }))
+            .unwrap();
+            assert!(write_provider_catalog().unwrap());
+            std::fs::read_to_string(&path).unwrap()
+        });
+        let value: serde_json::Value = serde_json::from_str(&after).unwrap();
+        assert_eq!(value["index"]["exclude"][0], "**/coverage/**");
+        assert_eq!(value["offload"]["url"], "http://localhost:11434/v1");
+        assert!(value["offload_catalog"].is_array());
+    }
+
+    fn configured(url: &str, model: Option<&str>) -> ResolvedOffload {
+        with_env(&[], |_| {
+            write_offload_config(Some(OffloadConfig {
+                url: Some(url.into()),
+                model: model.map(str::to_string),
+                ..OffloadConfig::default()
+            }))
+            .unwrap();
+            resolve_offload()
+        })
+    }
+
+    #[test]
+    fn a_known_provider_without_a_model_uses_its_default_model() {
+        let groq = configured("https://api.groq.com/openai/v1/", None);
+        assert!(groq.enabled);
+        assert_eq!(groq.model, "llama-3.3-70b-versatile");
+        assert_eq!(groq.problem, None);
+        let openai = with_env(&[("AX_OFFLOAD_URL", "https://api.openai.com/v1")], |_| {
+            resolve_offload()
+        });
+        assert_eq!(openai.model, "gpt-4o");
+        let cerebras = configured("https://api.cerebras.ai/v1", None);
+        assert_eq!(cerebras.model, "gpt-oss-120b");
+    }
+
+    #[test]
+    fn a_set_model_wins_over_the_provider_default() {
+        assert_eq!(
+            configured("https://api.groq.com/openai/v1", Some("mixtral")).model,
+            "mixtral"
+        );
+        let r = with_env(
+            &[
+                ("AX_OFFLOAD_URL", "https://openrouter.ai/api/v1"),
+                ("AX_OFFLOAD_MODEL", "openai/gpt-4o"),
+            ],
+            |_| resolve_offload(),
+        );
+        assert!(r.enabled);
+        assert_eq!(r.model, "openai/gpt-4o");
+    }
+
+    #[test]
+    fn a_provider_without_a_default_model_needs_one_before_offload_runs() {
+        let r = configured("https://api.together.xyz/v1", None);
+        assert!(!r.enabled, "no request that must fail");
+        assert_eq!(r.origin, "config");
+        let problem = r.problem.expect("status says why");
+        assert!(problem.contains("Together AI"), "{problem}");
+        assert!(problem.contains("AX_OFFLOAD_MODEL"), "{problem}");
+    }
+
+    #[test]
+    fn env_settings_win_over_the_config_file() {
+        let full_config = || {
+            write_offload_config(Some(OffloadConfig {
+                url: Some("https://api.groq.com/openai/v1".into()),
+                model: Some("mixtral".into()),
+                key_env: Some("GROQ_API_KEY".into()),
+                effort: Some("low".into()),
+                style: Some("report".into()),
+            }))
+            .unwrap();
+        };
+        let from_file = with_env(&[("GROQ_API_KEY", "gsk-test")], |_| {
+            full_config();
+            resolve_offload()
+        });
+        assert!(from_file.enabled);
+        assert_eq!(from_file.origin, "config");
+        assert_eq!(from_file.model, "mixtral");
+        assert_eq!(from_file.key_source.as_deref(), Some("GROQ_API_KEY"));
+        assert_eq!(from_file.effort.as_deref(), Some("low"));
+        assert_eq!(from_file.style, "report");
+
+        let from_env = with_env(
+            &[
+                ("GROQ_API_KEY", "gsk-test"),
+                ("AX_OFFLOAD_URL", "https://api.groq.com/openai/v1"),
+                ("AX_OFFLOAD_KEY", "sk-env"),
+                ("AX_OFFLOAD_MODEL", "llama"),
+                ("AX_OFFLOAD_EFFORT", "high"),
+                ("AX_OFFLOAD_STYLE", "plain"),
+            ],
+            |_| {
+                full_config();
+                resolve_offload()
+            },
+        );
+        assert_eq!(from_env.origin, "env");
+        assert_eq!(from_env.model, "llama");
+        assert_eq!(from_env.api_key.as_deref(), Some("sk-env"));
+        assert_eq!(from_env.key_source.as_deref(), Some("AX_OFFLOAD_KEY"));
+        assert_eq!(from_env.effort.as_deref(), Some("high"));
+        assert_eq!(from_env.style, "plain");
+    }
+
+    #[test]
+    fn disable_wins_over_every_endpoint() {
+        let r = with_env(
+            &[
+                ("AX_OFFLOAD_DISABLE", "1"),
+                ("AX_OFFLOAD_URL", "http://localhost:11434/v1"),
+                ("AX_OFFLOAD_KEY", "sk-env"),
+            ],
+            |_| {
+                write_offload_config(Some(OffloadConfig {
+                    url: Some("https://api.openai.com/v1".into()),
+                    ..OffloadConfig::default()
+                }))
+                .unwrap();
+                resolve_offload()
+            },
+        );
+        assert!(!r.enabled);
+        assert_eq!(r.url, None);
+        assert_eq!(r.api_key, None);
+        assert_eq!(r.origin, "none");
+    }
+
+    #[test]
+    fn init_reports_an_existing_endpoint_without_changing_it() {
+        let (report, cfg) = with_env(&[("OPENAI_API_KEY", "sk-test")], |_| {
+            write_offload_config(Some(OffloadConfig {
+                url: Some("https://api.groq.com/openai/v1".into()),
+                ..OffloadConfig::default()
+            }))
+            .unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let report = rt.block_on(seed_offload_on_init()).unwrap();
+            (report, read_offload_config())
+        });
+        assert!(report.skipped_existing);
+        assert!(report.suggested.is_none());
+        let active = report.active.expect("the saved endpoint is reported");
+        assert_eq!(active.id, "groq");
+        assert_eq!(active.key_env.as_deref(), Some("GROQ_API_KEY"));
+        assert_eq!(cfg.url.as_deref(), Some("https://api.groq.com/openai/v1"));
+    }
+
+    #[test]
+    fn a_zero_or_invalid_timeout_uses_the_default() {
+        for raw in ["0", "-5", "soon"] {
+            let r = with_env(
+                &[
+                    ("AX_OFFLOAD_URL", "http://localhost:11434/v1"),
+                    ("AX_OFFLOAD_TIMEOUT_MS", raw),
+                    ("AX_OFFLOAD_MAXTOKENS", raw),
+                ],
+                |_| resolve_offload(),
+            );
+            assert_eq!(r.timeout_ms, 20000, "timeout {raw}");
+            assert_eq!(r.max_tokens, 12000, "max tokens {raw}");
+        }
+        let r = with_env(
+            &[
+                ("AX_OFFLOAD_URL", "http://localhost:11434/v1"),
+                ("AX_OFFLOAD_TIMEOUT_MS", "5000"),
+            ],
+            |_| resolve_offload(),
+        );
+        assert_eq!(r.timeout_ms, 5000);
+    }
+
+    #[test]
+    fn a_configured_key_is_not_sent_to_an_endpoint_from_the_env() {
+        let r = with_env(
+            &[
+                ("OPENAI_API_KEY", "sk-openai"),
+                ("AX_OFFLOAD_URL", "http://localhost:11434/v1"),
+            ],
+            |_| {
+                write_offload_config(Some(OffloadConfig {
+                    url: Some("https://api.openai.com/v1".into()),
+                    key_env: Some("OPENAI_API_KEY".into()),
+                    ..OffloadConfig::default()
+                }))
+                .unwrap();
+                resolve_offload()
+            },
+        );
+        assert!(r.enabled);
+        assert_eq!(r.origin, "env");
+        assert_eq!(r.url.as_deref(), Some("http://localhost:11434/v1"));
+        assert_eq!(
+            r.api_key, None,
+            "the OpenAI key belongs to the configured url"
+        );
+        assert_eq!(r.key_source, None);
+    }
+
+    #[test]
+    fn a_configured_key_still_pairs_with_the_same_endpoint_or_a_key_only_config() {
+        // The env url equals the configured url (trailing slash ignored).
+        let same = with_env(
+            &[
+                ("GROQ_API_KEY", "gsk-test"),
+                ("AX_OFFLOAD_URL", "https://api.groq.com/openai/v1/"),
+            ],
+            |_| {
+                write_offload_config(Some(OffloadConfig {
+                    url: Some("https://api.groq.com/openai/v1".into()),
+                    key_env: Some("GROQ_API_KEY".into()),
+                    ..OffloadConfig::default()
+                }))
+                .unwrap();
+                resolve_offload()
+            },
+        );
+        assert_eq!(same.api_key.as_deref(), Some("gsk-test"));
+        assert_eq!(same.key_source.as_deref(), Some("GROQ_API_KEY"));
+
+        // Config names only the key; the endpoint comes from the env.
+        let key_only = with_env(
+            &[
+                ("GROQ_API_KEY", "gsk-test"),
+                ("AX_OFFLOAD_URL", "https://api.groq.com/openai/v1"),
+            ],
+            |_| {
+                write_offload_config(Some(OffloadConfig {
+                    key_env: Some("GROQ_API_KEY".into()),
+                    ..OffloadConfig::default()
+                }))
+                .unwrap();
+                resolve_offload()
+            },
+        );
+        assert_eq!(key_only.api_key.as_deref(), Some("gsk-test"));
+    }
+
+    #[test]
+    fn a_key_without_an_endpoint_is_never_used() {
+        for vars in [
+            vec![("AX_OFFLOAD_KEY", "sk-x"), ("OPENAI_API_KEY", "sk-openai")],
+            vec![
+                ("GROQ_API_KEY", "gsk-test"),
+                ("OPENAI_API_KEY", "sk-openai"),
+            ],
+        ] {
+            let r = with_env(&vars, |_| {
+                write_offload_config(Some(OffloadConfig {
+                    key_env: Some("GROQ_API_KEY".into()),
+                    ..OffloadConfig::default()
+                }))
+                .unwrap();
+                resolve_offload()
+            });
+            assert!(!r.enabled);
+            assert_eq!(r.url, None);
+            assert_eq!(r.api_key, None);
+            assert_eq!(r.key_source, None);
+        }
     }
 }

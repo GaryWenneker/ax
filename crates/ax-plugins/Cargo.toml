@@ -13,7 +13,7 @@ ax-types = { workspace = true }
 ax-utils = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-toml = "0.8"
+toml = "0.9"
 tracing = { workspace = true }
 wasmtime = { version = "=48.0.9", optional = true, default-features = true }
 

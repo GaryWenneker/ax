@@ -1,66 +1,66 @@
 //! Phase 3 embedding-runtime bake-off (SPEC-PHASE3-EMBED.md).
 //! Compares hash / lexical / blake3; reports ONNX and Candle as not_built until linked + configured.
 
-use ax_memory::bench::{load_coding_fixture, CodingFixture};
-use ax_memory::embed::{cosine, embed_text};
+#[cfg(any(test, feature = "neural-ort"))]
+use crate::fixture::cosine_rank;
+#[cfg(test)]
+use crate::fixture::doc_text;
+use crate::fixture::{doc_vectors, lexical_rank, rank_with_doc_vectors, Embed, LOCKED};
+use ax_memory::bench::{load_coding_fixture, CodingFixture, CodingQuestion};
+#[cfg(test)]
+use ax_memory::embed::cosine;
+use ax_memory::embed::embed_text;
 use serde_json::{json, Value};
 use std::time::Instant;
 
 use crate::metrics::{Acc, SummaryStyle, EMBED_BAKEOFF};
 use crate::runtime::Backend;
 
-const LOCKED: &[&str] = &[
-    "named_trigger",
-    "paraphrase",
-    "abstention",
-    "delivery_budget",
-];
-
-fn doc_text(m: &ax_memory::bench::CodingMemory) -> String {
-    format!("{} {} {} {}", m.key, m.title, m.body, m.triggers.join(" "))
+fn locked_questions(fixture: &CodingFixture) -> impl Iterator<Item = &CodingQuestion> {
+    fixture
+        .questions
+        .iter()
+        .filter(|q| LOCKED.contains(&q.family.as_str()))
 }
 
-fn cosine_rank(
+/// Locked-family metrics and the median per-question latency of one embedding candidate.
+/// Document vectors are computed before timing, so every candidate's latency is query
+/// embedding plus ranking. The first embedding error is returned.
+fn measure_locked(
     fixture: &CodingFixture,
-    prompt: &str,
-    embed: &dyn Fn(&str) -> Vec<f32>,
-) -> Vec<String> {
-    let q = embed(prompt);
-    let mut scored: Vec<(f32, String)> = fixture
-        .memories
-        .iter()
-        .filter(|m| m.insert)
-        .map(|m| {
-            let v = embed(&doc_text(m));
-            (cosine(&q, &v), m.key.clone())
-        })
-        .collect();
-    scored.sort_by(|a, b| {
-        b.0.partial_cmp(&a.0)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.1.cmp(&b.1))
-    });
-    scored.into_iter().map(|(_, k)| k).collect()
+    embed: Embed<'_>,
+    docs: &[(String, Vec<f32>)],
+) -> Result<(Acc, f64), String> {
+    let mut times = Vec::new();
+    let mut acc = Acc::default();
+    for q in locked_questions(fixture) {
+        let t0 = Instant::now();
+        let ranked = rank_with_doc_vectors(&q.prompt, embed, docs)?;
+        times.push(t0.elapsed().as_secs_f64() * 1_000_000.0);
+        acc.observe(EMBED_BAKEOFF, Some(&q.family), &q.relevant, &ranked);
+    }
+    Ok((acc, crate::fixture::median(&mut times)))
 }
 
-/// Same ranking as `cosine_rank` but reuses precomputed document vectors (validation-only).
-#[allow(dead_code)]
-fn cosine_rank_with_doc_cache(
-    prompt: &str,
-    embed: &dyn Fn(&str) -> Vec<f32>,
-    doc_vectors: &[(String, Vec<f32>)],
-) -> Vec<String> {
-    let q = embed(prompt);
-    let mut scored: Vec<(f32, String)> = doc_vectors
-        .iter()
-        .map(|(key, v)| (cosine(&q, v), key.clone()))
-        .collect();
-    scored.sort_by(|a, b| {
-        b.0.partial_cmp(&a.0)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.1.cmp(&b.1))
-    });
-    scored.into_iter().map(|(_, k)| k).collect()
+/// One measured embedding candidate, or a `failed` candidate naming the embedding error.
+fn embedding_candidate(fixture: &CodingFixture, id: &str, method: &str, embed: Embed<'_>) -> Value {
+    let measured =
+        doc_vectors(fixture, embed).and_then(|docs| measure_locked(fixture, embed, &docs));
+    match measured {
+        Ok((acc, median)) => candidate_measured(id, method, false, false, acc, median),
+        Err(reason) => candidate_failed(id, method, false, &reason),
+    }
+}
+
+fn candidate_failed(id: &str, method: &str, claims_neural: bool, reason: &str) -> Value {
+    json!({
+        "id": id,
+        "kind": "failed",
+        "method": method,
+        "claimsNeuralInference": claims_neural,
+        "admitted": false,
+        "reason": format!("embedding failed: {reason}")
+    })
 }
 
 /// Keep every positive baseline score in its original order. Only a zero-score
@@ -103,21 +103,6 @@ fn baseline_keep_positive_then_fill(
     ranked
 }
 
-fn lexical_rank(fixture: &CodingFixture, prompt: &str) -> Vec<String> {
-    let docs: Vec<crate::lexical::LexicalDoc> = fixture
-        .memories
-        .iter()
-        .filter(|m| m.insert)
-        .map(|m| crate::lexical::LexicalDoc::new(m.key.clone(), &m.title, &m.body, &m.triggers))
-        .collect();
-    let (ranked, abstained) = crate::lexical::rank(&docs, prompt);
-    if abstained {
-        Vec::new()
-    } else {
-        ranked.into_iter().map(|h| h.key).collect()
-    }
-}
-
 fn candidate_not_built(id: &str, reason: &str) -> Value {
     json!({
         "id": id,
@@ -157,30 +142,6 @@ fn candidate_measured(
 pub fn run_embed_bakeoff(fixture_text: &str) -> Result<Value, String> {
     let fixture = load_coding_fixture(fixture_text)?;
 
-    let hash_started = Instant::now();
-    let mut hash_times = Vec::new();
-    let hash_acc = {
-        let mut acc = Acc::default();
-        for q in fixture
-            .questions
-            .iter()
-            .filter(|q| LOCKED.contains(&q.family.as_str()))
-        {
-            let t0 = Instant::now();
-            let ranked = cosine_rank(&fixture, &q.prompt, &embed_text);
-            hash_times.push(t0.elapsed().as_secs_f64() * 1_000_000.0);
-            acc.observe(EMBED_BAKEOFF, Some(&q.family), &q.relevant, &ranked);
-        }
-        let _ = hash_started;
-        acc
-    };
-    hash_times.sort_by(f64::total_cmp);
-    let hash_median = if hash_times.is_empty() {
-        0.0
-    } else {
-        hash_times[hash_times.len() / 2]
-    };
-
     let mut lex_times = Vec::new();
     let lex_acc = {
         let mut acc = Acc::default();
@@ -204,13 +165,11 @@ pub fn run_embed_bakeoff(fixture_text: &str) -> Result<Value, String> {
     };
 
     let mut candidates = vec![
-        candidate_measured(
+        embedding_candidate(
+            &fixture,
             "hash-v1",
             "ax_memory::embed::embed_text cosine retrieval",
-            false,
-            false,
-            hash_acc,
-            hash_median,
+            &|t| Ok(embed_text(t)),
         ),
         candidate_measured(
             "lexical-semantic-cpu",
@@ -223,33 +182,11 @@ pub fn run_embed_bakeoff(fixture_text: &str) -> Result<Value, String> {
     ];
 
     if let Some(backend) = crate::runtime::active() {
-        let mut times = Vec::new();
-        let mut acc = Acc::default();
-        for q in fixture
-            .questions
-            .iter()
-            .filter(|q| LOCKED.contains(&q.family.as_str()))
-        {
-            let t0 = Instant::now();
-            let ranked = cosine_rank(&fixture, &q.prompt, &|t| {
-                backend.embed(t).unwrap_or_default()
-            });
-            times.push(t0.elapsed().as_secs_f64() * 1_000_000.0);
-            acc.observe(EMBED_BAKEOFF, Some(&q.family), &q.relevant, &ranked);
-        }
-        times.sort_by(f64::total_cmp);
-        let median = if times.is_empty() {
-            0.0
-        } else {
-            times[times.len() / 2]
-        };
-        candidates.push(candidate_measured(
+        candidates.push(embedding_candidate(
+            &fixture,
             "cpu-blake3",
             "blake3 bag vector via neural-runtime (deterministic; not semantic)",
-            false,
-            false,
-            acc,
-            median,
+            &|t| backend.embed(t),
         ));
     } else {
         candidates.push(candidate_not_built(
@@ -263,82 +200,51 @@ pub fn run_embed_bakeoff(fixture_text: &str) -> Result<Value, String> {
     let onnx_locked_ok = false;
     #[cfg(feature = "neural-ort")]
     {
+        const ONNX_ID: &str = "onnx-runtime-cpu";
+        const ONNX_METHOD: &str =
+            "ONNX Runtime CPU + local all-MiniLM-L6-v2.onnx (neural embedding inference)";
         match crate::onnx_embed::try_embed_text("warmup") {
             Ok(_) => {
-                let doc_pairs: Vec<(String, String)> = fixture
-                    .memories
-                    .iter()
-                    .filter(|m| m.insert)
-                    .map(|m| (m.key.clone(), doc_text(m)))
-                    .collect();
-                let doc_cache = crate::onnx_embed::BakeoffDocCache::build(doc_pairs)?;
-                let embed_query =
-                    |text: &str| crate::onnx_embed::try_embed_text(text).unwrap_or_default();
-                let rank_onnx = |prompt: &str| {
-                    cosine_rank_with_doc_cache(prompt, &embed_query, doc_cache.entries())
-                };
-                let mut times = Vec::new();
-                let mut acc = Acc::default();
-                for q in fixture
-                    .questions
-                    .iter()
-                    .filter(|q| LOCKED.contains(&q.family.as_str()))
-                {
-                    let t0 = Instant::now();
-                    let ranked = rank_onnx(&q.prompt);
-                    times.push(t0.elapsed().as_secs_f64() * 1_000_000.0);
-                    acc.observe(EMBED_BAKEOFF, Some(&q.family), &q.relevant, &ranked);
-                }
-                times.sort_by(f64::total_cmp);
-                let median = if times.is_empty() {
-                    0.0
-                } else {
-                    times[times.len() / 2]
-                };
-                onnx_paraphrase = acc.paraphrase_recall_at_3();
-                let mut held = Acc::default();
-                for q in fixture
-                    .questions
-                    .iter()
-                    .filter(|q| !LOCKED.contains(&q.family.as_str()))
-                {
-                    let ranked = rank_onnx(&q.prompt);
-                    held.observe(EMBED_BAKEOFF, Some(&q.family), &q.relevant, &ranked);
-                }
-                let mut hash_held = Acc::default();
-                for q in fixture
-                    .questions
-                    .iter()
-                    .filter(|q| !LOCKED.contains(&q.family.as_str()))
-                {
-                    let ranked = cosine_rank(&fixture, &q.prompt, &embed_text);
-                    hash_held.observe(EMBED_BAKEOFF, Some(&q.family), &q.relevant, &ranked);
-                }
-                let mut cand = candidate_measured(
-                    "onnx-runtime-cpu",
-                    "ONNX Runtime CPU + local all-MiniLM-L6-v2.onnx (neural embedding inference)",
-                    true,
-                    true,
-                    acc,
-                    median,
-                );
-                cand["modelPath"] = json!(crate::onnx_embed::model_paths().0.display().to_string());
-                if let Ok(sum) =
-                    crate::onnx_embed::model_checksum(&crate::onnx_embed::model_paths().0)
-                {
-                    cand["checksum"] = json!(sum);
-                }
-                cand["heldOut"] = held.summary(SummaryStyle::EmbedBakeoff);
-                cand["heldOutHashBaseline"] = hash_held.summary(SummaryStyle::EmbedBakeoff);
-                cand["validationDocEmbedCache"] = json!({
-                    "documentsEmbeddedOnce": doc_cache.entries().len(),
-                    "persistedToMemoryColumn": false
-                });
-                candidates.push(cand);
+                let embed: Embed<'_> = &crate::onnx_embed::try_embed_text;
+                let measured = (|| -> Result<Value, String> {
+                    let docs = doc_vectors(&fixture, embed)?;
+                    let (acc, median) = measure_locked(&fixture, embed, &docs)?;
+                    let paraphrase = acc.paraphrase_recall_at_3();
+                    let mut held = Acc::default();
+                    let mut hash_held = Acc::default();
+                    for q in fixture
+                        .questions
+                        .iter()
+                        .filter(|q| !LOCKED.contains(&q.family.as_str()))
+                    {
+                        let ranked = rank_with_doc_vectors(&q.prompt, embed, &docs)?;
+                        held.observe(EMBED_BAKEOFF, Some(&q.family), &q.relevant, &ranked);
+                        let ranked = cosine_rank(&fixture, &q.prompt, &embed_text);
+                        hash_held.observe(EMBED_BAKEOFF, Some(&q.family), &q.relevant, &ranked);
+                    }
+                    let mut cand =
+                        candidate_measured(ONNX_ID, ONNX_METHOD, true, true, acc, median);
+                    if let Ok((path, sum)) = crate::onnx_embed::loaded_model() {
+                        cand["modelPath"] = json!(path.display().to_string());
+                        cand["checksum"] = json!(sum);
+                    }
+                    cand["heldOut"] = held.summary(SummaryStyle::EmbedBakeoff);
+                    cand["heldOutHashBaseline"] = hash_held.summary(SummaryStyle::EmbedBakeoff);
+                    cand["validationDocEmbedCache"] = json!({
+                        "documentsEmbeddedOnce": docs.len(),
+                        "persistedToMemoryColumn": false
+                    });
+                    onnx_paraphrase = paraphrase;
+                    Ok(cand)
+                })();
+                candidates.push(measured.unwrap_or_else(|reason| {
+                    onnx_paraphrase = None;
+                    candidate_failed(ONNX_ID, ONNX_METHOD, true, &reason)
+                }));
             }
             Err(e) => {
                 candidates.push(json!({
-                    "id": "onnx-runtime-cpu",
+                    "id": ONNX_ID,
                     "kind": "not_configured",
                     "claimsNeuralInference": true,
                     "admitted": false,
@@ -418,10 +324,7 @@ pub fn run_embed_bakeoff(fixture_text: &str) -> Result<Value, String> {
         "neuralEmbeddingAdmitted": neural_admitted,
         "neuralEmbeddingInferenceActive": false,
         "candidates": candidates,
-        "memory": {
-            "kind": "not_measured",
-            "reason": "no portable RSS reader in this harness"
-        },
+        "memory": crate::rss::memory_report(),
         "selection": {
             "decision": if neural_admitted {
                 "onnx MiniLM measured and paraphrase-beats-hash; keep SEMANTIC_WEIGHT=0 and memory column hash-v1 until held-out promotion gate"
@@ -458,12 +361,7 @@ mod tests {
     #[test]
     fn hash_positive_prefix_plus_lexical_fill_on_non_locked_questions() {
         let fixture = load_coding_fixture(crate::CODING_FIXTURE).unwrap();
-        let locked = [
-            "named_trigger",
-            "paraphrase",
-            "abstention",
-            "delivery_budget",
-        ];
+        let locked = crate::fixture::LOCKED;
         let mut questions = 0u32;
         let mut changed = 0u32;
         let mut positive_short = 0u32;
@@ -536,13 +434,8 @@ mod tests {
             .map(|memory| (memory.key.clone(), doc_text(memory)))
             .collect();
         let doc_cache = crate::onnx_embed::BakeoffDocCache::build(doc_pairs).expect("cache");
-        let embed = |text: &str| crate::onnx_embed::try_embed_text(text).unwrap_or_default();
-        let locked = [
-            "named_trigger",
-            "paraphrase",
-            "abstention",
-            "delivery_budget",
-        ];
+        let embed: Embed<'_> = &crate::onnx_embed::try_embed_text;
+        let locked = crate::fixture::LOCKED;
         let mut questions = 0u32;
         let mut changed = 0u32;
         let mut baseline_mrr = 0.0;
@@ -574,7 +467,8 @@ mod tests {
             });
             let baseline: Vec<String> =
                 scored.iter().map(|(key, _)| key.clone()).take(10).collect();
-            let extra = cosine_rank_with_doc_cache(&question.prompt, &embed, doc_cache.entries());
+            let extra =
+                rank_with_doc_vectors(&question.prompt, embed, doc_cache.entries()).expect("rank");
             let filled = baseline_keep_positive_then_fill(&scored, &extra, 10);
             if filled != baseline {
                 changed += 1;
@@ -676,7 +570,7 @@ mod tests {
             .collect();
         for q in fixture.questions.iter().take(8) {
             let uncached = cosine_rank(&fixture, &q.prompt, &embed_text);
-            let cached = cosine_rank_with_doc_cache(&q.prompt, &embed_text, &docs);
+            let cached = rank_with_doc_vectors(&q.prompt, &|t| Ok(embed_text(t)), &docs).unwrap();
             assert_eq!(uncached, cached, "family {}", q.family);
         }
     }
@@ -698,11 +592,81 @@ mod tests {
         let insert_count = doc_pairs.len();
         let doc_cache = crate::onnx_embed::BakeoffDocCache::build(doc_pairs).expect("cache");
         assert_eq!(doc_cache.entries().len(), insert_count);
-        let embed = |text: &str| crate::onnx_embed::try_embed_text(text).unwrap_or_default();
+        let embed = |text: &str| crate::onnx_embed::try_embed_text(text).expect("embed");
         for q in fixture.questions.iter().take(8) {
             let uncached = cosine_rank(&fixture, &q.prompt, &embed);
-            let cached = cosine_rank_with_doc_cache(&q.prompt, &embed, doc_cache.entries());
+            let cached = rank_with_doc_vectors(
+                &q.prompt,
+                &crate::onnx_embed::try_embed_text,
+                doc_cache.entries(),
+            )
+            .expect("rank");
             assert_eq!(uncached, cached, "family {}", q.family);
+        }
+    }
+
+    #[test]
+    fn an_embedding_error_marks_the_candidate_failed() {
+        let fixture = load_coding_fixture(crate::CODING_FIXTURE).unwrap();
+        // Fails on the longest document only, like a text over the model's sequence limit.
+        let longest = fixture
+            .memories
+            .iter()
+            .filter(|m| m.insert)
+            .map(|m| doc_text(m).len())
+            .max()
+            .unwrap();
+        let embed = move |t: &str| {
+            if t.len() >= longest {
+                Err("sequence too long".to_string())
+            } else {
+                Ok(embed_text(t))
+            }
+        };
+        let cand = embedding_candidate(&fixture, "flaky", "test", &embed);
+        assert_eq!(cand["kind"], "failed", "{cand}");
+        assert!(cand["reason"]
+            .as_str()
+            .unwrap()
+            .contains("sequence too long"));
+        assert_eq!(cand["admitted"], false);
+
+        let query_fails = |t: &str| {
+            if t.len() < longest {
+                // Every question prompt is shorter than the documents' maximum.
+                if fixture.questions.iter().any(|q| q.prompt == t) {
+                    return Err("query failed".to_string());
+                }
+            }
+            Ok(embed_text(t))
+        };
+        let cand = embedding_candidate(&fixture, "query-flaky", "test", &query_fails);
+        assert_eq!(cand["kind"], "failed", "{cand}");
+    }
+
+    #[test]
+    fn timed_ranking_embeds_documents_once_and_each_query_once() {
+        let fixture = load_coding_fixture(crate::CODING_FIXTURE).unwrap();
+        let calls = std::cell::Cell::new(0usize);
+        let embed = |t: &str| {
+            calls.set(calls.get() + 1);
+            Ok(embed_text(t))
+        };
+        let docs = doc_vectors(&fixture, &embed).unwrap();
+        let after_docs = calls.get();
+        assert_eq!(after_docs, docs.len());
+        let (acc, _) = measure_locked(&fixture, &embed, &docs).unwrap();
+        let questions = locked_questions(&fixture).count();
+        assert_eq!(calls.get() - after_docs, questions);
+        assert!(acc.summary(SummaryStyle::EmbedBakeoff)["questionsScored"].as_u64() > Some(0));
+    }
+
+    #[test]
+    fn embed_bakeoff_reports_measured_memory() {
+        let report = run_embed_bakeoff(crate::CODING_FIXTURE).unwrap();
+        if cfg!(any(target_os = "macos", target_os = "linux")) {
+            assert_eq!(report["memory"]["kind"], "measured", "{}", report["memory"]);
+            assert!(report["memory"]["rssBytes"].as_u64().unwrap() > 0);
         }
     }
 
