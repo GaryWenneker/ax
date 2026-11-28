@@ -27,6 +27,7 @@ pub mod stack_catalog;
 pub mod stacks;
 pub mod store;
 pub mod types;
+mod write_lock;
 pub mod zip_package;
 
 pub use agents_share::{

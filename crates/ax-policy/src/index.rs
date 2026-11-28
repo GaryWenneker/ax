@@ -56,6 +56,7 @@ pub async fn import_policy_from_files(
     project_root: &Path,
     mode: ImportMode,
 ) -> Result<PolicyIndexResult, AxError> {
+    let _writer = crate::write_lock::policy_write_lock(project_root).await;
     let _ = crate::agents_share::migrate_legacy_policy_to_agents(project_root);
     crate::hierarchy::ensure_scope_dirs(project_root, crate::types::PolicyScope::Project)
         .map_err(|e| AxError::Other(e.to_string()))?;

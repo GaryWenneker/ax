@@ -129,6 +129,7 @@ impl PolicyStore {
         mut frontmatter: RuleFrontmatter,
         body: String,
     ) -> Result<PolicyRuleDoc, ValidationError> {
+        let _writer = crate::write_lock::policy_write_lock(&self.project_root).await;
         let scope = PolicyScope::parse(&frontmatter.scope).unwrap_or(PolicyScope::Project);
         frontmatter.scope = scope.as_str().into();
         if let Some(ref s) = frontmatter.storage {
@@ -353,6 +354,7 @@ impl PolicyStore {
         mut frontmatter: SkillFrontmatter,
         body: String,
     ) -> Result<PolicySkillDoc, ValidationError> {
+        let _writer = crate::write_lock::policy_write_lock(&self.project_root).await;
         let scope = PolicyScope::parse(&frontmatter.scope).unwrap_or(PolicyScope::Project);
         frontmatter.scope = scope.as_str().into();
         if let Some(ref s) = frontmatter.storage {
@@ -522,6 +524,7 @@ impl PolicyStore {
     }
 
     pub async fn delete_rule(&self, id: &str) -> Result<bool, AxError> {
+        let _writer = crate::write_lock::policy_write_lock(&self.project_root).await;
         let doc = self.get_rule_doc(id).await?;
         let Some(doc) = doc else {
             return delete_rule_by_id(&self.pool, id).await;
@@ -558,6 +561,7 @@ impl PolicyStore {
     }
 
     pub async fn delete_skill(&self, name: &str) -> Result<bool, AxError> {
+        let _writer = crate::write_lock::policy_write_lock(&self.project_root).await;
         let doc = self.get_skill_doc(name).await?;
         let Some(doc) = doc else {
             return delete_skill_by_name(&self.pool, name).await;
