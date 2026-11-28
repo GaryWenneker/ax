@@ -1238,11 +1238,7 @@ async fn auth_finish(
             let passkey: Passkey = serde_json::from_str(&json)
                 .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Stored key malformed"))?;
             let verified = webauthn(&headers)?
-                .finish_discoverable_authentication(
-                    &credential,
-                    state,
-                    &[DiscoverableKey::from(&passkey)],
-                )
+                .finish_discoverable_authentication_v2(&credential, state, &passkey)
                 .map_err(|_| err(StatusCode::UNAUTHORIZED, "Passkey assertion rejected"))?;
             (member_id, verified, passkey, record_id)
         }
@@ -1541,6 +1537,18 @@ pub fn router(hub: WebHub) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// `web_passkeys.credential_json` written by webauthn-rs 0.5.5 must still load
+    /// and round-trip unchanged, so stored passkeys keep working after upgrades.
+    #[test]
+    fn passkeys_stored_by_webauthn_0_5_still_load() {
+        let stored = r#"{"cred":{"cred_id":"AQIDBAUGBwgJCgsMDQ4PEA","cred":{"type_":"ES256","key":{"EC_EC2":{"curve":"SECP256R1","x":"wn5_bfwXgxX8Bt9jLP6MG-YRXgWFHGgpkEWrlaEayPM","y":"j3u3nBiyFfh1n6JFqzS8_Bo7Bi9nXBM6dWf5ANsIX8Q"}}},"counter":7,"transports":["internal","hybrid"],"user_verified":true,"backup_eligible":true,"backup_state":true,"registration_policy":"required","extensions":{"cred_protect":"Ignored","hmac_create_secret":"NotRequested","appid":"NotRequested","cred_props":{"Unsigned":{"rk":true}}},"attestation":{"data":"None","metadata":"None"},"attestation_format":"none"}}"#;
+        let passkey: Passkey = serde_json::from_str(stored).expect("0.5 passkey loads");
+        assert_eq!(
+            URL_SAFE_NO_PAD.encode(passkey.cred_id()),
+            "AQIDBAUGBwgJCgsMDQ4PEA"
+        );
+        assert_eq!(serde_json::to_string(&passkey).unwrap(), stored);
+    }
     #[test]
     fn attempts_older_than_the_window_are_dropped() {
         let mut limiter = AttemptLimiter::default();
