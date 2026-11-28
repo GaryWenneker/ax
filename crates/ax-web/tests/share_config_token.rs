@@ -1,5 +1,6 @@
 //! `GET /api/policy/share/config` reports `tokenSet` and never the git API
-//! token, and a token left in `ax.json` moves out of it on the first load.
+//! token. A read writes nothing (it is allowed in read-only mode); a token
+//! left in `ax.json` moves to the credential store on the next save.
 //! The credential store is the in-process memory store
 //! (`AX_SHARE_SECRET_STORE=memory`), so no OS keychain is touched.
 
@@ -64,7 +65,24 @@ async fn share_config_reports_token_set_and_never_the_token() {
     assert_eq!(json["github"]["tokenSet"], true, "{body}");
     assert!(json["github"].get("token").is_none(), "{body}");
     let on_disk = std::fs::read_to_string(root.join("ax.json")).unwrap();
+    assert!(
+        on_disk.contains("glpat-in-ax-json"),
+        "a GET rewrote ax.json: {on_disk}"
+    );
+
+    // A save without a token moves the old one out of ax.json.
+    let (status, body) = send(
+        &app,
+        "PUT",
+        "/api/policy/share/config",
+        r#"{"provider":"github","github":{"repoUrl":"https://gitlab.example.com/t/p.git"}}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let on_disk = std::fs::read_to_string(root.join("ax.json")).unwrap();
     assert!(!on_disk.contains("glpat-in-ax-json"), "{on_disk}");
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["github"]["tokenSet"], true, "{body}");
 
     // A new token goes to the credential store and never reaches a file.
     let (status, body) = send(
