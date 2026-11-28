@@ -317,7 +317,7 @@ You can also run `ax capture-git` manually or click "Capture from git" in the Co
 
 | Moment | Cursor | Claude Code | What runs |
 |---|---|---|---|
-| Turn start | `beforeSubmitPrompt` | `UserPromptSubmit` | `ax turn-hook start` saves a snapshot in `.ax/turns/`: the prompt (first 300 characters, secrets redacted), `HEAD`, and a content hash of every dirty file |
+| Turn start | `beforeSubmitPrompt` | `UserPromptSubmit` | `ax turn-hook start` saves a snapshot in `.ax/turns/`: the prompt (first 300 characters, secrets redacted), `HEAD`, and a content hash of every dirty file (a file over 32 MiB is fingerprinted by its size and modification time instead of being read) |
 | Agent reply | `afterAgentResponse` | — | `ax turn-hook response` keeps the latest reply in the snapshot, secrets redacted |
 | Turn end | `stop` | `Stop` (inside `ax stop-hook`) | `ax turn-hook end` compares the tree with the snapshot and writes one memory. Claude Code's reply comes from `last_assistant_message` |
 
@@ -326,6 +326,7 @@ Rules:
 - **Only turns that did something.** Files whose content changed since the snapshot, new or deleted files, and commits made during the turn count. Files that were already dirty and not touched again do not, and neither do ax's own files under `.ax/` (database, logs, snapshots) except `.ax/policy/` and `.ax/memory/`. A turn that only answered a question writes nothing.
 - **One memory per turn.** The id comes from the conversation and the turn (Cursor's `generation_id`, or a per-conversation counter for Claude Code), so a retried hook never duplicates.
 - **With the outcome.** The memory ends with `Outcome:` and the agent's final reply, up to 20,000 characters (longer replies end with `[truncated]`). A turn without a captured reply has no outcome section.
+- **Parallel sessions keep their own turn.** Each conversation's snapshot names its own turn, so when two sessions work in the same project, a later session starting does not stop the first one's turn end from recording its outcome, files and commits.
 - **Subagents don't end the turn.** Claude Code's `SubagentStop` still runs the policy check, but the turn memory waits for the main agent's `Stop`.
 - **Given back while you work.** `ax_preflight` adds an `<ax_turn_history>` block with at most 3 related past turns, newest first: turns that changed a file passed in `files`, or turns that `ax_recall` finds for the prompt *and* that share at least 2 words of 4+ letters with it. Each line has the date, the prompt, the first 800 characters of the outcome, and up to 6 files. The block is at most 1,200 characters.
 - **Local.** `turn` memories are still skipped by the `<ax_memories>` block, the memory titles list, and `ax memory export`.
@@ -336,9 +337,13 @@ Rules:
 
 The memory says *what* changed and what the agent reported, not *why*. Save the why with `ax_remember`.
 
+### File-change memories from sync
+
+When a sync or the file watcher re-indexes a file, ax writes a `file_change` memory titled `changed <path>`. Only paths the index keeps count: build output (`target`, `target-*` when gitignored), `node_modules`, `.git`, dot-folders such as `.claude/worktrees`, `ax.json` excludes, gitignored paths, and folders never get one. A batch of more than 20 changed files writes one summary memory instead, titled `changed N files in <folders>` and tagged `burst`, with the first 100 paths in its body. To remove such memories that older builds wrote, run `ax memory prune-file-changes` (a dry run) and then `ax memory prune-file-changes --apply`. See [CLI](/reference/cli/#ax-memory-prune-file-changes).
+
 ### When did I change X?
 
-`ax_history` (MCP) and `ax history` (CLI) list the turns and git commits that touched a file, a symbol, or a topic, newest first, with date and time, the prompt, the outcome (first 600 characters), the files, and the commits.
+`ax_history` (MCP) and `ax history` (CLI) list the turns and git commits that touched a file, a symbol, or a topic, newest first, with date and time, the prompt, the outcome (first 600 characters), the files, and the commits. For a topic, a commit is listed when its message contains every significant word of the query (four letters or more, not a stop word), in any letter case.
 
 - A **file path** matches exactly or by its end (`review_language.rs` finds `crates/ax-core/src/review_language.rs`). `git log` for that path adds the commits.
 - A **symbol name** resolves to the file it is defined in, then works like a path.

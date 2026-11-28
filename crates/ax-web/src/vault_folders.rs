@@ -179,7 +179,7 @@ fn refuse(hub: &WebHub, headers: &HeaderMap, write: bool) -> Option<Response> {
     if write && hub.readonly {
         return Some(error(StatusCode::FORBIDDEN, "ax web is read-only"));
     }
-    (!crate::dav::mount::allowed(headers, false)).then(|| {
+    (!crate::dav::mount::allowed(headers, false, hub.port)).then(|| {
         error(
             StatusCode::FORBIDDEN,
             "only the local browser on this machine can manage vault folders",

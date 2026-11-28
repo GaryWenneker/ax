@@ -150,6 +150,8 @@ The status-bar **Q** chip shows a live score (and a critical badge when needed).
 | **Findings** | Ranked checks with severity and waste hints |
 | **Actions** | **Copy fixpack**, Run full session audit, Open Logging, Refresh |
 
+The live score reruns the audit only when the project's verbose log changes, and at most once every 5 seconds; when there is no verbose log it keeps the last result. Once the Q chip or the quality stream has been opened, a background check looks for log changes every 5 seconds. **Run full session audit** always runs a new audit.
+
 CLI equivalent:
 
 ```bash

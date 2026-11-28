@@ -5,7 +5,7 @@ use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
-use ax_global_db::{access, global_db_path, open_and_init};
+use ax_global_db::access;
 use axum::{
     extract::{ConnectInfo, Path, Request, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
@@ -47,64 +47,20 @@ fn cookie_value(headers: &HeaderMap) -> Option<&str> {
         .split(';')
         .find_map(|part| part.trim().strip_prefix("ax_web_session="))
 }
-fn forwarded_client_is_remote(headers: &HeaderMap) -> bool {
-    let Some(value) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) else {
-        return false;
-    };
-    let client = value.split(',').next().unwrap_or("").trim();
-    client
-        .parse::<std::net::IpAddr>()
-        .map(|ip| !ip.is_loopback())
-        .unwrap_or(!client.is_empty())
-}
-
 fn local_owner_can_manage_without_session(trusted_local: bool, local: bool) -> bool {
     trusted_local && local
 }
 
-fn loopback_host(headers: &HeaderMap, port: u16) -> bool {
-    let host = headers
-        .get(header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    host == format!("127.0.0.1:{port}")
-        || host == format!("localhost:{port}")
-        || host == format!("[::1]:{port}")
-}
-
+/// The person at this computer: a loopback socket peer with no proxy header,
+/// on the loopback address. A reverse proxy or tunnel on this computer
+/// forwards other people, so its requests need a signed-in session.
 fn local_request(headers: &HeaderMap, peer: SocketAddr, port: u16) -> bool {
-    // Opening the loopback URL is the person at this computer, even if a
-    // proxy header is also present. A public hostname stays untrusted when
-    // it forwards someone else's address.
-    peer.ip().is_loopback()
-        && crate::local_owner::browser_serves(headers, port)
-        && (loopback_host(headers, port) || !forwarded_client_is_remote(headers))
+    crate::request_guard::peer_is_local(Some(peer), headers)
+        && crate::local_owner::loopback_browser(headers, port)
 }
 
-fn proxied_browser(headers: &HeaderMap, peer: SocketAddr, port: u16) -> bool {
-    // The reverse proxy runs on this computer and forwards the operator's
-    // browser. The public host is accepted only when that browser names it.
-    peer.ip().is_loopback()
-        && !loopback_host(headers, port)
-        && crate::local_owner::browser_serves(headers, port)
-}
-
-fn served_operator(headers: &HeaderMap, peer: SocketAddr, port: u16) -> bool {
-    local_request(headers, peer, port) || proxied_browser(headers, peer, port)
-}
-
-fn password_owner_without_session(
-    local_only: bool,
-    proxied: bool,
-    trusted_local: bool,
-    local: bool,
-) -> bool {
-    local_owner_can_manage_without_session(trusted_local, local) || (local_only && proxied)
-}
 async fn db() -> Result<SqlitePool, ErrorResponse> {
-    let path = global_db_path()
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Database unavailable"))?;
-    open_and_init(&path)
+    crate::global_pool::global_pool()
         .await
         .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Database unavailable"))
 }
@@ -202,10 +158,8 @@ async fn browser_member(
         return Ok(id);
     }
     // The person at this computer can set a password before any web session
-    // exists. The reverse proxy on this machine is that same person.
-    if password_owner_without_session(
-        hub.local_only,
-        proxied_browser(headers, peer, hub.port),
+    // exists.
+    if local_owner_can_manage_without_session(
         trusted_local_mode(hub),
         local_request(headers, peer, hub.port),
     ) {
@@ -307,6 +261,34 @@ fn page_origin(headers: &HeaderMap) -> Result<Url, ErrorResponse> {
     origin()
 }
 
+/// Whether the request's `Origin` is the page this server serves. That page
+/// is `AX_WEB_AUTH_ORIGIN` when set, else the request's own `Host` (checked
+/// by [`crate::request_guard::guard`]) over HTTPS, or over HTTP too unless a
+/// proxy reports HTTPS. The `Origin` value itself never decides what is
+/// trusted, so a sibling subdomain cannot pass.
+fn own_page_origin(headers: &HeaderMap, authority: Option<&str>) -> bool {
+    let Some(sent) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) else {
+        return false;
+    };
+    if let Ok(value) = std::env::var("AX_WEB_AUTH_ORIGIN") {
+        return parse_origin(&value).is_ok_and(|url| sent == url.as_str().trim_end_matches('/'));
+    }
+    let Some(host) = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .or(authority)
+        .filter(|host| !host.is_empty())
+    else {
+        return false;
+    };
+    let https_proxy = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        == Some("https");
+    sent.eq_ignore_ascii_case(&format!("https://{host}"))
+        || (!https_proxy && sent.eq_ignore_ascii_case(&format!("http://{host}")))
+}
+
 fn origin() -> Result<Url, ErrorResponse> {
     let value =
         std::env::var("AX_WEB_AUTH_ORIGIN").unwrap_or_else(|_| "http://localhost:7070".to_string());
@@ -349,9 +331,158 @@ fn passkey_ceremonies() -> &'static Mutex<HashMap<String, (Instant, Ceremony)>> 
     static STORE: OnceLock<Mutex<HashMap<String, (Instant, Ceremony)>>> = OnceLock::new();
     STORE.get_or_init(|| Mutex::new(HashMap::new()))
 }
-fn login_attempts() -> &'static Mutex<HashMap<String, (u32, Instant)>> {
-    static STORE: OnceLock<Mutex<HashMap<String, (u32, Instant)>>> = OnceLock::new();
-    STORE.get_or_init(|| Mutex::new(HashMap::new()))
+/// How long a failed sign-in attempt counts against its keys.
+const ATTEMPT_WINDOW: Duration = Duration::from_secs(300);
+/// Attempts for one identity from one address within the window.
+const ATTEMPTS_PER_IDENTITY: u32 = 5;
+/// Attempts from one address within the window, whatever identity they name.
+/// Not applied to a reverse proxy or tunnel on this computer: all its clients
+/// share its address, so one client could lock everyone out.
+const ATTEMPTS_PER_ADDRESS: u32 = 30;
+/// Most keys tracked at once. When full, new attempts are refused.
+const MAX_TRACKED_KEYS: usize = 10_000;
+
+/// Sign-in attempt counters. An attempt is counted before the password is
+/// checked, so parallel requests cannot all pass the limit at once.
+#[derive(Default)]
+struct AttemptLimiter {
+    entries: HashMap<String, (u32, Instant)>,
+}
+
+impl AttemptLimiter {
+    fn prune(&mut self, now: Instant) {
+        self.entries
+            .retain(|_, (_, first)| now.saturating_duration_since(*first) < ATTEMPT_WINDOW);
+    }
+
+    fn count(&self, key: &str) -> u32 {
+        self.entries.get(key).map_or(0, |(count, _)| *count)
+    }
+
+    /// Counts one attempt against every `(key, limit)` pair, or against none
+    /// when any key is at its limit or the table is full.
+    fn reserve(&mut self, keys: &[(&str, u32)], now: Instant) -> bool {
+        self.prune(now);
+        if keys.iter().any(|(key, limit)| self.count(key) >= *limit) {
+            return false;
+        }
+        let new_keys = keys
+            .iter()
+            .filter(|(key, _)| !self.entries.contains_key(*key))
+            .count();
+        if self.entries.len() + new_keys > MAX_TRACKED_KEYS {
+            return false;
+        }
+        for (key, _) in keys {
+            self.entries.entry((*key).to_string()).or_insert((0, now)).0 += 1;
+        }
+        true
+    }
+
+    /// A successful sign-in clears its identity key and returns its attempt to
+    /// the address.
+    fn forgive(&mut self, identity_key: &str, address_key: Option<&str>) {
+        self.entries.remove(identity_key);
+        let Some(address_key) = address_key else {
+            return;
+        };
+        if let Some(entry) = self.entries.get_mut(address_key) {
+            entry.0 = entry.0.saturating_sub(1);
+            if entry.0 == 0 {
+                self.entries.remove(address_key);
+            }
+        }
+    }
+}
+
+fn login_attempts() -> &'static Mutex<AttemptLimiter> {
+    static STORE: OnceLock<Mutex<AttemptLimiter>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(AttemptLimiter::default()))
+}
+
+/// The rate-limit keys of one sign-in kind (`login` or `recovery`).
+struct AttemptKeys {
+    identity: String,
+    /// `None` for a reverse proxy or tunnel on this computer.
+    address: Option<String>,
+}
+
+impl AttemptKeys {
+    fn limits(&self) -> Vec<(&str, u32)> {
+        let mut limits = vec![(self.identity.as_str(), ATTEMPTS_PER_IDENTITY)];
+        if let Some(address) = &self.address {
+            limits.push((address.as_str(), ATTEMPTS_PER_ADDRESS));
+        }
+        limits
+    }
+}
+
+fn attempt_keys(kind: &str, peer: SocketAddr, headers: &HeaderMap, identity: &str) -> AttemptKeys {
+    let ip = peer.ip().to_canonical();
+    let proxied = crate::request_guard::peer_is_local_proxy(Some(peer), headers);
+    AttemptKeys {
+        identity: format!("{kind}:{ip}:{}", hash(identity)),
+        address: (!proxied).then(|| format!("{kind}-address:{ip}")),
+    }
+}
+
+async fn reserve_attempt(keys: &AttemptKeys) -> bool {
+    login_attempts()
+        .lock()
+        .await
+        .reserve(&keys.limits(), Instant::now())
+}
+
+async fn forgive_attempt(keys: &AttemptKeys) {
+    login_attempts()
+        .lock()
+        .await
+        .forgive(&keys.identity, keys.address.as_deref());
+}
+
+/// Argon2 work at once. Each run takes tens of milliseconds of CPU and about
+/// 19 MB, so a burst of sign-ins waits here instead of starving the server.
+fn hashing_slots() -> &'static tokio::sync::Semaphore {
+    static SLOTS: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
+    SLOTS.get_or_init(|| tokio::sync::Semaphore::new(4))
+}
+
+/// Runs Argon2 work on the blocking pool, a few at a time, so the async
+/// workers keep serving other requests.
+async fn run_argon2<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, ErrorResponse> {
+    let failed = || err(StatusCode::INTERNAL_SERVER_ERROR, "Password check failed");
+    let _slot = hashing_slots().acquire().await.map_err(|_| failed())?;
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|_| failed())
+}
+
+/// Checks `password` against a stored Argon2 hash, or against the unusable
+/// dummy hash when `digest` is `None` so unknown identities take as long.
+async fn verify_password(password: String, digest: Option<String>) -> Result<bool, ErrorResponse> {
+    run_argon2(move || {
+        let digest = digest.as_deref().unwrap_or_else(|| dummy_password_hash());
+        PasswordHash::new(digest).ok().is_some_and(|parsed| {
+            Argon2::default()
+                .verify_password(password.as_bytes(), &parsed)
+                .is_ok()
+        })
+    })
+    .await
+}
+
+/// A new Argon2 hash of `password`.
+async fn hash_new_password(password: String) -> Result<String, ErrorResponse> {
+    run_argon2(move || {
+        let salt = SaltString::generate(&mut OsRng);
+        Argon2::default()
+            .hash_password(password.as_bytes(), &salt)
+            .map(|hash| hash.to_string())
+    })
+    .await?
+    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Password setup failed"))
 }
 fn dummy_password_hash() -> &'static str {
     static DUMMY: OnceLock<String> = OnceLock::new();
@@ -470,7 +601,7 @@ async fn setup(
     if enabled(&pool).await? {
         return Err(err(StatusCode::FORBIDDEN, "Already enabled"));
     }
-    if hub.readonly || !hub.local_only || !served_operator(&headers, peer, hub.port) {
+    if hub.readonly || !hub.local_only || !local_request(&headers, peer, hub.port) {
         return Err(err(StatusCode::FORBIDDEN, "Local Owner required"));
     }
     if body.password.len() < 12 || body.password.len() > 1024 {
@@ -485,11 +616,7 @@ async fn setup(
         .into_iter()
         .find(|m| m.role == access::MemberRole::Owner && m.status == "active")
         .ok_or_else(|| err(StatusCode::FORBIDDEN, "Owner required"))?;
-    let salt = SaltString::generate(&mut OsRng);
-    let verifier = Argon2::default()
-        .hash_password(body.password.as_bytes(), &salt)
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Password setup failed"))?
-        .to_string();
+    let verifier = hash_new_password(body.password).await?;
     sqlx::query(
         "INSERT INTO web_password_credentials(member_id,password_hash) VALUES (?,?)
                  ON CONFLICT(member_id) DO UPDATE SET password_hash=excluded.password_hash",
@@ -516,7 +643,7 @@ async fn configure(
     let current = enabled(&pool).await?;
     let actor = browser_member(&pool, &headers, peer, &hub).await?;
     require_owner(&pool, &actor).await?;
-    if !hub.local_only || !served_operator(&headers, peer, hub.port) {
+    if !hub.local_only || !local_request(&headers, peer, hub.port) {
         return Err(err(
             StatusCode::FORBIDDEN,
             "Change authentication only at local Command Center",
@@ -619,18 +746,12 @@ async fn password_login(
     if identity.is_empty() || body.password.len() > 1024 {
         return Err(err(StatusCode::UNAUTHORIZED, PUBLIC_LOGIN_DENIED));
     }
-    let limit_key = format!("{}:{}", peer.ip(), hash(identity));
-    {
-        let attempts = login_attempts().lock().await;
-        if attempts
-            .get(&limit_key)
-            .is_some_and(|(count, first)| *count >= 5 && first.elapsed() < Duration::from_secs(300))
-        {
-            return Err(err(
-                StatusCode::TOO_MANY_REQUESTS,
-                "Too many login attempts",
-            ));
-        }
+    let keys = attempt_keys("login", peer, &headers, identity);
+    if !reserve_attempt(&keys).await {
+        return Err(err(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many login attempts",
+        ));
     }
     let row: Option<(String, String)> = sqlx::query_as(
         "SELECT m.id, c.password_hash FROM team_members m
@@ -645,25 +766,11 @@ async fn password_login(
     .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Sign-in unavailable"))?;
     // Always run Argon2, even for unknown identities, to avoid timing
     // differences that disclose account existence.
-    let digest = row
-        .as_ref()
-        .map(|(_, hash)| hash.as_str())
-        .unwrap_or_else(|| dummy_password_hash());
-    let valid = PasswordHash::new(digest).ok().is_some_and(|parsed| {
-        Argon2::default()
-            .verify_password(body.password.as_bytes(), &parsed)
-            .is_ok()
-    });
-    if !valid {
-        let mut attempts = login_attempts().lock().await;
-        let entry = attempts.entry(limit_key).or_insert((0, Instant::now()));
-        if entry.1.elapsed() >= Duration::from_secs(300) {
-            *entry = (0, Instant::now());
-        }
-        entry.0 += 1;
+    let digest = row.as_ref().map(|(_, hash)| hash.clone());
+    if !verify_password(body.password, digest).await? {
         return Err(err(StatusCode::UNAUTHORIZED, PUBLIC_LOGIN_DENIED));
     }
-    login_attempts().lock().await.remove(&limit_key);
+    forgive_attempt(&keys).await;
     establish(
         &pool,
         &row.expect("valid account has a password").0,
@@ -692,7 +799,6 @@ async fn user_password(
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok());
     let trusted = local_request(&headers, peer, hub.port)
-        || proxied_browser(&headers, peer, hub.port)
         || origin().is_ok_and(|url| req_origin == Some(url.as_str().trim_end_matches('/')));
     if !trusted {
         return Err(err(StatusCode::FORBIDDEN, "Untrusted request origin"));
@@ -712,11 +818,7 @@ async fn user_password(
     if exists.is_none() {
         return Err(err(StatusCode::NOT_FOUND, "Active user not found"));
     }
-    let salt = SaltString::generate(&mut OsRng);
-    let verifier = Argon2::default()
-        .hash_password(body.password.as_bytes(), &salt)
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Password setup failed"))?
-        .to_string();
+    let verifier = hash_new_password(body.password).await?;
     let mut tx = pool
         .begin()
         .await
@@ -892,15 +994,9 @@ async fn recover_login(
     if !body.code.starts_with("axr-") || body.code.len() > 100 || identity.is_empty() {
         return Err(err(StatusCode::UNAUTHORIZED, PUBLIC_RECOVERY_DENIED));
     }
-    let limit_key = format!("recovery:{}:{}", peer.ip(), hash(identity));
-    {
-        let attempts = login_attempts().lock().await;
-        if attempts
-            .get(&limit_key)
-            .is_some_and(|(count, since)| *count >= 5 && since.elapsed() < Duration::from_secs(300))
-        {
-            return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many attempts"));
-        }
+    let keys = attempt_keys("recovery", peer, &headers, identity);
+    if !reserve_attempt(&keys).await {
+        return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many attempts"));
     }
     let verifier = hash(&body.code);
     let mut tx = pool
@@ -927,15 +1023,7 @@ async fn recover_login(
     .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Recovery unavailable"))?;
     let member_id = match (member, code_holder) {
         (Some((id,)), Some((code_member,))) if id == code_member => id,
-        _ => {
-            let mut attempts = login_attempts().lock().await;
-            let attempt = attempts.entry(limit_key).or_insert((0, Instant::now()));
-            if attempt.1.elapsed() >= Duration::from_secs(300) {
-                *attempt = (0, Instant::now());
-            }
-            attempt.0 += 1;
-            return Err(err(StatusCode::UNAUTHORIZED, PUBLIC_RECOVERY_DENIED));
-        }
+        _ => return Err(err(StatusCode::UNAUTHORIZED, PUBLIC_RECOVERY_DENIED)),
     };
     let updated = sqlx::query(
         "UPDATE web_recovery_codes SET consumed_at=unixepoch()
@@ -962,6 +1050,7 @@ async fn recover_login(
         &serde_json::json!({}),
     )
     .await;
+    forgive_attempt(&keys).await;
     establish(&pool, &member_id, &headers, secure_origin(&headers)).await
 }
 async fn logout(headers: HeaderMap) -> Result<Response, ErrorResponse> {
@@ -1299,7 +1388,6 @@ fn excluded(path: &str) -> bool {
         || path.starts_with("/api/web-auth/users/")
         || path == "/api/web-auth/passkeys"
         || path.starts_with("/api/web-auth/passkeys/")
-        || path.starts_with("/api/auth/")
         || path.starts_with("/mcp")
         || path.starts_with("/api/share")
 }
@@ -1313,6 +1401,24 @@ fn is_vault_path(path: &str) -> bool {
         || path.starts_with("/api/dav/")
 }
 pub async fn gate(State(hub): State<WebHub>, mut req: Request, next: Next) -> Response {
+    let path = req.uri().path();
+    // All JSON data routes require the gate. The static SPA shell itself can
+    // load to display a login without exposing any indexed project data, so
+    // it is served before any database work and even when global.db is down.
+    if excluded(path) || (!is_vault_path(path) && !path.starts_with("/api/") && path != "/api") {
+        return next.run(req).await;
+    }
+    // Client credentials (`axc_`) are not browser sessions. The share-token
+    // middleware inside this gate authenticates them and applies their scopes
+    // (`http_scope`), whether or not web login is on.
+    let bearer = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|value| value.starts_with("Bearer axc_"));
+    if bearer && path.starts_with("/api/") {
+        return next.run(req).await;
+    }
     let pool = match db().await {
         Ok(pool) => pool,
         Err((s, j)) => return (s, j).into_response(),
@@ -1321,26 +1427,6 @@ pub async fn gate(State(hub): State<WebHub>, mut req: Request, next: Next) -> Re
         Ok(value) => value,
         Err((s, j)) => return (s, j).into_response(),
     };
-    let path = req.uri().path();
-    // All JSON data routes require the gate. The static SPA shell itself can
-    // load to display a login without exposing any indexed project data.
-    if excluded(path) || (!is_vault_path(path) && !path.starts_with("/api/") && path != "/api") {
-        // Static SPA assets and its unauthenticated login shell contain no user data;
-        // every data API remains behind the server-side gate.
-        return next.run(req).await;
-    }
-    // Machine bearer clients keep scope checks in their dedicated resource routers.
-    let bearer = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|value| value.starts_with("Bearer axc_"));
-    if bearer && path.starts_with("/api/access/") {
-        return next.run(req).await;
-    }
-    if bearer && path.starts_with("/api/") && !active {
-        return next.run(req).await;
-    }
     let peer = req
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
@@ -1364,18 +1450,11 @@ pub async fn gate(State(hub): State<WebHub>, mut req: Request, next: Next) -> Re
         return err(StatusCode::UNAUTHORIZED, "Sign in required").into_response();
     };
     if req.method() != Method::GET && req.method() != Method::HEAD {
-        let expected = page_origin(req.headers()).ok();
-        let req_origin = req
-            .headers()
-            .get(header::ORIGIN)
-            .and_then(|v| v.to_str().ok());
-        // Reject cross-site mutations. Require an exact Origin from modern browsers.
-        // Local command center accepts either loopback spelling for non-WebAuthn endpoints.
+        // Reject mutations from any other page, same-site ones included.
+        // The local Command Center accepts either loopback spelling.
         let local_origin = peer.is_some_and(|addr| local_request(req.headers(), addr, hub.port));
         if !local_origin
-            && expected
-                .as_ref()
-                .is_none_or(|url| req_origin != Some(url.as_str().trim_end_matches('/')))
+            && !own_page_origin(req.headers(), req.uri().authority().map(|a| a.as_str()))
         {
             return err(StatusCode::FORBIDDEN, "Untrusted request origin").into_response();
         }
@@ -1386,7 +1465,15 @@ pub async fn gate(State(hub): State<WebHub>, mut req: Request, next: Next) -> Re
     let Some((_, role)) = session_member(&pool, req.headers()).await else {
         return err(StatusCode::UNAUTHORIZED, "Sign in required").into_response();
     };
-    let admin_path = path.starts_with("/api/remote-mcp/")
+    // Routes that act on this computer (agent CLIs and their terminal,
+    // language servers, OS drive mounts, sign-in setup) are management too.
+    let admin_path = path == "/api/agent"
+        || path.starts_with("/api/agent/")
+        || path.starts_with("/api/lsp/")
+        || path == "/api/dav/mount"
+        || path.starts_with("/api/dav/mount/")
+        || path.starts_with("/api/auth/microsoft")
+        || path.starts_with("/api/remote-mcp/")
         || path.starts_with("/api/access/")
         || path.starts_with("/api/ops/")
         || path.starts_with("/api/ship/")
@@ -1398,13 +1485,24 @@ pub async fn gate(State(hub): State<WebHub>, mut req: Request, next: Next) -> Re
     if admin_path && !role.permits("admin:team") {
         return err(StatusCode::FORBIDDEN, "Administrative role required").into_response();
     }
-    if req.method() != Method::GET && req.method() != Method::HEAD && !role.permits("memory:write")
-    {
+    // A WebSocket opens with GET but carries a live session that can change
+    // things, so it counts as a write.
+    let websocket = req
+        .headers()
+        .get(header::UPGRADE)
+        .is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(b"websocket"));
+    let write = websocket || (req.method() != Method::GET && req.method() != Method::HEAD);
+    if write && !role.permits("memory:write") {
         return err(StatusCode::FORBIDDEN, "Write permission required").into_response();
     }
     req.extensions_mut().insert(member_id);
+    req.extensions_mut().insert(SignedIn);
     next.run(req).await
 }
+
+/// Set by [`gate`] on a request that passed web sign-in and its role rules.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SignedIn;
 async fn no_store(req: Request, next: Next) -> Response {
     let mut response = next.run(req).await;
     response
@@ -1441,10 +1539,76 @@ pub fn router(hub: WebHub) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn attempts_older_than_the_window_are_dropped() {
+        let mut limiter = AttemptLimiter::default();
+        let start = Instant::now();
+        for n in 0..100 {
+            let key = format!("login:198.51.100.1:{n}");
+            assert!(limiter.reserve(&[(&key, 5)], start));
+        }
+        assert_eq!(limiter.entries.len(), 100);
+        let later = start + ATTEMPT_WINDOW + Duration::from_secs(1);
+        assert!(limiter.reserve(&[("login:198.51.100.2:x", 5)], later));
+        assert_eq!(limiter.entries.len(), 1, "expired keys are pruned");
+    }
+
+    #[test]
+    fn a_full_table_refuses_new_keys_but_not_known_ones() {
+        let mut limiter = AttemptLimiter::default();
+        let now = Instant::now();
+        for n in 0..MAX_TRACKED_KEYS {
+            limiter.entries.insert(format!("k{n}"), (1, now));
+        }
+        assert!(!limiter.reserve(&[("new", 5)], now));
+        assert!(limiter.reserve(&[("k1", 5)], now));
+        assert_eq!(limiter.entries.len(), MAX_TRACKED_KEYS);
+    }
+
+    #[test]
+    fn a_limited_key_counts_nothing_and_success_forgives() {
+        let mut limiter = AttemptLimiter::default();
+        let now = Instant::now();
+        for _ in 0..5 {
+            assert!(limiter.reserve(&[("id", 5), ("ip", 30)], now));
+        }
+        assert!(!limiter.reserve(&[("id", 5), ("ip", 30)], now));
+        assert_eq!(limiter.count("ip"), 5, "a refused attempt is not counted");
+        limiter.forgive("id", Some("ip"));
+        assert_eq!(limiter.count("id"), 0);
+        assert_eq!(limiter.count("ip"), 4);
+    }
+
+    /// Behind a tunnel every visitor arrives from 127.0.0.1. Failures under
+    /// many identities must not lock sign-in for a different identity.
+    #[test]
+    fn failures_through_a_local_proxy_do_not_block_other_identities() {
+        let peer: SocketAddr = "127.0.0.1:40000".parse().unwrap();
+        let mut proxied = HeaderMap::new();
+        proxied.insert("cf-connecting-ip", "198.51.100.9".parse().unwrap());
+        let mut limiter = AttemptLimiter::default();
+        let now = Instant::now();
+        for n in 0..ATTEMPTS_PER_ADDRESS * 2 {
+            let keys = attempt_keys("login", peer, &proxied, &format!("guess-{}", n % 10));
+            assert!(keys.address.is_none());
+            limiter.reserve(&keys.limits(), now);
+        }
+        let owner = attempt_keys("login", peer, &proxied, "owner");
+        assert!(limiter.reserve(&owner.limits(), now));
+        // A direct peer still has its address-wide limit.
+        let direct: SocketAddr = "203.0.113.7:40000".parse().unwrap();
+        for n in 0..ATTEMPTS_PER_ADDRESS {
+            let keys = attempt_keys("login", direct, &HeaderMap::new(), &format!("u{n}"));
+            assert!(limiter.reserve(&keys.limits(), now));
+        }
+        let next = attempt_keys("login", direct, &HeaderMap::new(), "owner");
+        assert!(!limiter.reserve(&next.limits(), now));
+    }
+
     #[tokio::test]
     async fn revoking_two_owner_passkeys_preserves_one() {
         let directory = tempfile::tempdir().unwrap();
-        let pool = open_and_init(&directory.path().join("auth.db"))
+        let pool = ax_global_db::open_and_init(&directory.path().join("auth.db"))
             .await
             .unwrap();
         access::bootstrap_owner(&pool, "owner", "Local owner", None)
@@ -1479,33 +1643,6 @@ mod tests {
         assert!(!revoke_passkey_in_db(&pool, "owner", "key-a").await.unwrap());
         assert!(!revoke_passkey_in_db(&pool, "owner", "key-b").await.unwrap());
     }
-    #[tokio::test]
-    async fn recovery_verifiers_are_consumed_once() {
-        let directory = tempfile::tempdir().unwrap();
-        let pool = open_and_init(&directory.path().join("auth.db"))
-            .await
-            .unwrap();
-        access::bootstrap_owner(&pool, "owner", "Owner", None)
-            .await
-            .unwrap();
-        let code = "axr-this-is-only-a-test-code";
-        sqlx::query("INSERT INTO web_recovery_codes(member_id,verifier) VALUES ('owner',?)")
-            .bind(hash(code))
-            .execute(&pool)
-            .await
-            .unwrap();
-        for expected in [1, 0] {
-            let result = sqlx::query(
-                "UPDATE web_recovery_codes SET consumed_at=unixepoch()
-                 WHERE verifier=? AND consumed_at IS NULL",
-            )
-            .bind(hash(code))
-            .execute(&pool)
-            .await
-            .unwrap();
-            assert_eq!(result.rows_affected(), expected);
-        }
-    }
     #[test]
     fn discoverable_sign_in_challenge_names_no_account() {
         let url = Url::parse("http://localhost:7070").unwrap();
@@ -1523,12 +1660,6 @@ mod tests {
         assert!(value.get("mediation").is_none());
     }
     #[test]
-    fn local_owner_can_set_a_password_without_a_web_session() {
-        assert!(local_owner_can_manage_without_session(true, true));
-        assert!(!local_owner_can_manage_without_session(true, false));
-        assert!(!local_owner_can_manage_without_session(false, true));
-    }
-    #[test]
     fn public_login_and_recovery_use_single_denial_messages() {
         assert_eq!(PUBLIC_LOGIN_DENIED, "Invalid credentials");
         assert_eq!(PUBLIC_RECOVERY_DENIED, "Invalid recovery code");
@@ -1544,8 +1675,11 @@ mod tests {
         headers.insert(header::HOST, "localhost:7070".parse().unwrap());
         let peer = "127.0.0.1:23456".parse().unwrap();
         assert!(local_request(&headers, peer, 7070));
+        // A proxy on this computer forwarding someone else is not local,
+        // even when it sets the loopback Host.
         headers.insert("x-forwarded-for", "203.0.113.7".parse().unwrap());
-        assert!(local_request(&headers, peer, 7070));
+        assert!(!local_request(&headers, peer, 7070));
+        headers.remove("x-forwarded-for");
         headers.insert(header::HOST, "admin.example.com".parse().unwrap());
         headers.insert(header::ORIGIN, "https://admin.example.com".parse().unwrap());
         assert!(!local_request(&headers, peer, 7070));
@@ -1558,31 +1692,22 @@ mod tests {
     }
 
     #[test]
-    fn reverse_proxy_browser_can_set_a_password_without_a_session() {
+    fn reverse_proxy_browser_needs_a_session_to_set_a_password() {
         let mut headers = HeaderMap::new();
         headers.insert(header::HOST, "admin.example.com".parse().unwrap());
         headers.insert(header::ORIGIN, "https://admin.example.com".parse().unwrap());
         headers.insert("x-forwarded-for", "203.0.113.7".parse().unwrap());
         headers.insert("x-forwarded-proto", "https".parse().unwrap());
         let peer = "127.0.0.1:23456".parse().unwrap();
-        assert!(proxied_browser(&headers, peer, 7070));
-        assert!(served_operator(&headers, peer, 7070));
         assert!(!local_request(&headers, peer, 7070));
-        assert!(password_owner_without_session(true, true, false, false));
-        assert!(!password_owner_without_session(false, true, false, false));
-        assert!(!password_owner_without_session(true, false, false, false));
+        let mut tunnel = HeaderMap::new();
+        tunnel.insert(header::HOST, "127.0.0.1:7070".parse().unwrap());
+        tunnel.insert("x-forwarded-proto", "https".parse().unwrap());
+        assert!(!local_request(&tunnel, peer, 7070));
         let mut local = HeaderMap::new();
         local.insert(header::HOST, "127.0.0.1:7070".parse().unwrap());
-        assert!(!proxied_browser(&local, peer, 7070));
-        headers.insert(header::ORIGIN, "https://evil.example".parse().unwrap());
-        assert!(!proxied_browser(&headers, peer, 7070));
-        headers.remove(header::ORIGIN);
-        headers.insert("sec-fetch-site", "cross-site".parse().unwrap());
-        assert!(!proxied_browser(&headers, peer, 7070));
-        assert!(!proxied_browser(
-            &headers,
-            "203.0.113.7:23456".parse().unwrap(),
-            7070
-        ));
+        assert!(local_request(&local, peer, 7070));
+        local.insert("sec-fetch-site", "cross-site".parse().unwrap());
+        assert!(!local_request(&local, peer, 7070));
     }
 }

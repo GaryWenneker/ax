@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 
 pub struct RememberArgs {
     pub text: Option<String>,
@@ -30,7 +30,7 @@ pub async fn run_remember(args: RememberArgs) -> Result<(), String> {
         when,
         json,
     } = args;
-    let root = resolve_path(None);
+    let root = resolve_project_root(None);
     let text = if confirm.is_none() && purge.is_none() {
         Some(text.ok_or("give the memory text, or --confirm ID, or --purge ID")?)
     } else {
@@ -181,7 +181,7 @@ pub async fn run_remember(args: RememberArgs) -> Result<(), String> {
 }
 
 pub async fn run_capture_git(limit: Option<u32>, quiet: bool, json: bool) -> Result<(), String> {
-    let root = resolve_path(None);
+    let root = resolve_project_root(None);
     ax_usage::log_memory(
         Some(&root),
         format!("capture-git start limit={}", limit.unwrap_or(100)),
@@ -233,7 +233,7 @@ pub async fn run_history(
     depth: String,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(None);
+    let root = resolve_project_root(None);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let by_id = id.is_some();
     let entries = if let Some(id) = id {
@@ -283,7 +283,7 @@ pub async fn run_recall(
     filter: ax_memory::MemoryFilter,
     json: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(None);
+    let root = resolve_project_root(None);
     let query = query.unwrap_or_default();
     let q_len = query.chars().count();
     let trace = ax_usage::ToolTrace::begin(
@@ -389,7 +389,7 @@ pub async fn run_export(
     out: Option<String>,
     quiet: bool,
 ) -> Result<(), String> {
-    let root = resolve_path(None);
+    let root = resolve_project_root(None);
     ax_usage::log_memory(Some(&root), "export start");
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let tag = tag.unwrap_or_else(|| "shared".into());
@@ -421,7 +421,7 @@ pub async fn run_export(
 }
 
 pub async fn run_import(path: Option<String>, quiet: bool) -> Result<(), String> {
-    let root = resolve_path(None);
+    let root = resolve_project_root(None);
     ax_usage::log_memory(Some(&root), "import start");
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let path = path
@@ -454,7 +454,7 @@ pub async fn run_import(path: Option<String>, quiet: bool) -> Result<(), String>
 }
 
 pub async fn run_reindex(json: bool) -> Result<(), String> {
-    let root = resolve_path(None);
+    let root = resolve_project_root(None);
     ax_usage::log_memory(Some(&root), "reindex start");
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let updated = ax_memory::reindex_memory_fts(ax.db_pool())
@@ -468,6 +468,59 @@ pub async fn run_reindex(json: bool) -> Result<(), String> {
         );
     } else {
         println!("Rebuilt memories_fts; updated search_text on {updated} rows");
+    }
+    Ok(())
+}
+
+/// Remove `file_change` memories whose every path the index excludes.
+pub async fn run_prune_file_changes(apply: bool, json: bool) -> Result<(), String> {
+    let root = resolve_project_root(None);
+    ax_usage::log_memory(
+        Some(&root),
+        format!("prune-file-changes start apply={apply}"),
+    );
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let mut filter = ax_extraction::IndexPathFilter::new(&root, &ax.config().exclude);
+    let mut excluded = |path: &str| filter.excludes(path);
+    let mut progress = |done: usize, total: usize| {
+        if !json {
+            eprint!("\rpurged {done}/{total}");
+            if done == total {
+                eprintln!();
+            }
+        }
+    };
+    let report =
+        ax_memory::prune_excluded_file_changes(ax.db_pool(), &mut excluded, apply, &mut progress)
+            .await
+            .map_err(|e| e.to_string())?;
+    ax_usage::log_memory(
+        Some(&root),
+        format!(
+            "prune-file-changes ok apply={apply} matched={} purged={}",
+            report.matched, report.purged
+        ),
+    );
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string(&report).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    println!(
+        "{} file_change memories, {} name only paths the index excludes, {} keep.",
+        report.scanned, report.matched, report.kept
+    );
+    for area in &report.areas {
+        println!("  {:>8}  {}", area.count, area.area);
+    }
+    if report.dry_run {
+        if report.matched > 0 {
+            println!("Dry run: nothing deleted. Run `ax memory prune-file-changes --apply` to remove them.");
+        }
+    } else {
+        println!("Removed {} memories.", report.purged);
     }
     Ok(())
 }

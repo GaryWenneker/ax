@@ -201,13 +201,72 @@ impl MigratedPools {
 
 static HIERARCHY_MIGRATED: MigratedPools = MigratedPools::new();
 
+/// Columns added after the first schema; each must exist for the schema to be complete.
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("specs", "needs_plan", "INTEGER NOT NULL DEFAULT 0"),
+    ("specs", "execution_ready", "INTEGER NOT NULL DEFAULT 0"),
+    (
+        "plan_selections",
+        "compatibility",
+        "TEXT NOT NULL DEFAULT 'current'",
+    ),
+];
+
+/// True when every table, the flag row and every added column already exist,
+/// so nothing needs writing. A read-only connection depends on this: it can
+/// read a complete schema but cannot run the `INSERT` or `ALTER` statements.
+async fn hierarchy_schema_complete(pool: &SqlitePool) -> bool {
+    let tables: Vec<&str> = [SPEC_TABLES, SCHEMA]
+        .iter()
+        .flat_map(|script| script.split("CREATE TABLE IF NOT EXISTS ").skip(1))
+        .filter_map(|rest| rest.split_whitespace().next())
+        .collect();
+    let present: Vec<String> =
+        match sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type = 'table'")
+            .fetch_all(pool)
+            .await
+        {
+            Ok(names) => names,
+            Err(_) => return false,
+        };
+    if !tables
+        .iter()
+        .all(|table| present.iter().any(|name| name == table))
+    {
+        return false;
+    }
+    let flag: Option<String> =
+        sqlx::query_scalar("SELECT key FROM spec_flags WHERE key = 'hierarchy_v2'")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+    if flag.is_none() {
+        return false;
+    }
+    for (table, column, _) in ADDED_COLUMNS {
+        let columns: Vec<String> =
+            sqlx::query_scalar(&format!("SELECT name FROM pragma_table_info('{table}')"))
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default();
+        if !columns.iter().any(|name| name == column) {
+            return false;
+        }
+    }
+    true
+}
+
 /// Create or upgrade the hierarchy tables. The work runs once per pool; later
-/// calls return at once, so read paths never take the write lock.
+/// calls return at once, so read paths never take the write lock. A schema
+/// that is already complete is not written to, so a read-only pool works too.
 pub async fn ensure_hierarchy_schema(pool: &SqlitePool) -> Result<(), String> {
     if HIERARCHY_MIGRATED.contains(pool) {
         return Ok(());
     }
-    migrate_hierarchy_schema(pool).await?;
+    if !hierarchy_schema_complete(pool).await {
+        migrate_hierarchy_schema(pool).await?;
+    }
     HIERARCHY_MIGRATED.insert(pool);
     Ok(())
 }
@@ -230,21 +289,9 @@ pub(crate) async fn run_schema(pool: &SqlitePool, script: &str) -> Result<(), St
 async fn migrate_hierarchy_schema(pool: &SqlitePool) -> Result<(), String> {
     run_schema(pool, SPEC_TABLES).await?;
     run_schema(pool, SCHEMA).await?;
-    add_column_if_missing(pool, "specs", "needs_plan", "INTEGER NOT NULL DEFAULT 0").await?;
-    add_column_if_missing(
-        pool,
-        "specs",
-        "execution_ready",
-        "INTEGER NOT NULL DEFAULT 0",
-    )
-    .await?;
-    add_column_if_missing(
-        pool,
-        "plan_selections",
-        "compatibility",
-        "TEXT NOT NULL DEFAULT 'current'",
-    )
-    .await?;
+    for (table, column, definition) in ADDED_COLUMNS {
+        add_column_if_missing(pool, table, column, definition).await?;
+    }
     Ok(())
 }
 

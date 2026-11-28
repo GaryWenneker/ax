@@ -73,6 +73,22 @@ fn kill(pid: u64) {
 
 struct KillOnDrop(Child);
 
+/// Kills the daemon a proxy started on its own, which is not our child: on
+/// drop, whatever pid `.ax/daemon.json` names is killed, so a failed
+/// assertion does not leave a detached daemon running. Declare it after the
+/// project so it drops while `daemon.json` still exists.
+struct KillDaemonOnDrop<'a> {
+    root: &'a Path,
+}
+
+impl Drop for KillDaemonOnDrop<'_> {
+    fn drop(&mut self) {
+        if let Some(pid) = daemon_info(self.root).and_then(|i| i["pid"].as_u64()) {
+            kill(pid);
+        }
+    }
+}
+
 impl Drop for KillOnDrop {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -252,6 +268,7 @@ fn e3_a_newer_proxy_restarts_an_older_daemon_on_its_own_binary() {
         daemon_info(&p.root).and_then(|i| i["pid"].as_u64())
     });
 
+    let _spawned = KillDaemonOnDrop { root: &p.root };
     let (_proxy, mut client) = start_proxy(&newer, &p);
     let reply = client.call_status(2);
     assert!(
@@ -266,7 +283,6 @@ fn e3_a_newer_proxy_restarts_an_older_daemon_on_its_own_binary() {
         proxy_stderr(&p)
     );
     assert_ne!(info["pid"].as_u64(), Some(old_pid));
-    kill(info["pid"].as_u64().unwrap());
 }
 
 #[test]
@@ -293,6 +309,7 @@ fn e4_an_older_proxy_attaches_to_a_newer_daemon_without_restarting_it() {
 #[test]
 fn d7_a_proxy_keeps_serving_after_its_daemon_is_killed() {
     let p = project();
+    let _spawned = KillDaemonOnDrop { root: &p.root };
     let (mut proxy, mut client) = start_proxy(Path::new(env!("CARGO_BIN_EXE_ax")), &p);
     assert!(client.call_status(2).get("result").is_some(), "first call");
 
@@ -351,5 +368,6 @@ fn d7_a_proxy_keeps_serving_after_its_daemon_is_killed() {
         "stdin closed means a clean exit, got {status}: {}",
         proxy_stderr(&p)
     );
-    kill(second["pid"].as_u64().unwrap());
+    // `_spawned` kills the daemon `daemon.json` now names.
+    assert!(daemon_info(&p.root).is_some_and(|i| i["pid"] == second["pid"]));
 }

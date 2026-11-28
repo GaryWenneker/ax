@@ -45,6 +45,50 @@ pub fn append_lang_call_refs(
     }
 }
 
+/// Calls written inside Rust macro arguments, such as `println!("{}", total(items))`.
+///
+/// tree-sitter leaves macro arguments unparsed: a `token_tree` of raw tokens with no
+/// `call_expression` in it. An identifier directly followed by a parenthesized token
+/// tree is a call. Macros are not expanded, so calls a macro generates are not found.
+pub fn append_rust_macro_call_refs(
+    result: &mut ax_types::ExtractionResult,
+    tree: &Tree,
+    ctx: &RefCtx,
+) {
+    walk_macro_invocations(tree.root_node(), ctx, result);
+}
+
+fn walk_macro_invocations(node: TsNode, ctx: &RefCtx, result: &mut ax_types::ExtractionResult) {
+    let in_macro = node.kind() == "macro_invocation";
+    for i in 0..node.child_count() {
+        let Some(child) = node.child(i) else { continue };
+        if in_macro && child.kind() == "token_tree" {
+            walk_token_tree(child, ctx, result);
+        } else {
+            walk_macro_invocations(child, ctx, result);
+        }
+    }
+}
+
+fn walk_token_tree(tree: TsNode, ctx: &RefCtx, result: &mut ax_types::ExtractionResult) {
+    for i in 0..tree.child_count() {
+        let Some(child) = tree.child(i) else { continue };
+        if child.kind() != "token_tree" {
+            continue;
+        }
+        let callee = i.checked_sub(1).and_then(|at| tree.child(at));
+        // `fn name(...)` is an item defined inside the macro, not a call.
+        let defines = i >= 2 && tree.child(i - 2).is_some_and(|n| n.kind() == "fn");
+        if let Some(callee) = callee.filter(|n| n.kind() == "identifier") {
+            let parenthesized = ctx.source.get(child.start_byte()) == Some(&b'(');
+            if parenthesized && !defines {
+                push_call_ref(callee, ctx, &node_text(callee, ctx.source), result);
+            }
+        }
+        walk_token_tree(child, ctx, result);
+    }
+}
+
 fn walk_for_calls(node: TsNode, ctx: &RefCtx, result: &mut ax_types::ExtractionResult) {
     if node.kind() == "call_expression" {
         if let Some(callee) = extract_ts_js_callee(node, ctx.source) {

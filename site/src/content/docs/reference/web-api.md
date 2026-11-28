@@ -6,6 +6,7 @@ description: Every HTTP endpoint served by ax web / ax ship --watch, grouped by 
 `ax web` (and `ax ship --watch`) serve the Command Center UI and a JSON API on the same port (default `7070`). Every path below is relative to that server, for example `http://127.0.0.1:7070/api/stats`.
 
 - Requests from the local machine need no token. Through `ax share`, every `/api`, `/dav` and `/ax` request needs the share token (see [Share Command Center](/guides/share/)).
+- The `Host` header must name this server: `localhost` or a loopback address, an IP address when the server is bound beyond loopback, the host of `AX_WEB_AUTH_ORIGIN`, or a name listed in `AX_WEB_ALLOWED_HOSTS` (comma separated) or in `web.allowed_hosts` in `~/.ax/config.json`. Any other `Host` gets `403`. This stops DNS rebinding, where a page on another domain points its name at this computer. The list is read when the server starts.
 - Endpoints ending in `/stream` or `/events` answer with Server-Sent Events (SSE).
 - UI routes like `/policy/rules` or `/graph` return the single-page app and work as bookmarks. Unknown `/api/` routes return an error rather than the HTML application shell.
 
@@ -25,10 +26,12 @@ description: Every HTTP endpoint served by ax web / ax ship --watch, grouped by 
 | GET | `/api/files` | Indexed file tree (lazy per folder) |
 | GET | `/api/files/roots` | Top-level folders and files |
 | GET | `/api/search` | Full-text symbol search |
-| GET | `/api/source` | Source text of a file range |
+| GET | `/api/source` | Source text of a file range (indexed files only, up to 8 MiB; never `.env*`, `.git/` or `.ax/`) |
 | GET | `/api/unresolved` | Unresolved references |
 | GET | `/api/unresolved/summary` | Unresolved counts per kind |
 | POST | `/api/unresolved/reconcile` | Re-run resolution for unresolved references |
+
+List routes take `limit` and `offset`. `limit` is kept between 1 and the route's maximum, and a negative `offset` starts at the first row.
 
 ## Policy (rules and skills)
 
@@ -51,7 +54,7 @@ description: Every HTTP endpoint served by ax web / ax ship --watch, grouped by 
 | POST | `/api/policy/match` | Which rules and skills match a prompt (Match page) |
 | POST | `/api/policy/capture` | Save a durable directive as a rule |
 | POST | `/api/policy/reindex` | Re-index policy from disk |
-| POST | `/api/policy/export` | Export policy files |
+| POST | `/api/policy/export` | Export policy files to `out_dir`, a folder inside the project (default `.ax/policy/export`); absolute paths, `..` and links out of the project get 400 |
 | GET | `/api/policy/pack/status` | Git pack sync status |
 | POST | `/api/policy/pack/export` | Export a pack |
 | POST | `/api/policy/pack/import` | Import a pack |
@@ -63,6 +66,17 @@ description: Every HTTP endpoint served by ax web / ax ship --watch, grouped by 
 | GET | `/api/policy/review/{id}` | One staged item |
 | POST | `/api/policy/review/{id}/approve` | Accept a staged item |
 | POST | `/api/policy/review/{id}/reject` | Reject a staged item |
+| GET | `/api/policy/skills/catalog/search` | Search the public skill catalog |
+| POST | `/api/policy/skills/catalog/install` | Install a skill from a catalog source |
+| GET | `/api/policy/skills/catalog/installed` | Skills installed from the catalog |
+| GET, PUT | `/api/policy/skills/catalog/settings` | Install reporting and the publish repository |
+| GET | `/api/policy/skills/catalog/audits`, `/api/policy/rules/catalog/audits` | Latest audit reports |
+| POST | `/api/policy/skills/catalog/audit` | Audit a skill before installing it |
+| GET, POST | `/api/policy/skills/{name}/audit` | Read or run a skill audit |
+| POST | `/api/policy/rules/{id}/audit` | Run a rule audit |
+| POST | `/api/policy/skills/{name}/publish` | Publish one skill to the publish repository |
+
+Read-only mode (`ax share`, `AX_WEB_READONLY=1`) refuses every catalog route that writes: install, settings, audits and publish. The publish repository must be an `https://` or `ssh://` URL, an scp-style `user@host:path`, or a folder inside the project (relative folders are relative to the project, optionally prefixed with `well-known:`); other values get `400`.
 | GET, PUT | `/api/policy/settings` | Policy settings (folder, storage mode) |
 
 ### Remote policy share
@@ -78,7 +92,17 @@ description: Every HTTP endpoint served by ax web / ax ship --watch, grouped by 
 | PUT | `/api/auth/microsoft/config` | Tenant / client settings |
 | DELETE | `/api/auth/microsoft` | Sign out |
 
+The Microsoft sign-in routes follow the same share-token and sign-in rules as the rest of `/api`. Starting or polling sign-in, changing the client and signing out work only on a writable server, from a browser on this computer at the loopback address; other callers get `403`. While the server's environment sets `AX_MS_CLIENT_ID`, that value is used for sign-in and `PUT /api/auth/microsoft/config` answers `409`.
+
 See [Remote Policy Share](/guides/policy-sharing/).
+
+## Specs
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/specs` | List specs and imported plans |
+
+The list imports finished plans from the plan folders on disk at most once every 30 seconds. `GET /api/specs?refresh=1` (or `refresh=true`) rescans the folders first; the Specs page sends it. A read-only Command Center lists what is stored without importing.
 
 ## Memory and links
 
@@ -118,7 +142,7 @@ See [Obsidian Vault](/guides/obsidian-vault/).
 | GET | `/api/ship/events` | Pipeline events (SSE) |
 | GET | `/api/ship/status` | Branch, last report, running step |
 | GET | `/api/ship/impact` | Changed files and impacted tests |
-| POST | `/api/ship/command` | Run evaluate / draft PR |
+| POST | `/api/ship/command` | Run evaluate / draft PR. Both are refused in read-only mode |
 | GET, PUT | `/api/ship/config` | Read or save `.ax/ship.toml` |
 | GET, PUT | `/api/ship/review-language` | Review comment language |
 
@@ -131,7 +155,7 @@ The `/api/ship/sonar/*` endpoints (discover, install, start, stop, bootstrap, se
 | GET | `/api/usage/savings` | Savings dashboard data |
 | POST | `/api/usage/savings/import` | Import IDE session logs |
 | GET | `/api/usage/savings/call/{id}` | One recorded tool call |
-| POST | `/api/usage/tokenize` | Token count for a text |
+| POST | `/api/usage/tokenize` | Token count for a text (body up to 512 KiB; text beyond the tokenizer's input cap is answered as truncated) |
 | GET | `/api/usage/pricing` | Model price catalog |
 | GET | `/api/usage/pricing/status` | Last price sync |
 | GET | `/api/usage/pricing/history` | Price over time |
@@ -139,10 +163,10 @@ The `/api/ship/sonar/*` endpoints (discover, install, start, stop, bootstrap, se
 | POST | `/api/usage/pricing/sync` | Sync prices now |
 | GET | `/api/usage/mcp-trace/events` | Live MCP verbose stream (SSE) |
 | GET | `/api/usage/mcp-trace/chunk` | Older log lines |
-| GET | `/api/usage/mcp-trace/path` | Path of today's log file |
+| GET | `/api/usage/mcp-trace/path` | Path of today's log file. When this project has no verbose log, the local owner's own writable Command Center follows the most recently written log of another recent project; read-only (share) viewers and other callers only ever see this project's log |
 | GET | `/api/usage/mcp-quality` | Quality metrics (Q slide-out) |
 | GET | `/api/usage/mcp-quality/events` | Quality updates (SSE) |
-| POST | `/api/usage/mcp-audit` | Run the audit (`ax mcp audit`) |
+| POST | `/api/usage/mcp-audit` | Run the audit (`ax mcp audit`). `session` is a session id or one of this project's agent transcript files; other paths get 400. Refused in read-only mode |
 
 ## Workspace
 
@@ -158,6 +182,10 @@ The `/api/ship/sonar/*` endpoints (discover, install, start, stop, bootstrap, se
 | GET | `/api/workspace/purge-plan` | What a project purge would delete |
 | POST | `/api/workspace/purge` | Delete a project's ax data |
 
+These routes work on folders anywhere on this computer; there is no list of allowed folders. Paths must be absolute. With web sign-in off, they answer only the browser of the person at this computer: a connection from this computer, without a proxy header, to `127.0.0.1`, `localhost` or `[::1]` on the Command Center port, with no `Origin` from another page. Anything else gets 403. With sign-in on, they need an Admin or Owner session. The routes that write, `recent/add` included, are refused in read-only mode.
+
+Purging the database of the project that is open closes it first: its background tasks stop and every connection to `.ax/ax.db` closes, and the reply has `"disconnected": true`. Until another project is opened with `switch`, project routes under `/api` and `/dav` answer 409 with "No project open"; the workspace, access, sign-in and action routes keep working.
+
 ## IDEs and agents
 
 | Method | Path | Purpose |
@@ -170,17 +198,19 @@ The `/api/ship/sonar/*` endpoints (discover, install, start, stop, bootstrap, se
 | GET, POST | `/api/agent/profiles` | List / create agent profiles |
 | PUT | `/api/agent/profiles/active` | Set the active profile |
 | PUT, DELETE | `/api/agent/profiles/{agent}/{id}` | Edit / delete a profile |
-| POST | `/api/agent/profiles/{agent}/{id}/auth/stream` | Sign a profile in (SSE) |
+| POST | `/api/agent/profiles/{agent}/{id}/auth/stream` | Sign a profile in (SSE with the CLI's output lines; stopped after 15 minutes or when the stream closes) |
 | POST | `/api/agent/profiles/{agent}/{id}/authenticated` | Mark a profile as signed in |
 
 `/api/agent/chat/stream` and `/api/agent/pty/ws` belonged to the removed Agent page. The `config` and `profiles` endpoints still exist, but no Command Center screen uses them anymore.
+
+In read-only mode every `/api/agent` request other than `GET` and `HEAD` returns 403. `/api/agent/chat/stream` starts an agent with tool access in the project, so like the terminal socket it answers only the local browser (a loopback peer on the loopback address); other callers get 403. An external agent run is stopped after 30 minutes or as soon as the browser closes the stream. Closing the `/api/agent/pty/ws` socket kills the CLI it started.
 
 ## Operations and integrations
 
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/ops/mcp-health` | Shared MCP daemon health |
-| POST | `/api/ops/mcp-reload` | Restart the MCP daemon (**Reload MCP**) |
+| POST | `/api/ops/mcp-reload` | Restart the MCP daemon (**Reload MCP**). Only from the local owner's own Command Center page; refused in read-only mode |
 | GET | `/api/lsp/status` | Language-server status |
 | POST | `/api/lsp/enrich` | Add exact edges from language servers |
 | GET | `/api/plugins` | Extractor plugins |
@@ -216,9 +246,14 @@ Interactive human sessions use an opaque, HttpOnly, SameSite cookie. Passkeys ar
 
 Authentication may be disabled for trusted local installations; remote Command Center data access stays protected. Configure `AX_WEB_AUTH_ORIGIN` to the exact stable HTTPS origin used for passkeys; localhost development is supported. Browser clients must not send credentials to a different host.
 
+With sign-in on, every `/api` request needs a session, and the gate applies the member's role:
+
+- **Changes** (any method other than `GET` and `HEAD`, and every WebSocket) need a role that may write; a Read-only member gets 403. A change from another computer must carry an `Origin` that is this server's own page: `AX_WEB_AUTH_ORIGIN` when it is set, otherwise the request's `Host` over HTTPS (or over HTTP when no proxy reports `X-Forwarded-Proto: https`). Any other `Origin`, including a sibling subdomain, or none at all, gets 403.
+- **Management and this computer** need Admin or Owner: `/api/agent` (IDE installs, agent chat and the agent terminal), `/api/workspace`, `/api/lsp`, `/api/dav/mount`, `/api/auth/microsoft`, `/api/remote-mcp`, `/api/access`, `/api/ops`, `/api/ship`, `/api/plugins`, `/api/policy/share`, `/api/vault` and `/api/actions`.
+
 ## Team, clients and replication access
 
-These endpoints enforce the local-owner session or a client credential with the corresponding `admin:team`, `admin:clients` or `admin:nodes` scope. Mutations are rejected in read-only mode. Local browser mutations use the CSRF value from `/api/access/session` in `X-Ax-Access-Csrf`. Token values are returned only when created/revealed; keep them out of logs and screenshots.
+These endpoints enforce the local-owner session or a client credential with the corresponding `admin:team`, `admin:clients` or `admin:nodes` scope. Mutations are rejected in read-only mode. Local browser mutations use the CSRF value from `/api/access/session` in `X-Ax-Access-Csrf`. Token values are returned only when created/revealed; keep them out of logs and screenshots. A client credential acts with the role of the member it belongs to, so only an Owner can create, issue, rotate or change the scopes of a client that belongs to an Owner; anyone else gets 403.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -242,6 +277,8 @@ These endpoints enforce the local-owner session or a client credential with the 
 | POST | `/api/access/nodes/{id}/remove` | Remove a revoked peer record |
 | POST | `/api/access/nodes/{id}/reenroll` | Allow a blocked peer to enroll again |
 
+Starting the local service as a replica enrolls with the Primary and applies its snapshot, which can take minutes. During that time `GET /api/access/nodes/local` keeps answering and reports `"setting_up": true`; a second start, stop or remove is refused with 409 until setup finishes.
+
 ## Local remote-MCP connection login
 
 Use these on the hosting computer through local Command Center. They manage the local OAuth client connection, not public server access grants. Mutations require `X-Ax-Csrf` from the status response.
@@ -260,7 +297,7 @@ These are host operations, not passive documentation examples. Streaming variant
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/ship/sonar/discover` | Inspect runtimes, containers and reachability |
+| GET | `/api/ship/sonar/discover` | Inspect runtimes, containers and reachability. Outside read-only mode it also starts project provisioning when SonarQube is enabled and reachable |
 | POST | `/api/ship/sonar/install` | Install the configured service |
 | POST | `/api/ship/sonar/install/stream` | Install with progress |
 | POST | `/api/ship/sonar/start` | Start the service |
@@ -269,7 +306,7 @@ These are host operations, not passive documentation examples. Streaming variant
 | POST | `/api/ship/sonar/stop/stream` | Stop with progress |
 | POST | `/api/ship/sonar/bootstrap` | Bootstrap project setup |
 | GET | `/api/ship/sonar/setup` | Read project, scanner and token setup status |
-| POST | `/api/ship/sonar/validate-login` | Validate configured login |
+| POST | `/api/ship/sonar/validate-login` | Check a SonarQube login. `host` must be the configured SonarQube host or a loopback address (other hosts get 400); refused in read-only mode |
 | GET | `/api/ship/sonar/validate-token` | Validate the current token |
 | POST | `/api/ship/sonar/regenerate-token` | Replace the scanner token |
 | POST | `/api/ship/sonar/scan` | Run a scan |
@@ -277,6 +314,10 @@ These are host operations, not passive documentation examples. Streaming variant
 | POST | `/api/ship/sonar/exclude` | Update scan exclusions |
 | GET | `/api/ship/sonar/ui/info` | Proxy connection information |
 | ANY | `/api/ship/sonar/ui/{*path}` | Proxy a SonarQube UI subpath |
+
+The UI proxy sends each request with the configured SonarQube admin login. Only `GET` and `HEAD` pass in every case. Any other method returns 403 in read-only mode, on a cross-site request (`Sec-Fetch-Site` other than `same-origin`), and when the `Origin` header is missing or names a different host than the request. The SonarQube page opened in the Command Center meets these rules on its own.
+
+The other `/api/ship` writes follow the same `Origin` rule when they carry no JSON body (for example `sonar/start`, `sonar/stop`, `sonar/regenerate-token` and `sonar/scan` without a body), because another website can send such a request without a CORS preflight. Writes with a `Content-Type: application/json` body are not affected, so scripts and the desktop client can call them without an `Origin` header.
 
 ## Live data refresh
 

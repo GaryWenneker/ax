@@ -134,10 +134,11 @@ mod tests {
         )
         .unwrap();
 
-        let prev_home = std::env::var_os("AX_HOME_DIR");
-        let prev_db = std::env::var_os("AX_USAGE_DB");
-        std::env::set_var("AX_HOME_DIR", home.path());
-        std::env::set_var("AX_USAGE_DB", db.path());
+        let env = crate::test_env::scoped_env(&[
+            ("AX_HOME_DIR", home.path().as_os_str()),
+            ("AX_USAGE_DB", db.path().as_os_str()),
+        ])
+        .await;
 
         let ran = run("month", None, None, None, true, None).await;
         let report = collect_report(
@@ -149,15 +150,7 @@ mod tests {
             None,
         )
         .await;
-
-        match prev_home {
-            Some(value) => std::env::set_var("AX_HOME_DIR", value),
-            None => std::env::remove_var("AX_HOME_DIR"),
-        }
-        match prev_db {
-            Some(value) => std::env::set_var("AX_USAGE_DB", value),
-            None => std::env::remove_var("AX_USAGE_DB"),
-        }
+        drop(env);
 
         ran.unwrap();
         let (report, _, _) = report.unwrap();
