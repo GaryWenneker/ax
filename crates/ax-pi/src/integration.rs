@@ -6,7 +6,7 @@
 //! transcript, so this crate returns context sections for a tool or resource
 //! boundary and does not ask the host to rewrite `session.agent.state.messages`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -132,12 +132,84 @@ struct State {
     indexed_paths: Vec<String>,
     repository_state: String,
     output_cache: HashMap<String, String>,
-    pending_args: HashMap<String, Value>,
+    pending_tools: PendingTools,
+    /// Sequence for generated tool call ids when the host sends none.
+    tool_seq: u64,
     started: bool,
     model_seq: u64,
     /// Unique per integration instance. Generated turn, model and tool ids
     /// carry it, so a later run on the same database never reuses an id.
     run_id: String,
+}
+
+/// Tool calls that started and have not ended yet, holding their arguments
+/// until the end event. A start with a call id pairs with the end carrying the
+/// same id; starts without one pair first-in, first-out per session and tool.
+#[derive(Default)]
+struct PendingTools {
+    by_id: HashMap<String, (String, Value)>,
+    unnamed: HashMap<(String, String), VecDeque<Value>>,
+    count: usize,
+}
+
+/// Unfinished tool calls kept at most. Starts beyond this are not held; their
+/// end events fall back to the arguments they carry themselves.
+const MAX_PENDING_TOOLS: usize = 1024;
+
+impl PendingTools {
+    fn start(&mut self, session: &str, tool: &str, call_id: Option<String>, arguments: Value) {
+        if self.count >= MAX_PENDING_TOOLS {
+            return;
+        }
+        match call_id {
+            Some(id) => {
+                if self
+                    .by_id
+                    .insert(id, (session.to_string(), arguments))
+                    .is_none()
+                {
+                    self.count += 1;
+                }
+            }
+            None => {
+                self.unnamed
+                    .entry((session.to_string(), tool.to_string()))
+                    .or_default()
+                    .push_back(arguments);
+                self.count += 1;
+            }
+        }
+    }
+
+    fn finish(&mut self, session: &str, tool: &str, call_id: Option<&str>) -> Option<Value> {
+        let found = match call_id {
+            Some(id) => self.by_id.remove(id).map(|(_, arguments)| arguments),
+            None => {
+                let key = (session.to_string(), tool.to_string());
+                let queue = self.unnamed.get_mut(&key)?;
+                let found = queue.pop_front();
+                if queue.is_empty() {
+                    self.unnamed.remove(&key);
+                }
+                found
+            }
+        };
+        if found.is_some() {
+            self.count -= 1;
+        }
+        found
+    }
+
+    fn drop_session(&mut self, session: &str) {
+        self.by_id.retain(|_, (owner, _)| owner != session);
+        self.unnamed.retain(|(owner, _), _| owner != session);
+        self.count = self.by_id.len() + self.unnamed.values().map(VecDeque::len).sum::<usize>();
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.count
+    }
 }
 
 impl PiIntegration {
@@ -563,7 +635,8 @@ pub fn create_pi_integration(options: PiOptions) -> PiIntegration {
             indexed_paths: Vec::new(),
             repository_state: "unknown".into(),
             output_cache: HashMap::new(),
-            pending_args: HashMap::new(),
+            pending_tools: PendingTools::default(),
+            tool_seq: 0,
             started: false,
             model_seq: 0,
             run_id: uuid::Uuid::new_v4().simple().to_string(),
@@ -583,6 +656,7 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
             if let Some(session) = state.sessions.get_mut(&base.session_id) {
                 session.cumulative_cost.currency = "USD".into();
             }
+            state.pending_tools.drop_session(&base.session_id);
         }
         AxAgentEvent::TurnStarted(base) => {
             let session_id = base.session_id.clone();
@@ -623,6 +697,8 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
                     turn.ended_at = Some(base.timestamp);
                 }
             }
+            // A tool that has not ended by the end of its turn never will.
+            state.pending_tools.drop_session(&base.session_id);
         }
         AxAgentEvent::ModelResponse(model) => {
             state.model_seq += 1;
@@ -686,19 +762,29 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
             });
         }
         AxAgentEvent::ToolStarted(start) => {
-            let call_id = start.base.operation_id.clone().unwrap_or_else(|| {
-                format!("{}-{}-{}", start.tool_name, state.run_id, state.tools.len())
-            });
-            state.pending_args.insert(call_id, arguments_for_hash(raw));
+            state.pending_tools.start(
+                &start.base.session_id,
+                &start.tool_name,
+                start.base.operation_id.clone(),
+                arguments_for_hash(raw),
+            );
         }
         AxAgentEvent::ToolEnded(end) => {
-            let call_id = end.base.operation_id.clone().unwrap_or_else(|| {
-                format!("{}-{}-{}", end.tool_name, state.run_id, state.tools.len())
-            });
             let arguments = state
-                .pending_args
-                .remove(&call_id)
+                .pending_tools
+                .finish(
+                    &end.base.session_id,
+                    &end.tool_name,
+                    end.base.operation_id.as_deref(),
+                )
                 .unwrap_or_else(|| arguments_for_hash(raw));
+            let call_id = match end.base.operation_id.clone() {
+                Some(id) => id,
+                None => {
+                    state.tool_seq += 1;
+                    format!("{}-{}-{}", end.tool_name, state.run_id, state.tool_seq)
+                }
+            };
             let turn_id = end
                 .base
                 .turn_id
@@ -988,4 +1074,56 @@ pub async fn read_optimization(path: &Path) -> Result<(String, Value), String> {
     let text = format_optimization(&report);
     let json = serde_json::to_value(&report).map_err(|err| err.to_string())?;
     Ok((text, json))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn integration() -> PiIntegration {
+        create_pi_integration(PiOptions {
+            session_id: Some("s".into()),
+            ..PiOptions::default()
+        })
+    }
+
+    fn pending_count(pi: &PiIntegration) -> usize {
+        let state = pi.state.lock().unwrap();
+        state.pending_tools.len()
+    }
+
+    #[test]
+    fn tools_that_never_end_are_dropped_when_the_session_ends() {
+        let pi = integration();
+        pi.ingest(&json!({"type": "agent_start"})).unwrap();
+        pi.ingest(&json!({"type": "tool_execution_start", "toolName": "rg", "toolCallId": "c1", "args": {"q": 1}}))
+            .unwrap();
+        pi.ingest(&json!({"type": "tool_execution_start", "toolName": "rg", "args": {"q": 2}}))
+            .unwrap();
+        assert!(pending_count(&pi) > 0);
+        pi.ingest(&json!({"type": "agent_end"})).unwrap();
+        assert_eq!(pending_count(&pi), 0);
+    }
+
+    #[test]
+    fn unfinished_tools_are_held_up_to_a_limit() {
+        let pi = integration();
+        for n in 0..(MAX_PENDING_TOOLS + 50) {
+            pi.ingest(&json!({"type": "tool_execution_start", "toolName": "rg", "args": {"n": n}}))
+                .unwrap();
+        }
+        assert_eq!(pending_count(&pi), MAX_PENDING_TOOLS);
+    }
+
+    #[test]
+    fn a_turn_end_drops_that_sessions_unfinished_tools_only() {
+        let pi = integration();
+        pi.ingest(&json!({"type": "tool_execution_start", "toolName": "rg", "toolCallId": "c1", "args": {}}))
+            .unwrap();
+        pi.ingest(&json!({"type": "tool_execution_start", "toolName": "rg", "toolCallId": "c2", "sessionId": "other", "args": {}}))
+            .unwrap();
+        pi.ingest(&json!({"type": "turn_end"})).unwrap();
+        assert_eq!(pending_count(&pi), 1);
+    }
 }

@@ -28,10 +28,7 @@ pub fn translate(
     if session.is_empty() {
         return Err(TranslateError("missing session id".into()));
     }
-    let mut base = AxEventBase::new(
-        event_time_ms(event).unwrap_or(timestamp),
-        session,
-    );
+    let mut base = AxEventBase::new(event_time_ms(event).unwrap_or(timestamp), session);
     base.turn_id = string_attr(event, &["turnId", "turn_id", "turn.id"]);
     base.operation_id = string_attr(
         event,

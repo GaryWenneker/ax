@@ -634,7 +634,11 @@ mod tests {
 
     #[test]
     fn entity_on_identifier_boundaries_still_matches() {
-        let obs = observation("rg", json!({"pattern": "fn UserService(", "path": "src/"}), 7_000);
+        let obs = observation(
+            "rg",
+            json!({"pattern": "fn UserService(", "path": "src/"}),
+            7_000,
+        );
         let advice = advise_observation(&obs, false, OptimizationMode::Optimize, 9_000, true);
         assert_eq!(advice.alternatives[0].rule, "known-symbol-search");
         assert_eq!(advice.alternatives[0].confidence, Confidence::High);
