@@ -119,11 +119,12 @@ impl DesktopApp {
 }
 
 impl eframe::App for DesktopApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // Keep UI alive while SSE streams deliver.
-        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(100));
 
-        egui::TopBottomPanel::top("titlebar").show(ctx, |ui| {
+        egui::Panel::top("titlebar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading(egui::RichText::new("ax").color(theme::ACCENT).strong());
                 ui.label(egui::RichText::new("/ graph + policy").weak());
@@ -137,7 +138,7 @@ impl eframe::App for DesktopApp {
             });
         });
 
-        egui::TopBottomPanel::bottom("statusbar").show(ctx, |ui| {
+        egui::Panel::bottom("statusbar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(&self.status_msg);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -150,10 +151,10 @@ impl eframe::App for DesktopApp {
             });
         });
 
-        egui::SidePanel::left("sidebar")
-            .default_width(200.0)
+        egui::Panel::left("sidebar")
+            .default_size(200.0)
             .resizable(true)
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 ui.add_space(4.0);
                 ui.label(egui::RichText::new("Browse").small().weak());
                 ui.separator();
@@ -170,7 +171,7 @@ impl eframe::App for DesktopApp {
                 }
             });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             let mut pctx = PageCtx {
                 client: self.client.clone(),
                 status_msg: &mut self.status_msg,
