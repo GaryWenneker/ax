@@ -419,10 +419,21 @@ pub fn write_project_share_config_with(
     let github = &config.github;
     let key = crate::secret::token_key(project_root, &github.repo_url);
     if github.clear_token {
-        // The plain-text locations are cleared even when the credential
-        // store cannot be reached, but the save then reports that failure:
-        // a token left in the store would come back on the next load.
-        let deleted = secrets.delete(&key);
+        // The plain-text locations are always cleared. A store that holds a
+        // token and cannot delete it fails the save, since that token would
+        // come back on the next load. A store that cannot be read at all
+        // holds nothing ax loads (a load falls back the same way), so the
+        // delete is still tried and the clear succeeds with a warning.
+        let deleted = match secrets.get(&key) {
+            Ok(Some(_)) => secrets.delete(&key),
+            Ok(None) => Ok(()),
+            Err(e) => {
+                if secrets.delete(&key).is_err() {
+                    crate::secret::warn_unavailable_once(&e);
+                }
+                Ok(())
+            }
+        };
         write_git_token(token_store, &github.repo_url, None)?;
         write_share_at(&path, config)?;
         deleted?;
@@ -1049,6 +1060,37 @@ mod tests {
         let err =
             write_project_share_config_with(project.path(), &clear, &secrets, &store).unwrap_err();
         assert!(err.contains("credential store"), "{err}");
+    }
+
+    /// With no credential store at all (headless Linux, no Secret Service)
+    /// there is nothing to delete there, so clearing the token succeeds once
+    /// ax.json and the old token file no longer hold it.
+    #[test]
+    fn clear_token_succeeds_without_a_credential_store() {
+        let project = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let store = home.path().join("auth/git-share.json");
+        let repo = "https://gitlab.example.com/team/policy.git";
+        write_share_json(
+            &project.path().join(CONFIG_FILENAME),
+            serde_json::json!({
+                "provider": "github",
+                "github": { "repoUrl": repo, "token": "glpat-old" }
+            }),
+        );
+        write_git_token(&store, repo, Some("glpat-file")).unwrap();
+
+        let mut clear = github_with_token("");
+        clear.github.repo_url = repo.into();
+        clear.github.clear_token = true;
+        write_project_share_config_with(project.path(), &clear, &Unavailable, &store)
+            .expect("clearing must not need a credential store that is not there");
+
+        let cfg = load_share_config_with(project.path(), &Unavailable, &store);
+        assert_eq!(cfg.github.token, "");
+        assert!(!cfg.github.token_set);
+        let raw = fs::read_to_string(project.path().join(CONFIG_FILENAME)).unwrap();
+        assert!(!raw.contains("glpat-old"), "{raw}");
     }
 
     #[test]
