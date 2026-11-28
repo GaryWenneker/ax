@@ -105,7 +105,7 @@ pub fn ensure_within(root: &Path, path: &Path) -> Result<(), PathEscape> {
 /// content, never a partial file: write a temporary file next to it, flush it
 /// to disk, then rename it over `path`. Keeps the old file's permissions.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    replace_file(path, bytes, false)
+    write_replacing(path, bytes, false)
 }
 
 /// [`atomic_write`] for a secret: the temporary file is created with mode
@@ -113,10 +113,12 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// its permissions were, so the content is never readable by other users,
 /// not even briefly.
 pub fn atomic_write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    replace_file(path, bytes, true)
+    write_replacing(path, bytes, true)
 }
 
-fn replace_file(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> {
+/// Writes `bytes` to a temporary file next to `path`, then moves it over
+/// `path` through [`replace_file`].
+fn write_replacing(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> {
     let dir = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
