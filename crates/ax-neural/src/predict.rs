@@ -24,12 +24,17 @@ pub struct Prediction {
     pub relationship: String,
 }
 
+/// Most predictions one call returns, highest confidence first.
+pub const MAX_PREDICTIONS: usize = 50;
+
 pub fn predict(rows: &[Observation], task: &str, minimum_confidence: f64) -> Vec<Prediction> {
     predict_with_edges(rows, task, minimum_confidence, &[])
 }
 
-/// Same as [`predict`], but marks `relationship: verified` when `(kind, target_id)` appears in `edges`
-/// as either endpoint pair encoded `source\0target` kind hints, or as `"graph:{source}->{target}"` targets.
+/// Same as [`predict`], but marks a prediction `relationship: verified` when a graph edge
+/// joins its target to another id that this task predicts or that its matching feedback
+/// rows used as context. Edges never become predictions on their own. At most
+/// [`MAX_PREDICTIONS`] predictions are returned.
 pub fn predict_with_edges(
     rows: &[Observation],
     task: &str,
@@ -45,7 +50,6 @@ pub fn predict_with_edges(
     }
     let mut counts: HashMap<(&'static str, &str), usize> = HashMap::new();
     let mut pattern_counts: HashMap<&str, usize> = HashMap::new();
-    let mut graph_counts: HashMap<(&str, &str), usize> = HashMap::new();
     for row in &matched {
         tally(
             &mut counts,
@@ -65,21 +69,26 @@ pub fn predict_with_edges(
                 .or_insert(0) += 1;
         }
     }
+    // Ids this task touches: every counted target plus the matching rows' context ids.
+    let mut known: HashSet<&str> = counts.keys().map(|(_, id)| *id).collect();
+    for row in &matched {
+        known.extend(row.context_ids.iter().map(String::as_str));
+    }
+    // For each known id, the other known ids an edge joins it to.
+    let mut linked: HashMap<&str, Vec<&str>> = HashMap::new();
     for (source, target) in edges {
-        if source.is_empty() || target.is_empty() {
+        let (source, target) = (source.as_str(), target.as_str());
+        if source.is_empty() || target.is_empty() || source == target {
             continue;
         }
-        *graph_counts
-            .entry((source.as_str(), target.as_str()))
-            .or_insert(0) += matched.len();
+        if known.contains(source) && known.contains(target) {
+            linked.entry(source).or_default().push(target);
+            linked.entry(target).or_default().push(source);
+        }
     }
     let total = matched.len() as f64;
     let mut out: Vec<Prediction> = Vec::new();
-    let mut push = |kind: &str,
-                    target_id: String,
-                    count: usize,
-                    confidence: f64,
-                    relationship: &str| {
+    let mut push = |kind: &str, target_id: String, count: usize, confidence: f64| {
         if confidence + f64::EPSILON < minimum_confidence {
             return;
         }
@@ -87,10 +96,25 @@ pub fn predict_with_edges(
             "{kind} `{target_id}` co-occurred in {count} of {} feedback rows matching this task (frequency prior; not neural inference)",
             matched.len()
         );
-        let evidence = vec![format!(
+        let mut evidence = vec![format!(
             "seen in {count}/{} matching execution(s) for task category filter",
             matched.len()
         )];
+        let mut relationship = "inferred";
+        if kind != "pattern" {
+            if let Some(others) = linked.get(target_id.as_str()) {
+                relationship = "verified";
+                let mut others = others.clone();
+                others.sort_unstable();
+                others.dedup();
+                evidence.extend(
+                    others
+                        .iter()
+                        .take(5)
+                        .map(|other| format!("graph edge joins `{target_id}` and `{other}`")),
+                );
+            }
+        }
         out.push(Prediction {
             kind: kind.to_string(),
             target_id,
@@ -101,14 +125,8 @@ pub fn predict_with_edges(
             relationship: relationship.into(),
         });
     };
-    for ((kind, target_id), count) in counts {
-        push(
-            kind,
-            target_id.to_string(),
-            count,
-            count as f64 / total,
-            "inferred",
-        );
+    for ((kind, target_id), count) in &counts {
+        push(kind, target_id.to_string(), *count, *count as f64 / total);
     }
     for (category, count) in pattern_counts {
         push(
@@ -116,16 +134,6 @@ pub fn predict_with_edges(
             format!("task:{category}"),
             count,
             count as f64 / total,
-            "inferred",
-        );
-    }
-    for ((source, target), count) in graph_counts {
-        push(
-            "graph",
-            format!("{source}->{target}"),
-            count,
-            1.0,
-            "verified",
         );
     }
     drop(push);
@@ -136,6 +144,7 @@ pub fn predict_with_edges(
             .then_with(|| a.kind.cmp(&b.kind))
             .then_with(|| a.target_id.cmp(&b.target_id))
     });
+    out.truncate(MAX_PREDICTIONS);
     out
 }
 
@@ -404,12 +413,22 @@ fn tally<'a>(
     }
 }
 
+/// Lowercased alphanumeric words of `text`.
+fn words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// True when every word of the row's category is a whole word of the task.
 fn category_matches(row: &Observation, task: &str) -> bool {
-    let category = row.task_category.to_ascii_lowercase();
-    let task = task.to_ascii_lowercase();
-    !category.is_empty()
-        && !task.trim().is_empty()
-        && (task.contains(&category) || category.contains(&task))
+    let category = words(&row.task_category);
+    if category.is_empty() {
+        return false;
+    }
+    let task: HashSet<String> = words(task).into_iter().collect();
+    category.iter().all(|word| task.contains(word))
 }
 
 #[cfg(test)]
@@ -585,16 +604,83 @@ mod tests {
             task_category: "graph".into(),
             skills: vec![],
             rules: vec![],
+            context_ids: vec!["src/a.rs".into(), "src/b.rs".into(), "src/c.rs".into()],
+        };
+        let edges = vec![
+            ("src/a.rs".into(), "src/b.rs".into()),
+            ("src/c.rs".into(), "src/elsewhere.rs".into()),
+        ];
+        let predicted = predict_with_edges(&[row], "graph", 0.0, &edges);
+        let relationship = |id: &str| {
+            predicted
+                .iter()
+                .find(|p| p.kind == "file" && p.target_id == id)
+                .map(|p| p.relationship.clone())
+                .expect("file prediction")
+        };
+        assert_eq!(relationship("src/a.rs"), "verified");
+        assert_eq!(relationship("src/b.rs"), "verified");
+        // An edge to an id outside the predicted context does not verify.
+        assert_eq!(relationship("src/c.rs"), "inferred");
+        let a = predicted
+            .iter()
+            .find(|p| p.target_id == "src/a.rs")
+            .unwrap();
+        assert!(a.evidence.iter().any(|e| e.contains("src/b.rs")), "{a:?}");
+    }
+
+    #[test]
+    fn project_edges_are_never_predictions_by_themselves() {
+        let row = Observation {
+            task_category: "parser".into(),
+            skills: vec!["parse-errors".into()],
+            rules: vec![],
             context_ids: vec![],
         };
-        let edges = vec![("A".into(), "B".into())];
-        let predicted = predict_with_edges(&[row], "graph", 0.0, &edges);
-        let link = predicted
-            .iter()
-            .find(|p| p.kind == "graph" && p.target_id == "A->B")
-            .expect("graph prediction");
-        assert_eq!(link.relationship, "verified");
-        assert!(!link.explanation.is_empty());
+        let edges: Vec<(String, String)> = (0..5_000)
+            .map(|i| (format!("n{i}"), format!("m{i}")))
+            .collect();
+        let predicted = predict_with_edges(&[row], "fix the parser", 0.0, &edges);
+        assert!(predicted.iter().all(|p| p.kind != "graph"), "{predicted:?}");
+        assert_eq!(predicted.len(), 2, "skill + pattern only: {predicted:?}");
+    }
+
+    #[test]
+    fn predictions_are_capped() {
+        let row = Observation {
+            task_category: "parser".into(),
+            skills: (0..1_000).map(|i| format!("skill-{i}")).collect(),
+            rules: vec![],
+            context_ids: vec![],
+        };
+        let predicted = predict(&[row], "parser", 0.0);
+        assert_eq!(predicted.len(), MAX_PREDICTIONS);
+    }
+
+    #[test]
+    fn category_match_needs_whole_tokens() {
+        let row = |category: &str| Observation {
+            task_category: category.into(),
+            skills: vec!["s".into()],
+            rules: vec![],
+            context_ids: vec![],
+        };
+        // "ui" hides inside "build"; that is not a match.
+        assert!(!category_matches(&row("ui"), "build the release pipeline"));
+        // A one-letter task is not a substring match for every category.
+        assert!(!category_matches(&row("parser"), "a"));
+        assert!(!category_matches(&row("parser"), "  "));
+        assert!(category_matches(&row("ui"), "fix the UI layout"));
+        assert!(category_matches(&row("parser"), "fix the parser"));
+        assert!(category_matches(&row("named_trigger"), "named_trigger"));
+        assert!(category_matches(
+            &row("release pipeline"),
+            "build the release pipeline"
+        ));
+        assert!(!category_matches(
+            &row("release notes"),
+            "build the release pipeline"
+        ));
     }
 
     #[test]
