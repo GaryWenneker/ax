@@ -12,8 +12,8 @@ use walkdir::WalkDir;
 use crate::cursor_state::{import_cursor_composer_state, normalize_cursor_model};
 use crate::period::{resolve_period, UsagePeriod};
 use crate::pricing::{
-    input_cost_usd, price_as_of, price_for_model, price_for_model_with_source, pricing_info,
-    reference_pricing, reference_pricing_with_source, refresh_price_cache_from_db, PricingInfo,
+    input_cost_usd, price_for_model, price_for_model_with_source, pricing_info, reference_pricing,
+    reference_pricing_with_source, refresh_price_cache_from_db, PricingInfo,
 };
 use crate::store::{open_pool, usage_db_path};
 use crate::tokenizer::{
@@ -787,6 +787,23 @@ pub struct SessionCostCoverage {
     pub by_day: Vec<SessionDaySpend>,
     /// Recorded session time, rounded up to the next minute. Zero when no session has an end at or after its start.
     pub minutes: u64,
+    /// One entry per imported session, so a cost report can merge only the sessions
+    /// that have no quoted usage events of their own.
+    #[serde(skip)]
+    pub sessions: Vec<SessionCostEntry>,
+}
+
+/// Catalog spend and token counts of one imported session.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SessionCostEntry {
+    pub agent: String,
+    pub session_id: String,
+    pub model: String,
+    pub usd: f64,
+    /// Local calendar day the session started, as `YYYY-MM-DD`.
+    pub day: Option<String>,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
 }
 
 pub(crate) fn session_cost_coverage(sessions: &[AgentSessionRow]) -> SessionCostCoverage {
@@ -799,6 +816,7 @@ pub(crate) fn session_cost_coverage(sessions: &[AgentSessionRow]) -> SessionCost
     let mut output_known = false;
     let mut spend_usd = 0.0;
     let mut total_ms = 0i64;
+    let mut entries = Vec::with_capacity(sessions.len());
     for session in sessions {
         let usd = session
             .session_cost_usd_est
@@ -806,10 +824,20 @@ pub(crate) fn session_cost_coverage(sessions: &[AgentSessionRow]) -> SessionCost
             .unwrap_or(0.0);
         let model = session_model_label(&session.model);
         let agent = agent_label(&session.agent);
+        let day = session.started_at.and_then(local_iso_day);
+        entries.push(SessionCostEntry {
+            agent: session.agent.clone(),
+            session_id: session.session_id.clone(),
+            model: model.clone(),
+            usd,
+            day: day.clone(),
+            input_tokens: session.session_input_tokens.map(|n| n.max(0)),
+            output_tokens: session.session_output_tokens.map(|n| n.max(0)),
+        });
         *models.entry(model).or_default() += usd;
         *agents.entry(agent).or_default() += usd;
         spend_usd += usd;
-        if let Some(day) = session.started_at.and_then(local_iso_day) {
+        if let Some(day) = day {
             *days.entry(day).or_default() += usd;
         }
         if let Some(n) = session.session_input_tokens {
@@ -841,6 +869,7 @@ pub(crate) fn session_cost_coverage(sessions: &[AgentSessionRow]) -> SessionCost
         spend_usd,
         by_day,
         minutes: minutes_from_span_ms(total_ms),
+        sessions: entries,
     }
 }
 
@@ -1288,19 +1317,24 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
     .await
     .map_err(|e| e.to_string())?;
 
+    // One catalog read for the whole period instead of one per day.
+    let dates: Vec<String> = daily_raw.iter().map(|row| row.0.clone()).collect();
+    let day_prices = crate::pricing::reference_prices_as_of(&pool, &dates).await;
     let mut daily: Vec<DailySavings> = Vec::with_capacity(daily_raw.len());
     for (
-        date,
-        tokens_saved_est,
-        calls,
-        graph_calls,
-        failed_calls,
-        counterfactual_files,
-        counterfactual_tokens_est,
-        graph_response_tokens_est,
-    ) in daily_raw
+        (
+            date,
+            tokens_saved_est,
+            calls,
+            graph_calls,
+            failed_calls,
+            counterfactual_files,
+            counterfactual_tokens_est,
+            graph_response_tokens_est,
+        ),
+        (pricing, _),
+    ) in daily_raw.into_iter().zip(day_prices)
     {
-        let (pricing, _) = price_as_of(None, &date).await;
         daily.push(DailySavings {
             date,
             tokens_saved_est,
@@ -1514,18 +1548,47 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
         i64,
         i64,
     );
-    const SESSIONS_SQL: &str = "SELECT s.agent, s.session_id, s.read_calls, s.grep_calls, s.ax_calls,
+    // Every MCP call belongs to at most one session: among the sessions whose
+    // window contains it, the one in the call's project, then the one started
+    // last. Overlapping sessions never count the same call twice. Only
+    // sessions that overlap the calls in range can own one, so `windows`
+    // leaves out the rest of the imported history.
+    const SESSIONS_SQL: &str = "WITH in_range AS (
+           SELECT * FROM agent_session_log s
+           WHERE COALESCE(s.started_at, s.source_mtime) >= ?1
+             AND COALESCE(s.started_at, s.source_mtime) <= ?2
+         ),
+         windows AS MATERIALIZED (
+           SELECT s.id, s.started_at, s.ended_at,
+                  (SELECT e.project FROM agent_usage_event e
+                    WHERE e.agent = s.agent AND e.session_id = s.session_id
+                      AND e.project IS NOT NULL
+                    LIMIT 1) AS project
+           FROM agent_session_log s
+           WHERE s.started_at IS NOT NULL AND s.ended_at IS NOT NULL
+             AND s.ended_at >= (SELECT MIN(started_at) FROM in_range)
+             AND s.started_at <= (SELECT MAX(ended_at) FROM in_range)
+         ),
+         owned AS MATERIALIZED (
+           SELECT m.savings_eligible, m.tokens_saved_est,
+                  (SELECT c.id FROM (
+                     SELECT w.id, w.started_at,
+                            COALESCE(w.project = m.project, 0) AS same_project
+                     FROM windows w
+                     WHERE m.created_at BETWEEN w.started_at AND w.ended_at) c
+                    ORDER BY c.same_project DESC, c.started_at DESC, c.id DESC
+                    LIMIT 1) AS owner
+           FROM mcp_call_log m
+           WHERE m.created_at >= (SELECT MIN(started_at) FROM in_range)
+             AND m.created_at <= (SELECT MAX(ended_at) FROM in_range)
+         )
+         SELECT s.agent, s.session_id, s.read_calls, s.grep_calls, s.ax_calls,
                 s.session_input_tokens, s.session_output_tokens, s.model,
                 s.started_at, s.ended_at,
-                (SELECT COUNT(*) FROM mcp_call_log m
-                  WHERE s.started_at IS NOT NULL AND s.ended_at IS NOT NULL
-                    AND m.created_at BETWEEN s.started_at AND s.ended_at),
-                (SELECT COALESCE(SUM(m.tokens_saved_est), 0) FROM mcp_call_log m
-                  WHERE s.started_at IS NOT NULL AND s.ended_at IS NOT NULL
-                    AND m.savings_eligible = 1
-                    AND m.created_at BETWEEN s.started_at AND s.ended_at)
-         FROM agent_session_log s
-         WHERE COALESCE(s.started_at, s.source_mtime) >= ? AND COALESCE(s.started_at, s.source_mtime) <= ?
+                (SELECT COUNT(*) FROM owned o WHERE o.owner = s.id),
+                (SELECT COALESCE(SUM(o.tokens_saved_est), 0) FROM owned o
+                  WHERE o.owner = s.id AND o.savings_eligible = 1)
+         FROM in_range s
          ORDER BY COALESCE(s.started_at, s.source_mtime) DESC";
 
     let session_rows: Vec<AgentSessionRow> = sqlx::query_as::<_, SessionTuple>(SESSIONS_SQL)
@@ -1825,6 +1888,45 @@ struct SessionAccum {
     model: Option<String>,
     started_at: Option<i64>,
     ended_at: Option<i64>,
+    /// Usage already counted per API response (message id or request id), with
+    /// the index of its event. Transcripts repeat one response's usage on every
+    /// content-block line.
+    seen_responses: HashMap<String, (ResponseUsage, Option<usize>)>,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct ResponseUsage {
+    input: Option<i64>,
+    output: Option<i64>,
+    cache_read: Option<i64>,
+    cache_write: Option<i64>,
+}
+
+impl ResponseUsage {
+    fn max(self, other: Self) -> Self {
+        fn m(a: Option<i64>, b: Option<i64>) -> Option<i64> {
+            match (a, b) {
+                (Some(a), Some(b)) => Some(a.max(b)),
+                (a, b) => a.or(b),
+            }
+        }
+        Self {
+            input: m(self.input, other.input),
+            output: m(self.output, other.output),
+            cache_read: m(self.cache_read, other.cache_read),
+            cache_write: m(self.cache_write, other.cache_write),
+        }
+    }
+}
+
+/// The id of the API response a transcript line belongs to: the message id,
+/// else the line's request id.
+fn response_key(msg: &Value, line: &Value) -> Option<String> {
+    msg.get("id")
+        .or_else(|| line.get("requestId"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 fn parse_iso_ms(s: &str) -> Option<i64> {
@@ -1921,7 +2023,12 @@ fn classify_cursor_tool(name: &str, input: &Value, acc: &mut SessionAccum) {
     }
 }
 
-fn add_usage_from_message(msg: &Value, acc: &mut SessionAccum, capture_event: bool) {
+fn add_usage_from_message(
+    msg: &Value,
+    acc: &mut SessionAccum,
+    capture_event: bool,
+    response: Option<String>,
+) {
     if acc.model.is_none() {
         if let Some(model) = msg.get("model").and_then(|m| m.as_str()) {
             if !model.is_empty() {
@@ -1932,34 +2039,65 @@ fn add_usage_from_message(msg: &Value, acc: &mut SessionAccum, capture_event: bo
     let Some(usage) = msg.get("usage") else {
         return;
     };
-    let input = usage
-        .get("input_tokens")
-        .or_else(|| usage.get("prompt_tokens"))
-        .and_then(json_i64);
-    let output = usage
-        .get("output_tokens")
-        .or_else(|| usage.get("completion_tokens"))
-        .and_then(json_i64);
-    let cache_read = usage.get("cache_read_input_tokens").and_then(json_i64);
-    let cache_write = usage.get("cache_creation_input_tokens").and_then(json_i64);
+    let current = ResponseUsage {
+        input: usage
+            .get("input_tokens")
+            .or_else(|| usage.get("prompt_tokens"))
+            .and_then(json_i64),
+        output: usage
+            .get("output_tokens")
+            .or_else(|| usage.get("completion_tokens"))
+            .and_then(json_i64),
+        cache_read: usage.get("cache_read_input_tokens").and_then(json_i64),
+        cache_write: usage.get("cache_creation_input_tokens").and_then(json_i64),
+    };
     acc.saw_usage = true;
-    acc.session_input_tokens += input.unwrap_or(0).max(0);
-    acc.session_output_tokens += output.unwrap_or(0).max(0);
-    acc.cache_read_tokens += cache_read.unwrap_or(0).max(0);
-    acc.cache_write_tokens += cache_write.unwrap_or(0).max(0);
-    if capture_event {
-        acc.events.push(crate::cost::CostUsage {
-            provider: None,
-            model: acc.model.clone(),
-            input_tokens: input,
-            output_tokens: output,
-            cache_read_tokens: cache_read,
-            cache_write_tokens: cache_write,
-            timestamp_ms: acc.ended_at.or(acc.started_at),
-            session_id: None,
-            turn_id: Some(acc.events.len().to_string()),
-            confidence: crate::cost::CostConfidence::Estimated,
-        });
+    let (previous, event_idx) = match response
+        .as_ref()
+        .and_then(|key| acc.seen_responses.get(key))
+    {
+        Some(&(prev, idx)) => (Some(prev), idx),
+        None => (None, None),
+    };
+    // A repeated response counts once, at the largest value seen for each field.
+    let counted = previous.map_or(current, |p| p.max(current));
+    let base = previous.unwrap_or_default();
+    let delta =
+        |new: Option<i64>, old: Option<i64>| new.unwrap_or(0).max(0) - old.unwrap_or(0).max(0);
+    acc.session_input_tokens += delta(counted.input, base.input);
+    acc.session_output_tokens += delta(counted.output, base.output);
+    acc.cache_read_tokens += delta(counted.cache_read, base.cache_read);
+    acc.cache_write_tokens += delta(counted.cache_write, base.cache_write);
+
+    let event_idx = match event_idx {
+        Some(idx) => {
+            if let Some(event) = acc.events.get_mut(idx) {
+                event.input_tokens = counted.input;
+                event.output_tokens = counted.output;
+                event.cache_read_tokens = counted.cache_read;
+                event.cache_write_tokens = counted.cache_write;
+            }
+            Some(idx)
+        }
+        None if capture_event => {
+            acc.events.push(crate::cost::CostUsage {
+                provider: None,
+                model: acc.model.clone(),
+                input_tokens: counted.input,
+                output_tokens: counted.output,
+                cache_read_tokens: counted.cache_read,
+                cache_write_tokens: counted.cache_write,
+                timestamp_ms: acc.ended_at.or(acc.started_at),
+                session_id: None,
+                turn_id: Some(acc.events.len().to_string()),
+                confidence: crate::cost::CostConfidence::Estimated,
+            });
+            Some(acc.events.len() - 1)
+        }
+        None => None,
+    };
+    if let Some(key) = response {
+        acc.seen_responses.insert(key, (counted, event_idx));
     }
 }
 
@@ -1975,13 +2113,19 @@ fn process_claude_line(line: &str, acc: &mut SessionAccum) {
         acc.started_at = Some(acc.started_at.map_or(ts, |s| s.min(ts)));
         acc.ended_at = Some(acc.ended_at.map_or(ts, |e| e.max(ts)));
     }
-    let msg = v.get("message").unwrap_or(&v);
+    let wrapped = v.get("message");
+    let msg = wrapped.unwrap_or(&v);
+    let response = response_key(msg, &v);
     let on_message =
         msg.get("role").and_then(|r| r.as_str()) == Some("assistant") && msg.get("usage").is_some();
     if msg.get("role").and_then(|r| r.as_str()) == Some("assistant") {
-        add_usage_from_message(msg, acc, on_message);
+        add_usage_from_message(msg, acc, on_message, response.clone());
     }
-    add_usage_from_message(&v, acc, !on_message && v.get("usage").is_some());
+    // Usage at the top level of a wrapped line. A flat line was handled above.
+    if wrapped.is_some() {
+        let top_key = response.map(|k| format!("{k}#line"));
+        add_usage_from_message(&v, acc, !on_message && v.get("usage").is_some(), top_key);
+    }
     let content = msg.get("content").and_then(|c| c.as_array()).or_else(|| {
         v.get("message")
             .and_then(|m| m.get("content"))
@@ -2017,7 +2161,8 @@ fn process_cursor_line(line: &str, acc: &mut SessionAccum) {
         return;
     };
     // Cursor transcripts usually omit usage; capture it (and the model) when present.
-    add_usage_from_message(msg, acc, true);
+    let response = response_key(msg, &v);
+    add_usage_from_message(msg, acc, true, response);
     let Some(items) = msg.get("content").and_then(|c| c.as_array()) else {
         return;
     };
@@ -2030,7 +2175,7 @@ fn process_cursor_line(line: &str, acc: &mut SessionAccum) {
     }
 }
 
-async fn import_claude_file(path: &Path) -> Result<bool, String> {
+async fn import_claude_file(path: &Path, roots: &[String]) -> Result<bool, String> {
     let session_id = path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -2057,16 +2202,13 @@ async fn import_claude_file(path: &Path) -> Result<bool, String> {
     }
     let wrote = upsert_agent_session("claude", &session_id, &acc, mtime).await?;
     if wrote {
-        let project = path
-            .parent()
-            .and_then(|p| p.file_name())
-            .and_then(|s| s.to_str());
-        persist_usage_events("claude", &session_id, project, &acc.events).await?;
+        let project = transcript_project("claude", path, roots);
+        persist_usage_events("claude", &session_id, project.as_deref(), &acc.events).await?;
     }
     Ok(wrote)
 }
 
-async fn import_cursor_file(path: &Path) -> Result<bool, String> {
+async fn import_cursor_file(path: &Path, roots: &[String]) -> Result<bool, String> {
     let session_id = path
         .parent()
         .and_then(|p| p.file_name())
@@ -2095,11 +2237,8 @@ async fn import_cursor_file(path: &Path) -> Result<bool, String> {
     }
     let wrote = upsert_agent_session("cursor", &session_id, &acc, mtime).await?;
     if wrote {
-        let project = path
-            .parent()
-            .and_then(|p| p.file_name())
-            .and_then(|s| s.to_str());
-        persist_usage_events("cursor", &session_id, project, &acc.events).await?;
+        let project = transcript_project("cursor", path, roots);
+        persist_usage_events("cursor", &session_id, project.as_deref(), &acc.events).await?;
     }
     Ok(wrote)
 }
@@ -2156,6 +2295,55 @@ async fn persist_usage_events(
     Ok(())
 }
 
+/// Project paths this machine has logged ax calls or sessions for.
+async fn known_project_roots() -> Vec<String> {
+    let Ok(pool) = open_pool().await else {
+        return Vec::new();
+    };
+    sqlx::query_scalar::<_, String>(
+        "SELECT project FROM mcp_call_log WHERE project IS NOT NULL AND project != ''
+         UNION SELECT project FROM ax_durable_scope WHERE project != ''",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default()
+}
+
+/// Claude Code folder name for a project path: every character other than an
+/// ASCII letter or digit becomes `-` (`/Users/me/ax` → `-Users-me-ax`).
+fn claude_project_slug(root: &str) -> String {
+    root.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
+}
+
+/// The project a transcript belongs to. The agent's folder slug is mapped back
+/// to the one known project path with that slug; without a single match the
+/// slug itself is kept. Cursor keeps transcripts under
+/// `projects/{slug}/agent-transcripts/{id}/{id}.jsonl`, Claude Code under
+/// `projects/{slug}/{id}.jsonl`.
+fn transcript_project(agent: &str, path: &Path, roots: &[String]) -> Option<String> {
+    let slug_dir = if agent == "cursor" {
+        path.ancestors()
+            .find(|a| a.file_name().and_then(|n| n.to_str()) == Some("agent-transcripts"))?
+            .parent()?
+    } else {
+        path.parent()?
+    };
+    let slug = slug_dir.file_name()?.to_str()?;
+    let mut matches = roots.iter().filter(|root| {
+        if agent == "cursor" {
+            crate::mcp_audit::cursor_project_slug(Path::new(root.as_str())) == slug
+        } else {
+            claude_project_slug(root) == slug
+        }
+    });
+    match (matches.next(), matches.next()) {
+        (Some(root), None) => Some(root.clone()),
+        _ => Some(slug.to_string()),
+    }
+}
+
 fn claude_projects_dir() -> Option<PathBuf> {
     ax_utils::paths::home_dir().map(|h| h.join(".claude").join("projects"))
 }
@@ -2185,6 +2373,7 @@ pub async fn import_agent_logs(claude: bool, cursor: bool) -> Result<ImportResul
     let mut claude_sessions = 0usize;
     let mut cursor_sessions = 0usize;
     let mut skipped = 0usize;
+    let roots = known_project_roots().await;
 
     if claude {
         if let Some(root) = claude_projects_dir() {
@@ -2201,7 +2390,7 @@ pub async fn import_agent_logs(claude: bool, cursor: bool) -> Result<ImportResul
                     if path.to_string_lossy().contains("subagents") {
                         continue;
                     }
-                    match import_claude_file(path).await {
+                    match import_claude_file(path, &roots).await {
                         Ok(true) => claude_sessions += 1,
                         Ok(false) => skipped += 1,
                         Err(e) => eprintln!("ax savings import: {}: {e}", path.display()),
@@ -2223,7 +2412,7 @@ pub async fn import_agent_logs(claude: bool, cursor: bool) -> Result<ImportResul
                     if !cursor_transcript_matches(path) {
                         continue;
                     }
-                    match import_cursor_file(path).await {
+                    match import_cursor_file(path, &roots).await {
                         Ok(true) => cursor_sessions += 1,
                         Ok(false) => skipped += 1,
                         Err(e) => eprintln!("ax savings import: {}: {e}", path.display()),
@@ -2496,6 +2685,51 @@ mod tests {
     }
 
     #[test]
+    fn claude_multi_block_response_counts_usage_once() {
+        // Claude Code writes one line per content block; each repeats the same
+        // message id and usage object.
+        let mut acc = SessionAccum::default();
+        for block in ["thinking", "text", "tool_use", "tool_use"] {
+            let line = format!(
+                r#"{{"timestamp":"2026-10-03T12:00:00Z","requestId":"req_1","message":{{"id":"msg_1","role":"assistant","model":"claude-sonnet","content":[{{"type":"{block}","name":"Read"}}],"usage":{{"input_tokens":2000,"output_tokens":50,"cache_read_input_tokens":7}}}}}}"#
+            );
+            process_claude_line(&line, &mut acc);
+        }
+        assert_eq!(acc.session_input_tokens, 2000);
+        assert_eq!(acc.session_output_tokens, 50);
+        assert_eq!(acc.cache_read_tokens, 7);
+        assert_eq!(acc.events.len(), 1);
+        // A second response is counted on its own.
+        let line = r#"{"message":{"id":"msg_2","role":"assistant","usage":{"input_tokens":10,"output_tokens":1}}}"#;
+        process_claude_line(line, &mut acc);
+        assert_eq!(acc.session_input_tokens, 2010);
+        assert_eq!(acc.events.len(), 2);
+    }
+
+    #[test]
+    fn claude_repeated_response_keeps_largest_usage() {
+        let mut acc = SessionAccum::default();
+        let first = r#"{"message":{"id":"msg_1","role":"assistant","usage":{"input_tokens":100,"output_tokens":5}}}"#;
+        let last = r#"{"message":{"id":"msg_1","role":"assistant","usage":{"input_tokens":100,"output_tokens":80}}}"#;
+        process_claude_line(first, &mut acc);
+        process_claude_line(last, &mut acc);
+        assert_eq!(acc.session_input_tokens, 100);
+        assert_eq!(acc.session_output_tokens, 80);
+        assert_eq!(acc.events.len(), 1);
+        assert_eq!(acc.events[0].output_tokens, Some(80));
+    }
+
+    #[test]
+    fn claude_flat_assistant_line_counts_usage_once() {
+        let line = r#"{"role":"assistant","usage":{"input_tokens":300,"output_tokens":20}}"#;
+        let mut acc = SessionAccum::default();
+        process_claude_line(line, &mut acc);
+        assert_eq!(acc.session_input_tokens, 300);
+        assert_eq!(acc.session_output_tokens, 20);
+        assert_eq!(acc.events.len(), 1);
+    }
+
+    #[test]
     fn claude_tool_classification() {
         let mut acc = SessionAccum::default();
         classify_claude_tool("Read", &mut acc);
@@ -2583,6 +2817,61 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn savings_summary_reads_the_price_catalog_once_for_all_days() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let db = temp_usage_db_path("daily-prices");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+        let pool = open_pool().await.expect("pool");
+        let day = |n: i64| {
+            (chrono::Local::now().date_naive() - chrono::Duration::days(n))
+                .format("%Y-%m-%d")
+                .to_string()
+        };
+        let reference = crate::pricing::pricing_config().reference_model.clone();
+        for (n, input) in [(5, 1.0), (2, 4.0)] {
+            sqlx::query("INSERT INTO model_price_daily(date,source,model_id,input_per_mtok,output_per_mtok) VALUES (?, 'openrouter', ?, ?, 1.0)")
+                .bind(day(n))
+                .bind(format!("anthropic/{reference}"))
+                .bind(input)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let now = chrono::Utc::now().timestamp_millis();
+        for n in 0..5 {
+            sqlx::query("INSERT INTO mcp_call_log(tool,response_chars,response_tokens_est,ok,created_at,savings_eligible,tokens_saved_est) VALUES ('ax_node',1,1,1,?,1,1000000)")
+                .bind(now - n * 86_400_000)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        crate::pricing_sync::CATALOG_SCANS.with(|n| n.set(0));
+        let summary = query_savings_summary(&SavingsQuery {
+            period: UsagePeriod::Week,
+            from: None,
+            to: None,
+        })
+        .await
+        .expect("summary");
+        let scans = crate::pricing_sync::CATALOG_SCANS.with(|n| n.get());
+        let mut expected = Vec::new();
+        for d in &summary.daily {
+            expected.push(input_cost_usd(
+                1_000_000,
+                crate::pricing::price_as_of(None, &d.date).await.0,
+            ));
+        }
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(&db);
+
+        assert!(summary.daily.len() >= 4, "{:?}", summary.daily);
+        let got: Vec<f64> = summary.daily.iter().map(|d| d.cost_saved_usd_est).collect();
+        assert_eq!(got, expected);
+        assert!(scans <= 1, "{scans} catalog reads for {} days", got.len());
+    }
+
     fn temp_usage_db_path(label: &str) -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
         static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -2659,7 +2948,8 @@ mod tests {
             started_at: Some(1_000),
             ended_at: Some(2_000),
         };
-        crate::cursor_state::upsert_composer_state_row(&state_row)
+        let pool = crate::store::open_pool().await.expect("pool");
+        crate::cursor_state::upsert_composer_state_row(&pool, &state_row)
             .await
             .expect("state");
 
@@ -2893,5 +3183,169 @@ mod tests {
         std::fs::remove_file(&parent).ok();
         let err = result.expect_err("a file is not a directory for the usage database");
         assert!(!err.is_empty(), "{err}");
+    }
+
+    #[tokio::test]
+    async fn imported_transcripts_store_the_project_path() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let db = temp_usage_db_path("transcript-project");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+        let pool = open_pool().await.expect("pool");
+        let project = "/Users/me/work/my_app";
+        sqlx::query("INSERT INTO mcp_call_log(tool,project,response_chars,response_tokens_est,ok,created_at) VALUES ('ax_node',?,1,1,1,1)")
+            .bind(project)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let line = r#"{"timestamp":"2026-10-03T12:00:00Z","role":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"tool_use","name":"Read","input":{}}],"usage":{"input_tokens":10,"output_tokens":1}}}"#;
+        let cursor = tmp
+            .path()
+            .join("cursor/users-me-work-my-app/agent-transcripts/chat-1/chat-1.jsonl");
+        let unknown = tmp
+            .path()
+            .join("cursor/other-place/agent-transcripts/chat-2/chat-2.jsonl");
+        let claude = tmp.path().join("claude/-Users-me-work-my-app/sess-1.jsonl");
+        for f in [&cursor, &unknown, &claude] {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(f, format!("{line}\n")).unwrap();
+        }
+        let roots = known_project_roots().await;
+        assert!(import_cursor_file(&cursor, &roots).await.unwrap());
+        assert!(import_cursor_file(&unknown, &roots).await.unwrap());
+        assert!(import_claude_file(&claude, &roots).await.unwrap());
+        let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT agent, session_id, project FROM agent_usage_event ORDER BY agent, session_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(&db);
+        assert_eq!(
+            rows,
+            vec![
+                ("claude".into(), "sess-1".into(), Some(project.into())),
+                ("cursor".into(), "chat-1".into(), Some(project.into())),
+                ("cursor".into(), "chat-2".into(), Some("other-place".into())),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn overlapping_sessions_do_not_share_mcp_calls() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let db = temp_usage_db_path("overlap");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+        let pool = open_pool().await.expect("pool");
+        let now = chrono::Utc::now().timestamp_millis();
+        let hour = 3_600_000;
+        // Session a (project /p/a) runs for two hours; session b (project /p/b)
+        // starts later and overlaps it.
+        for (agent, id, start, end, project) in [
+            ("cursor", "a", now - 2 * hour, now, "/p/a"),
+            ("claude", "b", now - hour, now, "/p/b"),
+        ] {
+            sqlx::query("INSERT INTO agent_session_log(agent,session_id,source_mtime,started_at,ended_at,model) VALUES (?,?,?,?,?,'m')")
+                .bind(agent).bind(id).bind(end).bind(start).bind(end)
+                .execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO agent_usage_event(agent,session_id,turn_id,project,confidence,created_at) VALUES (?,?,'0',?,'estimated',?)")
+                .bind(agent).bind(id).bind(project).bind(start)
+                .execute(&pool).await.unwrap();
+        }
+        for (at, project, saved) in [
+            (now - 90 * 60_000, Some("/p/a"), 100), // only a is open
+            (now - 30 * 60_000, Some("/p/a"), 10),  // both open, a's project
+            (now - 20 * 60_000, Some("/p/b"), 1),   // both open, b's project
+            (now - 10 * 60_000, None, 1000),        // both open, unknown project
+        ] {
+            sqlx::query("INSERT INTO mcp_call_log(tool,project,response_chars,response_tokens_est,ok,created_at,savings_eligible,tokens_saved_est) VALUES ('ax_node',?,1,1,1,?,1,?)")
+                .bind(project).bind(at).bind(saved)
+                .execute(&pool).await.unwrap();
+        }
+        let summary = query_savings_summary(&SavingsQuery {
+            period: UsagePeriod::Week,
+            from: None,
+            to: None,
+        })
+        .await
+        .expect("summary");
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(&db);
+        let by_id = |id: &str| {
+            summary
+                .agent_sessions
+                .iter()
+                .find(|s| s.session_id == id)
+                .map(|s| (s.mcp_calls_in_window, s.tokens_saved_in_window))
+                .unwrap()
+        };
+        assert_eq!(by_id("a"), (2, 110));
+        // The unknown-project call goes to the most recently started session.
+        assert_eq!(by_id("b"), (2, 1001));
+        let by_model: i64 = summary.by_model.iter().map(|r| r.tokens_saved_est).sum();
+        assert_eq!(by_model, summary.tokens_saved_est);
+    }
+
+    #[tokio::test]
+    async fn a_session_that_started_before_the_period_still_owns_its_calls() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let db = temp_usage_db_path("overlap-early");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+        let pool = open_pool().await.expect("pool");
+        let now = chrono::Utc::now().timestamp_millis();
+        let hour = 3_600_000;
+        let day = 24 * hour;
+        // "early" started before the week and overlaps "late"; "ancient" is
+        // long over and overlaps nothing in the period.
+        for (agent, id, start, end, project) in [
+            ("cursor", "early", now - 8 * day, now - hour, "/p/early"),
+            ("claude", "late", now - 2 * hour, now, "/p/late"),
+            (
+                "claude",
+                "ancient",
+                now - 30 * day,
+                now - 29 * day,
+                "/p/early",
+            ),
+        ] {
+            sqlx::query("INSERT INTO agent_session_log(agent,session_id,source_mtime,started_at,ended_at,model) VALUES (?,?,?,?,?,'m')")
+                .bind(agent).bind(id).bind(end).bind(start).bind(end)
+                .execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO agent_usage_event(agent,session_id,turn_id,project,confidence,created_at) VALUES (?,?,'0',?,'estimated',?)")
+                .bind(agent).bind(id).bind(project).bind(start)
+                .execute(&pool).await.unwrap();
+        }
+        for (at, project, saved) in [
+            (now - 90 * 60_000, "/p/early", 100), // both open, early's project
+            (now - 30 * 60_000, "/p/late", 7),    // only late is open
+        ] {
+            sqlx::query("INSERT INTO mcp_call_log(tool,project,response_chars,response_tokens_est,ok,created_at,savings_eligible,tokens_saved_est) VALUES ('ax_node',?,1,1,1,?,1,?)")
+                .bind(project).bind(at).bind(saved)
+                .execute(&pool).await.unwrap();
+        }
+        let summary = query_savings_summary(&SavingsQuery {
+            period: UsagePeriod::Week,
+            from: None,
+            to: None,
+        })
+        .await
+        .expect("summary");
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(&db);
+        let late = summary
+            .agent_sessions
+            .iter()
+            .find(|s| s.session_id == "late")
+            .map(|s| (s.mcp_calls_in_window, s.tokens_saved_in_window))
+            .unwrap();
+        assert_eq!(late, (1, 7));
+        assert!(summary
+            .agent_sessions
+            .iter()
+            .all(|s| s.session_id == "late"));
     }
 }

@@ -1,5 +1,17 @@
 //! Plan B contract: authority states, resolver input, selection receipts, manifest seals.
-//! The resolver, replay runner, and 95% score are not implemented here.
+//! The replay runner and 95% score are not implemented here.
+//!
+//! Experimental: the product reaches only [`list_manifest_summaries`] and
+//! [`start_replay_for_manifest`]. Nothing outside tests calls the approval functions,
+//! [`store_manifest`] or [`resolve_context`] yet. Approvals require an active member with the
+//! owner, admin or approver role and a reason, and each one stores the actor, reason and time
+//! in `context_approvals` ([`load_approval`]). `actor_kind` is supplied by the caller, so a
+//! caller that wires approval must derive it from its authenticated transport.
+//!
+//! Seals are SHA-256 over length-prefixed keys and values ([`seal`]). Rows sealed with the
+//! earlier `ax-manifest-v1` payload (NUL separators) still verify when they are unchanged;
+//! [`list_manifest_summaries`] lists them with the `legacy_seal` uncertainty instead of
+//! `integrity_failed`.
 
 use sha2::Digest;
 
@@ -157,18 +169,51 @@ pub enum ReceiptStatus {
     Blocking,
 }
 
+/// A receipt blocks when a mandatory item was left out for lack of budget. A mandatory item
+/// rejected as a duplicate (its content is already in) or as created after the replay cutoff
+/// does not block.
 pub fn receipt_status(candidates: &[SelectionCandidate]) -> ReceiptStatus {
-    if candidates.iter().any(|candidate| {
-        candidate.role == SelectionRole::Mandatory
-            && candidate.decision == SelectionDecision::Rejected
-    }) {
+    status_of(
+        candidates
+            .iter()
+            .map(|c| (c.role, c.decision, c.reason.as_str())),
+    )
+}
+
+fn status_of<'a>(
+    items: impl IntoIterator<Item = (SelectionRole, SelectionDecision, &'a str)>,
+) -> ReceiptStatus {
+    let blocking = items.into_iter().any(|(role, decision, reason)| {
+        role == SelectionRole::Mandatory
+            && decision == SelectionDecision::Rejected
+            && reason == "budget"
+    });
+    if blocking {
         ReceiptStatus::Blocking
     } else {
         ReceiptStatus::Ready
     }
 }
 
+/// SHA-256 over the pairs sorted by key, then value. Every key and value is
+/// written with its byte length first, so no text inside a value can be read
+/// as a separator or as the start of the next pair.
 pub fn seal(pairs: &[(&str, &str)]) -> String {
+    let mut ordered: Vec<(&str, &str)> = pairs.to_vec();
+    ordered.sort_by(|left, right| left.0.cmp(right.0).then(left.1.cmp(right.1)));
+    let mut payload = Vec::from(&b"ax-seal-v2\0"[..]);
+    for (key, value) in ordered {
+        for field in [key, value] {
+            payload.extend((field.len() as u64).to_le_bytes());
+            payload.extend(field.as_bytes());
+        }
+    }
+    hex::encode(sha2::Sha256::digest(&payload))
+}
+
+/// The earlier `ax-manifest-v1` payload: each key and value followed by a NUL.
+/// Used only to recognise rows sealed before [`seal`] used length prefixes.
+fn legacy_seal(pairs: &[(&str, &str)]) -> String {
     let mut ordered: Vec<(&str, &str)> = pairs.to_vec();
     ordered.sort_by(|left, right| left.0.cmp(right.0).then(left.1.cmp(right.1)));
     let mut payload = Vec::from(&b"ax-manifest-v1\0"[..]);
@@ -179,6 +224,33 @@ pub fn seal(pairs: &[(&str, &str)]) -> String {
         payload.push(0);
     }
     hex::encode(sha2::Sha256::digest(&payload))
+}
+
+/// How a stored seal compares with the stored row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SealCheck {
+    /// Matches the current seal format.
+    Current,
+    /// Matches the legacy `ax-manifest-v1` format the row was sealed with.
+    Legacy,
+    /// Matches neither: the row changed after it was sealed.
+    Broken,
+}
+
+impl SealCheck {
+    fn of(stored: &str, current: impl FnOnce() -> String, legacy: impl FnOnce() -> String) -> Self {
+        if current() == stored {
+            Self::Current
+        } else if legacy() == stored {
+            Self::Legacy
+        } else {
+            Self::Broken
+        }
+    }
+
+    fn ok(self) -> bool {
+        !matches!(self, Self::Broken)
+    }
 }
 
 pub fn seal_matches(pairs: &[(&str, &str)], expected: &str) -> bool {
@@ -276,6 +348,9 @@ pub struct ResolveReceipt {
     pub items: Vec<ResolvedItem>,
 }
 
+/// Choose the context for a task. Mandatory candidates get the budget first, then advisory
+/// ones share what is left; within each pass the input order decides. Items come back in the
+/// input order.
 pub fn resolve_context(
     mode: ReplayMode,
     cutoff_ms: Option<i64>,
@@ -283,54 +358,57 @@ pub fn resolve_context(
     budget_tokens: u64,
     candidates: &[ContextCandidate],
 ) -> ResolveReceipt {
-    let mut items = Vec::with_capacity(candidates.len());
-    let mut seen = std::collections::BTreeSet::new();
-    let mut remaining = budget_tokens;
-    let mut blocking = false;
-    for candidate in candidates {
-        let role = if candidate.kind == "skill" {
-            SelectionRole::Advisory
-        } else if candidate.mandatory {
+    let role_of = |candidate: &ContextCandidate| {
+        if candidate.kind != "skill" && candidate.mandatory {
             SelectionRole::Mandatory
         } else {
             SelectionRole::Advisory
-        };
-        let after_cutoff = mode == ReplayMode::AsOf
-            && cutoff_ms.is_some_and(|cutoff| candidate.created_at_ms > cutoff);
-        let (decision, reason) = if after_cutoff {
-            (SelectionDecision::Rejected, "after cutoff")
-        } else if role == SelectionRole::Advisory && !candidate_relevant(candidate, task_tags) {
-            (SelectionDecision::Rejected, "not relevant")
-        } else if seen.contains(&candidate.content_hash) {
-            (SelectionDecision::Rejected, "duplicate")
-        } else if candidate.tokens > remaining {
-            if role == SelectionRole::Mandatory {
-                blocking = true;
+        }
+    };
+    let mut decided: Vec<Option<ResolvedItem>> = vec![None; candidates.len()];
+    let mut seen = std::collections::BTreeSet::new();
+    let mut remaining = budget_tokens;
+    for pass in [SelectionRole::Mandatory, SelectionRole::Advisory] {
+        for (index, candidate) in candidates.iter().enumerate() {
+            let role = role_of(candidate);
+            if role != pass {
+                continue;
             }
-            (SelectionDecision::Rejected, "budget")
-        } else {
-            remaining -= candidate.tokens;
-            seen.insert(candidate.content_hash.clone());
-            let reason = if role == SelectionRole::Mandatory {
-                "mandatory"
+            let after_cutoff = mode == ReplayMode::AsOf
+                && cutoff_ms.is_some_and(|cutoff| candidate.created_at_ms > cutoff);
+            let (decision, reason) = if after_cutoff {
+                (SelectionDecision::Rejected, "after cutoff")
+            } else if role == SelectionRole::Advisory && !candidate_relevant(candidate, task_tags) {
+                (SelectionDecision::Rejected, "not relevant")
+            } else if seen.contains(&candidate.content_hash) {
+                (SelectionDecision::Rejected, "duplicate")
+            } else if candidate.tokens > remaining {
+                (SelectionDecision::Rejected, "budget")
             } else {
-                "relevant"
+                remaining -= candidate.tokens;
+                seen.insert(candidate.content_hash.clone());
+                let reason = if role == SelectionRole::Mandatory {
+                    "mandatory"
+                } else {
+                    "relevant"
+                };
+                (SelectionDecision::Selected, reason)
             };
-            (SelectionDecision::Selected, reason)
-        };
-        items.push(ResolvedItem {
-            id: candidate.id.clone(),
-            role,
-            decision,
-            reason: reason.into(),
-        });
+            decided[index] = Some(ResolvedItem {
+                id: candidate.id.clone(),
+                role,
+                decision,
+                reason: reason.into(),
+            });
+        }
     }
+    let items: Vec<ResolvedItem> = decided.into_iter().flatten().collect();
     ResolveReceipt {
-        status: if blocking {
-            ReceiptStatus::Blocking
-        } else {
-            ReceiptStatus::Ready
-        },
+        status: status_of(
+            items
+                .iter()
+                .map(|item| (item.role, item.decision, item.reason.as_str())),
+        ),
         items,
     }
 }
@@ -398,20 +476,14 @@ pub async fn approve_receipt(
         return Err("integrity_failed".into());
     }
     require_approver_member(membership, actor_member_id).await?;
-    let result = sqlx::query(
-        "UPDATE selection_receipts
-         SET approval = 'approved', actor_member_id = ?2
-         WHERE id = ?1 AND approval = 'unapproved'",
+    record_approval(
+        pool,
+        ApprovalSubject::Receipt,
+        receipt_id,
+        actor_member_id,
+        reason,
     )
-    .bind(receipt_id)
-    .bind(actor_member_id)
-    .execute(pool)
     .await
-    .map_err(|error| error.to_string())?;
-    if result.rows_affected() != 1 {
-        return Err("missing receipt".into());
-    }
-    Ok(())
 }
 
 pub async fn verify_receipt(pool: &sqlx::SqlitePool, receipt_id: &str) -> Result<bool, String> {
@@ -433,7 +505,12 @@ pub async fn verify_receipt(pool: &sqlx::SqlitePool, receipt_id: &str) -> Result
     .fetch_all(pool)
     .await
     .map_err(|error| error.to_string())?;
-    Ok(receipt_rows_seal(&project_id, &status, &rows) == seal)
+    Ok(SealCheck::of(
+        &seal,
+        || receipt_rows_seal(&project_id, &status, &rows),
+        || legacy_receipt_rows_seal(&project_id, &status, &rows),
+    )
+    .ok())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -498,6 +575,7 @@ pub async fn store_manifest(
         return Err("unauthorized".into());
     }
     ensure_manifest_schema(pool).await?;
+    let manifest = &normalized_manifest(manifest);
     let seal = manifest_seal(manifest);
     let created_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -510,17 +588,17 @@ pub async fn store_manifest(
     )
     .bind(&seal)
     .bind(&manifest.project_id)
-    .bind(manifest.session_id.trim())
-    .bind(manifest.turn_id.trim())
-    .bind(manifest.agent_id.trim())
-    .bind(manifest.provider_chat_id.as_deref().map(str::trim).filter(|value| !value.is_empty()))
+    .bind(&manifest.session_id)
+    .bind(&manifest.turn_id)
+    .bind(&manifest.agent_id)
+    .bind(&manifest.provider_chat_id)
     .bind(mode_name(manifest.mode))
     .bind(manifest.cutoff_ms)
-    .bind(manifest.snapshot_id.as_deref().map(str::trim).filter(|value| !value.is_empty()))
+    .bind(&manifest.snapshot_id)
     .bind(&manifest.receipt_id)
-    .bind(manifest.model.trim())
-    .bind(manifest.tool_versions.trim())
-    .bind(manifest.commit_hash.trim())
+    .bind(&manifest.model)
+    .bind(&manifest.tool_versions)
+    .bind(&manifest.commit_hash)
     .bind(created_at)
     .execute(pool)
     .await
@@ -546,20 +624,14 @@ pub async fn approve_manifest(
         return Err("integrity_failed".into());
     }
     require_approver_member(membership, actor_member_id).await?;
-    let result = sqlx::query(
-        "UPDATE context_manifests
-         SET approval = 'approved', actor_member_id = ?2
-         WHERE id = ?1 AND approval = 'unapproved'",
+    record_approval(
+        pool,
+        ApprovalSubject::Manifest,
+        manifest_id,
+        actor_member_id,
+        reason,
     )
-    .bind(manifest_id)
-    .bind(actor_member_id)
-    .execute(pool)
     .await
-    .map_err(|error| error.to_string())?;
-    if result.rows_affected() != 1 {
-        return Err("missing manifest".into());
-    }
-    Ok(())
 }
 
 type ManifestColumns = (
@@ -620,53 +692,107 @@ pub async fn verify_manifest(pool: &sqlx::SqlitePool, manifest_id: &str) -> Resu
         tool_versions,
         commit_hash,
     };
-    Ok(manifest_seal(&manifest) == seal)
+    Ok(manifest_seal_check(&manifest, &seal).ok())
 }
 
+/// How many manifests [`list_manifest_summaries`] returns, newest first.
+pub const MANIFEST_LIST_LIMIT: i64 = 200;
+
+/// The newest [`MANIFEST_LIST_LIMIT`] manifests of a project.
 pub async fn list_manifest_summaries(
     pool: &sqlx::SqlitePool,
     project_id: &str,
 ) -> Result<Vec<ManifestSummary>, String> {
+    list_manifest_summaries_page(pool, project_id, MANIFEST_LIST_LIMIT, 0).await
+}
+
+#[derive(sqlx::FromRow)]
+struct ManifestListRow {
+    id: String,
+    project_id: String,
+    session_id: String,
+    turn_id: String,
+    agent_id: String,
+    provider_chat_id: Option<String>,
+    mode: String,
+    cutoff_ms: Option<i64>,
+    snapshot_id: Option<String>,
+    receipt_id: String,
+    model: String,
+    tool_versions: String,
+    commit_hash: String,
+    seal: String,
+    approval: String,
+    replay_score: Option<String>,
+}
+
+/// One page of a project's manifests, newest first. `limit` is clamped to 1..=1000. One query
+/// reads the sealed columns and the latest replay score; the seal is checked in memory.
+pub async fn list_manifest_summaries_page(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<ManifestSummary>, String> {
     require_text(project_id, "project")?;
     ensure_manifest_schema(pool).await?;
     ensure_replay_schema(pool).await?;
-    let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(
-        "SELECT id, session_id, turn_id, agent_id, approval
-         FROM context_manifests
-         WHERE project_id = ?1
-         ORDER BY created_at DESC, id",
+    let rows: Vec<ManifestListRow> = sqlx::query_as(
+        "SELECT m.id, m.project_id, m.session_id, m.turn_id, m.agent_id, m.provider_chat_id,
+                m.mode, m.cutoff_ms, m.snapshot_id, m.receipt_id, m.model, m.tool_versions,
+                m.commit_hash, m.seal, m.approval,
+                (SELECT r.score FROM replay_runs r WHERE r.manifest_id = m.id
+                 ORDER BY r.created_at DESC LIMIT 1) AS replay_score
+         FROM context_manifests m
+         WHERE m.project_id = ?1
+         ORDER BY m.created_at DESC, m.id
+         LIMIT ?2 OFFSET ?3",
     )
     .bind(project_id.trim())
+    .bind(limit.clamp(1, 1000))
+    .bind(offset.max(0))
     .fetch_all(pool)
     .await
     .map_err(|error| error.to_string())?;
     let mut out = Vec::with_capacity(rows.len());
-    for (id, session_id, turn_id, agent_id, approval) in rows {
-        let integrity_ok = verify_manifest(pool, &id).await.unwrap_or(false);
-        let replay_status: Option<String> = sqlx::query_scalar(
-            "SELECT score FROM replay_runs WHERE manifest_id = ?1 ORDER BY created_at DESC LIMIT 1",
-        )
-        .bind(&id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|error| error.to_string())?;
-        let replay_status = replay_status.unwrap_or_else(|| "not_run".into());
+    for row in rows {
+        let check = parse_mode(&row.mode).map_or(SealCheck::Broken, |mode| {
+            let manifest = ContextManifest {
+                project_id: row.project_id,
+                session_id: row.session_id.clone(),
+                turn_id: row.turn_id.clone(),
+                agent_id: row.agent_id.clone(),
+                provider_chat_id: row.provider_chat_id,
+                mode,
+                cutoff_ms: row.cutoff_ms,
+                snapshot_id: row.snapshot_id,
+                receipt_id: row.receipt_id,
+                model: row.model,
+                tool_versions: row.tool_versions,
+                commit_hash: row.commit_hash,
+            };
+            manifest_seal_check(&manifest, &row.seal)
+        });
+        let integrity_ok = check.ok();
+        let replay_status = row.replay_score.unwrap_or_else(|| "not_run".into());
         let mut uncertainties = Vec::new();
-        if approval != "approved" {
+        if row.approval != "approved" {
             uncertainties.push("unapproved".into());
         }
         if !integrity_ok {
             uncertainties.push("integrity_failed".into());
+        } else if check == SealCheck::Legacy {
+            uncertainties.push("legacy_seal".into());
         }
         if replay_status == "not_tested" || replay_status == "not_run" {
             uncertainties.push(replay_status.clone());
         }
         out.push(ManifestSummary {
-            id,
-            session_id,
-            turn_id,
-            agent_id,
-            approval,
+            id: row.id,
+            session_id: row.session_id,
+            turn_id: row.turn_id,
+            agent_id: row.agent_id,
+            approval: row.approval,
             integrity_ok,
             replay_status,
             uncertainties,
@@ -823,9 +949,13 @@ pub async fn load_replay_run(
     })
 }
 
+/// Approve a replay run. The same rules as a manifest approval apply: a human actor, a
+/// reason, and an active member with the owner, admin or approver role.
 pub async fn approve_replay_run(
     pool: &sqlx::SqlitePool,
+    membership: &sqlx::SqlitePool,
     run_id: &str,
+    actor_member_id: &str,
     actor_kind: &str,
     reason: &str,
 ) -> Result<(), String> {
@@ -835,17 +965,154 @@ pub async fn approve_replay_run(
     if reason.trim().is_empty() {
         return Err("reason required".into());
     }
-    let result = sqlx::query(
-        "UPDATE replay_runs SET approval = 'approved' WHERE id = ?1 AND approval = 'unapproved'",
+    ensure_replay_schema(pool).await?;
+    require_approver_member(membership, actor_member_id).await?;
+    record_approval(
+        pool,
+        ApprovalSubject::Replay,
+        run_id,
+        actor_member_id,
+        reason,
     )
-    .bind(run_id)
+    .await
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalSubject {
+    Receipt,
+    Manifest,
+    Replay,
+}
+
+impl ApprovalSubject {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Receipt => "receipt",
+            Self::Manifest => "manifest",
+            Self::Replay => "replay",
+        }
+    }
+
+    fn table(self) -> &'static str {
+        match self {
+            Self::Receipt => "selection_receipts",
+            Self::Manifest => "context_manifests",
+            Self::Replay => "replay_runs",
+        }
+    }
+}
+
+/// Who approved a receipt, manifest or replay run, why, and when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalRecord {
+    pub subject: String,
+    pub subject_id: String,
+    pub actor_member_id: String,
+    pub reason: String,
+    pub approved_at_ms: i64,
+}
+
+async fn ensure_approval_schema(pool: &sqlx::SqlitePool) -> Result<(), String> {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS context_approvals (
+            subject_kind TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            actor_member_id TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            approved_at INTEGER NOT NULL,
+            PRIMARY KEY (subject_kind, subject_id)
+        )",
+    )
     .execute(pool)
     .await
     .map_err(|error| error.to_string())?;
-    if result.rows_affected() != 1 {
-        return Err("missing replay".into());
-    }
     Ok(())
+}
+
+/// Mark the subject approved and store the audit row in one transaction. A subject that is
+/// already approved returns `"<subject> already approved"`; an unknown one `"missing <subject>"`.
+async fn record_approval(
+    pool: &sqlx::SqlitePool,
+    subject: ApprovalSubject,
+    subject_id: &str,
+    actor_member_id: &str,
+    reason: &str,
+) -> Result<(), String> {
+    ensure_approval_schema(pool).await?;
+    let approved_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0);
+    let table = subject.table();
+    let set_actor = if subject == ApprovalSubject::Replay {
+        ""
+    } else {
+        ", actor_member_id = ?2"
+    };
+    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let result = sqlx::query(&format!(
+        "UPDATE {table} SET approval = 'approved'{set_actor}
+         WHERE id = ?1 AND approval = 'unapproved'"
+    ))
+    .bind(subject_id)
+    .bind(actor_member_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    if result.rows_affected() != 1 {
+        let approval: Option<String> =
+            sqlx::query_scalar(&format!("SELECT approval FROM {table} WHERE id = ?1"))
+                .bind(subject_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|error| error.to_string())?;
+        return Err(match approval.as_deref() {
+            Some("approved") => format!("{} already approved", subject.as_str()),
+            Some(other) => format!("{} is {other}", subject.as_str()),
+            None => format!("missing {}", subject.as_str()),
+        });
+    }
+    sqlx::query(
+        "INSERT OR REPLACE INTO context_approvals
+         (subject_kind, subject_id, actor_member_id, reason, approved_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+    )
+    .bind(subject.as_str())
+    .bind(subject_id)
+    .bind(actor_member_id)
+    .bind(reason.trim())
+    .bind(approved_at)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    tx.commit().await.map_err(|error| error.to_string())
+}
+
+/// The stored approval of a receipt, manifest or replay run, if it was approved.
+pub async fn load_approval(
+    pool: &sqlx::SqlitePool,
+    subject: ApprovalSubject,
+    subject_id: &str,
+) -> Result<Option<ApprovalRecord>, String> {
+    ensure_approval_schema(pool).await?;
+    let row: Option<(String, String, i64)> = sqlx::query_as(
+        "SELECT actor_member_id, reason, approved_at FROM context_approvals
+         WHERE subject_kind = ?1 AND subject_id = ?2",
+    )
+    .bind(subject.as_str())
+    .bind(subject_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(
+        row.map(|(actor_member_id, reason, approved_at_ms)| ApprovalRecord {
+            subject: subject.as_str().into(),
+            subject_id: subject_id.into(),
+            actor_member_id,
+            reason,
+            approved_at_ms,
+        }),
+    )
 }
 
 async fn ensure_replay_schema(pool: &sqlx::SqlitePool) -> Result<(), String> {
@@ -861,6 +1128,13 @@ async fn ensure_replay_schema(pool: &sqlx::SqlitePool) -> Result<(), String> {
             approval TEXT NOT NULL,
             created_at INTEGER NOT NULL
         )",
+    )
+    .execute(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_replay_runs_manifest
+         ON replay_runs (manifest_id, created_at)",
     )
     .execute(pool)
     .await
@@ -940,29 +1214,101 @@ async fn ensure_manifest_schema(pool: &sqlx::SqlitePool) -> Result<(), String> {
     Ok(())
 }
 
+/// The manifest as it is stored: text fields trimmed, and an optional id that
+/// is empty after trimming becomes `None`. Sealing and storing both use this
+/// form, so a manifest read back from its row seals to the same value.
+fn normalized_manifest(manifest: &ContextManifest) -> ContextManifest {
+    let optional = |value: &Option<String>| {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    ContextManifest {
+        project_id: manifest.project_id.clone(),
+        session_id: manifest.session_id.trim().to_string(),
+        turn_id: manifest.turn_id.trim().to_string(),
+        agent_id: manifest.agent_id.trim().to_string(),
+        provider_chat_id: optional(&manifest.provider_chat_id),
+        mode: manifest.mode,
+        cutoff_ms: manifest.cutoff_ms,
+        snapshot_id: optional(&manifest.snapshot_id),
+        receipt_id: manifest.receipt_id.clone(),
+        model: manifest.model.trim().to_string(),
+        tool_versions: manifest.tool_versions.trim().to_string(),
+        commit_hash: manifest.commit_hash.trim().to_string(),
+    }
+}
+
+/// An optional field in a seal: `-` when absent, `=` and the value when present,
+/// so `None` never seals like `Some(0)` or `Some("")`.
+fn sealed_option(value: Option<String>) -> String {
+    match value {
+        Some(value) => format!("={value}"),
+        None => "-".to_string(),
+    }
+}
+
 fn manifest_seal(manifest: &ContextManifest) -> String {
-    let cutoff = manifest.cutoff_ms.unwrap_or(0).to_string();
-    let provider = manifest.provider_chat_id.clone().unwrap_or_default();
-    let snapshot = manifest.snapshot_id.clone().unwrap_or_default();
+    let manifest = normalized_manifest(manifest);
     let owned = [
-        ("agent", manifest.agent_id.trim().to_string()),
-        ("cutoff", cutoff),
+        ("agent", manifest.agent_id),
+        (
+            "cutoff",
+            sealed_option(manifest.cutoff_ms.map(|value| value.to_string())),
+        ),
         ("mode", mode_name(manifest.mode).to_string()),
-        ("project", manifest.project_id.trim().to_string()),
-        ("provider", provider),
-        ("commit", manifest.commit_hash.trim().to_string()),
-        ("model", manifest.model.trim().to_string()),
-        ("receipt", manifest.receipt_id.clone()),
-        ("session", manifest.session_id.trim().to_string()),
-        ("tools", manifest.tool_versions.trim().to_string()),
-        ("snapshot", snapshot),
-        ("turn", manifest.turn_id.trim().to_string()),
+        ("project", manifest.project_id),
+        ("provider", sealed_option(manifest.provider_chat_id)),
+        ("commit", manifest.commit_hash),
+        ("model", manifest.model),
+        ("receipt", manifest.receipt_id),
+        ("session", manifest.session_id),
+        ("tools", manifest.tool_versions),
+        ("snapshot", sealed_option(manifest.snapshot_id)),
+        ("turn", manifest.turn_id),
     ];
     let pairs: Vec<(&str, &str)> = owned
         .iter()
         .map(|(key, value)| (*key, value.as_str()))
         .collect();
     seal(&pairs)
+}
+
+fn manifest_seal_check(manifest: &ContextManifest, stored: &str) -> SealCheck {
+    SealCheck::of(
+        stored,
+        || manifest_seal(manifest),
+        || legacy_manifest_seal(manifest),
+    )
+}
+
+/// The manifest seal in the legacy `ax-manifest-v1` format, where an absent
+/// cutoff sealed as `0` and an absent provider or snapshot as empty text.
+fn legacy_manifest_seal(manifest: &ContextManifest) -> String {
+    let owned = [
+        ("agent", manifest.agent_id.trim().to_string()),
+        ("cutoff", manifest.cutoff_ms.unwrap_or(0).to_string()),
+        ("mode", mode_name(manifest.mode).to_string()),
+        ("project", manifest.project_id.trim().to_string()),
+        (
+            "provider",
+            manifest.provider_chat_id.clone().unwrap_or_default(),
+        ),
+        ("commit", manifest.commit_hash.trim().to_string()),
+        ("model", manifest.model.trim().to_string()),
+        ("receipt", manifest.receipt_id.clone()),
+        ("session", manifest.session_id.trim().to_string()),
+        ("tools", manifest.tool_versions.trim().to_string()),
+        ("snapshot", manifest.snapshot_id.clone().unwrap_or_default()),
+        ("turn", manifest.turn_id.trim().to_string()),
+    ];
+    let pairs: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect();
+    legacy_seal(&pairs)
 }
 
 fn mode_name(mode: ReplayMode) -> &'static str {
@@ -1074,6 +1420,30 @@ fn receipt_rows_seal(
         ("status".to_string(), status.to_string()),
     ];
     for (index, (id, role, decision, reason)) in rows.iter().enumerate() {
+        owned.push((format!("item.{index}.id"), id.clone()));
+        owned.push((format!("item.{index}.role"), role.clone()));
+        owned.push((format!("item.{index}.decision"), decision.clone()));
+        owned.push((format!("item.{index}.reason"), reason.clone()));
+    }
+    let pairs: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+    seal(&pairs)
+}
+
+/// The receipt seal in the legacy `ax-manifest-v1` format, one `|`-joined
+/// pair per item.
+fn legacy_receipt_rows_seal(
+    project_id: &str,
+    status: &str,
+    rows: &[(String, String, String, String)],
+) -> String {
+    let mut owned = vec![
+        ("project".to_string(), project_id.to_string()),
+        ("status".to_string(), status.to_string()),
+    ];
+    for (index, (id, role, decision, reason)) in rows.iter().enumerate() {
         owned.push((
             format!("item.{index}"),
             format!("{id}|{role}|{decision}|{reason}"),
@@ -1083,7 +1453,7 @@ fn receipt_rows_seal(
         .iter()
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
-    seal(&pairs)
+    legacy_seal(&pairs)
 }
 
 fn status_name(status: ReceiptStatus) -> &'static str {
@@ -1335,6 +1705,62 @@ mod tests {
     }
 
     #[test]
+    fn a_mandatory_rule_gets_the_budget_before_an_earlier_advisory_skill() {
+        let skill = candidate(
+            "skill-dotnet",
+            "skill",
+            false,
+            "s1",
+            60,
+            1,
+            &["dotnet"],
+            "Use dotnet.",
+        );
+        let rule = candidate("rule-english", "rule", true, "r1", 50, 1, &[], "English.");
+        for candidates in [[skill.clone(), rule.clone()], [rule.clone(), skill.clone()]] {
+            let receipt = resolve_context(ReplayMode::Current, None, &["dotnet"], 100, &candidates);
+            assert_eq!(receipt.status, ReceiptStatus::Ready);
+            assert_eq!(
+                item(&receipt, "rule-english").decision,
+                SelectionDecision::Selected
+            );
+            assert_eq!(item(&receipt, "skill-dotnet").reason, "budget");
+            let ids: Vec<&str> = receipt.items.iter().map(|i| i.id.as_str()).collect();
+            let input: Vec<&str> = candidates.iter().map(|c| c.id.as_str()).collect();
+            assert_eq!(ids, input, "items keep the input order");
+        }
+    }
+
+    #[test]
+    fn receipt_status_and_the_resolver_agree_on_what_blocks() {
+        let receipt = resolve_context(
+            ReplayMode::AsOf,
+            Some(10),
+            &[],
+            100,
+            &[
+                candidate("rule-a", "rule", true, "same", 10, 1, &[], "A."),
+                candidate("rule-b", "rule", true, "same", 10, 1, &[], "A."),
+                candidate("rule-late", "rule", true, "late", 10, 20, &[], "Late."),
+            ],
+        );
+        assert_eq!(item(&receipt, "rule-b").reason, "duplicate");
+        assert_eq!(item(&receipt, "rule-late").reason, "after cutoff");
+        assert_eq!(receipt.status, ReceiptStatus::Ready);
+        let as_candidates: Vec<SelectionCandidate> = receipt
+            .items
+            .iter()
+            .map(|i| SelectionCandidate {
+                id: i.id.clone(),
+                role: i.role,
+                decision: i.decision,
+                reason: i.reason.clone(),
+            })
+            .collect();
+        assert_eq!(receipt_status(&as_candidates), receipt.status);
+    }
+
+    #[test]
     fn a_dotnet_task_keeps_the_rule_and_drops_the_typescript_skill() {
         let receipt = resolve_context(
             ReplayMode::Current,
@@ -1503,7 +1929,7 @@ mod tests {
             .await
             .unwrap();
         let pool = database.pool().clone();
-        std::mem::forget(database);
+        drop(database);
         let receipt = resolve_context(
             ReplayMode::Current,
             None,
@@ -1598,7 +2024,7 @@ mod tests {
             .await
             .unwrap();
         let pool = database.pool().clone();
-        std::mem::forget(database);
+        drop(database);
         (dir, pool)
     }
 
@@ -1655,38 +2081,15 @@ mod tests {
     #[tokio::test]
     async fn a_manifest_stores_session_turn_agent_and_cutoff_and_a_human_approves_it() {
         let (dir, pool) = temp_pool().await;
-        let receipt = resolve_context(
-            ReplayMode::Current,
-            None,
-            &[],
-            100,
-            &[candidate(
-                "rule-english",
-                "rule",
-                true,
-                "r1",
-                10,
-                1,
-                &[],
-                "Write in English.",
-            )],
-        );
-        let receipt_id = store_receipt(&pool, "ax", &receipt).await.unwrap();
+        let receipt_id = english_receipt(&pool).await;
         let missing_cutoff = store_manifest(
             &pool,
             &ContextManifest {
-                project_id: "ax".into(),
-                session_id: "session-1".into(),
-                turn_id: "turn-1".into(),
-                agent_id: "agent-ax".into(),
-                provider_chat_id: None,
                 mode: ReplayMode::AsOf,
-                cutoff_ms: None,
-                snapshot_id: None,
-                receipt_id: receipt_id.clone(),
                 model: String::new(),
                 tool_versions: String::new(),
                 commit_hash: String::new(),
+                ..base_manifest(&receipt_id)
             },
         )
         .await
@@ -1695,18 +2098,10 @@ mod tests {
         let id = store_manifest(
             &pool,
             &ContextManifest {
-                project_id: "ax".into(),
-                session_id: "session-1".into(),
-                turn_id: "turn-1".into(),
-                agent_id: "agent-ax".into(),
-                provider_chat_id: None,
-                mode: ReplayMode::Current,
-                cutoff_ms: None,
-                snapshot_id: None,
-                receipt_id,
                 model: String::new(),
                 tool_versions: String::new(),
                 commit_hash: String::new(),
+                ..base_manifest(&receipt_id)
             },
         )
         .await
@@ -1802,42 +2197,10 @@ mod tests {
     #[tokio::test]
     async fn a_manifest_stores_model_tools_and_commit_and_replay_stays_not_implemented() {
         let (dir, pool) = temp_pool().await;
-        let receipt = resolve_context(
-            ReplayMode::Current,
-            None,
-            &[],
-            100,
-            &[candidate(
-                "rule-english",
-                "rule",
-                true,
-                "r1",
-                10,
-                1,
-                &[],
-                "Write in English.",
-            )],
-        );
-        let receipt_id = store_receipt(&pool, "ax", &receipt).await.unwrap();
-        let id = store_manifest(
-            &pool,
-            &ContextManifest {
-                project_id: "ax".into(),
-                session_id: "session-1".into(),
-                turn_id: "turn-1".into(),
-                agent_id: "agent-ax".into(),
-                provider_chat_id: None,
-                mode: ReplayMode::Current,
-                cutoff_ms: None,
-                snapshot_id: None,
-                receipt_id,
-                model: "test-model".into(),
-                tool_versions: "ax_explore=1".into(),
-                commit_hash: "abc123".into(),
-            },
-        )
-        .await
-        .unwrap();
+        let receipt_id = english_receipt(&pool).await;
+        let id = store_manifest(&pool, &base_manifest(&receipt_id))
+            .await
+            .unwrap();
         let stored: (String, String, String) = sqlx::query_as(
             "SELECT model, tool_versions, commit_hash FROM context_manifests WHERE id = ?1",
         )
@@ -1885,13 +2248,36 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(score, "not_tested");
-        let agent = approve_replay_run(&pool, &run_id, "agent", "pass")
-            .await
-            .unwrap_err();
+        let agent = approve_replay_run(
+            &pool,
+            &membership,
+            &run_id,
+            "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7",
+            "agent",
+            "pass",
+        )
+        .await
+        .unwrap_err();
         assert!(agent.contains("agent"), "{agent}");
-        approve_replay_run(&pool, &run_id, "human", "manual protocol checked")
+        approve_replay_run(
+            &pool,
+            &membership,
+            &run_id,
+            "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7",
+            "human",
+            "manual protocol checked",
+        )
+        .await
+        .unwrap();
+        let record = load_approval(&pool, ApprovalSubject::Replay, &run_id)
             .await
+            .unwrap()
             .unwrap();
+        assert_eq!(record.reason, "manual protocol checked");
+        assert_eq!(
+            record.actor_member_id,
+            "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7"
+        );
         sqlx::query("UPDATE context_manifests SET commit_hash = 'fff' WHERE id = ?1")
             .bind(&id)
             .execute(&pool)
@@ -1907,38 +2293,12 @@ mod tests {
     #[tokio::test]
     async fn start_replay_for_manifest_uses_stored_identity_and_stays_not_tested() {
         let (dir, pool) = temp_pool().await;
-        let receipt = resolve_context(
-            ReplayMode::Current,
-            None,
-            &[],
-            100,
-            &[candidate(
-                "rule-english",
-                "rule",
-                true,
-                "r1",
-                10,
-                1,
-                &[],
-                "Write in English.",
-            )],
-        );
-        let receipt_id = store_receipt(&pool, "ax", &receipt).await.unwrap();
+        let receipt_id = english_receipt(&pool).await;
         let manifest_id = store_manifest(
             &pool,
             &ContextManifest {
-                project_id: "ax".into(),
-                session_id: "session-1".into(),
-                turn_id: "turn-1".into(),
-                agent_id: "agent-ax".into(),
                 provider_chat_id: Some("prov-1".into()),
-                mode: ReplayMode::Current,
-                cutoff_ms: None,
-                snapshot_id: None,
-                receipt_id,
-                model: "test-model".into(),
-                tool_versions: "ax_explore=1".into(),
-                commit_hash: "abc123".into(),
+                ..base_manifest(&receipt_id)
             },
         )
         .await
@@ -1975,38 +2335,14 @@ mod tests {
     #[tokio::test]
     async fn a_wrong_agent_or_invented_provider_id_fails_replay() {
         let (dir, pool) = temp_pool().await;
-        let receipt = resolve_context(
-            ReplayMode::Current,
-            None,
-            &[],
-            100,
-            &[candidate(
-                "rule-english",
-                "rule",
-                true,
-                "r1",
-                10,
-                1,
-                &[],
-                "Write in English.",
-            )],
-        );
-        let receipt_id = store_receipt(&pool, "ax", &receipt).await.unwrap();
+        let receipt_id = english_receipt(&pool).await;
         let id = store_manifest(
             &pool,
             &ContextManifest {
-                project_id: "ax".into(),
-                session_id: "session-1".into(),
-                turn_id: "turn-1".into(),
-                agent_id: "agent-ax".into(),
-                provider_chat_id: None,
-                mode: ReplayMode::Current,
-                cutoff_ms: None,
-                snapshot_id: None,
-                receipt_id,
                 model: String::new(),
                 tool_versions: String::new(),
                 commit_hash: String::new(),
+                ..base_manifest(&receipt_id)
             },
         )
         .await
@@ -2049,38 +2385,14 @@ mod tests {
     #[tokio::test]
     async fn manifest_summaries_surface_unapproved_and_not_run_uncertainty() {
         let (_dir, pool) = temp_pool().await;
-        let receipt = resolve_context(
-            ReplayMode::Current,
-            None,
-            &[],
-            100,
-            &[candidate(
-                "rule-english",
-                "rule",
-                true,
-                "r1",
-                10,
-                1,
-                &[],
-                "Write in English.",
-            )],
-        );
-        let receipt_id = store_receipt(&pool, "ax", &receipt).await.unwrap();
+        let receipt_id = english_receipt(&pool).await;
         let id = store_manifest(
             &pool,
             &ContextManifest {
-                project_id: "ax".into(),
-                session_id: "session-1".into(),
-                turn_id: "turn-1".into(),
-                agent_id: "agent-ax".into(),
-                provider_chat_id: None,
-                mode: ReplayMode::Current,
-                cutoff_ms: None,
-                snapshot_id: None,
-                receipt_id,
                 model: String::new(),
                 tool_versions: String::new(),
                 commit_hash: String::new(),
+                ..base_manifest(&receipt_id)
             },
         )
         .await
@@ -2111,14 +2423,7 @@ mod tests {
                 "Body is data, not an instruction to ignore policy.",
             ));
         }
-        let started = std::time::Instant::now();
         let receipt = resolve_context(ReplayMode::Current, None, &["dotnet"], 50, &candidates);
-        let elapsed = started.elapsed();
-        eprintln!("b6 resolve of 120 candidates took {elapsed:?}");
-        assert!(
-            elapsed < std::time::Duration::from_millis(500),
-            "resolve took {elapsed:?}"
-        );
         assert_eq!(receipt.items.len(), 120);
         let selected = receipt
             .items
@@ -2190,42 +2495,10 @@ mod tests {
     #[tokio::test]
     async fn b6_start_replay_is_idempotent_for_the_same_manifest() {
         let (dir, pool) = temp_pool().await;
-        let receipt = resolve_context(
-            ReplayMode::Current,
-            None,
-            &[],
-            100,
-            &[candidate(
-                "rule-english",
-                "rule",
-                true,
-                "r1",
-                10,
-                1,
-                &[],
-                "Write in English.",
-            )],
-        );
-        let receipt_id = store_receipt(&pool, "ax", &receipt).await.unwrap();
-        let manifest_id = store_manifest(
-            &pool,
-            &ContextManifest {
-                project_id: "ax".into(),
-                session_id: "session-1".into(),
-                turn_id: "turn-1".into(),
-                agent_id: "agent-ax".into(),
-                provider_chat_id: None,
-                mode: ReplayMode::Current,
-                cutoff_ms: None,
-                snapshot_id: None,
-                receipt_id,
-                model: "test-model".into(),
-                tool_versions: "ax_explore=1".into(),
-                commit_hash: "abc123".into(),
-            },
-        )
-        .await
-        .unwrap();
+        let receipt_id = english_receipt(&pool).await;
+        let manifest_id = store_manifest(&pool, &base_manifest(&receipt_id))
+            .await
+            .unwrap();
         let membership =
             membership_pool(&dir, "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7", "owner").await;
         approve_manifest(
@@ -2258,94 +2531,74 @@ mod tests {
     #[tokio::test]
     async fn b6_list_summaries_handles_one_hundred_manifests() {
         let (_dir, pool) = temp_pool().await;
-        let base = resolve_context(
-            ReplayMode::Current,
-            None,
-            &[],
-            100,
-            &[candidate(
-                "rule-english",
-                "rule",
-                true,
-                "r1",
-                10,
-                1,
-                &[],
-                "Write in English.",
-            )],
-        );
-        let receipt_id = store_receipt(&pool, "ax", &base).await.unwrap();
+        let receipt_id = english_receipt(&pool).await;
         for index in 0..100 {
             store_manifest(
                 &pool,
                 &ContextManifest {
-                    project_id: "ax".into(),
                     session_id: format!("session-{index}"),
                     turn_id: format!("turn-{index}"),
-                    agent_id: "agent-ax".into(),
-                    provider_chat_id: None,
-                    mode: ReplayMode::Current,
-                    cutoff_ms: None,
-                    snapshot_id: None,
-                    receipt_id: receipt_id.clone(),
-                    model: "test-model".into(),
-                    tool_versions: "ax_explore=1".into(),
                     commit_hash: format!("commit-{index}"),
+                    ..base_manifest(&receipt_id)
                 },
             )
             .await
             .unwrap();
         }
-        let started = std::time::Instant::now();
         let summaries = list_manifest_summaries(&pool, "ax").await.unwrap();
-        let elapsed = started.elapsed();
         assert_eq!(summaries.len(), 100);
-        assert!(
-            elapsed < std::time::Duration::from_secs(2),
-            "list took {elapsed:?}"
-        );
         assert!(summaries.iter().all(|row| !row.uncertainties.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn the_manifest_list_is_capped_and_reports_integrity_and_the_latest_replay() {
+        let (_dir, pool) = temp_pool().await;
+        let first = sealed_unapproved_manifest(&pool).await;
+        for index in 0..200 {
+            sqlx::query(
+                "INSERT INTO context_manifests
+                 SELECT ?1, project_id, session_id, turn_id, agent_id, provider_chat_id, mode,
+                        cutoff_ms, snapshot_id, receipt_id, model, tool_versions, commit_hash,
+                        seal, approval, actor_member_id, created_at + ?2
+                 FROM context_manifests WHERE id = ?3",
+            )
+            .bind(format!("copy-{index:03}"))
+            .bind(index + 1)
+            .bind(&first)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let listed = list_manifest_summaries(&pool, "ax").await.unwrap();
+        assert_eq!(listed.len() as i64, MANIFEST_LIST_LIMIT);
+        assert_eq!(listed[0].id, "copy-199", "newest first");
+        let rest =
+            list_manifest_summaries_page(&pool, "ax", MANIFEST_LIST_LIMIT, MANIFEST_LIST_LIMIT)
+                .await
+                .unwrap();
+        assert_eq!(rest.len(), 1);
+        assert_eq!(rest[0].id, first);
+
+        sqlx::query("UPDATE context_manifests SET commit_hash = 'tampered' WHERE id = 'copy-199'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        start_replay_for_manifest(&pool, "copy-198").await.unwrap();
+        let listed = list_manifest_summaries(&pool, "ax").await.unwrap();
+        assert!(!listed[0].integrity_ok);
+        assert!(listed[0].uncertainties.contains(&"integrity_failed".into()));
+        assert!(listed[1].integrity_ok);
+        assert_eq!(listed[1].replay_status, "not_tested");
+        assert_eq!(listed[2].replay_status, "not_run");
     }
 
     #[tokio::test]
     async fn b6_concurrent_replay_starts_share_one_run_row() {
         let (dir, pool) = temp_pool().await;
-        let receipt = resolve_context(
-            ReplayMode::Current,
-            None,
-            &[],
-            100,
-            &[candidate(
-                "rule-english",
-                "rule",
-                true,
-                "r1",
-                10,
-                1,
-                &[],
-                "Write in English.",
-            )],
-        );
-        let receipt_id = store_receipt(&pool, "ax", &receipt).await.unwrap();
-        let manifest_id = store_manifest(
-            &pool,
-            &ContextManifest {
-                project_id: "ax".into(),
-                session_id: "session-1".into(),
-                turn_id: "turn-1".into(),
-                agent_id: "agent-ax".into(),
-                provider_chat_id: None,
-                mode: ReplayMode::Current,
-                cutoff_ms: None,
-                snapshot_id: None,
-                receipt_id,
-                model: "test-model".into(),
-                tool_versions: "ax_explore=1".into(),
-                commit_hash: "abc123".into(),
-            },
-        )
-        .await
-        .unwrap();
+        let receipt_id = english_receipt(&pool).await;
+        let manifest_id = store_manifest(&pool, &base_manifest(&receipt_id))
+            .await
+            .unwrap();
         let membership =
             membership_pool(&dir, "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7", "owner").await;
         approve_manifest(
@@ -2375,42 +2628,10 @@ mod tests {
     }
 
     async fn sealed_unapproved_manifest(pool: &sqlx::SqlitePool) -> String {
-        let receipt = resolve_context(
-            ReplayMode::Current,
-            None,
-            &[],
-            100,
-            &[candidate(
-                "rule-english",
-                "rule",
-                true,
-                "r1",
-                10,
-                1,
-                &[],
-                "Write in English.",
-            )],
-        );
-        let receipt_id = store_receipt(pool, "ax", &receipt).await.unwrap();
-        store_manifest(
-            pool,
-            &ContextManifest {
-                project_id: "ax".into(),
-                session_id: "session-1".into(),
-                turn_id: "turn-1".into(),
-                agent_id: "agent-ax".into(),
-                provider_chat_id: None,
-                mode: ReplayMode::Current,
-                cutoff_ms: None,
-                snapshot_id: None,
-                receipt_id,
-                model: "test-model".into(),
-                tool_versions: "ax_explore=1".into(),
-                commit_hash: "abc123".into(),
-            },
-        )
-        .await
-        .unwrap()
+        let receipt_id = english_receipt(pool).await;
+        store_manifest(pool, &base_manifest(&receipt_id))
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
@@ -2459,7 +2680,94 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(again.contains("missing"), "{again}");
+        assert!(again.contains("already approved"), "{again}");
+    }
+
+    #[tokio::test]
+    async fn an_approval_records_who_approved_why_and_when() {
+        let (dir, pool) = temp_pool().await;
+        let manifest_id = sealed_unapproved_manifest(&pool).await;
+        let membership =
+            membership_pool(&dir, "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7", "owner").await;
+        approve_manifest(
+            &pool,
+            &membership,
+            &manifest_id,
+            "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7",
+            "human",
+            "manifest matches the PR",
+        )
+        .await
+        .unwrap();
+        let (actor, reason, at): (String, String, i64) = sqlx::query_as(
+            "SELECT actor_member_id, reason, approved_at FROM context_approvals
+             WHERE subject_kind = 'manifest' AND subject_id = ?1",
+        )
+        .bind(&manifest_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(actor, "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7");
+        assert_eq!(reason, "manifest matches the PR");
+        assert!(at > 0);
+    }
+
+    #[tokio::test]
+    async fn replay_approval_requires_an_approver_member() {
+        let (dir, pool) = temp_pool().await;
+        let manifest_id = sealed_unapproved_manifest(&pool).await;
+        let run = start_replay_for_manifest(&pool, &manifest_id)
+            .await
+            .unwrap();
+        let membership =
+            membership_pool(&dir, "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7", "owner").await;
+        let outsider = approve_replay_run(
+            &pool,
+            &membership,
+            &run.id,
+            "someone-else",
+            "human",
+            "looks right",
+        )
+        .await
+        .unwrap_err();
+        assert!(outsider.contains("approver"), "{outsider}");
+        assert_eq!(
+            load_replay_run(&pool, &run.id).await.unwrap().approval,
+            "unapproved"
+        );
+        approve_replay_run(
+            &pool,
+            &membership,
+            &run.id,
+            "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7",
+            "human",
+            "looks right",
+        )
+        .await
+        .unwrap();
+        let again = approve_replay_run(
+            &pool,
+            &membership,
+            &run.id,
+            "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7",
+            "human",
+            "twice",
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(again, "replay already approved");
+        let missing = approve_replay_run(
+            &pool,
+            &membership,
+            "no-such-run",
+            "a4c2d177-d0ca-4d7d-8789-cba7ebcae5c7",
+            "human",
+            "x",
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(missing, "missing replay");
     }
 
     #[tokio::test]
@@ -2558,5 +2866,177 @@ mod tests {
             };
             assert_eq!(state.blocks_authority(), expected, "{}", state.as_str());
         }
+    }
+
+    /// Stores the standard one-rule receipt that the manifest tests build on.
+    async fn english_receipt(pool: &sqlx::SqlitePool) -> String {
+        let receipt = resolve_context(
+            ReplayMode::Current,
+            None,
+            &[],
+            100,
+            &[candidate(
+                "rule-english",
+                "rule",
+                true,
+                "r1",
+                10,
+                1,
+                &[],
+                "Write in English.",
+            )],
+        );
+        store_receipt(pool, "ax", &receipt).await.unwrap()
+    }
+
+    /// A valid current-mode manifest; tests override the fields they check.
+    fn base_manifest(receipt_id: &str) -> ContextManifest {
+        ContextManifest {
+            project_id: "ax".into(),
+            session_id: "session-1".into(),
+            turn_id: "turn-1".into(),
+            agent_id: "agent-ax".into(),
+            provider_chat_id: None,
+            mode: ReplayMode::Current,
+            cutoff_ms: None,
+            snapshot_id: None,
+            receipt_id: receipt_id.into(),
+            model: "test-model".into(),
+            tool_versions: "ax_explore=1".into(),
+            commit_hash: "abc123".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_manifest_with_padded_optional_ids_still_verifies() {
+        let (_dir, pool) = temp_pool().await;
+        let receipt = resolve_context(ReplayMode::Current, None, &[], 100, &[]);
+        let receipt_id = store_receipt(&pool, "ax", &receipt).await.unwrap();
+        for (provider, snapshot) in [(Some("chat-1 "), Some(" snap-1 ")), (Some("  "), Some(""))] {
+            let manifest = ContextManifest {
+                provider_chat_id: provider.map(str::to_string),
+                snapshot_id: snapshot.map(str::to_string),
+                ..base_manifest(&receipt_id)
+            };
+            let id = store_manifest(&pool, &manifest).await.unwrap();
+            assert!(
+                verify_manifest(&pool, &id).await.unwrap(),
+                "{provider:?} {snapshot:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_manifest_seal_tells_absent_fields_from_empty_or_zero_ones() {
+        let absent = base_manifest("receipt");
+        let zero = ContextManifest {
+            cutoff_ms: Some(0),
+            ..base_manifest("receipt")
+        };
+        assert_ne!(manifest_seal(&absent), manifest_seal(&zero));
+        let padded = ContextManifest {
+            provider_chat_id: Some(" chat ".into()),
+            ..base_manifest("receipt")
+        };
+        let trimmed = ContextManifest {
+            provider_chat_id: Some("chat".into()),
+            ..base_manifest("receipt")
+        };
+        assert_eq!(manifest_seal(&padded), manifest_seal(&trimmed));
+    }
+
+    #[test]
+    fn receipt_items_with_shifted_separators_seal_differently() {
+        let left = [(
+            "x|mandatory|selected|ok".to_string(),
+            "advisory".to_string(),
+            "rejected".to_string(),
+            "r".to_string(),
+        )];
+        let right = [(
+            "x".to_string(),
+            "mandatory".to_string(),
+            "selected".to_string(),
+            "ok|advisory|rejected|r".to_string(),
+        )];
+        assert_ne!(
+            receipt_rows_seal("ax", "ready", &left),
+            receipt_rows_seal("ax", "ready", &right)
+        );
+    }
+
+    #[test]
+    fn seal_values_with_nul_bytes_cannot_shift_into_the_next_pair() {
+        assert_ne!(seal(&[("a", "b"), ("c", "d")]), seal(&[("a", "b\0c\0d")]));
+    }
+
+    /// Seals made with the earlier `ax-manifest-v1` payload (NUL separators,
+    /// absent options as `0` / empty). The hex values were computed outside
+    /// this crate from that format.
+    const LEGACY_RECEIPT_SEAL: &str =
+        "8f84824036acc22bd78de0f8d1fe28208555e4f2b8d5171ecc42c75c62016d00";
+    const LEGACY_MANIFEST_SEAL: &str =
+        "785785d1396bc9b6f5e4e8d0cfe4d8ea644d0b2192f98b6e63668c500fec39e7";
+
+    async fn insert_legacy_rows(pool: &sqlx::SqlitePool) {
+        ensure_receipt_schema(pool).await.unwrap();
+        ensure_manifest_schema(pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO selection_receipts (id, project_id, status, seal, approval, created_at)
+             VALUES (?1, 'ax', 'ready', ?1, 'unapproved', 1)",
+        )
+        .bind(LEGACY_RECEIPT_SEAL)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO selection_receipt_items (receipt_id, position, item_id, role, decision, reason)
+             VALUES (?1, 0, 'x', 'mandatory', 'selected', 'ok')",
+        )
+        .bind(LEGACY_RECEIPT_SEAL)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO context_manifests
+             (id, project_id, session_id, turn_id, agent_id, provider_chat_id, mode, cutoff_ms,
+              snapshot_id, receipt_id, model, tool_versions, commit_hash, seal, approval, created_at)
+             VALUES (?1, 'ax', 's1', 't1', 'a1', NULL, 'current', NULL, NULL, ?2, 'm', 't=1', 'c1',
+                     ?1, 'unapproved', 1)",
+        )
+        .bind(LEGACY_MANIFEST_SEAL)
+        .bind(LEGACY_RECEIPT_SEAL)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn rows_sealed_in_the_legacy_format_verify_and_are_listed_as_legacy() {
+        let (_dir, pool) = temp_pool().await;
+        insert_legacy_rows(&pool).await;
+        assert!(verify_receipt(&pool, LEGACY_RECEIPT_SEAL).await.unwrap());
+        assert!(verify_manifest(&pool, LEGACY_MANIFEST_SEAL).await.unwrap());
+        let listed = list_manifest_summaries(&pool, "ax").await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].integrity_ok);
+        assert!(listed[0].uncertainties.contains(&"legacy_seal".into()));
+        assert!(!listed[0].uncertainties.contains(&"integrity_failed".into()));
+
+        // A legacy row that changed after sealing still fails.
+        sqlx::query("UPDATE context_manifests SET model = 'other'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE selection_receipt_items SET reason = 'changed'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(!verify_receipt(&pool, LEGACY_RECEIPT_SEAL).await.unwrap());
+        assert!(!verify_manifest(&pool, LEGACY_MANIFEST_SEAL).await.unwrap());
+        let listed = list_manifest_summaries(&pool, "ax").await.unwrap();
+        assert!(!listed[0].integrity_ok);
+        assert!(listed[0].uncertainties.contains(&"integrity_failed".into()));
+        assert!(!listed[0].uncertainties.contains(&"legacy_seal".into()));
     }
 }

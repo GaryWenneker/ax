@@ -234,10 +234,6 @@ fn render_head_stub(
     (text, sent, original.saturating_sub(sent))
 }
 
-pub async fn cache_oversized_reply(tool: &str, body: &str) -> CacheOutcome {
-    cache_reply(None, tool, body).await
-}
-
 /// Project-bound variant used by MCP. Unknown roots never create references.
 pub async fn cache_project_reply(
     root: Option<&std::path::Path>,
@@ -247,10 +243,10 @@ pub async fn cache_project_reply(
     let Some(root) = root else {
         return CacheOutcome::Passthrough;
     };
-    cache_reply(Some(root), tool, body).await
+    cache_reply(root, tool, body).await
 }
 
-async fn cache_reply(root: Option<&std::path::Path>, tool: &str, body: &str) -> CacheOutcome {
+async fn cache_reply(root: &std::path::Path, tool: &str, body: &str) -> CacheOutcome {
     if !cache_enabled() || exempt_from_cache(tool) {
         return CacheOutcome::Passthrough;
     }
@@ -259,9 +255,7 @@ async fn cache_reply(root: Option<&std::path::Path>, tool: &str, body: &str) -> 
     if original < threshold {
         return CacheOutcome::Passthrough;
     }
-    let id = root
-        .map(|r| project_cache_id(r, body))
-        .unwrap_or_else(|| cache_id(body));
+    let id = project_cache_id(root, body);
     let (stub, sent, removed) = if keeps_graph_head(tool) {
         render_head_stub(tool, &id, body, original, threshold)
     } else {
@@ -272,7 +266,7 @@ async fn cache_reply(root: Option<&std::path::Path>, tool: &str, body: &str) -> 
     }
     match open_pool().await {
         Ok(pool) => {
-            if store_project_body(&pool, root, &id, tool, body, original)
+            if store_project_body(&pool, Some(root), &id, tool, body, original)
                 .await
                 .is_err()
             {
@@ -290,20 +284,16 @@ async fn cache_reply(root: Option<&std::path::Path>, tool: &str, body: &str) -> 
     }
 }
 
-pub async fn stash_text(label: Option<&str>, text: &str) -> Result<StashReceipt, String> {
-    stash(None, label, text).await
-}
-
 pub async fn stash_project_text(
     root: &std::path::Path,
     label: Option<&str>,
     text: &str,
 ) -> Result<StashReceipt, String> {
-    stash(Some(root), label, text).await
+    stash(root, label, text).await
 }
 
 async fn stash(
-    root: Option<&std::path::Path>,
+    root: &std::path::Path,
     label: Option<&str>,
     text: &str,
 ) -> Result<StashReceipt, String> {
@@ -318,21 +308,14 @@ async fn stash(
         .filter(|s| !s.is_empty())
         .unwrap_or("stash");
     let tool: String = tool.chars().filter(|c| !c.is_control()).take(64).collect();
-    let id = root
-        .map(|r| project_cache_id(r, text))
-        .unwrap_or_else(|| cache_id(text));
+    let id = project_cache_id(root, text);
     let original_tokens = count_tokens(text) as i64;
     let pool = open_pool().await.map_err(|e| e.to_string())?;
-    store_project_body(&pool, root, &id, &tool, text, original_tokens).await?;
+    store_project_body(&pool, Some(root), &id, &tool, text, original_tokens).await?;
     Ok(StashReceipt {
         id,
         original_tokens,
     })
-}
-
-pub async fn recent_catalog(limit: usize) -> Result<Vec<CatalogEntry>, String> {
-    let pool = open_pool().await.map_err(|e| e.to_string())?;
-    list_recent(&pool, limit).await
 }
 
 pub fn format_catalog(entries: &[CatalogEntry], max_tokens: i64) -> String {
@@ -447,16 +430,6 @@ pub struct ContextCacheCounts {
     pub session_inline_tokens: i64,
 }
 
-pub async fn expand_cached(
-    id: &str,
-    offset: usize,
-    limit: Option<usize>,
-) -> Result<ExpandPage, String> {
-    let pool = open_pool().await.map_err(|e| e.to_string())?;
-    let body = load_body(&pool, id).await?;
-    Ok(page_body(&body, offset, limit))
-}
-
 /// Canonical path is an existing project identity; never infer ownership from a body.
 pub fn project_scope(root: &std::path::Path) -> String {
     root.canonicalize()
@@ -526,6 +499,7 @@ pub fn page_body(body: &str, offset: usize, limit: Option<usize>) -> ExpandPage 
     }
 }
 
+#[cfg(test)]
 pub(crate) async fn store_body(
     pool: &SqlitePool,
     id: &str,
@@ -575,31 +549,9 @@ pub(crate) async fn store_project_body(
     Ok(())
 }
 
-async fn list_recent(pool: &SqlitePool, limit: usize) -> Result<Vec<CatalogEntry>, String> {
-    let now = chrono::Utc::now().timestamp();
-    let limit = limit.clamp(1, 50) as i64;
-    let rows: Vec<(String, String, String, i64)> = sqlx::query_as(
-        "SELECT id, tool, body, original_tokens FROM mcp_context_cache
-         WHERE expires_at >= ? ORDER BY created_at DESC LIMIT ?",
-    )
-    .bind(now)
-    .bind(limit)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(rows
-        .into_iter()
-        .map(|(id, tool, body, original_tokens)| CatalogEntry {
-            summary: one_line_summary(&body),
-            id,
-            tool,
-            original_tokens,
-        })
-        .collect())
-}
-
-/// Record one session event. Stores the body only when it is over the cache
-/// threshold and no cache id was already assigned.
+/// Record one session event in the session index. The body is never stored
+/// here: a reply that went inline has no cache id (its tokens count as
+/// inline), and a stubbed reply passes the id it was already stored under.
 pub async fn note_session_event(
     session_id: Option<&str>,
     tool: &str,
@@ -609,16 +561,27 @@ pub async fn note_session_event(
     if !cache_enabled() || body.trim().is_empty() {
         return Ok(());
     }
+    let pool = open_pool().await.map_err(|e| e.to_string())?;
+    index_session_event(&pool, session_id, tool, body, existing_cache_id).await
+}
+
+/// Insert one row into `mcp_session_index` and drop rows older than the cache
+/// TTL, so the index does not grow without bound.
+async fn index_session_event(
+    pool: &SqlitePool,
+    session_id: Option<&str>,
+    tool: &str,
+    body: &str,
+    cache_id: Option<&str>,
+) -> Result<(), String> {
     let original_tokens = count_tokens(body) as i64;
     let summary = one_line_summary(body);
-    let mut cache_id = existing_cache_id.map(|s| s.to_string());
-    let pool = open_pool().await.map_err(|e| e.to_string())?;
-    if cache_id.is_none() && original_tokens >= cache_threshold() {
-        let id = cache_id_of(body);
-        store_body(&pool, &id, tool, body, original_tokens).await?;
-        cache_id = Some(id);
-    }
     let now = chrono::Utc::now().timestamp();
+    sqlx::query("DELETE FROM mcp_session_index WHERE created_at < ?")
+        .bind(now - TTL_SECS)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
     sqlx::query(
         "INSERT INTO mcp_session_index
          (session_id, tool, summary, original_tokens, cache_id, created_at)
@@ -628,9 +591,9 @@ pub async fn note_session_event(
     .bind(tool)
     .bind(&summary)
     .bind(original_tokens)
-    .bind(&cache_id)
+    .bind(cache_id)
     .bind(now)
-    .execute(&pool)
+    .execute(pool)
     .await
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -651,51 +614,6 @@ pub fn spawn_note_session_event(
         )
         .await;
     });
-}
-
-fn cache_id_of(body: &str) -> String {
-    cache_id(body)
-}
-
-pub async fn recent_session_catalog(
-    session_id: Option<&str>,
-    limit: usize,
-) -> Result<Vec<CatalogEntry>, String> {
-    let pool = open_pool().await.map_err(|e| e.to_string())?;
-    let limit = limit.clamp(1, 50) as i64;
-    let rows: Vec<CatalogRow> = sqlx::query_as(
-        "SELECT cache_id, tool, summary, original_tokens, session_id
-         FROM mcp_session_index
-         ORDER BY CASE WHEN session_id IS NOT NULL AND session_id = ?1 THEN 0 ELSE 1 END,
-                  created_at DESC
-         LIMIT ?2",
-    )
-    .bind(session_id.unwrap_or(""))
-    .bind(limit)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(scope_catalog(rows, session_id))
-}
-
-type CatalogRow = (Option<String>, String, String, i64, Option<String>);
-
-/// Entries from other chats and entries without a cache id cannot be expanded here; drop them.
-fn scope_catalog(rows: Vec<CatalogRow>, session_id: Option<&str>) -> Vec<CatalogEntry> {
-    let Some(session_id) = session_id else {
-        return Vec::new();
-    };
-    rows.into_iter()
-        .filter(|(_, _, _, _, session)| session.as_deref() == Some(session_id))
-        .filter_map(|(cache_id, tool, summary, original_tokens, _)| {
-            Some(CatalogEntry {
-                id: cache_id?,
-                tool,
-                summary,
-                original_tokens,
-            })
-        })
-        .collect()
 }
 
 /// Pull tool-result strings out of a Cursor or Claude JSONL transcript.
@@ -776,46 +694,7 @@ fn value_text(value: &serde_json::Value) -> Option<String> {
     }
 }
 
-/// Stash tool-result chunks that cross the token threshold. Returns how many were stored.
-pub async fn ingest_jsonl_oversized(
-    session_id: Option<&str>,
-    jsonl: &str,
-) -> Result<usize, String> {
-    if !cache_enabled() {
-        return Ok(0);
-    }
-    let mut stored = 0;
-    let pool = open_pool().await.map_err(|e| e.to_string())?;
-    for (tool, text) in tool_chunks_from_jsonl(jsonl) {
-        let tokens = count_tokens(&text) as i64;
-        if tokens < cache_threshold() {
-            continue;
-        }
-        let id = cache_id(&text);
-        if cache_id_recorded(&pool, &id).await? {
-            continue;
-        }
-        note_session_event(session_id, &tool, &text, None).await?;
-        stored += 1;
-    }
-    Ok(stored)
-}
-
-async fn cache_id_recorded(pool: &SqlitePool, id: &str) -> Result<bool, String> {
-    let hit: Option<(i64,)> = sqlx::query_as(
-        "SELECT 1 FROM mcp_context_cache WHERE id = ?
-         UNION
-         SELECT 1 FROM mcp_session_index WHERE cache_id = ?
-         LIMIT 1",
-    )
-    .bind(id)
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(hit.is_some())
-}
-
+#[cfg(test)]
 pub(crate) async fn load_body(pool: &SqlitePool, id: &str) -> Result<String, String> {
     let now = chrono::Utc::now().timestamp();
     let row: Option<(String,)> =
@@ -834,41 +713,105 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    type Row = (Option<String>, String, String, i64, Option<String>);
-
-    fn row(id: Option<&str>, session: Option<&str>) -> Row {
-        (
-            id.map(str::to_string),
-            "ax_explore".into(),
-            "summary".into(),
-            900,
-            session.map(str::to_string),
-        )
-    }
-
-    #[test]
-    fn catalog_keeps_only_expandable_entries_of_this_session() {
-        let rows = vec![
-            row(Some("mine"), Some("chat-a")),
-            row(Some("other"), Some("chat-b")),
-            row(None, Some("chat-a")),
-            row(Some("orphan"), None),
-        ];
-        let ids: Vec<String> = scope_catalog(rows, Some("chat-a"))
-            .into_iter()
-            .map(|e| e.id)
-            .collect();
-        assert_eq!(ids, vec!["mine".to_string()]);
-    }
-
-    #[test]
-    fn catalog_is_empty_without_a_session() {
-        let rows = vec![row(Some("mine"), Some("chat-a"))];
-        assert!(scope_catalog(rows, None).is_empty());
-    }
-
     fn big_body() -> String {
         "line one of the cached reply\n".repeat(4_000)
+    }
+
+    async fn temp_usage_db() -> (
+        tempfile::TempDir,
+        SqlitePool,
+        tokio::sync::MutexGuard<'static, ()>,
+    ) {
+        let guard = crate::store::USAGE_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("usage.db");
+        std::env::set_var("AX_USAGE_DB", db.display().to_string());
+        let pool = crate::store::open_pool_at(&db).await.unwrap();
+        (dir, pool, guard)
+    }
+
+    #[tokio::test]
+    async fn an_inline_reply_is_indexed_without_a_stored_copy() {
+        let (_dir, pool, _guard) = temp_usage_db().await;
+        let body = big_body();
+        let tokens = count_tokens(&body) as i64;
+        assert!(tokens >= cache_threshold());
+        note_session_event(Some("sess-inline"), "ax_preflight", &body, None)
+            .await
+            .unwrap();
+        let cached: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM mcp_context_cache")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(cached.0, 0, "an inline reply must not be stored again");
+        let counts = context_cache_counts(&pool, 0, Some("sess-inline"))
+            .await
+            .unwrap();
+        assert_eq!(counts.session_rows, 1);
+        assert_eq!(counts.session_stored_tokens, 0);
+        assert_eq!(counts.session_inline_tokens, tokens);
+    }
+
+    #[tokio::test]
+    async fn a_stubbed_reply_keeps_its_cache_id_in_the_index() {
+        let (_dir, pool, _guard) = temp_usage_db().await;
+        note_session_event(
+            Some("sess-stub"),
+            "ax_explore",
+            &big_body(),
+            Some("cc_given"),
+        )
+        .await
+        .unwrap();
+        let row: (Option<String>,) =
+            sqlx::query_as("SELECT cache_id FROM mcp_session_index WHERE session_id = 'sess-stub'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row.0.as_deref(), Some("cc_given"));
+    }
+
+    #[tokio::test]
+    async fn session_index_rows_past_the_cache_ttl_are_pruned() {
+        let (_dir, pool, _guard) = temp_usage_db().await;
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query(
+            "INSERT INTO mcp_session_index (session_id, tool, summary, original_tokens, cache_id, created_at)
+             VALUES ('old', 'ax_search', 'old', 5, NULL, ?), ('recent', 'ax_search', 'recent', 5, NULL, ?)",
+        )
+        .bind(now - TTL_SECS - 60)
+        .bind(now - 60)
+        .execute(&pool)
+        .await
+        .unwrap();
+        note_session_event(Some("new"), "ax_search", "a small reply", None)
+            .await
+            .unwrap();
+        let sessions: Vec<(String,)> =
+            sqlx::query_as("SELECT session_id FROM mcp_session_index ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let sessions: Vec<String> = sessions.into_iter().map(|r| r.0).collect();
+        assert_eq!(sessions, vec!["recent".to_string(), "new".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn session_lookups_use_an_index() {
+        let (_dir, pool, _guard) = temp_usage_db().await;
+        let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+            "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM mcp_session_index WHERE session_id = 'x'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let detail: Vec<String> = plan.into_iter().map(|r| r.3).collect();
+        assert!(
+            detail
+                .iter()
+                .any(|d| d.contains("USING") && d.contains("INDEX")),
+            "{detail:?}"
+        );
     }
 
     #[test]
@@ -1034,8 +977,6 @@ mod tests {
             .unwrap();
         let err = load_body(&pool, "cc_test").await.unwrap_err();
         assert!(err.contains("No cached MCP reply"));
-        let listed = list_recent(&pool, 20).await.unwrap();
-        assert!(listed.is_empty());
         let _ = std::fs::remove_file(&path);
     }
 

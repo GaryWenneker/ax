@@ -98,13 +98,19 @@ pub async fn remember_lesson(pool: &SqlitePool, lesson: &Lesson) -> Result<Memor
 }
 
 /// Raise confidence when two lessons share the same symptom subject.
+///
+/// The pair is recorded as a `corroborates` link, so the same two lessons
+/// raise confidence only once, in either order. Returns whether confidence changed.
 pub async fn corroborate_lessons(pool: &SqlitePool, a: &str, b: &str) -> Result<bool, AxError> {
     let a = a.trim();
     let b = b.trim();
     if a.is_empty() || b.is_empty() || a == b {
         return Ok(false);
     }
-    let _ = crate::store::link_memories(pool, a, b, "corroborates").await;
+    let (a, b) = if a <= b { (a, b) } else { (b, a) };
+    if !crate::store::link_memories(pool, a, b, "corroborates").await? {
+        return Ok(false);
+    }
     let result = sqlx::query(
         "UPDATE memories SET confidence = MIN(1.0, confidence + 0.1) WHERE id IN (?, ?)",
     )

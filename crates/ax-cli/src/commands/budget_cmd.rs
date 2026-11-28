@@ -3,13 +3,16 @@
 use std::path::Path;
 
 use ax_usage::{
-    collect_report, cycle_stats, daily_plan, format_money, load_settings, monthly_budget_usd,
-    parse_mode, price_band, save_global_budget, simulate, BudgetMode, BudgetSectionPatch,
-    BudgetSettings, PriceBand, SavingsQuery, UsagePeriod,
+    collect_report, cycle_stats, daily_plan, format_money, load_settings,
+    load_settings_with_diagnostics, monthly_budget_usd, parse_mode, price_band, save_global_budget,
+    simulate, BudgetMode, BudgetSectionPatch, BudgetSettings, PriceBand, SavingsQuery, UsagePeriod,
 };
 
 pub async fn run_plan(json: bool, project: Option<&Path>) -> Result<(), String> {
-    let settings = load_settings(project);
+    let (settings, diagnostics) = load_settings_with_diagnostics(project);
+    for diag in &diagnostics {
+        eprintln!("warning: {diag}");
+    }
     let plan = daily_plan(&settings);
     let query = SavingsQuery {
         period: UsagePeriod::MonthToDate,
