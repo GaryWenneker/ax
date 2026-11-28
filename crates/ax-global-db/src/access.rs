@@ -122,6 +122,19 @@ impl MemberRole {
     pub fn permits(self, scope: &str) -> bool {
         self.default_scopes().contains(&scope)
     }
+
+    /// Rank by scope breadth, broadest first. Each role holds every scope of
+    /// the roles ranked below it, so the first role of a member's set grants
+    /// the union of the set's scopes and is what team_members.role stores.
+    pub fn breadth_rank(self) -> u8 {
+        match self {
+            Self::Owner => 0,
+            Self::Admin => 1,
+            Self::Approver => 2,
+            Self::Member => 3,
+            Self::Readonly => 4,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -196,7 +209,13 @@ type ClientAuthRow = (
     String,
     String,
     Option<String>,
+    String,
+    bool,
 );
+
+/// A token's last-used time is written again only when it is older than this,
+/// so steady traffic does not take the global.db write lock on every request.
+const TOUCH_INTERVAL_SQL: &str = "-60 seconds";
 type NodeRow = (
     String,
     String,
@@ -273,13 +292,7 @@ pub async fn update_member_roles(
         bail!("invalid member status or empty role set");
     }
     let mut unique = roles.to_vec();
-    unique.sort_by_key(|role| match role {
-        MemberRole::Owner => 0,
-        MemberRole::Approver => 1,
-        MemberRole::Admin => 2,
-        MemberRole::Member => 3,
-        MemberRole::Readonly => 4,
-    });
+    unique.sort_by_key(|role| role.breadth_rank());
     unique.dedup();
     let strongest = unique[0];
     let mut tx = pool.begin().await?;
@@ -672,7 +685,8 @@ pub async fn authenticate_client_token(
     let prefix = token.chars().take(12).collect::<String>();
     let verifier = token_verifier(token);
     let row: Option<ClientAuthRow> = sqlx::query_as(
-        "SELECT c.member_id, c.id, tm.role, tm.status, c.status, c.scopes, cc.expires_at
+        "SELECT c.member_id, c.id, tm.role, tm.status, c.status, c.scopes, cc.expires_at, cc.id,
+                (cc.last_used_at IS NULL OR cc.last_used_at < datetime('now', ?)) AS touch_due
              FROM client_credentials cc
              JOIN clients c ON c.id = cc.client_id
              JOIN team_members tm ON tm.id = c.member_id
@@ -680,12 +694,23 @@ pub async fn authenticate_client_token(
                AND cc.verifier = ?
                AND cc.revoked_at IS NULL",
     )
+    .bind(TOUCH_INTERVAL_SQL)
     .bind(&prefix)
     .bind(&verifier)
     .fetch_optional(pool)
     .await?;
 
-    let Some((member_id, client_id, role, member_status, client_status, scopes, expires_at)) = row
+    let Some((
+        member_id,
+        client_id,
+        role,
+        member_status,
+        client_status,
+        scopes,
+        expires_at,
+        credential_id,
+        touch_due,
+    )) = row
     else {
         return Ok(None);
     };
@@ -710,20 +735,11 @@ pub async fn authenticate_client_token(
         .filter(|scope| role.permits(scope))
         .collect::<Vec<_>>();
 
-    sqlx::query(
-        "UPDATE client_credentials SET last_used_at = CURRENT_TIMESTAMP WHERE token_prefix = ?",
-    )
-    .bind(&prefix)
-    .execute(pool)
-    .await?;
-    sqlx::query("UPDATE clients SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?")
-        .bind(&client_id)
-        .execute(pool)
-        .await?;
-    sqlx::query("UPDATE team_members SET last_active_at = CURRENT_TIMESTAMP WHERE id = ?")
-        .bind(&member_id)
-        .execute(pool)
-        .await?;
+    if touch_due {
+        // Last-seen times are informational: a busy or locked database must
+        // not turn a valid token into a failed request.
+        let _ = touch_client(pool, &credential_id, &client_id, &member_id).await;
+    }
 
     Ok(Some(ClientPrincipal {
         member_id,
@@ -731,6 +747,30 @@ pub async fn authenticate_client_token(
         role,
         scopes: effective,
     }))
+}
+
+/// Records use of a client credential in one write transaction, by id.
+async fn touch_client(
+    pool: &SqlitePool,
+    credential_id: &str,
+    client_id: &str,
+    member_id: &str,
+) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE client_credentials SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(credential_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE clients SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(client_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE team_members SET last_active_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(member_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 pub async fn revoke_client_credential(pool: &SqlitePool, credential_id: &str) -> Result<bool> {
@@ -842,17 +882,29 @@ pub async fn register_trusted_replica(
         bail!("replica is blocked");
     }
 
+    // Enrollment grants access to a project the node never had. It never
+    // clears a per-project revoke: only `grant_node_project` (an admin) can.
     sqlx::query(
         "INSERT INTO node_project_access (node_id, project_id, revoked_at)
          VALUES (?, ?, NULL)
-         ON CONFLICT(node_id, project_id) DO UPDATE SET
-            revoked_at = NULL,
-            granted_at = CURRENT_TIMESTAMP",
+         ON CONFLICT(node_id, project_id) DO NOTHING",
     )
     .bind(node_id)
     .bind(project_id)
     .execute(&mut *tx)
     .await?;
+    let access_revoked: (bool,) = sqlx::query_as(
+        "SELECT revoked_at IS NOT NULL FROM node_project_access
+         WHERE node_id = ? AND project_id = ?",
+    )
+    .bind(node_id)
+    .bind(project_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if access_revoked.0 {
+        // Dropping the transaction rolls back the node upsert as well.
+        bail!("replica is blocked");
+    }
 
     sqlx::query(
         "INSERT INTO security_audit_log (event_type, subject_type, subject_id, details)
@@ -928,6 +980,16 @@ pub async fn issue_node_credential(
     if result.rows_affected() != 1 {
         bail!("node cannot be approved");
     }
+    // A node has one live credential: issuing a new one retires the old ones,
+    // so re-issuing after a suspected leak cuts the leaked token off.
+    sqlx::query(
+        "UPDATE node_credentials SET revoked_at = CURRENT_TIMESTAMP
+         WHERE node_id = ? AND id != ? AND revoked_at IS NULL",
+    )
+    .bind(node_id)
+    .bind(&credential_id)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
 
     Ok(IssuedNodeCredential {
@@ -986,20 +1048,22 @@ pub async fn authenticate_node_token(
     }
     let prefix = token.chars().take(12).collect::<String>();
     let verifier = token_verifier(token);
-    let row: Option<(String, String, Option<String>)> = sqlx::query_as(
-        "SELECT nc.node_id, rn.trust_state, nc.expires_at
+    let row: Option<(String, String, Option<String>, String, bool)> = sqlx::query_as(
+        "SELECT nc.node_id, rn.trust_state, nc.expires_at, nc.id,
+                (nc.last_used_at IS NULL OR nc.last_used_at < datetime('now', ?)) AS touch_due
          FROM node_credentials nc
          JOIN replication_nodes rn ON rn.id = nc.node_id
          WHERE nc.token_prefix = ?
            AND nc.verifier = ?
            AND nc.revoked_at IS NULL",
     )
+    .bind(TOUCH_INTERVAL_SQL)
     .bind(&prefix)
     .bind(&verifier)
     .fetch_optional(pool)
     .await?;
 
-    let Some((node_id, trust_state, expires_at)) = row else {
+    let Some((node_id, trust_state, expires_at, credential_id, touch_due)) = row else {
         return Ok(None);
     };
     if trust_state != "trusted" {
@@ -1016,18 +1080,27 @@ pub async fn authenticate_node_token(
         }
     }
 
-    sqlx::query(
-        "UPDATE node_credentials SET last_used_at = CURRENT_TIMESTAMP WHERE token_prefix = ?",
-    )
-    .bind(&prefix)
-    .execute(pool)
-    .await?;
-    sqlx::query("UPDATE replication_nodes SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?")
-        .bind(&node_id)
-        .execute(pool)
-        .await?;
+    if touch_due {
+        // Informational, like client last-seen times: never fail auth on it.
+        let _ = touch_node(pool, &credential_id, &node_id).await;
+    }
 
     Ok(Some(NodePrincipal { node_id }))
+}
+
+/// Records use of a node credential in one write transaction, by id.
+async fn touch_node(pool: &SqlitePool, credential_id: &str, node_id: &str) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE node_credentials SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(credential_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE replication_nodes SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(node_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 pub async fn authenticate_node_token_for_project(
@@ -1321,6 +1394,82 @@ mod tests {
         );
     }
 
+    #[test]
+    fn each_role_holds_every_scope_of_the_roles_below_it() {
+        // The single team_members.role column stands for the whole role set, so
+        // the broadest role must cover every scope of the others.
+        let mut order = [
+            MemberRole::Readonly,
+            MemberRole::Approver,
+            MemberRole::Owner,
+            MemberRole::Member,
+            MemberRole::Admin,
+        ];
+        order.sort_by_key(|role| role.breadth_rank());
+        for (i, high) in order.iter().enumerate() {
+            for low in &order[i..] {
+                for scope in low.default_scopes() {
+                    assert!(high.permits(scope), "{high:?} lacks {scope} of {low:?}");
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn admin_plus_approver_keeps_admin_scopes() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_and_init(&dir.path().join("global.db")).await.unwrap();
+        bootstrap_owner(&pool, "owner", "Owner", None)
+            .await
+            .unwrap();
+        create_member(&pool, "ada", "Ada", None, MemberRole::Member)
+            .await
+            .unwrap();
+        update_member_roles(
+            &pool,
+            "ada",
+            &[MemberRole::Approver, MemberRole::Admin],
+            "active",
+        )
+        .await
+        .unwrap();
+        let members = list_members(&pool).await.unwrap();
+        let ada = members.iter().find(|m| m.id == "ada").unwrap();
+        assert_eq!(ada.role, MemberRole::Admin);
+        assert!(ada.roles.contains(&MemberRole::Approver));
+        create_client(
+            &pool,
+            "ada-cli",
+            "ada",
+            "Ada CLI",
+            "cli",
+            &["admin:clients".to_string()],
+        )
+        .await
+        .expect("an admin who also approves may create admin clients");
+    }
+
+    #[tokio::test]
+    async fn opening_repairs_an_approver_projection_that_hid_admin() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("global.db");
+        let pool = open_and_init(&path).await.unwrap();
+        bootstrap_owner(&pool, "owner", "Owner", None)
+            .await
+            .unwrap();
+        create_member(&pool, "ada", "Ada", None, MemberRole::Approver)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO member_roles(member_id, role) VALUES ('ada', 'admin')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        crate::database::initialize_schema(&pool).await.unwrap();
+        let members = list_members(&pool).await.unwrap();
+        let ada = members.iter().find(|m| m.id == "ada").unwrap();
+        assert_eq!(ada.role, MemberRole::Admin);
+    }
+
     #[tokio::test]
     async fn member_safety_and_effective_scopes() {
         let dir = tempfile::tempdir().unwrap();
@@ -1388,6 +1537,94 @@ mod tests {
         assert!(issue_client_credential(&pool, "client", None)
             .await
             .is_err());
+    }
+
+    async fn scalar(pool: &SqlitePool, sql: &'static str) -> Option<String> {
+        sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    }
+
+    async fn client_fixture() -> (tempfile::TempDir, SqlitePool, IssuedClientCredential) {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_and_init(&dir.path().join("global.db")).await.unwrap();
+        bootstrap_owner(&pool, "owner", "Owner", None)
+            .await
+            .unwrap();
+        create_client(&pool, "c1", "owner", "c1", "cli", &["memory:read".into()])
+            .await
+            .unwrap();
+        let issued = issue_client_credential(&pool, "c1", None).await.unwrap();
+        (dir, pool, issued)
+    }
+
+    #[tokio::test]
+    async fn client_auth_skips_recent_touches() {
+        let (_dir, pool, issued) = client_fixture().await;
+        authenticate_client_token(&pool, &issued.token)
+            .await
+            .unwrap()
+            .unwrap();
+        for sql in [
+            "UPDATE client_credentials SET last_used_at = datetime('now', '-30 seconds')",
+            "UPDATE clients SET last_seen_at = datetime('now', '-30 seconds')",
+            "UPDATE team_members SET last_active_at = datetime('now', '-30 seconds')",
+        ] {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        }
+        let before = scalar(&pool, "SELECT last_used_at FROM client_credentials").await;
+        authenticate_client_token(&pool, &issued.token)
+            .await
+            .unwrap()
+            .unwrap();
+        let after = scalar(&pool, "SELECT last_used_at FROM client_credentials").await;
+        assert_eq!(before, after, "a touch within a minute wrote again");
+
+        sqlx::query("UPDATE client_credentials SET last_used_at = datetime('now', '-5 minutes')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let stale = scalar(&pool, "SELECT last_used_at FROM client_credentials").await;
+        authenticate_client_token(&pool, &issued.token)
+            .await
+            .unwrap()
+            .unwrap();
+        let fresh = scalar(&pool, "SELECT last_used_at FROM client_credentials").await;
+        assert_ne!(stale, fresh, "an old touch must be refreshed");
+    }
+
+    #[tokio::test]
+    async fn client_auth_survives_a_failed_touch() {
+        let (_dir, pool, issued) = client_fixture().await;
+        sqlx::query(
+            "CREATE TRIGGER no_touch BEFORE UPDATE ON clients
+             BEGIN SELECT RAISE(ABORT, 'database is locked'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let principal = authenticate_client_token(&pool, &issued.token).await;
+        assert!(
+            matches!(principal, Ok(Some(_))),
+            "a failed last-seen write rejected a valid token: {principal:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn node_auth_survives_a_failed_touch() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_and_init(&dir.path().join("global.db")).await.unwrap();
+        discover_replica(&pool, "n1", "Replica", None)
+            .await
+            .unwrap();
+        let issued = issue_node_credential(&pool, "n1", None).await.unwrap();
+        sqlx::query(
+            "CREATE TRIGGER no_touch BEFORE UPDATE ON replication_nodes
+             BEGIN SELECT RAISE(ABORT, 'database is locked'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let principal = authenticate_node_token(&pool, &issued.token).await;
+        assert!(matches!(principal, Ok(Some(_))), "{principal:?}");
     }
 
     #[tokio::test]
@@ -1483,6 +1720,73 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(list_nodes(&pool).await.unwrap()[0].trust_state, "trusted");
+    }
+
+    #[tokio::test]
+    async fn enrollment_registration_does_not_restore_revoked_project_access() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_and_init(&dir.path().join("global.db")).await.unwrap();
+        register_trusted_replica(&pool, "n1", "Replica", None, "p1")
+            .await
+            .unwrap();
+        register_trusted_replica(&pool, "n1", "Replica", None, "p2")
+            .await
+            .unwrap();
+        let credential = issue_node_credential(&pool, "n1", None).await.unwrap();
+        assert!(revoke_node_project(&pool, "n1", "p1").await.unwrap());
+
+        // The enrollment secret for p1 must not undo the per-project revoke.
+        assert!(register_trusted_replica(&pool, "n1", "Replica", None, "p1")
+            .await
+            .is_err());
+        assert!(
+            authenticate_node_token_for_project(&pool, &credential.token, "p1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // Access to the other project, and repeat enrollment there, keep working.
+        register_trusted_replica(&pool, "n1", "Replica", None, "p2")
+            .await
+            .unwrap();
+        assert!(
+            authenticate_node_token_for_project(&pool, &credential.token, "p2")
+                .await
+                .unwrap()
+                .is_some()
+        );
+        // Only an explicit grant restores it.
+        grant_node_project(&pool, "n1", "p1").await.unwrap();
+        register_trusted_replica(&pool, "n1", "Replica", None, "p1")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn issuing_a_node_credential_revokes_the_earlier_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_and_init(&dir.path().join("global.db")).await.unwrap();
+        register_trusted_replica(&pool, "n1", "Replica", None, "p1")
+            .await
+            .unwrap();
+        register_trusted_replica(&pool, "n2", "Other", None, "p1")
+            .await
+            .unwrap();
+        let first = issue_node_credential(&pool, "n1", None).await.unwrap();
+        let other = issue_node_credential(&pool, "n2", None).await.unwrap();
+        let second = issue_node_credential(&pool, "n1", None).await.unwrap();
+        assert!(authenticate_node_token(&pool, &first.token)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(authenticate_node_token(&pool, &second.token)
+            .await
+            .unwrap()
+            .is_some());
+        assert!(authenticate_node_token(&pool, &other.token)
+            .await
+            .unwrap()
+            .is_some());
     }
 
     #[tokio::test]

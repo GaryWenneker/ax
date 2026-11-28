@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 
 use crate::open_pool;
 
@@ -44,61 +44,54 @@ pub async fn sync_project(global: &SqlitePool, project_root: &Path) -> Result<Sy
         .to_string();
 
     let project = open_pool(&db_path, false).await?;
+    let read = read_project(&project).await;
+    project.close().await;
+    let ProjectRows {
+        nodes,
+        files,
+        edges,
+        rules,
+        skills,
+    } = read?;
 
+    // One transaction for the whole replace: a failure halfway (busy
+    // timeout, disk full, interrupt) keeps the previous rows, readers never
+    // see a half-built project, and the sync commits once instead of per row.
+    // The first statement writes, so the write lock is taken up front.
+    let mut tx = global.begin().await?;
     sqlx::query(
         "INSERT INTO projects (name, path, last_sync) VALUES (?, ?, CURRENT_TIMESTAMP)
          ON CONFLICT(path) DO UPDATE SET name = excluded.name, last_sync = CURRENT_TIMESTAMP",
     )
     .bind(&name)
     .bind(&path_str)
-    .execute(global)
+    .execute(&mut *tx)
     .await?;
 
     let project_id: (i64,) = sqlx::query_as("SELECT id FROM projects WHERE path = ?")
         .bind(&path_str)
-        .fetch_one(global)
+        .fetch_one(&mut *tx)
         .await?;
     let pid = project_id.0;
 
     sqlx::query("DELETE FROM global_nodes WHERE project_id = ?")
         .bind(pid)
-        .execute(global)
+        .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM global_documents WHERE project_id = ?")
         .bind(pid)
-        .execute(global)
+        .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM global_edges WHERE project_id = ?")
         .bind(pid)
-        .execute(global)
+        .execute(&mut *tx)
         .await?;
-    sync_policy_table(
-        global,
-        &project,
-        pid,
-        "policy_rules",
-        "id",
-        "global_policy_rules",
-    )
-    .await?;
-    sync_policy_table(
-        global,
-        &project,
-        pid,
-        "policy_skills",
-        "name",
-        "global_policy_skills",
-    )
-    .await?;
-
-    let nodes: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
-        "SELECT n.id, n.kind, n.name, n.file_path, f.content_hash
-         FROM nodes n
-         LEFT JOIN files f ON f.path = n.file_path",
-    )
-    .fetch_all(&project)
-    .await
-    .context("read nodes from project ax.db")?;
+    if let Some(rows) = &rules {
+        sync_policy_table(&mut tx, pid, rows, "id", "global_policy_rules").await?;
+    }
+    if let Some(rows) = &skills {
+        sync_policy_table(&mut tx, pid, rows, "name", "global_policy_skills").await?;
+    }
 
     for (source_id, kind, node_name, file_path, file_hash) in &nodes {
         let hash = file_hash
@@ -114,15 +107,9 @@ pub async fn sync_project(global: &SqlitePool, project_root: &Path) -> Result<Sy
         .bind(node_name)
         .bind(file_path)
         .bind(&hash)
-        .execute(global)
+        .execute(&mut *tx)
         .await?;
     }
-
-    let files: Vec<(String, String, String)> =
-        sqlx::query_as("SELECT path, content_hash, language FROM files")
-            .fetch_all(&project)
-            .await
-            .unwrap_or_default();
 
     for (file_path, content_hash, language) in &files {
         let doc_type = doc_type_from(file_path, language);
@@ -134,15 +121,9 @@ pub async fn sync_project(global: &SqlitePool, project_root: &Path) -> Result<Sy
         .bind(file_path)
         .bind(&doc_type)
         .bind(content_hash)
-        .execute(global)
+        .execute(&mut *tx)
         .await?;
     }
-
-    let edges: Vec<(String, String, String)> =
-        sqlx::query_as("SELECT source, target, kind FROM edges")
-            .fetch_all(&project)
-            .await
-            .unwrap_or_default();
 
     for (source, target, kind) in &edges {
         sqlx::query(
@@ -153,7 +134,7 @@ pub async fn sync_project(global: &SqlitePool, project_root: &Path) -> Result<Sy
         .bind(source)
         .bind(target)
         .bind(map_edge_kind(kind))
-        .execute(global)
+        .execute(&mut *tx)
         .await?;
     }
 
@@ -161,10 +142,10 @@ pub async fn sync_project(global: &SqlitePool, project_root: &Path) -> Result<Sy
         .bind(nodes.len() as i64)
         .bind(files.len() as i64)
         .bind(pid)
-        .execute(global)
+        .execute(&mut *tx)
         .await?;
 
-    rebuild_shared_knowledge(global).await?;
+    rebuild_shared_knowledge(&mut tx).await?;
 
     let duration_ms = started.elapsed().as_millis() as u64;
     sqlx::query(
@@ -174,10 +155,9 @@ pub async fn sync_project(global: &SqlitePool, project_root: &Path) -> Result<Sy
     .bind(&name)
     .bind(nodes.len() as i64)
     .bind(duration_ms as i64)
-    .execute(global)
+    .execute(&mut *tx)
     .await?;
-
-    project.close().await;
+    tx.commit().await?;
 
     Ok(SyncResult {
         project_name: name,
@@ -186,6 +166,60 @@ pub async fn sync_project(global: &SqlitePool, project_root: &Path) -> Result<Sy
         edge_count: edges.len(),
         duration_ms,
     })
+}
+
+type NodeRow = (String, String, String, String, Option<String>);
+
+/// Everything a sync copies out of the project's `ax.db`, read before the
+/// global write transaction starts so that transaction stays short.
+struct ProjectRows {
+    nodes: Vec<NodeRow>,
+    files: Vec<(String, String, String)>,
+    edges: Vec<(String, String, String)>,
+    rules: Option<Vec<sqlx::sqlite::SqliteRow>>,
+    skills: Option<Vec<sqlx::sqlite::SqliteRow>>,
+}
+
+async fn read_project(project: &SqlitePool) -> Result<ProjectRows> {
+    let nodes: Vec<NodeRow> = sqlx::query_as(
+        "SELECT n.id, n.kind, n.name, n.file_path, f.content_hash
+         FROM nodes n
+         LEFT JOIN files f ON f.path = n.file_path",
+    )
+    .fetch_all(project)
+    .await
+    .context("read nodes from project ax.db")?;
+    let files = sqlx::query_as("SELECT path, content_hash, language FROM files")
+        .fetch_all(project)
+        .await
+        .unwrap_or_default();
+    let edges = sqlx::query_as("SELECT source, target, kind FROM edges")
+        .fetch_all(project)
+        .await
+        .unwrap_or_default();
+    Ok(ProjectRows {
+        nodes,
+        files,
+        edges,
+        rules: policy_rows(project, "policy_rules").await,
+        skills: policy_rows(project, "policy_skills").await,
+    })
+}
+
+async fn policy_rows(
+    project: &SqlitePool,
+    table: &'static str,
+) -> Option<Vec<sqlx::sqlite::SqliteRow>> {
+    if !table_exists(project, table).await {
+        return None;
+    }
+    // Safe: `table` is a `'static` literal from `project_rows`.
+    Some(
+        sqlx::query(sqlx::AssertSqlSafe(format!("SELECT * FROM {table}")))
+            .fetch_all(project)
+            .await
+            .unwrap_or_default(),
+    )
 }
 
 async fn table_exists(pool: &SqlitePool, name: &str) -> bool {
@@ -200,22 +234,13 @@ async fn table_exists(pool: &SqlitePool, name: &str) -> bool {
 }
 
 async fn sync_policy_table(
-    global: &SqlitePool,
-    project: &SqlitePool,
+    global: &mut SqliteConnection,
     pid: i64,
-    source_table: &'static str,
-    id_col: &'static str,
+    rows: &[sqlx::sqlite::SqliteRow],
+    id_col: &str,
     dest_table: &'static str,
 ) -> Result<()> {
-    // Safe (all queries below): the table names are `'static` literals from `sync_project`.
-    if !table_exists(project, source_table).await {
-        return Ok(());
-    }
-    let rows: Vec<sqlx::sqlite::SqliteRow> =
-        sqlx::query(sqlx::AssertSqlSafe(format!("SELECT * FROM {source_table}")))
-            .fetch_all(project)
-            .await
-            .unwrap_or_default();
+    // Safe (all queries below): `dest_table` is a `'static` literal from `sync_project`.
     for row in rows {
         let item_id: String = row.try_get::<String, _>(id_col).unwrap_or_default();
         if item_id.is_empty() {
@@ -225,12 +250,12 @@ async fn sync_policy_table(
             "SELECT 1 FROM {dest_table} WHERE item_id = ? AND level = 'global' LIMIT 1"
         )))
         .bind(&item_id)
-        .fetch_optional(global)
+        .fetch_optional(&mut *global)
         .await?;
         if at_global_level.is_some() {
             continue;
         }
-        let payload = row_to_policy_json(&row, id_col);
+        let payload = row_to_policy_json(row, id_col);
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "INSERT INTO {dest_table} (project_id, item_id, payload, level) VALUES (?, ?, ?, 'mirror')
              ON CONFLICT(project_id, item_id) DO UPDATE SET payload = excluded.payload, synced_at = CURRENT_TIMESTAMP
@@ -239,7 +264,7 @@ async fn sync_policy_table(
         .bind(pid)
         .bind(&item_id)
         .bind(payload.to_string())
-        .execute(global)
+        .execute(&mut *global)
         .await?;
     }
     Ok(())
@@ -350,12 +375,12 @@ fn map_edge_kind(kind: &str) -> &'static str {
     }
 }
 
-async fn rebuild_shared_knowledge(global: &SqlitePool) -> Result<()> {
+async fn rebuild_shared_knowledge(global: &mut SqliteConnection) -> Result<()> {
     sqlx::query("DELETE FROM shared_knowledge")
-        .execute(global)
+        .execute(&mut *global)
         .await?;
     sqlx::query("DELETE FROM cross_project_refs")
-        .execute(global)
+        .execute(&mut *global)
         .await?;
 
     let groups: Vec<(String, String, String, String)> = sqlx::query_as(
@@ -368,7 +393,7 @@ async fn rebuild_shared_knowledge(global: &SqlitePool) -> Result<()> {
          GROUP BY d.content_hash
          HAVING COUNT(DISTINCT d.project_id) > 1",
     )
-    .fetch_all(global)
+    .fetch_all(&mut *global)
     .await?;
 
     for (hash, doc_type, file_path, projects_json) in groups {
@@ -383,7 +408,7 @@ async fn rebuild_shared_knowledge(global: &SqlitePool) -> Result<()> {
         .bind(&file_path)
         .bind(&projects_json)
         .bind(&first)
-        .execute(global)
+        .execute(&mut *global)
         .await?;
 
         for i in 0..names.len() {
@@ -397,10 +422,91 @@ async fn rebuild_shared_knowledge(global: &SqlitePool) -> Result<()> {
                 .bind(&names[j])
                 .bind(&file_path)
                 .bind(&file_path)
-                .execute(global)
+                .execute(&mut *global)
                 .await?;
             }
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::open_and_init;
+
+    async fn project_index(root: &Path, nodes: &[&str]) {
+        std::fs::create_dir_all(root.join(".ax")).unwrap();
+        let db = open_pool(&project_db_path(root), true).await.unwrap();
+        for ddl in [
+            "CREATE TABLE IF NOT EXISTS nodes (id TEXT, kind TEXT, name TEXT, file_path TEXT)",
+            "CREATE TABLE IF NOT EXISTS files (path TEXT, content_hash TEXT, language TEXT)",
+            "CREATE TABLE IF NOT EXISTS edges (source TEXT, target TEXT, kind TEXT)",
+            "DELETE FROM nodes",
+            "DELETE FROM files",
+            "DELETE FROM edges",
+        ] {
+            sqlx::query(ddl).execute(&db).await.unwrap();
+        }
+        for id in nodes {
+            sqlx::query("INSERT INTO nodes VALUES (?, 'function', ?, 'src/a.rs')")
+                .bind(id)
+                .bind(id)
+                .execute(&db)
+                .await
+                .unwrap();
+        }
+        sqlx::query("INSERT INTO files VALUES ('src/a.rs', 'h1', 'rust')")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO edges VALUES ('a', 'b', 'calls')")
+            .execute(&db)
+            .await
+            .unwrap();
+        db.close().await;
+    }
+
+    async fn count(pool: &SqlitePool, table: &str) -> i64 {
+        let row: (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        row.0
+    }
+
+    #[tokio::test]
+    async fn a_failed_sync_keeps_the_previous_global_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("proj");
+        project_index(&root, &["a", "b"]).await;
+        let global = open_and_init(&dir.path().join("global.db")).await.unwrap();
+        let first = sync_project(&global, &root).await.unwrap();
+        assert_eq!(first.synced_count, 2);
+        assert_eq!(first.edge_count, 1);
+
+        project_index(&root, &["a", "b", "c"]).await;
+        // Fail the sync after the nodes are written, while writing edges.
+        sqlx::query(
+            "CREATE TRIGGER fail_edges BEFORE INSERT ON global_edges
+             BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+        )
+        .execute(&global)
+        .await
+        .unwrap();
+        assert!(sync_project(&global, &root).await.is_err());
+
+        assert_eq!(count(&global, "global_nodes").await, 2);
+        assert_eq!(count(&global, "global_documents").await, 1);
+        assert_eq!(count(&global, "global_edges").await, 1);
+
+        sqlx::query("DROP TRIGGER fail_edges")
+            .execute(&global)
+            .await
+            .unwrap();
+        let second = sync_project(&global, &root).await.unwrap();
+        assert_eq!(second.synced_count, 3);
+        assert_eq!(count(&global, "global_nodes").await, 3);
+        assert_eq!(count(&global, "global_edges").await, 1);
+    }
 }

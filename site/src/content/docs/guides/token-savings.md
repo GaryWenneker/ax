@@ -252,8 +252,8 @@ Compress prompts algorithmically before sending them to the LLM.
 | Tool | Approach | Savings |
 |---|---|---|
 | [LLMLingua](https://github.com/microsoft/LLMLingua) | Coarse-to-fine iterative compression | Up to 20x |
-| [Headroom](https://github.com/headroom-ai/headroom) | Compress tool outputs, logs, RAG chunks | 60-95% |
-| [RTK](https://github.com/nicholasgasior/rtk) | Rust CLI proxy for dev-command output | 60-90% |
+| [Headroom](https://github.com/headroomlabs-ai/headroom) | Compress tool outputs, logs, RAG chunks | 60-95% |
+| [RTK](https://github.com/rtk-ai/rtk) | Rust CLI proxy for dev-command output | 60-90% |
 
 Lossless compression principles: strip prose transitions and hedging; preserve numbers, entities, and constraints; transform verbose text into dense bullets; split into 3-5K token self-contained sections.
 
@@ -264,7 +264,7 @@ Lossless compression principles: strip prose transitions and hedging; preserve n
 When using Retrieval-Augmented Generation, send only the top 3-5 most relevant text chunks — not entire documents.
 
 - Optimize chunking strategy (semantic boundaries, not fixed-length splits).
-- Use a reranker to filter before injection: [OpenProvence](https://github.com/openProvence/openProvence) drops ~99% of off-topic sentences.
+- Use a reranker to filter before injection: [OpenProvence](https://github.com/hotchpotch/open_provence) drops ~99% of off-topic sentences.
 - Research shows RAG is [1250x cheaper](https://arxiv.org/abs/2501.01880) than stuffing full documents into context for many query types.
 
 ### 8. Batch APIs

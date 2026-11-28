@@ -177,11 +177,71 @@ fn read_auth_json(path: &Path) -> Result<AuthJsonFile, String> {
 }
 
 fn write_auth_json(path: &Path, auth: &AuthJsonFile) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
     let text = serde_json::to_string_pretty(auth).map_err(|e| e.to_string())? + "\n";
-    fs::write(path, text).map_err(|e| format!("write auth.json: {e}"))
+    write_secret(path, text.as_bytes()).map_err(|e| format!("write auth.json: {e}"))
+}
+
+/// Creates `~/.ax/cursor-auth` readable only by the user (0700 on Unix), and
+/// tightens a folder an older version created with default permissions.
+fn private_profiles_dir() -> Result<PathBuf, String> {
+    let dir = profiles_dir().ok_or("no home directory")?;
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("protect {}: {e}", dir.display()))?;
+    }
+    Ok(dir)
+}
+
+/// Writes a file holding tokens: atomically, and readable only by the user
+/// (0600 on Unix) whatever the umask or the old file's mode was. The
+/// temporary file is created with mode 0600 before any token byte is
+/// written, so no copy of the tokens is ever readable by others, even in a
+/// shared folder such as Cursor's own config folder.
+fn write_secret(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    write_private(path, bytes).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    fs::create_dir_all(dir)?;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "secret".into());
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = dir.join(format!(".{name}.{}.{seq}.tmp", std::process::id()));
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let result = (|| {
+        let mut f = options.open(&tmp)?;
+        #[cfg(unix)]
+        {
+            // `mode` is masked by the umask; it can only remove bits, but make
+            // the file exactly 0600 before the tokens go in.
+            use std::os::unix::fs::PermissionsExt;
+            f.set_permissions(fs::Permissions::from_mode(0o600))?;
+        }
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
 }
 
 pub fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
@@ -371,14 +431,10 @@ fn load_manifest() -> Manifest {
 }
 
 fn save_manifest(manifest: &Manifest) -> Result<(), String> {
-    let dir = profiles_dir().ok_or("no home directory")?;
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    private_profiles_dir()?;
     let path = manifest_path().ok_or("no home directory")?;
-    fs::write(
-        &path,
-        serde_json::to_string_pretty(manifest).map_err(|e| e.to_string())? + "\n",
-    )
-    .map_err(|e| e.to_string())
+    let text = serde_json::to_string_pretty(manifest).map_err(|e| e.to_string())? + "\n";
+    write_secret(&path, text.as_bytes())
 }
 
 pub fn save_profile(
@@ -386,16 +442,12 @@ pub fn save_profile(
     mut snapshot: CursorAuthSnapshot,
 ) -> Result<SavedProfileMeta, String> {
     validate_name(name)?;
-    let dir = profiles_dir().ok_or("no home directory")?;
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    private_profiles_dir()?;
 
     snapshot.saved_at = now_unix();
     let path = profile_path(name)?;
-    fs::write(
-        &path,
-        serde_json::to_string_pretty(&snapshot).map_err(|e| e.to_string())? + "\n",
-    )
-    .map_err(|e| e.to_string())?;
+    let text = serde_json::to_string_pretty(&snapshot).map_err(|e| e.to_string())? + "\n";
+    write_secret(&path, text.as_bytes())?;
 
     let mut manifest = load_manifest();
     if !manifest.profiles.iter().any(|p| p == name) {
@@ -515,5 +567,79 @@ mod tests {
         assert!(validate_name("enterprise").is_ok());
         assert!(validate_name("pro-plus").is_ok());
         assert!(validate_name("bad name").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_tokens_are_private_to_the_user() {
+        use std::os::unix::fs::PermissionsExt;
+        let _home = crate::test_home::fresh("cursor-auth-perms");
+        let dir = profiles_dir().unwrap();
+        // A folder left world-readable by an older version is tightened too.
+        fs::create_dir_all(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+        let snapshot = CursorAuthSnapshot {
+            version: 1,
+            saved_at: 0,
+            label: None,
+            email: "a@b.c".into(),
+            membership: "pro".into(),
+            subscription_status: "active".into(),
+            sign_up_type: "x".into(),
+            scoped_profile: "x".into(),
+            auth_json: AuthJsonFile {
+                access_token: "secret-access".into(),
+                refresh_token: "secret-refresh".into(),
+            },
+            vscdb_keys: HashMap::new(),
+        };
+        save_profile("work", snapshot).unwrap();
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&dir), 0o700, "cursor-auth folder");
+        assert_eq!(mode(&profile_path("work").unwrap()), 0o600, "profile file");
+        assert_eq!(mode(&manifest_path().unwrap()), 0o600, "manifest");
+
+        let auth = dir.join("cursor-roaming").join("auth.json");
+        write_auth_json(
+            &auth,
+            &AuthJsonFile {
+                access_token: "a".into(),
+                refresh_token: "r".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(mode(&auth), 0o600, "auth.json");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn secrets_replace_a_readable_file_without_leaving_temp_files() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("ax-secret-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+        let path = dir.join("auth.json");
+        fs::write(&path, "old").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_secret(&path, b"new-token").unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new-token");
+
+        // A failed write (target is a non-empty folder) leaves no temp copy.
+        let blocked = dir.join("blocked");
+        fs::create_dir_all(blocked.join("x")).unwrap();
+        assert!(write_secret(&blocked, b"token").is_err());
+        let names: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            names.iter().all(|n| !n.ends_with(".tmp")),
+            "temp file left behind: {names:?}"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }
