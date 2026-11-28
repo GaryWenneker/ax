@@ -21,8 +21,20 @@ async fn project_with_marker_rule() -> (tempfile::TempDir, ax_core::Ax) {
     (dir, ax)
 }
 
+/// True when the marker rule fired, i.e. the guarded file's content was read.
+/// A path outside the project is refused with `outside-project` (#329) before
+/// any read, which is not a content violation.
 fn violated(result: &Value) -> bool {
-    result["allowed"] == false
+    rule_ids(result).iter().any(|id| id == "no-marker")
+}
+
+fn rule_ids(result: &Value) -> Vec<String> {
+    result["violations"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v["rule_id"].as_str().map(str::to_string))
+        .collect()
 }
 
 #[tokio::test]
@@ -137,13 +149,24 @@ async fn diagnostics_does_not_read_files_outside_the_project() {
     .expect("diagnostics");
     let text = result.to_string();
     assert!(text.contains("src/inside.rs"), "{text}");
-    let guarded: Vec<String> = result["guardedPaths"]
+    // Only the file inside the project was read: it alone trips the content rule.
+    // The two outside paths may be listed, refused as outside-project.
+    let entries = result["guardedPaths"]
         .as_array()
         .or_else(|| result["guarded"].as_array())
         .cloned()
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let read: Vec<String> = entries
         .iter()
+        .filter(|g| violated(g))
         .filter_map(|g| g["path"].as_str().map(str::to_string))
         .collect();
-    assert_eq!(guarded, vec!["src/inside.rs".to_string()], "{result}");
+    assert_eq!(read, vec!["src/inside.rs".to_string()], "{result}");
+    for entry in entries.iter().filter(|g| g["path"] != "src/inside.rs") {
+        assert_eq!(
+            rule_ids(entry),
+            vec!["outside-project".to_string()],
+            "{result}"
+        );
+    }
 }
