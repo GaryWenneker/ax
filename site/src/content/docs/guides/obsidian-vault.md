@@ -17,7 +17,7 @@ In the Command Center, open **Settings → Vault connection** and click **Connec
 | Windows | `net use` maps the first free drive letter (Z: downward) and labels it `ax` | for example `Y:` |
 | Linux | `gio mount` connects it and adds an `ax` bookmark in Files | Files sidebar |
 
-Change the **Drive name** before connecting to use another name. **Connect at login** reconnects when you log in, as long as `ax web` is running. **Disconnect** removes the drive, the bookmark, and the login item.
+Change the **Drive name** before connecting to use another name. On macOS the drive mounts on the folder `~/<drive name>`; a mount hides that folder's contents, so ax refuses a name whose folder already holds files (for example `Documents`). **Connect at login** reconnects when you log in, as long as `ax web` is running. **Disconnect** removes the drive, the bookmark, and the login item.
 
 On Windows the **WebClient** service must be running. If it is not, the card shows the command to start it. If a connect command fails, the card shows the exact command so you can copy it and run it yourself. The buttons work only from a browser on the same machine, and never in an `ax share` session.
 
@@ -138,7 +138,7 @@ What links do in ax:
 - **Add folder** asks for a name (1–32 letters, digits, spaces, `_` or `-`, unique) and an absolute path to an existing directory. **Choose…** opens your system's folder dialog (Finder on macOS, the folder browser on Windows, zenity or kdialog on Linux), fills the path, and suggests the folder's name. Without a dialog (for example Linux without zenity or kdialog), type the path.
 - **Index into memory** imports the folder's `.md`, `.markdown`, and `.txt` files as `doc` memories. Agents find them with recall, but they are not listed in preflight's memory titles. They are re-synced when `ax web` starts, when you click **Sync now**, and shortly after you save a file through the vault. Turning indexing off, or removing the folder, deletes those memories. The files stay on disk.
 - Each row shows the last sync: files added, updated, removed, and skipped.
-- Only the browser on your own machine can see or change folders. Requests with another host or a foreign `Origin` get 403, including from share sessions and other devices on your network.
+- Only the browser on your own machine can see or change folders. The request must come from this computer without a proxy in between, and a browser page must be Command Center itself (a loopback address on Command Center's port). Requests from other devices on your network, share sessions, other websites, and pages served by other local servers get 403. The same check guards **Connect**, IDE install, and the folder picker.
 - `folders/` and each `folders/<name>/` cannot be deleted or moved. Rename and move work only within one folder.
 - `..`, absolute paths, and symlinks are refused, so nothing outside the folder is reachable. Symlinks are not listed.
 - Indexing reads at most 2,000 files per folder and skips files over 256 KB, hidden files and folders, `node_modules`, and `target*` folders.

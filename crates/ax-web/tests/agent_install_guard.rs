@@ -19,12 +19,21 @@ async fn open_app(home: &std::path::Path, readonly: bool) -> Router {
     ax_db::Database::open(&root.join(".ax").join("ax.db"))
         .await
         .unwrap();
-    let hub = WebHub::open(root, readonly, 0).await.unwrap();
+    let hub = WebHub::open(root, readonly, 7070).await.unwrap();
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
     hub.nest_routers(cors)
+}
+
+/// The server's connection layer records the socket peer; requests in these
+/// tests come from this computer.
+fn from_loopback(mut req: Request<Body>) -> Request<Body> {
+    let peer: std::net::SocketAddr = "127.0.0.1:50000".parse().unwrap();
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo(peer));
+    req
 }
 
 async fn send(
@@ -46,7 +55,9 @@ async fn send(
     }
     let res = app
         .clone()
-        .oneshot(req.body(Body::from(body.to_string())).unwrap())
+        .oneshot(from_loopback(
+            req.body(Body::from(body.to_string())).unwrap(),
+        ))
         .await
         .unwrap();
     let status = res.status();

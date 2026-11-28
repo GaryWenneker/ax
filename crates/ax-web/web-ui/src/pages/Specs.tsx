@@ -233,7 +233,9 @@ export default function SpecsPage() {
 
   async function load() {
     try {
-      const response = await fetch('/api/specs');
+      // The Specs page rescans the plan folders each time it loads or saves,
+      // so a plan written on disk shows up at once.
+      const response = await fetch('/api/specs?refresh=1');
       const data = await response.json();
       setError(data.error ? String(data.error) : '');
       const parsed = parseSpecPayload(data);

@@ -42,14 +42,35 @@ not happen and passed before the fix; the mutants below show they can fail.
 | Coverage | skipped: no coverage tool is configured in this repository |
 | Property tests | skipped: none written |
 
+## Upgrade of an existing index (follow-up run)
+
+- Date of the run: 2026-11-28, after the merge (main at `73ca661b`).
+- Project: a local clone of this repository at `73ca661b`, with an empty `HOME`.
+- Old build: the release binary from before this change. New build: the release binary of
+  the run above.
+- Steps: `ax init` with the old build, then `ax sync` with the new build on the same
+  `.ax`, then `ax sync` again. Edge counts come from the `edges` table.
+
+| | Old build | After `ax sync` with the new build |
+|---|---|---|
+| Code files indexed | 1,468 | 1,468 (all re-indexed) |
+| Nodes | 16,728 | 16,728 |
+| `calls` edges | 59,794 | 68,964 (+9,170, about 15%) |
+| `contains`, `covers`, `documents`, `references` edges | 20,327 | 20,327 |
+| Unresolved references | 82,525 | 88,459 (+5,934) |
+| Wall time | 3 min 41 s (`ax init`) | 3 min 41 s (`ax sync`) |
+
+- The first `ax sync` with the new build re-indexed every file without a `--force`; the
+  version bump works as an upgrade path. The second `ax sync` reported "Already up to
+  date" in 0.1 s.
+- Of the 68,964 `calls` edges after the upgrade, 20,959 are `extracted` and 48,005
+  `inferred` (matched by name). The split of the 9,170 new edges was not measured.
+
 ## Not verified
 
 - Review loop: not run. No independent review round was made on this change.
-- The effect on a large real index (edge counts, index time) was not measured; only the
-  fixture project of the end-to-end test was indexed with the new build.
-- `EXTRACTION_VERSION` 7 -> 8 forces a full re-index on first use of the new build. That
-  path was exercised only by the fresh index in the end-to-end test, not by an upgrade
-  of an existing index.
+- Precision of the new call edges: no sample of the 9,170 added edges was checked for
+  wrong targets.
 
 ## Known limits (from the spec)
 

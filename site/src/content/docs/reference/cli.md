@@ -1327,6 +1327,10 @@ Local web UI — graph browser, policy editor, token usage dashboard, Command Ce
 
 Set `AX_WEB_READONLY=1` for browse-only mode.
 
+When the port is taken by an earlier `ax web`, that process is asked to stop (then force-stopped after 3 seconds) and the new server takes the port. When any other program holds the port, `ax web` leaves it running and exits with a message naming the program; pick another port with `--port`.
+
+`ax web` stops on Ctrl+C, and on Unix also on SIGTERM (systemd, Docker, an IDE). Requests still open get 3 seconds to finish; live event streams from an open Command Center tab are then closed, so a tab left open never keeps the server running.
+
 On start, `ax web` checks GitHub for a newer release (skips the 24-hour `~/.ax/update-check.json` cache) and prints the boxed notice to stderr **before** the server blocks. Disable with `AX_NO_UPDATE_CHECK=1`. Short commands still check after they exit.
 
 ```bash
@@ -1343,6 +1347,9 @@ Native wgpu Command Center (egui/eframe). Embeds `ax-web` in-process — same `/
 | `path` | optional | cwd | Project root (must contain `.ax/ax.db`) |
 | `--port` | number | `7070` | Embedded `ax-web` listen port |
 | `--bind` | string | `127.0.0.1` | Bind address |
+| `--allow-anonymous-lan` | flag | off | Serve a non-loopback `--bind` without sign-in |
+
+A bind address other than loopback needs Command Center sign-in (**Settings → Security**). Without it the server refuses to start, because anyone who can reach the address could read the project and run the agent. `--allow-anonymous-lan` (or `AX_WEB_ALLOW_ANONYMOUS_LAN=1`) starts it anyway and prints a warning. Even then, owner-only actions and the agent terminal work only from a browser on this computer at `http://127.0.0.1`.
 
 ```bash
 ax desktop
