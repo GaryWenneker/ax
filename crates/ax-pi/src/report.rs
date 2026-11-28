@@ -37,15 +37,46 @@ pub struct OptimizationGroup {
     pub estimated_reduction_percent: f64,
 }
 
+/// Borrowed rows a report is built from, so a live integration can report
+/// without copying its state.
+pub(crate) struct ReportRows<'a> {
+    pub last_session: Option<&'a str>,
+    pub turns: &'a [TurnRow],
+    pub tools: &'a [ToolEconomicsRecord],
+    pub models: &'a [ModelRow],
+    pub optimizations: &'a [OptimizationRow],
+}
+
+impl<'a> ReportRows<'a> {
+    fn of(snapshot: &'a PersistedSnapshot) -> Self {
+        Self {
+            last_session: snapshot.sessions.last().map(|session| session.id.as_str()),
+            turns: &snapshot.turns,
+            tools: &snapshot.tools,
+            models: &snapshot.models,
+            optimizations: &snapshot.optimizations,
+        }
+    }
+}
+
 pub fn economics_from(
     snapshot: &PersistedSnapshot,
     session_filter: Option<&str>,
     currency: &str,
     budget: Option<BudgetSnapshot>,
 ) -> EconomicsReport {
-    let tools = filter_tools(&snapshot.tools, session_filter);
-    let turns = filter_turns(&snapshot.turns, session_filter);
-    let models = filter_models(&snapshot.models, session_filter);
+    economics_of(&ReportRows::of(snapshot), session_filter, currency, budget)
+}
+
+pub(crate) fn economics_of(
+    rows: &ReportRows<'_>,
+    session_filter: Option<&str>,
+    currency: &str,
+    budget: Option<BudgetSnapshot>,
+) -> EconomicsReport {
+    let tools = filter_tools(rows.tools, session_filter);
+    let turns = filter_turns(rows.turns, session_filter);
+    let models = filter_models(rows.models, session_filter);
     let mut tool_output_tokens: BTreeMap<String, u64> = BTreeMap::new();
     let mut repeated_output_tokens = 0u64;
     for tool in &tools {
@@ -69,7 +100,7 @@ pub fn economics_from(
     let estimated_model_cost = sum_optional(models.iter().map(|model| model.estimated_cost));
     let session_id = session_filter
         .map(str::to_string)
-        .or_else(|| snapshot.sessions.last().map(|session| session.id.clone()));
+        .or_else(|| rows.last_session.map(str::to_string));
     EconomicsReport {
         session_id,
         turns: turns.len(),
@@ -83,7 +114,7 @@ pub fn economics_from(
         tool_output_tokens,
         repeated_output_tokens,
         estimated_model_cost,
-        potential_optimization_cost: potential_cost(&snapshot.optimizations, &tools),
+        potential_optimization_cost: potential_cost(rows.optimizations, &tools),
         largest_tool,
         currency: currency.to_string(),
         budget,
@@ -91,9 +122,13 @@ pub fn economics_from(
 }
 
 pub fn optimization_from(snapshot: &PersistedSnapshot) -> OptimizationReport {
+    optimization_of(&snapshot.optimizations)
+}
+
+pub(crate) fn optimization_of(optimizations: &[OptimizationRow]) -> OptimizationReport {
     let mut groups: BTreeMap<String, OptimizationGroup> = BTreeMap::new();
     let mut total = 0u64;
-    for row in &snapshot.optimizations {
+    for row in optimizations {
         let saved = row
             .alternative
             .estimated_current_tokens

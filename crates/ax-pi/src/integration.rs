@@ -21,8 +21,8 @@ use crate::economics::{
 };
 use crate::events::{self, arguments_for_hash, output_text_for_estimate};
 use crate::report::{
-    apply_display_currency, economics_from, format_economics, format_optimization,
-    optimization_from, EconomicsReport, OptimizationReport,
+    apply_display_currency, economics_from, economics_of, format_economics, format_optimization,
+    optimization_from, optimization_of, EconomicsReport, OptimizationReport, ReportRows,
 };
 use crate::store::{
     self, CacheRow, ModelRow, OptimizationRow, PersistedSnapshot, SessionRow, TurnRow,
@@ -131,7 +131,7 @@ struct State {
     entities: Vec<String>,
     indexed_paths: Vec<String>,
     repository_state: String,
-    output_cache: HashMap<String, String>,
+    output_cache: OutputCache,
     pending_tools: PendingTools,
     /// Sequence for generated tool call ids when the host sends none.
     tool_seq: u64,
@@ -155,6 +155,56 @@ struct PendingTools {
 /// Unfinished tool calls kept at most. Starts beyond this are not held; their
 /// end events fall back to the arguments they carry themselves.
 const MAX_PENDING_TOOLS: usize = 1024;
+
+/// Tool output text kept for exact-repeat replay, in bytes.
+const MAX_OUTPUT_CACHE_BYTES: usize = 16 * 1024 * 1024;
+
+/// Read-only tool output kept for exact-repeat replay, oldest dropped first
+/// once it holds more than [`MAX_OUTPUT_CACHE_BYTES`].
+#[derive(Default)]
+struct OutputCache {
+    entries: HashMap<String, String>,
+    order: VecDeque<String>,
+    bytes: usize,
+}
+
+impl OutputCache {
+    fn get(&self, identity: &str) -> Option<&String> {
+        self.entries.get(identity)
+    }
+
+    fn insert(&mut self, identity: String, text: String) {
+        if text.len() > MAX_OUTPUT_CACHE_BYTES {
+            return;
+        }
+        if let Some(old) = self.entries.remove(&identity) {
+            self.bytes -= old.len();
+            self.order.retain(|key| key != &identity);
+        }
+        while self.bytes + text.len() > MAX_OUTPUT_CACHE_BYTES {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(old) = self.entries.remove(&oldest) {
+                self.bytes -= old.len();
+            }
+        }
+        self.bytes += text.len();
+        self.order.push_back(identity.clone());
+        self.entries.insert(identity, text);
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.order.clear();
+        self.bytes = 0;
+    }
+
+    #[cfg(test)]
+    fn values(&self) -> impl Iterator<Item = &String> {
+        self.entries.values()
+    }
+}
 
 impl PendingTools {
     fn start(&mut self, session: &str, tool: &str, call_id: Option<String>, arguments: Value) {
@@ -406,12 +456,15 @@ impl PiIntegration {
             || {
                 let state = self.state.lock().map_err(|err| err.to_string())?;
                 // Figures stay in USD until the one display conversion below.
-                let mut report = economics_from(
-                    &snapshot_of(&state),
-                    session_id,
-                    "USD",
-                    self.budget_of(&state),
-                );
+                // Same session order as the persisted snapshot's rows.
+                let rows = ReportRows {
+                    last_session: state.sessions.keys().last().map(String::as_str),
+                    turns: &state.turns,
+                    tools: &state.tools,
+                    models: &state.models,
+                    optimizations: &state.optimizations,
+                };
+                let mut report = economics_of(&rows, session_id, "USD", self.budget_of(&state));
                 apply_display_currency(&mut report, currency, usd_per_eur);
                 Ok(report)
             },
@@ -427,7 +480,7 @@ impl PiIntegration {
             |report| report,
             || {
                 let state = self.state.lock().map_err(|err| err.to_string())?;
-                Ok(optimization_from(&snapshot_of(&state)))
+                Ok(optimization_of(&state.optimizations))
             },
         )
     }
@@ -634,7 +687,7 @@ pub fn create_pi_integration(options: PiOptions) -> PiIntegration {
             entities: Vec::new(),
             indexed_paths: Vec::new(),
             repository_state: "unknown".into(),
-            output_cache: HashMap::new(),
+            output_cache: OutputCache::default(),
             pending_tools: PendingTools::default(),
             tool_seq: 0,
             started: false,
@@ -1114,6 +1167,38 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(pending_count(&pi), MAX_PENDING_TOOLS);
+    }
+
+    #[test]
+    fn cached_tool_output_is_bounded_in_bytes() {
+        let pi = create_pi_integration(PiOptions {
+            mode: OptimizationMode::Optimize,
+            ..PiOptions::default()
+        });
+        pi.set_repository_state("head").unwrap();
+        let body = "x".repeat(1024 * 1024);
+        for n in 0..(MAX_OUTPUT_CACHE_BYTES / body.len() + 8) {
+            pi.record_tool_result(&ToolCallObservation {
+                session_id: "s".into(),
+                turn_id: "t".into(),
+                call_id: format!("c{n}"),
+                tool_name: "read".into(),
+                arguments: json!({"path": format!("f{n}.txt")}),
+                repository_state: "head".into(),
+                known_graph_entities: Vec::new(),
+                indexed_paths: Vec::new(),
+                output_text_for_estimate: Some(body.clone()),
+                output_token_estimate: Some(10),
+                output_bytes: None,
+                duration_ms: 1,
+                success: true,
+            })
+            .unwrap();
+        }
+        let state = pi.state.lock().unwrap();
+        let held: usize = state.output_cache.values().map(String::len).sum();
+        assert!(held <= MAX_OUTPUT_CACHE_BYTES, "{held} bytes held");
+        assert!(held > 0, "recent outputs stay cached");
     }
 
     #[test]

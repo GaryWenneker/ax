@@ -17,7 +17,7 @@ Ax does not copy the transcript, does not start a second agent loop, and does no
 | `advise` | Also return alternatives such as `rg` to `ax_explore` |
 | `optimize` | Approve a high-confidence deterministic alternative. Pi's `beforeToolCall` hook cannot rename a tool, so approval is a decision for the host, not a patched Pi runtime |
 
-In `optimize` mode an exact repeat (same tool, arguments and repository state) is replayed from the earlier output only when the tool is read-only (`read`, `cat`, `rg`, `grep`, `search`, `ax_search`, `ax_explore`, `ax_node`), the earlier call succeeded, and the host has set a known repository state. Shell commands, edits and other tools always run again, and any such call drops the cached reads, because it may have changed what they saw. Other repeats are only suggested.
+In `optimize` mode an exact repeat (same tool, arguments and repository state) is replayed from the earlier output only when the tool is read-only (`read`, `cat`, `rg`, `grep`, `search`, `ax_search`, `ax_explore`, `ax_node`), the earlier call succeeded, and the host has set a known repository state. Shell commands, edits and other tools always run again, and any such call drops the cached reads, because it may have changed what they saw. Other repeats are only suggested. At most 16 MiB of tool output is kept for replay; the oldest outputs are dropped first.
 
 A search is matched to a known graph entity only when the search text names the whole entity on identifier boundaries, so `renewal` does not match `new`. Names shorter than four characters never match. A search that names only the last segment of a qualified entity (`advise_observation` for `ax_pi::economics::advise_observation`) is a medium-confidence suggestion and is never approved in `optimize` mode. A read counts as an indexed-source read when an indexed path is the trailing path components of the target, so `lib.rs` matches `src/lib.rs` but not `src/mylib.rs`.
 
@@ -31,7 +31,7 @@ A search is matched to a known graph entity only when the search text names the 
 }
 ```
 
-Context selection uses the existing context planner. Always-apply rules stay even when they exceed the budget. The default cap is `AX_CONTEXT_MAX_TOKENS` (12000).
+Context selection uses the existing context planner. Always-apply rules stay even when they exceed the budget. The default cap is `AX_CONTEXT_MAX_TOKENS` (12000). The 256 most recent selections are cached; older ones are selected again when asked for.
 
 ## Commands
 
