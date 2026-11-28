@@ -57,6 +57,10 @@ impl DavMetaData for Meta {
     fn is_dir(&self) -> bool {
         self.dir
     }
+    // Vault entries are never symlinks; dav-server 0.12 made this required.
+    fn is_symlink(&self) -> bool {
+        false
+    }
 }
 
 fn at_ms(ms: i64) -> SystemTime {
@@ -1421,6 +1425,12 @@ impl DavFileSystem for DavVault {
             Ok(Box::new(node.meta()) as Box<dyn DavMetaData>)
         }
         .boxed()
+    }
+
+    // No symlinks in the vault, so link metadata is the entry's own metadata
+    // (the dav-server 0.11 default, required since 0.12).
+    fn symlink_metadata<'a>(&'a self, path: &'a DavPath) -> FsFuture<'a, Box<dyn DavMetaData>> {
+        self.metadata(path)
     }
 
     fn create_dir<'a>(&'a self, path: &'a DavPath) -> FsFuture<'a, ()> {
