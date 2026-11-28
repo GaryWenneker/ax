@@ -101,10 +101,7 @@ mod tests {
 
     #[test]
     fn semantic_search_model_reflects_query_embedding_not_lexical_challenger() {
-        assert_eq!(
-            semantic_search_model(false),
-            ax_memory::embed::ACTIVE_MODEL,
-        );
+        assert_eq!(semantic_search_model(false), ax_memory::embed::ACTIVE_MODEL,);
         if crate::runtime_built() {
             assert_eq!(semantic_search_model(true), "cpu-blake3");
             assert_ne!(semantic_search_model(true), crate::lexical::CHALLENGER_ID);

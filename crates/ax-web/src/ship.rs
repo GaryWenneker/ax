@@ -81,7 +81,37 @@ pub fn router_hub(hub: WebHub) -> Router {
             "/sonar/ui/{*path}",
             axum::routing::any(crate::sonar_proxy::handle_sonar_ui_proxy),
         )
+        .route_layer(axum::middleware::from_fn(same_origin_without_json))
         .with_state(hub)
+}
+
+/// A write without a JSON body is a "simple" request that another website can
+/// send without a CORS preflight (a form post or a no-cors fetch). Ship writes
+/// like these start or stop SonarQube, replace its token or run a scan, so they
+/// must come from a page this Command Center served. JSON writes keep working
+/// for non-browser clients because browsers preflight them.
+async fn same_origin_without_json(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let json = req
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(';').next())
+        .is_some_and(|v| v.trim().eq_ignore_ascii_case("application/json"));
+    if !json {
+        if let Err(reason) =
+            crate::sonar_proxy::proxy_write_allowed(req.method(), req.headers(), false)
+        {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({ "ok": false, "error": reason })),
+            )
+                .into_response();
+        }
+    }
+    next.run(req).await
 }
 
 fn readonly_err() -> (StatusCode, Json<serde_json::Value>) {
@@ -221,8 +251,9 @@ async fn handle_ship_command(
             let evaluating = ctx.evaluating.clone();
             let report_store = ctx.report.clone();
             tokio::spawn(async move {
-                let result = daemon.evaluate().await;
-                evaluating.store(false, Ordering::SeqCst);
+                let runner = daemon.clone();
+                let result =
+                    run_clearing_flag(evaluating, async move { runner.evaluate().await }).await;
                 match result {
                     Ok(report) => {
                         *report_store.lock().await = Some(report);
@@ -242,6 +273,9 @@ async fn handle_ship_command(
             .into_response()
         }
         "draft" => {
+            if hub.readonly {
+                return readonly_err().into_response();
+            }
             let cfg = ctx.daemon.config().await;
             let pipeline = ax_ship::ShipPipeline::new(
                 ctx.daemon.project_root.clone(),
@@ -362,7 +396,8 @@ async fn handle_sonar_discover(State(hub): State<WebHub>) -> impl IntoResponse {
     ctx.daemon.reload_config().await;
     let config = ctx.daemon.config().await;
     let discovery = sonar_discovery(&config).await;
-    if config.sonar.enabled && discovery.reachable {
+    // Provisioning writes to SonarQube and the project; never for a read-only viewer.
+    if config.sonar.enabled && discovery.reachable && !hub.readonly {
         ctx.daemon.spawn_sonar_auto_provision();
     }
     let setup = sonar_setup_status(&config, &ctx.daemon.project_root, discovery.reachable).await;
@@ -391,9 +426,46 @@ struct SonarValidateLoginBody {
     admin_password: String,
 }
 
+/// The login check makes this server connect to `host` with the given
+/// credentials. Allow only the configured SonarQube or a loopback address, so
+/// the route cannot be used to probe other hosts on the owner's network.
+fn sonar_login_host_allowed(host: &str, configured: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(host) else {
+        return false;
+    };
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+    if host.trim_end_matches('/') == configured.trim_end_matches('/') {
+        return true;
+    }
+    url.host_str().is_some_and(|name| {
+        name.eq_ignore_ascii_case("localhost")
+            || name
+                .trim_matches(['[', ']'])
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    })
+}
+
 async fn handle_sonar_validate_login(
+    State(hub): State<WebHub>,
     Json(body): Json<SonarValidateLoginBody>,
 ) -> impl IntoResponse {
+    if hub.readonly {
+        return readonly_err().into_response();
+    }
+    let configured = ship_ctx(&hub).await.daemon.config().await.sonar.host;
+    if !sonar_login_host_allowed(&body.host, &configured) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "Use the configured SonarQube host or a loopback address",
+            })),
+        )
+            .into_response();
+    }
     match validate_sonar_login(&body.host, &body.admin_user, &body.admin_password).await {
         Ok(valid) => Json(serde_json::json!({
             "ok": true,
@@ -543,7 +615,15 @@ async fn handle_sonar_install(State(hub): State<WebHub>) -> impl IntoResponse {
     let result = install_sonar_with_log(&mut config, &log).await;
     match result {
         Ok(discovery) => {
-            let _ = ctx.daemon.set_config(config).await;
+            if let Err(e) = save_sonar_operation(&ctx.daemon, &config).await {
+                return Json(serde_json::json!({
+                    "ok": false,
+                    "error": e,
+                    "discovery": discovery,
+                    "logs": log.lines(),
+                }))
+                .into_response();
+            }
             Json(serde_json::json!({
                 "ok": true,
                 "discovery": discovery,
@@ -669,7 +749,15 @@ async fn handle_sonar_scan(
     .await
     {
         Ok(gate) => {
-            let _ = ctx.daemon.set_config(config).await;
+            if let Err(e) = save_sonar_operation(&ctx.daemon, &config).await {
+                return Json(serde_json::json!({
+                    "ok": false,
+                    "error": e,
+                    "quality_gate": gate,
+                    "logs": log.lines(),
+                }))
+                .into_response();
+            }
             Json(serde_json::json!({
                 "ok": true,
                 "quality_gate": gate,
@@ -720,11 +808,12 @@ async fn sonar_scan_stream(
         .await
         {
             Ok(gate) => {
-                let _ = daemon.set_config(config).await;
+                let saved = save_sonar_operation(&daemon, &config).await;
                 let _ = tx.send(
                     serde_json::json!({
                         "type": "done",
-                        "ok": true,
+                        "ok": saved.is_ok(),
+                        "error": saved.err(),
                         "quality_gate": gate,
                         "logs": log.lines(),
                     })
@@ -799,16 +888,19 @@ async fn sonar_operation_stream(
 
         match result {
             Ok(discovery) => {
-                if matches!(op, SonarOp::Install) {
-                    let _ = daemon.set_config(config).await;
-                }
+                let saved = if matches!(op, SonarOp::Install) {
+                    save_sonar_operation(&daemon, &config).await
+                } else {
+                    Ok(())
+                };
                 if matches!(op, SonarOp::Install | SonarOp::Start) {
                     daemon.spawn_sonar_auto_provision();
                 }
                 let _ = tx.send(
                     serde_json::json!({
                         "type": "done",
-                        "ok": true,
+                        "ok": saved.is_ok(),
+                        "error": saved.err(),
                         "discovery": discovery,
                         "logs": log.lines(),
                     })
@@ -1075,8 +1167,112 @@ async fn validate_config_change(current: &ShipConfig, next: &ShipConfig) -> Resu
     Ok(())
 }
 
+/// Save what a long SonarQube install or scan changed. The operation ran on a
+/// snapshot taken minutes earlier, so only the fields it sets are copied onto
+/// the settings as they are now; changes the user saved meanwhile are kept.
+async fn save_sonar_operation(daemon: &ShipDaemon, after: &ShipConfig) -> Result<(), String> {
+    daemon.reload_config().await;
+    let mut current = daemon.config().await;
+    current.sonar.enabled = after.sonar.enabled;
+    if current.sonar.podman_container.is_none() {
+        current.sonar.podman_container = after.sonar.podman_container.clone();
+    }
+    daemon
+        .set_config(current)
+        .await
+        .map_err(|e| format!("Could not save the Ship settings: {e}"))
+}
+
 fn parse_host_port(host: &str) -> Option<u16> {
     let trimmed = host.trim_end_matches('/');
     let after_scheme = trimmed.split("//").nth(1).unwrap_or(trimmed);
     after_scheme.split(':').nth(1).and_then(|p| p.parse().ok())
+}
+
+/// Run one evaluation in its own task and clear the `evaluating` flag when it
+/// ends, also when it panics; a panic comes back as an error message.
+async fn run_clearing_flag<T, F>(evaluating: Arc<AtomicBool>, run: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: std::future::Future<Output = Result<T, String>> + Send + 'static,
+{
+    let result = match tokio::spawn(run).await {
+        Ok(result) => result,
+        Err(error) if error.is_panic() => Err("Evaluation stopped unexpectedly".into()),
+        Err(_) => Err("Evaluation was cancelled".into()),
+    };
+    evaluating.store(false, Ordering::SeqCst);
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_panicking_evaluation_clears_the_evaluating_flag() {
+        let flag = Arc::new(AtomicBool::new(true));
+        let task = tokio::spawn(run_clearing_flag(flag.clone(), async {
+            if flag_panics() {
+                panic!("unexpected git state");
+            }
+            Ok::<(), String>(())
+        }));
+        let outcome = task.await;
+        assert!(
+            !flag.load(Ordering::SeqCst),
+            "a panic must not leave evaluate marked as running"
+        );
+        let message = outcome
+            .expect("the supervisor reports the panic instead of dying")
+            .unwrap_err();
+        assert!(message.contains("unexpectedly"), "{message}");
+
+        // A normal run clears the flag and passes its result through.
+        flag.store(true, Ordering::SeqCst);
+        let value = run_clearing_flag(flag.clone(), async { Ok::<u8, String>(7) }).await;
+        assert_eq!(value, Ok(7));
+        assert!(!flag.load(Ordering::SeqCst));
+    }
+
+    fn flag_panics() -> bool {
+        true
+    }
+
+    #[tokio::test]
+    async fn a_long_sonar_operation_keeps_settings_changed_while_it_ran() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".ax")).unwrap();
+        let daemon = ShipDaemon::new(dir.path().to_path_buf());
+        // The operation starts from a snapshot and turns SonarQube on.
+        let mut after = daemon.config().await;
+        after.sonar.enabled = true;
+        after.sonar.podman_container = Some("sonar-x".into());
+        // Meanwhile the user changes other settings.
+        let mut edited = daemon.config().await;
+        edited.sonar.exclude_repos = vec!["vendor".into()];
+        edited.ship.target_branch = "develop".into();
+        edited.sonar.podman_container = None;
+        daemon.set_config(edited).await.unwrap();
+
+        save_sonar_operation(&daemon, &after).await.unwrap();
+
+        daemon.reload_config().await;
+        let saved = daemon.config().await;
+        assert!(saved.sonar.enabled);
+        assert_eq!(saved.sonar.podman_container.as_deref(), Some("sonar-x"));
+        assert_eq!(saved.sonar.exclude_repos, vec!["vendor".to_string()]);
+        assert_eq!(saved.ship.target_branch, "develop");
+    }
+
+    #[tokio::test]
+    async fn a_failed_save_after_a_sonar_operation_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        // `.ax` is a file, so ship.toml cannot be written.
+        std::fs::write(dir.path().join(".ax"), "").unwrap();
+        let daemon = ShipDaemon::new(dir.path().to_path_buf());
+        let mut after = daemon.config().await;
+        after.sonar.enabled = true;
+        assert!(save_sonar_operation(&daemon, &after).await.is_err());
+    }
 }

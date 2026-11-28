@@ -50,13 +50,10 @@ pub fn index_progress_callback(
         if let Ok(mut guard) = state.lock() {
             if guard.last_phase != Some(p.phase) {
                 guard.last_phase = Some(p.phase);
-                eprintln!();
-                eprint!("  {} ", phase_heading(p.phase));
-                if let Some(ref path) = p.file_path {
-                    if p.phase == IndexPhase::Resolving && p.current == 0 {
-                        eprintln!("{}", path.dimmed());
-                    }
-                }
+                // The steady tick redraws the bar line; suspend it so the
+                // heading lands above the bar instead of being overwritten.
+                let heading = phase_heading_text(&p);
+                guard.pb.suspend(|| eprint!("\n{heading}"));
             }
 
             if p.total > 0 {
@@ -103,6 +100,18 @@ pub fn format_duration_ms(ms: u64) -> String {
     format!("{hrs}h {min}m")
 }
 
+/// The line printed when a new phase starts, ending in a newline.
+fn phase_heading_text(p: &IndexProgress) -> String {
+    let mut text = format!("  {}", phase_heading(p.phase));
+    if let Some(ref path) = p.file_path {
+        if p.phase == IndexPhase::Resolving && p.current == 0 {
+            text.push_str(&format!(" {}", path.dimmed()));
+        }
+    }
+    text.push('\n');
+    text
+}
+
 fn phase_heading(phase: IndexPhase) -> String {
     match phase {
         IndexPhase::Scanning => "Scanning project for changes…".cyan().bold().to_string(),
@@ -136,4 +145,38 @@ fn truncate_path(path: &str, max: usize) -> String {
         .rev()
         .collect();
     format!("…{tail}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn progress(phase: IndexPhase, current: u32, file_path: Option<&str>) -> IndexProgress {
+        IndexProgress {
+            phase,
+            current,
+            total: 10,
+            file_path: file_path.map(str::to_string),
+        }
+    }
+
+    /// The bar redraws its own line, so a heading must be whole lines that
+    /// indicatif prints above it.
+    #[test]
+    fn phase_headings_are_whole_lines() {
+        for p in [
+            progress(IndexPhase::Parsing, 0, None),
+            progress(IndexPhase::Parsing, 3, Some("src/main.rs")),
+            progress(IndexPhase::Resolving, 0, Some("4 files")),
+        ] {
+            let text = phase_heading_text(&p);
+            assert!(text.ends_with('\n'), "{text:?}");
+            assert!(!text.starts_with('\n'), "{text:?}");
+            assert!(text.contains(&phase_heading(p.phase)), "{text:?}");
+        }
+        assert!(
+            phase_heading_text(&progress(IndexPhase::Resolving, 0, Some("4 files")))
+                .contains("4 files")
+        );
+    }
 }

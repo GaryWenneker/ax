@@ -28,7 +28,11 @@ fn doc_text(m: &ax_memory::bench::CodingMemory) -> String {
     format!("{} {} {} {}", m.key, m.title, m.body, m.triggers.join(" "))
 }
 
-fn cosine_rank(fixture: &CodingFixture, prompt: &str, embed: &dyn Fn(&str) -> Vec<f32>) -> Vec<String> {
+fn cosine_rank(
+    fixture: &CodingFixture,
+    prompt: &str,
+    embed: &dyn Fn(&str) -> Vec<f32>,
+) -> Vec<String> {
     let q = embed(prompt);
     let mut scored: Vec<(f32, String)> = fixture
         .memories
@@ -129,7 +133,11 @@ pub async fn run_path_validate(fixture_text: &str) -> Result<Value, String> {
                 true,
             ),
             Err(e) => (
-                stage("failed", &format!("model load/infer failed: {e}"), json!({})),
+                stage(
+                    "failed",
+                    &format!("model load/infer failed: {e}"),
+                    json!({}),
+                ),
                 false,
             ),
         };

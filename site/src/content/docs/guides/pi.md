@@ -37,7 +37,7 @@ Context selection uses the existing context planner. Always-apply rules stay eve
 ax bootstrap
 ax agent economics
 ax agent economics --json
-ax agent optimize --report
+ax agent optimize
 ```
 
 Figures are estimates. A missing catalog rate stays unknown. Tool runtime is not billed as model tokens. Only tokens delivered into a later model context are priced, and that amount is not added on top of the model usage quote.

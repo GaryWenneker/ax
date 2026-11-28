@@ -153,11 +153,7 @@ impl ReferenceResolver {
                 }
             }
             let ref_ = unresolved_from_db(&db_ref);
-            if let Some(r) = self
-                .name_matcher
-                .resolve_deferred_call(&reads, &ref_)
-                .await
-            {
+            if let Some(r) = self.name_matcher.resolve_deferred_call(&reads, &ref_).await {
                 result.stats.resolved += 1;
                 let method = format!("{:?}", r.resolved_by);
                 *result.stats.by_method.entry(method).or_insert(0) += 1;

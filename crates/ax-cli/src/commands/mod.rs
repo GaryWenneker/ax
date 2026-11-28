@@ -3,6 +3,7 @@
 pub mod affected;
 pub mod agent;
 pub mod api;
+pub(crate) mod ax_process;
 pub mod bootstrap;
 pub mod budget_cmd;
 pub mod cache_cmd;
@@ -24,6 +25,7 @@ pub mod export;
 pub mod export_concepts;
 pub mod export_okf;
 pub mod files;
+pub mod git_status;
 pub mod global;
 pub mod impact;
 pub mod index;
@@ -38,6 +40,7 @@ pub mod node;
 pub mod offload;
 pub mod path;
 pub mod policy;
+pub mod policy_pull;
 pub mod policy_share;
 pub mod preflight;
 pub mod pricing;
@@ -75,9 +78,44 @@ pub fn unavailable_in_headless_build(command: &str) -> String {
     format!("`{command}` is not included in this headless ax build; use the full ax distribution")
 }
 
-pub fn resolve_path(path: Option<String>) -> PathBuf {
-    path.map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+/// The directory a command that creates, indexes or removes a project acts on: `path` as
+/// given, else the current directory. `ax init`, `install`, `uninit`, `index`, `sync`,
+/// `ship` and `bootstrap` use it, so they never reach up into a parent project.
+pub fn resolve_target_dir(path: Option<String>) -> PathBuf {
+    path.map(PathBuf::from).unwrap_or_else(current_dir)
+}
+
+/// The project a command works on: `path` as given; otherwise the nearest ancestor of the
+/// current directory that holds an initialized project (`.ax/ax.db`), never `$HOME` (whose
+/// `.ax` is the global ax folder). With no such ancestor it is the current directory, so
+/// the command reports "project not initialized" as before. Every command that reads or
+/// updates an existing project and every hook use this one rule, which matches the MCP
+/// server.
+pub fn resolve_project_root(path: Option<String>) -> PathBuf {
+    match path {
+        Some(path) => PathBuf::from(path),
+        None => {
+            let cwd = current_dir();
+            find_project_root(&cwd).unwrap_or(cwd)
+        }
+    }
+}
+
+/// The nearest directory at or above `start` with an initialized project, skipping `$HOME`.
+/// The result is canonical when `start` exists.
+pub fn find_project_root(start: &Path) -> Option<PathBuf> {
+    let start = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
+    let home = ax_utils::paths::home_dir();
+    let home_canonical = home.as_deref().and_then(|h| h.canonicalize().ok());
+    start
+        .ancestors()
+        .filter(|dir| Some(*dir) != home.as_deref() && Some(*dir) != home_canonical.as_deref())
+        .find(|dir| ax_context::directory::is_initialized(dir))
+        .map(Path::to_path_buf)
+}
+
+fn current_dir() -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
 /// Git hooks call `--quiet` commands in every checkout; one that was never initialized

@@ -125,10 +125,12 @@ pub fn locked_families_clear(report: &serde_json::Value) -> bool {
     true
 }
 
-
-
 /// Deterministic train/validation split. `validation_ratio` in (0,1); seed makes it reproducible.
-pub fn split_dataset(rows: &[Value], validation_ratio: f64, seed: u64) -> Result<(Vec<Value>, Vec<Value>), String> {
+pub fn split_dataset(
+    rows: &[Value],
+    validation_ratio: f64,
+    seed: u64,
+) -> Result<(Vec<Value>, Vec<Value>), String> {
     if !(0.0..1.0).contains(&validation_ratio) {
         return Err("validation_ratio must be in [0,1)".into());
     }
@@ -192,7 +194,10 @@ pub fn train_ranking_prior(
     let (train, validation) = split_dataset(rows, validation_ratio, seed)?;
     let mut weights: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
     for row in &train {
-        let outcome = row.get("outcome").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let outcome = row
+            .get("outcome")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         let w = outcome_weight(outcome);
         if w == 0.0 {
             continue;
@@ -234,10 +239,17 @@ pub fn train_ranking_prior(
 pub fn project_scoped_weights(rows: &[Value]) -> std::collections::BTreeMap<String, f64> {
     let mut weights = std::collections::BTreeMap::new();
     for row in rows {
-        let Some(project) = row.get("projectId").and_then(|v| v.as_str()).filter(|id| !id.is_empty()) else {
+        let Some(project) = row
+            .get("projectId")
+            .and_then(|v| v.as_str())
+            .filter(|id| !id.is_empty())
+        else {
             continue;
         };
-        let outcome = row.get("outcome").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let outcome = row
+            .get("outcome")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         let weight = outcome_weight(outcome);
         if weight == 0.0 {
             continue;
@@ -248,7 +260,9 @@ pub fn project_scoped_weights(rows: &[Value]) -> std::collections::BTreeMap<Stri
                     if id.is_empty() {
                         continue;
                     }
-                    *weights.entry(format!("{project}\t{key}:{id}")).or_insert(0.0) += weight;
+                    *weights
+                        .entry(format!("{project}\t{key}:{id}"))
+                        .or_insert(0.0) += weight;
                 }
             }
         }
@@ -269,7 +283,10 @@ fn evaluate_prior(
     let mut scored = 0u64;
     let mut agree = 0u64;
     for row in validation {
-        let outcome = row.get("outcome").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let outcome = row
+            .get("outcome")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         let target = outcome_weight(outcome);
         if target == 0.0 {
             continue;
@@ -427,7 +444,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod phase5_tests {
     use super::*;
@@ -443,8 +459,14 @@ mod phase5_tests {
         assert_eq!(a_train, b_train);
         assert_eq!(a_val, b_val);
         assert_eq!(a_train.len() + a_val.len(), 10);
-        let train_cats: std::collections::BTreeSet<_> = a_train.iter().map(|r| r["taskCategory"].as_str().unwrap()).collect();
-        let val_cats: std::collections::BTreeSet<_> = a_val.iter().map(|r| r["taskCategory"].as_str().unwrap()).collect();
+        let train_cats: std::collections::BTreeSet<_> = a_train
+            .iter()
+            .map(|r| r["taskCategory"].as_str().unwrap())
+            .collect();
+        let val_cats: std::collections::BTreeSet<_> = a_val
+            .iter()
+            .map(|r| r["taskCategory"].as_str().unwrap())
+            .collect();
         assert!(train_cats.is_disjoint(&val_cats));
     }
 
@@ -458,7 +480,9 @@ mod phase5_tests {
         let weights = project_scoped_weights(&rows);
         assert_eq!(weights.get("a\tcontextIds:memory:m1").copied(), Some(1.0));
         assert_eq!(weights.get("b\tcontextIds:memory:m1").copied(), Some(-0.5));
-        assert!(weights.keys().all(|key| key.starts_with("a\t") || key.starts_with("b\t")));
+        assert!(weights
+            .keys()
+            .all(|key| key.starts_with("a\t") || key.starts_with("b\t")));
     }
 
     #[test]

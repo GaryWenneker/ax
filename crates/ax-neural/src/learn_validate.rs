@@ -63,11 +63,9 @@ fn baseline_rank(fixture: &CodingFixture, prompt: &str) -> Vec<String> {
         .iter()
         .filter(|m| m.insert)
         .map(|m| {
-            let text = format!("{} {} {}", m.title, m.body, m.triggers.join(" ")).to_ascii_lowercase();
-            let score = tokens
-                .iter()
-                .filter(|t| text.contains(t.as_str()))
-                .count() as f64;
+            let text =
+                format!("{} {} {}", m.title, m.body, m.triggers.join(" ")).to_ascii_lowercase();
+            let score = tokens.iter().filter(|t| text.contains(t.as_str())).count() as f64;
             (score, m.key.clone())
         })
         .collect();
@@ -95,8 +93,17 @@ pub fn run_learn_validate(fixture_text: &str) -> Result<Value, String> {
 
     // A. Before: no historical feedback
     let mut before = Acc::default();
-    for q in fixture.questions.iter().filter(|q| eval_ids.contains(&q.id)) {
-        before.observe(LEARN_VALIDATE, None, &q.relevant, &baseline_rank(&fixture, &q.prompt));
+    for q in fixture
+        .questions
+        .iter()
+        .filter(|q| eval_ids.contains(&q.id))
+    {
+        before.observe(
+            LEARN_VALIDATE,
+            None,
+            &q.relevant,
+            &baseline_rank(&fixture, &q.prompt),
+        );
     }
 
     // B/C. Feedback collected (explicit rows above); train candidate on non-eval only
@@ -122,7 +129,11 @@ pub fn run_learn_validate(fixture_text: &str) -> Result<Value, String> {
     // D. Evaluate candidate on held-out locked questions (never in train_feedback)
     let mut after = Acc::default();
     let ranked_after = rank_from_weights(&weights);
-    for q in fixture.questions.iter().filter(|q| eval_ids.contains(&q.id)) {
+    for q in fixture
+        .questions
+        .iter()
+        .filter(|q| eval_ids.contains(&q.id))
+    {
         after.observe(LEARN_VALIDATE, None, &q.relevant, &ranked_after);
     }
 
@@ -168,14 +179,22 @@ pub fn run_learn_validate(fixture_text: &str) -> Result<Value, String> {
     let stable_reload = weights == reloaded;
     let mut after_reload = Acc::default();
     let ranked_reload = rank_from_weights(&reloaded);
-    for q in fixture.questions.iter().filter(|q| eval_ids.contains(&q.id)) {
+    for q in fixture
+        .questions
+        .iter()
+        .filter(|q| eval_ids.contains(&q.id))
+    {
         after_reload.observe(LEARN_VALIDATE, None, &q.relevant, &ranked_reload);
     }
 
     // Leakage check: no eval executionId in train set
     let train_exec: HashSet<String> = train_feedback
         .iter()
-        .filter_map(|r| r.get("executionId").and_then(|v| v.as_str()).map(str::to_string))
+        .filter_map(|r| {
+            r.get("executionId")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
         .collect();
     let leak = eval_ids
         .iter()

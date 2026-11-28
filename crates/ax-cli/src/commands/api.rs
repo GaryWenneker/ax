@@ -1,8 +1,8 @@
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 use crate::ui::SpinnerGuard;
 
 pub async fn run(module: String, limit: usize, json: bool) -> Result<(), String> {
-    let root = resolve_path(None);
+    let root = resolve_project_root(None);
     ax_usage::log_cli(
         Some(&root),
         format!(

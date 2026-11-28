@@ -279,15 +279,14 @@ mod tests {
     async fn busy_retry_stops_at_its_time_budget() {
         let started = std::time::Instant::now();
         let mut calls = 0u32;
-        let res: Result<(), sqlx::Error> =
-            with_busy_retry_for(Duration::from_millis(100), || {
-                calls += 1;
-                async {
-                    tokio::time::sleep(Duration::from_millis(60)).await;
-                    Err(sqlx::Error::Protocol("database is locked".into()))
-                }
-            })
-            .await;
+        let res: Result<(), sqlx::Error> = with_busy_retry_for(Duration::from_millis(100), || {
+            calls += 1;
+            async {
+                tokio::time::sleep(Duration::from_millis(60)).await;
+                Err(sqlx::Error::Protocol("database is locked".into()))
+            }
+        })
+        .await;
         assert!(res.is_err());
         assert!(calls < 12, "kept retrying past the budget: {calls} calls");
         assert!(started.elapsed() < Duration::from_secs(2));

@@ -78,12 +78,17 @@ Examples:
   ax init --all            Refresh existing ax projects under the home directory
   ax index --force         Rebuild the index from scratch";
 
-pub const UNINIT_LONG: &str = "Remove ax from a project by deleting the .ax/ directory.
+pub const UNINIT_LONG: &str =
+    "Remove ax from a project: the git sync hooks, then the .ax/ directory.
 
-Permanently deletes the local index (ax.db). Does not touch agent MCP configs.
+Permanently deletes everything in .ax/: the index and stored memories (ax.db),
+project rules and skills (policy/), shared memories (memory/) and backups.
+Lists what .ax/ holds and asks first; without a terminal it needs --yes.
+Does not touch agent MCP configs.
 
 Examples:
-  ax uninit                Remove .ax/ from current project
+  ax uninit                Remove .ax/ from current project (asks first)
+  ax uninit --yes          Remove without asking (scripts, CI)
   ax uninit ./legacy-app   Remove from a specific path";
 
 pub const INDEX_LONG: &str = "Rebuild the index from scratch (full scan + extract + resolve).
@@ -208,9 +213,11 @@ Examples:
   ax affected src/auth/login.ts
   ax affected packages/api/src/handler.rs src/db/user.rs";
 
-pub const UNLOCK_LONG: &str = "Force-remove a stale .ax/ax.lock left by a crashed process.
+pub const UNLOCK_LONG: &str = "Clear a stale .ax/ax.lock left by a crashed process.
 
-Safe when no other ax process is indexing the same project.
+When a live process still holds the lock, only that process is stopped, and
+only when it is an ax process (SIGTERM first, SIGKILL after 5 seconds).
+Other ax processes keep running.
 
 Examples:
   ax unlock
@@ -219,11 +226,13 @@ Examples:
 pub const DAEMON_LONG: &str = "MCP background daemon control (TCP / named pipe per project).
 
 The daemon shares one index connection for multiple MCP clients (Cursor, VS Code, …).
-`restart` clears a stuck daemon and stale locks without killing every ax.exe.
+`restart` clears a stuck daemon and stale locks.
 
 Subcommands:
   status    Show pid, port, socket path from .ax/daemon.json
-  stop      Stop the running daemon for this project root
+  stop      Stop the running daemon for this project root: checks that the
+            recorded pid is an ax daemon, sends SIGTERM, waits, then SIGKILL.
+            A pid that now belongs to another program is left running.
   restart   Stop + start a fresh daemon (same as Command Center Reload MCP)
 
 Examples:
@@ -236,11 +245,17 @@ pub const VERSION_LONG: &str = "Print the installed ax version.
 
 Also available as `ax -V` / `ax --version`.";
 
-pub const UPGRADE_LONG: &str = "Self-update from getax.wenneker.io (non-interactive — no confirmation prompt).
+pub const UPGRADE_LONG: &str = "Self-update from GitHub Releases, getax.wenneker.io as fallback.
+Non-interactive — no confirmation prompt.
 
 Downloads the platform bundle for your OS/arch. On Windows, extracts to %LOCALAPPDATA%\\ax\\current
 (matching install.ps1), updates ~/.cargo/bin/ax.exe when present, and exits immediately — a detached
-PowerShell helper finishes the swap after this process exits. Open a new terminal and run `ax version`.
+`ax upgrade-apply` helper (no PowerShell needed) finishes the swap after this process exits.
+Open a new terminal and run `ax version`.
+
+The archive is checked against the release's SHA256SUMS before it is installed; a missing
+or different checksum stops the upgrade. A --local archive is checked against a SHA256SUMS
+in the same folder when one is there.
 
 Examples:
   ax upgrade               Download and install latest available release (always reinstalls)

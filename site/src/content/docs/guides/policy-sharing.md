@@ -249,8 +249,10 @@ Set the client ID for every teammate:
 export AX_MS_CLIENT_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 ```
 
-Add to shell profile or CI secret store. ax reads only `AX_MS_CLIENT_ID` — never
-commit client secrets (public client apps do not use one).
+Add to shell profile or CI secret store. Command Center can also save the client ID
+to `share.microsoftClientId` in `~/.ax/config.json`; when `AX_MS_CLIENT_ID` is set, it
+takes precedence over the saved value. Never commit client secrets (public client apps
+do not use one).
 
 ### 2. SharePoint / OneDrive folder
 

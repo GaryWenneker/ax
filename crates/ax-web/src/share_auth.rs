@@ -1,10 +1,119 @@
 //! Optional share-token gate for `ax share` / LAN exposure.
+//!
+//! Tokens are compared in constant time. A socket peer that presents wrong
+//! credentials [`MAX_FAILURES`] times within [`FAILURE_WINDOW`] gets 429 for
+//! every credential it presents until the window ends, the correct one
+//! included, and none of them is checked. A reverse proxy or tunnel on this computer is not
+//! limited this way, because all its clients share its address. Failed client
+//! and node credentials are written to the security audit log.
 
-use axum::extract::Request;
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+use axum::extract::{ConnectInfo, Request};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::middleware::Next;
 use axum::response::IntoResponse;
 use axum::response::Response;
+use subtle::ConstantTimeEq;
+
+/// Wrong credentials one socket peer may present within [`FAILURE_WINDOW`].
+const MAX_FAILURES: u32 = 20;
+const FAILURE_WINDOW: Duration = Duration::from_secs(60);
+/// Peers tracked at once; expired entries are dropped when this is reached.
+const MAX_TRACKED_PEERS: usize = 4096;
+
+struct Failures {
+    count: u32,
+    since: Instant,
+}
+
+static FAILURES: Mutex<Option<HashMap<IpAddr, Failures>>> = Mutex::new(None);
+
+/// True while `peer` has used up its failed attempts in the current window.
+fn peer_locked(peer: Option<IpAddr>) -> bool {
+    let Some(peer) = peer else { return false };
+    let mut guard = FAILURES.lock().unwrap_or_else(|p| p.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    match map.get(&peer) {
+        Some(f) if f.since.elapsed() >= FAILURE_WINDOW => {
+            map.remove(&peer);
+            false
+        }
+        Some(f) => f.count >= MAX_FAILURES,
+        None => false,
+    }
+}
+
+fn record_failure(peer: Option<IpAddr>) {
+    let Some(peer) = peer else { return };
+    let mut guard = FAILURES.lock().unwrap_or_else(|p| p.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    if map.len() >= MAX_TRACKED_PEERS && !map.contains_key(&peer) {
+        map.retain(|_, f| f.since.elapsed() < FAILURE_WINDOW);
+        if map.len() >= MAX_TRACKED_PEERS {
+            return;
+        }
+    }
+    let entry = map.entry(peer).or_insert(Failures {
+        count: 0,
+        since: Instant::now(),
+    });
+    if entry.since.elapsed() >= FAILURE_WINDOW {
+        *entry = Failures {
+            count: 0,
+            since: Instant::now(),
+        };
+    }
+    entry.count = entry.count.saturating_add(1);
+}
+
+fn too_many_failures() -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [(header::RETRY_AFTER, FAILURE_WINDOW.as_secs().to_string())],
+        axum::Json(serde_json::json!({"error":"Too many failed attempts; try again later"})),
+    )
+        .into_response()
+}
+
+/// Constant-time token comparison (the length is not secret).
+fn token_eq(provided: &str, expected: &str) -> bool {
+    provided.len() == expected.len() && bool::from(provided.as_bytes().ct_eq(expected.as_bytes()))
+}
+
+/// The address failures are counted against: the socket peer, or `None` for
+/// a reverse proxy or tunnel on this computer, whose clients all share it.
+fn failure_peer(req: &Request) -> Option<IpAddr> {
+    let peer = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|info| info.0);
+    if crate::request_guard::peer_is_local_proxy(peer, req.headers()) {
+        return None;
+    }
+    peer.map(|addr| addr.ip().to_canonical())
+}
+
+async fn audit_failed_credential(
+    db: &sqlx::SqlitePool,
+    kind: &str,
+    path: &str,
+    peer: Option<IpAddr>,
+) {
+    let _ = ax_global_db::access::audit(
+        db,
+        None,
+        None,
+        "authentication.failed",
+        "http",
+        path,
+        &serde_json::json!({"credential": kind, "peer": peer.map(|p| p.to_string())}),
+    )
+    .await;
+}
 
 pub async fn share_token_middleware(req: Request, next: Next) -> Response {
     enforce_share_token(req, next, std::env::var("AX_SHARE_TOKEN").ok()).await
@@ -15,6 +124,7 @@ pub(crate) async fn enforce_share_token(
     next: Next,
     configured: Option<String>,
 ) -> Response {
+    let peer = failure_peer(&req);
     let client_token = req
         .headers()
         .get(header::AUTHORIZATION)
@@ -23,22 +133,38 @@ pub(crate) async fn enforce_share_token(
     if let Some(token) =
         client_token.filter(|token| token.starts_with("axc_") || token.starts_with("axn_"))
     {
-        let db_path = match ax_global_db::global_db_path() {
-            Ok(p) => p,
-            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        };
-        let db = match ax_global_db::open_and_init(&db_path).await {
+        // A locked peer gets 429 before its credential is checked, so the
+        // answer never tells a guesser whether this guess was right.
+        if peer_locked(peer) {
+            return too_many_failures();
+        }
+        let db = match crate::global_pool::global_pool().await {
             Ok(db) => db,
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         };
+        if token.starts_with("axn_") {
+            // Node credentials authenticate replication traffic only; the
+            // Command Center HTTP API has no node scopes.
+            record_failure(peer);
+            audit_failed_credential(&db, "node", req.uri().path(), peer).await;
+            return (
+                StatusCode::UNAUTHORIZED,
+                axum::Json(serde_json::json!({
+                    "error": "Node credentials are accepted only by the replication server; use a client credential (axc_) for this API"
+                })),
+            )
+                .into_response();
+        }
         let principal = match ax_global_db::access::authenticate_client_token(&db, token).await {
             Ok(Some(p)) => p,
             _ => {
+                record_failure(peer);
+                audit_failed_credential(&db, "client", req.uri().path(), peer).await;
                 return (
                     StatusCode::UNAUTHORIZED,
                     axum::Json(serde_json::json!({"error":"Invalid client credential"})),
                 )
-                    .into_response()
+                    .into_response();
             }
         };
         // Only explicitly scoped APIs are available to client credentials.
@@ -74,7 +200,6 @@ pub(crate) async fn enforce_share_token(
         || path == "/sw.js"
         || path == "/favicon.ico"
         || path == "/api/share/status"
-        || path.starts_with("/api/auth/microsoft")
     {
         return next.run(req).await;
     }
@@ -98,11 +223,18 @@ pub(crate) async fn enforce_share_token(
         });
 
     let provided = header_token.or(cookie_token);
+    let presented = provided.is_some() || share_query_token(req.uri().query()).is_some();
     let secure = share_secure(req.headers());
+    if presented && peer_locked(peer) {
+        return too_many_failures();
+    }
     if let Some(location) = share_redirect_location(path, req.uri().query(), &expected) {
         return share_cookie_redirect(&location, &expected, secure);
     }
-    if provided.as_deref() == Some(expected.as_str()) {
+    if provided
+        .as_deref()
+        .is_some_and(|token| token_eq(token, &expected))
+    {
         let mut res = next.run(req).await;
         if let Ok(val) = share_cookie(&expected, secure).parse() {
             res.headers_mut().append(header::SET_COOKIE, val);
@@ -110,6 +242,9 @@ pub(crate) async fn enforce_share_token(
         return res;
     }
 
+    if presented {
+        record_failure(peer);
+    }
     ax_usage::log_share(None, "auth fail");
     crate::share_api::unauthorized_gate_html()
 }
@@ -122,9 +257,9 @@ pub(crate) fn request_has_share_token(
     let Some(expected) = expected.filter(|token| !token.is_empty()) else {
         return false;
     };
-    share_query_token(query).as_deref() == Some(expected)
-        || bearer_share_token(headers) == Some(expected)
-        || cookie_share_token(headers) == Some(expected)
+    share_query_token(query).is_some_and(|token| token_eq(&token, expected))
+        || bearer_share_token(headers).is_some_and(|token| token_eq(token, expected))
+        || cookie_share_token(headers).is_some_and(|token| token_eq(token, expected))
 }
 
 fn share_redirect_location(path: &str, query: Option<&str>, expected: &str) -> Option<String> {
@@ -138,7 +273,7 @@ fn share_redirect_location(path: &str, query: Option<&str>, expected: &str) -> O
         let mut parts = pair.splitn(2, '=');
         let key = parts.next().unwrap_or("");
         if key == "token" {
-            if urlencoding_decode(parts.next().unwrap_or("")) == expected {
+            if token_eq(&urlencoding_decode(parts.next().unwrap_or("")), expected) {
                 matched = true;
             }
             continue;
@@ -302,6 +437,23 @@ mod tests {
     }
 
     #[test]
+    fn token_comparison_matches_only_the_exact_token() {
+        assert!(token_eq("sekret", "sekret"));
+        assert!(!token_eq("sekreT", "sekret"));
+        assert!(!token_eq("sekre", "sekret"));
+        assert!(!token_eq("", "sekret"));
+        let mut headers = HeaderMap::new();
+        headers.insert(header::COOKIE, "ax_share=sekret".parse().unwrap());
+        assert!(request_has_share_token(&headers, None, Some("sekret")));
+        assert!(!request_has_share_token(&headers, None, Some("other")));
+        assert!(request_has_share_token(
+            &HeaderMap::new(),
+            Some("token=sekret"),
+            Some("sekret")
+        ));
+    }
+
+    #[test]
     fn wrong_query_token_is_not_a_redirect() {
         assert!(share_redirect_location("/notes", Some("token=nope"), "sekret").is_none());
     }
@@ -374,6 +526,103 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(second.status(), StatusCode::OK);
+    }
+
+    fn share_request(uri: &str, peer: &str, cookie: Option<&str>, proxied: bool) -> Request {
+        let mut builder = axum::http::Request::builder().uri(uri);
+        if let Some(cookie) = cookie {
+            builder = builder.header(header::COOKIE, format!("ax_share={cookie}"));
+        }
+        if proxied {
+            builder = builder.header("cf-connecting-ip", "198.51.100.9");
+        }
+        let mut req = builder.body(axum::body::Body::empty()).unwrap();
+        let peer: SocketAddr = peer.parse().unwrap();
+        req.extensions_mut().insert(ConnectInfo(peer));
+        req
+    }
+
+    fn share_app() -> axum::Router {
+        axum::Router::new()
+            .route("/notes", axum::routing::get(|| async { "page" }))
+            .layer(axum::middleware::from_fn(fixed_share))
+    }
+
+    async fn share_status(app: &axum::Router, req: Request) -> StatusCode {
+        use tower::ServiceExt;
+        app.clone().oneshot(req).await.unwrap().status()
+    }
+
+    /// Once a peer has used up its failures, every credential it presents
+    /// gets 429 without being checked, the correct one included, so the
+    /// answer no longer tells a guesser which guess was right.
+    #[tokio::test]
+    async fn a_locked_peer_cannot_tell_a_right_guess_from_a_wrong_one() {
+        let app = share_app();
+        let peer = "198.51.100.21:40000";
+        for _ in 0..MAX_FAILURES {
+            let status =
+                share_status(&app, share_request("/notes", peer, Some("stale"), false)).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED);
+        }
+        assert_eq!(
+            share_status(&app, share_request("/notes", peer, Some("stale"), false)).await,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(
+            share_status(&app, share_request("/notes", peer, Some("sekret"), false)).await,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(
+            share_status(
+                &app,
+                share_request("/notes?token=sekret", peer, None, false)
+            )
+            .await,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        let mut bearer = share_request("/notes", peer, None, false);
+        bearer
+            .headers_mut()
+            .insert(header::AUTHORIZATION, "Bearer sekret".parse().unwrap());
+        assert_eq!(
+            share_status(&app, bearer).await,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        let mut client = share_request("/notes", peer, None, false);
+        client
+            .headers_mut()
+            .insert(header::AUTHORIZATION, "Bearer axc_guess".parse().unwrap());
+        assert_eq!(
+            share_status(&app, client).await,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+
+        // Another peer is not affected.
+        let other = "198.51.100.22:40000";
+        assert_eq!(
+            share_status(&app, share_request("/notes", other, Some("sekret"), false)).await,
+            StatusCode::OK
+        );
+    }
+
+    /// Behind a tunnel every viewer arrives from 127.0.0.1 with a proxy
+    /// header; one viewer's failures must not lock out the others.
+    #[tokio::test]
+    async fn failures_through_a_local_proxy_lock_nobody() {
+        let app = share_app();
+        let peer = "127.0.0.1:40001";
+        for _ in 0..MAX_FAILURES * 2 {
+            assert_eq!(
+                share_status(&app, share_request("/notes", peer, Some("wrong"), true)).await,
+                StatusCode::UNAUTHORIZED
+            );
+        }
+        let mapped = "[::ffff:127.0.0.1]:40002";
+        assert_eq!(
+            share_status(&app, share_request("/notes", mapped, Some("wrong"), true)).await,
+            StatusCode::UNAUTHORIZED
+        );
     }
 
     async fn fixed_share(req: axum::extract::Request, next: Next) -> Response {

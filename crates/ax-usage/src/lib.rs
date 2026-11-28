@@ -122,14 +122,15 @@ pub use reuse_cache::{
     HOOK_SESSION_MAX_AGE, SESSION_CONTEXT_TOKENS,
 };
 pub use savings::{
-    format_mcp_call_log, mcp_call_log_limit, recent_mcp_calls, McpCallLogEntry, MCP_CALL_LOG_DEFAULT_LIMIT,
-    MCP_CALL_LOG_MAX_LIMIT,
-    cli_mcp_tool, current_assumptions, estimate_savings, flush_cli_call, import_agent_logs,
-    is_savings_eligible_tool, parse_cursor_hook_model, parse_cursor_hook_session_id,
-    query_call_token_detail, query_savings_summary, record_mcp_call, record_session_model_tag,
-    spawn_record_mcp_call, stash_cli_result, CallTokenDetail, ImportResult, McpCallRecord,
-    SavingsAssumptions, SavingsEstimate, SavingsQuery, SavingsSummary, PREVIEW_MAX_BYTES,
+    cli_mcp_tool, current_assumptions, estimate_savings, flush_cli_call, format_mcp_call_log,
+    import_agent_logs, is_savings_eligible_tool, mcp_call_log_limit, parse_cursor_hook_model,
+    parse_cursor_hook_session_id, query_call_token_detail, query_savings_summary, recent_mcp_calls,
+    record_mcp_call, record_session_model_tag, spawn_record_mcp_call, stash_cli_result,
+    CallTokenDetail, ImportResult, McpCallLogEntry, McpCallRecord, SavingsAssumptions,
+    SavingsEstimate, SavingsQuery, SavingsSummary, MCP_CALL_LOG_DEFAULT_LIMIT,
+    MCP_CALL_LOG_MAX_LIMIT, PREVIEW_MAX_BYTES,
 };
+pub use spec_documents::{classify_documents_from_json, import_spec_from_json, ListedPlan};
 pub use spec_hierarchy::{
     alternative_plan_from_json, approve_artifact, approve_for_member, approve_from_json,
     bind_approval_actor, capture_plan_draft, compare_plan_from_json,
@@ -151,7 +152,6 @@ pub use spec_registry::{
     save_revision, show_spec, spec_context_block, spec_pointer_for, sync_markdown, SpecHistoryRow,
     SpecListItem, SpecPointer, SpecRevision,
 };
-pub use spec_documents::{classify_documents_from_json, import_spec_from_json, ListedPlan};
 pub use store::{open_pool, usage_db_path};
 pub use tokenizer::{
     count_file_tokens, count_tokens, token_cache_status, tokenize_text, tokenizer_available,
