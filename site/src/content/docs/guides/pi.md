@@ -42,7 +42,7 @@ ax agent optimize --report
 
 Figures are estimates. A missing catalog rate stays unknown. Tool runtime is not billed as model tokens. Only tokens delivered into a later model context are priced, and that amount is not added on top of the model usage quote.
 
-`ax agent economics` reads `budget.currency` and `budget.usdPerEur` from the same settings as `ax budget`. Euro amounts are USD divided by `usdPerEur`. Without that rate the report stays in USD.
+`ax agent economics` reads `budget.currency` and `budget.usdPerEur` from the same settings as `ax budget`. Euro amounts are USD divided by `usdPerEur`. Without that rate the report stays in USD, and so does any other currency. The monthly budget is compared with spend in USD; a euro budget without `usdPerEur` is left out of the report rather than compared at an assumed rate.
 
 `ax_context` adds a `piContext` object. That object is the selected rules, skills, memories, and graph hits for the task, capped by `AX_CONTEXT_MAX_TOKENS`. It is not written into the Pi transcript.
 

@@ -230,6 +230,78 @@ fn changed_knowledge_for_the_same_task_is_not_served_from_the_cache() {
     assert!(third.cache_hit, "unchanged knowledge still hits the cache");
 }
 
+fn spend_one_point_zero_eight_usd(pi: &ax_pi::PiIntegration) {
+    // 360,000 input tokens at 3 USD per million tokens.
+    for event in [
+        json!({"type": "agent_start", "sessionId": "abc123"}),
+        json!({"type": "turn_start", "sessionId": "abc123"}),
+        json!({
+            "type": "message_end",
+            "sessionId": "abc123",
+            "message": {
+                "role": "assistant",
+                "content": [],
+                "provider": "anthropic",
+                "model": "claude",
+                "usage": {"input": 360000, "output": 0, "cacheRead": 0}
+            }
+        }),
+        json!({"type": "turn_end", "sessionId": "abc123"}),
+    ] {
+        pi.ingest(&event).unwrap();
+    }
+}
+
+#[test]
+fn euro_economics_convert_usd_spend_with_the_configured_rate() {
+    let pi = create_pi_integration(PiOptions {
+        currency: "EUR".into(),
+        usd_per_eur: Some(1.08),
+        ..priced(OptimizationMode::Advise)
+    });
+    spend_one_point_zero_eight_usd(&pi);
+    let report = pi.economics(Some("abc123")).unwrap();
+    assert_eq!(report.currency, "EUR");
+    assert!((report.estimated_model_cost.unwrap() - 1.0).abs() < 1e-6);
+    let budget = report.budget.clone().expect("budget");
+    assert_eq!(budget.currency, "EUR");
+    assert!((budget.spent - 1.0).abs() < 1e-6, "{budget:?}");
+    assert!((budget.remaining - 59.0).abs() < 1e-6, "{budget:?}");
+    assert!(pi
+        .format_economics_text(Some("abc123"))
+        .unwrap()
+        .contains("€1.00"));
+    let cost = pi.get_cost("abc123").unwrap();
+    assert_eq!(cost.currency, "USD", "model_usd is a USD figure");
+    assert!((cost.model_usd.unwrap() - 1.08).abs() < 1e-6);
+}
+
+#[test]
+fn euro_economics_without_a_rate_stay_in_usd_and_compare_no_budget() {
+    let pi = create_pi_integration(PiOptions {
+        currency: "EUR".into(),
+        usd_per_eur: None,
+        ..priced(OptimizationMode::Advise)
+    });
+    spend_one_point_zero_eight_usd(&pi);
+    let report = pi.economics(Some("abc123")).unwrap();
+    assert_eq!(report.currency, "USD");
+    assert!((report.estimated_model_cost.unwrap() - 1.08).abs() < 1e-6);
+    assert!(report.budget.is_none(), "{:?}", report.budget);
+    assert!(!pi
+        .format_economics_text(Some("abc123"))
+        .unwrap()
+        .contains('€'));
+}
+
+#[test]
+fn usd_per_eur_is_read_from_the_budget_settings() {
+    let options = PiOptions::from_config_value(&json!({
+        "budget": {"monthly": 60, "currency": "EUR", "usdPerEur": 1.08}
+    }));
+    assert_eq!(options.usd_per_eur, Some(1.08));
+}
+
 #[test]
 fn scenario_mandatory_rule_is_kept() {
     let pi = create_pi_integration(PiOptions {

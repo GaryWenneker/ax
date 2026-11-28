@@ -104,6 +104,9 @@ impl PiOptions {
         if let Some(currency) = value.pointer("/budget/currency").and_then(Value::as_str) {
             options.currency = currency.to_string();
         }
+        if let Some(rate) = value.pointer("/budget/usdPerEur").and_then(Value::as_f64) {
+            options.usd_per_eur = Some(rate);
+        }
         options
     }
 }
@@ -288,7 +291,7 @@ impl PiIntegration {
     pub fn get_cost(&self, session_id: &str) -> Result<CostSnapshot, PiError> {
         self.guard_or(
             CostSnapshot {
-                currency: self.options.currency.clone(),
+                currency: "USD".into(),
                 model_usd: None,
                 tool_context_usd: None,
                 confidence: "estimated".into(),
@@ -301,7 +304,7 @@ impl PiIntegration {
                     .get(session_id)
                     .map(|session| session.cumulative_cost.clone())
                     .unwrap_or(CostSnapshot {
-                        currency: self.options.currency.clone(),
+                        currency: "USD".into(),
                         model_usd: None,
                         tool_context_usd: None,
                         confidence: "estimated".into(),
@@ -311,17 +314,24 @@ impl PiIntegration {
     }
 
     pub fn economics(&self, session_id: Option<&str>) -> Result<EconomicsReport, PiError> {
+        let currency = self.options.currency.as_str();
+        let usd_per_eur = self.options.usd_per_eur;
+        let mut empty = empty_report("USD");
+        apply_display_currency(&mut empty, currency, usd_per_eur);
         self.guard_or(
-            empty_report(&self.options.currency),
+            empty,
             |report| report,
             || {
                 let state = self.state.lock().map_err(|err| err.to_string())?;
-                Ok(economics_from(
+                // Figures stay in USD until the one display conversion below.
+                let mut report = economics_from(
                     &snapshot_of(&state),
                     session_id,
-                    &self.options.currency,
+                    "USD",
                     self.budget_of(&state),
-                ))
+                );
+                apply_display_currency(&mut report, currency, usd_per_eur);
+                Ok(report)
             },
         )
     }
@@ -398,8 +408,14 @@ impl PiIntegration {
         self.broken.store(true, Ordering::SeqCst);
     }
 
+    /// The budget in USD, like the spend it is compared with. `None` when the
+    /// monthly budget's currency has no rate; no exchange rate is assumed.
     fn budget_of(&self, state: &State) -> Option<BudgetSnapshot> {
-        let monthly = self.options.monthly_budget?;
+        let monthly = crate::economics::amount_in_usd(
+            self.options.monthly_budget?,
+            &self.options.currency,
+            self.options.usd_per_eur,
+        )?;
         let spent = state
             .sessions
             .values()
@@ -411,7 +427,7 @@ impl PiIntegration {
             self.options.days_remaining,
             monthly,
         );
-        snapshot.currency = self.options.currency.clone();
+        snapshot.currency = "USD".into();
         Some(snapshot)
     }
 
@@ -554,7 +570,7 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
         }
         AxAgentEvent::SessionEnded(base) => {
             if let Some(session) = state.sessions.get_mut(&base.session_id) {
-                session.cumulative_cost.currency = options.currency.clone();
+                session.cumulative_cost.currency = "USD".into();
             }
         }
         AxAgentEvent::TurnStarted(base) => {
@@ -804,8 +820,9 @@ fn session_state(options: &PiOptions, session_id: &str) -> AxSessionState {
         context_version: None,
         cache_namespace: format!("{}:{session_id}", options.project_id),
         cumulative_usage: UsageSnapshot::default(),
+        // `model_usd` and `tool_context_usd` are USD figures.
         cumulative_cost: CostSnapshot {
-            currency: options.currency.clone(),
+            currency: "USD".into(),
             model_usd: None,
             tool_context_usd: None,
             confidence: "estimated".into(),

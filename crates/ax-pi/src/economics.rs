@@ -366,16 +366,28 @@ pub fn budget_snapshot(
     }
 }
 
+/// A USD amount in the display currency. Only EUR has a rate (`usd_per_eur`);
+/// every other case, EUR without a rate included, stays labelled USD.
 pub fn display_amount(usd: f64, currency: &str, usd_per_eur: Option<f64>) -> (f64, String) {
-    if currency.eq_ignore_ascii_case("eur") {
-        if let Some(rate) = usd_per_eur.filter(|rate| *rate > 0.0) {
-            return (usd / rate, "EUR".into());
-        }
+    match eur_rate(currency, usd_per_eur) {
+        Some(rate) => (usd / rate, "EUR".into()),
+        None => (usd, "USD".into()),
     }
-    if currency.eq_ignore_ascii_case("eur") {
-        return (usd, "USD".into());
+}
+
+/// A budget in `currency` as USD, or `None` when no rate converts it.
+pub fn amount_in_usd(amount: f64, currency: &str, usd_per_eur: Option<f64>) -> Option<f64> {
+    if currency.eq_ignore_ascii_case("usd") {
+        return Some(amount);
     }
-    (usd, currency.to_ascii_uppercase())
+    eur_rate(currency, usd_per_eur).map(|rate| amount * rate)
+}
+
+fn eur_rate(currency: &str, usd_per_eur: Option<f64>) -> Option<f64> {
+    if !currency.eq_ignore_ascii_case("eur") {
+        return None;
+    }
+    usd_per_eur.filter(|rate| rate.is_finite() && *rate > 0.0)
 }
 
 #[cfg(test)]
@@ -565,6 +577,15 @@ mod tests {
         let (usd, label) = display_amount(1.08, "eur", None);
         assert_eq!(label, "USD");
         assert!((usd - 1.08).abs() < 0.001);
+    }
+
+    #[test]
+    fn a_currency_without_a_rate_keeps_the_usd_label() {
+        assert_eq!(
+            display_amount(1.08, "GBP", Some(1.08)),
+            (1.08, "USD".into())
+        );
+        assert_eq!(display_amount(1.08, "usd", None), (1.08, "USD".into()));
     }
 
     #[test]
