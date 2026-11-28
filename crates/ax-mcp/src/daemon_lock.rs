@@ -99,7 +99,9 @@ pub fn release_daemon_lock(pid_path: &Path) {
 
 pub fn is_pid_alive(pid: u32) -> bool {
     use sysinfo::{Pid, System};
-    let mut sys = System::new();
+    let Ok(mut sys) = System::new() else {
+        return false;
+    };
     sys.refresh_processes(
         sysinfo::ProcessesToUpdate::Some(&[Pid::from_u32(pid)]),
         true,
