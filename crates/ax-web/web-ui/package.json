@@ -19,7 +19,7 @@
     "@tiptap/extension-table": "~3.33.1",
     "@tiptap/markdown": "~3.33.1",
     "@tiptap/pm": "~3.33.1",
-    "@tiptap/react": "~3.33.1",
+    "@tiptap/react": "~3.35.0",
     "@tiptap/starter-kit": "~3.33.1",
     "@tiptap/suggestion": "~3.33.1",
     "@uiw/react-md-editor": "^4.2.2",
