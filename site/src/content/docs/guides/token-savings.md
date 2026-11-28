@@ -150,6 +150,8 @@ Resolution order for USD estimates:
 2. Latest OpenRouter snapshot in `~/.ax/usage.db`
 3. Built-in defaults
 
+ax reads `~/.ax/pricing.toml` once, when the process starts. After you edit it, restart a long-running `ax web` or MCP server for the new rates to apply; a one-shot CLI command reads the file each time it runs.
+
 In the snapshot an exact model id wins (with or without the `provider/` prefix). Otherwise the longest catalog id contained in the requested id wins, and only then the shortest catalog id that contains the requested id. So `gpt-4o` is priced as `openai/gpt-4o`, not `openai/gpt-4o-mini`.
 
 ### Cursor state.vscdb (automatic on import)
@@ -353,6 +355,8 @@ ax savings import --claude          # Claude Code only
 ```
 
 Each transcript's usage is stored under its project. The agent's project folder name (for example `-Users-me-app` or `users-me-app`) is mapped back to the one project path ax has logged calls for with that folder name; without a single match the folder name is kept. Only rows stored under a project path are included in that project's history export. One API response counts once, even when the transcript repeats its usage on every content-block line.
+
+A transcript whose modification time is not newer than at its last import is skipped without being read, so running the import again only processes new or changed sessions. To re-import an unchanged file, touch it first. A skipped transcript still moves to its project path when ax has learned that path since the last import, so a session first stored under its folder name ends up under the right project. A file whose modification time cannot be read is always imported. A session with output or cache tokens but no per-turn usage events, such as one imported by a version before v10.0.0, is read once more without a touch, so its per-turn usage and costs are backfilled. Input tokens alone do not trigger this: Cursor stores them in `state.vscdb` for sessions whose transcripts have no usage lines, and those transcripts are still read only once. The session and its per-turn usage are written together: when that write fails, nothing is stored and the next import tries the file again.
 
 ---
 

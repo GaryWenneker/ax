@@ -157,6 +157,16 @@ verbose_mcp = true
 # Empty / "local" = browser local timezone in Command Center.
 timezone = ""
 
+[retention]
+# Opt-in cleanup of history ax otherwise keeps forever. Every key is off by
+# default; a missing or 0 value keeps everything. See "History retention" below.
+# activity_days = 180
+# activity_max_bytes = 50000000
+# durable_days = 365
+# durable_max_bytes = 0
+# verbose_log_days = 30
+# verbose_log_max_bytes = 0
+
 [auto_commit]
 # Opt-in Aider-style checkpointing — disabled by default. When enabled,
 # uncommitted working-tree changes are committed before the gate runs (so
@@ -215,6 +225,23 @@ ax ship --evaluate --auto-commit --revert-on-fail # + rollback on failure
 ```
 
 The report's `auto_commit` field (`ax ship --evaluate` JSON output) reports `status`: `clean` (nothing to commit), `committed`, `kept-failing` (failed but `revert_on_fail` is off), `reverted`, or `revert-failed`.
+
+### History retention (`[retention]`)
+
+By default ax deletes none of this project's history: the activity events behind **Logging**, durable conversation transcripts (`ax_durable`), and the dated MCP verbose log files (`.ax/mcp-verbose-YYYY-MM-DD.log`, which contain tool arguments and reply previews) all stay until you remove them. To limit them, set one or both limits per kind:
+
+| Key | What it limits |
+|---|---|
+| `activity_days` | Activity events of this project older than this many days are deleted. |
+| `activity_max_bytes` | The newest activity events are kept up to this much stored text (summary, operation, files, symbols, commits, error); older ones are deleted. |
+| `durable_days` | Durable transcript entries of this project's conversations older than this many days are deleted. |
+| `durable_max_bytes` | The newest durable entries are kept up to this many body bytes; older ones are deleted. |
+| `verbose_log_days` | A dated log file for day D is deleted when D is before today minus this many days (in the `[ui].timezone` rotation day). |
+| `verbose_log_max_bytes` | The newest log files are kept up to this total size; older files are deleted. |
+
+- A missing key, `0`, or a value that does not parse (for example a negative number or a string) means no limit for that key only; the other keys still apply, and ax logs a warning naming the ignored key. If `ship.toml` cannot be parsed at all, nothing is deleted.
+- Cleanup runs at the same points as the cache TTL cleanup: activity and durable limits when this project writes an activity event or a durable entry (an `ax_durable` call that only reads, such as `read`, `search`, `doc_get` or `task_resume`, does not start it; at most once every five minutes per process), and log limits when the log rotates to a new day. Today's log file is never deleted, and an unmigrated legacy `mcp-verbose.log` is left alone. In the same way, neither the age limit nor the byte cap deletes the activity event or durable entries that were just written, even when one alone is over the cap: the write succeeds and its id stays valid, and the older rows are deleted. For a durable write this covers every entry the write stored, so an entry a hook adds after an `append`, a `compact` or a tool note never pushes the written entry out. Dated files received from other nodes under `.ax/server/replicated-logs/` count toward the same limits.
+- Only this project's rows are deleted. Durable transcripts written before project scoping existed are never touched. Deleted rows and files cannot be recovered.
 
 Set the PAT in your environment before draft PR or review commands:
 

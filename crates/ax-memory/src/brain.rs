@@ -876,13 +876,15 @@ pub async fn stamp_memory(
     model: &str,
 ) -> Result<(), AxError> {
     let tier = tier_for_kind(kind);
-    sqlx::query(
-        "UPDATE memories SET tier = ?, embedding_model = ?, status = COALESCE(NULLIF(status, ''), 'active') WHERE id = ?",
-    )
-    .bind(tier)
-    .bind(model)
-    .bind(id)
-    .execute(pool)
+    crate::store::retry_locked(|| {
+        sqlx::query(
+            "UPDATE memories SET tier = ?, embedding_model = ?, status = COALESCE(NULLIF(status, ''), 'active') WHERE id = ?",
+        )
+        .bind(tier)
+        .bind(model)
+        .bind(id)
+        .execute(pool)
+    })
     .await
     .map_err(|e| db_err_pub(pool, e))?;
     if tier == TIER_ARCHIVE {
