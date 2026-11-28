@@ -376,6 +376,8 @@ pub async fn register(pool: &SqlitePool, model: &ModelRecord<'_>) -> Result<(), 
     .map_err(|error| error.to_string())
 }
 
+/// Makes `version` the one promoted version of `model_id`. The check, the
+/// flag change and the audit row commit together or not at all.
 pub async fn promote(
     pool: &SqlitePool,
     project_id: &str,
@@ -389,112 +391,129 @@ pub async fn promote(
         return Err("hash-v1 is not a neural registry model".into());
     }
     promotion_allowed(explicit, beats_baseline, regressions_clear).await?;
+    let mut tx = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|error| error.to_string())?;
     let exists: i64 =
         sqlx::query("SELECT COUNT(*) AS n FROM neural_model WHERE model_id = ? AND version = ?")
             .bind(model_id)
             .bind(version)
-            .fetch_one(pool)
+            .fetch_one(&mut *tx)
             .await
             .map(|row| row.get("n"))
             .map_err(|error| error.to_string())?;
     if exists == 0 {
         return Err("model version is not registered".into());
     }
-    sqlx::query("UPDATE neural_model SET promoted = 0 WHERE model_id = ?")
-        .bind(model_id)
-        .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
-    sqlx::query("UPDATE neural_model SET promoted = 1 WHERE model_id = ? AND version = ?")
-        .bind(model_id)
-        .bind(version)
-        .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
-    audit(
-        pool,
-        project_id,
-        "promote",
-        &format!("{model_id}@{version}"),
-    )
-    .await
+    activate(&mut tx, project_id, model_id, version, "promote").await?;
+    tx.commit().await.map_err(|error| error.to_string())
 }
 
+/// Returns `model_id` to the version that was active before the current one,
+/// skipping versions that an earlier rollback left. Runs in one transaction.
 pub async fn rollback(
     pool: &SqlitePool,
     project_id: &str,
     model_id: &str,
 ) -> Result<String, String> {
-    let current = promoted_version(pool, model_id)
+    let mut tx = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|error| error.to_string())?;
+    let current = promoted_version(&mut tx, model_id)
         .await?
         .ok_or_else(|| "no promoted model to roll back".to_string())?;
-    let promoted_history = promote_history(pool, project_id, model_id).await?;
-    let Some(index) = promoted_history
-        .iter()
-        .position(|version| version == &current)
-    else {
+    let stack = activation_stack(&mut tx, model_id).await?;
+    let Some(index) = stack.iter().rposition(|version| version == &current) else {
         return Err("no previous promoted version to select".into());
     };
     if index == 0 {
         return Err("no previous promoted version to select".into());
     }
-    let version = promoted_history[index - 1].clone();
+    let version = stack[index - 1].clone();
+    activate(&mut tx, project_id, model_id, &version, "rollback").await?;
+    tx.commit().await.map_err(|error| error.to_string())?;
+    Ok(version)
+}
+
+async fn activate(
+    tx: &mut sqlx::SqliteConnection,
+    project_id: &str,
+    model_id: &str,
+    version: &str,
+    action: &str,
+) -> Result<(), String> {
     sqlx::query("UPDATE neural_model SET promoted = 0 WHERE model_id = ?")
         .bind(model_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|error| error.to_string())?;
     sqlx::query("UPDATE neural_model SET promoted = 1 WHERE model_id = ? AND version = ?")
         .bind(model_id)
-        .bind(&version)
-        .execute(pool)
+        .bind(version)
+        .execute(&mut *tx)
         .await
         .map_err(|error| error.to_string())?;
-    audit(
-        pool,
-        project_id,
-        "rollback",
-        &format!("{model_id}@{version}"),
+    sqlx::query(
+        "INSERT INTO neural_audit (project_id, action, detail, created_at) VALUES (?, ?, ?, ?)",
     )
-    .await?;
-    Ok(version)
+    .bind(project_id)
+    .bind(action)
+    .bind(format!("{model_id}@{version}"))
+    .bind(now())
+    .execute(&mut *tx)
+    .await
+    .map(|_| ())
+    .map_err(|error| error.to_string())
 }
 
-async fn promoted_version(pool: &SqlitePool, model_id: &str) -> Result<Option<String>, String> {
+async fn promoted_version(
+    conn: &mut sqlx::SqliteConnection,
+    model_id: &str,
+) -> Result<Option<String>, String> {
     sqlx::query("SELECT version FROM neural_model WHERE model_id = ? AND promoted = 1 LIMIT 1")
         .bind(model_id)
-        .fetch_optional(pool)
+        .fetch_optional(conn)
         .await
         .map(|row| row.map(|row| row.get("version")))
         .map_err(|error| error.to_string())
 }
 
-/// Versions that were promoted for this model, in audit order (oldest first).
-async fn promote_history(
-    pool: &SqlitePool,
-    project_id: &str,
+/// The versions that were active for this model, oldest first, rebuilt from
+/// every project's promote and rollback audit rows (the promoted flag belongs
+/// to the model, not to a project). A promote pushes its version; a rollback
+/// pops the version it left, so a rolled-back version is never selected again.
+async fn activation_stack(
+    conn: &mut sqlx::SqliteConnection,
     model_id: &str,
 ) -> Result<Vec<String>, String> {
     let prefix = format!("{model_id}@");
     let rows = sqlx::query(
-        "SELECT detail FROM neural_audit
-         WHERE project_id = ? AND action = 'promote' AND detail LIKE ?
-         ORDER BY created_at ASC, rowid ASC",
+        "SELECT action, detail FROM neural_audit
+         WHERE action IN ('promote', 'rollback') AND substr(detail, 1, ?) = ?
+         ORDER BY id ASC",
     )
-    .bind(project_id)
-    .bind(format!("{prefix}%"))
-    .fetch_all(pool)
+    .bind(prefix.chars().count() as i64)
+    .bind(&prefix)
+    .fetch_all(conn)
     .await
     .map_err(|error| error.to_string())?;
-    Ok(rows
-        .into_iter()
-        .filter_map(|row| {
-            let detail: String = row.get("detail");
-            detail
-                .strip_prefix(&prefix)
-                .map(|version| version.to_string())
-        })
-        .collect())
+    let mut stack: Vec<String> = Vec::new();
+    for row in rows {
+        let action: String = row.get("action");
+        let detail: String = row.get("detail");
+        let Some(version) = detail.strip_prefix(&prefix) else {
+            continue;
+        };
+        if action == "rollback" {
+            stack.pop();
+        }
+        if stack.last().map(String::as_str) != Some(version) {
+            stack.push(version.to_string());
+        }
+    }
+    Ok(stack)
 }
 
 pub async fn promoted_checksum(
@@ -1205,6 +1224,133 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(error, "hash-v1 is not a neural registry model");
+    }
+
+    async fn registered(pool: &SqlitePool, versions: &[&'static str]) {
+        for version in versions {
+            register(pool, &model("m", version)).await.unwrap();
+        }
+    }
+
+    async fn active(pool: &SqlitePool) -> Option<String> {
+        promoted_checksum(pool, "m").await.unwrap()
+    }
+
+    async fn audit_rows(pool: &SqlitePool) -> i64 {
+        sqlx::query("SELECT COUNT(*) AS n FROM neural_audit")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .get("n")
+    }
+
+    async fn fail_audit_inserts(pool: &SqlitePool) {
+        sqlx::query(
+            "CREATE TRIGGER fail_audit BEFORE INSERT ON neural_audit
+             BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_failed_promote_leaves_the_previous_version_active() {
+        let (_dir, database) = db().await;
+        let pool = database.pool();
+        registered(pool, &["1", "2"]).await;
+        promote(pool, "p", "m", "1", true, true, true)
+            .await
+            .unwrap();
+        fail_audit_inserts(pool).await;
+        let error = promote(pool, "p", "m", "2", true, true, true)
+            .await
+            .unwrap_err();
+        assert!(error.contains("audit unavailable"), "{error}");
+        assert_eq!(active(pool).await.as_deref(), Some("1"));
+        assert_eq!(audit_rows(pool).await, 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_rollback_leaves_the_current_version_active() {
+        let (_dir, database) = db().await;
+        let pool = database.pool();
+        registered(pool, &["1", "2"]).await;
+        for version in ["1", "2"] {
+            promote(pool, "p", "m", version, true, true, true)
+                .await
+                .unwrap();
+        }
+        fail_audit_inserts(pool).await;
+        assert!(rollback(pool, "p", "m").await.is_err());
+        assert_eq!(active(pool).await.as_deref(), Some("2"));
+    }
+
+    #[tokio::test]
+    async fn rollback_after_promoting_a_version_again_selects_the_one_in_between() {
+        let (_dir, database) = db().await;
+        let pool = database.pool();
+        registered(pool, &["1", "2"]).await;
+        for version in ["1", "2", "1"] {
+            promote(pool, "p", "m", version, true, true, true)
+                .await
+                .unwrap();
+        }
+        assert_eq!(rollback(pool, "p", "m").await.unwrap(), "2");
+        assert_eq!(active(pool).await.as_deref(), Some("2"));
+    }
+
+    #[tokio::test]
+    async fn rollback_never_returns_to_a_version_that_was_rolled_back() {
+        let (_dir, database) = db().await;
+        let pool = database.pool();
+        registered(pool, &["1", "2", "3"]).await;
+        for version in ["1", "2"] {
+            promote(pool, "p", "m", version, true, true, true)
+                .await
+                .unwrap();
+        }
+        assert_eq!(rollback(pool, "p", "m").await.unwrap(), "1");
+        promote(pool, "p", "m", "3", true, true, true)
+            .await
+            .unwrap();
+        assert_eq!(rollback(pool, "p", "m").await.unwrap(), "1");
+        assert_eq!(active(pool).await.as_deref(), Some("1"));
+    }
+
+    #[tokio::test]
+    async fn rollback_uses_the_model_history_from_every_project() {
+        // The promoted flag belongs to the model, not to a project.
+        let (_dir, database) = db().await;
+        let pool = database.pool();
+        registered(pool, &["1", "2"]).await;
+        promote(pool, "p", "m", "1", true, true, true)
+            .await
+            .unwrap();
+        promote(pool, "q", "m", "2", true, true, true)
+            .await
+            .unwrap();
+        assert_eq!(rollback(pool, "q", "m").await.unwrap(), "1");
+    }
+
+    #[tokio::test]
+    async fn rollback_history_matches_the_model_id_exactly() {
+        let (_dir, database) = db().await;
+        let pool = database.pool();
+        registered(pool, &["1", "2"]).await;
+        register(pool, &model("m_x", "9")).await.unwrap();
+        register(pool, &model("m_", "1")).await.unwrap();
+        register(pool, &model("m_", "2")).await.unwrap();
+        promote(pool, "p", "m_", "1", true, true, true)
+            .await
+            .unwrap();
+        promote(pool, "p", "m_x", "9", true, true, true)
+            .await
+            .unwrap();
+        promote(pool, "p", "m_", "2", true, true, true)
+            .await
+            .unwrap();
+        assert_eq!(rollback(pool, "p", "m_").await.unwrap(), "1");
     }
 
     #[tokio::test]
