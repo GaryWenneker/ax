@@ -79,7 +79,7 @@ pub fn parent_pid() -> Option<u32> {
 pub fn parent_pid() -> Option<u32> {
     let pid = Pid::from_u32(std::process::id());
     let Ok(mut sys) = System::new() else {
-        return 0;
+        return None;
     };
     sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
     sys.process(pid)
