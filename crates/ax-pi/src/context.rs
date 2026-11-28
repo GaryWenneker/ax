@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use ax_usage::{select_context, ContextBlock, ContextClass};
 
-use crate::economics::estimate_text;
+use crate::economics::{estimate_text, path_ends_with};
 use crate::types::{
     CachedContext, ContextCacheKey, ContextRequest, ContextResult, ContextSection, SectionType,
 };
@@ -143,7 +143,7 @@ impl ContextCache {
             !entry.source_hashes.iter().any(|source| {
                 paths
                     .iter()
-                    .any(|path| source == path || source.ends_with(path) || path.ends_with(source))
+                    .any(|path| path_ends_with(source, path) || path_ends_with(path, source))
             })
         });
     }
@@ -299,6 +299,17 @@ mod tests {
         cache.invalidate_paths(&["src/UserService.cs".into()]);
         assert!(cache.get(&base).is_none());
         assert!(cache.get(&other).is_some());
+    }
+
+    #[test]
+    fn path_invalidation_matches_whole_components_only() {
+        let mut cache = ContextCache::default();
+        let key = sample_key("p");
+        cache.insert(key.clone(), cached(&key, vec!["src/mylib.rs".into()]));
+        cache.invalidate_paths(&["lib.rs".into()]);
+        assert!(cache.get(&key).is_some(), "lib.rs is not src/mylib.rs");
+        cache.invalidate_paths(&["/repo/src/mylib.rs".into()]);
+        assert!(cache.get(&key).is_none());
     }
 
     #[test]

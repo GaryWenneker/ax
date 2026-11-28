@@ -201,6 +201,68 @@ fn target_path(arguments: &Value) -> Option<String> {
     }
 }
 
+/// Entity names shorter than this (`id`, `new`) match too many unrelated
+/// searches to say anything about the symbol.
+const MIN_ENTITY_CHARS: usize = 4;
+
+fn identifier_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// `needle` occurs in `text` with no identifier character directly before or
+/// after it, so `new` is not found in `renewal`.
+fn contains_on_boundary(text: &str, needle: &str) -> bool {
+    if needle.chars().count() < MIN_ENTITY_CHARS {
+        return false;
+    }
+    text.match_indices(needle).any(|(start, found)| {
+        let before = text[..start].chars().next_back();
+        let after = text[start + found.len()..].chars().next();
+        !before.is_some_and(identifier_char) && !after.is_some_and(identifier_char)
+    })
+}
+
+/// The last segment of a qualified name (`a::b::Name` → `Name`), when the
+/// entity has more than one segment.
+fn last_segment(entity: &str) -> Option<&str> {
+    let segment = entity
+        .rsplit(|c: char| !identifier_char(c))
+        .find(|part| !part.is_empty())?;
+    (segment.len() < entity.len()).then_some(segment)
+}
+
+/// The first graph entity the search text names. The whole name on identifier
+/// boundaries is a high-confidence match; only the last segment of a
+/// qualified name is a medium-confidence one, so it is never applied
+/// automatically.
+fn known_entity_in<'a>(query: &str, entities: &'a [String]) -> Option<(&'a str, Confidence)> {
+    if let Some(entity) = entities
+        .iter()
+        .find(|entity| contains_on_boundary(query, entity.trim()))
+    {
+        return Some((entity.trim(), Confidence::High));
+    }
+    entities.iter().find_map(|entity| {
+        let segment = last_segment(entity.trim())?;
+        contains_on_boundary(query, segment).then_some((entity.trim(), Confidence::Medium))
+    })
+}
+
+fn path_components(path: &str) -> Vec<&str> {
+    path.split(['/', '\\'])
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect()
+}
+
+/// `known`'s path components are the trailing components of `path`, so
+/// `lib.rs` matches `src/lib.rs` but not `src/mylib.rs`. Separators may be
+/// `/` or `\`.
+pub(crate) fn path_ends_with(path: &str, known: &str) -> bool {
+    let path = path_components(path);
+    let known = path_components(known);
+    !known.is_empty() && path.ends_with(&known)
+}
+
 pub fn advise_observation(
     observation: &ToolCallObservation,
     already_seen: bool,
@@ -219,10 +281,8 @@ pub fn advise_observation(
 
     if search_tool(&observation.tool_name) {
         let query = query_text(&observation.arguments);
-        if let Some(entity) = observation
-            .known_graph_entities
-            .iter()
-            .find(|entity| !entity.is_empty() && query.contains(entity.as_str()))
+        if let Some((entity, confidence)) =
+            known_entity_in(&query, &observation.known_graph_entities)
         {
             let alternative_tokens = if current > GRAPH_EXPLORE_TOKEN_ESTIMATE {
                 GRAPH_EXPLORE_TOKEN_ESTIMATE
@@ -234,7 +294,7 @@ pub fn advise_observation(
                 estimated_current_tokens: current,
                 estimated_alternative_tokens: alternative_tokens,
                 estimated_reduction_percent: reduction_percent(current, alternative_tokens),
-                confidence: Confidence::High,
+                confidence,
                 reason: format!("{entity} exists as a known graph entity."),
                 rule: "known-symbol-search".into(),
             });
@@ -246,7 +306,7 @@ pub fn advise_observation(
             let indexed = observation
                 .indexed_paths
                 .iter()
-                .any(|known| known == &path || path.ends_with(known));
+                .any(|known| path_ends_with(&path, known));
             if indexed {
                 let alternative_tokens = if current > GRAPH_EXPLORE_TOKEN_ESTIMATE {
                     GRAPH_EXPLORE_TOKEN_ESTIMATE
@@ -559,6 +619,59 @@ mod tests {
         );
         assert_eq!(advice.alternatives[0].tool_name, "ax_node");
         assert!(advice.apply.is_none());
+    }
+
+    #[test]
+    fn entity_inside_a_longer_word_is_not_a_known_symbol() {
+        let mut obs = observation("rg", json!({"pattern": "renewal", "path": "src/"}), 7_000);
+        obs.known_graph_entities = vec!["new".into(), "renew".into()];
+        let advice = advise_observation(&obs, false, OptimizationMode::Optimize, 9_000, true);
+        assert!(advice.alternatives.is_empty(), "{:?}", advice.alternatives);
+        assert!(advice.apply.is_none());
+    }
+
+    #[test]
+    fn entity_on_identifier_boundaries_still_matches() {
+        let obs = observation("rg", json!({"pattern": "fn UserService(", "path": "src/"}), 7_000);
+        let advice = advise_observation(&obs, false, OptimizationMode::Optimize, 9_000, true);
+        assert_eq!(advice.alternatives[0].rule, "known-symbol-search");
+        assert_eq!(advice.alternatives[0].confidence, Confidence::High);
+        let obs = observation("rg", json!({"pattern": "UserServiceImpl"}), 7_000);
+        let advice = advise_observation(&obs, false, OptimizationMode::Advise, 9_000, true);
+        assert!(advice.alternatives.is_empty(), "{:?}", advice.alternatives);
+    }
+
+    #[test]
+    fn short_entity_names_never_match() {
+        let mut obs = observation("rg", json!({"pattern": "id"}), 7_000);
+        obs.known_graph_entities = vec!["id".into()];
+        let advice = advise_observation(&obs, false, OptimizationMode::Advise, 9_000, true);
+        assert!(advice.alternatives.is_empty(), "{:?}", advice.alternatives);
+    }
+
+    #[test]
+    fn last_segment_of_a_qualified_entity_is_a_partial_match() {
+        let mut obs = observation("rg", json!({"pattern": "advise_observation"}), 7_000);
+        obs.known_graph_entities = vec!["ax_pi::economics::advise_observation".into()];
+        let advice = advise_observation(&obs, false, OptimizationMode::Optimize, 9_000, true);
+        assert_eq!(advice.alternatives[0].rule, "known-symbol-search");
+        assert_eq!(advice.alternatives[0].confidence, Confidence::Medium);
+        assert!(advice.apply.is_none(), "a partial match is never applied");
+    }
+
+    #[test]
+    fn indexed_path_matches_whole_components_only() {
+        let mut obs = observation("read", json!({"path": "src/mylib.rs"}), 7_000);
+        obs.indexed_paths = vec!["lib.rs".into()];
+        let advice = advise_observation(&obs, false, OptimizationMode::Advise, 9_000, true);
+        assert!(advice.alternatives.is_empty(), "{:?}", advice.alternatives);
+        obs.arguments = json!({"path": "./crates/x/src/lib.rs"});
+        obs.indexed_paths = vec!["src/lib.rs".into()];
+        let advice = advise_observation(&obs, false, OptimizationMode::Advise, 9_000, true);
+        assert_eq!(advice.alternatives[0].rule, "indexed-read");
+        obs.arguments = json!({"path": "src\\lib.rs"});
+        let advice = advise_observation(&obs, false, OptimizationMode::Advise, 9_000, true);
+        assert_eq!(advice.alternatives[0].rule, "indexed-read");
     }
 
     #[test]
