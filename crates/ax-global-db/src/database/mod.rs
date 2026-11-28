@@ -4,17 +4,22 @@ use anyhow::{Context, Result};
 use sqlx::{Acquire, SqlitePool};
 
 use ax_db::schema::split_statements;
+use ax_db::with_busy_retry;
 
 const SCHEMA_SQL: &str = include_str!("../../../../database/schema/global.db.schema.sql");
 
 pub async fn initialize_schema(pool: &SqlitePool) -> Result<()> {
+    // Every statement is idempotent, so one that lost a race for the write
+    // lock with another process opening the same file is simply run again.
     for stmt in split_statements(SCHEMA_SQL) {
-        sqlx::query(&stmt).execute(pool).await.with_context(|| {
-            format!(
-                "schema statement failed: {}",
-                stmt.chars().take(80).collect::<String>()
-            )
-        })?;
+        with_busy_retry(|| sqlx::query(&stmt).execute(pool))
+            .await
+            .with_context(|| {
+                format!(
+                    "schema statement failed: {}",
+                    stmt.chars().take(80).collect::<String>()
+                )
+            })?;
     }
     // One-time backfill for existing single-role installs; never re-add a
     // deliberately removed role when init runs again.
@@ -30,6 +35,21 @@ pub async fn initialize_schema(pool: &SqlitePool) -> Result<()> {
     }
     add_column_if_missing(pool, "team_members", "avatar_image", "TEXT").await?;
     widen_member_role_check(pool).await?;
+    repair_admin_role_projection(pool).await?;
+    Ok(())
+}
+
+/// team_members.role once ranked Approver above Admin, so a member holding
+/// both was stored as 'approver' and lost the admin scopes. Store 'admin'.
+async fn repair_admin_role_projection(pool: &SqlitePool) -> Result<()> {
+    sqlx::query(
+        "UPDATE team_members SET role = 'admin'
+         WHERE role = 'approver'
+           AND EXISTS (SELECT 1 FROM member_roles r
+                       WHERE r.member_id = team_members.id AND r.role = 'admin')",
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 

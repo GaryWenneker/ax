@@ -19,8 +19,8 @@ async fn note(pool: &sqlx::SqlitePool, title: &str) -> String {
 
 #[tokio::test]
 async fn recall_keeps_only_the_named_session_and_turn() {
-    let root = std::env::temp_dir().join(format!("ax-mem-filter-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join(".ax/turns")).unwrap();
     let db = ax_db::Database::open(&root.join(".ax/ax.db"))
         .await
@@ -76,5 +76,4 @@ async fn recall_keeps_only_the_named_session_and_turn() {
     assert!(open.len() >= 3);
 
     db.close().await;
-    let _ = std::fs::remove_dir_all(&root);
 }

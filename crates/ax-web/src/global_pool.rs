@@ -36,9 +36,10 @@ pub(crate) async fn pool_at(path: &Path) -> Result<SqlitePool, String> {
         Some(e) => e.opens,
         None => 0,
     };
+    // `{:#}` keeps the SQLite cause; `to_string` would print only the context.
     let pool = ax_global_db::open_and_init(path)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("{e:#}"))?;
     pools.insert(
         path.to_path_buf(),
         Entry {
@@ -84,5 +85,49 @@ mod tests {
         let fresh = pool_at(&b).await.unwrap();
         assert!(!fresh.is_closed());
         assert_eq!(opens(&b).await, 2);
+    }
+
+    /// Another process (the CLI, MCP, or a policy reindex in this one) can
+    /// be writing `global.db` while it is still in rollback-journal mode.
+    /// Switching it to WAL then fails at once with "database is locked":
+    /// SQLite skips the busy handler there, so `busy_timeout` does not help.
+    /// The first open must wait for that writer instead of failing.
+    #[tokio::test]
+    async fn first_open_waits_for_a_writer_holding_the_file() {
+        use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
+        use sqlx::{ConnectOptions, Connection};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("global.db");
+        let mut writer = SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Delete)
+            .connect()
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE other_writer(a)")
+            .execute(&mut writer)
+            .await
+            .unwrap();
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut writer)
+            .await
+            .unwrap();
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            sqlx::query("COMMIT").execute(&mut writer).await.unwrap();
+            writer.close().await.unwrap();
+        });
+
+        let pool = pool_at(&path)
+            .await
+            .expect("first open waits for the writer");
+        sqlx::query("SELECT COUNT(*) FROM web_auth_settings")
+            .execute(&pool)
+            .await
+            .unwrap();
+        release.await.unwrap();
+        assert_eq!(opens(&path).await, 1);
     }
 }

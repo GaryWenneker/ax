@@ -1,8 +1,13 @@
 //! §2 production-path validation for ONNX embedding (SPEC-VALIDATION-ONNX-PATH.md).
 //! Measures stages and arms A–D without changing production defaults.
 
+use crate::fixture::{cosine_rank, lexical_rank, LOCKED};
+#[cfg(feature = "neural-ort")]
+use crate::fixture::{doc_text, rank_with_doc_vectors, Embed};
 use ax_memory::bench::{load_coding_fixture, CodingFixture};
-use ax_memory::embed::{cosine, embed_text};
+#[cfg(feature = "neural-ort")]
+use ax_memory::embed::cosine;
+use ax_memory::embed::embed_text;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::time::Instant;
@@ -13,58 +18,9 @@ use crate::rank::{plan as plan_blocks, RankClass, RankItem};
 #[cfg(feature = "neural-ort")]
 use crate::store::{embedding_count, insert_embedding};
 
-const LOCKED: &[&str] = &[
-    "named_trigger",
-    "paraphrase",
-    "abstention",
-    "delivery_budget",
-];
-
 const RRF_K: f64 = 60.0;
 #[cfg(feature = "neural-ort")]
 const ONNX_MODEL_ID: &str = "onnx-minilm-l6-v2";
-
-fn doc_text(m: &ax_memory::bench::CodingMemory) -> String {
-    format!("{} {} {} {}", m.key, m.title, m.body, m.triggers.join(" "))
-}
-
-fn cosine_rank(
-    fixture: &CodingFixture,
-    prompt: &str,
-    embed: &dyn Fn(&str) -> Vec<f32>,
-) -> Vec<String> {
-    let q = embed(prompt);
-    let mut scored: Vec<(f32, String)> = fixture
-        .memories
-        .iter()
-        .filter(|m| m.insert)
-        .map(|m| {
-            let v = embed(&doc_text(m));
-            (cosine(&q, &v), m.key.clone())
-        })
-        .collect();
-    scored.sort_by(|a, b| {
-        b.0.partial_cmp(&a.0)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.1.cmp(&b.1))
-    });
-    scored.into_iter().map(|(_, k)| k).collect()
-}
-
-fn lexical_rank(fixture: &CodingFixture, prompt: &str) -> Vec<String> {
-    let docs: Vec<crate::lexical::LexicalDoc> = fixture
-        .memories
-        .iter()
-        .filter(|m| m.insert)
-        .map(|m| crate::lexical::LexicalDoc::new(m.key.clone(), &m.title, &m.body, &m.triggers))
-        .collect();
-    let (ranked, abstained) = crate::lexical::rank(&docs, prompt);
-    if abstained {
-        Vec::new()
-    } else {
-        ranked.into_iter().map(|h| h.key).collect()
-    }
-}
 
 fn rrf_combine(lists: &[Vec<String>]) -> Vec<String> {
     let mut scores: HashMap<String, f64> = HashMap::new();
@@ -82,21 +38,32 @@ fn rrf_combine(lists: &[Vec<String>]) -> Vec<String> {
     ranked.into_iter().map(|(_, k)| k).collect()
 }
 
-fn score_arm(fixture: &CodingFixture, rank: &dyn Fn(&str) -> Vec<String>) -> Value {
+/// Locked and held-out metrics of one arm. The first ranking error is returned, so an
+/// embedding failure is never scored as an empty ranking.
+fn score_arm(
+    fixture: &CodingFixture,
+    rank: &dyn Fn(&str) -> Result<Vec<String>, String>,
+) -> Result<Value, String> {
     let mut locked = Acc::default();
     let mut held = Acc::default();
     for q in &fixture.questions {
-        let ranked = rank(&q.prompt);
+        let ranked = rank(&q.prompt)?;
         if LOCKED.contains(&q.family.as_str()) {
             locked.observe(PATH_VALIDATE, None, &q.relevant, &ranked);
         } else {
             held.observe(PATH_VALIDATE, None, &q.relevant, &ranked);
         }
     }
-    json!({
+    Ok(json!({
         "locked": locked.summary(SummaryStyle::PathValidate),
         "heldOut": held.summary(SummaryStyle::PathValidate)
-    })
+    }))
+}
+
+/// An arm whose ranking failed, with the reason.
+#[cfg(feature = "neural-ort")]
+fn arm_failed(reason: &str) -> Value {
+    json!({ "kind": "failed", "claimsNeuralInference": true, "reason": format!("embedding failed: {reason}") })
 }
 
 fn stage(status: &str, detail: &str, extra: Value) -> Value {
@@ -115,14 +82,14 @@ pub async fn run_path_validate(fixture_text: &str) -> Result<Value, String> {
     let started = Instant::now();
 
     // --- Arm A: hash-v1 ---
-    let arm_a = score_arm(&fixture, &|p| cosine_rank(&fixture, p, &embed_text));
+    let arm_a = score_arm(&fixture, &|p| Ok(cosine_rank(&fixture, p, &embed_text)))?;
 
     // --- Arm B: lexical ---
-    let arm_b = score_arm(&fixture, &|p| lexical_rank(&fixture, p));
+    let arm_b = score_arm(&fixture, &|p| Ok(lexical_rank(&fixture, p)))?;
 
     // --- Stages + Arm C: ONNX (feature-gated) ---
     #[cfg(feature = "neural-ort")]
-    let (stages, arm_c, onnx_ok) = {
+    let (stages, arm_c, onnx_ok, onnx_docs) = {
         let load = match crate::onnx_embed::try_embed_text("path-validate-warmup") {
             Ok(v) => (
                 stage(
@@ -158,6 +125,7 @@ pub async fn run_path_validate(fixture_text: &str) -> Result<Value, String> {
             "reason": "onnx unavailable"
         });
         let mut onnx_ok = false;
+        let mut onnx_docs: Vec<(String, Vec<f32>)> = Vec::new();
 
         if load.1 {
             infer = load.0.clone();
@@ -170,6 +138,7 @@ pub async fn run_path_validate(fixture_text: &str) -> Result<Value, String> {
             let mut stored = 0u64;
             for m in fixture.memories.iter().filter(|m| m.insert) {
                 let vec = crate::onnx_embed::try_embed_text(&doc_text(m))?;
+                onnx_docs.push((m.key.clone(), vec.clone()));
                 insert_embedding(
                     pool,
                     "memory",
@@ -213,24 +182,24 @@ pub async fn run_path_validate(fixture_text: &str) -> Result<Value, String> {
                 .find(|q| q.family == "paraphrase")
                 .map(|q| q.prompt.as_str())
                 .unwrap_or("hash vectors");
-            let ranked = cosine_rank(&fixture, sample_prompt, &|t| {
-                crate::onnx_embed::try_embed_text(t).unwrap_or_default()
-            });
+            let embed: Embed<'_> = &crate::onnx_embed::try_embed_text;
+            let ranked = rank_with_doc_vectors(sample_prompt, embed, &onnx_docs)?;
             retrieval = stage(
                 "measured",
                 "ONNX cosine retrieval produced a ranked key list",
                 json!({ "top3": ranked.iter().take(3).cloned().collect::<Vec<_>>() }),
             );
 
-            arm_c = score_arm(&fixture, &|p| {
-                cosine_rank(&fixture, p, &|t| {
-                    crate::onnx_embed::try_embed_text(t).unwrap_or_default()
-                })
-            });
-            arm_c["kind"] = json!("measured");
-            arm_c["method"] = json!("ONNX MiniLM cosine on fixture memories");
-            arm_c["claimsNeuralInference"] = json!(true);
-            onnx_ok = true;
+            match score_arm(&fixture, &|p| rank_with_doc_vectors(p, embed, &onnx_docs)) {
+                Ok(arm) => {
+                    arm_c = arm;
+                    arm_c["kind"] = json!("measured");
+                    arm_c["method"] = json!("ONNX MiniLM cosine on fixture memories");
+                    arm_c["claimsNeuralInference"] = json!(true);
+                    onnx_ok = true;
+                }
+                Err(reason) => arm_c = arm_failed(&reason),
+            }
 
             // Context delivery: retrieved docs → rank::plan
             let top_keys: Vec<String> = ranked.into_iter().take(5).collect();
@@ -274,11 +243,11 @@ pub async fn run_path_validate(fixture_text: &str) -> Result<Value, String> {
             "rankingFusion": fusion,
             "contextDelivery": context
         });
-        (stages, arm_c, onnx_ok)
+        (stages, arm_c, onnx_ok, onnx_docs)
     };
 
     #[cfg(not(feature = "neural-ort"))]
-    let (stages, arm_c, onnx_ok) = {
+    let (stages, arm_c, onnx_ok, _onnx_docs) = {
         let nb = stage(
             "not_built",
             "build with --features neural-ort and place MiniLM under ~/.ax/models",
@@ -305,6 +274,7 @@ pub async fn run_path_validate(fixture_text: &str) -> Result<Value, String> {
                 "reason": "neural-ort feature not linked"
             }),
             false,
+            Vec::<(String, Vec<f32>)>::new(),
         )
     };
 
@@ -312,17 +282,20 @@ pub async fn run_path_validate(fixture_text: &str) -> Result<Value, String> {
     let arm_d = if onnx_ok {
         #[cfg(feature = "neural-ort")]
         {
-            let mut metrics = score_arm(&fixture, &|p| {
+            let embed: Embed<'_> = &crate::onnx_embed::try_embed_text;
+            match score_arm(&fixture, &|p| {
                 let a = cosine_rank(&fixture, p, &embed_text);
                 let b = lexical_rank(&fixture, p);
-                let c = cosine_rank(&fixture, p, &|t| {
-                    crate::onnx_embed::try_embed_text(t).unwrap_or_default()
-                });
-                rrf_combine(&[a, b, c])
-            });
-            metrics["kind"] = json!("measured");
-            metrics["method"] = json!("RRF(k=60) of hash-v1 + lexical + ONNX");
-            metrics
+                let c = rank_with_doc_vectors(p, embed, &onnx_docs)?;
+                Ok(rrf_combine(&[a, b, c]))
+            }) {
+                Ok(mut metrics) => {
+                    metrics["kind"] = json!("measured");
+                    metrics["method"] = json!("RRF(k=60) of hash-v1 + lexical + ONNX");
+                    metrics
+                }
+                Err(reason) => arm_failed(&reason),
+            }
         }
         #[cfg(not(feature = "neural-ort"))]
         {
@@ -332,8 +305,8 @@ pub async fn run_path_validate(fixture_text: &str) -> Result<Value, String> {
         let mut metrics = score_arm(&fixture, &|p| {
             let a = cosine_rank(&fixture, p, &embed_text);
             let b = lexical_rank(&fixture, p);
-            rrf_combine(&[a, b])
-        });
+            Ok(rrf_combine(&[a, b]))
+        })?;
         metrics["kind"] = json!("measured");
         metrics["method"] = json!("RRF(k=60) of hash-v1 + lexical (ONNX unavailable)");
         metrics["onnxIncluded"] = json!(false);
@@ -390,6 +363,14 @@ mod tests {
         assert!(report["arms"]["A_hash_v1"]["kind"] == "measured");
         assert!(report["arms"]["B_lexical_semantic"]["kind"] == "measured");
         assert!(report["arms"]["D_combined_rrf"]["kind"] == "measured");
+    }
+
+    #[test]
+    fn a_ranking_error_fails_the_arm_instead_of_scoring_it() {
+        let fixture = load_coding_fixture(crate::CODING_FIXTURE).unwrap();
+        let err = score_arm(&fixture, &|_| Err("ort run: sequence too long".into())).unwrap_err();
+        assert!(err.contains("sequence too long"));
+        assert!(score_arm(&fixture, &|p| Ok(lexical_rank(&fixture, p))).is_ok());
     }
 
     #[tokio::test]

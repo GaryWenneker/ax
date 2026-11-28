@@ -346,9 +346,30 @@ pub fn nearest_dated_log_before(
 
 /// Merge all verbose logs (dated + any unmigrated legacy) for audit windows.
 pub fn read_merged_verbose_log(project_root: &Path) -> String {
+    read_merged_verbose_log_since(project_root, 0)
+}
+
+/// Merge the verbose logs that can hold lines at or after `since_ms` (Unix ms).
+///
+/// Dated files from before the day of `since_ms` (one extra day of margin for
+/// nodes in another rotation timezone) are not read. Legacy undated files are
+/// always read, because their name gives only the day of their first line.
+/// `since_ms <= 0` reads the whole history.
+pub fn read_merged_verbose_log_since(project_root: &Path, since_ms: i64) -> String {
     let _ = migrate_legacy_log(Some(project_root));
+    let cutoff = (since_ms > 0)
+        .then(|| DateTime::<Utc>::from_timestamp_millis(since_ms))
+        .flatten()
+        .map(|t| previous_calendar_day(rotation_calendar_date(Some(project_root), t)));
     let mut parts = Vec::new();
-    for (_day, path) in list_dated_log_files(project_root) {
+    for (day, path) in list_dated_log_files(project_root) {
+        let dated = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with(DATED_LOG_PREFIX));
+        if dated && cutoff.is_some_and(|c| day < c) {
+            continue;
+        }
         let origin = replicated_log_origin(project_root, &path);
         let text = read_log_file_text(&path)
             .lines()
@@ -430,11 +451,10 @@ fn parse_line_timestamp(line: &str) -> Option<DateTime<Utc>> {
         .ok()
         .map(|dt| dt.with_timezone(&Utc))
         .or_else(|| {
-            let z = if trimmed.starts_with("20") && trimmed.len() >= 20 {
-                format!("{}Z", &trimmed[..19])
-            } else {
+            if !trimmed.starts_with("20") {
                 return None;
-            };
+            }
+            let z = format!("{}Z", trimmed.get(..19)?);
             DateTime::parse_from_rfc3339(&z)
                 .ok()
                 .map(|dt| dt.with_timezone(&Utc))
@@ -502,6 +522,61 @@ fn civil_from_days(z: i64) -> (i32, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn read_since_skips_dated_files_before_the_window() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let ax = dir.join(".ax");
+        let remote = ax.join("server/replicated-logs/node");
+        fs::create_dir_all(&remote).unwrap();
+        fs::write(
+            ax.join("mcp-verbose-2020-01-01.log"),
+            "2020-01-01T10:00:00.000Z [ax-mcp] old-local\n",
+        )
+        .unwrap();
+        fs::write(
+            remote.join("mcp-verbose-2020-01-02.log"),
+            "2020-01-02T10:00:00.000Z [ax-mcp] old-remote\n",
+        )
+        .unwrap();
+        // A received legacy file is named by its first line but may hold newer lines.
+        fs::write(
+            remote.join(LEGACY_LOG_NAME),
+            "2020-01-03T10:00:00.000Z [ax-mcp] legacy-first\n",
+        )
+        .unwrap();
+        let now = Utc::now();
+        let today = rotation_calendar_date(Some(&dir), now);
+        fs::write(
+            path_for_date(&ax, today),
+            format!("{} [ax-mcp] new-local\n", now.to_rfc3339()),
+        )
+        .unwrap();
+
+        let since_ms = now.timestamp_millis() - 30 * 60_000;
+        let text = read_merged_verbose_log_since(&dir, since_ms);
+        assert!(text.contains("new-local"), "{text}");
+        assert!(text.contains("legacy-first"), "{text}");
+        assert!(!text.contains("old-local"), "{text}");
+        assert!(!text.contains("old-remote"), "{text}");
+
+        // No bound: the whole history.
+        let all = read_merged_verbose_log_since(&dir, 0);
+        assert!(all.contains("old-local") && all.contains("old-remote"));
+        assert_eq!(all, read_merged_verbose_log(&dir));
+    }
+
+    #[test]
+    fn parse_line_timestamp_handles_multibyte_char_at_byte_18() {
+        // `é` spans bytes 18-19; byte 24 is a boundary, byte 19 is not.
+        let line = "2026-07-20T10:00:0\u{e9}xxxx [ax] something";
+        assert!(!line.is_char_boundary(19));
+        assert!(line.is_char_boundary(24));
+        assert_eq!(parse_line_timestamp(line), None);
+        // Still parses a plain timestamp without a zone suffix.
+        assert!(parse_line_timestamp("2026-07-20T10:00:00 [ax] ok and more").is_some());
+    }
 
     #[test]
     fn received_segments_preserve_repeated_events_without_duplicating_overlaps() {

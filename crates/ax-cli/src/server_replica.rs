@@ -83,8 +83,7 @@ fn save_selected(root: &Path, revision: &str, staged: bool) -> Result<(), String
     serde_json::to_writer_pretty(&mut file, &selected).map_err(|e| e.to_string())?;
     file.write_all(b"\n").map_err(|e| e.to_string())?;
     file.as_file().sync_all().map_err(|e| e.to_string())?;
-    file.persist(root.join("current.json"))
-        .map_err(|e| e.error.to_string())?;
+    ax_utils::fs_safe::persist_temp(file, &root.join("current.json")).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -246,7 +245,7 @@ pub(crate) fn record_attempt(
     serde_json::to_writer_pretty(&mut temp, &state).map_err(|e| e.to_string())?;
     temp.write_all(b"\n").map_err(|e| e.to_string())?;
     temp.as_file().sync_all().map_err(|e| e.to_string())?;
-    temp.persist(&file_path).map_err(|e| e.error.to_string())?;
+    ax_utils::fs_safe::persist_temp(temp, &file_path).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -601,6 +600,27 @@ mod tests {
         assert!(finished.is_err());
     }
 
+    /// A handle on a directory that can change its timestamps. Windows opens a
+    /// directory only with backup semantics and needs write-attributes access;
+    /// a plain `File::open` there fails with "Access is denied".
+    fn open_directory_for_times(path: &Path) -> fs::File {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+            const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+            fs::OpenOptions::new()
+                .access_mode(FILE_WRITE_ATTRIBUTES)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                .open(path)
+                .unwrap()
+        }
+        #[cfg(not(windows))]
+        {
+            fs::File::open(path).unwrap()
+        }
+    }
+
     #[test]
     fn staging_a_new_revision_removes_older_revisions_and_staging_leftovers() {
         let (tmp, config, project) = staging_fixture();
@@ -617,8 +637,7 @@ mod tests {
         let leftover = root.join(".staging-crashed");
         fs::create_dir(&leftover).unwrap();
         let old = std::time::SystemTime::now() - Duration::from_secs(2 * 3600);
-        fs::File::open(&leftover)
-            .unwrap()
+        open_directory_for_times(&leftover)
             .set_modified(old)
             .unwrap();
         // A staging folder another process is writing right now stays.

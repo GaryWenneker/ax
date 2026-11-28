@@ -82,7 +82,7 @@ pub async fn predicted_block(root: &Path, pool: &SqlitePool, prompt: &str) -> Op
     if !cfg.prediction_active() {
         return None;
     }
-    let project = ax_neural::dispatch::project_id(root);
+    let project = ax_neural::dispatch::adopted_project_id(pool, root).await;
     let rows = match ax_neural::store::observations(pool, &project).await {
         Ok(rows) => rows,
         Err(error) => {
@@ -117,10 +117,12 @@ pub async fn predicted_block(root: &Path, pool: &SqlitePool, prompt: &str) -> Op
 /// Adds this preflight to the project's rank totals. Awaited, because a CLI process ends
 /// as soon as preflight returns; bounded, so a busy database cannot hold the reply.
 pub async fn record_totals(pool: &SqlitePool, root: &Path, outcome: &RankOutcome) {
-    let project = ax_neural::dispatch::project_id(root);
     let blocks = i64::try_from(outcome.budget.duplicates.len()).unwrap_or(i64::MAX);
     let tokens = i64::try_from(outcome.budget.duplicate_tokens).unwrap_or(i64::MAX);
-    let write = ax_neural::store::record_rank(pool, &project, blocks, tokens, outcome.micros);
+    let write = async {
+        let project = ax_neural::dispatch::adopted_project_id(pool, root).await;
+        ax_neural::store::record_rank(pool, &project, blocks, tokens, outcome.micros).await
+    };
     match tokio::time::timeout(TOTALS_TIMEOUT, write).await {
         Ok(Ok(())) => {}
         Ok(Err(error)) => tracing::warn!("neural rank totals not recorded: {error}"),
@@ -224,5 +226,87 @@ mod tests {
         assert_eq!(blocks[0].id, "required");
         assert!(notes.iter().any(|note| note.id == "required" && note.keep));
         assert_eq!(blocks[1].id, "opt-memory");
+    }
+
+    /// A project whose feedback and rank totals sit under the key older
+    /// versions stored: the root with a trailing separator. Returns the
+    /// project handle (keeps the pool open), the canonical root and the
+    /// legacy spelling.
+    async fn legacy_keyed_project(dir: &Path) -> (ax_core::Ax, std::path::PathBuf, String) {
+        let root = dir.canonicalize().unwrap();
+        std::fs::write(
+            root.join("ax.json"),
+            r#"{"neural":{"prediction":{"enabled":true},"learning":{"feedback_collection":true}}}"#,
+        )
+        .unwrap();
+        let ax = ax_core::Ax::init(&root).await.unwrap();
+        let pool = ax.db_pool();
+        for execution in ["e1", "e2"] {
+            ax_neural::dispatch::handle(
+                &root,
+                "feedback",
+                &serde_json::json!({
+                    "executionId": execution,
+                    "taskCategory": "parser",
+                    "outcome": "success",
+                    "skillIds": ["parse-errors"],
+                    "ruleIds": ["english-only"],
+                    "contextIds": ["memory:parser-lines"]
+                }),
+                Some(pool),
+            )
+            .await
+            .unwrap();
+        }
+        let canonical = ax_neural::dispatch::project_id(&root);
+        ax_neural::store::record_rank(pool, &canonical, 1, 50, 200)
+            .await
+            .unwrap();
+        let legacy = format!("{}{}", root.to_string_lossy(), std::path::MAIN_SEPARATOR);
+        for table in ["neural_feedback", "neural_audit", "neural_rank_total"] {
+            sqlx::query(&format!("UPDATE {table} SET project_id = ?"))
+                .bind(&legacy)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+        (ax, root, legacy)
+    }
+
+    #[tokio::test]
+    async fn predictions_include_feedback_stored_under_a_legacy_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let (ax, _root, legacy) = legacy_keyed_project(dir.path()).await;
+        let block = predicted_block(Path::new(&legacy), ax.db_pool(), "fix the parser")
+            .await
+            .expect("legacy feedback predicts without any dispatch call first");
+        assert!(block.text.contains("parse-errors"), "{}", block.text);
+    }
+
+    #[tokio::test]
+    async fn rank_totals_merge_with_totals_stored_under_a_legacy_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let (ax, root, legacy) = legacy_keyed_project(dir.path()).await;
+        let pool = ax.db_pool();
+        let outcome = RankOutcome {
+            notes: Vec::new(),
+            budget: NeuralBudget::default(),
+            micros: 100,
+        };
+        record_totals(pool, Path::new(&legacy), &outcome).await;
+        let canonical = ax_neural::dispatch::project_id(&root);
+        let totals = ax_neural::store::rank_totals(pool, &canonical)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(totals.preflights, 2);
+        assert_eq!(totals.duplicate_tokens, 50);
+        let left: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM neural_rank_total WHERE project_id = ?")
+                .bind(&legacy)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        assert_eq!(left, 0);
     }
 }

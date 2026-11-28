@@ -138,18 +138,24 @@ def export_evaluate_benchmark(ax: Ax) -> None:
 
 
 def models(ax: Ax) -> None:
-    flags = ("--explicit", "--beats-baseline", "--regressions-clear")
-    ax.json("neural", "register", "m", "1", "aaa", "--metrics", '{"precision":0.8}')
-    ax.json("neural", "register", "m", "2", "bbb")
+    flags = ("--explicit",)
+    hit = {"scored": 1, "hits": 1}
+    families = {f: hit for f in ("named_trigger", "paraphrase", "abstention", "delivery_budget")}
+    evidence = json.dumps({"precision": 0.8, "bakeoff": {"families": families}})
+    ax.json("neural", "register", "m", "1", "aaa", "--metrics", evidence)
+    ax.json("neural", "register", "m", "2", "bbb", "--metrics", evidence)
+    ax.json("neural", "register", "m", "3", "ccc")
     refused = ax.run("neural", "promote", "m", "1", want=1)
     check("explicit" in refused, refused[-2000:])
+    bare = ax.run("neural", "promote", "m", "3", *flags, want=1)
+    check("no bake-off evidence" in bare, bare[-2000:])
     ax.json("neural", "promote", "m", "1", *flags)
     ax.json("neural", "promote", "m", "2", *flags)
     check(ax.json("neural", "model-status", "m").get("promotedChecksum") == "bbb", "promote m 2")
     check(ax.json("neural", "rollback", "m").get("rolledBackTo") == "1", "rollback m")
     check(ax.json("neural", "model-status", "m").get("promotedChecksum") == "aaa", "after rollback")
     listed = ax.json("neural", "models").get("models", [])
-    check([model.get("version") for model in listed] == ["1", "2"], f"models {listed}")
+    check([model.get("version") for model in listed] == ["1", "2", "3"], f"models {listed}")
 
 
 def main() -> int:

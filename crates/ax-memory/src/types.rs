@@ -10,6 +10,18 @@ fn default_tier() -> String {
     "t2".into()
 }
 
+/// Kinds that preflight never injects; only an explicit recall finds them.
+/// `recall_only_kinds_sql!` is the same list as an SQL tuple.
+pub const RECALL_ONLY_KINDS: &[&str] = &["turn", "doc", "graph_diff", "activity", "file_change"];
+
+/// `RECALL_ONLY_KINDS` as an SQL tuple literal, for `concat!` in queries.
+macro_rules! recall_only_kinds_sql {
+    () => {
+        "('turn', 'doc', 'graph_diff', 'activity', 'file_change')"
+    };
+}
+pub(crate) use recall_only_kinds_sql;
+
 /// What kind of knowledge a memory captures.
 pub const MEMORY_KINDS: &[&str] = &[
     "decision",
@@ -17,6 +29,7 @@ pub const MEMORY_KINDS: &[&str] = &[
     "architecture",
     "convention",
     "note",
+    "lesson",
     "git",
     "turn",
     "doc",
@@ -78,4 +91,16 @@ pub struct MemoryFilter {
     pub kind: Option<String>,
     pub since: Option<i64>,
     pub until: Option<i64>,
+}
+
+#[cfg(test)]
+mod recall_only_tests {
+    #[test]
+    fn the_sql_tuple_matches_the_kind_list() {
+        let quoted: Vec<String> = super::RECALL_ONLY_KINDS
+            .iter()
+            .map(|k| format!("'{k}'"))
+            .collect();
+        assert_eq!(recall_only_kinds_sql!(), format!("({})", quoted.join(", ")));
+    }
 }

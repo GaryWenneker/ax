@@ -25,6 +25,28 @@ fn tokens(text: &str) -> Vec<String> {
     out
 }
 
+/// Rows PMI learns from: at most this many durable memories.
+const PMI_SAMPLE_ROWS: i64 = 2000;
+/// Characters of each body PMI reads; long bodies add noise, not signal.
+const PMI_BODY_CHARS: i64 = 4096;
+
+/// Active, enabled semantic-tier memories (decisions, notes, conventions),
+/// newest first with id as tie-break, so the same vault always yields the same
+/// sample. Turns, file changes, docs and archive rows are left out, by kind
+/// as well as by tier (older vaults can hold them in t2): they are large and
+/// would teach co-occurrences nobody chose to remember.
+const PMI_SAMPLE: &str = concat!(
+    "SELECT title, substr(body, 1, ?) FROM memories
+     WHERE enabled = 1
+       AND tier = 't2'
+       AND kind NOT IN ",
+    crate::types::recall_only_kinds_sql!(),
+    "
+       AND COALESCE(status, 'active') = 'active'
+     ORDER BY updated_at DESC, id
+     LIMIT ?"
+);
+
 /// Expand query tokens with high-PMI co-occurring terms from memory titles/bodies.
 pub async fn expand_with_pmi(
     pool: &SqlitePool,
@@ -35,11 +57,12 @@ pub async fn expand_with_pmi(
     if seeds.is_empty() || limit == 0 {
         return Ok(Vec::new());
     }
-    let rows: Vec<(String, String)> =
-        sqlx::query_as("SELECT title, body FROM memories WHERE enabled = 1 LIMIT 2000")
-            .fetch_all(pool)
-            .await
-            .map_err(|e| db_err(pool, e))?;
+    let rows: Vec<(String, String)> = sqlx::query_as(PMI_SAMPLE)
+        .bind(PMI_BODY_CHARS)
+        .bind(PMI_SAMPLE_ROWS)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| db_err(pool, e))?;
     let mut df: HashMap<String, f64> = HashMap::new();
     let mut pair: HashMap<(String, String), f64> = HashMap::new();
     let mut docs = 0.0;

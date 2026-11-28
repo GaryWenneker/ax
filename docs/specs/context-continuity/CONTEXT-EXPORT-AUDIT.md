@@ -19,7 +19,7 @@ Caps applied by the writer, not by the exporter:
 
 A prompt of 8,001 characters is stored as 8,000. Re-inserting the same turn id is ignored, so the first prompt wins. A blank session id or turn id is a no-op.
 
-`load_export_input` reads `agent_sessions.project_id` and `agent_turns` ordered by `sequence`, then `id`. An empty session id is an error. A SQL failure is an error. An empty result is a captured empty inventory, not a missing store.
+`load_export_input` reads `agent_sessions.project_id` and `agent_turns` ordered by `sequence`, then `id`. An empty session id is an error. A session id with no `agent_sessions` row is an error. A SQL failure is an error, including a failed spec lookup. A known session with no turns is a captured empty inventory. The loader never reports the inventory as closed: the store records no session end and cannot rule out a turn that was never written.
 
 ## What is not a turn inventory
 
@@ -36,7 +36,7 @@ Working-context notes are conversation notes. There is no decisions table and no
 - Missing `files`, `commits`, or tool-call refs are `unavailable`, not an empty list.
 - `Present` of an empty list is captured-and-empty and does not by itself block `complete`.
 - `not_captured` on a mandatory section blocks `complete`.
-- Any redacted field blocks `complete`.
+- Any redacted field blocks `complete`. The export keeps no value of a redacted prompt or outcome, and the turn hash of that turn covers a fixed marker instead of the value. The verifier fails when any string in either document contains a redacted value.
 - An unresolvable reference blocks `complete`.
 
 ## What this audit does not claim

@@ -411,8 +411,7 @@ fn stage_policies(
     serde_json::to_writer_pretty(&mut temp, &ledger).map_err(|e| e.to_string())?;
     temp.write_all(b"\n").map_err(|e| e.to_string())?;
     temp.as_file().sync_all().map_err(|e| e.to_string())?;
-    temp.persist(&ledger_path)
-        .map_err(|e| e.error.to_string())?;
+    ax_utils::fs_safe::persist_temp(temp, &ledger_path).map_err(|e| e.to_string())?;
     Ok((queued, conflicts))
 }
 

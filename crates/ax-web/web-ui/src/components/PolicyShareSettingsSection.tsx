@@ -521,7 +521,7 @@ export default function PolicyShareSettingsSection() {
             ) : (
               <SettingRow
                 title="API token (optional)"
-                description="Only needed on locked-down GitLab instances where raw git (SSH/HTTPS) is forced through SSO and can't be used headlessly. When set, sync uses that host's /api/v4 REST API instead of git clone/push. Leave blank to use normal git credentials."
+                description="Only needed on locked-down GitLab instances where raw git (SSH/HTTPS) is forced through SSO and can't be used headlessly. When set, sync uses that host's /api/v4 REST API instead of git clone/push. The token is kept in ~/.ax/auth on this machine, never in ax.json. Leave blank to use normal git credentials."
               >
                 <input
                   type="password"
@@ -531,8 +531,27 @@ export default function PolicyShareSettingsSection() {
                   autoComplete="off"
                   onChange={(e) => patch({ github: { ...config.github, token: e.target.value } })}
                   onBlur={() => void saveCurrent().catch(() => undefined)}
-                  placeholder="glpat-… / personal or project access token"
+                  placeholder={
+                    config.github.hasToken
+                      ? 'Saved in ~/.ax/auth (type to replace)'
+                      : 'glpat-… / personal or project access token'
+                  }
                 />
+                {config.github.hasToken ? (
+                  <button
+                    type="button"
+                    className="btn btn-subtle"
+                    disabled={!loaded || !!busy}
+                    onClick={() =>
+                      void persist(
+                        { ...config, github: { ...config.github, token: '', clearToken: true } },
+                        'API token removed',
+                      ).catch(() => undefined)
+                    }
+                  >
+                    Remove token
+                  </button>
+                ) : null}
               </SettingRow>
             )}
           </>

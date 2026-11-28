@@ -54,10 +54,11 @@ impl ChatRunner {
 
         let answer = ax_reasoning::synthesize_offload(prompt, context, Some(&meta))
             .await
-            .ok_or_else(|| {
-                String::from(
+            .ok_or_else(|| match ax_reasoning::last_offload_error() {
+                Some(err) => format!("LLM request failed: {err}"),
+                None => String::from(
                     "LLM request failed — check your API key and endpoint in ~/.ax/config.json",
-                )
+                ),
             })?;
 
         Ok(answer)
