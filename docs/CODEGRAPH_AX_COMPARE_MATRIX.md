@@ -67,9 +67,9 @@ Stack and infrastructure used by each tool — runtime, storage, parsing, transp
 | **MCP transport — stdio** | `StdioTransport` (`readline` on stdin) | `StdioTransport` (line-delimited stdin/out) | ✅ |
 | **MCP transport — socket** | `SocketTransport` (`net.Socket` NDJSON) | Windows named pipe + Unix `.ax/daemon.sock` (tmpdir fallback) + TCP fallback; `daemon_conn.rs` | ✅ ax: TCP fallback extra |
 | **MCP daemon / proxy** | Shared daemon per project (`daemon.ts`, `proxy.ts`, `.codegraph/daemon.sock`, Windows named pipe) | `daemon.rs`, `proxy.rs`, `daemon_paths.rs`; `.ax/daemon.json` + socket path; TCP fallback if bind fails | ✅ |
-| **MCP query pool** | `worker_threads` query-pool (off-main-thread graph queries) | `query_pool.rs` — concurrent read-tool dispatch (`AX_QUERY_POOL_SIZE`) | ✅ |
+| **MCP query pool** | `worker_threads` query-pool (off-main-thread graph queries) | None: tool calls on one MCP engine run one at a time over its single Ax handle | ⏭️ |
 | **MCP watchdogs** | PPID + liveness watchdogs (`ppid-watchdog.ts`, `liveness-watchdog.ts`) | PPID (`ppid_watchdog.rs`) + liveness child (`liveness_watchdog.rs`, `watchdog-child`); `AX_NO_WATCHDOG=1` disables | ✅ |
-| **Env tuning** | `CODEGRAPH_PARSE_WORKERS`, `CODEGRAPH_QUERY_POOL_SIZE`, `CODEGRAPH_NO_DAEMON` | `AX_PARSE_WORKERS`, `AX_QUERY_POOL_SIZE`, `AX_DAEMON_IDLE_TIMEOUT_MS` | ✅ |
+| **Env tuning** | `CODEGRAPH_PARSE_WORKERS`, `CODEGRAPH_QUERY_POOL_SIZE`, `CODEGRAPH_NO_DAEMON` | `AX_PARSE_WORKERS`, `AX_DAEMON_IDLE_TIMEOUT_MS` (no query pool setting) | ✅ |
 | **Testing** | **Vitest** 2 + evaluation harness | `ax-smoke-tests` + 49 unit/integration tests | ✅ ax: native Rust tests vs Vitest eval harness |
 | **Telemetry** | `telemetry/` + Cloudflare Worker | `ax-telemetry` crate + `telemetry-worker/` + `ax telemetry` CLI | ✅ |
 | **Self-update** | `upgrade/` module + `codegraph upgrade` | `ax upgrade` — GitHub releases + cargo install fallback | ✅ |
@@ -250,7 +250,7 @@ Stack and infrastructure used by each tool — runtime, storage, parsing, transp
 | Stdio JSON-RPC | Yes | Yes | ✅ |
 | Socket transport | Yes | Yes — named pipe / Unix socket + TCP fallback (`daemon_conn.rs`) | ✅ |
 | Daemon / proxy / registry | Full | `daemon.rs`, `proxy.rs`, `daemon_paths.rs`, `daemon_lock.rs` (`.ax/daemon.pid` + `daemon.json`) | ✅ |
-| Query pool (off-thread) | Yes | `query_pool.rs` — read-tool concurrency (`AX_QUERY_POOL_SIZE`, default cores−1) | ✅ |
+| Query pool (off-thread) | Yes | None: read tools share the engine's single Ax handle | ⏭️ |
 | PPID / liveness watchdogs | Yes | PPID + liveness (`AX_PPID_POLL_MS`, `AX_HOST_PPID`, `AX_WATCHDOG_TIMEOUT_MS`, `AX_NO_WATCHDOG`) | ✅ |
 | Lazy init | Yes | `McpEngine` lazy init | ✅ |
 | Response envelope | `{ content:[{text}], structuredContent }` (full both) | **Lean by default** — `content.text` authoritative; `structuredContent` projected to metadata; data tools omit it (`AX_MCP_FULL=1` restores CG-style full). `server.rs` `lean_structured` | ➕ ax ahead — token-savings delta, no CG equivalent |
@@ -552,7 +552,7 @@ Angular, Symfony, etc. — one framework per sprint using same trait.
 | 6.8 | `reopen_if_replaced` on DB external change | `ax-core/lib.rs`, `ax-db/lib.rs` | ✅ inode check + `wire_layers`; MCP tools call before `tools/call` |
 | 6.9 | PPID watchdog for proxy mode | `ax-mcp/ppid_watchdog.rs` | ✅ `spawn_ppid_watchdog` in proxy + direct stdio; `AX_PPID_POLL_MS=0` disables |
 | 6.10 | Liveness child-process watchdog | `liveness_watchdog.rs`, `watchdog-child` CLI | ✅ Heartbeat child kills wedged parent; daemon + stdio + proxy |
-| 6.11 | Query pool for read tools | `query_pool.rs`, `engine.rs`, `server.rs` | ✅ Semaphore pool (`AX_QUERY_POOL_SIZE`) |
+| 6.11 | Query pool for read tools | None | ⏭️ Not implemented; calls on one engine are serialized |
 | 6.12 | Integration smoke tests | `crates/ax-smoke-tests` | ✅ `test-smoke` init/sync/search |
 
 ### Estimate

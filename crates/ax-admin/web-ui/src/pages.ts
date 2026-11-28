@@ -36,19 +36,14 @@ export const PAGES: readonly PageDef[] = [
 
 export const SECTIONS = ['Graph', 'Knowledge', 'Management', 'System'] as const;
 
-/** Tools that exist only for an admin grant on the remote server. */
-export const ADMIN_TOOLS: readonly string[] = [
-  'ax_sync', 'ax_index', 'ax_policy_index', 'ax_files',
-  'ax_cost', 'ax_tool_economics', 'ax_budget', 'ax_optimization_advice', 'ax_logs',
-];
-
 export function visiblePages(toolNames: readonly string[]): PageDef[] {
   const offered = new Set(toolNames);
   return PAGES.filter((page) => page.id === 'tools' || page.tools.some((tool) => offered.has(tool)));
 }
 
-export function hasAdminAccess(toolNames: readonly string[]): boolean {
-  return toolNames.some((name) => ADMIN_TOOLS.includes(name));
+/** True when the server lists a tool that needs its admin grant (see `Tool.admin`). */
+export function hasAdminAccess(tools: readonly { admin: boolean }[]): boolean {
+  return tools.some((tool) => tool.admin);
 }
 
 /** The page to show for a location hash such as "#/memory". */

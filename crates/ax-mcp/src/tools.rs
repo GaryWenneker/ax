@@ -67,7 +67,7 @@ impl ToolHandler {
                     .search_nodes(
                         query,
                         &SearchOptions {
-                            limit: Some(20),
+                            limit: Some(capped_limit(&params, 20, MAX_SEARCH_LIMIT) as u32),
                             ..Default::default()
                         },
                     )
@@ -176,7 +176,7 @@ impl ToolHandler {
                     .map_err(|e| e.to_string())?;
                 if let Some(first) = nodes.first() {
                     let callers = ax
-                        .get_callers(&first.node.id, 3)
+                        .get_callers(&first.node.id, graph_depth(&params))
                         .await
                         .map_err(|e| e.to_string())?;
                     let text = format_nodes_text(&format!("Callers of '{sym}'"), &callers);
@@ -199,7 +199,7 @@ impl ToolHandler {
                     .map_err(|e| e.to_string())?;
                 if let Some(first) = nodes.first() {
                     let callees = ax
-                        .get_callees(&first.node.id, 3)
+                        .get_callees(&first.node.id, graph_depth(&params))
                         .await
                         .map_err(|e| e.to_string())?;
                     let text = format_nodes_text(&format!("Callees of '{sym}'"), &callees);
@@ -222,7 +222,7 @@ impl ToolHandler {
                     .map_err(|e| e.to_string())?;
                 if let Some(first) = nodes.first() {
                     let sg = ax
-                        .get_impact_radius(&first.node.id, 3)
+                        .get_impact_radius(&first.node.id, graph_depth(&params))
                         .await
                         .map_err(|e| e.to_string())?;
                     let text = format_subgraph_text(sym, &sg);
@@ -236,7 +236,7 @@ impl ToolHandler {
                 }
             }
             "ax_cycles" => {
-                let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+                let limit = capped_limit(&params, 50, MAX_LIST_LIMIT);
                 let cycles = ax.find_cycles(limit).await.map_err(|e| e.to_string())?;
                 let text = if cycles.is_empty() {
                     "No call-graph cycles found.".to_string()
@@ -327,7 +327,7 @@ impl ToolHandler {
                 if module.is_empty() {
                     return Err("module is required".into());
                 }
-                let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(200) as usize;
+                let limit = capped_limit(&params, 200, MAX_LIST_LIMIT);
                 let nodes = ax
                     .module_api(module, limit)
                     .await
@@ -551,10 +551,8 @@ async fn index_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
         return sync_tool(ax).await;
     }
     ax_usage::log_workspace(Some(&root), "index start force=1 via=mcp");
-    if let Err(e) = ax.clear().await {
-        ax_usage::log_workspace(Some(&root), "index fail stage=clear via=mcp");
-        return Err(e.to_string());
-    }
+    // No clear first: index_all replaces each file's rows and then drops files
+    // that are gone, so a failed run leaves the previous graph usable.
     let opts = IndexOptions {
         force: true,
         quiet: true,
@@ -2118,6 +2116,47 @@ fn attach_skill_audit(value: &mut Value, ax: &Ax, name: &str, source_path: &str)
     value["audit"] = json!(ax_skill_catalog::agent_brief(&report, &file));
 }
 
+/// Largest file ax_guard and ax_diagnostics read to check content rules.
+const GUARD_READ_LIMIT: u64 = 2 * 1024 * 1024;
+
+/// Reads a file for content rules only when `path_str` names a regular file
+/// inside the project (relative, or absolute under the project root) that
+/// does not leave it through `..` or a symbolic link and is at most
+/// [`GUARD_READ_LIMIT`] bytes. Anything else is checked by path alone.
+async fn guard_file_content(root: &Path, path_str: &str) -> Option<Vec<u8>> {
+    let root = root.to_path_buf();
+    let path_str = path_str.to_string();
+    tokio::task::spawn_blocking(move || read_guarded_project_file(&root, &path_str))
+        .await
+        .ok()
+        .flatten()
+}
+
+fn read_guarded_project_file(root: &Path, path_str: &str) -> Option<Vec<u8>> {
+    let candidate = Path::new(path_str);
+    let rel = if candidate.is_absolute() {
+        let real_root = root.canonicalize().ok();
+        candidate
+            .strip_prefix(root)
+            .ok()
+            .or_else(|| {
+                real_root
+                    .as_deref()
+                    .and_then(|r| candidate.strip_prefix(r).ok())
+            })?
+            .to_str()?
+            .to_string()
+    } else {
+        path_str.to_string()
+    };
+    let full = ax_utils::contained_join(root, &rel).ok()?;
+    let meta = std::fs::metadata(&full).ok()?;
+    if !meta.is_file() || meta.len() > GUARD_READ_LIMIT {
+        return None;
+    }
+    ax_utils::read_bounded(&full, GUARD_READ_LIMIT).ok()
+}
+
 /// The guarded path relative to the project root, with `/` separators, so
 /// `when:file:` globs match an absolute path the same way as a relative one.
 /// A path outside the root is returned as given.
@@ -2140,7 +2179,10 @@ async fn guard(ax: &mut Ax, params: Value) -> Result<Value, String> {
     if paths.len() == 1 {
         let path_str = &paths[0];
         let path = ax.project_root().join(path_str);
-        let content = guard_content_from_params(&params).or_else(|| std::fs::read(&path).ok());
+        let content = match guard_content_from_params(&params) {
+            Some(content) => Some(content),
+            None => guard_file_content(ax.project_root(), path_str).await,
+        };
         let result = ax
             .guard_operation(&path, op, content.as_deref())
             .await
@@ -2165,7 +2207,10 @@ async fn guard(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let mut results = Vec::new();
     for path_str in &paths {
         let path = ax.project_root().join(path_str);
-        let content = guard_content_from_params(&params).or_else(|| std::fs::read(&path).ok());
+        let content = match guard_content_from_params(&params) {
+            Some(content) => Some(content),
+            None => guard_file_content(ax.project_root(), path_str).await,
+        };
         let result = ax
             .guard_operation(&path, op, content.as_deref())
             .await
@@ -2222,7 +2267,7 @@ async fn diagnostics(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let mut guarded_paths = Vec::new();
     for path_str in &paths {
         let abs = ax.project_root().join(path_str);
-        let content = std::fs::read(&abs).ok();
+        let content = guard_file_content(ax.project_root(), path_str).await;
         if let Ok(result) = ax
             .guard_operation(&abs, GuardOp::Write, content.as_deref())
             .await
@@ -2422,44 +2467,10 @@ fn guard_content_from_params(params: &Value) -> Option<Vec<u8>> {
 }
 
 fn base64_decode(input: &str) -> Option<Vec<u8>> {
-    const TABLE: &[u8; 256] = &{
-        let mut t = [255u8; 256];
-        let mut i = 0u8;
-        while i < 64 {
-            let c = match i {
-                0..=25 => b'A' + i,
-                26..=51 => b'a' + (i - 26),
-                52..=61 => b'0' + (i - 52),
-                62 => b'+',
-                _ => b'/',
-            };
-            t[c as usize] = i;
-            i += 1;
-        }
-        t[b'=' as usize] = 0;
-        t
-    };
-    let bytes = input.trim().as_bytes();
-    if bytes.is_empty() || !bytes.len().is_multiple_of(4) {
-        return None;
-    }
-    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
-    let mut buf = 0u32;
-    let mut bits = 0u32;
-    for &b in bytes {
-        let v = TABLE[b as usize];
-        if v == 255 {
-            return None;
-        }
-        buf = (buf << 6) | v as u32;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buf >> bits) as u8);
-            buf &= (1 << bits) - 1;
-        }
-    }
-    Some(out)
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD
+        .decode(input.trim())
+        .ok()
 }
 
 fn string_array(v: Option<&Value>) -> Vec<String> {
@@ -2555,7 +2566,7 @@ fn format_subgraph_text(sym: &str, sg: &Subgraph) -> String {
     out
 }
 
-fn explore_tool() -> Value {
+pub(crate) fn explore_tool() -> Value {
     json!({
         "name": "ax_explore",
         "description": "Semantic search + graph traversal with numbered source and call spine",
@@ -2627,9 +2638,9 @@ fn capture_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "prompt": { "type": "string" },
+                "prompt": { "type": "string", "description": "The user prompt (propose)" },
                 "files": { "type": "array", "items": { "type": "string" } },
-                "action": { "type": "string", "enum": ["propose", "save"] },
+                "action": { "type": "string", "enum": ["propose", "save"], "description": "propose (default) needs prompt; save needs rule" },
                 "rule": {
                     "type": "object",
                     "properties": {
@@ -2637,8 +2648,7 @@ fn capture_tool() -> Value {
                         "body": { "type": "string" }
                     }
                 }
-            },
-            "required": ["prompt"]
+            }
         }
     })
 }
@@ -2677,7 +2687,7 @@ fn guard_tool() -> Value {
                 "content": { "type": "string", "description": "Proposed file content for new files (UTF-8 check)" },
                 "contentBase64": { "type": "string", "description": "Base64-encoded proposed content" }
             },
-            "required": ["path"]
+            "description": "Pass path, paths or file."
         }
     })
 }
@@ -2741,15 +2751,15 @@ fn extra_tools() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "name": { "type": "string", "description": "Symbol name or qualified name" },
-                    "limit": { "type": "number", "description": "Max matches (default 3)" },
-                    "maxLinesPerSnippet": { "type": "number", "description": "Source lines per match (default 400)" },
+                    "limit": { "type": "number", "description": "Max matches (default 3, maximum 50)" },
+                    "maxLinesPerSnippet": { "type": "number", "description": "Source lines per match (default 400, maximum 2000)" },
                     "mode": { "type": "string", "enum": ["signature"], "description": "signature: path, lines, and declaration only" },
-                    "maxSourceChars": { "type": "number", "description": "Source chars per match (default 24000)" }
+                    "maxSourceChars": { "type": "number", "description": "Source chars per match (default 24000, maximum 200000)" }
                 },
                 "required": ["name"]
             }
         }),
-        json!({ "name": "ax_search", "description": "FTS symbol search", "inputSchema": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] } }),
+        json!({ "name": "ax_search", "description": "FTS symbol search", "inputSchema": { "type": "object", "properties": { "query": { "type": "string" }, "limit": { "type": "number", "description": "Max results (default 20, maximum 100)" } }, "required": ["query"] } }),
         json!({ "name": "ax_status", "description": "Index stats and staleness", "inputSchema": { "type": "object", "properties": {} } }),
         json!({
             "name": "ax_budget",
@@ -2858,16 +2868,16 @@ fn extra_tools() -> Vec<Value> {
                 }
             }
         }),
-        json!({ "name": "ax_callers", "description": "Find callers", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
-        json!({ "name": "ax_callees", "description": "Find callees", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
-        json!({ "name": "ax_impact", "description": "Impact radius", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
+        json!({ "name": "ax_callers", "description": "Find callers", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" }, "depth": { "type": "number", "description": "Hops to follow (default 3, maximum 6)" } }, "required": ["symbol"] } }),
+        json!({ "name": "ax_callees", "description": "Find callees", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" }, "depth": { "type": "number", "description": "Hops to follow (default 3, maximum 6)" } }, "required": ["symbol"] } }),
+        json!({ "name": "ax_impact", "description": "Impact radius", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" }, "depth": { "type": "number", "description": "Hops to follow (default 3, maximum 6)" } }, "required": ["symbol"] } }),
         json!({
             "name": "ax_cycles",
             "description": "List call-graph cycles (non-trivial SCCs on Calls/References edges).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "limit": { "type": "number", "description": "Max cycles to return (default 50)" }
+                    "limit": { "type": "number", "description": "Max cycles to return (default 50, maximum 500)" }
                 }
             }
         }),
@@ -2890,7 +2900,7 @@ fn extra_tools() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "module": { "type": "string", "description": "Module name or path prefix, e.g. ax-mcp or crates/ax-mcp" },
-                    "limit": { "type": "number", "description": "Max symbols (default 200)" }
+                    "limit": { "type": "number", "description": "Max symbols (default 200, maximum 500)" }
                 },
                 "required": ["module"]
             }
@@ -2955,8 +2965,8 @@ fn extra_tools() -> Vec<Value> {
                     "tags": { "type": "array", "items": { "type": "string" } },
                     "files": { "type": "array", "items": { "type": "string" }, "description": "Related project-relative file paths" },
                     "triggers": { "type": "array", "items": { "type": "string" }, "description": "Exact cue names. CLI: --trigger NAME. The reply includes suggested_triggers; those names are not stored unless you pass them." },
-                    "action": { "type": "string", "enum": ["confirm"], "description": "confirm enables a candidate long-term memory. CLI: ax remember --confirm ID" },
-                    "id": { "type": "string", "description": "Memory id to confirm" }
+                    "action": { "type": "string", "enum": ["confirm", "useful", "wrong", "purge"], "description": "Acts on the memory named by id instead of storing one. confirm enables a candidate long-term memory (CLI: ax remember --confirm ID); useful and wrong record feedback; purge deletes the memory permanently." },
+                    "id": { "type": "string", "description": "Memory id the action applies to" }
                 }
             }
         }),
@@ -3352,22 +3362,48 @@ fn keep_exact_entries(result: &mut ax_types::ExploreResult, name: &str) {
     }
 }
 
+/// Upper bounds for caller-supplied graph sizes; larger values are lowered to these.
+const MAX_EXPLORE_LIMIT: u32 = 50;
+const MAX_EXPLORE_DEPTH: u32 = 6;
+const MAX_LINES_PER_SNIPPET: u32 = 2_000;
+const MAX_SOURCE_CHARS: u32 = 200_000;
+/// Upper bound for `limit` on list tools such as `ax_cycles` and `ax_api`.
+const MAX_LIST_LIMIT: usize = 500;
+const MAX_SEARCH_LIMIT: usize = 100;
+
+/// `depth` for ax_callers, ax_callees and ax_impact: default 3, between 1 and the explore maximum.
+fn graph_depth(params: &Value) -> u32 {
+    capped_u32(params, "depth", MAX_EXPLORE_DEPTH)
+        .unwrap_or(3)
+        .max(1)
+}
+
+fn capped_u32(params: &Value, key: &str, max: u32) -> Option<u32> {
+    params
+        .get(key)
+        .and_then(Value::as_u64)
+        .map(|n| n.min(u64::from(max)) as u32)
+}
+
+/// `limit` from `params`, `default` when absent, never above `max`.
+fn capped_limit(params: &Value, default: usize, max: usize) -> usize {
+    params
+        .get("limit")
+        .and_then(Value::as_u64)
+        .map_or(default, |n| usize::try_from(n).unwrap_or(usize::MAX))
+        .min(max)
+}
+
 fn explore_opts_from_params(params: &Value) -> ExploreOptions {
-    let mut opts = ExploreOptions::default();
-    if let Some(n) = params.get("limit").and_then(|v| v.as_u64()) {
-        opts.limit = Some(n as u32);
-    }
-    if let Some(n) = params.get("depth").and_then(|v| v.as_u64()) {
-        opts.depth = Some(n as u32);
-    }
+    let mut opts = ExploreOptions {
+        limit: capped_u32(params, "limit", MAX_EXPLORE_LIMIT),
+        depth: capped_u32(params, "depth", MAX_EXPLORE_DEPTH),
+        max_lines_per_snippet: capped_u32(params, "maxLinesPerSnippet", MAX_LINES_PER_SNIPPET),
+        max_source_chars: capped_u32(params, "maxSourceChars", MAX_SOURCE_CHARS),
+        ..ExploreOptions::default()
+    };
     if let Some(b) = params.get("includeCode").and_then(|v| v.as_bool()) {
         opts.include_code = Some(b);
-    }
-    if let Some(n) = params.get("maxLinesPerSnippet").and_then(|v| v.as_u64()) {
-        opts.max_lines_per_snippet = Some(n as u32);
-    }
-    if let Some(n) = params.get("maxSourceChars").and_then(|v| v.as_u64()) {
-        opts.max_source_chars = Some(n as u32);
     }
     opts
 }
@@ -3438,6 +3474,81 @@ pub fn server_instructions(has_policy: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explore_options_are_capped_and_never_wrap() {
+        let huge = serde_json::json!({
+            "limit": 4_000_000_000u64,
+            "depth": 100_000,
+            "maxLinesPerSnippet": 4_294_967_297u64,
+            "maxSourceChars": 4_000_000_000u64,
+        });
+        let opts = explore_opts_from_params(&huge);
+        assert_eq!(opts.limit, Some(MAX_EXPLORE_LIMIT));
+        assert_eq!(opts.depth, Some(MAX_EXPLORE_DEPTH));
+        assert_eq!(opts.max_lines_per_snippet, Some(MAX_LINES_PER_SNIPPET));
+        assert_eq!(opts.max_source_chars, Some(MAX_SOURCE_CHARS));
+        let small = serde_json::json!({ "limit": 3, "depth": 2, "maxLinesPerSnippet": 40, "maxSourceChars": 900 });
+        let opts = explore_opts_from_params(&small);
+        assert_eq!(
+            (
+                opts.limit,
+                opts.depth,
+                opts.max_lines_per_snippet,
+                opts.max_source_chars
+            ),
+            (Some(3), Some(2), Some(40), Some(900))
+        );
+    }
+
+    #[test]
+    fn schemas_accept_what_the_handlers_accept() {
+        let mut defs = ToolHandler::tool_definitions(&["ax_remember"]);
+        defs.extend([guard_tool(), capture_tool()]);
+        let def = |name: &str| defs.iter().find(|d| d["name"] == name).expect(name).clone();
+        let required = |name: &str| -> Vec<String> {
+            def(name)["inputSchema"]["required"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        // ax_guard runs on paths[] or file alone; action=save needs no prompt.
+        assert!(!required("ax_guard").contains(&"path".to_string()));
+        assert!(!required("ax_policy_capture").contains(&"prompt".to_string()));
+        let actions = def("ax_remember")["inputSchema"]["properties"]["action"]["enum"].clone();
+        assert_eq!(
+            actions,
+            serde_json::json!(["confirm", "useful", "wrong", "purge"])
+        );
+    }
+
+    #[test]
+    fn list_limits_default_and_cap() {
+        let none = serde_json::json!({});
+        assert_eq!(capped_limit(&none, 50, MAX_LIST_LIMIT), 50);
+        let huge = serde_json::json!({ "limit": u64::MAX });
+        assert_eq!(capped_limit(&huge, 50, MAX_LIST_LIMIT), MAX_LIST_LIMIT);
+        let small = serde_json::json!({ "limit": 7 });
+        assert_eq!(capped_limit(&small, 50, MAX_LIST_LIMIT), 7);
+    }
+
+    #[test]
+    fn base64_decode_honors_padding_and_rejects_bad_input() {
+        assert_eq!(base64_decode("QUJD"), Some(b"ABC".to_vec()));
+        assert_eq!(base64_decode("QUI="), Some(b"AB".to_vec()));
+        assert_eq!(base64_decode("QQ=="), Some(b"A".to_vec()));
+        assert_eq!(base64_decode(" QQ==\n"), Some(b"A".to_vec()));
+        assert_eq!(base64_decode(""), Some(Vec::new()));
+        assert_eq!(base64_decode("Q=Q="), None);
+        assert_eq!(base64_decode("QQ"), None);
+        assert_eq!(base64_decode("Q!=="), None);
+        let params = serde_json::json!({ "contentBase64": "aGk=" });
+        assert_eq!(guard_content_from_params(&params), Some(b"hi".to_vec()));
+    }
 
     #[test]
     fn guard_matches_folder_globs_for_absolute_paths() {
@@ -3836,6 +3947,7 @@ mod tests {
 
     #[tokio::test]
     async fn r1_preflight_injects_turns_that_changed_an_open_file() {
+        let _env = crate::test_env::shared().await;
         let (dir, mut ax) = project_with_turn("Fixed it, 11 languages load.").await;
         let open = ax.project_root().join("src/a.rs");
         let inject = preflight_inject(
@@ -3864,6 +3976,7 @@ mod tests {
 
     #[tokio::test]
     async fn r2_preflight_without_related_turns_has_no_block() {
+        let _env = crate::test_env::shared().await;
         let (_dir, mut ax) = project_with_turn("Done.").await;
         let inject = preflight_inject(
             &mut ax,
@@ -3876,6 +3989,7 @@ mod tests {
 
     #[tokio::test]
     async fn h2_history_question_points_the_agent_to_ax_history() {
+        let _env = crate::test_env::shared().await;
         let (_dir, mut ax) = project_with_turn("Done.").await;
         let inject = preflight_inject(
             &mut ax,
@@ -3888,6 +4002,7 @@ mod tests {
 
     #[tokio::test]
     async fn ax_history_lists_turns_and_gives_one_in_full_by_id() {
+        let _env = crate::test_env::shared().await;
         let outcome = "o".repeat(5_000);
         let (_dir, mut ax) = project_with_turn(&outcome).await;
         let listed = ToolHandler::call_tool(&mut ax, "ax_history", json!({ "query": "src/a.rs" }))
@@ -3920,6 +4035,7 @@ mod tests {
 
     #[tokio::test]
     async fn ax_history_since_filters_and_rejects_bad_dates() {
+        let _env = crate::test_env::shared().await;
         let (_dir, mut ax) = project_with_turn("Done.").await;
         let later = ToolHandler::call_tool(
             &mut ax,

@@ -22,9 +22,23 @@ pub fn project_hash(project_root: &Path) -> String {
     hex::encode(&digest[..8])
 }
 
+/// Socket path used when the one inside the project is too long. On Linux it
+/// lives in `$XDG_RUNTIME_DIR` (a per-user 0700 directory) when that is set,
+/// so other users cannot take the name first; otherwise in the temp
+/// directory (per user on macOS).
 pub fn tmpdir_socket_path(project_root: &Path) -> PathBuf {
     let hash = project_hash(project_root);
-    std::env::temp_dir().join(format!("ax-{hash}.sock"))
+    private_runtime_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join(format!("ax-{hash}.sock"))
+}
+
+fn private_runtime_dir() -> Option<PathBuf> {
+    if cfg!(any(windows, target_os = "macos")) {
+        return None;
+    }
+    let dir = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?);
+    (dir.is_absolute() && dir.is_dir()).then_some(dir)
 }
 
 pub fn daemon_socket_candidates(project_root: &Path) -> Vec<String> {

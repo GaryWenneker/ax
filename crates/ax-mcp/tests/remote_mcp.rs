@@ -1,67 +1,38 @@
 //! Remote boundary tests use real Ax projects and the HTTP router, without an external issuer.
+mod common;
+
 use ax_mcp::remote::{
     auth::TokenVerifier,
-    config::{ApiKey, OAuthConfig, Project, RemoteConfig},
+    config::RemoteConfig,
     server::{bind, router, RemoteState},
 };
 use axum::{
-    body::{to_bytes, Body},
+    body::Body,
     http::{Request, StatusCode},
     Router,
 };
-use jsonwebtoken::{encode, jwk::JwkSet, Algorithm, EncodingKey, Header};
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use tower::ServiceExt;
 
 async fn fixture() -> (tempfile::TempDir, Router, Arc<RemoteConfig>) {
+    common::isolate_process();
     let dir = tempfile::tempdir().unwrap();
     let mut projects = Vec::new();
     for id in ["alpha", "beta"] {
-        let root = dir.path().join(id);
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(
-            root.join("lib.rs"),
-            "pub fn remote_fixture() -> u32 { 1 }\n",
-        )
-        .unwrap();
-        let mut ax = ax_core::Ax::init(&root).await.unwrap();
-        ax.index_all(
-            ax_extraction::orchestrator::IndexOptions {
-                quiet: true,
-                ..Default::default()
-            },
-            None,
-        )
-        .await
-        .unwrap();
-        drop(ax);
-        projects.push(Project {
-            id: id.into(),
-            root,
-            subjects: vec![id.into()],
-            write_subjects: vec![id.into()],
-            admin_subjects: vec![],
-        });
+        projects.push(common::indexed_project(dir.path(), id).await);
     }
-    let mut config = RemoteConfig {
-        public_url: "https://ax.example.com".into(),
-        oauth: OAuthConfig {
-            built_in: false,
-            issuer: "https://issuer.example.com/".into(),
-            jwks_uri: "https://issuer.example.com/jwks".into(),
-        },
+    let mut config = common::remote_config(
         projects,
-        api_keys: vec![ApiKey {
-            id: "ide".into(),
-            sha256: hex::encode(Sha256::digest(b"test-ide-key")),
-            projects: vec!["alpha".into()],
-            write: false,
-            admin: false,
-        }],
-        allowed_origins: vec![],
-    };
+        vec![common::api_key(
+            "ide",
+            "test-ide-key",
+            "alpha",
+            false,
+            false,
+        )],
+    );
     config.validate().unwrap();
     let config = Arc::new(config);
     let verifier = verifier(config.clone());
@@ -70,56 +41,29 @@ async fn fixture() -> (tempfile::TempDir, Router, Arc<RemoteConfig>) {
 }
 
 fn verifier(config: Arc<RemoteConfig>) -> TokenVerifier {
-    TokenVerifier::with_keys(config, test_material().jwks.clone(), reqwest::Client::new())
+    TokenVerifier::with_keys(
+        config,
+        common::signing().jwks.clone(),
+        reqwest::Client::new(),
+    )
 }
 
 fn claims(sub: &str) -> Value {
-    json!({"sub":sub,"iss":"https://issuer.example.com/","aud":"https://ax.example.com","exp":ax_mcp::remote::credentials::now()+3600,"scope":"ax:context"})
+    common::claims(sub, "ax:context")
 }
+
 fn token(claims: &Value) -> String {
-    let mut header = Header::new(Algorithm::RS256);
-    header.kid = Some("ax-test-key".into());
-    encode(
-        &header,
-        claims,
-        &EncodingKey::from_rsa_pem(test_material().pem.as_bytes()).unwrap(),
-    )
-    .unwrap()
+    common::sign(claims)
 }
 
-struct TestMaterial {
-    pem: String,
-    jwks: JwkSet,
-}
-
-fn test_material() -> &'static TestMaterial {
-    static MATERIAL: OnceLock<TestMaterial> = OnceLock::new();
-    MATERIAL.get_or_init(|| {
-        use base64::Engine;
-        // The rsa crate has no patched release for RUSTSEC-2023-0071.
-        let key = openssl::rsa::Rsa::generate(2048).expect("test key");
-        let n = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.n().to_vec());
-        let e = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.e().to_vec());
-        let pem = String::from_utf8(
-            openssl::pkey::PKey::from_rsa(key)
-                .expect("pkey")
-                .private_key_to_pem_pkcs8()
-                .expect("pem"),
-        )
-        .expect("pem utf8");
-        let jwks = serde_json::from_value(json!({
-            "keys": [{
-                "kty": "RSA",
-                "alg": "RS256",
-                "use": "sig",
-                "kid": "ax-test-key",
-                "n": n,
-                "e": e
-            }]
-        }))
-        .expect("jwks");
-        TestMaterial { pem, jwks }
-    })
+#[tokio::test]
+async fn remote_tests_never_write_the_real_usage_database() {
+    let (_dir, _app, _config) = fixture().await;
+    let db = std::env::var_os("AX_USAGE_DB").expect("AX_USAGE_DB is set");
+    let tmp = std::env::temp_dir().canonicalize().unwrap();
+    let db = std::path::PathBuf::from(db);
+    let parent = db.parent().unwrap().canonicalize().unwrap();
+    assert!(parent.starts_with(&tmp), "{}", db.display());
 }
 
 #[test]
@@ -142,39 +86,18 @@ async fn post(
     session: Option<&str>,
     value: Value,
 ) -> (StatusCode, axum::http::HeaderMap, Value) {
-    let mut request = Request::builder()
-        .method("POST")
-        .uri(format!("/projects/{project}/mcp"))
-        .header("accept", "application/json, text/event-stream")
-        .header("content-type", "application/json");
-    if let Some(token) = token {
-        request = request.header("authorization", format!("Bearer {token}"));
-    }
-    if let Some(session) = session {
-        request = request
-            .header("mcp-session-id", session)
-            .header("mcp-protocol-version", "2025-11-25");
-    }
-    let response = app
-        .clone()
-        .oneshot(request.body(Body::from(value.to_string())).unwrap())
-        .await
-        .unwrap();
-    let status = response.status();
-    let headers = response.headers().clone();
-    let bytes = to_bytes(response.into_body(), 8 * 1024 * 1024)
-        .await
-        .unwrap();
-    let body = if bytes.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(&bytes).unwrap()
-    };
-    (status, headers, body)
+    common::post(app, project, token, session, value).await
 }
+
 async fn initialize(app: &Router, project: &str, token: &str) -> String {
-    let (status, headers, body) = post(app, project, Some(token), None,
-        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}})).await;
+    let (status, headers, body) = post(
+        app,
+        project,
+        Some(token),
+        None,
+        common::initialize_request("test"),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["result"]["protocolVersion"], "2025-11-25");
     headers["mcp-session-id"].to_str().unwrap().to_owned()
@@ -416,18 +339,15 @@ async fn remote_tools_deny_execution_writes_root_overrides_and_foreign_chats() {
     )
     .await;
     assert_eq!(body["error"]["code"], -32602);
-    assert_eq!(
-        post(
-            &app,
-            "alpha",
-            Some("test-ide-key"),
-            Some(&session),
-            call("ax_preflight", json!({"session":"foreign"}))
-        )
-        .await
-        .0,
-        StatusCode::FORBIDDEN
-    );
+    let (status, _, body) = post(
+        &app,
+        "alpha",
+        Some("test-ide-key"),
+        Some(&session),
+        call("ax_preflight", json!({"session":"foreign"})),
+    )
+    .await;
+    assert_unknown_handle(status, &body, "omit `session` to start a new chat");
     let (_, _, list) = post(
         &app,
         "alpha",
@@ -444,10 +364,12 @@ async fn remote_tools_deny_execution_writes_root_overrides_and_foreign_chats() {
 }
 
 #[tokio::test]
-async fn remote_chats_and_caches_are_connection_owned() {
+async fn remote_chats_and_caches_are_principal_owned() {
     let (_dir, app, _) = fixture().await;
     let a = initialize(&app, "alpha", "test-ide-key").await;
-    let b = initialize(&app, "alpha", "test-ide-key").await;
+    // A different principal with access to the same project.
+    let other_token = token(&claims("alpha"));
+    let b = initialize(&app, "alpha", &other_token).await;
     let call = |name: &str, arguments: Value| json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":name,"arguments":arguments}});
     let (_, _, stash) = post(
         &app,
@@ -468,31 +390,117 @@ async fn remote_chats_and_caches_are_connection_owned() {
     )
     .await;
     assert!(expanded.to_string().contains("PRIVATE-REMOTE-A"));
-    assert_eq!(
-        post(
-            &app,
-            "alpha",
-            Some("test-ide-key"),
-            Some(&b),
-            call("ax_expand", json!({"id":id}))
-        )
-        .await
-        .0,
-        StatusCode::FORBIDDEN
+    let (status, _, body) = post(
+        &app,
+        "alpha",
+        Some(&other_token),
+        Some(&b),
+        call("ax_expand", json!({"id":id})),
+    )
+    .await;
+    assert_unknown_handle(status, &body, "Unknown cache id");
+    assert!(!body.to_string().contains("PRIVATE-REMOTE-A"));
+    // Even an explicit guessed chat cannot select another principal's context.
+    let (status, _, body) = post(
+        &app,
+        "alpha",
+        Some(&other_token),
+        Some(&b),
+        call("ax_session", json!({"session":"guess","action":"get"})),
+    )
+    .await;
+    assert_unknown_handle(status, &body, "omit `session` to start a new chat");
+}
+
+/// A chat or cache id that this principal does not own is answered with a
+/// tool error that tells the agent to start over, not with an HTTP error that
+/// clients take for a failed sign-in.
+fn assert_unknown_handle(status: StatusCode, body: &Value, hint: &str) {
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["result"]["isError"], true, "{body}");
+    let text = body["result"]["content"][0]["text"].as_str().unwrap_or("");
+    assert!(text.contains(hint), "{body}");
+}
+
+#[tokio::test]
+async fn remote_chat_and_cache_ids_survive_a_reconnect_by_the_same_principal() {
+    let (_dir, app, _) = fixture().await;
+    let call = |name: &str, arguments: Value| json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":name,"arguments":arguments}});
+    let first = initialize(&app, "alpha", "test-ide-key").await;
+    let (_, _, stash) = post(
+        &app,
+        "alpha",
+        Some("test-ide-key"),
+        Some(&first),
+        call("ax_stash", json!({"text":"REMOTE-RECONNECT-STASH"})),
+    )
+    .await;
+    let cache = stash["result"]["structuredContent"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("missing stash id: {stash}"))
+        .to_owned();
+    let (_, _, preflight) = post(
+        &app,
+        "alpha",
+        Some("test-ide-key"),
+        Some(&first),
+        call("ax_preflight", json!({})),
+    )
+    .await;
+    let chat = preflight["result"]["structuredContent"]["session"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("missing preflight session: {preflight}"))
+        .to_owned();
+
+    // The client re-initializes (session expired, client or server restart)
+    // and keeps passing the ids it was given, as the tool text tells it to.
+    let again = initialize(&app, "alpha", "test-ide-key").await;
+    let (status, _, expanded) = post(
+        &app,
+        "alpha",
+        Some("test-ide-key"),
+        Some(&again),
+        call("ax_expand", json!({"id":cache})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{expanded}");
+    assert!(
+        expanded.to_string().contains("REMOTE-RECONNECT-STASH"),
+        "{expanded}"
     );
-    // Even an explicit guessed chat cannot select another connection's context.
-    assert_eq!(
-        post(
-            &app,
-            "alpha",
-            Some("test-ide-key"),
-            Some(&b),
-            call("ax_session", json!({"session":"guess","action":"get"}))
-        )
-        .await
-        .0,
-        StatusCode::FORBIDDEN
-    );
+    let (status, _, resumed) = post(
+        &app,
+        "alpha",
+        Some("test-ide-key"),
+        Some(&again),
+        call("ax_preflight", json!({"session":chat})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resumed}");
+    assert_ne!(resumed["result"]["isError"], true, "{resumed}");
+
+    // Another principal on the same project never gets them.
+    let other_token = token(&claims("alpha"));
+    let other = initialize(&app, "alpha", &other_token).await;
+    let (status, _, body) = post(
+        &app,
+        "alpha",
+        Some(&other_token),
+        Some(&other),
+        call("ax_expand", json!({"id":cache})),
+    )
+    .await;
+    assert_unknown_handle(status, &body, "Unknown cache id");
+    assert!(!body.to_string().contains("REMOTE-RECONNECT-STASH"));
+    let (status, _, body) = post(
+        &app,
+        "alpha",
+        Some(&other_token),
+        Some(&other),
+        call("ax_preflight", json!({"session":chat})),
+    )
+    .await;
+    assert_unknown_handle(status, &body, "omit `session` to start a new chat");
 }
 
 #[tokio::test]
@@ -598,7 +606,7 @@ async fn remote_discovery_advertises_oauth_and_rejects_invalid_identity_without_
 }
 
 #[tokio::test]
-async fn remote_context_reset_rehydrates_policy_and_fork_keeps_connection_ownership() {
+async fn remote_context_reset_rehydrates_policy_and_fork_keeps_principal_ownership() {
     let (_dir, app, config) = fixture().await;
     let rules = config.projects[0].root.join(".agents/rules");
     std::fs::create_dir_all(&rules).unwrap();
@@ -674,19 +682,17 @@ async fn remote_context_reset_rehydrates_policy_and_fork_keeps_connection_owners
         .0,
         StatusCode::OK
     );
-    let other = initialize(&app, "alpha", "test-ide-key").await;
-    assert_eq!(
-        post(
-            &app,
-            "alpha",
-            Some("test-ide-key"),
-            Some(&other),
-            call("ax_preflight", json!({"session":child}))
-        )
-        .await
-        .0,
-        StatusCode::FORBIDDEN
-    );
+    let other_token = token(&claims("alpha"));
+    let other = initialize(&app, "alpha", &other_token).await;
+    let (status, _, body) = post(
+        &app,
+        "alpha",
+        Some(&other_token),
+        Some(&other),
+        call("ax_preflight", json!({"session":child})),
+    )
+    .await;
+    assert_unknown_handle(status, &body, "omit `session` to start a new chat");
 }
 
 #[tokio::test]
@@ -724,19 +730,17 @@ async fn remote_durable_branches_register_only_server_issued_child_ids() {
         )
         .await;
         assert_ne!(read["result"]["isError"], true, "{read}");
-        let other = initialize(&app, "alpha", "test-ide-key").await;
-        assert_eq!(
-            post(
-                &app,
-                "alpha",
-                Some("test-ide-key"),
-                Some(&other),
-                call(json!({"action":"read","session":child}))
-            )
-            .await
-            .0,
-            StatusCode::FORBIDDEN
-        );
+        let other_token = token(&claims("alpha"));
+        let other = initialize(&app, "alpha", &other_token).await;
+        let (status, _, body) = post(
+            &app,
+            "alpha",
+            Some(&other_token),
+            Some(&other),
+            call(json!({"action":"read","session":child})),
+        )
+        .await;
+        assert_unknown_handle(status, &body, "omit `session` to start a new chat");
     }
 }
 
@@ -791,6 +795,53 @@ async fn remote_authorized_writer_can_remember_but_cannot_save_global_policy() {
     }
 }
 
+#[tokio::test]
+async fn remote_policy_save_cannot_choose_where_the_rule_file_goes() {
+    let (_dir, app, _) = fixture().await;
+    let mut c = claims("alpha");
+    c["scope"] = json!("ax:context ax:write");
+    let writer = token(&c);
+    let transport = initialize(&app, "alpha", &writer).await;
+    let call = |args: Value| json!({"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"ax_policy_capture","arguments":args}});
+    let outside = tempfile::tempdir().unwrap();
+    let target = outside.path().join("planted.mdc");
+    for frontmatter in [
+        json!({"id":"planted","level":"INFO","alwaysApply":true,"storage":"files",
+            "source": target.to_string_lossy()}),
+        json!({"id":"planted","level":"INFO","alwaysApply":true,"source":"root:shared/rules/x.mdc"}),
+        json!({"id":"planted","level":"INFO","alwaysApply":true,"storage":"files"}),
+        json!({"id":"../../planted","level":"INFO","alwaysApply":true}),
+        json!({"id":"planted","level":"INFO","alwaysApply":true,"unknownKey":"x"}),
+    ] {
+        let (status, _, body) = post(
+            &app,
+            "alpha",
+            Some(&writer),
+            Some(&transport),
+            call(
+                json!({"action":"save","rule":{"frontmatter":frontmatter,"body":"attacker text"}}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{frontmatter} -> {body}");
+    }
+    assert!(!target.exists(), "remote save wrote outside the project");
+
+    // A plain project rule built from the allowed fields still saves.
+    let (status, _, saved) = post(
+        &app,
+        "alpha",
+        Some(&writer),
+        Some(&transport),
+        call(json!({"action":"save","rule":{"frontmatter":{
+            "id":"remote-ok","level":"INFO","alwaysApply":true,"scope":"project",
+            "triggers":["x"],"globs":[],"tags":[],"priority":10},"body":"fine"}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_ne!(saved["result"]["isError"], true, "{saved}");
+}
+
 async fn initialize_as(app: &Router, project: &str, token: &str, client: &str) -> String {
     let (status, headers, body) = post(app, project, Some(token), None,
         json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":client,"version":"1"}}})).await;
@@ -804,12 +855,14 @@ fn between<'a>(text: &'a str, start: &str, stops: &[char]) -> &'a str {
 }
 
 /// A Claude client gets text-only replies, and the server still learns the chat
-/// and cache ids it issued, so the connection keeps owning them.
+/// and cache ids it issued, so the principal keeps owning them.
 #[tokio::test]
 async fn remote_claude_client_gets_text_only_replies_and_keeps_its_chats_and_caches() {
     let (_dir, app, _) = fixture().await;
     let a = initialize_as(&app, "alpha", "test-ide-key", "claude-code").await;
-    let b = initialize_as(&app, "alpha", "test-ide-key", "claude-code").await;
+    // Ids are owned per principal and project, so the outsider is another principal.
+    let other_token = token(&claims("alpha"));
+    let b = initialize_as(&app, "alpha", &other_token, "claude-code").await;
     let call = |name: &str, arguments: Value| json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":name,"arguments":arguments}});
     let key = Some("test-ide-key");
 
@@ -830,7 +883,7 @@ async fn remote_claude_client_gets_text_only_replies_and_keeps_its_chats_and_cac
     let chat = between(text, "<ax_chat session=", &[' ', '>']).to_owned();
     assert!(chat.starts_with("axs_"), "no chat id in the text: {text}");
 
-    // The chat this connection was given stays usable by it, and only by it.
+    // The chat this principal was given stays usable by it, and only by it.
     let (status, _, second) = post(
         &app,
         "alpha",
@@ -845,15 +898,15 @@ async fn remote_claude_client_gets_text_only_replies_and_keeps_its_chats_and_cac
         second["result"].get("structuredContent").is_none(),
         "{second}"
     );
-    let (status, _, _) = post(
+    let (status, _, body) = post(
         &app,
         "alpha",
-        key,
+        Some(&other_token),
         Some(&b),
         call("ax_preflight", json!({"session":chat})),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_unknown_handle(status, &body, "omit `session` to start a new chat");
 
     let (_, _, stash) = post(
         &app,
@@ -887,13 +940,13 @@ async fn remote_claude_client_gets_text_only_replies_and_keeps_its_chats_and_cac
         expanded["result"].get("structuredContent").is_none(),
         "{expanded}"
     );
-    let (status, _, _) = post(
+    let (status, _, body) = post(
         &app,
         "alpha",
-        key,
+        Some(&other_token),
         Some(&b),
         call("ax_expand", json!({"id":id})),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_unknown_handle(status, &body, "Unknown cache id");
 }

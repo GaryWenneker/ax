@@ -223,6 +223,11 @@ impl Ax {
         &self.config
     }
 
+    /// Re-extract every file the scan finds and replace its rows one file at
+    /// a time. The graph is never emptied first: when the run fails halfway,
+    /// files it did not reach keep their previous rows. After a complete
+    /// extraction, files the scan no longer finds (deleted, excluded or now
+    /// generated) are dropped.
     pub async fn index_all(
         &mut self,
         opts: IndexOptions,
@@ -231,10 +236,17 @@ impl Ax {
         let _guard = self.index_mutex.lock().await;
         self.file_lock.acquire()?;
         let index_opts = self.merge_index_opts(&opts);
+        let started = unix_ms();
         let result = self
             .orchestrator
             .index_all(&self.queries, &index_opts, on_progress.as_mut())
             .await;
+        let result = match result {
+            Ok(result) => drop_files_not_indexed_since(&self.queries, started)
+                .await
+                .map(|()| result),
+            Err(e) => Err(e),
+        };
         let result = match result {
             Ok(result) => {
                 finalize_after_extract(
@@ -1095,6 +1107,32 @@ fn report_optimizing(on_progress: &mut Option<Box<dyn FnMut(IndexProgress) + Sen
             file_path: Some(label.into()),
         });
     }
+}
+
+fn unix_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Drop every file row (with its nodes, edges and stored source) that a full
+/// extraction started at `started` did not write. Replicated rows (paths
+/// under `ax-replica/`) come from imported datasets, not from the scan, so
+/// they are always kept.
+async fn drop_files_not_indexed_since(
+    queries: &QueryBuilder,
+    started: i64,
+) -> Result<(), ax_utils::errors::AxError> {
+    for file in queries.get_all_files().await? {
+        if file.path.starts_with(ax_db::replication::PREFIX) {
+            continue;
+        }
+        if file.indexed_at < started {
+            queries.clear_file(&file.path).await?;
+        }
+    }
+    Ok(())
 }
 
 /// The stale paths a read-path resync may re-extract: everything except doc

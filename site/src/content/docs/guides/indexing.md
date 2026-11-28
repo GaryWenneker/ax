@@ -67,7 +67,9 @@ Pending files **not** referenced by the response surface as a small footer inste
 
 ### 3. Connect-time catch-up — covers gaps when the MCP server wasn't running
 
-When your editor / agent (re)connects to the MCP server, ax runs a fast filesystem-based reconciliation (a `(size, mtime)` stat pre-filter, then a content hash on the rest) before answering the first query. So files changed while no MCP server was running — a `git pull` from the terminal, an edit from another editor, an agent that finished and exited — are caught up automatically on the next session's first tool call.
+When your editor / agent (re)connects to the MCP server, the first tool call starts a fast filesystem-based reconciliation (a `(size, mtime)` stat pre-filter, then a content hash on the rest) in the background, and fills an empty memory vault from git history. The first call is answered right away and does not wait for it. So files changed while no MCP server was running — a `git pull` from the terminal, an edit from another editor, an agent that finished and exited — are caught up automatically at the start of the next session.
+
+While that catch-up runs, `ax_status` ends with `### Catch-up sync: in progress` and its JSON has `"catchUp": "running"`. It runs once per project in a server process, however many sessions connect. An `ax_sync` or `ax_index` call made while it runs waits for it to finish first. Remote MCP sessions start no catch-up of their own: the remote server syncs each registered project once when it starts and then keeps it current with its file watcher.
 
 ### Verify what the watcher sees
 

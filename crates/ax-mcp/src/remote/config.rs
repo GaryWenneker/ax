@@ -14,6 +14,23 @@ pub struct RemoteConfig {
     pub api_keys: Vec<ApiKey>,
     #[serde(default)]
     pub allowed_origins: Vec<String>,
+    /// The header the proxy in front of Ax sets to the caller's address. Only
+    /// with this set are the unauthenticated OAuth limits shared out per
+    /// address; without it every caller shares one budget, since a caller can
+    /// set either header itself when no proxy overwrites it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_address_header: Option<ClientAddressHeader>,
+}
+
+/// A request header that names the caller's address, set by a trusted proxy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub enum ClientAddressHeader {
+    /// Cloudflare's `CF-Connecting-IP`, which Cloudflare always overwrites.
+    #[serde(rename = "cf-connecting-ip")]
+    CfConnectingIp,
+    /// The last `X-Forwarded-For` entry, which the nearest proxy appends.
+    #[serde(rename = "x-forwarded-for")]
+    XForwardedFor,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -23,6 +40,26 @@ pub struct OAuthConfig {
     pub built_in: bool,
     pub issuer: String,
     pub jwks_uri: String,
+    /// How many seconds the provider's clock may differ from this host's when
+    /// a JWT's `exp`, `nbf` and `iat` are checked. `0` checks them exactly.
+    #[serde(
+        default = "default_clock_skew_seconds",
+        skip_serializing_if = "is_default_clock_skew"
+    )]
+    pub clock_skew_seconds: u64,
+}
+
+/// The JWT clock leeway when the configuration names none.
+pub const DEFAULT_CLOCK_SKEW_SECONDS: u64 = 60;
+/// The largest leeway accepted; more would keep expired tokens usable.
+pub const MAX_CLOCK_SKEW_SECONDS: u64 = 300;
+
+fn default_clock_skew_seconds() -> u64 {
+    DEFAULT_CLOCK_SKEW_SECONDS
+}
+
+fn is_default_clock_skew(seconds: &u64) -> bool {
+    *seconds == DEFAULT_CLOCK_SKEW_SECONDS
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -70,6 +107,11 @@ impl RemoteConfig {
         self.public_url = public.origin().ascii_serialization();
         https_url(&self.oauth.issuer)?;
         https_url(&self.oauth.jwks_uri)?;
+        if self.oauth.clock_skew_seconds > MAX_CLOCK_SKEW_SECONDS {
+            return Err(format!(
+                "oauth.clock_skew_seconds may be at most {MAX_CLOCK_SKEW_SECONDS}"
+            ));
+        }
         if self.oauth.built_in
             && (self.oauth.issuer != format!("{}/oauth", self.public_url)
                 || self.oauth.jwks_uri != format!("{}/oauth/jwks", self.public_url))
@@ -126,11 +168,14 @@ impl RemoteConfig {
                 return Err("Admin API keys must also have write access".into());
             }
         }
-        for origin in &self.allowed_origins {
+        // Store each origin the way a browser sends it in the Origin header
+        // (lowercase host, default port dropped, no trailing slash).
+        for origin in &mut self.allowed_origins {
             let u = https_url(origin)?;
             if u.path() != "/" {
                 return Err("Allowed origins must be HTTPS origins".into());
             }
+            *origin = u.origin().ascii_serialization();
         }
         Ok(())
     }
@@ -153,5 +198,91 @@ mod tests {
         assert_eq!(config.public_url, "https://ax.example.com");
         assert_eq!(config.oauth.issuer, "https://Identity.Example/tenant/");
         assert_eq!(config.projects[0].subjects, ["subject"]);
+    }
+
+    #[test]
+    fn allowed_origins_are_stored_as_the_origin_a_browser_sends() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join(".ax")).unwrap();
+        std::fs::write(temp.path().join(".ax/ax.db"), "").unwrap();
+        let config = |origins: serde_json::Value| -> RemoteConfig {
+            serde_json::from_value(serde_json::json!({"public_url":"https://ax.example.com","allowed_origins":origins,"oauth":{"issuer":"https://id.example/","jwks_uri":"https://id.example/jwks"},"projects":[{"id":"demo","root":temp.path(),"subjects":["subject"]}]})).unwrap()
+        };
+        let mut mixed = config(serde_json::json!([
+            "https://App.Example.com",
+            "https://app.example.com:443/",
+            "https://tools.example.com:8443"
+        ]));
+        mixed.validate().unwrap();
+        assert_eq!(
+            mixed.allowed_origins,
+            [
+                "https://app.example.com",
+                "https://app.example.com",
+                "https://tools.example.com:8443"
+            ]
+        );
+        for bad in [
+            "https://app.example.com/path",
+            "https://app.example.com/?q=1",
+            "https://app.example.com/#frag",
+            "http://app.example.com",
+        ] {
+            assert!(
+                config(serde_json::json!([bad])).validate().is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_clock_skew_defaults_to_a_minute_and_has_an_upper_bound() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join(".ax")).unwrap();
+        std::fs::write(temp.path().join(".ax/ax.db"), "").unwrap();
+        let config = |oauth: serde_json::Value| -> RemoteConfig {
+            serde_json::from_value(serde_json::json!({"public_url":"https://ax.example.com","oauth":oauth,"projects":[{"id":"demo","root":temp.path(),"subjects":["subject"]}]})).unwrap()
+        };
+        let plain = config(
+            serde_json::json!({"issuer":"https://id.example/","jwks_uri":"https://id.example/jwks"}),
+        );
+        assert_eq!(plain.oauth.clock_skew_seconds, DEFAULT_CLOCK_SKEW_SECONDS);
+        let exact = config(
+            serde_json::json!({"issuer":"https://id.example/","jwks_uri":"https://id.example/jwks","clock_skew_seconds":0}),
+        );
+        assert_eq!(exact.oauth.clock_skew_seconds, 0);
+        let mut loose = config(
+            serde_json::json!({"issuer":"https://id.example/","jwks_uri":"https://id.example/jwks","clock_skew_seconds":MAX_CLOCK_SKEW_SECONDS + 1}),
+        );
+        assert!(loose.validate().is_err());
+    }
+
+    #[test]
+    fn the_client_address_header_is_named_explicitly_or_left_out() {
+        let config = |extra: serde_json::Value| -> Result<RemoteConfig, serde_json::Error> {
+            let mut value = serde_json::json!({"public_url":"https://ax.example.com","oauth":{"issuer":"https://id.example/","jwks_uri":"https://id.example/jwks"},"projects":[]});
+            for (name, v) in extra.as_object().unwrap() {
+                value[name] = v.clone();
+            }
+            serde_json::from_value(value)
+        };
+        let plain = config(serde_json::json!({})).unwrap();
+        assert_eq!(plain.client_address_header, None);
+        assert!(!serde_json::to_string(&plain)
+            .unwrap()
+            .contains("client_address_header"));
+        assert_eq!(
+            config(serde_json::json!({"client_address_header":"cf-connecting-ip"}))
+                .unwrap()
+                .client_address_header,
+            Some(ClientAddressHeader::CfConnectingIp)
+        );
+        assert_eq!(
+            config(serde_json::json!({"client_address_header":"x-forwarded-for"}))
+                .unwrap()
+                .client_address_header,
+            Some(ClientAddressHeader::XForwardedFor)
+        );
+        assert!(config(serde_json::json!({"client_address_header":"x-real-ip"})).is_err());
     }
 }
