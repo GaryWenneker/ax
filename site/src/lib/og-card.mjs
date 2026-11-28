@@ -158,8 +158,8 @@ export function cardHtml({ version, kicker, title, description, shotUrl, logoUrl
 			background:radial-gradient(120% 90% at 85% 10%, #23211a 0%, var(--paper) 55%);
 			color:var(--ink); font-family:system-ui, sans-serif; }
 		.text { flex:0 0 460px; display:flex; flex-direction:column; gap:16px; min-width:0; }
-		.logo { width:150px; height:91px; margin-left:-8px;
-			background:url('${safeLogo}') no-repeat; background-size:200% auto; background-position:48% 45%; }
+		.logo { width:147px; height:91px;
+			background:url('${safeLogo}') no-repeat; background-size:contain; background-position:left center; }
 		.kicker { font-family:ui-monospace, monospace; color:var(--accent); letter-spacing:.08em;
 			text-transform:uppercase; font-size:15px; }
 		.version { font-size:84px; line-height:.9; color:var(--accent); font-weight:700; letter-spacing:-.02em; }

@@ -63,8 +63,8 @@ function html(format) {
 html, body { width:${format.width}px; height:${format.height}px; overflow:hidden; }
 body { background:radial-gradient(120% 90% at 85% 10%, #23211a 0%, var(--paper) 55%); color:var(--ink);
   font-family:'Archivo Variable', system-ui, sans-serif; display:flex; }
-.logo { background:url('${logo}') no-repeat; background-size:200% auto; background-position:48% 45%;
-  aspect-ratio:1.65; }
+.logo { background:url('${logo}') no-repeat; background-size:contain; background-position:left center;
+  aspect-ratio:1.62; }
 .tag { font-family:'IBM Plex Mono', monospace; color:var(--accent); letter-spacing:.08em; text-transform:uppercase; }
 .version { font-family:'Bebas Neue', sans-serif; color:var(--accent); line-height:.9; }
 h1 { font-family:'Bebas Neue', sans-serif; font-weight:400; line-height:.95; letter-spacing:.01em; }
@@ -82,7 +82,7 @@ li span { color:var(--ink2); }
 /* wide: text left, screenshot right */
 .wide { flex-direction:row; padding:56px 0 56px 64px; gap:40px; align-items:center; }
 .wide .text { flex:0 0 46%; display:flex; flex-direction:column; gap:18px; }
-.wide .logo { width:170px; margin-left:-12px; }
+.wide .logo { width:170px; }
 .wide .version { font-size:84px; }
 .wide h1 { font-size:54px; }
 .wide ul { gap:10px; }
@@ -96,7 +96,7 @@ li span { color:var(--ink2); }
 .square, .story { flex-direction:column; align-items:flex-start; }
 .square { padding:72px; gap:22px; }
 .square .top { display:flex; align-items:center; gap:24px; }
-.square .logo { width:200px; margin-left:-14px; }
+.square .logo { width:200px; }
 .square .version { font-size:120px; }
 .square h1 { font-size:76px; }
 .square ul { gap:12px; }
@@ -107,7 +107,7 @@ li span { color:var(--ink2); }
 .square .shotwrap { flex:1; min-height:0; overflow:hidden; width:118%; margin-top:8px; border-radius:14px; }
 
 .story { padding:120px 84px 110px; gap:36px; }
-.story .logo { width:330px; margin-left:-20px; }
+.story .logo { width:330px; }
 .story .version { font-size:200px; }
 .story h1 { font-size:116px; }
 .story ul { gap:22px; }
