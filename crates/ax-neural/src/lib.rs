@@ -27,7 +27,8 @@ pub mod recovery;
 pub mod rss;
 pub mod runtime;
 pub mod share;
-pub mod speed;
+#[cfg(test)]
+mod speed;
 pub mod status;
 pub mod store;
 

@@ -1,30 +1,58 @@
 {
   "blocks": {
-    "neural": 2.934667,
-    "old": 4.099667
+    "basis": "no_old_equivalent",
+    "neural": 29.742084,
+    "neuralSamples": 5,
+    "note": "the old code had no path for this task; old side is hash embed plus cosine",
+    "old": 44.60875,
+    "oldSamples": 5
   },
   "embed": {
-    "neural": 0.324208,
-    "old": 0.544291
+    "basis": "same_work",
+    "neural": 2.3432079999999997,
+    "neuralSamples": 5,
+    "note": "both sides build a per-text representation in memory",
+    "old": 4.0333749999999995,
+    "oldSamples": 5
   },
   "graph": {
-    "neural": 1.357292,
-    "old": 1.7505000000000002
+    "basis": "no_old_equivalent",
+    "neural": 16.124125,
+    "neuralSamples": 5,
+    "note": "the old code had no path for this task; old side is hash embed plus cosine",
+    "old": 31.119,
+    "oldSamples": 5
   },
   "index": {
-    "neural": 0.07291600000000001,
-    "old": 49.349042000000004
+    "basis": "different_work",
+    "neural": 0.6561250000000001,
+    "neuralSamples": 5,
+    "note": "old writes SQLite memory rows; neural builds lexical docs in memory",
+    "old": 74.441084,
+    "oldSamples": 5
   },
   "learn": {
-    "neural": 0.068,
-    "old": 17.504125
+    "basis": "same_work",
+    "neural": 2.55875,
+    "neuralSamples": 5,
+    "note": "both sides write one SQLite row per feedback item",
+    "old": 20.167042,
+    "oldSamples": 5
   },
   "predict": {
-    "neural": 1.107917,
-    "old": 2.227042
+    "basis": "no_old_equivalent",
+    "neural": 19.482291999999998,
+    "neuralSamples": 5,
+    "note": "the old code had no path for this task; old side is hash embed plus cosine",
+    "old": 28.105917,
+    "oldSamples": 5
   },
   "query": {
-    "neural": 0.353167,
-    "old": 349.95091699999995
+    "basis": "different_work",
+    "neural": 9.452458,
+    "neuralSamples": 5,
+    "note": "old recalls from SQLite; neural ranks prebuilt lexical docs in memory",
+    "old": 1045.904625,
+    "oldSamples": 5
   }
 }
