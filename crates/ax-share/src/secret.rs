@@ -64,9 +64,16 @@ fn entry(key: &str) -> Result<keyring::Entry, SecretError> {
 /// because its tokens come back once it is unlocked.
 fn classify(err: keyring::Error, refused: &str) -> SecretError {
     match err {
-        // macOS: no keychain, keychain not available or invalid. Windows: no
-        // logon session, so no credential manager for this process.
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        // macOS: no keychain, keychain not available or invalid. keyring
+        // reports a read-only keychain (`errSecReadOnly`) the same way, but
+        // that keychain still holds and returns its tokens, so it refuses.
+        #[cfg(target_os = "macos")]
+        keyring::Error::NoStorageAccess(inner) if !macos_read_only(inner.as_ref()) => {
+            SecretError::Absent(UNAVAILABLE.into())
+        }
+        // Windows: no logon session, so no credential manager for this
+        // process.
+        #[cfg(target_os = "windows")]
         keyring::Error::NoStorageAccess(_) => SecretError::Absent(UNAVAILABLE.into()),
         // Linux and BSD: the Secret Service is reached over the D-Bus session
         // bus, so without a session bus there is no store.
@@ -76,6 +83,15 @@ fn classify(err: keyring::Error, refused: &str) -> SecretError {
         }
         _ => SecretError::Refused(refused.into()),
     }
+}
+
+/// Whether a keychain error keyring wrapped is `errSecReadOnly` (-25292).
+#[cfg(target_os = "macos")]
+fn macos_read_only(inner: &(dyn std::error::Error + Send + Sync + 'static)) -> bool {
+    const ERR_SEC_READ_ONLY: i32 = -25292;
+    inner
+        .downcast_ref::<security_framework::base::Error>()
+        .is_some_and(|e| e.code() == ERR_SEC_READ_ONLY)
 }
 
 /// Whether this process has a D-Bus session bus to reach a Secret Service
@@ -170,4 +186,24 @@ pub(crate) fn warn_unavailable_once(error: &SecretError) {
              its old location, and a new token cannot be saved"
         );
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A read-only macOS keychain (`errSecReadOnly`) still holds and returns
+    /// its tokens, so a refused delete there is a refusal, not "no store".
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_read_only_macos_keychain_is_a_refusal_not_an_absent_store() {
+        let read_only = security_framework::base::Error::from_code(-25292);
+        let err = classify(keyring::Error::NoStorageAccess(Box::new(read_only)), "no");
+        assert!(!err.is_absent(), "{err:?}");
+        for absent in [-25291, -25294, -25295] {
+            let e = security_framework::base::Error::from_code(absent);
+            let err = classify(keyring::Error::NoStorageAccess(Box::new(e)), "no");
+            assert!(err.is_absent(), "{absent}: {err:?}");
+        }
+    }
 }

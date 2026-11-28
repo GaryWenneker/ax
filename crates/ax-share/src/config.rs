@@ -296,6 +296,10 @@ fn load_git_token(
 /// the file entry stays, because that file is keyed by repo URL only and
 /// other projects on the same URL may still read it; an explicit
 /// `clearToken` removes it.
+///
+/// A token in `ax.json` belongs to the repo URL saved next to it there. When
+/// this save changes that URL, the token is dropped, never stored for the new
+/// URL, so it is not sent to another host.
 fn migrate_old_token(
     config_path: &Path,
     key: &str,
@@ -305,6 +309,7 @@ fn migrate_old_token(
 ) -> Result<(), String> {
     let inline = read_share_section(config_path)
         .and_then(|share| share.github)
+        .filter(|github| github.repo_url.trim() == repo_url.trim())
         .map(|github| github.token.trim().to_string())
         .unwrap_or_default();
     let stored = secrets.get(key);
@@ -426,7 +431,7 @@ pub fn write_project_share_config_with(
         .map(|github| github.repo_url.trim().to_string())
         .filter(|url| !url.is_empty() && url != github.repo_url.trim());
     let remove_previous = || match &previous_url {
-        Some(url) => remove_token(secrets, &crate::secret::token_key(project_root, url)),
+        Some(url) => remove_stored_token(secrets, &crate::secret::token_key(project_root, url)),
         None => Ok(()),
     };
     if github.clear_token {
@@ -435,10 +440,7 @@ pub fn write_project_share_config_with(
         // would come back on the next load (also a store that is only locked
         // or busy right now). Only when this machine has no credential store
         // at all is there nothing to delete, and the clear succeeds.
-        let deleted = match secrets.get(&key) {
-            Ok(None) => Ok(()),
-            Ok(Some(_)) | Err(_) => remove_token(secrets, &key),
-        };
+        let deleted = remove_stored_token(secrets, &key);
         let previous = remove_previous();
         write_git_token(token_store, &github.repo_url, None)?;
         write_share_at(&path, config)?;
@@ -446,7 +448,13 @@ pub fn write_project_share_config_with(
         previous?;
         return Ok(path);
     }
-    remove_previous()?;
+    // Without a clear, a store that refuses to delete the old URL's token
+    // (locked, or a session bus without a Secret Service) does not block the
+    // URL change: no lookup uses the old URL's entry any more, and the token
+    // there is never moved to the new URL.
+    if let Err(e) = remove_previous() {
+        tracing::warn!("ax share: the token for the previous repo URL was not removed: {e}");
+    }
     if !github.token.trim().is_empty() {
         // No plain-text fallback: a token that cannot go to the credential
         // store is refused.
@@ -456,6 +464,15 @@ pub fn write_project_share_config_with(
     }
     write_share_at(&path, config)?;
     Ok(path)
+}
+
+/// Deletes the credential-store entry `key` when the store may hold it: a
+/// store that reports no entry there has nothing to delete.
+fn remove_stored_token(secrets: &dyn ShareTokenStore, key: &str) -> Result<(), String> {
+    match secrets.get(key) {
+        Ok(None) => Ok(()),
+        Ok(Some(_)) | Err(_) => remove_token(secrets, key),
+    }
 }
 
 /// Deletes the credential-store entry `key`. Only a machine without any
@@ -1228,6 +1245,73 @@ mod tests {
         write_project_share_config_with(project.path(), &clear, &secrets, &store).unwrap();
         assert_eq!(secrets.get(&new_key).unwrap(), None);
         assert_eq!(secrets.get(&old_key).unwrap(), None);
+    }
+
+    /// A token still inline in `ax.json` belongs to the repo URL saved next to
+    /// it there. A save that changes the URL must drop it, never store it for
+    /// the new URL, or the next sync sends it to another host.
+    #[test]
+    fn an_inline_token_is_not_moved_to_a_new_repo_url() {
+        let project = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let store = home.path().join("auth/git-share.json");
+        let secrets = MemoryStore::default();
+        let old_url = "https://gitlab.example.com/team/policy.git";
+        let new_url = "https://git.other-host.example/team/policy.git";
+        let config_path = project.path().join(CONFIG_FILENAME);
+        write_share_json(
+            &config_path,
+            serde_json::json!({
+                "provider": "github",
+                "github": { "repoUrl": old_url, "token": "glpat-inline" }
+            }),
+        );
+
+        let mut moved = github_with_token("");
+        moved.github.repo_url = new_url.into();
+        write_project_share_config_with(project.path(), &moved, &secrets, &store).unwrap();
+
+        let new_key = crate::secret::token_key(project.path(), new_url);
+        assert_eq!(secrets.get(&new_key).unwrap(), None);
+        let cfg = load_share_config_with(project.path(), &secrets, &store);
+        assert_eq!(cfg.github.token, "");
+        assert!(!cfg.github.token_set);
+        let on_disk = fs::read_to_string(&config_path).unwrap();
+        assert!(!on_disk.contains("glpat-inline"), "{on_disk}");
+    }
+
+    /// Changing the repo URL must not depend on deleting a token for the old
+    /// URL: when nothing is stored there, or the store refuses (locked
+    /// keychain, a session bus without a Secret Service), the save still
+    /// goes through. Only an explicit clear insists on the delete.
+    #[test]
+    fn changing_the_repo_url_works_when_the_store_cannot_delete() {
+        let project = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let store = home.path().join("auth/git-share.json");
+        let old_url = "https://gitlab.example.com/team/policy.git";
+        let config_path = project.path().join(CONFIG_FILENAME);
+        write_share_json(
+            &config_path,
+            serde_json::json!({ "provider": "github", "github": { "repoUrl": old_url } }),
+        );
+
+        // Nothing is stored for the old URL; the store cannot delete at all.
+        let secrets = DeleteFails::default();
+        let mut moved = github_with_token("");
+        moved.github.repo_url = "https://gitlab.example.com/team/second.git".into();
+        write_project_share_config_with(project.path(), &moved, &secrets, &store)
+            .expect("no token for the old URL, so there is nothing to delete");
+
+        // The store is locked: every call is refused.
+        let locked = Lockable::default();
+        locked.set_locked(true);
+        let mut again = github_with_token("");
+        again.github.repo_url = "https://gitlab.example.com/team/third.git".into();
+        write_project_share_config_with(project.path(), &again, &locked, &store)
+            .expect("a locked store must not block a repo URL change");
+        let on_disk = fs::read_to_string(&config_path).unwrap();
+        assert!(on_disk.contains("team/third.git"), "{on_disk}");
     }
 
     #[test]
