@@ -24,7 +24,7 @@ tempfile = "3"
 uuid = { workspace = true }
 futures-util = { workspace = true }
 ort = { version = "2.0.0-rc.10", optional = true, default-features = false, features = ["download-binaries", "ndarray", "std", "tls-rustls"] }
-tokenizers = { version = "0.21", optional = true, default-features = false, features = ["onig"] }
+tokenizers = { version = "0.23", optional = true, default-features = false, features = ["onig"] }
 
 [dev-dependencies]
 tokio = { workspace = true }
