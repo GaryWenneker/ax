@@ -75,6 +75,12 @@ async fn project_conversation(
     .map_err(|e| e.to_string())
 }
 
+/// False for the actions that only read durable state. Retention cleanup runs
+/// only after a write, as the docs promise.
+fn durable_action_writes(action: &str) -> bool {
+    !matches!(action, "read" | "search" | "doc_get" | "task_resume")
+}
+
 async fn project_apply_with(
     pool: &SqlitePool,
     root: &std::path::Path,
@@ -99,7 +105,9 @@ async fn project_apply_with(
         }
     }
     let text = apply_with(pool, &conversation, request).await?;
-    crate::retention::maybe_prune_durable(pool, root).await;
+    if durable_action_writes(action) {
+        crate::retention::maybe_prune_durable(pool, root).await;
+    }
     if matches!(action, "fork" | "handoff") {
         if let Some(child) = text
             .split("child=")
@@ -1491,5 +1499,53 @@ mod tests {
             .unwrap();
         assert!(!read.contains("ANCIENT"), "{read}");
         assert!(read.contains("now"), "{read}");
+    }
+
+    #[tokio::test]
+    async fn a_read_only_durable_call_does_not_prune() {
+        let pool = pool().await;
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join(".ax")).unwrap();
+        std::fs::write(
+            root.path().join(".ax/ship.toml"),
+            "[retention]\ndurable_days = 30\n",
+        )
+        .unwrap();
+        let conversation = project_conversation(&pool, root.path(), "s").await.unwrap();
+        ensure_conversation(&pool, &conversation, None, None)
+            .await
+            .unwrap();
+        insert_old_entry(&pool, &conversation, "ANCIENT").await;
+        for request in [
+            json!({"action":"read"}),
+            json!({"action":"search","query":"ANCIENT"}),
+            json!({"action":"doc_get","name":"missing"}),
+        ] {
+            let _ = project_apply_with(&pool, root.path(), "s", &request).await;
+        }
+        let read = project_apply_with(&pool, root.path(), "s", &json!({"action":"read"}))
+            .await
+            .unwrap();
+        assert!(read.contains("ANCIENT"), "{read}");
+    }
+
+    #[test]
+    fn only_writing_durable_actions_trigger_cleanup() {
+        for action in ["read", "search", "doc_get", "task_resume"] {
+            assert!(!durable_action_writes(action), "{action}");
+        }
+        for action in [
+            "append",
+            "compact",
+            "fork",
+            "handoff",
+            "doc_put",
+            "task_start",
+            "task_checkpoint",
+            "task_finish",
+            "hook",
+        ] {
+            assert!(durable_action_writes(action), "{action}");
+        }
     }
 }

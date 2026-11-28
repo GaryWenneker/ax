@@ -210,8 +210,8 @@ By default ax deletes none of this project's history: the activity events behind
 | `verbose_log_days` | A dated log file for day D is deleted when D is before today minus this many days (in the `[ui].timezone` rotation day). |
 | `verbose_log_max_bytes` | The newest log files are kept up to this total size; older files are deleted. |
 
-- A missing key, `0`, or a value that does not parse (for example a negative number or a string) means no limit. If `ship.toml` cannot be parsed at all, nothing is deleted.
-- Cleanup runs at the same points as the cache TTL cleanup: activity and durable limits when this project writes an activity event or a durable entry (at most once every five minutes per process), and log limits when the log rotates to a new day. Today's log file is never deleted, and an unmigrated legacy `mcp-verbose.log` is left alone. Dated files received from other nodes under `.ax/server/replicated-logs/` count toward the same limits.
+- A missing key, `0`, or a value that does not parse (for example a negative number or a string) means no limit for that key only; the other keys still apply, and ax logs a warning naming the ignored key. If `ship.toml` cannot be parsed at all, nothing is deleted.
+- Cleanup runs at the same points as the cache TTL cleanup: activity and durable limits when this project writes an activity event or a durable entry (an `ax_durable` call that only reads, such as `read`, `search`, `doc_get` or `task_resume`, does not start it; at most once every five minutes per process), and log limits when the log rotates to a new day. Today's log file is never deleted, and an unmigrated legacy `mcp-verbose.log` is left alone. Dated files received from other nodes under `.ax/server/replicated-logs/` count toward the same limits.
 - Only this project's rows are deleted. Durable transcripts written before project scoping existed are never touched. Deleted rows and files cannot be recovered.
 
 Set the PAT in your environment before draft PR or review commands:

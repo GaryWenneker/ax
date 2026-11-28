@@ -14,16 +14,16 @@
 //! verbose_log_max_bytes = 0
 //! ```
 //!
-//! A missing, zero or unreadable value means "keep everything". Cleanup runs
-//! where the existing cache TTL cleanup runs: when a row of that kind is
-//! written (activity, durable) and when the verbose log rotates to a new day.
+//! A missing, zero or unreadable value means "keep everything" for that key;
+//! the other keys still apply. Cleanup runs where the existing cache TTL
+//! cleanup runs: when a row of that kind is written (activity, durable) and
+//! when the verbose log rotates to a new day.
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
 use chrono::NaiveDate;
-use serde::Deserialize;
 use sqlx::SqlitePool;
 
 const DAY_SECS: i64 = 24 * 60 * 60;
@@ -61,36 +61,37 @@ pub struct RetentionSettings {
     pub verbose_log: RetentionLimit,
 }
 
-#[derive(Debug, Deserialize, Default)]
-struct ShipRetentionFile {
-    #[serde(default)]
-    retention: RetentionSection,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct RetentionSection {
-    activity_days: Option<u32>,
-    activity_max_bytes: Option<u64>,
-    durable_days: Option<u32>,
-    durable_max_bytes: Option<u64>,
-    verbose_log_days: Option<u32>,
-    verbose_log_max_bytes: Option<u64>,
-}
-
-/// Parse the `[retention]` section from ship.toml text. Text that does not
-/// parse gives the default (keep everything), so a typo never deletes data.
+/// Parse the `[retention]` section from ship.toml text. Each key is read on
+/// its own: a key whose value is not a non-negative whole number in range is
+/// ignored with a warning and means no limit for that key only. Text that is
+/// not TOML gives the default (keep everything), so a typo never deletes data.
 pub fn parse_retention_settings(text: &str) -> RetentionSettings {
-    let section = match toml::from_str::<ShipRetentionFile>(text) {
-        Ok(file) => file.retention,
+    let file = match text.parse::<toml::Table>() {
+        Ok(file) => file,
         Err(err) => {
             tracing::warn!("ship.toml [retention] ignored, keeping all history: {err}");
             return RetentionSettings::default();
         }
     };
+    let Some(section) = file.get("retention").and_then(toml::Value::as_table) else {
+        return RetentionSettings::default();
+    };
+    let key = |name: &str| -> Option<i64> {
+        let value = section.get(name)?;
+        match value.as_integer().filter(|n| *n >= 0) {
+            Some(n) => Some(n),
+            None => {
+                tracing::warn!("ship.toml [retention] {name} = {value} ignored: not a whole number of 0 or more");
+                None
+            }
+        }
+    };
+    let days = |name: &str| key(name).and_then(|n| u32::try_from(n).ok());
+    let bytes = |name: &str| key(name).and_then(|n| u64::try_from(n).ok());
     RetentionSettings {
-        activity: RetentionLimit::new(section.activity_days, section.activity_max_bytes),
-        durable: RetentionLimit::new(section.durable_days, section.durable_max_bytes),
-        verbose_log: RetentionLimit::new(section.verbose_log_days, section.verbose_log_max_bytes),
+        activity: RetentionLimit::new(days("activity_days"), bytes("activity_max_bytes")),
+        durable: RetentionLimit::new(days("durable_days"), bytes("durable_max_bytes")),
+        verbose_log: RetentionLimit::new(days("verbose_log_days"), bytes("verbose_log_max_bytes")),
     }
 }
 
@@ -307,6 +308,17 @@ mod tests {
         assert_eq!(s.activity, RetentionLimit::new(Some(90), None));
         assert_eq!(s.durable, RetentionLimit::new(None, Some(1000)));
         assert_eq!(s.verbose_log, RetentionLimit::new(Some(30), Some(5000)));
+    }
+
+    #[test]
+    fn one_invalid_key_leaves_the_other_limits_in_place() {
+        let s = parse_retention_settings(
+            "[retention]\nactivity_days = \"soon\"\nactivity_max_bytes = 500\n\
+             durable_days = -1\nverbose_log_days = 30\n",
+        );
+        assert_eq!(s.activity, RetentionLimit::new(None, Some(500)));
+        assert!(s.durable.is_unlimited());
+        assert_eq!(s.verbose_log, RetentionLimit::new(Some(30), None));
     }
 
     #[test]
