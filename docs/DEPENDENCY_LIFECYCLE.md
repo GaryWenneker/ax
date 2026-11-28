@@ -7,12 +7,19 @@ claims that all packages are vulnerability-free.
 
 ## Coverage
 
+`scripts/test_dependency_age.py` lists every tracked `package-lock.json` with
+`git ls-files` and fails when one is missing from the age and advisory checks,
+the monitor and autofix matrices, `lcm_autofix.py` or Dependabot.
+
 | Ecosystem | Package sources | Automated update proposals | Security monitoring |
 | --- | --- | --- | --- |
 | Rust | `Cargo.toml`, `Cargo.lock` | Dependabot daily, 7-day cooldown | Daily RustSec audit |
 | npm | `site/package-lock.json` | Dependabot daily, 7-day cooldown | Daily npm audit |
 | npm | `telemetry-worker/package-lock.json` | Dependabot daily, 7-day cooldown | Daily npm audit |
 | npm | `crates/ax-web/web-ui/package-lock.json` | Dependabot daily, 7-day cooldown | Daily npm audit |
+| npm | `crates/ax-admin/web-ui/package-lock.json` | Dependabot daily, 7-day cooldown | Daily npm audit |
+| npm | `ide/vscode/package-lock.json` | Dependabot daily, 7-day cooldown | Daily npm audit |
+| npm | `obsidian/getax/package-lock.json` | Dependabot daily, 7-day cooldown | Daily npm audit |
 | GitHub Actions | `.github/workflows/*` | Dependabot daily, 7-day cooldown | Dependabot security alerts |
 
 Dependabot checks for ordinary version updates on weekdays. GitHub security
@@ -27,8 +34,9 @@ AX has two complementary automated proposal paths:
    updates enabled, it also opens advisory-driven security PRs.
 2. **Dependency Auto-Remediation** runs on a daily schedule and after changes to
    npm lockfiles on `main`. It attempts a **non-breaking, lockfile-only** npm
-   audit fix for each of `site/`, `telemetry-worker/`, and
-   `crates/ax-web/web-ui/`. It only creates or updates a PR when the affected
+   audit fix for each tracked npm project: `site/`, `telemetry-worker/`,
+   `crates/ax-web/web-ui/`, `crates/ax-admin/web-ui/`, `ide/vscode/` and
+   `obsidian/getax/`. It only creates or updates a PR when the affected
    project's vulnerability count strictly decreases at one or more severity
    levels, no severity count increases, the candidate passes a full 168-hour
    registry publication-age check, the new versions have no known OSV advisories, and `npm ci --dry-run` succeeds.
@@ -71,7 +79,7 @@ claim that the change has been application-tested.
 - Regular Dependabot **version-update** PRs are delayed until versions are at
   least **7 days (168 hours)** old.
 - Every pull request runs `minimum-release-age-7-days`: it compares the checked-in
-  `Cargo.lock` and the three npm lockfiles against the PR target branch.
+  `Cargo.lock` and every tracked npm lockfile against the PR target branch.
   Each **newly introduced or changed registry package version**, including
   transitive dependencies, must have a verifiable publication date at least
   168 hours before the check. Existing unchanged versions are grandfathered.
@@ -113,7 +121,7 @@ python3.12 scripts/check_dependency_age.py --base origin/main
 - [Automatic safe-fix PR workflow](https://github.com/GaryWenneker/ax/actions/workflows/dependency-autofix.yml):
   only lockfile-only, non-breaking npm advisory reductions are proposed.
 - [Daily lifecycle scan](https://github.com/GaryWenneker/ax/actions/workflows/dependency-monitor.yml):
-  RustSec against `Cargo.lock` and `npm audit` for the three npm lockfiles.
+  RustSec against `Cargo.lock` and `npm audit` for every tracked npm lockfile.
   A failed scan is an actionable warning, not proof that a release is compromised.
 - [PR dependency review](https://github.com/GaryWenneker/ax/actions/workflows/dependency-policy.yml):
   block newly introduced versions with **any known OSV advisory**, without requiring GitHub Dependency Graph.

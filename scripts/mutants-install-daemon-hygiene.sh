@@ -8,6 +8,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/lib/restore-on-exit.sh"
 
 CMDS=crates/ax-cli/src/commands/mod.rs
 SYNC=crates/ax-cli/src/commands/sync.rs
@@ -75,6 +76,7 @@ mutant() {
     echo "applies  $id"
     return
   fi
+  ax_guard_file "$file"
   perl -0pi -e "$expr" "$file"
   if git diff --quiet -- "$file"; then
     restore "$file"

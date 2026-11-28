@@ -5,6 +5,7 @@
 # with `ax web` on :7070); the server mutant runs the Rust links_api test.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/restore-on-exit.sh"
 UI="$ROOT/crates/ax-web/web-ui"
 
 unit() { (cd "$UI" && node --experimental-strip-types --test src/lib/linkPicker.test.ts >/dev/null 2>&1); }
@@ -18,7 +19,8 @@ killed=0; total=0
 mutant() {
   local suite=$1 file=$2 from=$3 to=$4
   total=$((total + 1))
-  cp "$file" "$file.orig"
+  ax_guard_file "$file"
+  cp "$file" "$AX_GUARD_TMP/orig"
   if ! python3 -c '
 import sys
 p, a, b = sys.argv[1:]
@@ -27,12 +29,12 @@ if a not in s:
     sys.exit(f"mutant anchor missing: {a}")
 open(p, "w").write(s.replace(a, b, 1))
 ' "$file" "$from" "$to"; then
-    mv "$file.orig" "$file"
+    mv "$AX_GUARD_TMP/orig" "$file"
     exit 1
   fi
   [ "$suite" = ui ] && sleep 2
   if "$suite"; then echo "SURVIVED [$suite] $file :: $from"; else echo "killed   [$suite] $file :: $from"; killed=$((killed + 1)); fi
-  mv "$file.orig" "$file"
+  mv "$AX_GUARD_TMP/orig" "$file"
   touch "$file"
 }
 

@@ -275,20 +275,30 @@ including an MCP check and the SDK call.
 ### Hosted remote MCP server (Azure, Render, Koyeb)
 
 `ax-serve-repo` (`slim/ax-serve-repo.sh`, the entry point of the `-server`
-image and also in `-ubuntu`) clones
-`AX_REPO_URL`, runs `ax init`, writes a remote configuration that grants
+image and also in `-ubuntu`) fetches
+`AX_REPO_URL` (at `AX_REPO_REF`, the default branch otherwise), runs `ax init`, writes a remote configuration that grants
 `AX_API_KEY` (stored only as its SHA-256) and runs
 `ax mcp remote serve --bind 0.0.0.0 --port $PORT`. Clients connect to
 `https://<service>/projects/project/mcp` with `Authorization: Bearer <key>`.
 The public URL comes from `AX_PUBLIC_URL` or is detected on Render, Koyeb,
-Railway and Azure Container Apps. The website's guide (Deploy to the cloud) has
+Railway and Azure Container Apps. An existing checkout in `AX_WORKDIR` is
+fetched again on every start, so a restart picks up new commits and a changed
+`AX_REPO_REF`. When that fetch fails (a network error, a GitHub outage, an
+expired token) the existing checkout is served as it is and a warning names its
+commit; only a start without a checkout fails. `ax-index-repo` fails the job
+instead. A token in `AX_REPO_URL` is used for the fetch only; the
+checkout's `origin` is stored without it. The website's guide (Deploy to the cloud) has
 the buttons:
 
-- Azure: `slim/azure/azuredeploy-server.json` (always-on Container App).
+- Azure: `slim/azure/azuredeploy-server.json` (always-on Container App). Nothing
+  answers `/health` until the clone and `ax init` finish; the `startupMinutes`
+  parameter (5-40, default 40) is how long the startup probe waits for that.
 - Render: `render.yaml` at the repository root.
-- Build the image locally with `docker build -f slim/Dockerfile --target server .`
-- Koyeb: a deploy URL with the image, command and variables
+- Koyeb: a deploy URL with the `-server` image and variables, with no command
+  override, so the image's `ax-serve-repo` entry point runs
   (`site/src/lib/cloud-deploy.mjs`).
+
+Build the image locally with `docker build -f slim/Dockerfile --target server .`
 
 Locally, the same container:
 
@@ -314,7 +324,9 @@ az deployment group create --resource-group my-rg --template-file slim/azure/azu
 `slim/azure/create-job.sh` creates (or updates) a manual job from the
 `-ubuntu` image. The job runs `ax-index-repo` (`slim/ax-index-repo.sh`), which
 clones `AX_REPO_URL`, runs `ax init` and then `AX_JOB_COMMAND`. The repository
-URL is stored as a job secret.
+URL is stored as a job secret and reaches `az` through a private temporary file,
+not its command line. For a URL with a token, set `AX_REPO_URL` instead of
+`--repo` so the token stays out of the process list and shell history.
 
 ```bash
 slim/azure/create-job.sh --resource-group my-rg --environment my-env --location westeurope --repo https://github.com/<owner>/<repo> --version <version> --start

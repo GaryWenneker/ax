@@ -6,11 +6,16 @@
 #   curl -fsSL https://getax.wenneker.io/install.sh | sh
 #
 # Always installs the latest published release (highest semver with assets).
-# Self-heals before download: stops ax, clears stuck upgrade-status/staging,
-# drops invalid AX_VERSION pins, and retries GitHub without a bad token.
+# Resolves, downloads, checks (SHA256SUMS) and unpacks the release first; only then it stops ax,
+# clears stuck upgrade-status/staging and swaps the new program in. It also
+# drops invalid AX_VERSION pins and retries GitHub without a rejected token
+# (stored GITHUB_TOKEN/GH_TOKEN values are never changed).
 # Pin a version: AX_VERSION=v2.0.14 curl -fsSL ... | sh
 # Upgrade: ax upgrade  (or re-run this script)
 # Uninstall: curl -fsSL https://getax.wenneker.io/install.sh | sh -s -- --uninstall
+#   Removes the program and the PATH lines; keeps ~/.ax data (database, policy,
+#   memories, sign-ins). Add --purge (and --yes when not interactive) to delete
+#   that data as well.
 set -eu
 
 REPO="${AX_GITHUB_REPO:-GaryWenneker/ax}"
@@ -40,44 +45,74 @@ clear_pending_upgrade_state() {
     echo "ax: cleared stuck upgrade-status.txt" >&2
   fi
   find "$INSTALL_DIR" -maxdepth 1 -type d -name 'upgrade-staging-*' -exec rm -rf {} + 2>/dev/null || true
-  if [ -d "$INSTALL_DIR/current.old" ]; then
-    rm -rf "$INSTALL_DIR/current.old"
-    echo "ax: removed parked current.old" >&2
-  fi
+  # Unpacked bundles from an install that failed or was interrupted; this install's own stays.
+  find "$INSTALL_DIR" -maxdepth 1 -type d -name '.install-new-*' ! -name ".install-new-$$" \
+    -exec rm -rf {} + 2>/dev/null || true
+  for ax_old in "$INSTALL_DIR"/current.old "$INSTALL_DIR"/current.old.*; do
+    if [ -d "$ax_old" ] && rm -rf "$ax_old" 2>/dev/null; then
+      echo "ax: removed parked ${ax_old##*/}" >&2
+    fi
+  done
 }
 
-disable_stale_github_tokens() {
-  clear_user="${1:-}"
+skip_github_token() {
+  # Drops the token for this install only; stored environment variables are never changed.
   for name in GITHUB_TOKEN GH_TOKEN; do
     eval "val=\${$name-}"
     if [ -n "$val" ]; then
       unset "$name"
-      echo "ax: ignoring process $name for this install (auth failed)." >&2
+      echo "ax: not using $name for the rest of this install ($1)." >&2
     fi
   done
-  if [ "$clear_user" = "user" ] && command -v powershell.exe >/dev/null 2>&1; then
-    for name in GITHUB_TOKEN GH_TOKEN; do
-      stored="$(powershell.exe -NoProfile -Command "[Environment]::GetEnvironmentVariable('$name','User')" 2>/dev/null || true)"
-      if [ -n "$stored" ]; then
-        powershell.exe -NoProfile -Command "[Environment]::SetEnvironmentVariable('$name', \$null, 'User')" 2>/dev/null || true
-        echo "ax: cleared stale $name from User environment." >&2
-      fi
-    done
+}
+
+suggest_token_cleanup() {
+  echo "ax: GitHub rejected the token in GITHUB_TOKEN/GH_TOKEN. If it is no longer valid, remove it where you set it." >&2
+  if command -v powershell.exe >/dev/null 2>&1; then
+    echo "ax: to remove a token stored in the Windows User environment, run in PowerShell:" >&2
+    echo "  [Environment]::SetEnvironmentVariable('GITHUB_TOKEN', \$null, 'User')" >&2
+    echo "  [Environment]::SetEnvironmentVariable('GH_TOKEN', \$null, 'User')" >&2
   fi
 }
 
-clean_install_tree() {
+swap_install_tree() {
+  # Replaces the working install with an unpacked one; on failure the old one comes back.
+  ax_new="$1"
+  ax_live="$INSTALL_DIR/current"
   stop_ax_processes
   clear_pending_upgrade_state
-  rm -rf "$INSTALL_DIR/current" "$INSTALL_DIR/versions"
+  # mv into an existing directory would nest the live tree inside it, so a parked
+  # tree that could not be removed gets a unique name instead.
+  ax_parked="$ax_live.old"
+  rm -rf "$ax_parked" 2>/dev/null || true
+  if [ -e "$ax_parked" ]; then ax_parked="$ax_live.old.$$"; fi
+  if [ -e "$ax_live" ] && ! mv "$ax_live" "$ax_parked"; then
+    echo "ax: cannot move $ax_live aside; the current install was left as it was." >&2
+    return 1
+  fi
+  if mv "$ax_new" "$ax_live"; then
+    rm -rf "$ax_parked" "$INSTALL_DIR/versions"
+    return 0
+  fi
+  echo "ax: could not activate the new install; restoring the previous one." >&2
+  if [ -e "$ax_parked" ]; then mv "$ax_parked" "$ax_live"; fi
+  return 1
 }
 
-if [ "${1:-}" = "--uninstall" ]; then
-  stop_ax_processes
-  rm -f "$BIN_DIR/ax"
-  rm -rf "$INSTALL_DIR"
-  echo "ax uninstalled (removed $INSTALL_DIR and $BIN_DIR/ax)."
-  exit 0
+ax_uninstall=0
+ax_purge=0
+ax_yes=0
+for ax_arg in "$@"; do
+  case "$ax_arg" in
+    --uninstall) ax_uninstall=1 ;;
+    --purge) ax_purge=1 ;;
+    --yes|-y) ax_yes=1 ;;
+    *) echo "ax: unknown option '$ax_arg' (supported: --uninstall [--purge [--yes]])." >&2; exit 1 ;;
+  esac
+done
+if [ "$ax_purge" = 1 ] && [ "$ax_uninstall" != 1 ]; then
+  echo "ax: --purge only works together with --uninstall." >&2
+  exit 1
 fi
 
 os="$(uname -s)"
@@ -125,10 +160,13 @@ for r in data:
         continue
     if any(a.get("name") == asset for a in r.get("assets", [])):
         tags.append(r["tag_name"])
+# Rank by the leading MAJOR[.MINOR[.PATCH]]; a tag without one is skipped.
 def key(t):
-    return tuple(int(x) for x in re.sub(r"^v", "", t).split("."))
-if tags:
-    print(max(tags, key=key))
+    m = re.match(r"v?(\d+)(?:\.(\d+))?(?:\.(\d+))?", t.strip())
+    return tuple(int(x or 0) for x in m.groups()) if m else None
+ranked = [t for t in tags if key(t) is not None]
+if ranked:
+    print(max(ranked, key=key))
 ' "$asset" 2>/dev/null
 }
 
@@ -175,16 +213,27 @@ resolve_version_from_api() {
         echo "ax: GitHub API returned releases but none include $asset." >&2
         return 1
         ;;
-      401|403)
-        echo "ax: GitHub API $attempt failed: HTTP $code" >&2
-        disable_stale_github_tokens user
+      401)
+        echo "ax: GitHub API $attempt failed: HTTP 401 (bad credentials)." >&2
+        [ "$attempt" = "with_token" ] && suggest_token_cleanup
+        skip_github_token "GitHub returned 401"
+        token=""
+        continue
+        ;;
+      403)
+        if grep -qi 'rate limit' "$tmp" 2>/dev/null; then
+          echo "ax: GitHub API rate limit reached ($attempt)." >&2
+        else
+          echo "ax: GitHub API $attempt failed: HTTP 403" >&2
+        fi
+        skip_github_token "GitHub returned 403"
         token=""
         continue
         ;;
       *)
         if [ "$attempt" = "with_token" ]; then
           echo "ax: GitHub API with token failed (HTTP $code); retrying without token." >&2
-          disable_stale_github_tokens
+          skip_github_token "GitHub returned HTTP $code"
           token=""
           continue
         fi
@@ -330,10 +379,14 @@ quote_shell_path() {
   printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
+profile_path_line() {
+  ax_quoted_bin="$(quote_shell_path "$BIN_DIR")"
+  printf '%s\n' "case \"\$PATH:\" in $ax_quoted_bin:*|*:$ax_quoted_bin:*) ;; *) export PATH=$ax_quoted_bin:\"\$PATH\" ;; esac"
+}
+
 append_path_profile() {
   ax_profile="$1"
-  ax_quoted_bin="$(quote_shell_path "$BIN_DIR")"
-  ax_path_line="case \"\$PATH:\" in $ax_quoted_bin:*|*:$ax_quoted_bin:*) ;; *) export PATH=$ax_quoted_bin:\"\$PATH\" ;; esac"
+  ax_path_line="$(profile_path_line)"
   if [ -f "$ax_profile" ] && grep -Fqx "$ax_path_line" "$ax_profile"; then
     echo "PATH configured: $ax_profile (already present)"
     return 0
@@ -373,9 +426,138 @@ show_session_path() {
   printf '  export PATH=%s:"$PATH"\n' "$(quote_shell_path "$BIN_DIR")"
 }
 
-# Kill stale ax and remove previous install before download.
-clean_install_tree
+remove_path_profile() {
+  # Drops the block append_path_profile wrote; every other line stays as it was.
+  ax_profile="$1"
+  [ -f "$ax_profile" ] || return 0
+  ax_path_line="$(profile_path_line)"
+  grep -Fqx "$ax_path_line" "$ax_profile" || return 0
+  ax_profile_tmp="$(mktemp)"
+  if AX_PATH_LINE="$ax_path_line" awk '
+    { line[NR] = $0 }
+    END {
+      target = ENVIRON["AX_PATH_LINE"]
+      out = 0
+      for (i = 1; i <= NR; i++) {
+        if (line[i] == "# ax PATH" && line[i + 1] == target) {
+          if (out > 0 && kept[out] == "") out--
+          i++
+          continue
+        }
+        if (line[i] == target) continue
+        kept[++out] = line[i]
+      }
+      for (i = 1; i <= out; i++) print kept[i]
+    }' "$ax_profile" >"$ax_profile_tmp" && cat "$ax_profile_tmp" >"$ax_profile"; then
+    echo "PATH removed: $ax_profile"
+  else
+    echo "ax: could not update $ax_profile; remove the '# ax PATH' lines by hand." >&2
+  fi
+  rm -f "$ax_profile_tmp"
+}
 
+purge_target_is_safe() {
+  ax_dir="${INSTALL_DIR%/}"
+  [ -n "$ax_dir" ] || return 1
+  [ "$ax_dir" != "${HOME%/}" ] || return 1
+  case "${ax_dir##*/}" in
+    .ax|ax|.ax[-_.]*|ax[-_.]*|*[-_.]ax) return 0 ;;
+  esac
+  return 1
+}
+
+confirm_purge() {
+  [ "$ax_yes" = 1 ] && return 0
+  if [ -t 2 ] && { : </dev/tty; } 2>/dev/null; then
+    printf 'Delete %s with all ax data in it (database, policy, memories, sign-ins)? [y/N] ' "$INSTALL_DIR" >/dev/tty
+    ax_answer=""
+    read -r ax_answer </dev/tty || ax_answer=""
+    case "$ax_answer" in y|Y|yes|YES|Yes) return 0 ;; esac
+    return 1
+  fi
+  echo "ax: --purge deletes $INSTALL_DIR with all ax data in it; re-run with --uninstall --purge --yes to confirm." >&2
+  return 1
+}
+
+uninstall_ax() {
+  if [ "$ax_purge" = 1 ]; then
+    if ! purge_target_is_safe; then
+      echo "ax: refusing to purge '$INSTALL_DIR': it is not an ax-specific directory. Remove ax data by hand." >&2
+      exit 1
+    fi
+    confirm_purge || { echo "ax: nothing was removed." >&2; exit 1; }
+  fi
+  stop_ax_processes
+  rm -f "$BIN_DIR/ax"
+  if [ -d "$INSTALL_DIR" ]; then
+    clear_pending_upgrade_state
+    rm -rf "$INSTALL_DIR/current" "$INSTALL_DIR/versions"
+  fi
+  for ax_profile in "${ZDOTDIR:-$HOME}/.zshrc" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+    remove_path_profile "$ax_profile"
+  done
+  if [ "$ax_purge" = 1 ]; then
+    rm -rf "$INSTALL_DIR"
+    echo "ax uninstalled and purged (removed $BIN_DIR/ax and $INSTALL_DIR)."
+  else
+    rmdir "$INSTALL_DIR" 2>/dev/null || true
+    echo "ax uninstalled (removed $BIN_DIR/ax and the program in $INSTALL_DIR)."
+    if [ -d "$INSTALL_DIR" ]; then
+      echo "Kept ax data in $INSTALL_DIR. To delete it too: sh -s -- --uninstall --purge"
+    fi
+  fi
+}
+
+if [ "$ax_uninstall" = 1 ]; then
+  uninstall_ax
+  exit 0
+fi
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{ print $1 }'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{ print $1 }'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 -r "$1" | awk '{ print $1 }'
+  else
+    return 1
+  fi
+}
+
+verify_archive() {
+  # Args: archive asset_name sums_path. Checks the archive against the release's
+  # SHA256SUMS, taken from GitHub; the mirror's copy is used only when GitHub is unreachable.
+  ax_archive="$1"
+  ax_asset="$2"
+  ax_sums="$3"
+  if ! curl -fsSL "https://github.com/$REPO/releases/download/$version/SHA256SUMS" -o "$ax_sums" 2>/dev/null; then
+    if curl -fsSL "$DOWNLOAD_BASE/$version/SHA256SUMS" -o "$ax_sums" 2>/dev/null; then
+      echo "ax: GitHub is unreachable; checking the archive against the mirror's SHA256SUMS." >&2
+    else
+      echo "ax: could not download SHA256SUMS for $version; the archive was not installed." >&2
+      return 1
+    fi
+  fi
+  ax_expected="$(awk -v a="$ax_asset" '{ f = $2; sub(/^\*/, "", f) } f == a { print tolower($1); exit }' "$ax_sums")"
+  if [ -z "$ax_expected" ]; then
+    echo "ax: SHA256SUMS of $version has no entry for $ax_asset; the archive was not installed." >&2
+    return 1
+  fi
+  if ! ax_actual="$(sha256_of "$ax_archive")" || [ -z "$ax_actual" ]; then
+    echo "ax: no sha256sum, shasum or openssl found to check the archive; install one and re-run." >&2
+    return 1
+  fi
+  if [ "$ax_actual" != "$ax_expected" ]; then
+    echo "ax: checksum mismatch for $ax_asset (expected $ax_expected, got $ax_actual); the archive was not installed." >&2
+    return 1
+  fi
+  echo "  checksum verified: $ax_asset"
+}
+
+# ---- install steps ----
+# Resolve, download and unpack first: a failure up to the swap leaves the working
+# install and the running ax processes alone.
 version="$(resolve_version)" || {
   echo "ax: could not resolve a release with downloadable assets; set AX_VERSION." >&2
   exit 1
@@ -387,6 +569,8 @@ github_url="https://github.com/$REPO/releases/download/$version/ax-${target}.tar
 echo "Installing ax $version ($target) — latest available..."
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+# POSIX sh skips the EXIT trap when a signal ends the script; exiting from the signal runs it.
+trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
 
 if curl -fsSL "$github_url" -o "$tmp/ax.tar.gz" 2>/dev/null; then
   echo "  downloaded from: $github_url"
@@ -400,12 +584,21 @@ else
   exit 1
 fi
 
-stop_ax_processes
+verify_archive "$tmp/ax.tar.gz" "ax-${target}.tar.gz" "$tmp/SHA256SUMS" || exit 1
+
+mkdir -p "$INSTALL_DIR"
+staged="$INSTALL_DIR/.install-new-$$"
+rm -rf "$staged"
+mkdir -p "$staged"
+trap 'rm -rf "$tmp" "$staged"' EXIT
+if ! tar -xzf "$tmp/ax.tar.gz" -C "$staged" --strip-components=1 || [ ! -f "$staged/ax" ]; then
+  echo "ax: the downloaded archive does not contain ax; the current install was left as it was." >&2
+  exit 1
+fi
+chmod +x "$staged/ax" 2>/dev/null || true
 
 dest="$INSTALL_DIR/current"
-mkdir -p "$dest"
-tar -xzf "$tmp/ax.tar.gz" -C "$dest" --strip-components=1
-chmod +x "$dest/ax" 2>/dev/null || true
+swap_install_tree "$staged" || exit 1
 
 mkdir -p "$BIN_DIR"
 sync_local_ax_instances "$dest/ax"

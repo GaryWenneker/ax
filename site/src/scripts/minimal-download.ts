@@ -75,6 +75,8 @@ export function mountMinimalDownload(): void {
   const guide = root.querySelector<HTMLAnchorElement>('[data-ax-guide]');
   if (!main || !title || !icon || !summary || !toggle || !panel || !help || !install || !code || !instruction || !copy || !status) return;
   root.dataset.ready = 'true';
+  /** The Astro base ('' or e.g. '/ax'), so rewritten links work on the mirror too. */
+  const siteBase = (root.dataset.axBase ?? '').replace(/\/$/, '');
   let os: InstallOS | null = null;
   let product: Product = 'ax';
   const buttons = [...root.querySelectorAll<HTMLButtonElement>('[data-ax-os]')];
@@ -120,7 +122,7 @@ export function mountMinimalDownload(): void {
     });
     productButtons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.axProduct === product)));
     if (help) help.textContent = installProducts[product].help;
-    if (guide) guide.href = installProducts[product].guide;
+    if (guide) guide.href = siteBase + installProducts[product].guide;
     status.textContent = '';
     title.textContent = os ? productTitle(product, os) : 'Choose your platform';
     summary.textContent = os ? `${osLabel[os]} · ${installerShell(os)}` : 'Select your development computer';

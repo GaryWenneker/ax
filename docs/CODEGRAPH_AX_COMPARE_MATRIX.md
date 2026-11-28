@@ -597,7 +597,7 @@ Infrastructure and hosting that lives outside the Rust workspace but is required
 | Telemetry worker | `telemetry.getcodegraph.com` | `telemetry.getax.wenneker.io` + `telemetry-worker/` | ✅ code; 🟡 live deploy needs Cloudflare + PostHog secrets |
 | Telemetry GH deploy workflow | Yes | `deploy-telemetry.yml` + `wrangler.workers-dev.jsonc` | ✅ |
 | Docs / marketing site | Vite `site/` + GH Pages | Astro Starlight `site/` + `deploy-site.yml` | ✅ https://garywenneker.github.io/ax/ |
-| Ops runbook | `TELEMETRY.md`, release docs | `docs/PRODUCTION.md`, `scripts/bootstrap-ops.ps1` | ✅ |
+| Ops runbook | `TELEMETRY.md`, release docs | `docs/PRODUCTION.md` | ✅ |
 | First tagged release | Published on CG repo | `v0.1.0` on GitHub (4/6 assets live) | ✅ partial — `darwin-x64` + `win32-arm64` pending CI re-run |
 | Docs site live | getcodegraph.com | https://garywenneker.github.io/ax/ | ✅ |
 
@@ -605,7 +605,6 @@ Infrastructure and hosting that lives outside the Rust workspace but is required
 
 | Step | Command |
 |------|---------|
-| Bootstrap git + GitHub + tag | `.\scripts\bootstrap-ops.ps1` |
 | Verify release assets | GitHub → Actions → Release → Releases |
 | Windows install smoke | `irm .../install.ps1 \| iex` or `ax upgrade` |
 | Telemetry (custom domain) | Cloudflare zone `wenneker.io` + `scripts\deploy-telemetry.ps1` |

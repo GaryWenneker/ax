@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Manual mutants for the policy link-origin fix. Each mutant must make the unit suite fail.
 set -euo pipefail
+scripts_dir="$(cd "$(dirname "$0")" && pwd)"
+source "$scripts_dir/lib/restore-on-exit.sh"
 cd "$(dirname "$0")/../crates/ax-web/web-ui"
 
 run_suite() { node --experimental-strip-types --test src/lib/policySelection.test.ts src/lib/routes.test.ts >/dev/null 2>&1; }
@@ -11,7 +13,8 @@ killed=0; total=0
 mutant() {
   local file=$1 from=$2 to=$3
   total=$((total + 1))
-  cp "$file" "$file.orig"
+  ax_guard_file "$file"
+  cp "$file" "$AX_GUARD_TMP/orig"
   python3 - "$file" "$from" "$to" <<'PY'
 import sys
 p, a, b = sys.argv[1:]
@@ -21,7 +24,7 @@ if a not in s:
 open(p, "w").write(s.replace(a, b, 1))
 PY
   if run_suite; then echo "SURVIVED: $file :: $from"; else echo "killed:   $file :: $from"; killed=$((killed + 1)); fi
-  mv "$file.orig" "$file"
+  mv "$AX_GUARD_TMP/orig" "$file"
 }
 
 mutant src/lib/routes.ts "origin: state.origin ?? null," "origin: null,"

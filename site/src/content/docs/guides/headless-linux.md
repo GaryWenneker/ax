@@ -59,7 +59,7 @@ As root it installs to `/usr/local/bin`, otherwise to `~/.local/bin`. Options: `
 curl -fsSL https://getax.wenneker.io/install-slim.sh | sh -s -- --bin-dir /opt/ax/bin
 ```
 
-The installer does not touch agent configuration or create an `~/.ax` install tree, and the headless build never updates itself: run the installer again to upgrade. It refuses to replace a full ax at the same path unless you pass `--force`.
+The installer does not touch agent configuration or create an `~/.ax` install tree, and the headless build never updates itself: run the installer again to upgrade. It refuses to replace a full ax at the same path unless you pass `--force`. It runs the downloaded binary once before it replaces anything, so a binary that does not run on the host leaves your existing `ax` in place.
 
 Container images, for `linux/amd64` and `linux/arm64`, are tagged with the release version without the `v`, and the newest release also as `latest`, `latest-ubuntu` and `latest-server`:
 
@@ -235,7 +235,7 @@ The template is `slim/azure/azuredeploy.json` in the repository; you can also de
 
 #### Deploy from the command line
 
-`slim/azure/create-job.sh` in the repository creates a manual Container Apps job around it, stores the repository URL as a job secret (so a URL with a token stays out of plain environment variables) and can start the first run. It needs the Azure CLI, logged in with `az login`:
+`slim/azure/create-job.sh` in the repository creates a manual Container Apps job around it, stores the repository URL as a job secret (so a URL with a token stays out of plain environment variables) and can start the first run. The URL reaches `az` through a private temporary file, not its command line. For a URL with a token, set `AX_REPO_URL` instead of passing `--repo`, so the token stays out of the process list and shell history too. It needs the Azure CLI, logged in with `az login`:
 
 ```bash
 slim/azure/create-job.sh --resource-group my-rg --environment my-env --location westeurope --repo https://github.com/<owner>/<repo> --version <version> --command "ax status && ax query main" --start
@@ -266,6 +266,8 @@ Authorization: Bearer <AX_API_KEY>
 
 Log Analytics workspace, Container Apps environment and an always-on Container App with HTTPS ingress. The MCP URL is in the deployment's **Outputs**.
 
+The app answers `/health` only after the clone and `ax init` finish. The `startupMinutes` parameter (default and maximum 40, the longest startup probe Container Apps allows) sets how long that may take; a start that runs longer is restarted and starts the clone and index again. For a large repository, choose more CPU.
+
 ### Render
 
 <div class="ax-deploy-row">
@@ -273,6 +275,8 @@ Log Analytics workspace, Container Apps environment and an always-on Container A
 </div>
 
 A web service from `render.yaml` in the repository (plan `starter`). Render generates `AX_API_KEY`; copy it from the service's **Environment** tab.
+
+Render waits for `/health` before it marks a deploy live, and fails a deploy whose health check does not pass within its deploy timeout (about 15 minutes). A repository that takes longer to clone and index on the chosen plan needs a larger plan or the Azure template.
 
 ### Koyeb
 
@@ -284,10 +288,10 @@ A web service from the image. Replace `AX_REPO_URL` and `AX_API_KEY` in the form
 
 Every deployment asks for:
 
-- **`AX_REPO_URL`**: the git URL to serve. For a private repository, include a read-only token in the URL. Azure stores it as a secret.
+- **`AX_REPO_URL`**: the git URL to serve. For a private repository, include a read-only token in the URL. Azure stores it as a secret. The token is used to fetch only; the checkout's `.git/config` keeps the URL without it.
 - **`AX_API_KEY`**: the bearer key clients send, at least 32 characters (letters, digits and `._~+/=-`). Generate one with `openssl rand -hex 32`. Only its SHA-256 is written to the server configuration.
 
-Optional variables: `AX_REPO_REF` (branch or tag), `AX_API_KEY_WRITE=1` (let the key write memories and policy; read-only otherwise), `AX_PROJECT_ID` (the `project` part of the URL) and `AX_PUBLIC_URL`. The public URL is detected on Azure Container Apps, Render, Koyeb and Railway; set it yourself anywhere else.
+Optional variables: `AX_REPO_REF` (branch or tag; when the checkout survives a restart, for example on a mounted `AX_WORKDIR`, the restart fetches this ref again; if that fetch fails, the existing checkout is served and the log shows a warning with its commit), `AX_API_KEY_WRITE=1` (let the key write memories and policy; read-only otherwise), `AX_PROJECT_ID` (the `project` part of the URL) and `AX_PUBLIC_URL`. The public URL is detected on Azure Container Apps, Render, Koyeb and Railway; set it yourself anywhere else.
 
 The checkout and index live on the container's disk. A restart or redeploy clones and indexes again, so the first requests after a start wait for `ax init`. Nobody can approve a browser (OAuth) sign-in on this server: approving one is done in the Command Center of the full ax, which the headless build does not have. The API key is the only way in.
 

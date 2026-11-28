@@ -34,10 +34,16 @@ export AX_TELEMETRY=0
 unset AX_MCP_TOOLS
 mkdir -p "$HOME"
 
-CONTEXT_KEY="e2e-context-$(uuidgen | tr 'A-Z' 'a-z')"
-ADMIN_KEY="e2e-admin-$(uuidgen | tr 'A-Z' 'a-z')"
-BETA_KEY="e2e-beta-$(uuidgen | tr 'A-Z' 'a-z')"
-sha() { printf '%s' "$1" | shasum -a 256 | cut -d' ' -f1; }
+# Only od and sha256sum (or shasum on macOS) are needed: minimal images lack uuidgen.
+random_hex() { od -An -tx1 -N16 /dev/urandom | tr -d ' \n'; }
+if command -v sha256sum >/dev/null 2>&1; then
+  sha() { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
+else
+  sha() { printf '%s' "$1" | shasum -a 256 | cut -d' ' -f1; }
+fi
+CONTEXT_KEY="e2e-context-$(random_hex)"
+ADMIN_KEY="e2e-admin-$(random_hex)"
+BETA_KEY="e2e-beta-$(random_hex)"
 
 for project in alpha beta; do
   mkdir -p "$WORK/$project"

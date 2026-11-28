@@ -104,10 +104,15 @@ def php_runtime_pins(root: Path) -> list[str]:
     for path in files:
         pins.extend(declared_php_runtimes(path.read_text(encoding="utf-8")))
     return pins
+# Every tracked package-lock.json. test_dependency_age.py fails when a new
+# lockfile is committed without being added here and to the workflow matrices.
 NPM_LOCKFILES = (
     "site/package-lock.json",
     "telemetry-worker/package-lock.json",
     "crates/ax-web/web-ui/package-lock.json",
+    "crates/ax-admin/web-ui/package-lock.json",
+    "ide/vscode/package-lock.json",
+    "obsidian/getax/package-lock.json",
 )
 CARGO_LOCKFILE = "Cargo.lock"
 USER_AGENT = "ax-dependency-lifecycle/1.0 (https://github.com/GaryWenneker/ax)"

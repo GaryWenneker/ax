@@ -13,19 +13,18 @@ mcp="$HOME/.cursor/mcp.json"
 [[ -e "$shim" ]] || fail "missing PATH shim $shim"
 [[ -x "$shim" ]] || fail "shim not executable: $shim"
 
+is_macho() { file -b "$1" | grep -q 'Mach-O'; }
+
 ft="$(file -b "$shim")"
-echo "$ft" | grep -q 'Mach-O' && fail "shim is Mach-O: $ft"
+is_macho "$shim" && fail "shim is Mach-O: $ft"
 echo "$ft" | grep -Eq 'text|script|POSIX' || fail "shim not a script: $ft"
 
 grep -q "$bin" "$shim" || fail "shim does not exec $bin"
 grep -q '^exec ' "$shim" || fail "shim has no exec"
 
-# Negative control: a Mach-O at the shim path would match this grep.
-if echo 'Mach-O 64-bit executable arm64' | grep -q 'Mach-O'; then
-	:
-else
-	fail "negative control for Mach-O grep is broken"
-fi
+# Negative control: the same Mach-O check recognises the real binary, so a Mach-O
+# copied to the shim path would be caught.
+is_macho "$bin" || fail "negative control: the Mach-O check does not recognise $bin ($(file -b "$bin"))"
 
 [[ -x "$reinstall" ]] || fail "missing $reinstall"
 grep -q 'relink_macos_macho' "$reinstall" || fail "reinstall-cli.sh missing Mach-O inode relink"

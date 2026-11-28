@@ -31,4 +31,4 @@
 |---|---|
 | Unit | agent_eval + rss in 124-pass suite |
 | Fixture execution | `./scripts/neural-agent-eval.sh` exit 0 |
-| Live LLM | `./scripts/neural-agent-live.py` with authenticated `cursor-agent` (claude CLI was unauthenticated) |
+| Live LLM | `./scripts/neural-agent-live.py --out docs/specs/ax-neural/agent-eval-live-results.json` with authenticated `cursor-agent` (claude CLI was unauthenticated) |

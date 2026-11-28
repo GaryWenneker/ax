@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 // Every visible `ax` command and subcommand must be documented in the CLI reference page.
 // Usage: node scripts/check-cli-docs.mjs [ax-binary] [cli.md]
+// The binary is the first argument, else $AX_BIN, else target-dev/release/ax in this repository.
+// Default paths resolve against the repository root, not the working directory.
 // Fails closed: a help call that errors, an empty command tree, or an unreadable doc exits 2.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const bin = process.argv[2] || 'target-dev/release/ax';
-const docPath = process.argv[3] || 'site/src/content/docs/reference/cli.md';
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const bin = process.argv[2] || process.env.AX_BIN || resolve(repoRoot, 'target-dev/release/ax');
+const docPath = process.argv[3] || resolve(repoRoot, 'site/src/content/docs/reference/cli.md');
 const SKIP = new Set(['help']);
 
 function die(msg) {

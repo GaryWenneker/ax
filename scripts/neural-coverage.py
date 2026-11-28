@@ -2,8 +2,10 @@
 """Line coverage gate for the Neural change, read from an lcov file written by cargo-llvm-cov.
 
 Two checks, both fail closed:
-- Each Neural file must reach its line-coverage floor. The floors are below 100% only where the
-  uncovered lines are listed in docs/specs/ax-neural/EVIDENCE.md with a reason.
+- Each Neural file must reach its line-coverage floor. A floor is the file's measured line
+  coverage from the gauntlet's coverage runs, rounded down to a whole percent, so a file that
+  loses tests fails the gate. Raise a floor when coverage goes up; lower one only together with
+  the change that removes the covered code.
 - Three shared files also hold unrelated work, so their Neural lines are found as regions: from the
   first line containing a start text to the first line at or after it containing an end text.
   Every instrumented line in a region must have run, except lines that contain an allowed text.
@@ -21,20 +23,20 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 FLOORS = {
-    "crates/ax-neural/src/bakeoff.rs": 0.0,
-    "crates/ax-neural/src/config.rs": 0.0,
-    "crates/ax-neural/src/dispatch.rs": 0.0,
-    "crates/ax-neural/src/graph.rs": 0.0,
-    "crates/ax-neural/src/learning.rs": 0.0,
-    "crates/ax-neural/src/lib.rs": 0.0,
-    "crates/ax-neural/src/predict.rs": 0.0,
-    "crates/ax-neural/src/rank.rs": 0.0,
-    "crates/ax-neural/src/share.rs": 0.0,
-    "crates/ax-neural/src/status.rs": 0.0,
-    "crates/ax-neural/src/store.rs": 0.0,
-    "crates/ax-mcp/src/neural_tool.rs": 0.0,
-    "crates/ax-cli/src/commands/neural.rs": 0.0,
-    "crates/ax-web/src/neural.rs": 0.0,
+    "crates/ax-neural/src/bakeoff.rs": 0.66,
+    "crates/ax-neural/src/config.rs": 0.99,
+    "crates/ax-neural/src/dispatch.rs": 0.95,
+    "crates/ax-neural/src/graph.rs": 0.99,
+    "crates/ax-neural/src/learning.rs": 0.96,
+    "crates/ax-neural/src/lib.rs": 1.0,
+    "crates/ax-neural/src/predict.rs": 0.97,
+    "crates/ax-neural/src/rank.rs": 1.0,
+    "crates/ax-neural/src/share.rs": 0.98,
+    "crates/ax-neural/src/status.rs": 0.88,
+    "crates/ax-neural/src/store.rs": 0.84,
+    "crates/ax-mcp/src/neural_tool.rs": 0.94,
+    "crates/ax-cli/src/commands/neural.rs": 0.86,
+    "crates/ax-web/src/neural.rs": 0.9,
 }
 
 # (file, start text, end text, texts of lines allowed to stay unrun)

@@ -28,7 +28,7 @@ import LogoMark from '../../components/LogoMark.astro';
           <h1 class="card-title">Sign in</h1>
           <p class="card-sub">ax telemetry dashboard</p>
 
-          <form id="login-form" class="form" autocomplete="off">
+          <form id="login-form" class="form">
             <label class="field">
               <span class="field-label">Password</span>
               <input
@@ -62,15 +62,15 @@ import LogoMark from '../../components/LogoMark.astro';
         const password = (document.getElementById('password') as HTMLInputElement).value;
 
         try {
+          // On success the server sets an HttpOnly cookie for /v1/admin; page scripts never see the token.
           const res = await fetch('/v1/admin/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ password }),
+            credentials: 'same-origin',
           });
 
           if (res.ok) {
-            const { token } = await res.json() as { token: string };
-            sessionStorage.setItem('ax_admin_token', token);
             window.location.href = '/admin/dashboard';
           } else {
             const data = await res.json().catch(() => ({})) as { error?: string };

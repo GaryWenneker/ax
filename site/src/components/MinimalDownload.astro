@@ -9,13 +9,15 @@ const osOptions = [
   { id:'windows', label:'Windows', icon: platformIcons.Windows },
   { id:'wsl2', label:'WSL2', icon: platformIcons.Linux },
 ];
+/** Site base without a trailing slash: '' on the canonical site, '/ax' on the GitHub Pages mirror. */
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const productOptions = [
   { id:'ax', label:'Ax' },
   { id:'slim', label:'Headless Linux' },
   { id:'admin', label:'Admin app' },
 ];
 ---
-<div class="ax-download" data-ax-downloader data-ax-reveal>
+<div class="ax-download" data-ax-downloader data-ax-base={base} data-ax-reveal>
   <div class="ax-download-row">
     <button class="ax-download-primary" type="button" data-ax-download>
       <span class="ax-os-icon" data-ax-main-icon set:html={platformIcons.macOS} />
@@ -54,11 +56,11 @@ const productOptions = [
     <p data-ax-install-status role="status" aria-live="polite"></p>
     <p>Your browser cannot run terminal commands. Paste the command into your terminal and press Enter.</p>
   </div>
-  <noscript><p>Run in macOS, Linux or WSL2 Terminal: <code>{INSTALL_UNIX}</code>. For Windows PowerShell, see the <a href="/getting-started/installation/#windows">installation guide</a>. Headless Linux: <a href="/guides/headless-linux/">guide</a>. Admin app: <a href="/guides/remote-admin/">guide</a>.</p></noscript>
+  <noscript><p>Run in macOS, Linux or WSL2 Terminal: <code>{INSTALL_UNIX}</code>. For Windows PowerShell, see the <a href={base + "/getting-started/installation/#windows"}>installation guide</a>. Headless Linux: <a href={base + "/guides/headless-linux/"}>guide</a>. Admin app: <a href={base + "/guides/remote-admin/"}>guide</a>.</p></noscript>
   <p class="ax-download-caption" aria-live="polite">
     <span data-ax-platform-label>macOS · Terminal</span><span aria-hidden="true">·</span>
     <span>Latest release: v{AX_RELEASE_VERSION.replace(/^v/, '')}</span><span aria-hidden="true">·</span>
-    <a href="/getting-started/installation/" data-ax-guide>Guide ↗</a><span aria-hidden="true">·</span>
+    <a href={base + "/getting-started/installation/"} data-ax-guide>Guide ↗</a><span aria-hidden="true">·</span>
     <a href="https://github.com/GaryWenneker/ax/releases/latest" target="_blank" rel="noopener noreferrer">Other files ↗</a>
   </p>
 </div>

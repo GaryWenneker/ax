@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cloudDeploys } from '../src/lib/cloud-deploy.mjs';
@@ -19,11 +19,15 @@ const byId = Object.fromEntries(cloudDeploys.map((d) => [d.id, d]));
 
 function generate(latest: string) {
 	const dir = mkdtempSync(join(tmpdir(), 'ax-azure-'));
-	mkdirSync(join(dir, 'public', 'releases'), { recursive: true });
-	writeFileSync(join(dir, 'public', 'releases', 'latest.txt'), `${latest}\n`);
-	execFileSync(process.execPath, [script], { cwd: dir, stdio: 'pipe' });
-	const out = (name: string) => JSON.parse(readFileSync(join(dir, 'public', 'deploy', name), 'utf8'));
-	return { job: out('azure-slim.json'), server: out('azure-slim-server.json') };
+	try {
+		mkdirSync(join(dir, 'public', 'releases'), { recursive: true });
+		writeFileSync(join(dir, 'public', 'releases', 'latest.txt'), `${latest}\n`);
+		execFileSync(process.execPath, [script], { cwd: dir, stdio: 'pipe' });
+		const out = (name: string) => JSON.parse(readFileSync(join(dir, 'public', 'deploy', name), 'utf8'));
+		return { job: out('azure-slim.json'), server: out('azure-slim-server.json') };
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 }
 
 const withoutVersion = (t: any) => ({ ...t, parameters: { ...t.parameters, axVersion: undefined } });
@@ -80,6 +84,16 @@ test('Render blueprint and Koyeb link use the server image without a command ove
 	assert.ok((koyeb.searchParams.get('env[AX_API_KEY]') ?? '').length < 32, 'placeholder key must be rejected');
 });
 
+test('slim README describes the Koyeb link without a command override', () => {
+	const readme = read(repo, 'slim', 'README.md');
+	const bullet = readme.match(/^- Koyeb:[^\n]*(?:\n {2}[^\n]*)*/m);
+	assert.ok(bullet, 'README has a Koyeb bullet');
+	assert.doesNotMatch(bullet[0], /image, command/);
+	assert.match(bullet[0], /no\s+command\s+override/);
+	const platforms = readme.slice(readme.indexOf('- Azure: `slim/azure/azuredeploy-server.json`'), bullet.index! + bullet[0].length);
+	assert.doesNotMatch(platforms, /^- Build the image locally/m, 'the local build is not a deploy platform');
+});
+
 test('docs link every deploy button to the same URLs the homepage uses', () => {
 	// The docs write the buttons as HTML links, so "&" in a URL is "&amp;" there.
 	const href = (id: string) => `href="${byId[id].url.replaceAll('&', '&amp;')}"`;
@@ -97,4 +111,22 @@ test('homepage shows the server deploy buttons', () => {
 	assert.match(home, /<MinimalDownload \/>\s*<CloudDeploy \/>/);
 	assert.match(component, /cloudDeploys\.filter\(\(d\) => d\.kind === 'MCP server'\)/);
 	assert.match(component, /#deploy-to-the-cloud/);
+});
+
+test('server startup probe waits long enough for clone and index, within Azure limits', () => {
+	// ax-serve-repo clones and indexes before the server binds, so the startup
+	// probe has to outlast both. Container Apps allows periodSeconds 1-240,
+	// failureThreshold 1-10 and initialDelaySeconds 0-60.
+	const app = server.resources.find((r: any) => r.type === 'Microsoft.App/containerApps');
+	const startup = app.properties.template.containers[0].probes.find((p: any) => p.type === 'Startup');
+	const minutes = server.parameters.startupMinutes;
+	assert.ok(minutes, 'startupMinutes parameter');
+	assert.equal(minutes.type, 'int');
+	assert.equal(startup.periodSeconds, "[mul(parameters('startupMinutes'), 6)]");
+	assert.equal(startup.failureThreshold, 10);
+	const budget = (m: number) => m * 6 * startup.failureThreshold + (startup.initialDelaySeconds ?? 0);
+	assert.ok(minutes.minValue * 6 >= 1 && minutes.maxValue * 6 <= 240, 'periodSeconds stays within 1-240');
+	assert.ok(budget(minutes.defaultValue) >= 30 * 60, 'default allows at least 30 minutes');
+	assert.equal(budget(minutes.maxValue), minutes.maxValue * 60);
+	assert.match(guide, /startupMinutes/);
 });

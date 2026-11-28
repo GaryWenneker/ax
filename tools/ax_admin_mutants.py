@@ -3,8 +3,9 @@
 
 Each mutant is one plausible bug in a security or correctness check. The mutant
 is applied, the named test is run, and the mutant counts as killed only when
-cargo built the code and a test failed ("test result: FAILED" in the output).
-A build error, a missing anchor or a passing test is a failure of this run.
+cargo built the code and a test failed ("test result: FAILED" in the output),
+or when the test run hangs past MUTANT_TIMEOUT. The run then goes on with the
+next mutant. A build error, a missing anchor or a passing test is a failure of this run.
 
     python3 tools/ax_admin_mutants.py             # run every mutant
     python3 tools/ax_admin_mutants.py --self-test # prove a survivor is reported
@@ -13,8 +14,11 @@ A build error, a missing anchor or a passing test is a failure of this run.
 Files are restored from their original bytes after every mutant, also when the
 run is interrupted.
 """
+from __future__ import annotations
+
 import hashlib
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -32,6 +36,10 @@ R_SERVER = "crates/ax-mcp/src/remote/server.rs"
 R_AUTH = "crates/ax-mcp/src/remote/auth.rs"
 R_CONFIG = "crates/ax-mcp/src/remote/config.rs"
 USAGE = "crates/ax-usage/src/savings.rs"
+
+# Seconds one mutant's test run may take. A run that hangs longer counts as killed:
+# the mutant made a test stop finishing, which the suite noticed.
+MUTANT_TIMEOUT = 1800
 
 # (id, what breaks, file, original text, mutated text, test command, test filter)
 MUTANTS = [
@@ -166,6 +174,30 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def run_tests(argv: list[str], env: dict[str, str]) -> tuple[int, str] | None:
+    """Run one test command; None when it hangs past MUTANT_TIMEOUT.
+
+    The command runs in its own process group. On a timeout, or when the run is
+    interrupted, the whole group is killed: cargo, the test binary it started and
+    any server a test spawned. An orphan left running would make the next
+    mutants' tests fail for its own reasons and record false kills.
+    """
+    proc = subprocess.Popen(argv, cwd=ROOT, env=env, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    try:
+        out, _ = proc.communicate(timeout=MUTANT_TIMEOUT)
+        return proc.returncode, out
+    except subprocess.TimeoutExpired:
+        return None
+    finally:
+        if proc.returncode is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.communicate()
+
+
 def run_mutant(mutant) -> str:
     ident, what, rel, old, new, command, test_filter = mutant
     path = ROOT / rel
@@ -177,13 +209,14 @@ def run_mutant(mutant) -> str:
     try:
         path.write_bytes(text.replace(old, new).encode("utf-8"))
         env = dict(os.environ, AX_SKIP_WEB_BUILD="1")
-        done = subprocess.run(command + [test_filter], cwd=ROOT, env=env,
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=1800)
+        done = run_tests(command + [test_filter], env)
     finally:
         path.write_bytes(original)
     if digest(path) != before:
         return "BROKEN (file not restored)"
-    out = done.stdout
+    if done is None:
+        return f"killed by timeout (no result after {MUTANT_TIMEOUT} s)"
+    returncode, out = done
     ran = [line for line in out.splitlines() if line.startswith("test result:")]
     if "error: could not compile" in out or "error[E" in out:
         return "BROKEN (does not compile)"
@@ -191,7 +224,7 @@ def run_mutant(mutant) -> str:
         return "BROKEN (no test ran)"
     if not any(" 0 passed; 0 failed" not in line for line in ran):
         return "BROKEN (filter matched no test)"
-    if done.returncode != 0 and any("FAILED" in line for line in ran):
+    if returncode != 0 and any("FAILED" in line for line in ran):
         failed = [line.split()[1] for line in out.splitlines() if line.startswith("test ") and line.endswith("FAILED")]
         return "killed by " + ", ".join(sorted(set(failed)))
     return "SURVIVED"

@@ -5,8 +5,10 @@
 #   irm https://getax.wenneker.io/install.ps1 | iex
 #
 # Always installs the latest published release (highest semver with assets).
-# Self-heals before download: stops ax, clears stuck upgrade-status/staging,
-# drops invalid AX_VERSION pins, and retries GitHub without a bad token.
+# Resolves, downloads, checks (SHA256SUMS) and unpacks the release first; only then it stops ax,
+# clears stuck upgrade-status/staging and swaps the new program in. It also
+# drops invalid AX_VERSION pins and retries GitHub without a rejected token
+# (stored GITHUB_TOKEN/GH_TOKEN values are never changed).
 # Pin a version: $env:AX_VERSION = 'v2.0.14'; irm ... | iex
 # Upgrade: ax upgrade  (or re-run this script)
 # Uninstall: remove %LOCALAPPDATA%\ax and its bin entry from user PATH.
@@ -39,8 +41,10 @@ function Stop-AxProcesses {
 }
 
 function Clear-AxPendingUpgradeState {
+  # KeepPath names the tree this install is staging; every other leftover goes.
   param(
-    [Parameter(Mandatory = $true)][string]$InstallRoot
+    [Parameter(Mandatory = $true)][string]$InstallRoot,
+    [string]$KeepPath = ''
   )
   if (-not (Test-Path $InstallRoot)) { return }
   $status = Join-Path $InstallRoot 'upgrade-status.txt'
@@ -53,52 +57,94 @@ function Clear-AxPendingUpgradeState {
       Remove-Item -Recurse -Force $_.FullName -ErrorAction SilentlyContinue
       Write-Host "ax: removed leftover $($_.Name)" -ForegroundColor Yellow
     }
-  # Parked tree from a failed Windows activate (current.old next to current).
-  $parked = Join-Path $InstallRoot 'current.old'
-  if (Test-Path $parked) {
-    Remove-Item -Recurse -Force $parked -ErrorAction SilentlyContinue
-    Write-Host "ax: removed parked current.old" -ForegroundColor Yellow
-  }
-}
-
-function Disable-AxStaleGitHubTokens {
-  param([switch]$ClearUserScope)
-  foreach ($name in @('GITHUB_TOKEN', 'GH_TOKEN')) {
-    if (Test-Path "Env:$name") {
-      Remove-Item "Env:$name" -ErrorAction SilentlyContinue
-      Write-Host "ax: ignoring process $name for this install (auth failed)." -ForegroundColor Yellow
-    }
-    if ($ClearUserScope) {
-      foreach ($scope in @('User', 'Machine')) {
-        $stored = [System.Environment]::GetEnvironmentVariable($name, $scope)
-        if ($stored) {
-          try {
-            [System.Environment]::SetEnvironmentVariable($name, $null, $scope)
-            Write-Host "ax: cleared stale $name from $scope environment." -ForegroundColor Yellow
-          } catch {
-            Write-Host "ax: could not clear $name from $scope (need elevation?). Process token already ignored." -ForegroundColor Yellow
-          }
-        }
+  # Unpacked bundles from an install that failed or was interrupted before activation.
+  $keepFull = if ($KeepPath) { [System.IO.Path]::GetFullPath($KeepPath) } else { '' }
+  Get-ChildItem -LiteralPath $InstallRoot -Directory -Force -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like '.install-new-*' -and $_.FullName -ne $keepFull } |
+    ForEach-Object {
+      Remove-Item -Recurse -Force -LiteralPath $_.FullName -ErrorAction SilentlyContinue
+      if (-not (Test-Path -LiteralPath $_.FullName)) {
+        Write-Host "ax: removed leftover $($_.Name)" -ForegroundColor Yellow
       }
     }
-  }
+  # Parked trees from a failed Windows activate (current.old or current.old-<id> next to current).
+  Get-ChildItem -LiteralPath $InstallRoot -Directory -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -eq 'current.old' -or $_.Name -like 'current.old-*' } |
+    ForEach-Object {
+      Remove-Item -Recurse -Force -LiteralPath $_.FullName -ErrorAction SilentlyContinue
+      if (-not (Test-Path -LiteralPath $_.FullName)) {
+        Write-Host "ax: removed parked $($_.Name)" -ForegroundColor Yellow
+      }
+    }
 }
 
-function Clear-AxInstallState {
+# Set when GitHub rejects or rate-limits the token: later requests in this install go
+# without it. Environment variables (process, User, Machine) are never changed.
+$script:AxSkipGitHubToken = $false
+
+function Skip-AxGitHubToken {
+  param([Parameter(Mandatory = $true)][string]$Reason)
+  if (-not $script:AxSkipGitHubToken -and ($env:GITHUB_TOKEN -or $env:GH_TOKEN)) {
+    Write-Host "ax: not using GITHUB_TOKEN/GH_TOKEN for the rest of this install ($Reason)." -ForegroundColor Yellow
+  }
+  $script:AxSkipGitHubToken = $true
+}
+
+function Write-AxTokenCleanupHint {
+  Write-Host "ax: GitHub rejected the token in GITHUB_TOKEN/GH_TOKEN. If it is no longer valid, remove it yourself:" -ForegroundColor Yellow
+  Write-Host "  [Environment]::SetEnvironmentVariable('GITHUB_TOKEN', `$null, 'User')" -ForegroundColor Yellow
+  Write-Host "  [Environment]::SetEnvironmentVariable('GH_TOKEN', `$null, 'User')" -ForegroundColor Yellow
+}
+
+function Get-AxHttpStatus {
+  param($ErrorRecord)
+  try {
+    $response = $ErrorRecord.Exception.Response
+    if ($response -and $response.StatusCode) { return [int]$response.StatusCode }
+  } catch { }
+  return $null
+}
+
+function Switch-AxInstallTree {
+  # Replaces the working install with an unpacked one; on failure the old one comes back.
+  param(
+    [Parameter(Mandatory = $true)][string]$NewTree,
+    [Parameter(Mandatory = $true)][string]$Live
+  )
   Stop-AxProcesses
-  Clear-AxPendingUpgradeState -InstallRoot $installDir
-  if (Test-Path $installDir) {
-    $current = Join-Path $installDir 'current'
-    if (Test-Path $current) {
+  Clear-AxPendingUpgradeState -InstallRoot $installDir -KeepPath $NewTree
+  # Move-Item into an existing directory would nest the live tree inside it, so a
+  # parked tree that cannot be removed (a locked file) gets a unique name instead.
+  $parked = "$Live.old"
+  if (Test-Path -LiteralPath $parked) {
+    try {
+      Remove-Item -Recurse -Force -LiteralPath $parked -ErrorAction Stop
+    } catch {
+      $parked = "$Live.old-$([guid]::NewGuid().ToString('N'))"
+    }
+  }
+  if (Test-Path -LiteralPath $Live) {
+    try {
+      Move-Item -LiteralPath $Live -Destination $parked -ErrorAction Stop
+    } catch {
+      Start-Sleep -Seconds 1
+      Stop-AxProcesses
       try {
-        Remove-Item -Recurse -Force $current
+        Move-Item -LiteralPath $Live -Destination $parked -ErrorAction Stop
       } catch {
-        Start-Sleep -Seconds 1
-        Stop-AxProcesses
-        Remove-Item -Recurse -Force $current
+        Remove-Item -Recurse -Force -LiteralPath $NewTree -ErrorAction SilentlyContinue
+        throw "ax: cannot move $Live aside ($_); the current install was left as it was."
       }
     }
   }
+  try {
+    Move-Item -LiteralPath $NewTree -Destination $Live -ErrorAction Stop
+  } catch {
+    if (Test-Path -LiteralPath $parked) { Move-Item -LiteralPath $parked -Destination $Live -ErrorAction SilentlyContinue }
+    Remove-Item -Recurse -Force -LiteralPath $NewTree -ErrorAction SilentlyContinue
+    throw "ax: could not activate the new install ($_); the previous install was restored."
+  }
+  if (Test-Path -LiteralPath $parked) { Remove-Item -Recurse -Force -LiteralPath $parked -ErrorAction SilentlyContinue }
 }
 
 function Copy-AxExeForce {
@@ -128,13 +174,24 @@ $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture 
 $target = "win32-$arch"
 $assetName = "ax-$target.zip"
 
+function ConvertTo-AxTagVersion([string]$Tag) {
+  # Sort key for a release tag: its leading MAJOR[.MINOR[.PATCH]], missing parts as 0.
+  # A tag without a leading number (or one too large to parse) sorts below every release.
+  if ("$Tag".Trim() -match '^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?') {
+    $parts = foreach ($i in 1..3) { if ($Matches[$i]) { $Matches[$i] } else { '0' } }
+    $parsed = $null
+    if ([version]::TryParse(($parts -join '.'), [ref]$parsed)) { return $parsed }
+  }
+  return [version]'0.0'
+}
+
 function Get-GitHubApiHeaders {
   param([switch]$NoAuth)
   $h = @{
     'User-Agent' = 'ax-install'
     Accept         = 'application/vnd.github+json'
   }
-  if (-not $NoAuth) {
+  if (-not $NoAuth -and -not $script:AxSkipGitHubToken) {
     if ($env:GITHUB_TOKEN) { $h.Authorization = "Bearer $($env:GITHUB_TOKEN)" }
     elseif ($env:GH_TOKEN) { $h.Authorization = "Bearer $($env:GH_TOKEN)" }
   }
@@ -156,7 +213,7 @@ function Resolve-AxVersionFromGitHubApi {
     @{ Headers = (Get-GitHubApiHeaders -NoAuth); Label = 'without token' }
   )
   # Deduplicate when no token is set (both attempts are identical).
-  if (-not $env:GITHUB_TOKEN -and -not $env:GH_TOKEN) {
+  if ($script:AxSkipGitHubToken -or (-not $env:GITHUB_TOKEN -and -not $env:GH_TOKEN)) {
     $attempts = @($attempts[1])
   }
   $lastError = $null
@@ -180,7 +237,7 @@ function Resolve-AxVersionFromGitHubApi {
       }
       if ($installable.Count -gt 0) {
         return ($installable |
-          Sort-Object { [version]($_.TrimStart('v')) } -Descending |
+          Sort-Object { ConvertTo-AxTagVersion $_ } -Descending |
           Select-Object -First 1)
       }
       Write-Host "ax: GitHub API ($($attempt.Label)) returned releases but none include $AssetName." -ForegroundColor Yellow
@@ -188,15 +245,22 @@ function Resolve-AxVersionFromGitHubApi {
     } catch {
       $lastError = $_
       $msg = "$_"
-      if ($msg -match '401|403|Unauthorized|Bad credentials') {
-        Write-Host "ax: GitHub API $($attempt.Label) failed: $msg" -ForegroundColor Yellow
-        # Drop bad tokens automatically — no manual env cleanup required.
-        Disable-AxStaleGitHubTokens -ClearUserScope
+      $status = Get-AxHttpStatus $_
+      # A rate-limit answer is also HTTP 403, so it is recognized first.
+      if ($msg -match 'rate limit') {
+        Write-Host "ax: GitHub API rate limit reached ($($attempt.Label))." -ForegroundColor Yellow
+        Skip-AxGitHubToken -Reason 'rate limit'
         continue
       }
-      if ($msg -match 'rate limit') {
+      if ($status -eq 401 -or $msg -match '\b401\b|Unauthorized|Bad credentials') {
         Write-Host "ax: GitHub API $($attempt.Label) failed: $msg" -ForegroundColor Yellow
-        Disable-AxStaleGitHubTokens
+        if ($attempt.Label -eq 'with token') { Write-AxTokenCleanupHint }
+        Skip-AxGitHubToken -Reason 'GitHub returned 401'
+        continue
+      }
+      if ($status -eq 403 -or $msg -match '\b403\b|Forbidden') {
+        Write-Host "ax: GitHub API $($attempt.Label) failed: $msg" -ForegroundColor Yellow
+        Skip-AxGitHubToken -Reason 'GitHub returned 403'
         continue
       }
       Write-Host "ax: GitHub API unreachable ($($attempt.Label)): $msg" -ForegroundColor Yellow
@@ -306,7 +370,7 @@ Or pin a published tag: `$env:AX_VERSION = 'v2.1.0'; irm https://getax.wenneker.
 
   $sorted = $candidates |
     Select-Object -Unique |
-    Sort-Object { [version]($_.TrimStart('v')) } -Descending
+    Sort-Object { ConvertTo-AxTagVersion $_ } -Descending
 
   foreach ($candidate in $sorted) {
     $tag = if ($candidate -match '^v') { $candidate } else { "v$candidate" }
@@ -387,9 +451,45 @@ function Set-UserPathFirst([string]$entry) {
   [Environment]::SetEnvironmentVariable('Path', $joined, 'User')
 }
 
-# Kill stale ax and wipe previous install before resolving/downloading.
-Clear-AxInstallState
+function Confirm-AxArchiveChecksum {
+  # Checks the archive against the release's SHA256SUMS, taken from GitHub; the mirror's
+  # copy is used only when GitHub is unreachable.
+  param(
+    [Parameter(Mandatory = $true)][string]$Archive,
+    [Parameter(Mandatory = $true)][string]$Asset,
+    [Parameter(Mandatory = $true)][string]$Tag,
+    [Parameter(Mandatory = $true)][string]$WorkDir
+  )
+  $sums = Join-Path $WorkDir 'SHA256SUMS'
+  $fetched = $false
+  try {
+    Invoke-WebRequest -Uri "https://github.com/$repo/releases/download/$Tag/SHA256SUMS" -OutFile $sums -TimeoutSec 60 -UseBasicParsing
+    $fetched = $true
+  } catch { }
+  if (-not $fetched) {
+    try {
+      Invoke-WebRequest -Uri "$downloadBase/$Tag/SHA256SUMS" -OutFile $sums -TimeoutSec 60 -UseBasicParsing
+      $fetched = $true
+      Write-Host "ax: GitHub is unreachable; checking the archive against the mirror's SHA256SUMS." -ForegroundColor Yellow
+    } catch { }
+  }
+  if (-not $fetched) { throw "ax: could not download SHA256SUMS for $Tag; the archive was not installed." }
+  $expected = $null
+  foreach ($line in [IO.File]::ReadAllLines($sums)) {
+    $parts = $line.Trim() -split '\s+', 2
+    if ($parts.Count -eq 2 -and $parts[1].TrimStart('*') -eq $Asset) { $expected = $parts[0].ToLowerInvariant(); break }
+  }
+  if (-not $expected) { throw "ax: SHA256SUMS of $Tag has no entry for $Asset; the archive was not installed." }
+  $actual = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($actual -ne $expected) {
+    throw "ax: checksum mismatch for $Asset (expected $expected, got $actual); the archive was not installed."
+  }
+  Write-Host "  checksum verified: $Asset" -ForegroundColor DarkGray
+}
 
+# ---- install steps ----
+# Resolve, download and unpack first: a failure up to the swap leaves the working
+# install and the running ax processes alone.
 $version = Resolve-AxVersion
 
 $getaxUrl = "$downloadBase/$version/ax-$target.zip"
@@ -415,18 +515,34 @@ if (-not $downloaded) {
   throw "ax: download failed. Try: cargo install --git https://github.com/$repo ax-cli"
 }
 Write-Host "  downloaded from: $downloadFrom" -ForegroundColor DarkGray
+try {
+  Confirm-AxArchiveChecksum -Archive $zip -Asset "ax-$target.zip" -Tag $version -WorkDir $tmp
+} catch {
+  Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
+  throw
+}
 
-Stop-AxProcesses
-
-$dest = Join-Path $installDir 'current'
-New-Item -ItemType Directory -Force -Path $dest | Out-Null
-Expand-Archive -Path $zip -DestinationPath $dest -Force
-$inner = Join-Path $dest "ax-$target"
-if (Test-Path $inner) {
-  Get-ChildItem -Force $inner | Move-Item -Destination $dest -Force
-  Remove-Item -Recurse -Force $inner
+New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+$staged = Join-Path $installDir (".install-new-" + [guid]::NewGuid().ToString('N'))
+try {
+  Expand-Archive -Path $zip -DestinationPath $staged -Force
+  $inner = Join-Path $staged "ax-$target"
+  if (Test-Path $inner) {
+    Get-ChildItem -Force $inner | Move-Item -Destination $staged -Force
+    Remove-Item -Recurse -Force $inner
+  }
+  if (-not (Test-Path (Join-Path $staged 'ax.exe'))) {
+    throw "ax: ax.exe not found in the downloaded bundle; the current install was left as it was."
+  }
+} catch {
+  Remove-Item -Recurse -Force -LiteralPath $staged -ErrorAction SilentlyContinue
+  Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
+  throw
 }
 Remove-Item -Recurse -Force $tmp
+
+$dest = Join-Path $installDir 'current'
+Switch-AxInstallTree -NewTree $staged -Live $dest
 
 $binDir = Join-Path $dest 'bin'
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null

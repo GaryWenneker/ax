@@ -3,6 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/lib/mutate.sh"
 
 echo "== cargo test -p ax-policy --lib agents_share + related =="
 cargo test -p ax-policy --lib agents_share -- --nocapture
@@ -28,76 +29,25 @@ fi
 grep -q 'INDEXED_DOT_DIRS' crates/ax-extraction/src/orchestrator.rs \
   || { echo "FAIL: indexer must whitelist .scripts" >&2; exit 1; }
 
-echo "== leak-gate negative control (disable check, expect test fail, restore) =="
+echo "== manual mutation =="
+# Only a failing test kills a mutant; a build error is a run error (scripts/lib/mutate.sh).
 SRC="crates/ax-policy/src/agents_share.rs"
-backup="$(mktemp)"
-cp "$SRC" "$backup"
-python3 - <<'PY'
-from pathlib import Path
-p = Path("crates/ax-policy/src/agents_share.rs")
-t = p.read_text()
-old = "if !doc.frontmatter.enabled {"
-new = "if false && !doc.frontmatter.enabled {"
-if old not in t:
-    raise SystemExit("FAIL: leak-gate branch missing")
-p.write_text(t.replace(old, new, 1))
-PY
-if cargo test -p ax-policy --lib agents_share::tests::leak_gate_detects_disabled_and_private --quiet; then
-  echo "FAIL: negative control did not fail after removing the disabled check" >&2
-  cp "$backup" "$SRC"
-  exit 1
-fi
-echo "negative-control: leak test went red with defence removed"
-cp "$backup" "$SRC"
-
-echo "== manual mutation (5) =="
 HIER="crates/ax-policy/src/hierarchy.rs"
-hbackup="$(mktemp)"
-cp "$HIER" "$hbackup"
-restore() { cp "$backup" "$SRC"; cp "$hbackup" "$HIER"; }
+agents_share_tests() { cargo test -p ax-policy --lib agents_share; }
+leak_gate_test() { cargo test -p ax-policy --lib agents_share::tests::leak_gate_detects_disabled_and_private; }
+project_dir_test() { cargo test -p ax-policy --lib agents_share::tests::project_write_path_is_agents; }
 
-kill_src() {
-  local name="$1"
-  python3 - "$2" "$3" <<'PY'
-import pathlib, sys
-p = pathlib.Path("crates/ax-policy/src/agents_share.rs")
-a, b = sys.argv[1], sys.argv[2]
-t = p.read_text()
-if a not in t:
-    raise SystemExit(f"mutant setup miss: {a!r}")
-p.write_text(t.replace(a, b, 1))
-PY
-  if cargo test -p ax-policy --lib agents_share --quiet; then
-    echo "FAIL: mutant survived: $name" >&2
-    restore
-    exit 1
-  fi
-  echo "killed: $name"
-  cp "$backup" "$SRC"
-}
-
-kill_src "export-ignores-enabled" "enabled && scope.is_packable()" "scope.is_packable()"
-kill_src "leak-skip-disabled" "if !doc.frontmatter.enabled {" "if false && !doc.frontmatter.enabled {"
-kill_src "inactive-never" "if !enabled && scope.is_packable()" "if false && !enabled && scope.is_packable()"
-kill_src "agents-dir-typo" 'pub const AGENTS_DIR: &str = ".agents";' 'pub const AGENTS_DIR: &str = ".agentz";'
-
-python3 - <<'PY'
-from pathlib import Path
-p = Path("crates/ax-policy/src/hierarchy.rs")
-t = p.read_text()
-old = "PolicyScope::Project => crate::agents_share::agents_dir(project_root),"
-new = "PolicyScope::Project => project_root.join(\".ax\").join(\"policy\"),"
-if old not in t:
-    raise SystemExit("hierarchy mutant miss")
-p.write_text(t.replace(old, new, 1))
-PY
-if cargo test -p ax-policy --lib agents_share::tests::project_write_path_is_agents --quiet; then
-  echo "FAIL: mutant survived: project-dir" >&2
-  restore
-  exit 1
-fi
-echo "killed: project-dir-legacy"
-restore
-rm -f "$backup" "$hbackup"
+# The leak-gate test itself must go red when the disabled check is removed.
+ax_mutate leak_gate_test "$SRC" 'if !doc.frontmatter.enabled {' 'if false && !doc.frontmatter.enabled {'
+ax_mutate agents_share_tests "$SRC" 'enabled && scope.is_packable()' 'scope.is_packable()'
+ax_mutate agents_share_tests "$SRC" 'if !doc.frontmatter.enabled {' 'if false && !doc.frontmatter.enabled {'
+ax_mutate agents_share_tests "$SRC" \
+  'if !enabled && scope.is_packable()' 'if false && !enabled && scope.is_packable()'
+ax_mutate agents_share_tests "$SRC" \
+  'pub const AGENTS_DIR: &str = ".agents";' 'pub const AGENTS_DIR: &str = ".agentz";'
+ax_mutate project_dir_test "$HIER" \
+  'PolicyScope::Project => crate::agents_share::agents_dir(project_root),' \
+  'PolicyScope::Project => project_root.join(".ax").join("policy"),'
+ax_mutants_summary
 
 echo "gauntlet-agents-git-share: ok"

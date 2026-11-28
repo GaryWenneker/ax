@@ -1,7 +1,11 @@
 .git
 .github
 target
+target-*
 **/target
+**/target-*
+dist
+dist-*
 node_modules
 **/node_modules
 site/dist

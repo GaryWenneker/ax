@@ -1,21 +1,9 @@
 import type { Handler } from '@netlify/functions';
-import { jwtVerify } from 'jose';
+import { adminCookieToken, sameOrigin, verifyAdminToken } from '../admin-token.ts';
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
-};
-
-async function verifyToken(authHeader: string | undefined, secret: string): Promise<boolean> {
-  if (!authHeader?.startsWith('Bearer ')) return false;
-  try {
-    await jwtVerify(authHeader.slice(7), new TextEncoder().encode(secret));
-    return true;
-  } catch {
-    return false;
-  }
-}
+// Same-origin only: the admin token arrives in an HttpOnly cookie set by
+// admin-auth, so no cross-origin (CORS) access is offered.
+const CORS_HEADERS = { 'Cache-Control': 'no-store' };
 
 type HogRow = unknown[];
 
@@ -236,9 +224,23 @@ async function buildDashboard(
   };
 }
 
+const TYPES = new Set(['dashboard', 'overview', 'timeline', 'tools', 'os']);
+const DEFAULT_DAYS = 30;
+
+/** Days of history to report: a whole number in 1..90, or 30 when `raw` is missing or not a number. */
+export function parseDays(raw: string | undefined): number {
+  const n = Number.parseInt(raw ?? '', 10);
+  if (!Number.isFinite(n)) return DEFAULT_DAYS;
+  return Math.min(Math.max(n, 1), 90);
+}
+
 const handler: Handler = async (event) => {
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 204, headers: CORS_HEADERS, body: '' };
+  if (!sameOrigin(event.headers ?? {})) {
+    return {
+      statusCode: 403,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: 'Cross-origin request refused' }),
+    };
   }
 
   const adminSecret = process.env.ADMIN_SECRET;
@@ -250,12 +252,27 @@ const handler: Handler = async (event) => {
     'https://us.posthog.com'
   ).replace(/\/$/, '');
 
-  if (!adminSecret || !posthogKey || !projectId) {
-    const missing = [
-      !adminSecret && 'ADMIN_SECRET',
-      !posthogKey && 'POSTHOG_PERSONAL_KEY',
-      !projectId && 'POSTHOG_PROJECT_ID',
-    ].filter(Boolean);
+  // Without ADMIN_SECRET no caller can be authenticated; say only that the dashboard is not set up.
+  if (!adminSecret) {
+    console.error('admin-telemetry: ADMIN_SECRET is not set');
+    return {
+      statusCode: 503,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: 'Telemetry dashboard not configured' }),
+    };
+  }
+
+  if (!(await verifyAdminToken(adminCookieToken(event.headers ?? {}), adminSecret))) {
+    return {
+      statusCode: 401,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: 'Unauthorized' }),
+    };
+  }
+
+  // Only a signed-in admin learns which PostHog settings are missing.
+  if (!posthogKey || !projectId) {
+    const missing = [!posthogKey && 'POSTHOG_PERSONAL_KEY', !projectId && 'POSTHOG_PROJECT_ID'].filter(Boolean);
     return {
       statusCode: 503,
       headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
@@ -267,17 +284,16 @@ const handler: Handler = async (event) => {
     };
   }
 
-  if (!(await verifyToken(event.headers.authorization, adminSecret))) {
-    return {
-      statusCode: 401,
-      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: 'Unauthorized' }),
-    };
-  }
-
   const params = event.queryStringParameters ?? {};
   const type = params.type ?? 'dashboard';
-  const days = Math.min(Math.max(parseInt(params.days ?? '30', 10), 1), 90);
+  const days = parseDays(params.days);
+  if (!TYPES.has(type)) {
+    return {
+      statusCode: 400,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: `Unknown type: ${type}` }),
+    };
+  }
 
   try {
     if (type === 'dashboard') {

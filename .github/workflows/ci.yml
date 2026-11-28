@@ -22,11 +22,71 @@ jobs:
       backend: ${{ steps.paths.outputs.backend }}
       frontend: ${{ steps.paths.outputs.frontend }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - name: Verify change classification
         run: python -m unittest discover -s scripts -p 'test_ci_changes.py'
+      - name: Verify workflow contracts
+        run: python -m unittest discover -s scripts -p 'test_workflows.py'
+      - name: Verify the gauntlet clippy filter
+        run: python -m unittest discover -s scripts -p 'test_gauntlet_clippy_filter.py'
+      - name: Verify mutation scripts restore source on exit
+        run: python -m unittest discover -s scripts -p 'test_restore_on_exit.py'
+      - name: Verify mutant runners count only failing tests as kills
+        run: python -m unittest discover -s scripts -p 'test_mutant_runners.py'
+      - name: Verify the Python mutant engine
+        run: python -m unittest discover -s scripts -p 'test_mutants_lib.py'
+      - name: Verify the release wait loop compares times in UTC
+        run: python -m unittest discover -s scripts -p 'test_release_tag.py'
+      - name: Verify release helpers only use flags release-tag accepts
+        run: python -m unittest discover -s scripts -p 'test_release_commands.py'
+      - name: Verify installer self-heal cleanup
+        run: python -m unittest discover -s scripts -p 'test_install_self_heal.py'
+      - name: Verify the ax-admin e2e script runs without uuidgen or shasum
+        run: python -m unittest discover -s scripts -p 'test_ax_admin_e2e_tools.py'
+      - name: Verify the slim container entry points and Azure job script
+        run: python -m unittest discover -s scripts -p 'test_slim_scripts.py'
+      - name: Verify the gauntlet and mutation helpers under tools
+        run: python -m unittest discover -s scripts -p 'test_gauntlet_tools.py'
+      - name: Verify no helper script rewrites git history
+        run: python -m unittest discover -s scripts -p 'test_no_history_rewrite.py'
+      - name: Verify the CLI docs check uses the binary it is given
+        run: python -m unittest discover -s scripts -p 'test_check_cli_docs.py'
+      - name: Verify the shared gauntlet layers
+        run: python -m unittest discover -s scripts -p 'test_gauntlet_lib.py'
+      - name: Verify the live Neural agent runners
+        run: python -m unittest discover -s scripts -p 'test_neural_agent_scripts.py'
+      - name: Verify the real-world agent runner restores the checkout
+        run: python -m unittest discover -s scripts -p 'test_neural_realworld_agent.py'
+      - name: Verify the real-world agent daemon stops retrying
+        run: python -m unittest discover -s scripts -p 'test_neural_realworld_daemon.py'
+      - name: Verify the Neural coverage floors can fail
+        run: python -m unittest discover -s scripts -p 'test_neural_coverage.py'
+      - name: Verify the standalone Docker build context and base images
+        run: python -m unittest discover -s scripts -p 'test_docker_build.py'
+      - name: Verify the headless installer
+        run: python -m unittest discover -s scripts -p 'test_install_slim.py'
+      - name: Verify no ignored file is tracked
+        run: python -m unittest discover -s scripts -p 'test_repo_hygiene.py'
+      - name: Verify the live bench arm denies tools it should not use
+        run: python -m unittest discover -s scripts -p 'test_bench_live_arm.py'
+      - name: Verify the bench MCP client reader thread
+        run: python -m unittest discover -s scripts -p 'test_bench_mcp_client.py'
+      - name: Verify changed-line coverage reads deleted-file diff headers
+        run: python -m unittest discover -s scripts -p 'test_changed_coverage.py'
+      - name: Verify the Chocolatey package preparation
+        run: python -m unittest discover -s scripts -p 'test_chocolatey_prepare.py'
+      - name: Verify the Cloudflare tunnel script (skips without pwsh)
+        run: python -m unittest discover -s scripts -p 'test_cloudflare_tunnel.py'
+      - name: Verify the GitHub Pages status check
+        run: python -m unittest discover -s scripts -p 'test_github_pages_status.py'
+      - name: Verify the mutant lists have no duplicates
+        run: python -m unittest discover -s scripts -p 'test_mutant_lists.py'
+      - name: Verify the real-world Neural metrics match exact paths
+        run: python -m unittest discover -s scripts -p 'test_neural_realworld_metrics.py'
+      - name: Verify ops scripts never publish the tree or overwrite live data
+        run: python -m unittest discover -s scripts -p 'test_ops_scripts.py'
       - name: Classify changed paths
         id: paths
         env:
@@ -44,11 +104,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           # Release builds use a separate cache; CI only compiles dev profile.
           shared-key: ci-test
@@ -71,13 +131,13 @@ jobs:
     name: clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: ci-lint
 
@@ -96,8 +156,8 @@ jobs:
       run:
         working-directory: crates/ax-admin/web-ui
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -119,8 +179,8 @@ jobs:
       run:
         working-directory: crates/ax-web/web-ui
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm

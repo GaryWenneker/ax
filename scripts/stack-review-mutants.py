@@ -8,10 +8,12 @@ Sources are restored byte-for-byte and verified by hash after each mutant.
 Usage: python3 scripts/stack-review-mutants.py   (from the repo root)
 """
 
-import hashlib
 import os
-import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from mutants_lib import run_mutants  # noqa: E402
 
 SKILL = "crates/ax-policy/templates/stacks/dotnet/skills/dotnet-code-review/SKILL.md"
 NEXT = "crates/ax-policy/templates/stacks/nextjs/skills/nextjs-review/SKILL.md"
@@ -87,63 +89,5 @@ MUTANTS = [
 ]
 
 
-def read_bytes(path: str) -> bytes:
-    with open(path, "rb") as f:
-        return f.read()
-
-
-def sha(path: str) -> str:
-    with open(path, "rb") as f:
-        return hashlib.sha256(f.read()).hexdigest()
-
-
-def run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    env = dict(os.environ)
-    env.pop("CARGO_TARGET_DIR", None)
-    return subprocess.run(cmd, capture_output=True, text=True, env=env)
-
-
-def main() -> int:
-    paths = sorted({m[1] for m in MUTANTS})
-    originals = {p: read_bytes(p) for p in paths}
-    hashes = {p: sha(p) for p in paths}
-    for cmd in (TESTS,):
-        base = run(cmd)
-        if base.returncode != 0:
-            print(f"BASELINE RED: {' '.join(cmd)}\n{base.stdout[-2000:]}{base.stderr[-2000:]}")
-            return 1
-    killed, problems = 0, []
-    for name, path, old, new, cmd in MUTANTS:
-        src = originals[path].decode()
-        if src.count(old) != 1:
-            problems.append(f"NOT APPLIED ({src.count(old)} matches): {name}")
-            continue
-        try:
-            with open(path, "w") as f:
-                f.write(src.replace(old, new))
-            out = run(cmd)
-        finally:
-            with open(path, "wb") as f:
-                f.write(originals[path])
-        if sha(path) != hashes[path]:
-            print(f"RESTORE FAILED for {path}")
-            return 1
-        text = out.stdout + out.stderr
-        if "error[E" in text or "could not compile" in text:
-            problems.append(f"DID NOT COMPILE: {name}")
-        elif out.returncode != 0 and "test result: FAILED" in text:
-            failed = [l.split()[1] for l in text.splitlines() if l.startswith("test ") and l.endswith("FAILED")]
-            killed += 1
-            print(f"killed   {name}  <- {', '.join(failed[:3])}")
-        elif out.returncode == 0:
-            problems.append(f"SURVIVED: {name}")
-        else:
-            problems.append(f"UNEXPECTED EXIT {out.returncode}: {name}")
-    print(f"\n{killed}/{len(MUTANTS)} mutants killed; sources restored (sha256 verified)")
-    for p in problems:
-        print(p)
-    return 0 if killed == len(MUTANTS) and not problems else 1
-
-
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_mutants(MUTANTS, (TESTS,)))

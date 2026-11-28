@@ -3,6 +3,13 @@
 
 For tasks with injects: break -> confirm RED -> agent -> verify -> restore.
 Success = all verify[] steps exit 0. Agent does not self-score.
+
+The runner edits the checkout it lives in: it writes each arm's `neural` block
+into ax.json, breaks source on purpose, and the agent edits tracked files. After
+every attempt ax.json gets its previous contents back and every tracked file the
+attempt changed is checked out from HEAD again, so a run never leaves broken
+code behind. Because of that reset the runner refuses to start while tracked
+files have uncommitted changes (the results file excepted).
 """
 
 from __future__ import annotations
@@ -19,7 +26,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TASKS = ROOT / "docs/specs/ax-neural/REALWORLD-TASKS.json"
-OUT = ROOT / "docs/specs/ax-neural/REALWORLD-RESULTS.json"
+OUT_REL = "docs/specs/ax-neural/REALWORLD-RESULTS.json"
+OUT = ROOT / OUT_REL
 INJECT = ROOT / "scripts/neural-realworld-inject.py"
 
 ARMS = {
@@ -28,6 +36,15 @@ ARMS = {
     "D_prediction": {"prediction": {"enabled": True}, "learning": {"feedback_collection": False}},
     "E_learning_train_only": {"prediction": {"enabled": True}, "learning": {"feedback_collection": True}},
 }
+
+
+# Exit code for errors a rerun cannot fix (sysexits EX_CONFIG); the daemon does not retry it.
+EXIT_CONFIG = 78
+
+
+def config_error(message: str) -> SystemExit:
+    print(message, file=sys.stderr)
+    return SystemExit(EXIT_CONFIG)
 
 
 def run(cmd: list[str], cwd: Path, env: dict | None = None, timeout: int | None = None) -> subprocess.CompletedProcess[str]:
@@ -46,11 +63,57 @@ def write_ax_json(neural: dict) -> None:
 
 
 def inject(action: str, task_id: str) -> dict:
+    """Apply or revert an inject; raise unless it reports applied or noop."""
     done = run([sys.executable, str(INJECT), action, "--task", task_id, "--tree", str(ROOT)], cwd=ROOT)
+    lines = done.stdout.strip().splitlines()
     try:
-        return json.loads(done.stdout.strip().splitlines()[-1])
-    except Exception:
-        return {"ok": done.returncode == 0, "stdout": done.stdout[-500:], "stderr": done.stderr[-500:]}
+        result = json.loads(lines[-1]) if lines else None
+    except json.JSONDecodeError:
+        result = None
+    if done.returncode != 0 or not isinstance(result, dict) or not (result.get("applied") or result.get("noop")):
+        raise config_error(f"inject {action} {task_id} failed: {(done.stderr or done.stdout).strip()[-500:]}")
+    return result
+
+
+def git(*args: str) -> str:
+    done = run(["git", *args], cwd=ROOT)
+    if done.returncode != 0:
+        raise config_error(f"git {' '.join(args)} failed: {done.stderr.strip()}")
+    return done.stdout
+
+
+def changed_tracked_files() -> list[str]:
+    """Tracked files that differ from HEAD (staged or not), except the results file."""
+    names = git("diff", "--name-only", "HEAD", "--").splitlines()
+    return sorted(n for n in names if n and n != OUT_REL)
+
+
+class Attempt:
+    """Put ax.json and every tracked file back after one attempt, however it ends."""
+
+    def __enter__(self) -> "Attempt":
+        path = ROOT / "ax.json"
+        self.ax_json = path.read_bytes() if path.exists() else None
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        path = ROOT / "ax.json"
+        if self.ax_json is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(self.ax_json)
+        changed = changed_tracked_files()
+        if changed:
+            git("checkout", "HEAD", "--", *changed)
+        left = changed_tracked_files()
+        if left:
+            raise config_error(f"could not restore tracked files after the attempt: {', '.join(left)}")
+
+
+def tail(text: str | bytes | None, size: int) -> str:
+    if isinstance(text, (bytes, bytearray)):
+        text = text.decode("utf-8", errors="replace")
+    return (text or "")[-size:]
 
 
 def verify_task(task: dict) -> dict:
@@ -109,9 +172,7 @@ def agent_attempt(task: dict, model: str, agent_bin: str) -> dict:
             "error": "agent_timeout",
             "timeoutSec": agent_timeout,
             "elapsedMillis": elapsed,
-            "stderrTail": ((exc.stderr or b"") if isinstance(exc.stderr, (bytes, bytearray)) else (exc.stderr or ""))[-1000:]
-            if False
-            else f"timed out after {agent_timeout}s",
+            "stderrTail": tail(exc.stderr, 1000) or f"timed out after {agent_timeout}s",
         }
     elapsed = (time.perf_counter() - started) * 1000
     try:
@@ -155,6 +216,9 @@ def main() -> int:
     if opts.inject_heldout:
         selected = [t for t in held if t.get("inject")]
     elif opts.task:
+        unknown = [i for i in opts.task if i not in by_id]
+        if unknown:
+            raise config_error(f"unknown task {', '.join(unknown)}")
         selected = [by_id[i] for i in opts.task]
     else:
         selected = [t for t in held if t.get("inject")][:1]
@@ -169,7 +233,14 @@ def main() -> int:
     arms = [a.strip() for a in opts.arms.split(",") if a.strip()]
     for a in arms:
         if a not in ARMS:
-            raise SystemExit(f"unknown or blocked arm {a}")
+            raise config_error(f"unknown or blocked arm {a}")
+
+    dirty = changed_tracked_files()
+    if dirty:
+        raise config_error(
+            "tracked files have uncommitted changes; every attempt resets tracked files to HEAD, "
+            f"so commit or stash these first: {', '.join(dirty)}"
+        )
 
     agent_bin = shutil.which("cursor-agent") or shutil.which("agent")
     rows = []
@@ -195,10 +266,10 @@ def main() -> int:
                 if opts.skip_done and (task["id"], arm, rep) in done_keys:
                     print(json.dumps({"taskId": task["id"], "arm": arm, "rep": rep, "skipped": True}), flush=True)
                     continue
-                write_ax_json(ARMS[arm])
                 baseline_red = None
                 inject_meta = None
-                try:
+                with Attempt():
+                    write_ax_json(ARMS[arm])
                     if task.get("inject"):
                         # ensure fixed, then break
                         inject("fix", task["inject"]["manifestId"])
@@ -270,9 +341,6 @@ def main() -> int:
                         "taskId": task["id"], "arm": arm, "rep": rep,
                         "taskSuccess": row["taskSuccess"], "baselineRed": baseline_red,
                     }), flush=True)
-                finally:
-                    if task.get("inject"):
-                        inject("fix", task["inject"]["manifestId"])
 
     agent_block = existing.get("agent") if isinstance(existing.get("agent"), dict) else {}
     prev_rows = list(agent_block.get("rows") or [])

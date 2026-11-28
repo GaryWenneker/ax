@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -225,6 +226,50 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
             text = (root / relative).read_text(encoding="utf-8")
             self.assertIn("php-runtime-guard.sh", text)
             self.assertIn("php_runtime_guard", text)
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def tracked_npm_lockfiles() -> set[str]:
+    out = subprocess.run(
+        ["git", "ls-files", "-z", "--", "package-lock.json", "*/package-lock.json"],
+        cwd=ROOT, capture_output=True, check=True,
+    ).stdout.decode()
+    return {p for p in out.split("\0") if p and "node_modules/" not in p}
+
+
+def matrix_paths(workflow: str) -> set[str]:
+    text = (ROOT / ".github" / "workflows" / workflow).read_text(encoding="utf-8")
+    return set(re.findall(r"(?m)^\s+path:\s*(\S+)\s*$", text))
+
+
+class LockfileCoverageTests(unittest.TestCase):
+    """Every tracked npm lockfile is under every dependency policy."""
+
+    def setUp(self):
+        self.lockfiles = tracked_npm_lockfiles()
+        self.dirs = {str(Path(p).parent) for p in self.lockfiles}
+        self.assertTrue(self.lockfiles, "git ls-files found no npm lockfiles")
+
+    def test_age_and_advisory_checks_cover_every_tracked_lockfile(self):
+        self.assertEqual(set(policy.NPM_LOCKFILES), self.lockfiles)
+
+    def test_monitor_and_autofix_matrices_cover_every_lockfile(self):
+        for workflow in ("dependency-monitor.yml", "dependency-autofix.yml"):
+            self.assertEqual(matrix_paths(workflow), self.dirs, workflow)
+
+    def test_autofix_project_choices_cover_every_lockfile(self):
+        sys.path.insert(0, str(Path(__file__).parent))
+        import lcm_autofix
+        self.assertEqual(set(lcm_autofix.PROJECTS), self.dirs)
+
+    def test_dependabot_covers_every_lockfile(self):
+        text = (ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+        npm_dirs = set(re.findall(
+            r'package-ecosystem:\s*"npm"\s*\n\s*directory:\s*"/([^"]+)"', text
+        ))
+        self.assertEqual(npm_dirs, self.dirs)
 
 
 if __name__ == "__main__":

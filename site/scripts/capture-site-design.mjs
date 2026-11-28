@@ -127,8 +127,9 @@ try {
       quality: 85,
     });
     if (name === "home-desktop" || name === "home-mobile") {
+      // The homepage PNGs used by the docs belong to capture-homepage.mjs,
+      // which also records their hashes in manifest.json.
       await page.screenshot({ path: path.join(output, name + "-viewport.jpg"), quality: 85 });
-      await page.screenshot({ path: path.join(site, 'public/screenshots', name.replace('home-', 'home-install-') + '.png'), fullPage: width < 900 });
     }
     console.log(name, "pass", JSON.stringify(check));
   }

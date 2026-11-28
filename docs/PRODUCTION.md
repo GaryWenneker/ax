@@ -2,15 +2,6 @@
 
 This guide completes the **ops / production** setup for ax: GitHub Releases, install scripts, telemetry ingest, and explore offload.
 
-## Quick bootstrap (one command)
-
-```powershell
-cd C:\gary\ax
-.\scripts\bootstrap-ops.ps1
-```
-
-Legacy bootstrap for repository setup only. For production releases use the trunk-based flow below.
-
 ## Prerequisites
 
 | Item | You need |

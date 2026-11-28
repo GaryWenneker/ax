@@ -8,6 +8,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/lib/restore-on-exit.sh"
 
 TURN=crates/ax-cli/src/commands/turn_hook.rs
 TURNS=crates/ax-memory/src/turns.rs
@@ -56,6 +57,7 @@ mutant() {
   total=$((total + 1))
   local before after
   before="$(shasum "$file" | cut -d' ' -f1)"
+  ax_guard_file "$file"
   perl -0pi -e "$expr" "$file"
   after="$(shasum "$file" | cut -d' ' -f1)"
   if [ "$before" = "$after" ]; then

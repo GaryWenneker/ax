@@ -215,6 +215,12 @@ hermetic cargo llvm-cov report --lcov --output-path "$WORK/lcov.info"
 python3 scripts/neural-coverage.py "$WORK/lcov.info"
 sed -E 's/^DA:([0-9]+),[0-9]+/DA:\1,0/' "$WORK/lcov.info" >"$WORK/zero.info"
 must_fail "coverage gate on a report where nothing ran" python3 scripts/neural-coverage.py "$WORK/zero.info"
+# Only predict.rs loses its hits; the regions still pass, so only its floor can catch this.
+awk '/^SF:.*crates\/ax-neural\/src\/predict\.rs$/ { zero = 1 }
+     /^end_of_record$/ { zero = 0 }
+     zero && /^DA:/ { split(substr($0, 4), f, ","); $0 = "DA:" f[1] ",0" }
+     { print }' "$WORK/lcov.info" >"$WORK/one-file-zero.info"
+must_fail "coverage floor when one Neural file lost its tests" python3 scripts/neural-coverage.py "$WORK/one-file-zero.info"
 must_fail "coverage gate without a report" python3 scripts/neural-coverage.py "$WORK/missing.info"
 
 echo "== real execution: the built binary in a temporary project"

@@ -11,8 +11,22 @@ GLOBAL_DB_PATH="$HOME/.ax/global.db"
 echo "🌍 Initializing Global Multi-Tenant Database..."
 echo "   Path: $GLOBAL_DB_PATH"
 
-# Create global database from schema
-sqlite3 "$GLOBAL_DB_PATH" < "$PROJECT_ROOT/database/schema/global.db.schema.sql"
+# Never write into an existing database: it may be the live one.
+if [ -e "$GLOBAL_DB_PATH" ]; then
+    echo "❌ $GLOBAL_DB_PATH already exists; move it aside first if you want a fresh one." >&2
+    exit 1
+fi
+
+# Build the database in a temporary file next to the target, then move it into place.
+mkdir -p "$(dirname "$GLOBAL_DB_PATH")"
+TMP_DB="$(mktemp "$GLOBAL_DB_PATH.XXXXXX")"
+trap 'rm -f "$TMP_DB"' EXIT
+rm -f "$TMP_DB"
+sqlite3 "$TMP_DB" < "$PROJECT_ROOT/database/schema/global.db.schema.sql"
+if ! mv -n "$TMP_DB" "$GLOBAL_DB_PATH" || [ -e "$TMP_DB" ]; then
+    echo "❌ $GLOBAL_DB_PATH appeared while the script ran; left it unchanged." >&2
+    exit 1
+fi
 
 # Verify creation
 if [ -f "$GLOBAL_DB_PATH" ]; then

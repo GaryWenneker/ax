@@ -1,0 +1,8 @@
+# Workspace tests that failed on this machine before the per-turn memory change, read by
+# scripts/gauntlet-per-turn-memory.sh. The last two are flaky: they pass alone and fail only
+# sometimes in the full workspace run.
+bootstrap::tests::legacy_prefix_from_workspace_folder
+bootstrap::tests::resolves_placeholder_to_folder_name
+savings::tests::cursor_transcript_path_filter
+savings::tests::transcript_import_does_not_wipe_state_tokens
+seed::tests::seeds_sonar_project_key_from_folder_name

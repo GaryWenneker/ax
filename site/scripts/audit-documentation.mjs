@@ -5,6 +5,7 @@ import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import GithubSlugger from 'github-slugger';
+import {screenshotEntryIssues} from './screenshot-provenance.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
 const read=p=>readFileSync(resolve(root,p),'utf8');
 const walk=dir=>readdirSync(resolve(root,dir),{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(`${dir}/${e.name}`):[`${dir}/${e.name}`]);
@@ -71,12 +72,8 @@ if(existsSync(manifestPath)) {
  const manifest=JSON.parse(readFileSync(manifestPath,'utf8'));
  for(const name of referenced) {
   const entry=manifest.find(e=>e.file===name);
-  if(!entry)issues.push(`screenshot provenance missing: ${name}`);
-  else {
-   const hash=createHash('sha256').update(readFileSync(resolve(root,'site/public/screenshots',name))).digest('hex');
-   if(entry.imageHash!==hash)issues.push(`screenshot hash missing/stale: ${name}`);
-   if(!entry.sourceHash || !entry.state && !entry.data.startsWith('public'))issues.push(`screenshot source/state missing: ${name}`);
-  }
+  const hash=entry?createHash('sha256').update(readFileSync(resolve(root,'site/public/screenshots',name))).digest('hex'):undefined;
+  issues.push(...screenshotEntryIssues(name,entry,hash));
  }
 } else issues.push('screenshot manifest missing');
 console.log(JSON.stringify({pages:pages.length,settings:settings.length,cli:commands.length,mcp:tools.length,http:endpoints.size,documents:docs.length,links,screenshotReferences:assets,uniqueScreenshots:referenced.size,issues},null,2));

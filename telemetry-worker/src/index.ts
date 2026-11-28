@@ -138,7 +138,8 @@ function sanitizeEvent(raw: unknown, machineId: string, common: JsonObject): Pos
   if (typeof raw !== 'object' || raw === null) return null;
   const e = raw as JsonObject;
   if (typeof e.event !== 'string') return null;
-  const spec = EVENTS[e.event];
+  // Own keys only: 'toString' or '__proto__' must not resolve to Object.prototype members.
+  const spec = Object.hasOwn(EVENTS, e.event) ? EVENTS[e.event] : undefined;
   if (!spec) return null;
 
   const rawProps = (typeof e.props === 'object' && e.props !== null ? e.props : {}) as JsonObject;

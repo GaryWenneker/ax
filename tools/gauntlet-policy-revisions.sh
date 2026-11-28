@@ -3,6 +3,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/lib/mutate.sh"
+source "$ROOT/scripts/lib/negative-control.sh"
 unset CARGO_TARGET_DIR
 
 echo "== rust =="
@@ -34,74 +36,24 @@ grep -q 'Local revision history' site/src/content/docs/guides/policy-engine.md \
 grep -q 'History' site/src/content/docs/guides/command-center.md \
   || { echo "FAIL: command-center.md missing History" >&2; exit 1; }
 
-echo "== negative control =="
-if grep -q 'policy-revisions-table-does-not-exist' crates/ax-db/src/migrations.rs; then
-  echo "FAIL: negative control passed (vacuous grep)" >&2
-  exit 1
-fi
+echo "== negative control: the wiring checks fail on a broken copy =="
+negative_control save-revision crates/ax-policy/src/store.rs 'record_save_revision' 'record_revision' \
+  grep -q 'record_save_revision'
 
 echo "== tsc =="
 (cd crates/ax-web/web-ui && npx tsc --noEmit)
 
 echo "== manual mutation =="
-SRC="$ROOT/crates/ax-policy/src/revisions.rs"
-ORIG="$(mktemp)"
-cp "$SRC" "$ORIG"
-kill_mutant() {
-  local label="$1"
-  if cargo test -p ax-policy revisions --quiet >/dev/null 2>&1; then
-    echo "FAIL: mutant survived: $label" >&2
-    cp "$ORIG" "$SRC"
-    exit 1
-  fi
-  echo "killed: $label"
-  cp "$ORIG" "$SRC"
-}
-
-# Mutant 1: never skip identical hashes
-python3 - <<'PY'
-from pathlib import Path
-p = Path("crates/ax-policy/src/revisions.rs")
-t = p.read_text()
-old = """    if latest.as_deref() == Some(hash.as_str()) {
-        return Ok(false);
-    }"""
-new = """    if false && latest.as_deref() == Some(hash.as_str()) {
-        return Ok(false);
-    }"""
-if old not in t:
-    raise SystemExit("mutant 1: pattern missing")
-p.write_text(t.replace(old, new, 1))
-PY
-kill_mutant "skip-identical"
-
-# Mutant 2: keep 21 instead of 20
-python3 - <<'PY'
-from pathlib import Path
-p = Path("crates/ax-policy/src/revisions.rs")
-t = p.read_text()
-old = "pub const POLICY_REVISION_CAP: i64 = 20;"
-new = "pub const POLICY_REVISION_CAP: i64 = 21;"
-if old not in t:
-    raise SystemExit("mutant 2: pattern missing")
-p.write_text(t.replace(old, new, 1))
-PY
-kill_mutant "cap-21"
-
-# Mutant 3: restore source stored as save
-python3 - <<'PY'
-from pathlib import Path
-p = Path("crates/ax-policy/src/revisions.rs")
-t = p.read_text()
-old = 'pub const SOURCE_RESTORE: &str = "restore";'
-new = 'pub const SOURCE_RESTORE: &str = "save";'
-if old not in t:
-    raise SystemExit("mutant 3: pattern missing")
-p.write_text(t.replace(old, new, 1))
-PY
-kill_mutant "restore-as-save"
-
-cp "$ORIG" "$SRC"
-rm -f "$ORIG"
+# Only a failing test kills a mutant; a build error is a run error (scripts/lib/mutate.sh).
+SRC="crates/ax-policy/src/revisions.rs"
+revision_tests() { cargo test -p ax-policy revisions; }
+ax_mutate revision_tests "$SRC" \
+  '    if latest.as_deref() == Some(hash.as_str()) {' \
+  '    if false && latest.as_deref() == Some(hash.as_str()) {'
+ax_mutate revision_tests "$SRC" \
+  'pub const POLICY_REVISION_CAP: i64 = 20;' 'pub const POLICY_REVISION_CAP: i64 = 21;'
+ax_mutate revision_tests "$SRC" \
+  'pub const SOURCE_RESTORE: &str = "restore";' 'pub const SOURCE_RESTORE: &str = "save";'
+ax_mutants_summary
 
 echo "== gauntlet ok =="

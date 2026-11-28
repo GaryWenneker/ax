@@ -8,11 +8,10 @@ on:
         description: "Optional tag; must match main's CLI version."
         required: false
 
+# Read-only by default; the jobs that publish name their own write grants.
 permissions:
-  contents: write
+  contents: read
   actions: read
-  pages: write
-  id-token: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -23,18 +22,14 @@ concurrency:
 
 jobs:
   prepare:
-    if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.source.outputs.sha }}
       tag: ${{ steps.source.outputs.tag }}
       publish: ${{ steps.source.outputs.publish }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: main
           fetch-depth: 0
@@ -43,16 +38,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_TAG: ${{ inputs.tag }}
-          VALIDATED_SHA: ${{ github.event.workflow_run.head_sha }}
         shell: bash
         run: |
           set -euo pipefail
           SHA=$(git rev-parse HEAD)
-          if [ -n "$VALIDATED_SHA" ] && [ "$VALIDATED_SHA" != "$SHA" ]; then
-            echo "A newer main commit exists; its CI will handle the release."
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           CI=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$SHA" --limit 20 --json status,conclusion --jq '[.[] | select(.status=="completed" and .conclusion=="success")] | length')
           [ "$CI" -ge 1 ] || { echo "::error::main CI must pass before release"; exit 1; }
           VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' crates/ax-cli/Cargo.toml | head -1)
@@ -111,15 +100,15 @@ jobs:
             target: x86_64-apple-darwin
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.prepare.outputs.sha }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: .
 
@@ -151,7 +140,7 @@ jobs:
         shell: pwsh
         run: ./scripts/package-release.ps1 -Bundle ${{ matrix.bundle }} -RustTarget ${{ matrix.target }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ax-${{ matrix.bundle }}
           path: dist/ax-${{ matrix.bundle }}.*
@@ -170,7 +159,7 @@ jobs:
           - os: ubuntu-24.04-arm
             arch: arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.prepare.outputs.sha }}
       - name: Build static headless binary (slim/Dockerfile, native architecture)
@@ -183,7 +172,7 @@ jobs:
           ./ax-slim version
       - name: Package archive
         run: bash scripts/package-slim-release.sh ${{ matrix.arch }} ./ax-slim
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ax-slim-linux-${{ matrix.arch }}
           path: dist/ax-slim-linux-${{ matrix.arch }}.tar.gz
@@ -216,13 +205,13 @@ jobs:
             bundle: darwin-x64
             target: x86_64-apple-darwin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.prepare.outputs.sha }}
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: .
           key: admin
@@ -250,7 +239,7 @@ jobs:
           [ -f "$bin" ] || bin="$bin.exe"
           [ -f "$bin" ] || bin="target-dev/${{ matrix.target }}/release/ax-admin.exe"
           bash scripts/package-admin-release.sh ${{ matrix.bundle }} "$bin"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ax-admin-${{ matrix.bundle }}
           path: dist/ax-admin-${{ matrix.bundle }}.*
@@ -258,11 +247,13 @@ jobs:
   release:
     needs: [prepare, build, build-slim, build-admin]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.prepare.outputs.sha }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist
           pattern: ax-*
@@ -279,7 +270,7 @@ jobs:
           cd dist
           sha256sum ax-* > SHA256SUMS
       - name: Stage complete release from validated main commit
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
           target_commitish: ${{ needs.prepare.outputs.sha }}
@@ -325,10 +316,10 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.prepare.outputs.sha }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist
           pattern: ax-slim-linux-*
@@ -350,15 +341,15 @@ jobs:
         run: |
           echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/ax-slim" >> "$GITHUB_OUTPUT"
           echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v3
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
       - name: Push distroless image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: image
           target: runtime
@@ -372,7 +363,7 @@ jobs:
             org.opencontainers.image.description=Headless ax (CLI + MCP server) for Linux containers
             org.opencontainers.image.version=${{ steps.image.outputs.version }}
       - name: Push Ubuntu image (shell and git)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: image
           target: ubuntu
@@ -386,7 +377,7 @@ jobs:
             org.opencontainers.image.description=Headless ax (CLI + MCP server) with git, for Linux containers
             org.opencontainers.image.version=${{ steps.image.outputs.version }}
       - name: Push server image (ax-serve-repo entry point)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: image
           target: server
@@ -407,7 +398,7 @@ jobs:
       (needs.release.result == 'success' || needs.prepare.outputs.publish == 'false')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.prepare.outputs.sha }}
       - name: Update download pointer after complete release
@@ -416,7 +407,7 @@ jobs:
         run: |
           echo "$RELEASE_TAG" > site/public/releases/latest.txt
           cp install.sh install.ps1 install-slim.sh install-admin.sh install-admin.ps1 site/public/
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -431,7 +422,7 @@ jobs:
           npm run build
           npm test
       - name: Upload released documentation
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: released-docs-site
           path: site/dist
@@ -442,7 +433,7 @@ jobs:
           SITE_BASE: /ax
         run: npx astro build
       - name: Upload GitHub Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: site/dist
 
@@ -450,11 +441,15 @@ jobs:
     needs: [prepare, build-docs]
     if: needs.build-docs.result == 'success'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.prepare.outputs.sha }}
       - name: Ensure GitHub Pages is enabled
@@ -465,4 +460,4 @@ jobs:
             gh api -X POST "repos/${GITHUB_REPOSITORY}/pages" -f build_type=workflow
           fi
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

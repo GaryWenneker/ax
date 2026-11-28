@@ -4,6 +4,7 @@
 # mutant must change the file (proved by cmp) and must make its suite fail.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
+source "$root/scripts/lib/restore-on-exit.sh"
 killed=0
 total=0
 
@@ -16,7 +17,8 @@ menu_suite() { (cd "$root" && cargo test -q -p ax-cli --bin ax stack_menu_text);
 mutate() { # suite, file, python-literal old, python-literal new
   local suite="$1" file="$2" old="$3" new="$4"
   total=$((total + 1))
-  cp "$file" "$file.orig"
+  ax_guard_file "$file"
+  cp "$file" "$AX_GUARD_TMP/orig"
   python3 - "$file" "$old" "$new" <<'PY'
 import sys
 p, old, new = sys.argv[1:]
@@ -25,15 +27,15 @@ if old not in s:
     sys.exit(f"mutant pattern not found in {p}: {old}")
 open(p, "w").write(s.replace(old, new, 1))
 PY
-  if cmp -s "$file" "$file.orig"; then
-    mv "$file.orig" "$file"; echo "NOT APPLIED: $old"; exit 1
+  if cmp -s "$file" "$AX_GUARD_TMP/orig"; then
+    mv "$AX_GUARD_TMP/orig" "$file"; echo "NOT APPLIED: $old"; exit 1
   fi
   if "$suite" >/dev/null 2>&1; then
     echo "SURVIVED: $file :: $old -> $new"
   else
     killed=$((killed + 1)); echo "killed: $file :: $old -> $new"
   fi
-  mv "$file.orig" "$file"
+  mv "$AX_GUARD_TMP/orig" "$file"
 }
 
 

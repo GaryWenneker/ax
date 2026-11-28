@@ -5,6 +5,7 @@
 target
 target-*
 **/target
+slim/dist
 **/node_modules
 site
 crates/ax-web/web-ui

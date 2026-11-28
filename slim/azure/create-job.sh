@@ -10,7 +10,10 @@
 #   --resource-group RG   resource group (required)
 #   --environment ENV     Container Apps environment (required; created when --location is given)
 #   --location LOC        create the environment in this region if it does not exist
-#   --repo URL            git URL to index (required; stored as a job secret)
+#   --repo URL            git URL to index (required unless AX_REPO_URL is set; stored as a
+#                         job secret). For a URL with a token, set AX_REPO_URL instead so the
+#                         token stays out of the process list. The URL reaches az through a
+#                         private temporary file, never on its command line.
 #   --ref REF             branch or tag to index
 #   --command CMD         command to run after indexing (default: ax status)
 #   --name NAME           job name (default: ax-index)
@@ -20,7 +23,7 @@
 #   --start               start one execution right away and print the log command
 set -eu
 
-NAME="ax-index"; RG=""; ENV_NAME=""; LOCATION=""; REPO=""; REF=""; CMD="ax status"
+NAME="ax-index"; RG=""; ENV_NAME=""; LOCATION=""; REPO="${AX_REPO_URL:-}"; REF=""; CMD="ax status"
 VERSION=""; IMAGE=""; CPU="1.0"; MEMORY="2.0Gi"; START=0
 
 die() { printf 'create-job: %s\n' "$*" >&2; exit 1; }
@@ -40,19 +43,27 @@ while [ $# -gt 0 ]; do
     --cpu) need "$@"; CPU="$2"; shift 2 ;;
     --memory) need "$@"; MEMORY="$2"; shift 2 ;;
     --start) START=1; shift ;;
-    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
+    -h|--help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 0 ;;
     *) die "unknown option '$1' (see --help)" ;;
   esac
 done
 
 [ -n "$RG" ] || die "--resource-group is required"
 [ -n "$ENV_NAME" ] || die "--environment is required"
-[ -n "$REPO" ] || die "--repo is required"
+[ -n "$REPO" ] || die "--repo (or AX_REPO_URL) is required"
 command -v az >/dev/null 2>&1 || die "the Azure CLI (az) is required"
 if [ -z "$IMAGE" ]; then
   [ -n "$VERSION" ] || die "pass --version vX.Y.Z (a release with headless assets) or --image"
   IMAGE="ghcr.io/garywenneker/ax-slim:${VERSION#v}-ubuntu"
 fi
+
+# The Azure CLI reads an argument that starts with @ from that file, so the repository URL (and
+# any token in it) never appears in az's command line.
+SECRET_DIR="$(umask 077 && mktemp -d "${TMPDIR:-/tmp}/ax-create-job.XXXXXX")"
+trap 'rm -rf "$SECRET_DIR"' EXIT
+trap 'exit 1' HUP INT TERM
+SECRETS="$SECRET_DIR/secrets"
+(umask 077 && printf 'ax-repo-url=%s' "$REPO" > "$SECRETS")
 
 if ! az containerapp env show --name "$ENV_NAME" --resource-group "$RG" --output none 2>/dev/null; then
   [ -n "$LOCATION" ] || die "environment '$ENV_NAME' not found in '$RG'; pass --location to create it"
@@ -63,13 +74,13 @@ fi
 set -- --name "$NAME" --resource-group "$RG" \
   --image "$IMAGE" --cpu "$CPU" --memory "$MEMORY" \
   --command "ax-index-repo" \
-  --secrets "ax-repo-url=$REPO" \
+  --secrets "@$SECRETS" \
   --env-vars "AX_REPO_URL=secretref:ax-repo-url" "AX_JOB_COMMAND=$CMD" ${REF:+"AX_REPO_REF=$REF"} \
   --output none
 
 if az containerapp job show --name "$NAME" --resource-group "$RG" --output none 2>/dev/null; then
   echo "Updating job $NAME ($IMAGE)" >&2
-  az containerapp job secret set --name "$NAME" --resource-group "$RG" --secrets "ax-repo-url=$REPO" --output none
+  az containerapp job secret set --name "$NAME" --resource-group "$RG" --secrets "@$SECRETS" --output none
   az containerapp job update --name "$NAME" --resource-group "$RG" \
     --image "$IMAGE" --cpu "$CPU" --memory "$MEMORY" --command "ax-index-repo" \
     --replace-env-vars "AX_REPO_URL=secretref:ax-repo-url" "AX_JOB_COMMAND=$CMD" ${REF:+"AX_REPO_REF=$REF"} \

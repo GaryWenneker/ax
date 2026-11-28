@@ -34,14 +34,14 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
       nupkg: ${{ steps.pack.outputs.nupkg }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Validate tag and stamp package
         id: meta
         shell: pwsh
         run: |
-          $tag = "${{ inputs.tag }}".Trim()
-          if ($tag -notmatch '^v?\d+\.\d+\.\d+') { throw "Invalid tag: $tag" }
+          $tag = "$env:REQUESTED_TAG".Trim()
+          if ($tag -notmatch '^v?\d+\.\d+\.\d+$') { throw "Invalid tag: $tag" }
           $version = if ($tag.StartsWith('v')) { $tag.Substring(1) } else { $tag }
           $tag = "v$version"
           # Ensure the release exists and is published.
@@ -57,6 +57,7 @@ jobs:
           "tag=$tag" >> $env:GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.tag }}
 
       - name: choco pack
         id: pack
@@ -71,7 +72,7 @@ jobs:
           Write-Host "Packed $($nupkg.FullName) ($([math]::Round($nupkg.Length/1KB,1)) KB)"
           Pop-Location
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ax-agent-nupkg
           path: packaging/chocolatey/ax-agent/ax-agent.${{ steps.meta.outputs.version }}.nupkg
@@ -82,7 +83,7 @@ jobs:
     if: ${{ inputs.run_install_test }}
     runs-on: windows-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ax-agent-nupkg
           path: nupkg
@@ -115,7 +116,7 @@ jobs:
       (needs.install-test.result == 'success' || needs.install-test.result == 'skipped')
     runs-on: windows-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ax-agent-nupkg
           path: nupkg

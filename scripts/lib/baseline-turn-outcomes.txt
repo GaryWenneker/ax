@@ -1,0 +1,10 @@
+# Workspace tests that failed before the turn outcomes change, read by
+# scripts/gauntlet-turn-outcomes.sh. The first five come from the main checkout (the last two of
+# those are flaky). cycles_api_path_handlers_work opens the repo's own .ax/, which a fresh
+# worktree does not have.
+bootstrap::tests::legacy_prefix_from_workspace_folder
+bootstrap::tests::resolves_placeholder_to_folder_name
+savings::tests::cursor_transcript_path_filter
+savings::tests::transcript_import_does_not_wipe_state_tokens
+seed::tests::seeds_sonar_project_key_from_folder_name
+cycles_api_path_handlers_work
