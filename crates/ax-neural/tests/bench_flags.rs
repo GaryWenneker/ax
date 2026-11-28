@@ -92,12 +92,7 @@ async fn raw_bench_flag_ablates_the_term_coverage_drop() {
 }
 
 fn precision_at_3(relevant: &[String], ranked: &[String]) -> f64 {
-    let hits = ranked
-        .iter()
-        .take(3)
-        .filter(|got| relevant.iter().any(|want| want == *got))
-        .count();
-    hits as f64 / 3.0
+    ax_neural::benchmark_abc::precision_at(relevant, ranked, 3).unwrap_or(0.0)
 }
 
 #[tokio::test]

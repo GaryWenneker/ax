@@ -129,7 +129,7 @@ pub(crate) fn ranked_metrics(ranked: &[String], gold: &[String]) -> (f64, f64, f
         ideal += 1.0 / ((index as f64) + 2.0).ln();
     }
     let ndcg = if ideal == 0.0 { 0.0 } else { dcg / ideal };
-    let precision = hits / 3.0;
+    let precision = crate::metrics::precision_at(gold, ranked, 3).unwrap_or(0.0);
     let recall = if gold.is_empty() {
         0.0
     } else {
