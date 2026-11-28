@@ -1,5 +1,5 @@
 use crate::config::load;
-use crate::graph::{suggest_report_capped, GraphReport, InputEdge};
+use crate::graph::{suggest_report_capped, GraphReport, InputEdge, EDGE_LIMIT};
 use crate::learning::{validate_feedback, FeedbackInput};
 use crate::share::{packet_for, ModelManifest, SharePolicy};
 use crate::status::status_report;
@@ -12,7 +12,6 @@ use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
 use std::path::Path;
 
-const EDGE_LIMIT: usize = 200_000;
 const FEEDBACK_ROWS: usize = 2_000;
 
 async fn models_reply(pool: Option<&SqlitePool>) -> Result<Value, String> {

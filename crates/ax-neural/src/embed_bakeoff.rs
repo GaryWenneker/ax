@@ -1,47 +1,16 @@
 //! Phase 3 embedding-runtime bake-off (SPEC-PHASE3-EMBED.md).
 //! Compares hash / lexical / blake3; reports ONNX and Candle as not_built until linked + configured.
 
-use ax_memory::bench::{load_coding_fixture, CodingFixture};
+#[cfg(any(test, feature = "neural-ort"))]
+use crate::fixture::doc_text;
+use crate::fixture::{cosine_rank, lexical_rank, LOCKED};
+use ax_memory::bench::load_coding_fixture;
 use ax_memory::embed::{cosine, embed_text};
 use serde_json::{json, Value};
 use std::time::Instant;
 
 use crate::metrics::{Acc, SummaryStyle, EMBED_BAKEOFF};
 use crate::runtime::Backend;
-
-const LOCKED: &[&str] = &[
-    "named_trigger",
-    "paraphrase",
-    "abstention",
-    "delivery_budget",
-];
-
-fn doc_text(m: &ax_memory::bench::CodingMemory) -> String {
-    format!("{} {} {} {}", m.key, m.title, m.body, m.triggers.join(" "))
-}
-
-fn cosine_rank(
-    fixture: &CodingFixture,
-    prompt: &str,
-    embed: &dyn Fn(&str) -> Vec<f32>,
-) -> Vec<String> {
-    let q = embed(prompt);
-    let mut scored: Vec<(f32, String)> = fixture
-        .memories
-        .iter()
-        .filter(|m| m.insert)
-        .map(|m| {
-            let v = embed(&doc_text(m));
-            (cosine(&q, &v), m.key.clone())
-        })
-        .collect();
-    scored.sort_by(|a, b| {
-        b.0.partial_cmp(&a.0)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.1.cmp(&b.1))
-    });
-    scored.into_iter().map(|(_, k)| k).collect()
-}
 
 /// Same ranking as `cosine_rank` but reuses precomputed document vectors (validation-only).
 #[allow(dead_code)]
@@ -101,21 +70,6 @@ fn baseline_keep_positive_then_fill(
         }
     }
     ranked
-}
-
-fn lexical_rank(fixture: &CodingFixture, prompt: &str) -> Vec<String> {
-    let docs: Vec<crate::lexical::LexicalDoc> = fixture
-        .memories
-        .iter()
-        .filter(|m| m.insert)
-        .map(|m| crate::lexical::LexicalDoc::new(m.key.clone(), &m.title, &m.body, &m.triggers))
-        .collect();
-    let (ranked, abstained) = crate::lexical::rank(&docs, prompt);
-    if abstained {
-        Vec::new()
-    } else {
-        ranked.into_iter().map(|h| h.key).collect()
-    }
 }
 
 fn candidate_not_built(id: &str, reason: &str) -> Value {
@@ -458,12 +412,7 @@ mod tests {
     #[test]
     fn hash_positive_prefix_plus_lexical_fill_on_non_locked_questions() {
         let fixture = load_coding_fixture(crate::CODING_FIXTURE).unwrap();
-        let locked = [
-            "named_trigger",
-            "paraphrase",
-            "abstention",
-            "delivery_budget",
-        ];
+        let locked = crate::fixture::LOCKED;
         let mut questions = 0u32;
         let mut changed = 0u32;
         let mut positive_short = 0u32;
@@ -537,12 +486,7 @@ mod tests {
             .collect();
         let doc_cache = crate::onnx_embed::BakeoffDocCache::build(doc_pairs).expect("cache");
         let embed = |text: &str| crate::onnx_embed::try_embed_text(text).unwrap_or_default();
-        let locked = [
-            "named_trigger",
-            "paraphrase",
-            "abstention",
-            "delivery_budget",
-        ];
+        let locked = crate::fixture::LOCKED;
         let mut questions = 0u32;
         let mut changed = 0u32;
         let mut baseline_mrr = 0.0;

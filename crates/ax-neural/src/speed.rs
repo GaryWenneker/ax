@@ -1,5 +1,6 @@
 //! Neural modules against the old hash and recall path. No language model.
 
+use crate::fixture::median;
 use crate::graph::{suggest_report, InputEdge};
 use crate::learning::{validate_feedback, FeedbackInput};
 use crate::lexical::{rank, LexicalDoc};
@@ -16,11 +17,6 @@ const PASSES: usize = 40;
 
 fn text_for(index: usize) -> String {
     format!("module alpha{index} keeps ledger row {index} stable under replay")
-}
-
-fn median(samples: &mut [f64]) -> f64 {
-    samples.sort_by(f64::total_cmp);
-    samples[samples.len() / 2]
 }
 
 fn time_ms(mut work: impl FnMut()) -> f64 {

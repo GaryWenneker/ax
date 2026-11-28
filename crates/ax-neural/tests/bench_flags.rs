@@ -42,12 +42,7 @@ async fn raw_bench_flag_ablates_the_term_coverage_drop() {
         .await
         .unwrap();
     database.pool().close().await;
-    let locked = [
-        "named_trigger",
-        "paraphrase",
-        "abstention",
-        "delivery_budget",
-    ];
+    let locked = ax_neural::fixture::LOCKED;
     let mut questions = 0u32;
     let mut ax_mrr = 0.0;
     let mut ax_recall = 0.0;
@@ -119,12 +114,7 @@ async fn skipping_relative_coverage_on_non_locked_questions() {
         .await
         .unwrap();
     database.pool().close().await;
-    let locked = [
-        "named_trigger",
-        "paraphrase",
-        "abstention",
-        "delivery_budget",
-    ];
+    let locked = ax_neural::fixture::LOCKED;
     let mut questions = 0u32;
     let mut ax_mrr = 0.0;
     let mut ax_recall = 0.0;
@@ -154,12 +144,7 @@ async fn skipping_relative_coverage_on_non_locked_questions() {
 async fn raw_gain_overlap_classes_on_non_locked_questions() {
     let _env = bench_env().await;
     let fixture = ax_memory::bench::load_coding_fixture(ax_neural::CODING_FIXTURE).unwrap();
-    let locked = [
-        "named_trigger",
-        "paraphrase",
-        "abstention",
-        "delivery_budget",
-    ];
+    let locked = ax_neural::fixture::LOCKED;
     let dir = tempfile::tempdir().unwrap();
     let database = ax_db::Database::open(&dir.path().join("recall-class-prod.db"))
         .await
@@ -256,12 +241,7 @@ fn overlap_class(hits: usize, terms: usize) -> &'static str {
 async fn identifier_stem_on_non_locked_questions() {
     let _env = bench_env().await;
     let fixture = ax_memory::bench::load_coding_fixture(ax_neural::CODING_FIXTURE).unwrap();
-    let locked = [
-        "named_trigger",
-        "paraphrase",
-        "abstention",
-        "delivery_budget",
-    ];
+    let locked = ax_neural::fixture::LOCKED;
     let dir = tempfile::tempdir().unwrap();
     let database = ax_db::Database::open(&dir.path().join("recall-stem-prod.db"))
         .await
@@ -389,12 +369,7 @@ async fn identifier_stem_on_non_locked_questions() {
 async fn identifier_boundary_on_non_locked_questions() {
     let _env = bench_env().await;
     let fixture = ax_memory::bench::load_coding_fixture(ax_neural::CODING_FIXTURE).unwrap();
-    let locked = [
-        "named_trigger",
-        "paraphrase",
-        "abstention",
-        "delivery_budget",
-    ];
+    let locked = ax_neural::fixture::LOCKED;
     let dir = tempfile::tempdir().unwrap();
     let database = ax_db::Database::open(&dir.path().join("recall-boundary-prod.db"))
         .await
@@ -495,12 +470,7 @@ async fn identifier_boundary_on_non_locked_questions() {
 async fn identifier_affix_on_non_locked_questions() {
     let _env = bench_env().await;
     let fixture = ax_memory::bench::load_coding_fixture(ax_neural::CODING_FIXTURE).unwrap();
-    let locked = [
-        "named_trigger",
-        "paraphrase",
-        "abstention",
-        "delivery_budget",
-    ];
+    let locked = ax_neural::fixture::LOCKED;
     let dir = tempfile::tempdir().unwrap();
     let database = ax_db::Database::open(&dir.path().join("recall-affix-prod.db"))
         .await

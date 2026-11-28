@@ -242,6 +242,7 @@ fn query_tokens(query: &str) -> impl Iterator<Item = &str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixture::ranked_metrics;
 
     fn candidate(id: &str, name: &str) -> CodeCandidate {
         CodeCandidate {
@@ -397,39 +398,6 @@ mod tests {
         assert_eq!(promoted.ids, vec!["xml".to_string(), "rows".to_string()]);
         let quiet = hybrid_rank("weather in Utrecht", &[], &rows, &[], 2);
         assert!(quiet.ids.is_empty());
-    }
-
-    fn ranked_metrics(ranked: &[String], gold: &[String]) -> (f64, f64, f64, f64) {
-        let mut reciprocal = 0.0;
-        for (index, id) in ranked.iter().enumerate() {
-            if gold.iter().any(|item| item == id) {
-                reciprocal = 1.0 / (index as f64 + 1.0);
-                break;
-            }
-        }
-        let mut dcg = 0.0;
-        let mut hits = 0.0;
-        for (index, id) in ranked.iter().take(10).enumerate() {
-            if gold.iter().any(|item| item == id) {
-                dcg += 1.0 / ((index as f64) + 2.0).ln();
-                if index < 3 {
-                    hits += 1.0;
-                }
-            }
-        }
-        let ideal_len = gold.len().min(10);
-        let mut ideal = 0.0;
-        for index in 0..ideal_len {
-            ideal += 1.0 / ((index as f64) + 2.0).ln();
-        }
-        let ndcg = if ideal == 0.0 { 0.0 } else { dcg / ideal };
-        let precision = hits / 3.0;
-        let recall = if gold.is_empty() {
-            0.0
-        } else {
-            hits / gold.len() as f64
-        };
-        (reciprocal, ndcg, precision, recall)
     }
 
     #[tokio::test]

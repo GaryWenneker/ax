@@ -6,7 +6,7 @@ use ax_memory::bench::{load_coding_fixture, CodingFixture, CodingMemory};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use crate::learn_validate::LOCKED;
+use crate::fixture::LOCKED;
 use crate::learning::{split_dataset, train_ranking_prior};
 use crate::metrics::{Acc, SummaryStyle, LEARN_VALIDATE};
 

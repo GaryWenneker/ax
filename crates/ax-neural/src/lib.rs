@@ -11,6 +11,7 @@ pub mod code_discovery;
 pub mod config;
 pub mod dispatch;
 pub mod embed_bakeoff;
+pub mod fixture;
 pub mod graph;
 pub mod learn_validate;
 pub mod learning;

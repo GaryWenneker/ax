@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-const FAMILIES: [(&str, &str); 4] = [
+pub(crate) const FAMILIES: [(&str, &str); 4] = [
     ("named_trigger", "top result is the named memory"),
     ("paraphrase", "a relevant memory in the top 3"),
     ("abstention", "nothing returned"),
@@ -38,39 +38,18 @@ fn compute_challenger_admitted() -> bool {
         return false;
     };
     let baseline = known_hash_v1_family_hits();
-    let docs: Vec<crate::lexical::LexicalDoc> = fixture
-        .memories
-        .iter()
-        .filter(|memory| memory.insert)
-        .map(|memory| {
-            crate::lexical::LexicalDoc::new(
-                memory.key.clone(),
-                &memory.title,
-                &memory.body,
-                &memory.triggers,
-            )
-        })
-        .collect();
-    let questions: Vec<(String, String, String, Vec<String>)> = fixture
-        .questions
-        .iter()
-        .filter(|q| {
-            matches!(
-                q.family.as_str(),
-                "named_trigger" | "paraphrase" | "abstention" | "delivery_budget"
-            )
-        })
-        .map(|q| {
-            (
-                q.id.clone(),
-                q.family.clone(),
-                q.prompt.clone(),
-                q.relevant.clone(),
-            )
-        })
-        .collect();
-    let challenger = crate::lexical::score_locked_families(&docs, &questions);
+    let challenger = lexical_challenger_families(&fixture);
     crate::lexical::beats_baseline(&baseline, &challenger)
+}
+
+/// Locked-family scores of the lexical challenger on the fixture.
+fn lexical_challenger_families(
+    fixture: &CodingFixture,
+) -> std::collections::HashMap<String, Value> {
+    crate::lexical::score_locked_families(
+        &crate::fixture::lexical_docs(fixture),
+        &crate::fixture::locked_questions(fixture),
+    )
 }
 
 /// Measured hash-v1 hits on the coding fixture (bakeoff-results / baseline_report).
@@ -156,38 +135,7 @@ fn evaluate_lexical_challenger(
     if !crate::runtime_built() {
         return (Value::Null, false, "hash-v1", "not_built");
     }
-    let docs: Vec<crate::lexical::LexicalDoc> = fixture
-        .memories
-        .iter()
-        .filter(|memory| memory.insert)
-        .map(|memory| {
-            crate::lexical::LexicalDoc::new(
-                memory.key.clone(),
-                &memory.title,
-                &memory.body,
-                &memory.triggers,
-            )
-        })
-        .collect();
-    let questions: Vec<(String, String, String, Vec<String>)> = fixture
-        .questions
-        .iter()
-        .filter(|q| {
-            matches!(
-                q.family.as_str(),
-                "named_trigger" | "paraphrase" | "abstention" | "delivery_budget"
-            )
-        })
-        .map(|q| {
-            (
-                q.id.clone(),
-                q.family.clone(),
-                q.prompt.clone(),
-                q.relevant.clone(),
-            )
-        })
-        .collect();
-    let challenger = crate::lexical::score_locked_families(&docs, &questions);
+    let challenger = lexical_challenger_families(fixture);
     let admitted = crate::lexical::beats_baseline(baseline_families, &challenger);
     let winner = if admitted {
         crate::lexical::CHALLENGER_ID
@@ -270,7 +218,7 @@ fn family_summary(
 }
 
 fn query_latency(fixture: &CodingFixture, score_millis: f64) -> Value {
-    let micros: Vec<f64> = fixture
+    let mut micros: Vec<f64> = fixture
         .questions
         .iter()
         .map(|question| {
@@ -282,7 +230,7 @@ fn query_latency(fixture: &CodingFixture, score_millis: f64) -> Value {
     json!({
         "kind": "measured",
         "samples": micros.len(),
-        "embedMicrosMedian": median(micros),
+        "embedMicrosMedian": crate::fixture::median(&mut micros),
         "scoreMillis": score_millis
     })
 }
@@ -293,12 +241,6 @@ fn millis(elapsed: Duration) -> f64 {
 
 fn micros(elapsed: Duration) -> f64 {
     elapsed.as_secs_f64() * 1_000_000.0
-}
-
-/// The middle value, or the upper of the two middle values; 0 without samples.
-fn median(mut values: Vec<f64>) -> f64 {
-    values.sort_by(f64::total_cmp);
-    values.get(values.len() / 2).copied().unwrap_or(0.0)
 }
 
 #[cfg(test)]
@@ -439,13 +381,6 @@ mod tests {
         assert_eq!(micros(Duration::from_millis(3)), 3000.0);
     }
 
-    #[test]
-    fn median_takes_the_middle_sample() {
-        assert_eq!(median(vec![3.0, 1.0, 2.0]), 2.0);
-        assert_eq!(median(vec![4.0, 1.0, 3.0, 2.0]), 3.0);
-        assert_eq!(median(Vec::new()), 0.0);
-    }
-
     fn score(id: &str, family: &str, ax: &[&str], abstained: bool) -> QuestionScore {
         QuestionScore {
             id: id.into(),
@@ -516,12 +451,7 @@ mod tests {
             .await
             .unwrap();
         database.pool().close().await;
-        let locked = [
-            "named_trigger",
-            "paraphrase",
-            "abstention",
-            "delivery_budget",
-        ];
+        let locked = crate::fixture::LOCKED;
         let mut questions = 0u32;
         let mut ax_mrr = 0.0;
         let mut bm25_mrr = 0.0;

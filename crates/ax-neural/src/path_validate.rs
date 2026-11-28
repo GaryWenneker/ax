@@ -1,8 +1,13 @@
 //! §2 production-path validation for ONNX embedding (SPEC-VALIDATION-ONNX-PATH.md).
 //! Measures stages and arms A–D without changing production defaults.
 
+#[cfg(feature = "neural-ort")]
+use crate::fixture::doc_text;
+use crate::fixture::{cosine_rank, lexical_rank, LOCKED};
 use ax_memory::bench::{load_coding_fixture, CodingFixture};
-use ax_memory::embed::{cosine, embed_text};
+#[cfg(feature = "neural-ort")]
+use ax_memory::embed::cosine;
+use ax_memory::embed::embed_text;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::time::Instant;
@@ -13,58 +18,9 @@ use crate::rank::{plan as plan_blocks, RankClass, RankItem};
 #[cfg(feature = "neural-ort")]
 use crate::store::{embedding_count, insert_embedding};
 
-const LOCKED: &[&str] = &[
-    "named_trigger",
-    "paraphrase",
-    "abstention",
-    "delivery_budget",
-];
-
 const RRF_K: f64 = 60.0;
 #[cfg(feature = "neural-ort")]
 const ONNX_MODEL_ID: &str = "onnx-minilm-l6-v2";
-
-fn doc_text(m: &ax_memory::bench::CodingMemory) -> String {
-    format!("{} {} {} {}", m.key, m.title, m.body, m.triggers.join(" "))
-}
-
-fn cosine_rank(
-    fixture: &CodingFixture,
-    prompt: &str,
-    embed: &dyn Fn(&str) -> Vec<f32>,
-) -> Vec<String> {
-    let q = embed(prompt);
-    let mut scored: Vec<(f32, String)> = fixture
-        .memories
-        .iter()
-        .filter(|m| m.insert)
-        .map(|m| {
-            let v = embed(&doc_text(m));
-            (cosine(&q, &v), m.key.clone())
-        })
-        .collect();
-    scored.sort_by(|a, b| {
-        b.0.partial_cmp(&a.0)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.1.cmp(&b.1))
-    });
-    scored.into_iter().map(|(_, k)| k).collect()
-}
-
-fn lexical_rank(fixture: &CodingFixture, prompt: &str) -> Vec<String> {
-    let docs: Vec<crate::lexical::LexicalDoc> = fixture
-        .memories
-        .iter()
-        .filter(|m| m.insert)
-        .map(|m| crate::lexical::LexicalDoc::new(m.key.clone(), &m.title, &m.body, &m.triggers))
-        .collect();
-    let (ranked, abstained) = crate::lexical::rank(&docs, prompt);
-    if abstained {
-        Vec::new()
-    } else {
-        ranked.into_iter().map(|h| h.key).collect()
-    }
-}
 
 fn rrf_combine(lists: &[Vec<String>]) -> Vec<String> {
     let mut scores: HashMap<String, f64> = HashMap::new();

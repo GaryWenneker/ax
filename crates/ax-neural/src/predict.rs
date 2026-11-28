@@ -242,7 +242,7 @@ fn hash_retrieve_top(
         .iter()
         .filter(|m| m.insert)
         .map(|m| {
-            let text = format!("{} {} {} {}", m.key, m.title, m.body, m.triggers.join(" "));
+            let text = crate::fixture::doc_text(m);
             (cosine(&q, &embed_text(&text)), m.key.clone())
         })
         .collect();

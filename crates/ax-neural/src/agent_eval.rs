@@ -2,6 +2,7 @@
 //! Measures context retrieval quality across Ax / Neural arms on the coding fixture.
 //! Live LLM task-success / token counts stay `not_measured` until an identical-model run is executed.
 
+use crate::fixture::{lexical_rank, LOCKED};
 use crate::metrics::{Acc, SummaryStyle, AGENT_EVAL};
 use ax_memory::bench::{load_coding_fixture, score_coding};
 use serde::Serialize;
@@ -35,28 +36,6 @@ impl ArmId {
             Self::D => "D_ax_neural_prediction",
             Self::E => "E_ax_neural_learning",
         }
-    }
-}
-
-const LOCKED: &[&str] = &[
-    "named_trigger",
-    "paraphrase",
-    "abstention",
-    "delivery_budget",
-];
-
-fn lexical_rank(fixture: &ax_memory::bench::CodingFixture, prompt: &str) -> Vec<String> {
-    let docs: Vec<crate::lexical::LexicalDoc> = fixture
-        .memories
-        .iter()
-        .filter(|m| m.insert)
-        .map(|m| crate::lexical::LexicalDoc::new(m.key.clone(), &m.title, &m.body, &m.triggers))
-        .collect();
-    let (ranked, abstained) = crate::lexical::rank(&docs, prompt);
-    if abstained {
-        Vec::new()
-    } else {
-        ranked.into_iter().map(|h| h.key).collect()
     }
 }
 
