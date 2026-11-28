@@ -147,14 +147,14 @@ ax init --all
 
 ### `ax bootstrap [path]`
 
-Apply the versioned architecture seed. The seed version is independent of the ax binary version. A second run does not duplicate entities, relationships, rules, or skills. The command does not start Pi.
+Apply the versioned architecture seed. The seed version is independent of the ax binary version. A second run does not duplicate entities, relationships, rules, or skills. The command does not start Pi. The seed entries in `.ax/domain-graph.json` are checked before any rule or skill file is written, so a failed check changes nothing. Problems in nodes and edges you wrote yourself (a missing summary, an edge to a missing node) are printed as warnings and do not stop the run. Rule ids in `.ax/seed/project.json` must be kebab-case.
 
 | Argument / flag | Type | Description |
 |---|---|---|
 | `path` | optional | Project root (default: current directory) |
 | `--dry-run` | flag | Print the seed plan and write nothing |
 | `--verify` | flag | Check required entities, relationships, rules, and skills. Exit non-zero when any are missing |
-| `--json` | flag | Machine-readable result (`seedVersion`, `status`, `entitiesCreated`, `relationshipsCreated`, `rulesCreated`, `skillsCreated`) |
+| `--json` | flag | Machine-readable result (`seedVersion`, `status`, `entitiesCreated`, `relationshipsCreated`, `rulesCreated`, `skillsCreated`, `warnings`) |
 
 ```bash
 ax bootstrap
@@ -1567,7 +1567,7 @@ ax policy quality english-only
 ax skill report-installs --on
 ```
 
-Installed skills are usable immediately. For a well-known URL, every file the index lists must be relative to the index or on the same origin (scheme, host and port); a file on another server is refused, and so is a redirect that leaves that origin. Each download stops at 25 MiB. `ax skill audit` stores a quality report for one skill and does not hide it. `ax skill brief` prints the edits for skills and rules. `ax policy quality <id>` audits one rule file and stores the same kind of report. Preflight includes both, and `ax_rules` returns rule briefs in `audits`. The agent edits the named file and leaves the skill or rule enabled. `--source` audits a catalog candidate without installing it. An agent submits a verdict JSON file with `verdict` (`pass`, `revise`, or `reject`), scores `clarity`, `trigger`, `steps`, `files`, and `safety` from 1 to 5, and findings whose `evidence` quotes the skill text. Reporting an install to skills.sh stays off until `ax skill report-installs --on`.
+Installed skills are usable immediately. A source is an `owner/repo` GitHub shorthand (letters, digits, `.`, `-` and `_` only), `git@github.com:owner/repo.git`, an https URL, or a local path; scp-style `user@host:path` for any host other than github.com is refused with a hint to use the https URL. Git clones always use https and keep a self-hosted port such as `https://gitlab.internal:8443/team/skills`. In a tree URL such as `https://github.com/o/r/tree/feature/x/skills/pdf`, a missing branch `feature` is retried as `feature/x` with path `skills/pdf`, and so on for up to eight segments. Azure `path` and `version` query values are percent-decoded. For a well-known URL, every file the index lists must be relative to the index or on the same origin (scheme, host and port); a file on another server is refused, and so is a redirect that leaves that origin. A relative entry must be a plain relative path: absolute, drive, UNC and `..` paths (backslashes included) are refused. Each download stops at 25 MiB. Skill downloads over HTTP (well-known indexes and their files, catalog search) use http or https only and refuse local hosts, private addresses, embedded credentials, and redirects to any of these. To install from an intranet skill index, list its host names in `allowPrivateHosts` in `.ax/skill-catalog.json`, for example `{"allowPrivateHosts": ["skills.corp.example"]}`: the CLI (`ax skill add`, `ax skill audit --source`) then fetches from those hosts, and from redirects to them, even when they resolve to a private, shared (100.64.0.0/10) or loopback address, and logs a warning each time. The list is empty by default. A skill folder must carry the name in its `SKILL.md` frontmatter, except for a repository whose `SKILL.md` sits at the top level: that skill installs under its frontmatter name, without the repository's `.git` data. `ax skill audit` stores a quality report for one skill and does not hide it. `ax skill brief` prints the edits for skills and rules. `ax policy quality <id>` audits one rule file and stores the same kind of report. Preflight includes both, and `ax_rules` returns rule briefs in `audits`. The agent edits the named file and leaves the skill or rule enabled. `--source` audits a catalog candidate without installing it. The audit never follows a symlink: a symlinked `SKILL.md` or skill directory gives a `symlink` failure and an empty report instead of the target's content. An agent submits a verdict JSON file with `verdict` (`pass`, `revise`, or `reject`), scores `clarity`, `trigger`, `steps`, `files`, and `safety` from 1 to 5, and findings whose `evidence` quotes the skill text. Git sources and the publish remote (`--remote`, or `publishRemote` in `.ax/skill-catalog.json`) must be `https://`, `ssh://` or scp-style `user@host:path`; any other value, including one that starts with `-`, is refused before git runs, and so is a branch or tag that starts with `-`. Reporting an install to skills.sh stays off until `ax skill report-installs --on`.
 
 ### `ax policy skill <name> [path]`
 
@@ -1628,6 +1628,8 @@ ax policy sync --fix --force
 ax policy history
 ax policy restore-item <id>
 ```
+
+`restore-item` takes a rule id (`utf8-no-bom`), a skill name (`startup`) or a template path (`skills/startup/SKILL.md`). When a bundled rule and a bundled skill share the name, such as `subagents`, name the kind: `rule:subagents` or `skill:subagents`.
 
 After `--fix` restores `.ax/policy/` files in database mode, run `ax policy import` so `ax.db` picks up the updated skill bodies.
 ### `ax policy capture <prompt> [path]`
@@ -1698,7 +1700,7 @@ ax policy storage files --global
 
 #### `ax policy storage set-item <id> <files|database> [path]`
 
-Set a **per-item** storage override for one rule id or skill name (hybrid mode).
+Set a **per-item** storage override for one rule id or skill name (hybrid mode). When a rule and a skill share the name, the command refuses and asks for `rule:<id>` or `skill:<name>`.
 
 | Flag | Description |
 |---|---|
@@ -1713,7 +1715,7 @@ ax policy storage set-item mobile-first database --keep-file --json
 
 ### `ax policy enable <id> [path]`
 
-Enable a rule or skill so matcher/preflight include it again.
+Enable a rule or skill so matcher/preflight include it again. When a rule and a skill share the name, pass `rule:<id>` or `skill:<name>`; a bare name that matches both is refused.
 
 ```bash
 ax policy enable mobile-first
@@ -1721,7 +1723,7 @@ ax policy enable mobile-first
 
 ### `ax policy disable <id> [path]`
 
-Disable a rule or skill without deleting it (frontmatter `enabled: false` + DB column).
+Disable a rule or skill without deleting it (frontmatter `enabled: false` + DB column). As with `enable`, use `rule:<id>` or `skill:<name>` when both kinds share the name.
 
 ```bash
 ax policy disable mobile-first
@@ -1729,7 +1731,7 @@ ax policy disable mobile-first
 
 ### `ax policy agents-dir [name] [path]`
 
-Show or set the folder that holds on-disk rules and skills. The default suggestion is `.agents`. The value is `policy.agentsDir` in project `ax.json`. When you set a new name and the old folder exists, ax renames it. `ax init` asks for this name when it is not saved yet.
+Show or set the folder that holds on-disk rules and skills. The default suggestion is `.agents`. The value is `policy.agentsDir` in project `ax.json`. The name must be a single folder inside the project: paths, `..`, `.`, `.ax` and `.git` are refused, and such a value found in `ax.json` is ignored with a warning (ax uses `.agents` instead). When you set a new name and the old folder exists, ax renames it. `ax init` asks for this name when it is not saved yet.
 
 ```bash
 ax policy agents-dir
@@ -1884,8 +1886,8 @@ ax policy review reject mobile-first
 
 | Subcommand | Description |
 |---|---|
-| `list [path]` | List pending rules and skills (`--json`) |
-| `show <id> [path]` | Show a pending item and its diff against the local copy (`--json`) |
+| `list [path]` | List pending rules and skills (`--json`). A pending file that cannot be parsed is reported on stderr with its path and the failing fields; the other items are still listed |
+| `show <id> [path]` | Show a pending item and its diff against the active item, wherever it is stored (`.agents/`, another scope folder or the database) (`--json`). Use `skill:<name>` to pick the skill when a pending rule has the same id |
 | `approve <id> [path]` | Move a pending item into active policy |
 | `reject <id> [path]` | Drop a pending item |
 

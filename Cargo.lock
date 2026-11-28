@@ -978,6 +978,7 @@ dependencies = [
  "ax-utils",
  "blake3",
  "dirs",
+ "fs2",
  "globset",
  "regex",
  "serde",
@@ -1000,6 +1001,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
 ]
@@ -1129,6 +1131,7 @@ dependencies = [
 name = "ax-skill-catalog"
 version = "10.1.2"
 dependencies = [
+ "ax-utils",
  "blake3",
  "flate2",
  "reqwest 0.12.28",
@@ -1137,6 +1140,7 @@ dependencies = [
  "serde_yaml",
  "tar",
  "tempfile",
+ "tracing",
  "walkdir",
  "zip",
 ]

@@ -1,5 +1,6 @@
 //! Concurrency, security, and utility primitives for ax.
 
+pub mod child;
 pub mod debounce;
 pub mod errors;
 pub mod file_lock;
@@ -17,8 +18,8 @@ pub use debounce::{debounce, Throttle};
 pub use errors::*;
 pub use file_lock::{clear_stale_lock, FileLock, DEFAULT_LOCK_WAIT};
 pub use fs_safe::{
-    atomic_write, contained_join, ensure_within, read_bounded, read_to_end_bounded, safe_relative,
-    update_locked, PathEscape,
+    atomic_write, atomic_write_private, contained_join, ensure_within, read_bounded,
+    read_to_end_bounded, safe_relative, update_locked, update_locked_at, PathEscape,
 };
 pub use logger::{get_logger, set_logger, Logger};
 pub use memory::{current_rss_bytes, MemoryMonitor};

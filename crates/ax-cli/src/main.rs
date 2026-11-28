@@ -1832,7 +1832,8 @@ enum PolicyCommands {
     /// Write one removed bundled rule or skill back
     #[command(name = "restore-item")]
     RestoreItem {
-        /// Rule id, skill name, or template path such as `rules/explore-before-grep.mdc`
+        /// Rule id, skill name, or template path such as `rules/explore-before-grep.mdc`;
+        /// use `rule:<id>` or `skill:<name>` when a rule and a skill share the name
         id: String,
         path: Option<String>,
         #[arg(long)]

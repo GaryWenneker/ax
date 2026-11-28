@@ -1,3 +1,5 @@
+use crate::remote::encode;
+
 pub fn install_report_url(enabled: bool, source: &str, skill: &str) -> Option<String> {
     if !enabled || skill.is_empty() {
         return None;
@@ -8,19 +10,6 @@ pub fn install_report_url(enabled: bool, source: &str, skill: &str) -> Option<St
     url.push_str("&skills=");
     url.push_str(&encode(skill));
     Some(url)
-}
-
-fn encode(value: &str) -> String {
-    let mut out = String::new();
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(byte as char);
-            }
-            _ => out.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    out
 }
 
 #[cfg(test)]

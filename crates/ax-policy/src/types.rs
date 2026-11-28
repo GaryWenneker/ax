@@ -121,6 +121,35 @@ impl PolicyItemStatus {
     }
 }
 
+/// Which kind of policy item an id names. A rule and a skill may share a
+/// name, so callers that know the kind pass it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PolicyItemKind {
+    Rule,
+    Skill,
+}
+
+impl PolicyItemKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Rule => "rule",
+            Self::Skill => "skill",
+        }
+    }
+
+    /// Split an optional `rule:` / `skill:` prefix off an id.
+    pub fn split_prefixed(id: &str) -> (Option<Self>, &str) {
+        if let Some(rest) = id.strip_prefix("rule:") {
+            (Some(Self::Rule), rest)
+        } else if let Some(rest) = id.strip_prefix("skill:") {
+            (Some(Self::Skill), rest)
+        } else {
+            (None, id)
+        }
+    }
+}
+
 fn default_priority() -> i32 {
     50
 }
@@ -361,6 +390,34 @@ pub struct MatchResult {
 pub struct PolicyIndexResult {
     pub rules_indexed: u32,
     pub skills_indexed: u32,
+    /// Policy files the import could not use. Each entry says whether the row indexed
+    /// earlier from that file was kept or removed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped: Vec<PolicySkip>,
+}
+
+/// One policy file an import left out, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PolicySkip {
+    pub path: String,
+    pub reason: String,
+    /// True when the row indexed earlier from this file stays as it was: the file
+    /// could not be read, its frontmatter is not YAML, or its stub source is
+    /// unusable. False when the file parsed but failed validation, so its row was
+    /// removed.
+    #[serde(default)]
+    pub kept: bool,
+}
+
+impl PolicySkip {
+    /// What happened to the row indexed earlier from this file, in words.
+    pub fn outcome(&self) -> &'static str {
+        if self.kept {
+            "previous version kept"
+        } else {
+            "its indexed row was removed"
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -392,6 +449,10 @@ pub struct GuardViolation {
 pub struct GuardResult {
     pub allowed: bool,
     pub violations: Vec<GuardViolation>,
+    /// Checks that could not run, such as content rules for a write that
+    /// came without content. They do not block, but the caller should say so.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -404,4 +465,26 @@ pub enum GuardOp {
 pub struct ValidationError {
     pub error: String,
     pub fields: std::collections::HashMap<String, String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PolicySkip;
+
+    #[test]
+    fn a_skip_says_whether_its_row_was_kept() {
+        let mut skip = PolicySkip {
+            path: "a.mdc".into(),
+            reason: "bad".into(),
+            kept: true,
+        };
+        assert_eq!(skip.outcome(), "previous version kept");
+        skip.kept = false;
+        assert_eq!(skip.outcome(), "its indexed row was removed");
+        let json = serde_json::to_value(&skip).unwrap();
+        assert_eq!(json["kept"], false);
+        // An entry written before the flag existed reads as removed, never as kept.
+        let old: PolicySkip = serde_json::from_str(r#"{"path":"a","reason":"r"}"#).unwrap();
+        assert!(!old.kept);
+    }
 }

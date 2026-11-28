@@ -765,13 +765,23 @@ async fn policy_index_tool(ax: &mut Ax, params: Value) -> Result<Value, String> 
             result.rules_indexed, result.skills_indexed
         ),
     );
+    let mut text = format!(
+        "Policy indexed: {} rules, {} skills (force={force})",
+        result.rules_indexed, result.skills_indexed
+    );
+    for skip in &result.skipped {
+        text.push_str(&format!(
+            "\nSkipped {} ({}): {}",
+            skip.path,
+            skip.outcome(),
+            skip.reason
+        ));
+    }
     Ok(json!({
-        "text": format!(
-            "Policy indexed: {} rules, {} skills (force={force})",
-            result.rules_indexed, result.skills_indexed
-        ),
+        "text": text,
         "rulesIndexed": result.rules_indexed,
         "skillsIndexed": result.skills_indexed,
+        "skipped": result.skipped,
         "force": force,
     }))
 }
@@ -1168,7 +1178,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
             .into_iter()
             .map(|r| r.id)
             .collect();
-        Some(finalize_proposal(proposal, &existing))
+        Some(finalize_proposal(proposal, &existing, ax.project_root()))
     } else {
         None
     };
@@ -2054,7 +2064,7 @@ async fn policy_capture(ax: &mut Ax, params: Value) -> Result<Value, String> {
         .into_iter()
         .map(|r| r.id)
         .collect();
-    let proposal = finalize_proposal(proposal, &existing);
+    let proposal = finalize_proposal(proposal, &existing, ax.project_root());
 
     Ok(json!({
         "ok": true,

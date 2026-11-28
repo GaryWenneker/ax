@@ -228,7 +228,7 @@ Policy can live in **files** (`.ax/policy/` on disk) or **database** (`ax.db` ta
 
 ```bash
 ax policy storage status           # show effective mode (project + global)
-ax policy storage database         # scan repo, show per-item interview (no import)
+ax policy storage database         # scan policy folders, show per-item interview (no import)
 ax policy storage database --yes   # import all candidates into ax.db, then switch
 ax policy storage files --yes      # export DB → files, then switch
 ```

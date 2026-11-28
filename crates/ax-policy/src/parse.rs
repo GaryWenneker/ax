@@ -10,19 +10,64 @@ use crate::types::{
 pub fn split_frontmatter(raw: &str) -> Result<(String, String), ValidationError> {
     let raw = raw.strip_prefix('\u{feff}').unwrap_or(raw);
     let trimmed = raw.trim_start();
-    if !trimmed.starts_with("---") {
+    // The frontmatter opens and closes on a line that is exactly `---` (a trailing
+    // `\r` or spaces aside); `----` or `--- text` are content, not delimiters.
+    let mut lines = trimmed.split_inclusive('\n');
+    if lines.next().map(str::trim_end) != Some("---") {
         return Err(field_err(
             "body",
             "document must start with YAML frontmatter (---)",
         ));
     }
-    let rest = trimmed.trim_start_matches("---").trim_start();
-    let end = rest
-        .find("\n---")
-        .ok_or_else(|| field_err("body", "missing closing ---"))?;
-    let yaml = rest[..end].trim();
-    let body = rest[end + 4..].trim_start().trim_end().to_string();
-    Ok((yaml.to_string(), body))
+    let yaml_start = trimmed.find('\n').map_or(trimmed.len(), |i| i + 1);
+    let mut offset = yaml_start;
+    for line in lines {
+        if line.trim_end() == "---" {
+            let yaml = trimmed[yaml_start..offset].trim();
+            let body = trimmed[offset + line.len()..].trim().to_string();
+            return Ok((yaml.to_string(), body));
+        }
+        offset += line.len();
+    }
+    Err(field_err("body", "missing closing ---"))
+}
+
+/// A known status or scope value in its canonical spelling; an absent value
+/// takes the default, and an unknown one is a validation error.
+fn known_value<T>(
+    map: &HashMap<String, Value>,
+    key: &str,
+    parse: impl Fn(&str) -> Option<T>,
+    canonical: impl Fn(T) -> &'static str,
+    allowed: &str,
+) -> Result<String, ValidationError> {
+    match get_str(map, key) {
+        None => Ok(canonical(parse("").expect("empty value has a default"))),
+        Some(value) => parse(&value)
+            .map(canonical)
+            .ok_or_else(|| field_err(key, &format!("must be {allowed}"))),
+    }
+    .map(str::to_string)
+}
+
+fn parse_status(map: &HashMap<String, Value>) -> Result<String, ValidationError> {
+    known_value(
+        map,
+        "status",
+        crate::types::PolicyItemStatus::parse,
+        |s| s.as_str(),
+        "approved, pending, or rejected",
+    )
+}
+
+fn parse_scope(map: &HashMap<String, Value>) -> Result<String, ValidationError> {
+    known_value(
+        map,
+        "scope",
+        crate::types::PolicyScope::parse,
+        |s| s.as_str(),
+        "company, workspace, project, private_user, or private_project",
+    )
 }
 
 pub fn parse_rule_file(path: &Path, raw: &str) -> Result<PolicyRuleDoc, ValidationError> {
@@ -67,16 +112,8 @@ fn parse_rule_frontmatter(yaml: &str) -> Result<RuleFrontmatter, ValidationError
     let share = get_bool(&map, "share");
     let mut tags = get_str_list(&map, "tags");
     ensure_shared_tag(&mut tags, share);
-    let status = get_str(&map, "status").unwrap_or_else(|| "approved".into());
-    let status = crate::types::PolicyItemStatus::parse(&status)
-        .unwrap_or(crate::types::PolicyItemStatus::Approved)
-        .as_str()
-        .to_string();
-    let scope = get_str(&map, "scope").unwrap_or_else(|| "project".into());
-    let scope = crate::types::PolicyScope::parse(&scope)
-        .unwrap_or(crate::types::PolicyScope::Project)
-        .as_str()
-        .to_string();
+    let status = parse_status(&map)?;
+    let scope = parse_scope(&map)?;
     let storage = get_str(&map, "storage")
         .and_then(|s| crate::config::PolicyStorage::parse(&s).map(|p| p.as_str().to_string()));
     Ok(RuleFrontmatter {
@@ -118,16 +155,8 @@ fn parse_skill_frontmatter(yaml: &str) -> Result<SkillFrontmatter, ValidationErr
     let share = get_bool(&map, "share");
     let mut tags = get_str_list(&map, "tags");
     ensure_shared_tag(&mut tags, share);
-    let status = get_str(&map, "status").unwrap_or_else(|| "approved".into());
-    let status = crate::types::PolicyItemStatus::parse(&status)
-        .unwrap_or(crate::types::PolicyItemStatus::Approved)
-        .as_str()
-        .to_string();
-    let scope = get_str(&map, "scope").unwrap_or_else(|| "project".into());
-    let scope = crate::types::PolicyScope::parse(&scope)
-        .unwrap_or(crate::types::PolicyScope::Project)
-        .as_str()
-        .to_string();
+    let status = parse_status(&map)?;
+    let scope = parse_scope(&map)?;
     let storage = get_str(&map, "storage")
         .and_then(|s| crate::config::PolicyStorage::parse(&s).map(|p| p.as_str().to_string()));
     Ok(SkillFrontmatter {
@@ -305,11 +334,7 @@ fn validate_rule(fm: &RuleFrontmatter) -> Result<(), ValidationError> {
     let mut fields = HashMap::new();
     if fm.id.is_empty() {
         fields.insert("id".into(), "required".into());
-    } else if !fm
-        .id
-        .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-    {
+    } else if !is_kebab_case(&fm.id) {
         fields.insert("id".into(), "must be kebab-case".into());
     }
     if crate::types::PolicyLevel::parse(&fm.level).is_none() {
@@ -341,10 +366,19 @@ fn validate_rule(fm: &RuleFrontmatter) -> Result<(), ValidationError> {
     Ok(())
 }
 
+/// Lowercase ASCII letters, digits and `-`. Rule ids and skill names are also file and folder
+/// names, so this keeps them to one safe path component.
+pub fn is_kebab_case(name: &str) -> bool {
+    name.chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
 fn validate_skill(fm: &SkillFrontmatter) -> Result<(), ValidationError> {
     let mut fields = HashMap::new();
     if fm.name.is_empty() {
         fields.insert("name".into(), "required".into());
+    } else if !is_kebab_case(&fm.name) {
+        fields.insert("name".into(), "must be kebab-case".into());
     }
     if fm.description.is_empty() {
         fields.insert("description".into(), "required".into());
@@ -361,8 +395,8 @@ fn validate_skill(fm: &SkillFrontmatter) -> Result<(), ValidationError> {
 pub fn serialize_rule(fm: &RuleFrontmatter, body: &str) -> String {
     let mut lines = vec![
         "---".into(),
-        format!("id: {}", fm.id),
-        format!("level: {}", fm.level),
+        format!("id: {}", yaml_scalar(&fm.id)),
+        format!("level: {}", yaml_scalar(&fm.level)),
         format!("alwaysApply: {}", fm.always_apply),
         format!(
             "globs: {}",
@@ -378,23 +412,23 @@ pub fn serialize_rule(fm: &RuleFrontmatter, body: &str) -> String {
         ),
         format!("priority: {}", fm.priority),
         format!("enabled: {}", fm.enabled),
-        format!("status: {}", fm.status),
-        format!("scope: {}", fm.scope),
+        format!("status: {}", yaml_scalar(&fm.status)),
+        format!("scope: {}", yaml_scalar(&fm.scope)),
     ];
     if fm.share {
         lines.push("share: true".into());
     }
     if let Some(ref s) = fm.storage {
-        lines.push(format!("storage: {s}"));
+        lines.push(format!("storage: {}", yaml_scalar(s)));
     }
     if let Some(ref s) = fm.source {
         lines.push(format!("source: {}", yaml_string(s)));
     }
     if let Some(ref r) = fm.root_id {
-        lines.push(format!("rootId: {r}"));
+        lines.push(format!("rootId: {}", yaml_scalar(r)));
     }
     if let Some(ref g) = fm.group {
-        lines.push(format!("group: {g}"));
+        lines.push(format!("group: {}", yaml_scalar(g)));
     }
     push_properties(&mut lines, &fm.properties);
     lines.push("---".into());
@@ -416,7 +450,7 @@ pub fn serialize_skill_stub(fm: &SkillFrontmatter) -> String {
 pub fn serialize_skill(fm: &SkillFrontmatter, body: &str) -> String {
     let mut lines = vec![
         "---".into(),
-        format!("name: {}", fm.name),
+        format!("name: {}", yaml_scalar(&fm.name)),
         format!("description: {}", yaml_string(&fm.description)),
         format!("alwaysApply: {}", fm.always_apply),
     ];
@@ -434,25 +468,25 @@ pub fn serialize_skill(fm: &SkillFrontmatter, body: &str) -> String {
     }
     lines.push(format!("priority: {}", fm.priority));
     lines.push(format!("enabled: {}", fm.enabled));
-    lines.push(format!("status: {}", fm.status));
-    lines.push(format!("scope: {}", fm.scope));
+    lines.push(format!("status: {}", yaml_scalar(&fm.status)));
+    lines.push(format!("scope: {}", yaml_scalar(&fm.scope)));
     if fm.share {
         lines.push("share: true".into());
     }
     if let Some(ref s) = fm.storage {
-        lines.push(format!("storage: {s}"));
+        lines.push(format!("storage: {}", yaml_scalar(s)));
     }
     if let Some(ref s) = fm.source {
         lines.push(format!("source: {}", yaml_string(s)));
     }
     if let Some(ref r) = fm.root_id {
-        lines.push(format!("rootId: {r}"));
+        lines.push(format!("rootId: {}", yaml_scalar(r)));
     }
     if let Some(ref t) = fm.context_task {
         lines.push(format!("contextTask: {}", yaml_string(t)));
     }
     if let Some(ref g) = fm.group {
-        lines.push(format!("group: {g}"));
+        lines.push(format!("group: {}", yaml_scalar(g)));
     }
     push_properties(&mut lines, &fm.properties);
     lines.push("---".into());
@@ -461,11 +495,27 @@ pub fn serialize_skill(fm: &SkillFrontmatter, body: &str) -> String {
     lines.join("\n")
 }
 
+/// A YAML double-quoted scalar for free text. JSON string syntax is valid YAML
+/// and escapes backslashes, quotes and control characters, so the value reads
+/// back exactly, newlines and leading spaces included.
 fn yaml_string(s: &str) -> String {
-    if s.contains('\n') || s.contains(':') {
-        format!("|\n  {}", s.replace('\n', "\n  "))
+    serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into())
+}
+
+/// `s` as a plain YAML scalar when it reads back as the same string, and
+/// quoted otherwise (`#perf`, `review: api`, `true`, `123`, …).
+fn yaml_scalar(s: &str) -> String {
+    let plain_ok = !s.is_empty()
+        && !s.contains(['\n', '\r', '\t'])
+        && matches!(
+            serde_yaml::from_str::<Value>(&format!("k: {s}")),
+            Ok(Value::Mapping(m))
+                if m.len() == 1 && m.get("k") == Some(&Value::String(s.to_string()))
+        );
+    if plain_ok {
+        s.to_string()
     } else {
-        format!("\"{}\"", s.replace('"', "\\\""))
+        yaml_string(s)
     }
 }
 
@@ -513,6 +563,12 @@ pub fn format_validation(err: &ValidationError) -> String {
     format!("{} ({detail})", err.error)
 }
 
+/// An error that names the file and every failing field, for places that turn
+/// a [`ValidationError`] into an [`ax_utils::errors::AxError`].
+pub fn validation_error_at(path: &Path, err: &ValidationError) -> ax_utils::errors::AxError {
+    ax_utils::errors::AxError::Other(format!("{}: {}", path.display(), format_validation(err)))
+}
+
 fn field_err(field: &str, msg: &str) -> ValidationError {
     let mut fields = HashMap::new();
     fields.insert(field.into(), msg.into());
@@ -527,10 +583,83 @@ mod tests {
     use super::*;
 
     #[test]
+    fn frontmatter_closes_only_on_a_line_that_is_exactly_three_dashes() {
+        let (yaml, body) =
+            split_frontmatter("---\nid: x\ndescription: |\n  a\n---- not a closer\n---\nBody.")
+                .unwrap();
+        assert_eq!(yaml, "id: x\ndescription: |\n  a\n---- not a closer");
+        assert_eq!(body, "Body.");
+
+        let (yaml, body) = split_frontmatter("---\nid: x\n--- trailing\n---\n\nBody.").unwrap();
+        assert_eq!(yaml, "id: x\n--- trailing");
+        assert_eq!(body, "Body.");
+    }
+
+    #[test]
+    fn empty_frontmatter_and_crlf_split() {
+        let (yaml, body) = split_frontmatter("---\n---\nBody.").unwrap();
+        assert_eq!(yaml, "");
+        assert_eq!(body, "Body.");
+
+        let (yaml, body) = split_frontmatter("---\r\nid: x\r\n---\r\n\r\nBody.\r\n").unwrap();
+        assert_eq!(yaml, "id: x");
+        assert_eq!(body, "Body.");
+
+        let (yaml, body) = split_frontmatter("---\nid: x\n---").unwrap();
+        assert_eq!(yaml, "id: x");
+        assert_eq!(body, "");
+
+        assert!(split_frontmatter("---\nid: x\nno closer").is_err());
+        assert!(split_frontmatter("id: x\n---\n").is_err());
+    }
+
+    #[test]
+    fn an_unknown_status_or_scope_is_a_validation_error() {
+        let rule = |extra: &str| {
+            format!("---\nid: r\nlevel: INFO\nalwaysApply: true\n{extra}\n---\n\nBody.")
+        };
+        let err = parse_rule_file(Path::new("r.mdc"), &rule("status: pendng")).unwrap_err();
+        assert!(err.fields.contains_key("status"), "{err:?}");
+        let err = parse_rule_file(Path::new("r.mdc"), &rule("scope: teams")).unwrap_err();
+        assert!(err.fields.contains_key("scope"), "{err:?}");
+        let ok =
+            parse_rule_file(Path::new("r.mdc"), &rule("status: pending\nscope: company")).unwrap();
+        assert_eq!(ok.frontmatter.status, "pending");
+        assert_eq!(ok.frontmatter.scope, "company");
+
+        let skill = |extra: &str| format!("---\nname: s\ndescription: d\n{extra}\n---\n\nSteps.");
+        let err = parse_skill_file(Path::new("SKILL.md"), &skill("status: aproved")).unwrap_err();
+        assert!(err.fields.contains_key("status"), "{err:?}");
+        let err = parse_skill_file(Path::new("SKILL.md"), &skill("scope: teams")).unwrap_err();
+        assert!(err.fields.contains_key("scope"), "{err:?}");
+    }
+
+    #[test]
     fn a_windows_bom_still_parses() {
         let raw = "\u{feff}---\nid: utf8\nlevel: INFO\nalwaysApply: true\n---\n\nBody.";
         let doc = parse_rule_file(Path::new("utf8.mdc"), raw).unwrap();
         assert_eq!(doc.frontmatter.id, "utf8");
+    }
+
+    #[test]
+    fn a_skill_name_must_be_kebab_case() {
+        for bad in [
+            "../../../.claude/skills/evil",
+            "a/b",
+            "a\\b",
+            "..",
+            "Has Space",
+        ] {
+            let raw = format!("---\nname: \"{bad}\"\ndescription: d\n---\n\nBody.\n");
+            let err = parse_skill_file(Path::new("SKILL.md"), &raw)
+                .expect_err(&format!("{bad} must be rejected"));
+            assert_eq!(
+                err.fields.get("name").map(String::as_str),
+                Some("must be kebab-case")
+            );
+        }
+        let ok = "---\nname: review-loop2\ndescription: d\n---\n\nBody.\n";
+        assert!(parse_skill_file(Path::new("SKILL.md"), ok).is_ok());
     }
 
     #[test]
@@ -589,6 +718,70 @@ mod tests {
         let doc = parse_rule_file(Path::new("hello-world.mdc"), &raw).unwrap();
         assert_eq!(doc.frontmatter.globs.len(), 2);
         assert!(doc.frontmatter.always_apply);
+    }
+
+    const AWKWARD: &[&str] = &[
+        "Use C:\\Users paths",
+        "Escape \\d in regex",
+        "D:/shared/rules/a.mdc",
+        "  leading spaces",
+        "multi\nline: text\n  indented",
+        "#perf",
+        "review: api",
+        "say \"hi\" & 'bye'",
+        "tab\there",
+        "true",
+        "123",
+        "- dash",
+        "{curly}",
+    ];
+
+    #[test]
+    fn skill_free_text_survives_a_save_unchanged() {
+        for value in AWKWARD {
+            let raw = "---\nname: round-trip\ndescription: d\n---\n\nBody.\n";
+            let mut fm = parse_skill_file(Path::new("SKILL.md"), raw)
+                .unwrap()
+                .frontmatter;
+            fm.description = (*value).into();
+            fm.source = Some((*value).into());
+            fm.context_task = Some((*value).into());
+            fm.group = Some((*value).into());
+            fm.root_id = Some((*value).into());
+            let saved = serialize_skill(&fm, "Body.");
+            let again = parse_skill_file(Path::new("SKILL.md"), &saved)
+                .unwrap_or_else(|e| panic!("{value:?} broke the file: {e:?}\n{saved}"));
+            let got = &again.frontmatter;
+            assert_eq!(got.description, *value, "description\n{saved}");
+            assert_eq!(got.source.as_deref(), Some(*value), "source\n{saved}");
+            assert_eq!(
+                got.context_task.as_deref(),
+                Some(*value),
+                "contextTask\n{saved}"
+            );
+            assert_eq!(got.group.as_deref(), Some(*value), "group\n{saved}");
+            assert_eq!(got.root_id.as_deref(), Some(*value), "rootId\n{saved}");
+        }
+    }
+
+    #[test]
+    fn rule_free_text_survives_a_save_unchanged() {
+        for value in AWKWARD {
+            let raw = "---\nid: round-trip\nlevel: INFO\nalwaysApply: true\n---\n\nBody.\n";
+            let mut fm = parse_rule_file(Path::new("r.mdc"), raw)
+                .unwrap()
+                .frontmatter;
+            fm.source = Some((*value).into());
+            fm.group = Some((*value).into());
+            fm.root_id = Some((*value).into());
+            let saved = serialize_rule(&fm, "Body.");
+            let again = parse_rule_file(Path::new("r.mdc"), &saved)
+                .unwrap_or_else(|e| panic!("{value:?} broke the file: {e:?}\n{saved}"));
+            let got = &again.frontmatter;
+            assert_eq!(got.source.as_deref(), Some(*value), "source\n{saved}");
+            assert_eq!(got.group.as_deref(), Some(*value), "group\n{saved}");
+            assert_eq!(got.root_id.as_deref(), Some(*value), "rootId\n{saved}");
+        }
     }
 
     #[test]
