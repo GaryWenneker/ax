@@ -28,9 +28,9 @@ ax sync            # incremental — only changed files
 
 ### 1. File watcher with debounced auto-sync (always on)
 
-`serve --mcp`, writable `ax web`, Remote MCP, and standalone Primary/Replica servers start the same Ax Sync file watcher automatically. Web watches the active workspace and stops its old watcher when you switch projects. Standalone and Remote MCP servers watch only their explicitly registered projects. Read-only/shared web sessions do not start a source-sync writer.
+`ax serve --mcp` and Remote MCP (`ax mcp remote serve`) start the same Ax Sync file watcher automatically. A Remote MCP server watches only its explicitly registered projects.
 
-The native watcher (FSEvents on macOS, inotify on Linux, ReadDirectoryChangesW on Windows) captures source-file create / modify / delete events. A debounce timer collapses bursts of edits into a single sync. Startup also reconciles edits made while the service was stopped. A configured detached Primary or Replica keeps its own watcher running after web closes or MCP refreshes; no separate `ax sync` command is required.
+The native watcher (FSEvents on macOS, inotify on Linux, ReadDirectoryChangesW on Windows) captures source-file create / modify / delete events. A debounce timer collapses bursts of edits into a single sync. Startup also reconciles edits made while the service was stopped; no separate `ax sync` command is required.
 
 ```
 agent writes src/Widget.ts
@@ -98,7 +98,7 @@ ax status
 
 Reports node/edge/file counts, the active SQLite backend, and the journal mode. In an agent session, the MCP-side `ax_status` additionally surfaces the `### Pending sync:` block described above.
 
-![Graph Stats — index metrics, language distribution, and database size](/screenshots/cc-stats-dark.png)
+In [ax-admin](/guides/remote-admin/), the **Status** page shows the index statistics, freshness and cache counts of the connected environment. With the admin grant, its **Operations** page runs a sync or a full index rebuild there.
 
 ## Documentation files
 
@@ -111,10 +111,10 @@ In addition to source code, ax indexes documentation files as `Doc` nodes:
 | PDF | `.pdf` | Opaque — presence only |
 | Other opaque | `.csv`, `.tsv`, `.rtf`, `.txt`, `.tex`, `.epub`, `.json`, `.xml`, `.html`, `.htm` | Opaque — presence only |
 
-Doc counts by extension appear automatically in every `ax_preflight` response (`<ax_index>` block) and in `ax status` / `ax_status` output (`stats.docsByExtension` in JSON). The Command Center **Stats** and **Graph** pages surface doc nodes alongside code (doc nodes render as squares on the Graph).
+Doc counts by extension appear automatically in every `ax_preflight` response (`<ax_index>` block) and in `ax status` / `ax_status` output (`stats.docsByExtension` in JSON). The HTML file from `ax export graph-html` draws doc nodes as squares next to the code.
 
 ## What gets indexed (source code)
 
-![Files — indexed source folder and language/path filters](/screenshots/cc-files-dark.png)
-
 Every file whose extension maps to a [supported language](/reference/languages/), minus dependency/build directories excluded by default (`node_modules`, `vendor`, `dist`, …), anything your `.gitignore` excludes, and files over 1 MB. See [Configuration](/getting-started/configuration/).
+
+`ax files` lists the indexed files. In [ax-admin](/guides/remote-admin/), the **Files** page shows them for the connected environment; it needs the admin grant. The [headless build](/guides/headless-linux/#languages) links only the core grammars by default: files in the other languages are listed but get no symbols.

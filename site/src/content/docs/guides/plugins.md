@@ -56,9 +56,10 @@ Guest exports: `memory`, `alloc(i32) -> i32`, `extract(i32, i32) -> i64` (hi = o
 
 ## Visibility
 
-- `GET /api/plugins/` lists every plugin found (name, extensions, mode, command/wasm, `trusted`)
-- Command Center **Settings → Plugins** shows the live table (and empty-state hint)
-- With Verbose MCP logging, index/sync writes `plugin extract name=… ok|fail` lines (filter Logging → plugin)
+- `ax plugins list` lists every plugin found: name, extensions, the command or wasm module it runs, and whether it is trusted. Add `--json` for scripts
+- Index and sync write `plugin extract name=… ok|fail` lines to the project's verbose log (`<project>/.ax/mcp-verbose-YYYY-MM-DD.log`)
+
+[ax-admin](/guides/remote-admin/) has no plugins page. Trust is given on the machine that runs the index, with `ax plugins trust`.
 
 ## Further reading
 

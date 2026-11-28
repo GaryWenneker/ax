@@ -1,6 +1,9 @@
 ---
 title: Standalone server and replicas
 description: Run Ax as a long-lived primary or replica, with authenticated UDP change notifications and resilient HTTPS synchronization.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 Ax can run independently of an IDE. A **primary** maintains an enrolled Ax project; one or more **replicas** contribute their existing knowledge and receive the combined cluster state. Native records remain intact, and received policy stays in review. The optional LAN notification channel makes synchronization responsive, while HTTPS polling catches missed notifications.

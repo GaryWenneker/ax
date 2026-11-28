@@ -26,3 +26,7 @@ ax detects web-framework routing files and emits `route` nodes linked by `refere
 | **Astro** | `src/pages/` file-based routes (`.astro` pages + `.ts` endpoints, `[param]`/`[...rest]` syntax) |
 
 Route resolution is automatic — there's nothing to configure. If a framework file is recognized, its routes appear in the graph after the next index or sync.
+
+Query them with `ax callers <handler>` or `ax explore`, or look a handler up on the **Nodes** page of [ax-admin](/guides/remote-admin/).
+
+The default headless build links only the core grammars. Files in C#, Swift and Scala get no symbols there, so ASP.NET and Vapor routes need a build with every language. See [Headless Linux build — Languages](/guides/headless-linux/#languages).

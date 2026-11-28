@@ -73,7 +73,7 @@ Commit the file to share settings with your team.
 
 ### Review comment language
 
-`reviews.commentLanguage` chooses the language of comments an agent posts on a pull request. Command Center Settings shows it as a dropdown. The project value wins over the same key in `~/.ax/config.json`. When neither is set, the language is English.
+`reviews.commentLanguage` chooses the language of comments an agent posts on a pull request. Set it in the project's `ax.json`. The project value wins over the same key in `~/.ax/config.json`. When neither is set, the language is English.
 
 Allowed codes: `en`, `nl`, `de`, `fr`, `es`, `pt`, `it`, `pl`, `sv`, `da`, `tr`.
 
@@ -201,7 +201,7 @@ Request limits are set with environment variables only:
 
 When the provider rejects a request or cannot be reached, ax falls back to the plain explore output and logs a warning with the status code and the start of the provider's reply (once per process; every time with `AX_OFFLOAD_DEBUG=1`). The API key is never logged.
 
-MCP graph calls log estimated context-token savings in **`~/.ax/usage.db`**. Query with [`ax savings`](/reference/cli/#ax-savings) or the **Savings** page in `ax web`. See [Token savings](/guides/token-savings/). Imported agent turns are quoted separately with [`ax costs`](/reference/cli/#ax-costs) and compared to a local plan with [`ax budget`](/reference/cli/#ax-budget). See [Agent budget](/guides/budget/). Pi runs stay in Pi; Ax can record their estimates with [`ax agent economics`](/reference/cli/#ax-agent-economics). See [Pi integration](/guides/pi/).
+MCP graph calls log estimated context-token savings in **`~/.ax/usage.db`**. Query with [`ax savings`](/reference/cli/#ax-savings). In [ax-admin](/guides/remote-admin/) the **Usage** page shows cost, tool economics and budget. See [Token savings](/guides/token-savings/). Imported agent turns are quoted separately with [`ax costs`](/reference/cli/#ax-costs) and compared to a local plan with [`ax budget`](/reference/cli/#ax-budget). See [Agent budget](/guides/budget/). Pi runs stay in Pi; Ax can record their estimates with [`ax agent economics`](/reference/cli/#ax-agent-economics). See [Pi integration](/guides/pi/).
 
 ## Policy rules and skills
 
@@ -212,7 +212,7 @@ ax stores agent instructions under `.ax/policy/`:
 | `.ax/policy/rules/*.mdc` | YAML frontmatter + markdown rule body |
 | `.ax/policy/skills/*/SKILL.md` | YAML frontmatter + skill workflow |
 
-Run `ax policy index` after editing policy files (or let `ax init` / `ax sync` re-index automatically). Manage rules and skills in the browser with `ax web --open`.
+Run `ax policy index` after editing policy files (or let `ax init` / `ax sync` re-index automatically). List what is indexed with [`ax policy rules`](/reference/cli/#ax-policy-rules-path) and [`ax policy skills`](/reference/cli/#ax-policy-skills-path), and test which rules a prompt matches with [`ax policy match`](/reference/cli/#ax-policy-match-prompt-path). In [ax-admin](/guides/remote-admin/) the **Rules** and **Skills** pages browse them; it has no rule or skill editor, so you edit the files in your own editor.
 
 ### Policy storage mode
 
@@ -235,17 +235,19 @@ ax policy storage files --yes      # export DB → files, then switch
 
 The migration scan walks the **entire codebase** for `.mdc` rules and `SKILL.md` skills — including `.cursor/rules/`, `.cursor/skills/`, and other paths — not only `.ax/policy/`. Bootstrap files (e.g. `.cursor/rules/ax.mdc`) are skipped. Each candidate includes interview questions (import yes/no, id, level, triggers, globs, priority, storage destination).
 
-In **database** mode, edits via ax web or `ax policy capture` write to SQLite; run `ax policy export` to materialize files for git. In **files** mode, `ax policy index` syncs disk → DB for delivery.
+In **database** mode, edits via `ax policy capture` (or the MCP tool `ax_policy_capture`) write to SQLite; run `ax policy export` to materialize files for git. In **files** mode, `ax policy index` syncs disk → DB for delivery.
 
 See the full [Policy Engine](/guides/policy-engine/) guide.
 
-## Command Center (`.ax/ship.toml`)
+<a id="command-center-axshiptoml"></a>
 
-ax seeds `.ax/ship.toml` on `ax init` when missing. It configures the ship quality-gate pipeline, optional SonarQube, and the PR remote (Azure DevOps by default):
+## Quality gate (`.ax/ship.toml`)
+
+ax seeds `.ax/ship.toml` on `ax init` when missing. It configures the ship quality-gate pipeline that [`ax ship --evaluate` and `ax ship --ci`](/reference/cli/#ax-ship-path) run, optional SonarQube, and the PR remote (Azure DevOps by default):
 
 | Section | Purpose |
 |---|---|
-| `[ship]` | Target branch, dashboard port |
+| `[ship]` | Target branch, and the dashboard port of `ax ship --watch` (full ax only) |
 | `[quality_gate]` | Pipeline steps and test runner |
 | `[remote]` | GitHub or Azure DevOps draft PR provider |
 | `[sonar]` | Optional local SonarQube via Podman |
@@ -253,7 +255,7 @@ ax seeds `.ax/ship.toml` on `ax init` when missing. It configures the ship quali
 
 If `.ax/ship.toml` cannot be read or parsed (for example `web_port = "7070"` with quotes, or an unclosed string), ax logs the error with the file name and runs with default ship settings. While the file is broken, ax never writes to it: saving settings from the Command Center and the automatic update of `git_roots` are refused with that error, so your `[remote]`, `[sonar]` and other settings stay on disk. Fix or remove the file to save again.
 
-See [Command Center](/guides/command-center/) for the full reference.
+The keys of each section are listed in [Configuration (`.ax/ship.toml`)](/guides/command-center/#configuration-axshiptoml) of the Command Center guide. That guide describes the full ax, which is being phased out; the file and its quality-gate keys are the same in the headless build.
 
 ## Where data lives
 

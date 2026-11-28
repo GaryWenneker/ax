@@ -81,11 +81,13 @@ test('Render blueprint and Koyeb link use the server image without a command ove
 });
 
 test('docs link every deploy button to the same URLs the homepage uses', () => {
+	// The docs write the buttons as HTML links, so "&" in a URL is "&amp;" there.
+	const href = (id: string) => `href="${byId[id].url.replaceAll('&', '&amp;')}"`;
 	for (const id of ['azure-server', 'render', 'koyeb']) {
-		assert.ok(guide.includes(`](${byId[id].url})`), `guide: ${id}`);
-		assert.ok(installation.includes(`](${byId[id].url})`), `installation: ${id}`);
+		assert.ok(guide.includes(href(id)), `guide: ${id}`);
+		assert.ok(installation.includes(href(id)), `installation: ${id}`);
 	}
-	assert.ok(guide.includes(`](${byId['azure-job'].url})`), 'guide: azure-job');
+	assert.ok(guide.includes(href('azure-job')), 'guide: azure-job');
 	assert.match(guide, /^## Deploy to the cloud$/m);
 });
 

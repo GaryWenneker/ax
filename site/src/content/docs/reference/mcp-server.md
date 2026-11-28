@@ -6,7 +6,7 @@ description: The tools ax exposes to AI agents over MCP.
 For authenticated context access from ChatGPT or another IDE through your existing tunnel, see [Remote MCP and browser login](/guides/remote-mcp/). That guide covers browser OAuth, dynamic local ports, project grants and the stdio bridge. Remote transport uses the [Smart Output](/guides/smart-output/) contract.
 
 
-ax runs as a [Model Context Protocol](https://modelcontextprotocol.io/) server. Agents configured by the installer launch it automatically — you don't start it by hand:
+ax runs as a [Model Context Protocol](https://modelcontextprotocol.io/) server. Agents configured by `ax install` launch it automatically — you don't start it by hand:
 
 ```bash
 ax serve --mcp
@@ -30,7 +30,7 @@ By default the server lists the **turn contract** plus the **whole graph read su
 
 `ax_explore` remains the one call that usually answers a whole question: give it a natural-language question or a bag of symbol and file names and it returns the **verbatim, line-numbered source** of the relevant symbols grouped by file, plus call paths and a blast-radius summary. Reach for the narrower tools when you already know exactly what you want.
 
-The specification tools use the same camelCase JSON as `POST /api/specs/...`. `ax_spec_flag` reads or sets `hierarchy_v2`, which defaults off. `ax_spec_approve` is called as an agent and is refused. A person approves with `ax spec-approve` in an interactive terminal, or in the Command Center. `ax_spec_review` lists finished plans that are waiting for a parent spec. `ax_spec_policy` links a spec or plan to one policy revision and stores the hash, not the rule body. `ax_spec_compatibility` records that a plan selection was checked after its spec changed. The CLI equivalents are in [CLI](/reference/cli/#specifications-and-plans).
+The specification tools use the same camelCase JSON as `POST /api/specs/...`. `ax_spec_flag` reads or sets `hierarchy_v2`, which defaults off. `ax_spec_approve` is called as an agent and is refused. A person approves with `ax spec-approve` in an interactive terminal. `ax_spec_review` lists finished plans that are waiting for a parent spec. `ax_spec_policy` links a spec or plan to one policy revision and stores the hash, not the rule body. `ax_spec_compatibility` records that a plan selection was checked after its spec changed. The CLI equivalents are in [CLI](/reference/cli/#specifications-and-plans).
 
 **Why the default is no longer minimal.** Earlier versions listed six tools and left the rest callable-but-unlisted. That created a contradiction: ax's own CRITICAL rules tell agents to call `ax_search` before `Grep` and `ax_sync` after edits, while `tools/list` said those tools did not exist. Agents that trusted the catalog fell back to filesystem sweeps — the behaviour the rules exist to prevent. The full audit is in `docs/audits/2026-08-19-preflight-graph-only/`.
 
@@ -243,15 +243,15 @@ To watch what each tool receives, how preflight enrichment builds the inject blo
 
 1. Logging is always enabled. Confirm that the MCP server is connected with the intended project path.
 2. Reconnect / restart the ax MCP server in Cursor.
-3. In Command Center (`ax web`), watch the status bar **Logging** chip (shows the latest tool / activity). Click it to open the **Logging** page — a list of today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` for the active workspace (**newest at top**; scroll down for earlier days; **Scroll to new** returns to the live top; logs are not cleared from the UI). Kind chips and the status bar separate **Inbound**, **Outbound**, and **Internal**.
+3. Read today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` for the project the agent is connected to. A new file starts each day and earlier days stay on disk. Lines are marked **Inbound** (what a tool received), **Outbound** (what ax sent back) or **Internal**.
+4. For a remote Ax, the **Logging** page of [ax-admin](/guides/remote-admin/) lists the MCP calls that environment handled: time, tool, result, duration and size. It needs the admin grant.
 
-![MCP Logging — live verbose stream with kind filters and Call Inspector](/screenshots/cc-logging-dark.png)
+![ax-admin — the Logging page with MCP calls](/screenshots/ax-admin-logging.png)
 
-4. Open the status-bar **Q** (Quality) chip for the metrics slide-out (correlation, enrichment, findings, **Copy fixpack**). CLI: `ax mcp audit`. Install `ax savings hook install` for `session=` tags.
+5. Score the session with `ax mcp audit`: correlation, enrichment, tool mix and findings, saved to `.ax/audit/latest.json`. Install `ax savings hook install` for `session=` tags.
+6. In Cursor, optionally also use **View → Output → ax / MCP Logs**.
 
-![MCP Quality — correlation, enrichment, tool mix, findings, and Copy fixpack](/screenshots/cc-mcp-quality-dark.png)
-
-5. Optionally also use **View → Output → ax / MCP Logs**, or open the log file directly.
+The full ax, which is being phased out, also has a live Logging page and a Quality slide-out in its Command Center; see [MCP Logging & Quality](/guides/mcp-quality/).
 
 MCP lines are prefixed with `[ax-mcp]`. From **ax 8.4.4**, matching CLI graph/policy/memory commands write the same `inbound tool=` / `outbound tool=` bodies with an `[ax]` brand into the same daily file, so Logging is not MCP-only. Lines never append debug text to `content.text` or `structuredContent`. When a Cursor session id is known, lines also include `session=<uuid>` so `ax mcp audit --session <uuid>` can filter the verbose log.
 
@@ -282,7 +282,7 @@ For whole-graph understanding — subsystems, hot spots, and unexpected coupling
 | `ax_insights` | Leiden **communities** (subsystems), **god nodes** (most-connected concepts), **surprising connections**, and **suggestedQuestions** (same templates as `ax report`). Params: `resolution`, `godLimit`, `surprisingLimit`. |
 | `ax_report` | Full Markdown architecture report (god nodes, communities, surprising links, dead code, unresolved refs, suggested questions). Returns `{ markdown }`. Param: `resolution`. |
 
-Every edge also carries a **confidence** tag — `extracted` (read straight from the AST), `inferred` (resolved by a heuristic/name-matching pass), or `ambiguous` (one of several candidate targets was picked) — surfaced in `ax_node` / `ax_callers` / `ax_callees` output and the Command Center edge badges. Markdown docs (`.md`/`.mdx`) are indexed as `Doc` nodes with full parsing; PDF, Office, and other opaque formats appear as `Doc` nodes (presence only, no content extraction). Counts by extension are auto-injected via `ax_preflight` and available in `ax status --json` as `stats.docsByExtension`.
+Every edge also carries a **confidence** tag — `extracted` (read straight from the AST), `inferred` (resolved by a heuristic/name-matching pass), or `ambiguous` (one of several candidate targets was picked) — surfaced in `ax_node` / `ax_callers` / `ax_callees` output. Markdown docs (`.md`/`.mdx`) are indexed as `Doc` nodes with full parsing; PDF, Office, and other opaque formats appear as `Doc` nodes (presence only, no content extraction). Counts by extension are auto-injected via `ax_preflight` and available in `ax status --json` as `stats.docsByExtension`.
 
 ## Source store: snippets come from the graph
 
@@ -317,7 +317,7 @@ Source store: 0/499 files — snippets for the rest report "source not stored"; 
 
 Coverage counts the files that can own a snippet — parsed, under the cap — not every row in `files`. This repo indexes 3,839 file rows and only 500 of them are code; the rest are SVG assets and build output no parser claims, and that count keeps rising during a `cargo build`. Measuring against those would report a gap that no re-index can ever close.
 
-**Not covered.** The Command Center source viewer (`ax web`) still reads files directly: it shows a human the file's *current* content, which is a different job from answering a graph query. Index-time scanning also walks the tree — that is how the graph gets built.
+**Not covered.** Index-time scanning walks the tree — that is how the graph gets built. The source viewer in the Command Center of the full ax also reads files directly: it shows a human the file's *current* content, which is a different job from answering a graph query.
 
 Enforcement lives in `crates/ax-context/tests/no_query_time_disk_reads.rs`, a fail-closed gate over the query-path modules, plus the CRITICAL `graph-only-query-path` policy rule that makes `ax_guard` block a write reintroducing a disk read. Rerun every layer with `.\scripts\gauntlet-graph-only.ps1`.
 
@@ -331,13 +331,13 @@ All connected clients share the daemon's engine. It runs one request at a time a
 
 When the daemon stops (an upgrade replaced its binary, it was restarted, it crashed), each proxy reconnects to the next daemon, or starts one, on the same stdio connection. Requests that were in flight get the JSON-RPC error `-32000` `ax daemon restarted; retry the call`; requests sent during the reconnect are delivered in order. A proxy on a newer `ax` build restarts an older daemon on its own binary; an older proxy attaches to a newer daemon. See [`ax daemon`](/reference/cli/#ax-daemon-path-statusstoprestart).
 
-If the daemon cannot start when the client first connects, each client falls back to an **embedded** engine — concurrent writers then produce `database is locked` and agents enter **DEGRADED**. Recover with Command Center **Reload MCP** (hamburger / sidebar Ops) or `ax daemon restart`, then restart MCP servers in the IDE. See [Troubleshooting](/troubleshooting/#mcp-hits-database-is-locked--agents-go-degraded).
+If the daemon cannot start when the client first connects, each client falls back to an **embedded** engine — concurrent writers then produce `database is locked` and agents enter **DEGRADED**. Recover with `ax daemon restart`, then restart MCP servers in the IDE. See [Troubleshooting](/troubleshooting/#mcp-hits-database-is-locked--agents-go-degraded).
 
 ## How agents should use it
 
 ax *is* the pre-built search index. For "how does X work?", architecture, a flow ("how does X reach Y"), or where-is-X questions — and while editing code — an agent should answer with `ax_explore` and stop, typically with **zero file reads**, rather than re-deriving the answer with `grep` + `Read`. A direct ax answer is one to a few calls; a grep/read exploration is dozens.
 
-**Prefer MCP ops over shell CLI.** When the ax MCP server is connected, agents must call `ax_sync`, `ax_index`, `ax_lsp`, `ax_ship`, `ax_policy_index`, `ax_remember` / `ax_recall` instead of running the matching `ax …` commands in a terminal. Shell CLI is reserved for DEGRADED mode (MCP unreachable) or ops with no MCP tool (`install`, `upgrade`, `web`, `share`, `ship --watch`). IDE bootstrap files (`AGENTS.md`, `.cursor/rules/ax.mdc`, …) and the CRITICAL `prefer-mcp-ops` policy rule encode the same mapping.
+**Prefer MCP ops over shell CLI.** When the ax MCP server is connected, agents must call `ax_sync`, `ax_index`, `ax_lsp`, `ax_ship`, `ax_policy_index`, `ax_remember` / `ax_recall` instead of running the matching `ax …` commands in a terminal. Shell CLI is reserved for DEGRADED mode (MCP unreachable) or ops with no MCP tool (`install`, and in the full ax `upgrade`, `web`, `share`, `ship --watch`). IDE bootstrap files (`AGENTS.md`, `.cursor/rules/ax.mdc`, …) and the CRITICAL `prefer-mcp-ops` policy rule encode the same mapping.
 
 The MCP server delivers this guidance to the main agent automatically, in the MCP `initialize` response (`server_instructions`). Because subagents and non-MCP harnesses never see that response, the installer also writes a short marker-fenced section into each agent's instructions file. Re-sync with `ax policy sync --fix` after upgrading ax.
 

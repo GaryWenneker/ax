@@ -154,7 +154,7 @@ async fn remote_tokens_require_signature_issuer_audience_expiry_and_scope() {
     let bad = encode(
         &Header::new(Algorithm::HS256),
         &claims("alpha"),
-        &EncodingKey::from_secret(b"attacker"),
+        &EncodingKey::from_secret(b"attacker").unwrap(),
     )
     .unwrap();
     assert!(verify.verify(&bad).await.is_err());
