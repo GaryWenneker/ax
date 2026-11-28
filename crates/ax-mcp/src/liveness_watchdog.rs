@@ -389,7 +389,14 @@ mod tests {
             Arc::clone(&progress),
             Duration::from_millis(10),
         ));
-        runtime.block_on(async { tokio::time::sleep(Duration::from_millis(60)).await });
+        // Drive the runtime until it has ticked twice; a loaded machine may need
+        // longer than a fixed sleep, so wait on the count with a generous limit.
+        runtime.block_on(async {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+            while progress.load(Ordering::SeqCst) < 2 && tokio::time::Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        });
         let alive = progress.load(Ordering::SeqCst);
         assert!(alive >= 2, "ticks while the runtime runs: {alive}");
         // Nothing drives the current-thread runtime now, like a wedged runtime.
