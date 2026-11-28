@@ -28,10 +28,7 @@ pub fn translate(
     if session.is_empty() {
         return Err(TranslateError("missing session id".into()));
     }
-    let mut base = AxEventBase::new(
-        attr_u64(event, &["timestamp", "timeUnixNano"]).unwrap_or(timestamp),
-        session,
-    );
+    let mut base = AxEventBase::new(event_time_ms(event).unwrap_or(timestamp), session);
     base.turn_id = string_attr(event, &["turnId", "turn_id", "turn.id"]);
     base.operation_id = string_attr(
         event,
@@ -72,7 +69,7 @@ pub fn translate(
                     event,
                     &["outputTokens", "output_tokens", "output.tokens"],
                 )
-                .map(|n| n as u32),
+                .map(saturating_u32),
                 output_bytes: attr_u64(event, &["outputBytes", "output_bytes", "output.bytes"]),
             })]
         }
@@ -91,7 +88,7 @@ pub fn translate(
                     event,
                     &["outputTokens", "output_tokens", "output.tokens"],
                 )
-                .map(|n| n as u32),
+                .map(saturating_u32),
                 output_bytes: attr_u64(event, &["outputBytes", "output_bytes", "output.bytes"]),
             })]
         }
@@ -163,6 +160,23 @@ fn string_attr(event: &Value, keys: &[&str]) -> Option<String> {
         }
     }
     None
+}
+
+/// Event time in milliseconds. `timestamp` is already milliseconds;
+/// OpenTelemetry's `timeUnixNano` (a number or, as OTLP JSON sends it, a
+/// decimal string) is nanoseconds and is converted.
+fn event_time_ms(event: &Value) -> Option<u64> {
+    if let Some(ms) = attr_u64(event, &["timestamp"]) {
+        return Some(ms);
+    }
+    let nanos = attr_u64(event, &["timeUnixNano"]).or_else(|| {
+        string_attr(event, &["timeUnixNano"]).and_then(|text| text.trim().parse::<u64>().ok())
+    })?;
+    Some(nanos / 1_000_000)
+}
+
+fn saturating_u32(n: u64) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
 }
 
 fn attr_u64(event: &Value, keys: &[&str]) -> Option<u64> {
@@ -293,6 +307,34 @@ mod tests {
         let event =
             json!({ "type": "message_end", "message": { "role": "user", "content": "hello" } });
         assert!(translate(&event, "sess", 1).unwrap().is_empty());
+    }
+
+    #[test]
+    fn time_unix_nano_is_converted_to_milliseconds() {
+        let event = json!({ "name": "pi.session.started", "timeUnixNano": 1_700_000_000_123_456_789u64, "attributes": { "session.id": "a" } });
+        match &translate(&event, "", 1).unwrap()[0] {
+            AxAgentEvent::SessionStarted(base) => assert_eq!(base.timestamp, 1_700_000_000_123),
+            other => panic!("unexpected {other:?}"),
+        }
+        let event = json!({ "name": "pi.session.started", "timeUnixNano": "1700000000123456789", "attributes": { "session.id": "a" } });
+        match &translate(&event, "", 1).unwrap()[0] {
+            AxAgentEvent::SessionStarted(base) => assert_eq!(base.timestamp, 1_700_000_000_123),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn huge_output_token_counts_saturate() {
+        let event = json!({ "type": "tool_execution_end", "toolName": "rg", "outputTokens": 4_294_967_301u64 });
+        match &translate(&event, "s", 1).unwrap()[0] {
+            AxAgentEvent::ToolEnded(end) => assert_eq!(end.output_token_estimate, Some(u32::MAX)),
+            other => panic!("unexpected {other:?}"),
+        }
+        let event = json!({ "type": "tool_execution_update", "toolName": "rg", "outputTokens": 4_294_967_301u64 });
+        match &translate(&event, "s", 1).unwrap()[0] {
+            AxAgentEvent::ToolOutput(out) => assert_eq!(out.output_token_estimate, Some(u32::MAX)),
+            other => panic!("unexpected {other:?}"),
+        }
     }
 
     #[test]

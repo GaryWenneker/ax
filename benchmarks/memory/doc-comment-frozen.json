@@ -1,0 +1,3091 @@
+{
+ "protocol": "doc-comment-affix-1",
+ "snapshot": "1f9de3ea58d975dfd52ce8f3ec67762af968ee11",
+ "pairs": [
+  {
+   "id": "crates/ax-agent/src/chat.rs:38",
+   "query": "Stream a single-turn reply using ax-reasoning offload config.",
+   "signature": "pub async fn stream_reply(&self, prompt: &str, context: &str) -> Result<String, String> {"
+  },
+  {
+   "id": "crates/ax-agent/src/config.rs:154",
+   "query": "Drop one project from the global recent list. Returns whether a row was removed.",
+   "signature": "pub fn forget_recent_project(path: &Path) -> Result<bool, String> {"
+  },
+  {
+   "id": "crates/ax-agent/src/config.rs:309",
+   "query": "Recent projects, plus every initialized ax project the home scan finds.",
+   "signature": "pub fn projects_for_switcher() -> Vec<RecentProject> {"
+  },
+  {
+   "id": "crates/ax-agent/src/loop.rs:39",
+   "query": "Run one agent turn with MCP tools, then synthesize a reply.",
+   "signature": "pub async fn run_agent_turn(project_root: &Path, prompt: &str) -> Result<AgentTurnResult, String> {"
+  },
+  {
+   "id": "crates/ax-agent/src/profiles.rs:218",
+   "query": "Resolve profile env, auto-creating `default` when the UI sends that id but no profile exists yet.",
+   "signature": "pub fn ensure_profile_env(agent: &str, profile_id: &str) -> Result<Vec<(String, String)>, String> {"
+  },
+  {
+   "id": "crates/ax-cli/src/commands/desktop.rs:4",
+   "query": "Launch the native wgpu Command Center (embeds ax-web in-process).",
+   "signature": "pub fn run(path: Option<String>, port: u16, bind: String) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-cli/src/commands/init.rs:33",
+   "query": "Refresh every existing ax project under the home directory. `AX_SKIP_PROJECT_INIT=1` leaves projects untouched.",
+   "signature": "pub async fn refresh_discovered_projects() -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-cli/src/commands/mod.rs:77",
+   "query": "Git hooks call `--quiet` commands in every checkout; one that was never initialized (a fresh worktree) is not an error for them, and must not get a `.ax/` either.",
+   "signature": "pub fn quiet_and_uninitialized(root: &Path, quiet: bool) -> bool {"
+  },
+  {
+   "id": "crates/ax-cli/src/commands/neural.rs:118",
+   "query": "Without `--edges` the graph command reads this project's edges and stores suggestions.",
+   "signature": "pub fn graph_args(edges: Option<String>) -> Result<Value, String> {"
+  },
+  {
+   "id": "crates/ax-cli/src/commands/neural.rs:148",
+   "query": "Writes the training export to `out` and returns a summary without the rows.",
+   "signature": "pub async fn write_export(root: &Path, out: &Path) -> Result<Value, String> {"
+  },
+  {
+   "id": "crates/ax-cli/src/commands/neural.rs:41",
+   "query": "The canonical project root, found the way the MCP server finds it: the nearest directory with `.ax`, else the canonical start path. Neural keys rows by this path.",
+   "signature": "pub fn project_root(path: Option<String>) -> Result<PathBuf, String> {"
+  },
+  {
+   "id": "crates/ax-cli/src/commands/policy.rs:104",
+   "query": "Clone a remote git policy registry into `.ax/policy/vendored/<name>/` and re-index.",
+   "signature": "pub async fn run_pull("
+  },
+  {
+   "id": "crates/ax-cli/src/commands/preflight.rs:80",
+   "query": "In-process shared tool runtime (no MCP stdio transport).  Emits CLI-branded inbound/outbound lines so Logging shows the same directions as MCP without faking the `[ax-mcp]` brand.",
+   "signature": "pub async fn invoke_shared_tool(root: &Path, name: &str, args: Value) -> Result<Value, String> {"
+  },
+  {
+   "id": "crates/ax-cli/src/commands/read_guard.rs:366",
+   "query": "Names a Grep pattern asks about. Alternation (`a|b`) is split so each identifier is checked. A piece that is not an identifier is skipped.",
+   "signature": "pub fn symbol_candidates(pattern: &str) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-cli/src/commands/turn_hook.rs:52",
+   "query": "Hook entry point. Always returns `Ok` and prints nothing: memory capture never blocks a turn.",
+   "signature": "pub async fn run(phase: TurnPhase) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-cli/src/commands/upgrade.rs:16",
+   "query": "Complete a staged `ax.new.exe` swap left by an older upgrade, and sync cargo shadow copies.",
+   "signature": "pub fn apply_pending_upgrade() {"
+  },
+  {
+   "id": "crates/ax-cli/src/commands/upgrade.rs:300",
+   "query": "Detached child: wait for upgrader exit, swap staged bundle into `%LOCALAPPDATA%\\\\ax\\\\current`.",
+   "signature": "pub fn run_upgrade_apply(parent_pid: u32, staging: PathBuf, dest: PathBuf) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-cli/src/server_apply.rs:106",
+   "query": "Project a validated mirror into the local memory vault. The exact last applied version is recorded in a ledger; locally edited records are never overwritten by subsequent automatic syncs. A missing remote record never deletes a local record.",
+   "signature": "pub async fn apply(config: &ServerConfig, snapshot: &Snapshot) -> Result<ApplyResult, String> {"
+  },
+  {
+   "id": "crates/ax-cli/src/server_exchange.rs:213",
+   "query": "Only the authenticated Primary calls this. Incoming identity is separately bound to the authorized node header by the HTTP handler before this point.",
+   "signature": "pub async fn publish("
+  },
+  {
+   "id": "crates/ax-cli/src/server_http.rs:360",
+   "query": "Start the listener and serve until the process receives shutdown.",
+   "signature": "pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-cli/src/server_push.rs:173",
+   "query": "Primary: register only authenticated replicas. Never trust a discovered primary or a claimed IP in packet JSON: use the UDP socket source address.",
+   "signature": "pub async fn primary(config: ServerConfig, udp_port: u16) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-cli/src/server_push.rs:297",
+   "query": "Replica: send signed UDP registrations from its receive socket and pull through the configured, authenticated primary HTTPS endpoint on change. Periodic HTTPS sync in server_http remains the fallback for lost packets.",
+   "signature": "pub async fn replica("
+  },
+  {
+   "id": "crates/ax-cli/src/server_replica.rs:345",
+   "query": "Projection is opt-in; transport always stages a verified separate mirror.",
+   "signature": "pub async fn sync_with_apply(config_path: &Path, apply_memories: bool) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-cli/src/server_snapshot.rs:164",
+   "query": "Build an isolated project-state snapshot directly from the Ax database. No policy-pack or memory-export API is called: the synchronization contract retains disabled, unshared and pending rows and their flags.",
+   "signature": "pub async fn export(config: &ServerConfig, project_id: &str) -> Result<Snapshot, String> {"
+  },
+  {
+   "id": "crates/ax-cli/src/server_snapshot.rs:174",
+   "query": "Export native and locally edited knowledge for contribution. Unmodified imported copies are excluded using the exact projection ledger, preventing replicas from feeding received records back around the cluster.",
+   "signature": "pub async fn export_native(config: &ServerConfig, project_id: &str) -> Result<Snapshot, String> {"
+  },
+  {
+   "id": "crates/ax-cli/src/server_snapshot.rs:74",
+   "query": "Fully validate a remote payload before creating any replica directories. Internal enabled and shared/local/private flags are data to replicate, not export filters. Only the registered project and cluster are accepted.",
+   "signature": "pub fn validate("
+  },
+  {
+   "id": "crates/ax-cli/src/ui/terminal.rs:18",
+   "query": "Whether styled output (clap, owo-colors, indicatif) should use ANSI colors.",
+   "signature": "pub fn colors_enabled() -> bool {"
+  },
+  {
+   "id": "crates/ax-cli/src/ui/terminal.rs:6",
+   "query": "Enable ANSI colors and VT processing where supported.",
+   "signature": "pub fn init() {"
+  },
+  {
+   "id": "crates/ax-cli/src/ui/update_notice.rs:9",
+   "query": "Print a boxed \"update available\" notice to stderr (after short commands, or at `ax web` start).",
+   "signature": "pub fn print_update_notice(current: &str, latest: &str) {"
+  },
+  {
+   "id": "crates/ax-cli/src/version_check.rs:116",
+   "query": "Parse release tag from `https://github.com/owner/repo/releases/tag/v1.2.3`.",
+   "signature": "pub fn parse_latest_tag_from_url(url: &str) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-cli/src/version_check.rs:257",
+   "query": "Highest semver release tag that has a downloadable bundle for this platform (matches install.ps1).",
+   "signature": "pub async fn resolve_latest_installable_version("
+  },
+  {
+   "id": "crates/ax-cli/src/version_check.rs:40",
+   "query": "Token for private repos or higher API rate limits (`AX_GITHUB_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, then `gh auth token`).",
+   "signature": "pub fn github_token() -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-cli/src/version_check.rs:507",
+   "query": "Non-blocking-ish notice after CLI commands (respects cache + env gates).",
+   "signature": "pub async fn maybe_notify_update() {"
+  },
+  {
+   "id": "crates/ax-cli/src/version_check.rs:512",
+   "query": "`force_refresh`: hit GitHub/CDN even if `~/.ax/update-check.json` is still fresh.",
+   "signature": "pub async fn maybe_notify_update_with(force_refresh: bool) {"
+  },
+  {
+   "id": "crates/ax-cli/src/version_check.rs:527",
+   "query": "Explicit `ax upgrade --check` (always hits network unless cache is fresh and shows result).",
+   "signature": "pub async fn run_check(force_refresh: bool) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-context/src/directory.rs:185",
+   "query": "Project roots under `root` for an unattended `ax init`.  A directory counts when it already has `.ax/ax.db`, a `.git` directory or file, or a workspace manifest. The walk stops at that directory, skips hidden and dependency folders, does not follow symlinks, and never returns the home directory or a filesystem root.",
+   "signature": "pub fn discover_projects_for_init(root: &Path, max_depth: usize) -> Vec<PathBuf> {"
+  },
+  {
+   "id": "crates/ax-context/src/directory.rs:291",
+   "query": "Decide what the front-load hook injects for a prompt from `cwd`.",
+   "signature": "pub fn plan_frontload_full(cwd: &Path, prompt: &str) -> FrontloadPlan {"
+  },
+  {
+   "id": "crates/ax-context/src/explore.rs:193",
+   "query": "Files in this result whose stored source no longer matches the graph.",
+   "signature": "pub async fn stale_files("
+  },
+  {
+   "id": "crates/ax-context/src/explore_format.rs:6",
+   "query": "Format an explore result as agent-readable plain text (CodeGraph explore shape).",
+   "signature": "pub fn format_explore_text(result: &ExploreResult) -> String {"
+  },
+  {
+   "id": "crates/ax-context/src/source_store.rs:124",
+   "query": "Slice `content` to a node's line range without line numbers, capped at `max_bytes`. Used for context code blocks.",
+   "signature": "pub fn slice_lines(content: &str, start_line: i32, end_line: i32, max_bytes: usize) -> String {"
+  },
+  {
+   "id": "crates/ax-context/src/source_store.rs:162",
+   "query": "Prefix a stale snippet so the agent can never mistake it for current source.",
+   "signature": "pub fn stale_note(file_path: &str) -> String {"
+  },
+  {
+   "id": "crates/ax-context/src/source_store.rs:37",
+   "query": "Resolve a project-relative path to source text using only the database.",
+   "signature": "pub async fn resolve_source("
+  },
+  {
+   "id": "crates/ax-context/src/source_store.rs:67",
+   "query": "Human-readable reason for a resolution that produced no usable text.",
+   "signature": "pub fn unavailable_reason(resolved: &ResolvedSource, file_path: &str) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-context/src/source_store.rs:87",
+   "query": "Slice `content` to a node's line range and number the lines.  `start_line` is 1-based and inclusive, `end_line` inclusive — the same convention the graph stores.",
+   "signature": "pub fn numbered_slice("
+  },
+  {
+   "id": "crates/ax-context/src/task_analyzer.rs:26",
+   "query": "Only project-relative source paths may be resolved from the current index.",
+   "signature": "pub fn safe_relative_path(path: &str) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-core/src/lib.rs:201",
+   "query": "CG: `reopenIfReplaced` — heal stale DB handle when `.ax/` was recreated (#925).",
+   "signature": "pub async fn reopen_if_replaced(&mut self) -> Result<bool, ax_utils::errors::AxError> {"
+  },
+  {
+   "id": "crates/ax-core/src/lib.rs:210",
+   "query": "Reopen SQLite from disk — picks up WAL commits from other processes (CLI, ax web).",
+   "signature": "pub async fn reopen_db(&mut self) -> Result<(), ax_utils::errors::AxError> {"
+  },
+  {
+   "id": "crates/ax-core/src/lib.rs:324",
+   "query": "CG: `indexFiles` — incremental re-index for changed paths only.",
+   "signature": "pub async fn index_files("
+  },
+  {
+   "id": "crates/ax-core/src/lib.rs:429",
+   "query": "Spawn a background task that watches the project and incrementally re-indexes changed files. Coordinates with other index operations via the on-disk file lock.",
+   "signature": "pub fn spawn_background_watch(project_root: PathBuf) -> tokio::task::JoinHandle<()> {"
+  },
+  {
+   "id": "crates/ax-core/src/lib.rs:482",
+   "query": "Debounced watch loop: re-index files after they stop changing (CG watcher sync).",
+   "signature": "pub async fn watch_and_sync("
+  },
+  {
+   "id": "crates/ax-core/src/lib.rs:615",
+   "query": "Task context from the graph, with one bounded freshness repair.  Code blocks come from the source store. If any entry point's stored source drifted from the working tree, re-index those files once and rebuild — never more than once, so a file that keeps failing cannot spin.",
+   "signature": "pub async fn build_context("
+  },
+  {
+   "id": "crates/ax-core/src/lib.rs:644",
+   "query": "Explore the graph, with one bounded freshness repair.  Snippets are served from the source store (never the working tree). A hash mismatch triggers a single scoped re-index of the affected files and one retry; if the index is busy the first result stands, with its stale labels intact.",
+   "signature": "pub async fn explore("
+  },
+  {
+   "id": "crates/ax-core/src/lib.rs:668",
+   "query": "Whole-graph insights: Leiden communities, god nodes, and surprising cross-community connections. Persists community assignments as a side effect so later queries and the web API can reuse them.",
+   "signature": "pub async fn insights("
+  },
+  {
+   "id": "crates/ax-core/src/lib.rs:680",
+   "query": "Non-exported symbols with no inbound references (best-effort dead code).",
+   "signature": "pub async fn find_dead_code(&self) -> Result<Vec<ax_types::Node>, ax_utils::errors::AxError> {"
+  },
+  {
+   "id": "crates/ax-core/src/lib.rs:685",
+   "query": "Render a full Markdown architecture report from the current graph.",
+   "signature": "pub async fn architecture_report("
+  },
+  {
+   "id": "crates/ax-core/src/lib.rs:726",
+   "query": "Call-graph cycles (non-trivial SCCs on Calls/References edges).",
+   "signature": "pub async fn find_cycles("
+  },
+  {
+   "id": "crates/ax-core/src/lib.rs:765",
+   "query": "Shortest Calls/References path between two node ids.",
+   "signature": "pub async fn find_path("
+  },
+  {
+   "id": "crates/ax-core/src/lib.rs:779",
+   "query": "Public API surface for a module/path prefix.  Matches exported symbols (`is_exported`) or `Visibility::Public`, whose file path / qualified name contains the module needle (e.g. `ax-mcp` or `crates/ax-mcp`).",
+   "signature": "pub async fn module_api("
+  },
+  {
+   "id": "crates/ax-core/src/lib.rs:892",
+   "query": "Remove project copies of rules and skills that the global level already holds.",
+   "signature": "pub async fn dedup_policy(&self, dry_run: bool) -> policy_dedup::DedupReport {"
+  },
+  {
+   "id": "crates/ax-core/src/lib.rs:920",
+   "query": "Project rules, and skills with the global ones merged in, as preflight matches them.",
+   "signature": "pub async fn policy_rows("
+  },
+  {
+   "id": "crates/ax-core/src/policy_dedup.rs:102",
+   "query": "Clean one project (when given) and global.db itself.  Never deletes a row before its winner is stored, and records every removed body as a revision. Files on disk are never touched.",
+   "signature": "pub async fn run("
+  },
+  {
+   "id": "crates/ax-core/src/policy_dedup.rs:145",
+   "query": "[`run`] against `~/.ax/global.db` (or `AX_GLOBAL_DB`).",
+   "signature": "pub async fn run_default(project: Option<(&SqlitePool, &Path)>, dry_run: bool) -> DedupReport {"
+  },
+  {
+   "id": "crates/ax-core/src/policy_dedup.rs:50",
+   "query": "One line per action, for CLI output and logs.",
+   "signature": "pub fn lines(&self) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-core/src/policy_dedup.rs:84",
+   "query": "Actions at info, a stopped run at warn; a skipped run (no global.db) stays quiet.",
+   "signature": "pub fn log(&self) {"
+  },
+  {
+   "id": "crates/ax-core/src/report.rs:189",
+   "query": "Templated exploration prompts seeded from the top god nodes and communities.",
+   "signature": "pub fn suggested_questions(ins: &GraphInsights) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-core/src/report.rs:20",
+   "query": "Render a full Markdown architecture report.",
+   "signature": "pub fn render_architecture_report(input: &ReportInput) -> String {"
+  },
+  {
+   "id": "crates/ax-core/src/report.rs:228",
+   "query": "Summarize unresolved references into a total and top-N (name, count) list.",
+   "signature": "pub fn summarize_unresolved(names: &[String], top_n: usize) -> (usize, Vec<(String, usize)>) {"
+  },
+  {
+   "id": "crates/ax-core/src/review_language.rs:128",
+   "query": "One preflight line, for example `PR review comments: Nederlands (reviews.commentLanguage=nl)`.",
+   "signature": "pub fn review_language_line(language: ReviewLanguage) -> String {"
+  },
+  {
+   "id": "crates/ax-core/src/review_language.rs:31",
+   "query": "Resolves the language from the raw JSON of the two config files. `None` means the file is absent. A present key with a value outside [`REVIEW_LANGUAGES`] is an error that names every allowed code.",
+   "signature": "pub fn resolve_review_language("
+  },
+  {
+   "id": "crates/ax-core/src/review_language.rs:80",
+   "query": "Reads `ax.json` in `project_root` and `~/.ax/config.json`. A missing file counts as unset. A file that is not JSON counts as unset. An invalid code is an error.",
+   "signature": "pub fn resolve_for_project(project_root: &std::path::Path) -> Result<ReviewLanguage, String> {"
+  },
+  {
+   "id": "crates/ax-core/src/review_language.rs:97",
+   "query": "Writes `reviews.commentLanguage` into the project's `ax.json`, keeping every other key.",
+   "signature": "pub fn write_project_review_language("
+  },
+  {
+   "id": "crates/ax-core/src/stats_format.rs:13",
+   "query": "Compact extension breakdown sorted by count descending (e.g. `43 md, 10 json, 2 html`).",
+   "signature": "pub fn format_docs_by_extension(docs: &HashMap<String, i64>) -> String {"
+  },
+  {
+   "id": "crates/ax-core/src/stats_format.rs:163",
+   "query": "Formatted text for `ax_status` MCP and CLI output.",
+   "signature": "pub fn format_status_text("
+  },
+  {
+   "id": "crates/ax-core/src/stats_format.rs:57",
+   "query": "Warn when the source store does not cover the files that can own a snippet.  Snippets come from the store, so an uncovered file answers graph queries with a \"source not stored\" marker. A database indexed before schema v17 starts at zero coverage, which looks like a broken tool unless we say what to run. Returns `None` once coverage is complete — no noise in the common case.  Measured against `source_expected_files`, not `file_count`: assets and build output are indexed as file rows but never parsed, so counting them would nag forever about a gap `ax_index` cannot close.",
+   "signature": "pub fn source_store_warning(stats: &GraphStats) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-core/src/stats_format.rs:69",
+   "query": "Auto-injected index snapshot for `ax_preflight`.",
+   "signature": "pub fn format_index_inject_block(stats: &GraphStats, pending: &[PendingFile]) -> String {"
+  },
+  {
+   "id": "crates/ax-core/src/workspace.rs:100",
+   "query": "Resolve absolute member roots. Empty members → single-project `[root]`.",
+   "signature": "pub fn member_roots(workspace_root: &Path) -> Vec<PathBuf> {"
+  },
+  {
+   "id": "crates/ax-core/src/workspace.rs:118",
+   "query": "Discover candidate members: Cargo workspace crates + nested `.ax/` dirs.",
+   "signature": "pub fn discover_members(workspace_root: &Path) -> Vec<WorkspaceMember> {"
+  },
+  {
+   "id": "crates/ax-core/src/workspace.rs:199",
+   "query": "Walk upward from `start` looking for a workspace config with members.",
+   "signature": "pub fn find_workspace_root(start: &Path) -> Option<PathBuf> {"
+  },
+  {
+   "id": "crates/ax-core/src/workspace.rs:50",
+   "query": "Load workspace members from `ax.json` or `.ax.json` at `root`.",
+   "signature": "pub fn load_workspace_config(root: &Path) -> WorkspaceConfig {"
+  },
+  {
+   "id": "crates/ax-core/src/workspace.rs:78",
+   "query": "Write (or merge) `members` into `ax.json` at `root`.",
+   "signature": "pub fn write_workspace_config(root: &Path, config: &WorkspaceConfig) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-db/src/builds.rs:34",
+   "query": "True when `mine` was built strictly earlier than `other`.",
+   "signature": "pub fn stamp_is_older(mine: &BuildStamp, other: &BuildStamp) -> bool {"
+  },
+  {
+   "id": "crates/ax-db/src/integrity.rs:392",
+   "query": "Returns whether the previous daemon exited without a clean shutdown, then leaves the marker so a crash of this process is visible next time.",
+   "signature": "pub fn take_unclean_shutdown(project_root: &Path) -> bool {"
+  },
+  {
+   "id": "crates/ax-db/src/integrity.rs:463",
+   "query": "Rebuilds derived indexes only. Memories, edges, file contents, and unresolved refs stay for `ax db repair`. This path does not copy a backup.",
+   "signature": "pub async fn repair_rebuildable_indexes(path: &Path) -> Result<Vec<String>, String> {"
+  },
+  {
+   "id": "crates/ax-db/src/lib.rs:172",
+   "query": "CG: `isReplacedOnDisk` — POSIX inode changed at same path (#925).",
+   "signature": "pub fn is_replaced_on_disk(&self) -> bool {"
+  },
+  {
+   "id": "crates/ax-db/src/lib.rs:28",
+   "query": "Wait for concurrent ax processes (sync, web API, MCP) before failing with SQLITE_BUSY. Override with `AX_DB_BUSY_TIMEOUT_SECS` (integer seconds, clamped 5..=600).",
+   "signature": "pub fn busy_timeout() -> Duration {"
+  },
+  {
+   "id": "crates/ax-db/src/lib.rs:43",
+   "query": "Per-file cap for the source store (`file_contents`, schema v17).  Files above the cap store no text. A graph read then reports an explicit \"source not stored\" marker instead of falling back to a disk read — a silent fallback would make the graph-only guarantee unverifiable. Override with `AX_SOURCE_STORE_MAX_BYTES` (bytes, clamped 64 KiB..=64 MiB).",
+   "signature": "pub fn source_store_cap_bytes() -> usize {"
+  },
+  {
+   "id": "crates/ax-db/src/lib.rs:55",
+   "query": "Shared `ax.db` connect options — WAL + busy timeout for multi-process IDE/CLI use.",
+   "signature": "pub fn connect_options(path: &Path, create_if_missing: bool) -> SqliteConnectOptions {"
+  },
+  {
+   "id": "crates/ax-db/src/lib.rs:66",
+   "query": "True when SQLite reports SQLITE_BUSY / database is locked (code 5).",
+   "signature": "pub fn is_sqlite_busy(err: &sqlx::Error) -> bool {"
+  },
+  {
+   "id": "crates/ax-db/src/lib.rs:79",
+   "query": "Retry an async SQLite operation while the database is busy.",
+   "signature": "pub async fn with_busy_retry<F, Fut, T>(mut op: F) -> Result<T, sqlx::Error>"
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:1008",
+   "query": "Known library / framework calls that cannot resolve to indexed symbols.",
+   "signature": "pub async fn prune_external_call_unresolved_refs(&self) -> Result<u64, AxError> {"
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:1147",
+   "query": "Doc nodes grouped by lowercase file extension (`md`, `pdf`, `docx`, …).",
+   "signature": "pub async fn count_doc_extensions(&self) -> Result<HashMap<String, i64>, AxError> {"
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:126",
+   "query": "CG: `insertNodes` — multi-row upsert in a single transaction. Chunked to stay well under SQLite's bind-variable limit.",
+   "signature": "pub async fn upsert_nodes(&self, nodes: &[Node]) -> Result<(), AxError> {"
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:1681",
+   "query": "True when stored text exists and provably matches the indexed graph.",
+   "signature": "pub fn is_fresh(&self) -> bool {"
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:249",
+   "query": "CG: `deleteFile` — remove file record, nodes (cascade edges), unresolved refs, and stored source.  Stored source must not outlive its `files` row: without the row there is no `content_hash` to validate the text against, so a reader could never tell fresh from stale.",
+   "signature": "pub async fn clear_file(&self, file_path: &str) -> Result<(), AxError> {"
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:258",
+   "query": "Same as [`Self::clear_file`] but keeps the stored source.  Used by the re-index path, which writes `file_contents` while it still holds the text in memory and only afterwards replaces nodes and the `files` row. Dropping the source here would erase what was just stored.",
+   "signature": "pub async fn clear_file_for_reindex(&self, file_path: &str) -> Result<(), AxError> {"
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:334",
+   "query": "Store a file's text in the source store so graph reads never touch disk.  `content_hash` must be the same hash written to `files.content_hash` for this path — the read path compares the two to detect staleness. Content over [`crate::source_store_cap_bytes`] is not stored: the row is removed so a read reports \"not stored\" rather than serving a truncated body.",
+   "signature": "pub async fn upsert_file_content("
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:370",
+   "query": "Fetch stored source for a path. `None` means \"not stored\" — never a licence to read the file from disk.",
+   "signature": "pub async fn get_file_content(&self, path: &str) -> Result<Option<StoredContent>, AxError> {"
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:387",
+   "query": "Everything a query-time snippet read needs, in one round trip: the stored text plus the `files` row it must agree with.  `Ok(None)` means the path is not in the graph at all. A row with `stored_content: None` means the source was never stored (or exceeded the cap) — the caller must report that, not fall back to reading the file.",
+   "signature": "pub async fn lookup_source(&self, path: &str) -> Result<Option<SourceLookup>, AxError> {"
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:408",
+   "query": "Indexed paths whose stored source no longer matches `files.content_hash`, restricted to `paths`. Pure SQL — no filesystem access.",
+   "signature": "pub async fn stale_source_paths(&self, paths: &[String]) -> Result<Vec<String>, AxError> {"
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:437",
+   "query": "Paths that already have stored source — used to find the backfill gap on databases indexed before the source store existed (pre-v17).",
+   "signature": "pub async fn get_file_content_paths("
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:452",
+   "query": "Drop stored source for paths the `files` table does not know about, and report how many rows went. Such rows can never be served — snippets are resolved through the graph — so they are pure weight in ax.db. They exist because a binary shipped before this prune stored text for every path it was handed, including build output the parser never claimed.",
+   "signature": "pub async fn prune_orphan_file_contents(&self) -> Result<u32, AxError> {"
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:478",
+   "query": "Coverage of the source store: (files with stored text, files it should cover). A gap means those snippets come back \"not stored\" until the next index.  The denominator is not `COUNT(*) FROM files`. That table also holds rows for files no parser claims — SVG assets, `.o` and `.rmeta` build output the watcher reported — and rows for files over the store cap. None of them can own a node, so none can ever be asked for a snippet; counting them would report a permanent gap that no re-index can close.",
+   "signature": "pub async fn source_store_coverage(&self) -> Result<(i64, i64), AxError> {"
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:503",
+   "query": "Batch fetch nodes by id — avoids N+1 round trips in graph traversal.",
+   "signature": "pub async fn get_nodes_by_ids(&self, ids: &[String]) -> Result<Vec<Node>, AxError> {"
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:588",
+   "query": "Fetch every edge in the graph. Used by whole-graph analysis (community detection, god-node ranking).",
+   "signature": "pub async fn get_all_edges(&self) -> Result<Vec<Edge>, AxError> {"
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:599",
+   "query": "Fetch every node in the graph. Used by whole-graph analysis.",
+   "signature": "pub async fn get_all_nodes(&self) -> Result<Vec<Node>, AxError> {"
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:608",
+   "query": "Replace all stored community assignments in a single transaction.",
+   "signature": "pub async fn replace_node_communities("
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:647",
+   "query": "All stored community assignments as (node_id, community_id, label).",
+   "signature": "pub async fn get_node_communities("
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:661",
+   "query": "Remove all documentation nodes (edges cascade via FK). Used to refresh the markdown/doc layer on each index pass.",
+   "signature": "pub async fn delete_doc_nodes(&self) -> Result<(), AxError> {"
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:671",
+   "query": "Node ids whose exact `qualified_name` or `name` equals `symbol` (excluding doc nodes). Used to link doc mentions to code symbols.",
+   "signature": "pub async fn get_node_ids_by_symbol("
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:689",
+   "query": "When communities were last computed (max computed_at), if ever.",
+   "signature": "pub async fn communities_computed_at(&self) -> Result<Option<i64>, AxError> {"
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:975",
+   "query": "Rows whose `from_node_id` no longer exists in `nodes`.",
+   "signature": "pub async fn prune_orphan_unresolved_refs(&self) -> Result<u64, AxError> {"
+  },
+  {
+   "id": "crates/ax-db/src/queries.rs:997",
+   "query": "Full generic call text captured before callee normalization (e.g. `AddSingleton<T>`).",
+   "signature": "pub async fn prune_malformed_call_unresolved_refs(&self) -> Result<u64, AxError> {"
+  },
+  {
+   "id": "crates/ax-db/src/replication.rs:1033",
+   "query": "Older history may omit additive columns. It may not add a column, change one, drop a primary key, or carry a constraint this schema lacks.",
+   "signature": "pub fn accepts_incoming(&self, incoming: &Self) -> bool {"
+  },
+  {
+   "id": "crates/ax-db/src/replication.rs:780",
+   "query": "Preserve received history when a native logger rotates, truncates or removes a file.",
+   "signature": "pub fn retain_logs(root: &Path, old: &Dataset, new: &mut Dataset) -> Result<()> {"
+  },
+  {
+   "id": "crates/ax-db/src/sync_strategy.rs:19",
+   "query": "Pure helper — `needsFullRebuild` in `src/database/sync-strategy.ts`.",
+   "signature": "pub fn needs_full_rebuild_from_timestamp(last_ms: Option<i64>, now_ms: i64) -> bool {"
+  },
+  {
+   "id": "crates/ax-db/src/sync_strategy.rs:31",
+   "query": "Returns whether the project needs a full re-index (no recent `last_full_sync`).",
+   "signature": "pub async fn needs_full_rebuild(&self) -> Result<bool, AxError> {"
+  },
+  {
+   "id": "crates/ax-db/src/vec_ext.rs:9",
+   "query": "Register the vec0 extension with the sqlite that sqlx links.",
+   "signature": "pub fn install_sqlite_vec() {"
+  },
+  {
+   "id": "crates/ax-desktop-client/src/api/client.rs:211",
+   "query": "Stream graph SSE events on a background thread. Returns a receiver of events.",
+   "signature": "pub fn stream_graph("
+  },
+  {
+   "id": "crates/ax-desktop-client/src/api/client.rs:506",
+   "query": "Fire-and-forget background fetch helper used by pages.",
+   "signature": "pub fn spawn_fetch<T, F>(f: F) -> Receiver<Result<T, String>>"
+  },
+  {
+   "id": "crates/ax-desktop-client/src/api/sse.rs:14",
+   "query": "Blocking SSE consumer over a readable stream (reqwest response bytes).",
+   "signature": "pub fn consume_sse_blocking<R: Read, F>(reader: R, mut on_event: F) -> Result<()>"
+  },
+  {
+   "id": "crates/ax-desktop-client/src/lib.rs:25",
+   "query": "Launch the native Command Center window for `root`.  Binds an embedded `ax-web` server at `http://{bind}:{port}` and blocks until the window is closed.",
+   "signature": "pub fn run(path: Option<String>, port: u16, bind: String) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-docs-catalog/src/lib.rs:74",
+   "query": "Sync documentation catalog into ax.db. Emits progress events when `on_event` is set.",
+   "signature": "pub async fn sync_catalog("
+  },
+  {
+   "id": "crates/ax-docs-catalog/src/scan.rs:57",
+   "query": "First-cell values of every Markdown table row in `path`, minus header rows, separator rows, cells starting with `--`, and values listed in `skip`.",
+   "signature": "pub fn product_names(path: &Path, skip: &[String]) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-extraction/src/contracts.rs:46",
+   "query": "Index OpenAPI / Protobuf / GraphQL contracts under `project_root`. Returns the number of contract operation nodes written.",
+   "signature": "pub async fn index_contracts("
+  },
+  {
+   "id": "crates/ax-extraction/src/languages/refs.rs:20",
+   "query": "Append unresolved call/import references for JS/TS family grammars.",
+   "signature": "pub fn append_ts_js_refs(result: &mut ax_types::ExtractionResult, tree: &Tree, ctx: &RefCtx) {"
+  },
+  {
+   "id": "crates/ax-extraction/src/languages/refs.rs:36",
+   "query": "Append call references for Rust / Python / Go / Java tree-sitter grammars.",
+   "signature": "pub fn append_lang_call_refs("
+  },
+  {
+   "id": "crates/ax-extraction/src/languages/refs.rs:620",
+   "query": "Same-file call edges for refs that match a local symbol by name.",
+   "signature": "pub fn emit_same_file_call_edges(result: &mut ax_types::ExtractionResult, file_path: &str) {"
+  },
+  {
+   "id": "crates/ax-extraction/src/markdown.rs:65",
+   "query": "Scan, parse, and persist all markdown docs under `project_root`.  Returns the number of doc nodes written. Existing doc nodes are cleared first so the pass is idempotent.",
+   "signature": "pub async fn index_markdown("
+  },
+  {
+   "id": "crates/ax-extraction/src/orchestrator.rs:400",
+   "query": "Incremental sync — scan project, re-index only new/changed files, drop stale entries.",
+   "signature": "pub async fn sync_changed("
+  },
+  {
+   "id": "crates/ax-extraction/src/orchestrator.rs:551",
+   "query": "CG: `indexFiles` — re-index only the given project-relative paths.",
+   "signature": "pub async fn index_files("
+  },
+  {
+   "id": "crates/ax-extraction/src/test_mapper.rs:7",
+   "query": "Mark test functions and emit Covers edges from test calls to production symbols.",
+   "signature": "pub fn annotate_tests(result: &mut ExtractionResult, source: &[u8], tree: &Tree, path: &str) {"
+  },
+  {
+   "id": "crates/ax-extraction/src/ts_grammars.rs:7",
+   "query": "Returns the tree-sitter grammar for `lang`, if one is linked.",
+   "signature": "pub fn ts_language_for(lang: Language) -> Option<TsLanguage> {"
+  },
+  {
+   "id": "crates/ax-global-db/src/access.rs:255",
+   "query": "Keep at least one active Owner, including under concurrent updates. Update the compatibility role and role-set in one SQLite write transaction.",
+   "signature": "pub async fn update_member_roles("
+  },
+  {
+   "id": "crates/ax-global-db/src/access.rs:311",
+   "query": "Compatibility API for existing single-role clients.",
+   "signature": "pub async fn update_member("
+  },
+  {
+   "id": "crates/ax-global-db/src/access.rs:432",
+   "query": "Immediate rotation: invalidate every previous credential atomically.",
+   "signature": "pub async fn rotate_client_credential("
+  },
+  {
+   "id": "crates/ax-global-db/src/policy.rs:14",
+   "query": "Append other-project policy JSON objects onto `local` (already annotated).",
+   "signature": "pub async fn extend_with_foreign_policy("
+  },
+  {
+   "id": "crates/ax-global-db/src/policy.rs:140",
+   "query": "Whether a company skill or rule row already exists for `item_id` under any machine project.",
+   "signature": "pub async fn global_policy_item_exists("
+  },
+  {
+   "id": "crates/ax-global-db/src/policy.rs:169",
+   "query": "Write one row and record a revision when its payload changed. Returns the new version, or `None` when the payload was already stored.",
+   "signature": "pub async fn upsert_policy_item_from("
+  },
+  {
+   "id": "crates/ax-global-db/src/policy.rs:308",
+   "query": "The version the next changed write gets. A row stored before revisions existed first becomes version 1 (`baseline`), so its next change is version 2.",
+   "signature": "pub async fn next_version(global: &SqlitePool, kind: PolicyKind, item_id: &str) -> Result<i64> {"
+  },
+  {
+   "id": "crates/ax-global-db/src/policy.rs:324",
+   "query": "`mirror` rows whose name exists at the global level, as `(project_id, item_id)`. They are deleted when `delete` is set.",
+   "signature": "pub async fn shadowed_mirrors("
+  },
+  {
+   "id": "crates/ax-global-db/src/policy.rs:352",
+   "query": "Store one machine-wide skill in `~/.ax/global.db` (`global_policy_skills`). The row is keyed to `~/.ax` so it is not tied to a single project.",
+   "signature": "pub async fn upsert_machine_skill(item_id: &str, payload: &Value) -> Result<()> {"
+  },
+  {
+   "id": "crates/ax-global-db/src/policy.rs:396",
+   "query": "Delete one row, recording its last payload as a revision first.",
+   "signature": "pub async fn delete_policy_item_from("
+  },
+  {
+   "id": "crates/ax-global-db/src/policy.rs:455",
+   "query": "The `kind` value in project `policy_revisions` and `global_policy_revisions`.",
+   "signature": "pub fn revision_kind(self) -> &'static str {"
+  },
+  {
+   "id": "crates/ax-global-db/src/policy.rs:464",
+   "query": "Nested `PolicyRuleDoc` / `PolicySkillDoc` JSON (from relocate) must look like a list row.",
+   "signature": "pub fn flatten_list_item(mut v: Value, kind: PolicyKind, item_id: &str) -> Value {"
+  },
+  {
+   "id": "crates/ax-global-db/src/remote_mcp_publications.rs:90",
+   "query": "Reconcile a CLI snapshot; browser imports register only the active binding. An early write serializes SQLite transactions before checking conflicts.",
+   "signature": "pub async fn register("
+  },
+  {
+   "id": "crates/ax-global-db/src/sync/mod.rs:247",
+   "query": "A project `policy_rules` / `policy_skills` row as the JSON payload stored in global.db.",
+   "signature": "pub fn row_to_policy_json(row: &sqlx::sqlite::SqliteRow, id_col: &str) -> serde_json::Value {"
+  },
+  {
+   "id": "crates/ax-graph/src/analysis.rs:127",
+   "query": "Run every analysis over an in-memory node/edge set in one pass.  This does not touch the database; callers fetch nodes/edges and persist community assignments separately.",
+   "signature": "pub fn compute_insights("
+  },
+  {
+   "id": "crates/ax-graph/src/analysis.rs:159",
+   "query": "Detect communities using the Leiden algorithm on the semantic subgraph.  `resolution` tunes granularity (higher → more, smaller communities). Returns an empty result when there are no nodes.",
+   "signature": "pub fn detect_communities(nodes: &[Node], edges: &[Edge], resolution: f64) -> CommunityResult {"
+  },
+  {
+   "id": "crates/ax-graph/src/analysis.rs:22",
+   "query": "Edge kinds that represent a *semantic* relationship between concepts.  `Contains` (structural nesting) and `Exports` are excluded so that files do not become artificial super-hubs that dominate both clustering and god-node rankings.  `Documents` (doc -> code mentions) is included here so documentation nodes stay connected in the graph visualization and export, but it is excluded from the architecture math via [`is_architectural_edge`].",
+   "signature": "pub fn is_semantic_edge(kind: EdgeKind) -> bool {"
+  },
+  {
+   "id": "crates/ax-graph/src/analysis.rs:307",
+   "query": "Rank the most-connected nodes by total semantic degree.",
+   "signature": "pub fn god_nodes(nodes: &[Node], edges: &[Edge], limit: usize) -> Vec<GodNode> {"
+  },
+  {
+   "id": "crates/ax-graph/src/analysis.rs:347",
+   "query": "Find edges that cross both a community boundary and a module boundary.  `communities` maps node id → community id. Edges between rarely-paired communities score higher (more surprising).",
+   "signature": "pub fn surprising_connections("
+  },
+  {
+   "id": "crates/ax-graph/src/analysis.rs:45",
+   "query": "Edge kinds that count toward *architecture* analysis: community detection, god-node ranking, and surprising connections.  This is [`is_semantic_edge`] minus `Documents` — documentation mentions should not distort subsystem clustering or make heavily-referenced docs look like god nodes, even though they remain visible in the graph.",
+   "signature": "pub fn is_architectural_edge(kind: EdgeKind) -> bool {"
+  },
+  {
+   "id": "crates/ax-graph/src/petgraph_analysis.rs:12",
+   "query": "Build a directed graph from call/reference edges and detect cycles.",
+   "signature": "pub fn call_graph_has_cycle(edges: &[Edge]) -> bool {"
+  },
+  {
+   "id": "crates/ax-graph/src/petgraph_analysis.rs:28",
+   "query": "List non-trivial strongly connected components on the Calls/References graph.  Multi-node SCCs are preferred. Pure self-loops (common noise in minified JS) are omitted unless `include_self_loops` is true.",
+   "signature": "pub fn find_call_cycles(edges: &[Edge], limit: usize) -> Vec<CallCycle> {"
+  },
+  {
+   "id": "crates/ax-graph/src/petgraph_analysis.rs:82",
+   "query": "Shortest directed path (Calls/References) from `from_id` to `to_id`.",
+   "signature": "pub fn shortest_call_path(edges: &[Edge], from_id: &str, to_id: &str) -> Option<Vec<String>> {"
+  },
+  {
+   "id": "crates/ax-graph/src/queries.rs:134",
+   "query": "Run whole-graph analysis (communities, god nodes, surprising edges) and persist the community assignments. `resolution` tunes cluster granularity.",
+   "signature": "pub async fn compute_insights("
+  },
+  {
+   "id": "crates/ax-graph/src/queries.rs:64",
+   "query": "Unreferenced non-exported symbols (CG: graph/queries.ts findDeadCode).",
+   "signature": "pub async fn find_dead_code(&self) -> Result<Vec<ax_types::Node>, ax_utils::errors::AxError> {"
+  },
+  {
+   "id": "crates/ax-graph/src/traversal.rs:187",
+   "query": "CG: reverse callers — nodes that depend on `node_id` via Calls/References/Imports.",
+   "signature": "pub async fn get_dependents("
+  },
+  {
+   "id": "crates/ax-graph/src/traversal.rs:212",
+   "query": "CG: `getImpactSubgraph` — full incoming subgraph for blast-radius.",
+   "signature": "pub async fn get_impact_subgraph("
+  },
+  {
+   "id": "crates/ax-installer/src/ax_command.rs:18",
+   "query": "The first `ax` on PATH as written there (a shim stays a shim); else the running binary.",
+   "signature": "pub fn resolve(path_env: Option<&OsStr>, running: Option<PathBuf>) -> AxCommand {"
+  },
+  {
+   "id": "crates/ax-installer/src/ax_command.rs:69",
+   "query": "Install-report line when the written path is not simply the running binary on PATH.",
+   "signature": "pub fn note(&self) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-installer/src/cli_catalog.rs:330",
+   "query": "Whether the CLI binary can be resolved (npm-root, PATH, or ~/.local/bin).",
+   "signature": "pub fn detect_cli_available(id: &str) -> bool {"
+  },
+  {
+   "id": "crates/ax-installer/src/cli_catalog.rs:340",
+   "query": "Resolve spawn program + optional args prefix (e.g. node + script path).",
+   "signature": "pub fn resolve_cli_spawn(id: &str) -> Result<CliSpawn, String> {"
+  },
+  {
+   "id": "crates/ax-installer/src/cli_catalog.rs:406",
+   "query": "Full path to the CLI program (for display / legacy callers).",
+   "signature": "pub fn resolve_cli_path(target: &str) -> Option<PathBuf> {"
+  },
+  {
+   "id": "crates/ax-installer/src/cli_catalog.rs:681",
+   "query": "Extract the `.js` path string from an npm `.cmd` line (before filesystem resolution).",
+   "signature": "pub fn extract_js_from_cmd_line(line: &str) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-installer/src/cli_catalog.rs:695",
+   "query": "Extract `node script.js` path from npm-generated `.cmd` wrapper.",
+   "signature": "pub fn parse_cmd_script_path(content: &str, cmd_path: &Path) -> Option<PathBuf> {"
+  },
+  {
+   "id": "crates/ax-installer/src/cli_install.rs:152",
+   "query": "Install CLI (if missing) and wire ax MCP before using an external agent.",
+   "signature": "pub fn ensure_agent_ready("
+  },
+  {
+   "id": "crates/ax-installer/src/cli_only.rs:46",
+   "query": "CLI-only instruction files under `project_root` that do not teach the memory procedure, as `(relative path, issue)`. Files without CLI-only content are not checked.",
+   "signature": "pub fn verify_cli_only(project_root: &Path) -> Vec<(String, String)> {"
+  },
+  {
+   "id": "crates/ax-installer/src/cli_only.rs:78",
+   "query": "Install CLI-only agent integration for the requested targets.  Empty `selected` installs every distinct IDE instruction surface plus shared files. Never writes MCP server configs, plugins, daemons, or IDE hooks.",
+   "signature": "pub fn install_cli_only("
+  },
+  {
+   "id": "crates/ax-installer/src/command_center.rs:101",
+   "query": "Installs the bundled `.vsix`; never fails the connect, the outcome is a note.",
+   "signature": "pub fn install_vscode_extension("
+  },
+  {
+   "id": "crates/ax-installer/src/command_center.rs:141",
+   "query": "The bundled extension version is already installed, so the IDE CLI need not run.",
+   "signature": "pub fn vscode_panel_current(target: &str, home: &Path, probe: &dyn Probe) -> bool {"
+  },
+  {
+   "id": "crates/ax-installer/src/command_center.rs:154",
+   "query": "True when an IDE `extensions.json` lists this extension at the bundled version. A version folder on disk is not enough: Disconnect can leave the folder while the IDE's own list no longer contains the extension.",
+   "signature": "pub fn manifest_lists_current(manifest: &str) -> bool {"
+  },
+  {
+   "id": "crates/ax-installer/src/command_center.rs:159",
+   "query": "True when the manifest lists this extension at any version.",
+   "signature": "pub fn manifest_lists_extension(manifest: &str) -> bool {"
+  },
+  {
+   "id": "crates/ax-installer/src/command_center.rs:207",
+   "query": "`tasks.json` with the ax task added once; other tasks and comments stay as they are.",
+   "signature": "pub fn zed_tasks_with_ax(existing: Option<&str>, open_command: &str) -> String {"
+  },
+  {
+   "id": "crates/ax-installer/src/command_center.rs:220",
+   "query": "`tasks.json` without the ax task, or `None` when there was nothing to remove.",
+   "signature": "pub fn zed_tasks_without_ax(existing: &str) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-installer/src/command_center.rs:259",
+   "query": "Per-product config folders (`IntelliJIdea2025.2`, `Rider2025.1`, …) under the JetBrains base.",
+   "signature": "pub fn jetbrains_config_dirs(base: &Path, probe: &dyn Probe) -> Vec<PathBuf> {"
+  },
+  {
+   "id": "crates/ax-installer/src/command_center.rs:280",
+   "query": "Writes the plugin jar into `<product>/plugins/` of every product folder.",
+   "signature": "pub fn install_jetbrains_plugin("
+  },
+  {
+   "id": "crates/ax-installer/src/command_center.rs:303",
+   "query": "Removes only the ax jar; returns the paths that were removed.",
+   "signature": "pub fn uninstall_jetbrains_plugin(product_dirs: &[PathBuf]) -> Result<Vec<PathBuf>, String> {"
+  },
+  {
+   "id": "crates/ax-installer/src/command_center.rs:377",
+   "query": "Writes the bundled `.vsix` to a temp file the IDE CLI can read.",
+   "signature": "pub fn vsix_on_disk() -> Result<PathBuf, String> {"
+  },
+  {
+   "id": "crates/ax-installer/src/command_center.rs:401",
+   "query": "The IDE's extension list contains this extension at the bundled version.",
+   "signature": "pub fn vscode_panel_registered(target: &str, home: &Path) -> bool {"
+  },
+  {
+   "id": "crates/ax-installer/src/command_center.rs:406",
+   "query": "The IDE's extension list contains this extension at any version.",
+   "signature": "pub fn vscode_panel_listed_here(target: &str) -> bool {"
+  },
+  {
+   "id": "crates/ax-installer/src/command_center.rs:413",
+   "query": "`AX_NO_IDE_PANEL=1` skips extension and plugin installs (tests, CI).",
+   "signature": "pub fn panels_disabled() -> bool {"
+  },
+  {
+   "id": "crates/ax-installer/src/command_center.rs:418",
+   "query": "Installs the VS Code-family extension unless the IDE lists the bundled version.",
+   "signature": "pub fn install_vscode_panel_here(target: &str, display_name: &str) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-installer/src/command_center.rs:447",
+   "query": "Command that opens a URL in the default browser on this OS, for the Zed task.",
+   "signature": "pub fn open_url_command(url: &str) -> String {"
+  },
+  {
+   "id": "crates/ax-installer/src/command_center.rs:62",
+   "query": "The IDE's command-line tool: PATH first, then the copy inside the app install.",
+   "signature": "pub fn resolve_vscode_cli("
+  },
+  {
+   "id": "crates/ax-installer/src/hooks.rs:174",
+   "query": "Remove every read-guard entry, flat or nested. Returns whether anything changed.",
+   "signature": "pub fn remove(config: &mut Value) -> bool {"
+  },
+  {
+   "id": "crates/ax-installer/src/hooks.rs:218",
+   "query": "Add the Cursor `beforeSubmitPrompt` / `afterAgentResponse` / `stop` entries for `ax turn-hook start|response|end`.",
+   "signature": "pub fn upsert_cursor_turn_hooks(config: &mut Value, bin: &str) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-installer/src/hooks.rs:235",
+   "query": "Remove every `ax turn-hook` entry. Returns whether anything changed.",
+   "signature": "pub fn remove_turn_hooks(config: &mut Value) -> bool {"
+  },
+  {
+   "id": "crates/ax-installer/src/hooks.rs:248",
+   "query": "`Ok(None)` when there was nothing of ours to remove.",
+   "signature": "pub fn uninstall_turn_hooks_file(path: &Path) -> Result<Option<FileAction>, String> {"
+  },
+  {
+   "id": "crates/ax-installer/src/hooks.rs:288",
+   "query": "`Ok(None)` when there was nothing of ours to remove.",
+   "signature": "pub fn uninstall_file(path: &Path) -> Result<Option<FileAction>, String> {"
+  },
+  {
+   "id": "crates/ax-installer/src/hooks.rs:46",
+   "query": "Binary path safe as the first token of a hook command on every platform.  Claude Code runs hooks through bash, including Git Bash on Windows. Bash treats `\\` as an escape, so `C:\\Users\\...\\ax.exe` becomes `C:Users...ax.exe` and the hook exits \"command not found\". Forward slashes are a valid program path for bash, cmd, and PowerShell. Paths with spaces stay quoted.",
+   "signature": "pub fn shell_bin(bin: &str) -> String {"
+  },
+  {
+   "id": "crates/ax-installer/src/ide_choice.rs:17",
+   "query": "Every installer target with its menu group, editors first.",
+   "signature": "pub fn ide_groups() -> Vec<(&'static str, &'static str)> {"
+  },
+  {
+   "id": "crates/ax-installer/src/ide_choice.rs:34",
+   "query": "Pre-checked ids: the saved list when there is one (even empty), otherwise the detected ones.",
+   "signature": "pub fn ide_defaults(saved: Option<&[String]>, detected: &[String]) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-installer/src/ide_choice.rs:42",
+   "query": "Typed fallback: ids split on spaces or commas, `none`, or empty for `defaults`.",
+   "signature": "pub fn parse_ide_choice(line: &str, defaults: &[String]) -> Result<Vec<String>, String> {"
+  },
+  {
+   "id": "crates/ax-installer/src/ide_choice.rs:70",
+   "query": "Ids that have ax configured but were not chosen; these are uninstalled.",
+   "signature": "pub fn ides_to_remove(configured: &[String], chosen: &[String]) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-installer/src/ide_choice.rs:79",
+   "query": "Targets a pack import may rewrite: configured ones only, limited to the saved list if any.",
+   "signature": "pub fn pack_refresh_targets(configured: &[String], saved: Option<&[String]>) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-installer/src/ide_choice.rs:88",
+   "query": "Split saved ids into known targets and unknown ones (to warn about).",
+   "signature": "pub fn known_ides(saved: &[String]) -> (Vec<String>, Vec<String>) {"
+  },
+  {
+   "id": "crates/ax-installer/src/lib.rs:36",
+   "query": "Ensure `~/.ax/config.json` exists with index/policy scaffolds.",
+   "signature": "pub fn ensure_global_config() {"
+  },
+  {
+   "id": "crates/ax-installer/src/targets.rs:157",
+   "query": "Enriched catalog entries for the agent terminal UI.",
+   "signature": "pub fn catalog_with_status(project_root: &Path) -> Result<Vec<AgentTargetStatus>, String> {"
+  },
+  {
+   "id": "crates/ax-installer/src/targets.rs:51",
+   "query": "Installed on this machine: the CLI resolves or the app is present. Config folders don't count.",
+   "signature": "pub fn is_detected(target: &str) -> bool {"
+  },
+  {
+   "id": "crates/ax-lsp/src/client.rs:178",
+   "query": "Definition with retries while the server is still indexing.",
+   "signature": "pub fn definition_ready("
+  },
+  {
+   "id": "crates/ax-lsp/src/client.rs:202",
+   "query": "Drain/answer server messages until quiescent (RA) or the budget expires.",
+   "signature": "pub fn wait_ready(&mut self, total: Duration) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-lsp/src/client.rs:426",
+   "query": "Strip Windows `\\\\?\\` / `\\\\?\\UNC\\` extended-length prefixes from canonicalize.",
+   "signature": "pub fn strip_verbatim_prefix(path: &Path) -> PathBuf {"
+  },
+  {
+   "id": "crates/ax-lsp/src/client.rs:520",
+   "query": "Prefer the column of `name` on the given 1-based line when the stored column points at a call receiver (e.g. `session_id.into()` stored at `session_id`).",
+   "signature": "pub fn column_for_name(content: &str, line_1based: i32, column: i32, name: &str) -> u32 {"
+  },
+  {
+   "id": "crates/ax-lsp/src/lib.rs:28",
+   "query": "Run LSP enrichment against unresolved refs and upsert Exact edges.",
+   "signature": "pub async fn enrich_project("
+  },
+  {
+   "id": "crates/ax-lsp/src/servers.rs:198",
+   "query": "True when the binary is runnable for enrich.  Prefer `--version` success, then a `version` subcommand (gopls). Some servers (notably `pyright-langserver`) reject version probes and exit non-zero while still being a real install — those count as available unless the process looks like a rustup shim without the component.",
+   "signature": "pub fn server_binary_works(path: &Path) -> bool {"
+  },
+  {
+   "id": "crates/ax-lsp/src/servers.rs:230",
+   "query": "True when this server's command is on PATH and actually runnable.",
+   "signature": "pub fn server_available(spec: &ServerSpec) -> bool {"
+  },
+  {
+   "id": "crates/ax-lsp/src/servers.rs:95",
+   "query": "Absolute path of a runnable server, if any.",
+   "signature": "pub fn working_binary(command: &str, project_root: Option<&Path>) -> Option<PathBuf> {"
+  },
+  {
+   "id": "crates/ax-mcp/src/chat_session.rs:15",
+   "query": "A new chat session id: `axs_` and 16 hex characters.",
+   "signature": "pub fn mint_session() -> String {"
+  },
+  {
+   "id": "crates/ax-mcp/src/chat_session.rs:21",
+   "query": "The chat for one call: the `session` argument, then a recent hook id, then (tools only) the connection's last chat; otherwise a new id from `mint`.",
+   "signature": "pub fn resolve_session("
+  },
+  {
+   "id": "crates/ax-mcp/src/chat_session.rs:48",
+   "query": "Count this preflight; returns the turns since the last write, this one included.",
+   "signature": "pub fn on_preflight(&mut self, chat: &str) -> u32 {"
+  },
+  {
+   "id": "crates/ax-mcp/src/chat_session.rs:58",
+   "query": "A successful `ax_session` write starts the chat's count over.",
+   "signature": "pub fn on_write(&mut self, chat: &str) {"
+  },
+  {
+   "id": "crates/ax-mcp/src/context_budget.rs:102",
+   "query": "Single JSON shape for `contextBudget.neural` (preflight, status, tests).",
+   "signature": "pub fn neural_budget_json(budget: &NeuralBudget) -> Value {"
+  },
+  {
+   "id": "crates/ax-mcp/src/context_budget.rs:120",
+   "query": "Like `finish_with_memory_reserve`, with `contextBudget.neural` inside the counted reply.",
+   "signature": "pub fn finish_with_neural("
+  },
+  {
+   "id": "crates/ax-mcp/src/daemon.rs:622",
+   "query": "Connects to the project's daemon only when it runs this exact ax version.",
+   "signature": "pub async fn try_connect(project_root: &Path) -> Option<(DaemonSession, DaemonHello)> {"
+  },
+  {
+   "id": "crates/ax-mcp/src/daemon.rs:633",
+   "query": "Connects to whatever daemon serves the project, whatever its version.",
+   "signature": "pub async fn connect_any(project_root: &Path) -> Option<(DaemonSession, DaemonHello)> {"
+  },
+  {
+   "id": "crates/ax-mcp/src/daemon.rs:681",
+   "query": "Waits up to `timeout_ms` for any daemon to serve the project, whatever its version.",
+   "signature": "pub async fn wait_for_any_daemon("
+  },
+  {
+   "id": "crates/ax-mcp/src/daemon_lock.rs:111",
+   "query": "Force-stop a process by PID (Windows `taskkill` / Unix `kill -9`).",
+   "signature": "pub fn kill_pid(pid: u32) -> bool {"
+  },
+  {
+   "id": "crates/ax-mcp/src/engine.rs:108",
+   "query": "Start the debounced file watcher and connect-time catch-up background services.",
+   "signature": "pub fn start_background_services(project_root: &Path) {"
+  },
+  {
+   "id": "crates/ax-mcp/src/engine.rs:121",
+   "query": "Remote conversations must never inherit a local Cursor hook's chat ID.",
+   "signature": "pub fn for_remote(project_root: PathBuf) -> Self {"
+  },
+  {
+   "id": "crates/ax-mcp/src/engine.rs:132",
+   "query": "Preflight turns per chat since its last `ax_session` write.",
+   "signature": "pub fn turns(&mut self) -> &mut TurnCounter {"
+  },
+  {
+   "id": "crates/ax-mcp/src/engine.rs:185",
+   "query": "Fresh Ax handle + policy sync — avoids stale SQLite WAL in long-lived daemon.",
+   "signature": "pub async fn ensure_policy_fresh(&mut self) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-mcp/src/exe_identity.rs:40",
+   "query": "The file at `path` is gone, or is no longer the file this identity was taken from.",
+   "signature": "pub fn replaced_on_disk(&self) -> bool {"
+  },
+  {
+   "id": "crates/ax-mcp/src/exe_identity.rs:46",
+   "query": "`current_exe`, minus the ` (deleted)` Linux appends once the file was replaced.",
+   "signature": "pub fn current_exe_path() -> Option<PathBuf> {"
+  },
+  {
+   "id": "crates/ax-mcp/src/invoke.rs:20",
+   "query": "Call an ax MCP tool in-process (no stdio JSON-RPC).",
+   "signature": "pub async fn call_tool(engine: &mut McpEngine, name: &str, args: Value) -> Result<Value, String> {"
+  },
+  {
+   "id": "crates/ax-mcp/src/links.rs:14",
+   "query": "Add the rules, skills and memories that matched items link to. Returns true when something was added; the inject block is then rebuilt from the new rule and skill lists.",
+   "signature": "pub fn expand_links("
+  },
+  {
+   "id": "crates/ax-mcp/src/links.rs:165",
+   "query": "Cheap check before loading every rule, skill and memory.",
+   "signature": "pub fn has_links(result: &MatchResult, memories: &[MemoryMatch]) -> bool {"
+  },
+  {
+   "id": "crates/ax-mcp/src/links.rs:97",
+   "query": "Resolve with the lightweight title catalog, then load only selected bodies.",
+   "signature": "pub async fn expand_project_links("
+  },
+  {
+   "id": "crates/ax-mcp/src/liveness_watchdog.rs:151",
+   "query": "Install liveness watchdog for a long-lived MCP/daemon process.",
+   "signature": "pub fn install_main_thread_watchdog() -> Option<WatchdogHandle> {"
+  },
+  {
+   "id": "crates/ax-mcp/src/liveness_watchdog.rs:96",
+   "query": "Child entry: read stdin heartbeats; kill parent when they stop.",
+   "signature": "pub fn run_watchdog_child(parent_pid: u32, timeout_ms: u64) {"
+  },
+  {
+   "id": "crates/ax-mcp/src/neural_tool.rs:119",
+   "query": "Adds this preflight to the project's rank totals. Awaited, because a CLI process ends as soon as preflight returns; bounded, so a busy database cannot hold the reply.",
+   "signature": "pub async fn record_totals(pool: &SqlitePool, root: &Path, outcome: &RankOutcome) {"
+  },
+  {
+   "id": "crates/ax-mcp/src/neural_tool.rs:80",
+   "query": "Predicted skills, rules, memories, and files for the prompt, from this project's feedback. Optional, so the budget may drop it. Nothing when prediction is off or nothing is confident.",
+   "signature": "pub async fn predicted_block(root: &Path, pool: &SqlitePool, prompt: &str) -> Option<ContextBlock> {"
+  },
+  {
+   "id": "crates/ax-mcp/src/policy_session.rs:103",
+   "query": "The chat session this connection used last.",
+   "signature": "pub fn connection_session(&self) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-mcp/src/policy_session.rs:42",
+   "query": "`initialize` starts a fresh agent context.",
+   "signature": "pub fn begin(&mut self, client_name: &str) {"
+  },
+  {
+   "id": "crates/ax-mcp/src/policy_session.rs:79",
+   "query": "A context epoch is independent of durable chat identity. Reset invalidates delivery acknowledgements and graph reuse without deleting durable notes.",
+   "signature": "pub fn observe_context(&mut self, epoch: Option<&str>, reset: bool) -> (String, bool) {"
+  },
+  {
+   "id": "crates/ax-mcp/src/ppid_watchdog.rs:19",
+   "query": "Returns a shutdown reason when supervision is lost, or `None` while supervised.",
+   "signature": "pub fn supervision_lost_reason(state: &SupervisionState) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-mcp/src/ppid_watchdog.rs:88",
+   "query": "Spawn async poll loop; calls `on_death` when parent/host supervision is lost.",
+   "signature": "pub fn spawn_ppid_watchdog<F: Fn() + Send + Sync + 'static>(on_death: F) {"
+  },
+  {
+   "id": "crates/ax-mcp/src/proxy.rs:129",
+   "query": "Starts a daemon for the project in the background and returns its pid.",
+   "signature": "pub fn spawn_daemon_child(project_root: &Path) -> std::io::Result<u32> {"
+  },
+  {
+   "id": "crates/ax-mcp/src/proxy.rs:156",
+   "query": "Serves stdio through the project daemon. `Err` only when no daemon could be reached at all, so the caller can fall back to an in-process server.",
+   "signature": "pub async fn attach_or_spawn(project_root: &Path) -> Result<(), Box<dyn std::error::Error>> {"
+  },
+  {
+   "id": "crates/ax-mcp/src/proxy.rs:167",
+   "query": "Stop the shared MCP daemon (if any), clear stale locks, and start a fresh daemon.  Safe for Command Center: does **not** kill unrelated `ax.exe` processes (unlike `ax unlock`).",
+   "signature": "pub async fn restart_daemon(project_root: &Path) -> Result<DaemonRestartReport, String> {"
+  },
+  {
+   "id": "crates/ax-mcp/src/proxy.rs:43",
+   "query": "Serves the MCP client on stdio through the daemon until the client closes stdin. Exits the process with status 1 when the daemon is gone and does not come back.",
+   "signature": "pub async fn run_stdio_proxy(project_root: &Path, session: DaemonSession) {"
+  },
+  {
+   "id": "crates/ax-mcp/src/proxy_pump.rs:159",
+   "query": "Forwards client lines to the daemon and daemon lines back. When the daemon goes away, every unanswered request gets an error, and `reconnect(attempt)` is retried until it yields a session or `deadline` passes. Returns `Ok` once the client has left: its input closed or its output stopped accepting lines.",
+   "signature": "pub async fn pump<R, W, C, F>("
+  },
+  {
+   "id": "crates/ax-mcp/src/remote/client.rs:488",
+   "query": "Cancel a pending browser login without waiting for its timeout.",
+   "signature": "pub async fn cancel_login(id: &str) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-mcp/src/remote/client.rs:600",
+   "query": "Stdio bridge for IDEs that cannot connect to authenticated HTTP directly.",
+   "signature": "pub async fn proxy(url: String) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-mcp/src/remote/export.rs:39",
+   "query": "Stable, alphanumeric keys, distinct for publishers with the same project ID.",
+   "signature": "pub fn server_key(p: &Publication) -> String {"
+  },
+  {
+   "id": "crates/ax-mcp/src/replication_credentials.rs:35",
+   "query": "Return the actual prior keychain value for rollback if settings cannot commit.",
+   "signature": "pub fn replace("
+  },
+  {
+   "id": "crates/ax-mcp/src/request_context.rs:41",
+   "query": "Private transport fields are server-owned; public clients cannot forge delivery state.",
+   "signature": "pub fn public_args(mut args: Value) -> Value {"
+  },
+  {
+   "id": "crates/ax-mcp/src/server.rs:45",
+   "query": "Resolve indexed project root for MCP: explicit `--path` first, then cwd walk-up.",
+   "signature": "pub fn resolve_mcp_project_root(explicit: Option<PathBuf>) -> Option<PathBuf> {"
+  },
+  {
+   "id": "crates/ax-mcp/src/smart_output.rs:65",
+   "query": "Remove only the formatter-owned policy envelope. Rule bodies are byte-for-byte intact.",
+   "signature": "pub fn policy_markdown(block: &str) -> String {"
+  },
+  {
+   "id": "crates/ax-mcp/src/smart_output.rs:77",
+   "query": "Details belong to ax_status; preflight needs freshness and actionable warnings.",
+   "signature": "pub fn index_context(stats: &GraphStats, pending: &[PendingFile]) -> String {"
+  },
+  {
+   "id": "crates/ax-mcp/src/smart_output.rs:99",
+   "query": "Strip an envelope only on a freshly generated auxiliary block, never on arbitrary user text.",
+   "signature": "pub fn generated_markdown(block: &str, tag: &str, heading: &str) -> String {"
+  },
+  {
+   "id": "crates/ax-mcp/src/staleness.rs:13",
+   "query": "Annotate `text` with a banner and/or footer based on pending files.",
+   "signature": "pub fn annotate_staleness(text: &str, value: &Value, pending: &[PendingFile]) -> String {"
+  },
+  {
+   "id": "crates/ax-mcp/src/tool_filter.rs:134",
+   "query": "Always listed (when applicable) — not gated by the allowlist.",
+   "signature": "pub fn is_core_tool(name: &str) -> bool {"
+  },
+  {
+   "id": "crates/ax-mcp/src/tool_filter.rs:139",
+   "query": "Parse `AX_MCP_TOOLS`. `None` = lean default (core only). `Some` with `\"*\"` = everything.",
+   "signature": "pub fn resolve_tool_allowlist() -> Option<HashSet<String>> {"
+  },
+  {
+   "id": "crates/ax-mcp/src/tool_filter.rs:181",
+   "query": "Filter a tools array Value in place for `tools/list`.",
+   "signature": "pub fn filter_tools_list(tools: &mut Vec<serde_json::Value>) {"
+  },
+  {
+   "id": "crates/ax-mcp/src/transport.rs:41",
+   "query": "JSON-RPC notifications omit `id` and must not receive a response (MCP spec).",
+   "signature": "pub fn is_notification(id: &Option<Value>) -> bool {"
+  },
+  {
+   "id": "crates/ax-mcp/src/transport.rs:92",
+   "query": "Write a pre-formatted JSON-RPC notification line (already ends with `\\n`).",
+   "signature": "pub fn send_notification_line(line: &str) -> Result<(), io::Error> {"
+  },
+  {
+   "id": "crates/ax-mcp/src/verbose.rs:146",
+   "query": "Daemon → proxy side-channel line (not JSON-RPC).",
+   "signature": "pub fn format_ax_log_line(text: &str) -> String {"
+  },
+  {
+   "id": "crates/ax-mcp/src/verbose.rs:151",
+   "query": "MCP logging notification — forwarded on stdout so Cursor's MCP Output shows it.",
+   "signature": "pub fn format_mcp_log_notification(text: &str) -> String {"
+  },
+  {
+   "id": "crates/ax-mcp/src/verbose.rs:166",
+   "query": "Parse a daemon side-channel log line; returns the text when it is `ax_log`.",
+   "signature": "pub fn parse_ax_log_line(line: &str) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-mcp/src/verbose.rs:188",
+   "query": "Append traces to the active daily log under `<project>/.ax/` (falls back to `~/.ax/`).",
+   "signature": "pub fn append_verbose_log_file(lines: &[String], project_root: Option<&Path>) {"
+  },
+  {
+   "id": "crates/ax-mcp/src/verbose.rs:198",
+   "query": "Deliver verbose lines on every path: stderr, log file, and (for callers) MCP notifs.",
+   "signature": "pub fn deliver_local(lines: &[String], project_root: Option<&Path>) {"
+  },
+  {
+   "id": "crates/ax-mcp/src/verbose.rs:22",
+   "query": "True when env override or project `[ui].verbose_mcp` is set.",
+   "signature": "pub fn verbose_enabled(project_root: Option<&Path>) -> bool {"
+  },
+  {
+   "id": "crates/ax-mcp/src/verbose.rs:27",
+   "query": "Run `fut` with an empty per-task verbose buffer; returns `(result, lines)`.",
+   "signature": "pub async fn with_trace_buffer<F, T>(fut: F) -> (T, Vec<String>)"
+  },
+  {
+   "id": "crates/ax-mcp/src/verbose.rs:43",
+   "query": "Append a prefixed single-line entry when a trace buffer is active. When a Cursor session id is known (`AX_CURSOR_SESSION_ID` or `~/.ax/active-cursor-session`), append `session=<id>` for audit correlation.",
+   "signature": "pub fn push_line(msg: impl AsRef<str>) {"
+  },
+  {
+   "id": "crates/ax-mcp/src/verbose.rs:55",
+   "query": "Active Cursor agent session id for verbose correlation (optional).",
+   "signature": "pub fn active_session_id() -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-pi/src/events.rs:200",
+   "query": "Text used only to estimate tokens. The caller must not store the returned string.",
+   "signature": "pub fn output_text_for_estimate(event: &Value) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-pi/src/integration.rs:385",
+   "query": "Next Ax operation fails internally. Non-strict mode still returns success.",
+   "signature": "pub fn fail_next(&self) {"
+  },
+  {
+   "id": "crates/ax-pi/src/integration.rs:850",
+   "query": "Record a read-guard recommendation. Missing databases and Ax errors do not change the guard decision.",
+   "signature": "pub fn read_guard_ids(db: &Path, fallback_session: &str) -> (String, String) {"
+  },
+  {
+   "id": "crates/ax-pi/src/report.rs:123",
+   "query": "Convert stored USD figures into the configured display currency. Euro display needs `usd_per_eur`. Without that rate the label stays USD.",
+   "signature": "pub fn apply_display_currency("
+  },
+  {
+   "id": "crates/ax-plugins/src/host.rs:68",
+   "query": "Extract via the first matching plugin for `path`'s extension. Returns `(plugin_name, result)`.",
+   "signature": "pub fn extract("
+  },
+  {
+   "id": "crates/ax-policy/src/agents_share.rs:115",
+   "query": "Move leftover `.ax/policy/{rules,skills}` files into `.agents` without overwriting.",
+   "signature": "pub fn migrate_legacy_policy_to_agents(project_root: &Path) -> std::io::Result<Vec<String>> {"
+  },
+  {
+   "id": "crates/ax-policy/src/agents_share.rs:194",
+   "query": "Write `keep` and delete the same rule id from other shareable trees.",
+   "signature": "pub fn relocate_rule_file(project_root: &Path, id: &str, keep: &Path) -> std::io::Result<()> {"
+  },
+  {
+   "id": "crates/ax-policy/src/agents_share.rs:223",
+   "query": "Fail-closed leak scan: private or disabled items must not sit under `.agents`.",
+   "signature": "pub fn agents_share_violations(project_root: &Path) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-policy/src/agents_share.rs:25",
+   "query": "Move an existing rules/skills folder when `policy.agentsDir` changes. No-op when the names match. Errors when the destination already exists.",
+   "signature": "pub fn relocate_agents_dir("
+  },
+  {
+   "id": "crates/ax-policy/src/agents_share.rs:296",
+   "query": "Point `.cursor/skills/<name>` at `.agents/skills/<name>` via symlink.",
+   "signature": "pub fn link_cursor_skills_to_agents(project_root: &Path) -> Result<Vec<String>, String> {"
+  },
+  {
+   "id": "crates/ax-policy/src/agents_share.rs:47",
+   "query": "Validate, move the existing folder when needed, then save `policy.agentsDir`.",
+   "signature": "pub fn set_agents_dir(project_root: &Path, raw: &str) -> Result<String, String> {"
+  },
+  {
+   "id": "crates/ax-policy/src/agents_share.rs:67",
+   "query": "Directory that should receive a file-backed item for this scope + enabled flag.",
+   "signature": "pub fn resolve_shareable_write_dir("
+  },
+  {
+   "id": "crates/ax-policy/src/builtin_packs.rs:170",
+   "query": "Install a built-in pack into project-scope policy (files), then caller should index.",
+   "signature": "pub fn install_builtin_pack("
+  },
+  {
+   "id": "crates/ax-policy/src/capture.rs:132",
+   "query": "Questions the agent should ask the user to refine rule options before save.",
+   "signature": "pub fn capture_interview_questions(proposal: &CaptureProposal) -> Vec<CaptureInterviewQuestion> {"
+  },
+  {
+   "id": "crates/ax-policy/src/capture.rs:221",
+   "query": "Apply unique id resolution and refresh preview fields.",
+   "signature": "pub fn finalize_proposal("
+  },
+  {
+   "id": "crates/ax-policy/src/capture.rs:240",
+   "query": "Resolve a unique rule id against existing ids (suffix -2, -3, …).",
+   "signature": "pub fn resolve_unique_id(base_id: &str, existing_ids: &[String]) -> String {"
+  },
+  {
+   "id": "crates/ax-policy/src/capture.rs:67",
+   "query": "Returns true when the prompt contains directive language worth proposing as a rule.",
+   "signature": "pub fn detect_directive(prompt: &str) -> bool {"
+  },
+  {
+   "id": "crates/ax-policy/src/capture.rs:72",
+   "query": "Build a rule proposal from prompt text (no disk write).",
+   "signature": "pub fn propose_rule_from_prompt(prompt: &str, open_files: &[String]) -> CaptureProposal {"
+  },
+  {
+   "id": "crates/ax-policy/src/config.rs:110",
+   "query": "Merge global `~/.ax/config.json` `\"policy\"` section with per-project `ax.json` (and workspace root `ax.json` roots when present).",
+   "signature": "pub fn load_policy_config(project_root: &Path) -> PolicyConfig {"
+  },
+  {
+   "id": "crates/ax-policy/src/config.rs:144",
+   "query": "Configured roots applicable to this project (member filter applied).",
+   "signature": "pub fn load_policy_roots(project_root: &Path) -> Vec<PolicyRoot> {"
+  },
+  {
+   "id": "crates/ax-policy/src/config.rs:251",
+   "query": "True when project `ax.json` has `\"policySync\": true`.",
+   "signature": "pub fn policy_sync_enabled(project_root: &Path) -> bool {"
+  },
+  {
+   "id": "crates/ax-policy/src/config.rs:256",
+   "query": "Read / write top-level `policySync` in project ax.json.",
+   "signature": "pub fn write_project_policy_sync(project_root: &Path, enabled: bool) -> Result<PathBuf, String> {"
+  },
+  {
+   "id": "crates/ax-policy/src/config.rs:367",
+   "query": "Resolved storage mode and which config layer set it.",
+   "signature": "pub fn policy_storage_status(project_root: &Path) -> PolicyStorageStatus {"
+  },
+  {
+   "id": "crates/ax-policy/src/config.rs:39",
+   "query": "Resolve per-item storage override against the project default.",
+   "signature": "pub fn effective_storage("
+  },
+  {
+   "id": "crates/ax-policy/src/config.rs:395",
+   "query": "Set `policy.storage` in per-project `ax.json` (merges other keys).",
+   "signature": "pub fn write_project_policy_storage("
+  },
+  {
+   "id": "crates/ax-policy/src/config.rs:405",
+   "query": "Set `policy.storage` in global `~/.ax/config.json` (merges other keys).",
+   "signature": "pub fn write_global_policy_storage(storage: PolicyStorage) -> Result<PathBuf, String> {"
+  },
+  {
+   "id": "crates/ax-policy/src/config.rs:440",
+   "query": "Stack ids saved in the project `ax.json` only (not the global config).",
+   "signature": "pub fn read_project_stack_ids(project_root: &Path) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-policy/src/config.rs:445",
+   "query": "`policy.stackDetect` from the project `ax.json` (`off` or `suggest`).",
+   "signature": "pub fn read_project_stack_detect(project_root: &Path) -> String {"
+  },
+  {
+   "id": "crates/ax-policy/src/config.rs:452",
+   "query": "Merge `policy.stacks` and `policy.stackDetect` into project `ax.json`.",
+   "signature": "pub fn write_project_stacks("
+  },
+  {
+   "id": "crates/ax-policy/src/config.rs:490",
+   "query": "`agents.ides` from the project `ax.json`; `None` when it was never saved.",
+   "signature": "pub fn read_project_ides(project_root: &Path) -> Option<Vec<String>> {"
+  },
+  {
+   "id": "crates/ax-policy/src/config.rs:502",
+   "query": "Save `agents.ides` in the project `ax.json`, keeping every other key.",
+   "signature": "pub fn write_project_ides(project_root: &Path, ides: &[String]) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-policy/src/config.rs:523",
+   "query": "`policy.agentsDir` when the project `ax.json` defines it.",
+   "signature": "pub fn configured_agents_dir(project_root: &Path) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-policy/src/config.rs:531",
+   "query": "Folder name for on-disk rules and skills. `.agents` when unset.",
+   "signature": "pub fn agents_dir_name(project_root: &Path) -> String {"
+  },
+  {
+   "id": "crates/ax-policy/src/config.rs:536",
+   "query": "A single relative directory name. No absolute paths, slashes, or `..`.",
+   "signature": "pub fn validate_agents_dir_name(raw: &str) -> Result<String, String> {"
+  },
+  {
+   "id": "crates/ax-policy/src/config.rs:551",
+   "query": "Save `policy.agentsDir` in the project `ax.json`.",
+   "signature": "pub fn write_project_agents_dir(project_root: &Path, raw: &str) -> Result<String, String> {"
+  },
+  {
+   "id": "crates/ax-policy/src/format.rs:35",
+   "query": "FNV-1a 64: stable across processes and Rust versions, unlike `DefaultHasher`.",
+   "signature": "pub fn content_hash(text: &str) -> u64 {"
+  },
+  {
+   "id": "crates/ax-policy/src/format.rs:45",
+   "query": "Hash of the body plus extra properties, so a property-only edit is resent.",
+   "signature": "pub fn delivered_body_hash(body: &str, properties: &PolicyProperties) -> u64 {"
+  },
+  {
+   "id": "crates/ax-policy/src/global_level.rs:129",
+   "query": "Both policy tables have the `level` column and the revisions table exists.",
+   "signature": "pub async fn schema_is_current(pool: &SqlitePool) -> Result<bool, sqlx::Error> {"
+  },
+  {
+   "id": "crates/ax-policy/src/global_level.rs:193",
+   "query": "`None` when global.db is absent or unreadable: callers then keep every project copy.",
+   "signature": "pub async fn load(path: &Path) -> Option<GlobalLevel> {"
+  },
+  {
+   "id": "crates/ax-policy/src/global_level.rs:226",
+   "query": "Tests never read the machine's global.db; they opt in per thread.",
+   "signature": "pub fn default_path() -> Option<PathBuf> {"
+  },
+  {
+   "id": "crates/ax-policy/src/global_level.rs:240",
+   "query": "Modification time of a policy file in ms since the epoch (0 when unknown).",
+   "signature": "pub fn file_changed_ms(path: &Path) -> i64 {"
+  },
+  {
+   "id": "crates/ax-policy/src/global_level.rs:27",
+   "query": "The `kind` value in `policy_revisions` and `global_policy_revisions`.",
+   "signature": "pub fn revision_kind(self) -> &'static str {"
+  },
+  {
+   "id": "crates/ax-policy/src/global_level.rs:60",
+   "query": "The copy that wins among the global rows with this name.",
+   "signature": "pub fn leader(&self, kind: Kind, name: &str) -> Option<&GlobalItem> {"
+  },
+  {
+   "id": "crates/ax-policy/src/global_level.rs:67",
+   "query": "True when a project copy with this body would lose to the global copy.",
+   "signature": "pub fn shadows(&self, kind: Kind, name: &str, body: &str, changed_ms: i64) -> bool {"
+  },
+  {
+   "id": "crates/ax-policy/src/global_level.rs:74",
+   "query": "The body as compared: trimmed, with Windows line endings read as `\\n`.",
+   "signature": "pub fn normalized(body: &str) -> String {"
+  },
+  {
+   "id": "crates/ax-policy/src/global_level.rs:83",
+   "query": "Same text apart from surrounding whitespace and line endings.",
+   "signature": "pub fn same_text(a: &str, b: &str) -> bool {"
+  },
+  {
+   "id": "crates/ax-policy/src/global_level.rs:89",
+   "query": "The more extensive body wins; on equal length the more recently changed one. Identical bodies never replace the global copy.",
+   "signature": "pub fn lower_copy_wins(lower: &str, lower_ms: i64, global: &str, global_ms: i64) -> bool {"
+  },
+  {
+   "id": "crates/ax-policy/src/global_level.rs:98",
+   "query": "Index of the item every other item loses to (the first one on a full tie).",
+   "signature": "pub fn leader_index(items: &[GlobalItem]) -> usize {"
+  },
+  {
+   "id": "crates/ax-policy/src/hierarchy.rs:133",
+   "query": "Resolve the on-disk policy directory for a scope (may not exist yet).",
+   "signature": "pub fn policy_dir_for_scope(project_root: &Path, scope: PolicyScope) -> PathBuf {"
+  },
+  {
+   "id": "crates/ax-policy/src/hierarchy.rs:152",
+   "query": "Ensure the policy directory for a scope exists (rules/ + skills/).",
+   "signature": "pub fn ensure_scope_dirs(project_root: &Path, scope: PolicyScope) -> std::io::Result<PathBuf> {"
+  },
+  {
+   "id": "crates/ax-policy/src/hierarchy.rs:163",
+   "query": "Ensure `.ax/.gitignore` ignores `policy-private/` and `policy-inactive/`.",
+   "signature": "pub fn ensure_private_gitignore(project_root: &Path) -> std::io::Result<()> {"
+  },
+  {
+   "id": "crates/ax-policy/src/hierarchy.rs:168",
+   "query": "Walk upward for `ax.json` / `.ax.json` containing a non-empty `members` array.",
+   "signature": "pub fn find_workspace_root(start: &Path) -> Option<PathBuf> {"
+  },
+  {
+   "id": "crates/ax-policy/src/hierarchy.rs:42",
+   "query": "Ordered policy directory roots to merge (lowest → highest precedence). Only includes directories that already exist (private dirs are created on first save).",
+   "signature": "pub fn policy_layer_dirs(project_root: &Path) -> Vec<PathBuf> {"
+  },
+  {
+   "id": "crates/ax-policy/src/hierarchy.rs:53",
+   "query": "Ordered layers with scope metadata (lowest → highest precedence).  Built-in scope dirs are merged first; configured [`crate::config::PolicyRoot`] mounts are inserted immediately after the matching built-in scope layer.",
+   "signature": "pub fn policy_layers(project_root: &Path) -> Vec<PolicyLayer> {"
+  },
+  {
+   "id": "crates/ax-policy/src/history.rs:101",
+   "query": "On the first sight of `kind` in an existing install, record what is already there. Absent bundled ids become `removed` so a later seed does not recreate them.",
+   "signature": "pub fn establish("
+  },
+  {
+   "id": "crates/ax-policy/src/history.rs:124",
+   "query": "`true` when a missing file must stay missing. A `present` or `restored` id that has disappeared is recorded as `removed`.",
+   "signature": "pub fn leave_absent(path: &Path, kind: &str, item_id: &str, force: bool) -> std::io::Result<bool> {"
+  },
+  {
+   "id": "crates/ax-policy/src/history.rs:173",
+   "query": "Copy the JSONL ledger into `policy_history` and archive each new row as a `policy` memory.",
+   "signature": "pub async fn mirror_project(pool: &SqlitePool, project_root: &Path) -> Result<usize, String> {"
+  },
+  {
+   "id": "crates/ax-policy/src/ide_loaded.rs:16",
+   "query": "Keys (`rule:<id>` / `skill:<name>`) whose identical body the IDE loads itself. `roots` are searched in order, usually the project root and the home directory.",
+   "signature": "pub fn ide_loaded_keys("
+  },
+  {
+   "id": "crates/ax-policy/src/ide_seed.rs:1011",
+   "query": "Verify IDE bootstrap files; with `fix`, create or repair via `seed_ide_agent_workflow`.",
+   "signature": "pub fn sync_ide_bootstrap(project_root: &Path, fix: bool) -> std::io::Result<SyncResult> {"
+  },
+  {
+   "id": "crates/ax-policy/src/ide_seed.rs:1016",
+   "query": "`fix` creates missing IDE bootstrap files. `force` also rewrites stale templates.",
+   "signature": "pub fn sync_ide_bootstrap_with_force("
+  },
+  {
+   "id": "crates/ax-policy/src/ide_seed.rs:690",
+   "query": "Ensure IDE bootstrap files exist (create or repair on init).  Seeds **all** agent surfaces (Cursor, Continue, Claude, …) so a teammate on a different IDE still gets `ax_preflight` after pack import / `ax init`.",
+   "signature": "pub fn seed_ide_agent_workflow(project_root: &Path) -> std::io::Result<IdeSeedResult> {"
+  },
+  {
+   "id": "crates/ax-policy/src/ide_seed.rs:696",
+   "query": "Seed IDE bootstrap files. With `force=false`, existing files are left alone (create-missing). With `force=true`, stale managed templates may be rewritten.",
+   "signature": "pub fn seed_ide_agent_workflow_with_force("
+  },
+  {
+   "id": "crates/ax-policy/src/ide_seed.rs:941",
+   "query": "Verify per-IDE bootstrap instruction files (Cursor, Continue, Claude, Gemini, Copilot, Windsurf, Cline).",
+   "signature": "pub fn verify_ide_bootstrap(project_root: &Path) -> Vec<InstructionCheck> {"
+  },
+  {
+   "id": "crates/ax-policy/src/index.rs:307",
+   "query": "When `git_export_only` is false, every DB rule/skill is written (exclusive files mode).",
+   "signature": "pub async fn export_policy_to_files_filtered("
+  },
+  {
+   "id": "crates/ax-policy/src/index.rs:436",
+   "query": "Bootstrap an empty database from files; preserve database authority thereafter. or refresh from disk (files mode). Safe to call on every MCP policy tool invocation.",
+   "signature": "pub async fn ensure_policy_ready("
+  },
+  {
+   "id": "crates/ax-policy/src/index.rs:642",
+   "query": "Policy counts and storage mode for status / diagnostics.",
+   "signature": "pub async fn policy_status("
+  },
+  {
+   "id": "crates/ax-policy/src/index.rs:833",
+   "query": "List rules with `effectiveStorage` / override flags filled from project default.",
+   "signature": "pub async fn list_rules_enriched("
+  },
+  {
+   "id": "crates/ax-policy/src/index.rs:918",
+   "query": "Whether policy MCP tools should be listed for this project.",
+   "signature": "pub fn policy_tools_enabled(project_root: &Path) -> bool {"
+  },
+  {
+   "id": "crates/ax-policy/src/index.rs:929",
+   "query": "Legacy sync check — filesystem dirs only (files mode).",
+   "signature": "pub fn policy_exists(project_root: &Path) -> bool {"
+  },
+  {
+   "id": "crates/ax-policy/src/links.rs:159",
+   "query": "The item `target` points to, or `None` when it points to nothing.",
+   "signature": "pub fn resolve(&self, target: &str) -> Option<&LinkItem> {"
+  },
+  {
+   "id": "crates/ax-policy/src/links.rs:187",
+   "query": "The text to put inside `[[…]]` so it resolves to `item`: the bare page when that is unambiguous, else the folder path. Memories always use `memories/<stem>`.",
+   "signature": "pub fn link_target(&self, item: &LinkItem) -> String {"
+  },
+  {
+   "id": "crates/ax-policy/src/links.rs:228",
+   "query": "One hop: the items `sources` link to, as `(target, linked from)`, in source order and then link order. Skips targets in `delivered` or rejected by `eligible`; stops at `cap`.",
+   "signature": "pub fn follow_links("
+  },
+  {
+   "id": "crates/ax-policy/src/links.rs:255",
+   "query": "A title as a file stem Obsidian accepts.",
+   "signature": "pub fn safe_stem(title: &str) -> String {"
+  },
+  {
+   "id": "crates/ax-policy/src/links.rs:273",
+   "query": "File stem per `(id, title, created_at)`. Clashing titles get ` (2)`, ` (3)` in creation order.",
+   "signature": "pub fn unique_stems(entries: &[(&str, &str, i64)]) -> Vec<(String, String)> {"
+  },
+  {
+   "id": "crates/ax-policy/src/links.rs:53",
+   "query": "`rule/english-only`, as used in link reasons.",
+   "signature": "pub fn label(&self) -> String {"
+  },
+  {
+   "id": "crates/ax-policy/src/links.rs:64",
+   "query": "Every `[[link]]` in `body`, in order, skipping fenced code blocks and inline code.",
+   "signature": "pub fn parse_links(body: &str) -> Vec<WikiLink> {"
+  },
+  {
+   "id": "crates/ax-policy/src/matcher.rs:45",
+   "query": "Load rules + skills through a per-database cache. A one-row generation query decides staleness so full policy bodies are not re-read from SQLite on every preflight call.",
+   "signature": "pub async fn cached_rules_and_skills("
+  },
+  {
+   "id": "crates/ax-policy/src/matcher.rs:75",
+   "query": "Explicit project policy overrides global defaults on the same name.",
+   "signature": "pub fn merge_skills("
+  },
+  {
+   "id": "crates/ax-policy/src/migrate.rs:201",
+   "query": "Upsert all candidates into the database (apply after interview / `--yes`).",
+   "signature": "pub async fn import_migrate_candidates("
+  },
+  {
+   "id": "crates/ax-policy/src/migrate.rs:233",
+   "query": "Scan + import in one step (used when `--migrate --yes`).",
+   "signature": "pub async fn migrate_to_database("
+  },
+  {
+   "id": "crates/ax-policy/src/migrate.rs:243",
+   "query": "Import into ax.db then delete `.agents/` and `.ax/policy/` sources (not `.cursor/`).",
+   "signature": "pub async fn exclusive_to_database("
+  },
+  {
+   "id": "crates/ax-policy/src/migrate.rs:256",
+   "query": "Delete markdown for imported ax-policy candidates. Returns how many files were removed.",
+   "signature": "pub fn remove_ax_policy_file_sources(project_root: &Path, candidates: &[MigrateCandidate]) -> u32 {"
+  },
+  {
+   "id": "crates/ax-policy/src/migrate.rs:82",
+   "query": "Recursively scan the project for policy rules (`.mdc`) and skills (`SKILL.md`).",
+   "signature": "pub fn scan_policy_candidates(project_root: &Path) -> MigratePlan {"
+  },
+  {
+   "id": "crates/ax-policy/src/pack.rs:147",
+   "query": "Export shareable rules/skills into `.ax/policy/shared/`.",
+   "signature": "pub async fn export_pack("
+  },
+  {
+   "id": "crates/ax-policy/src/pack.rs:234",
+   "query": "Import pack into local policy. Respects `requireReview` and `--force`.",
+   "signature": "pub async fn import_pack("
+  },
+  {
+   "id": "crates/ax-policy/src/pack.rs:244",
+   "query": "Import pack with optional `require_review` override (remote share sync).",
+   "signature": "pub async fn import_pack_with_options("
+  },
+  {
+   "id": "crates/ax-policy/src/pack.rs:263",
+   "query": "Import with a source label supplied by the authenticated share transport.",
+   "signature": "pub async fn import_pack_with_origin("
+  },
+  {
+   "id": "crates/ax-policy/src/pack.rs:546",
+   "query": "Convenience: paths helpers for tests / review.",
+   "signature": "pub fn active_rule_path(project_root: &Path, id: &str) -> PathBuf {"
+  },
+  {
+   "id": "crates/ax-policy/src/parse.rs:407",
+   "query": "Serialize a stub rule file (frontmatter + stub marker body).",
+   "signature": "pub fn serialize_rule_stub(fm: &RuleFrontmatter) -> String {"
+  },
+  {
+   "id": "crates/ax-policy/src/parse.rs:412",
+   "query": "Serialize a stub skill file (frontmatter + stub marker body).",
+   "signature": "pub fn serialize_skill_stub(fm: &SkillFrontmatter) -> String {"
+  },
+  {
+   "id": "crates/ax-policy/src/paths.rs:102",
+   "query": "Resolve a `source:` frontmatter value.  Accepts: - absolute paths (`D:/shared/rules/foo.mdc`) - `root:<id>/rules/foo.mdc` (relative to a configured policy root) - project-relative paths (must stay under project or a configured root)",
+   "signature": "pub fn resolve_source_path(project_root: &Path, source: &str) -> Result<PathBuf, String> {"
+  },
+  {
+   "id": "crates/ax-policy/src/paths.rs:145",
+   "query": "Resolve the on-disk write target for a file-backed item.",
+   "signature": "pub fn resolve_item_write_dir("
+  },
+  {
+   "id": "crates/ax-policy/src/paths.rs:25",
+   "query": "Per-project git pack directory: `.ax/policy/shared/`.",
+   "signature": "pub fn shared_dir(ax_dir: &Path) -> PathBuf {"
+  },
+  {
+   "id": "crates/ax-policy/src/paths.rs:30",
+   "query": "Pending review queue: `.ax/policy/pending/`.",
+   "signature": "pub fn pending_dir(ax_dir: &Path) -> PathBuf {"
+  },
+  {
+   "id": "crates/ax-policy/src/paths.rs:57",
+   "query": "Create `.ax/policy/` directories only — no template seeding (used on import / ensure).",
+   "signature": "pub fn ensure_policy_dirs(ax_dir: &Path) -> std::io::Result<()> {"
+  },
+  {
+   "id": "crates/ax-policy/src/paths.rs:68",
+   "query": "Resolve a user path under `.ax/policy/` — reject traversal.",
+   "signature": "pub fn resolve_policy_path(base: &Path, relative: &str) -> Result<PathBuf, String> {"
+  },
+  {
+   "id": "crates/ax-policy/src/paths.rs:91",
+   "query": "Whether a markdown body is a stub pointer (body loaded from `source`).",
+   "signature": "pub fn is_stub_body(body: &str) -> bool {"
+  },
+  {
+   "id": "crates/ax-policy/src/provenance.rs:14",
+   "query": "Called by blocking pending-file writers. Never attribute an edited file.",
+   "signature": "pub fn record_pending_origin(path: &Path, incoming: &str, origin: &str) -> Result<(), AxError> {"
+  },
+  {
+   "id": "crates/ax-policy/src/provenance.rs:43",
+   "query": "Missing, corrupt or stale optional metadata means unknown, never a guess.",
+   "signature": "pub async fn pending_origin(path: &Path, incoming: &str) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-policy/src/provenance.rs:63",
+   "query": "Remove only this pending item's optional metadata.",
+   "signature": "pub async fn remove_pending_origin(path: &Path) -> Result<(), AxError> {"
+  },
+  {
+   "id": "crates/ax-policy/src/review.rs:290",
+   "query": "Ensure pending dirs exist (for UI / import).",
+   "signature": "pub fn ensure_pending_dirs(project_root: &Path) -> Result<PathBuf, AxError> {"
+  },
+  {
+   "id": "crates/ax-policy/src/revisions.rs:132",
+   "query": "After zip restore + `index_policy`, record each written item as source `restore`.",
+   "signature": "pub async fn record_restore_writes("
+  },
+  {
+   "id": "crates/ax-policy/src/revisions.rs:42",
+   "query": "Insert a revision when `body` hashes differently from the newest row. Returns whether a row was inserted.",
+   "signature": "pub async fn record_if_changed("
+  },
+  {
+   "id": "crates/ax-policy/src/seed.rs:342",
+   "query": "Write embedded default policy files when missing. Never overwrites existing files.",
+   "signature": "pub fn seed_default_policy(ax_dir: &Path) -> std::io::Result<SeedResult> {"
+  },
+  {
+   "id": "crates/ax-policy/src/seed.rs:379",
+   "query": "Write one removed bundled rule or skill back and record `restored`.",
+   "signature": "pub fn restore_removed_item(project_root: &Path, id: &str) -> std::io::Result<RestoredItem> {"
+  },
+  {
+   "id": "crates/ax-policy/src/seed.rs:524",
+   "query": "Skills that `ax install` / `ax init` also store as machine skills in `~/.ax/global.db`.",
+   "signature": "pub fn global_db_seed_skills() -> Vec<(&'static str, &'static str)> {"
+  },
+  {
+   "id": "crates/ax-policy/src/seed.rs:663",
+   "query": "Write machine-wide bundled skills to a Cursor skills directory. Project-specific skills are installed only through stack packs.",
+   "signature": "pub fn seed_cursor_skills(skills_root: &Path) -> std::io::Result<SeedResult> {"
+  },
+  {
+   "id": "crates/ax-policy/src/seed.rs:734",
+   "query": "Seed `~/.ax/global_policy/` with machine-wide rules and skills (company scope via MCP). Existing files are never overwritten (create-missing only).",
+   "signature": "pub fn seed_global_policy() -> std::io::Result<SeedResult> {"
+  },
+  {
+   "id": "crates/ax-policy/src/seed.rs:739",
+   "query": "Like [`seed_global_policy`], but `force` may rewrite existing files that need a template upgrade.",
+   "signature": "pub fn seed_global_policy_with_force(force: bool) -> std::io::Result<SeedResult> {"
+  },
+  {
+   "id": "crates/ax-policy/src/seed.rs:752",
+   "query": "Seed `~/.ax/global_policy/skills/` with machine-wide skills (company scope via MCP).",
+   "signature": "pub fn seed_global_policy_skills() -> std::io::Result<SeedResult> {"
+  },
+  {
+   "id": "crates/ax-policy/src/seed.rs:757",
+   "query": "Seed `~/.cursor/skills/` with baseline rollout skills (machine-wide Cursor agents).",
+   "signature": "pub fn seed_global_cursor_skills() -> std::io::Result<SeedResult> {"
+  },
+  {
+   "id": "crates/ax-policy/src/seed.rs:766",
+   "query": "Seed `<project>/.cursor/skills/` with baseline rollout skills. Skills stored in `~/.ax/global.db` are left out: a project copy would only duplicate them.",
+   "signature": "pub fn seed_project_cursor_skills(project_root: &Path) -> std::io::Result<SeedResult> {"
+  },
+  {
+   "id": "crates/ax-policy/src/seed.rs:822",
+   "query": "Verify default instruction files match ax preflight workflow (Recall instruction-sync parity).",
+   "signature": "pub fn verify_instructions(ax_dir: &Path) -> Vec<InstructionCheck> {"
+  },
+  {
+   "id": "crates/ax-policy/src/seed.rs:871",
+   "query": "Verify instruction files; with `fix`, restore missing or drifted managed files from embedded templates.",
+   "signature": "pub fn sync_instructions(ax_dir: &Path, fix: bool) -> std::io::Result<SyncResult> {"
+  },
+  {
+   "id": "crates/ax-policy/src/seed.rs:877",
+   "query": "Verify/repair managed instruction files. `fix` restores missing files; `force` also rewrites drifted templates.",
+   "signature": "pub fn sync_instructions_with_force("
+  },
+  {
+   "id": "crates/ax-policy/src/seed.rs:979",
+   "query": "Warn when `.cursor/rules/*.mdc` duplicates ax policy — delivery must be MCP-only.",
+   "signature": "pub fn check_cursor_rule_duplicates(project_root: &Path) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-policy/src/skill_groups.rs:29",
+   "query": "Full catalog in display order, including groups with zero skills.",
+   "signature": "pub fn catalog() -> &'static [SkillGroupDef] {"
+  },
+  {
+   "id": "crates/ax-policy/src/skill_groups.rs:38",
+   "query": "Resolve a skill to a catalog id. Explicit catalog ids win; unknown ids become `ungrouped`.",
+   "signature": "pub fn resolve_skill_group(explicit: Option<&str>, name: &str, tags: &[String]) -> String {"
+  },
+  {
+   "id": "crates/ax-policy/src/skill_groups.rs:67",
+   "query": "Catalog ids that have at least one resolved skill, in catalog order.",
+   "signature": "pub fn visible_group_ids(resolved_groups: &[String]) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-policy/src/stacks.rs:102",
+   "query": "Ordered unique ids with dependencies prepended. Unknown ids error with the catalog.",
+   "signature": "pub fn resolve(ids: &[String]) -> Result<Vec<String>, String> {"
+  },
+  {
+   "id": "crates/ax-policy/src/stacks.rs:136",
+   "query": "Proposal only. A direct `react` dependency is reported even when Next.js is present.",
+   "signature": "pub fn detect(root: &Path) -> Vec<DetectedStack> {"
+  },
+  {
+   "id": "crates/ax-policy/src/stacks.rs:421",
+   "query": "Refresh managed files that still match the lock hash.",
+   "signature": "pub fn upgrade(root: &Path) -> Result<ApplyReport, String> {"
+  },
+  {
+   "id": "crates/ax-policy/src/stacks.rs:433",
+   "query": "Interpret one line from the init stack prompt. Empty keeps the current selection, or the detection when nothing is saved. `none` clears stacks. Other text is a list of ids separated by spaces or commas.",
+   "signature": "pub fn parse_stack_choice("
+  },
+  {
+   "id": "crates/ax-policy/src/stacks.rs:458",
+   "query": "Install `ids` and remove previously installed stacks that are no longer selected.",
+   "signature": "pub fn replace_selection(root: &Path, ids: &[String], force: bool) -> Result<ApplyReport, String> {"
+  },
+  {
+   "id": "crates/ax-policy/src/store.rs:300",
+   "query": "Save a rule under a new id, removing the previous row/file when `old_id` differs.",
+   "signature": "pub async fn rename_rule("
+  },
+  {
+   "id": "crates/ax-policy/src/store.rs:46",
+   "query": "Project-level default storage (from ax.json).",
+   "signature": "pub fn storage(&self) -> PolicyStorage {"
+  },
+  {
+   "id": "crates/ax-policy/src/store.rs:51",
+   "query": "Reload project default from disk (after settings change).",
+   "signature": "pub fn reload_storage(&mut self) {"
+  },
+  {
+   "id": "crates/ax-policy/src/store.rs:606",
+   "query": "Migrate a single rule/skill between files and database storage.",
+   "signature": "pub async fn set_item_storage("
+  },
+  {
+   "id": "crates/ax-policy/src/store.rs:702",
+   "query": "Clear per-item storage override (inherit project default again).",
+   "signature": "pub async fn clear_item_storage_override(&self, id_or_name: &str) -> Result<bool, AxError> {"
+  },
+  {
+   "id": "crates/ax-policy/src/store.rs:732",
+   "query": "Enable or disable a rule or skill by id/name (writes frontmatter + DB).",
+   "signature": "pub async fn set_enabled(&self, id_or_name: &str, enabled: bool) -> Result<bool, AxError> {"
+  },
+  {
+   "id": "crates/ax-policy/src/types.rs:75",
+   "query": "Whether this scope may be exported in a git pack.",
+   "signature": "pub fn is_packable(self) -> bool {"
+  },
+  {
+   "id": "crates/ax-policy/src/types.rs:80",
+   "query": "Human label for UI/docs (Company aliases on-disk `global_policy`).",
+   "signature": "pub fn label(self) -> &'static str {"
+  },
+  {
+   "id": "crates/ax-policy/src/zip_package.rs:709",
+   "query": "Consecutive insert/delete ops from the same LCS walk as `unified_diff`.",
+   "signature": "pub fn split_diff_hunks(old: &str, new: &str) -> Vec<DiffHunk> {"
+  },
+  {
+   "id": "crates/ax-quality/src/bootstrap.rs:109",
+   "query": "Resolve Sonar project key/name from ship.toml + project root directory.",
+   "signature": "pub fn resolve_for_project(sonar: &crate::sonar::SonarConfig, project_root: &Path) -> Self {"
+  },
+  {
+   "id": "crates/ax-quality/src/bootstrap.rs:124",
+   "query": "Sanitize a directory name into a SonarQube-safe project key.",
+   "signature": "pub fn sonar_key_from_name(name: &str) -> String {"
+  },
+  {
+   "id": "crates/ax-quality/src/bootstrap.rs:1248",
+   "query": "Host URL reachable from a scanner container (Podman/Docker on Windows/macOS).",
+   "signature": "pub fn scanner_host_url(host: &str) -> String {"
+  },
+  {
+   "id": "crates/ax-quality/src/bootstrap.rs:144",
+   "query": "Workspace-level Sonar key from ship.toml (or folder name when placeholder).",
+   "signature": "pub fn workspace_sonar_key(configured_key: &str, project_root: &Path) -> String {"
+  },
+  {
+   "id": "crates/ax-quality/src/bootstrap.rs:149",
+   "query": "Sonar project key + display name for each git repo in a multi-repo workspace.",
+   "signature": "pub fn resolve_sonar_repo_projects("
+  },
+  {
+   "id": "crates/ax-quality/src/bootstrap.rs:168",
+   "query": "Canonical SonarQube project key for a git repo folder under a workspace.",
+   "signature": "pub fn canonical_repo_project_key("
+  },
+  {
+   "id": "crates/ax-quality/src/bootstrap.rs:181",
+   "query": "Legacy workspace prefixes that may have been used before `project_key` changed (e.g. Contoso → ax).",
+   "signature": "pub fn legacy_workspace_prefixes(workspace_key: &str, project_root: &Path) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-quality/src/bootstrap.rs:194",
+   "query": "Use the configured key unless it is a template placeholder — then use the project folder name.",
+   "signature": "pub fn resolve_sonar_project(configured_key: &str, project_root: &Path) -> (String, String) {"
+  },
+  {
+   "id": "crates/ax-quality/src/bootstrap.rs:413",
+   "query": "Create any missing SonarQube projects for discovered git repos (idempotent).",
+   "signature": "pub async fn ensure_sonar_projects("
+  },
+  {
+   "id": "crates/ax-quality/src/bootstrap.rs:536",
+   "query": "Ensure scanner token exists and is valid; generate one when missing or rejected.",
+   "signature": "pub async fn ensure_sonar_token("
+  },
+  {
+   "id": "crates/ax-quality/src/bootstrap.rs:572",
+   "query": "Idempotent Sonar provisioning driven by autodiscovered git repositories.",
+   "signature": "pub async fn auto_provision_sonar_from_discovery("
+  },
+  {
+   "id": "crates/ax-quality/src/bootstrap.rs:591",
+   "query": "Prepare SonarQube before a quality-gate scan: projects per git repo + scanner token.",
+   "signature": "pub async fn ensure_sonar_ready_for_scan("
+  },
+  {
+   "id": "crates/ax-quality/src/bootstrap.rs:613",
+   "query": "Generate a fresh scanner token and persist it (`.ax/sonar.token` + env).",
+   "signature": "pub async fn regenerate_sonar_token("
+  },
+  {
+   "id": "crates/ax-quality/src/bootstrap.rs:666",
+   "query": "Set SonarQube UI to dark theme for the admin user (best-effort, idempotent).",
+   "signature": "pub async fn ensure_sonar_dark_theme(host: &str, user: &str, password: &str) {"
+  },
+  {
+   "id": "crates/ax-quality/src/bootstrap.rs:693",
+   "query": "Whether the SonarQube HTTP API responds at `host`.",
+   "signature": "pub async fn sonar_reachable(host: &str) -> bool {"
+  },
+  {
+   "id": "crates/ax-quality/src/bootstrap.rs:711",
+   "query": "Check SonarQube web UI credentials against `/api/authentication/validate`.",
+   "signature": "pub async fn validate_sonar_login(host: &str, user: &str, password: &str) -> Result<bool, String> {"
+  },
+  {
+   "id": "crates/ax-quality/src/bootstrap.rs:732",
+   "query": "Look up one or more projects — scanner token first, then admin basic auth.",
+   "signature": "pub async fn lookup_projects("
+  },
+  {
+   "id": "crates/ax-quality/src/bootstrap.rs:786",
+   "query": "Look up a project by key — scanner token first, then admin basic auth.",
+   "signature": "pub async fn lookup_project("
+  },
+  {
+   "id": "crates/ax-quality/src/bootstrap.rs:822",
+   "query": "Returns whether SonarQube accepts the scanner token. SonarQube 9.x: user token as HTTP Basic username (empty password). 10+: Bearer also works.",
+   "signature": "pub async fn validate_sonar_token(host: &str, token: &str) -> bool {"
+  },
+  {
+   "id": "crates/ax-quality/src/container.rs:288",
+   "query": "Sidecar PostgreSQL container name for a SonarQube stack.",
+   "signature": "pub fn db_container_name(sonar_name: &str) -> String {"
+  },
+  {
+   "id": "crates/ax-quality/src/container.rs:293",
+   "query": "Host port from a SonarQube URL such as `http://localhost:9000` (defaults to 9000).",
+   "signature": "pub fn sonar_host_port(host: &str) -> u16 {"
+  },
+  {
+   "id": "crates/ax-quality/src/container.rs:304",
+   "query": "Install or start the PostgreSQL-backed SonarQube stack when the API is offline.",
+   "signature": "pub async fn ensure_sonar_stack_online("
+  },
+  {
+   "id": "crates/ax-quality/src/container.rs:343",
+   "query": "Fast HTTP ping to SonarQube `/api/system/status` (shared client, ~800ms timeout).",
+   "signature": "pub fn sonar_ping_fast(host: &str) -> bool {"
+  },
+  {
+   "id": "crates/ax-quality/src/container.rs:354",
+   "query": "Localhost variants for the same port — used when the configured hostname does not resolve locally.",
+   "signature": "pub fn sonar_localhost_candidates(host: &str) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-quality/src/container.rs:720",
+   "query": "Start PostgreSQL sidecar (when present) then SonarQube.",
+   "signature": "pub fn start_sonar_stack("
+  },
+  {
+   "id": "crates/ax-quality/src/sonar.rs:266",
+   "query": "Full scan with explicit workspace repo count (for single-repo scans from multi-repo workspaces).",
+   "signature": "pub fn run_full_scan_with_log_multi("
+  },
+  {
+   "id": "crates/ax-quality/src/sonar.rs:430",
+   "query": "Backward-compatible alias — scans every git repo in the workspace.",
+   "signature": "pub fn run_incremental_scan("
+  },
+  {
+   "id": "crates/ax-quality/src/sonar.rs:567",
+   "query": "Fetch without waiting for the Compute Engine (for status checks / dashboards).",
+   "signature": "pub async fn fetch_quality_gate_snapshot("
+  },
+  {
+   "id": "crates/ax-reasoning/src/config.rs:267",
+   "query": "Seed provider catalog and wire active offload during `ax init`.",
+   "signature": "pub async fn seed_offload_on_init() -> Result<OffloadInitReport, String> {"
+  },
+  {
+   "id": "crates/ax-remote/src/seed.rs:16",
+   "query": "Write default `.ax/ship.toml` when missing. Never overwrites existing files.",
+   "signature": "pub fn seed_ship_config("
+  },
+  {
+   "id": "crates/ax-resolution/src/cleanup.rs:15",
+   "query": "Remove orphan, stale-file, malformed generic, and known external-library call refs.",
+   "signature": "pub async fn prune_stale_unresolved_refs("
+  },
+  {
+   "id": "crates/ax-resolution/src/import_resolver.rs:70",
+   "query": "Resolve an import string to a project-relative file path if the file exists on disk.",
+   "signature": "pub fn resolve_to_indexed_file(&self, from_file: &str, import_path: &str) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-share/src/auth/microsoft.rs:35",
+   "query": "True when a custom client ID was set (env or config) rather than the built-in default.",
+   "signature": "pub fn has_custom_client_id() -> bool {"
+  },
+  {
+   "id": "crates/ax-share/src/auth/microsoft.rs:365",
+   "query": "Encode a sharing URL for Graph `/shares/{shareId}/driveItem`.",
+   "signature": "pub fn encode_share_id(url: &str) -> String {"
+  },
+  {
+   "id": "crates/ax-share/src/auth/microsoft.rs:65",
+   "query": "Persist Azure AD client ID to `~/.ax/config.json` (`share.microsoftClientId`).",
+   "signature": "pub fn write_ms_client_id_to_config(client_id: &str) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-share/src/config.rs:213",
+   "query": "Load share config from project `ax.json` (defaults when missing).",
+   "signature": "pub fn load_share_config(project_root: &Path) -> ShareConfig {"
+  },
+  {
+   "id": "crates/ax-share/src/config.rs:222",
+   "query": "Path to the project share config file (`ax.json`).",
+   "signature": "pub fn project_config_path(project_root: &Path) -> PathBuf {"
+  },
+  {
+   "id": "crates/ax-share/src/paths.rs:32",
+   "query": "Legacy global status path (unused — status is per-project).",
+   "signature": "pub fn share_status_path_legacy() -> PathBuf {"
+  },
+  {
+   "id": "crates/ax-share/src/providers/github.rs:109",
+   "query": "Push local pack dir (+ optional memory file) to a shared git repository.  Works against any git host (GitHub, GitLab, Azure DevOps, on-prem) — it shells out to the ambient `git` binary, so it reuses whatever credentials (SSH key, Git Credential Manager, cached PAT) already authenticate normal `git clone`/`git push` on this machine for that host.",
+   "signature": "pub fn push_github("
+  },
+  {
+   "id": "crates/ax-share/src/providers/gitlab_api.rs:419",
+   "query": "Whether this config should use the GitLab REST API transport instead of raw git — true when an API token is configured and the repo URL is http(s) (SSH URLs like `git@host:ns/proj.git` always use raw git).",
+   "signature": "pub fn should_use_api(config: &GithubShareConfig) -> bool {"
+  },
+  {
+   "id": "crates/ax-share/src/providers/onedrive.rs:193",
+   "query": "Push local pack directory to OneDrive share root (overwrite files).",
+   "signature": "pub async fn push_onedrive("
+  },
+  {
+   "id": "crates/ax-ship/src/auto_commit.rs:23",
+   "query": "Commit all uncommitted changes in `git_root` under `message`. Returns `None` (no-op) if the working tree was already clean.",
+   "signature": "pub fn create_checkpoint("
+  },
+  {
+   "id": "crates/ax-ship/src/auto_commit.rs:45",
+   "query": "Undo `checkpoint` via `git reset --mixed HEAD~1` — but only if it is still HEAD (nothing else has been committed in that repo since). Never destroys file contents: changes stay on disk, simply uncommitted again.",
+   "signature": "pub fn revert_checkpoint(git_root: &Path, checkpoint: &Checkpoint) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-ship/src/git_root.rs:10",
+   "query": "Relative folder names under `workspace` that contain a `.git` directory (depth 1).",
+   "signature": "pub fn discover_git_repos(workspace: &Path) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-ship/src/git_root.rs:111",
+   "query": "All git repo paths used by the quality gate.",
+   "signature": "pub fn resolve_git_roots(workspace: &Path, config: &ShipConfig) -> Result<Vec<PathBuf>, String> {"
+  },
+  {
+   "id": "crates/ax-ship/src/git_root.rs:143",
+   "query": "Backward-compatible single-repo resolver (first of `resolve_git_roots`).",
+   "signature": "pub fn resolve_git_root(workspace: &Path, config: &ShipConfig) -> Result<PathBuf, String> {"
+  },
+  {
+   "id": "crates/ax-ship/src/git_root.rs:191",
+   "query": "Resolve the git diff base branch for a single repository.",
+   "signature": "pub fn resolve_repo_base_branch("
+  },
+  {
+   "id": "crates/ax-ship/src/git_root.rs:254",
+   "query": "Run `git diff` against each repo's resolved base branch and merge paths as `{repo_name}/{file}`.",
+   "signature": "pub fn diff_all_repos("
+  },
+  {
+   "id": "crates/ax-ship/src/git_root.rs:35",
+   "query": "Fill `ship.git_roots` from discovery and merge newly cloned repos into the list. Persists to `.ax/ship.toml` when roots change.",
+   "signature": "pub fn sync_discovered_git_roots(workspace: &Path, config: &mut ShipConfig) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-ship/src/git_root.rs:76",
+   "query": "Git repo folder names for Sonar provisioning — configured roots plus any autodiscovered repos. Repos listed in `sonar.exclude_repos` are filtered out.",
+   "signature": "pub fn resolve_sonar_repo_names(workspace: &Path, config: &ShipConfig) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-ship/src/lib.rs:106",
+   "query": "Like `evaluate`, but lets the caller adjust the freshly-reloaded config for this single run only (e.g. CLI `--auto-commit` / `--revert-on-fail` flags) without persisting the override to `ship.toml`.",
+   "signature": "pub async fn evaluate_with("
+  },
+  {
+   "id": "crates/ax-ship/src/lib.rs:74",
+   "query": "Background Sonar provisioning from autodiscovered git repos (idempotent).",
+   "signature": "pub fn spawn_sonar_auto_provision(self: &Arc<Self>) {"
+  },
+  {
+   "id": "crates/ax-ship/src/run_log.rs:38",
+   "query": "Mark an unfinished run as interrupted (e.g. after ax web restart mid-evaluate).",
+   "signature": "pub fn finalize_stale_run_log(project_root: &Path) {"
+  },
+  {
+   "id": "crates/ax-ship/src/runners.rs:11",
+   "query": "Run impacted tests grouped by detected runner. Returns true when all succeed (or when there are no tests).",
+   "signature": "pub fn run_impacted_tests(config: &ShipConfig, tia: &TiaResult) -> bool {"
+  },
+  {
+   "id": "crates/ax-skill-catalog/src/lockfile.rs:49",
+   "query": "Catalog ids for skills whose directory is still on disk. `anthropics/skills` + `pdf` is `anthropics/skills/pdf`, not every skill named pdf.",
+   "signature": "pub fn installed_ids(&self) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-skill-catalog/src/publish.rs:6",
+   "query": "Copy exactly one installed skill into `dest/skills/<name>/`.",
+   "signature": "pub fn stage_one_skill(skills_root: &Path, name: &str, dest: &Path) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-skill-catalog/src/search.rs:157",
+   "query": "Compact display for a star count: `999`, `35.7K`, `1.8M`.",
+   "signature": "pub fn format_star_count(count: u64) -> String {"
+  },
+  {
+   "id": "crates/ax-skill-catalog/src/search.rs:99",
+   "query": "`owner/repo/skill` ids that are safe to request from skills.sh.",
+   "signature": "pub fn catalog_card_url(id: &str) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-skill-catalog/src/validate.rs:30",
+   "query": "Catalog installs keep the published description, including ones longer than 1024 characters.",
+   "signature": "pub fn read_catalog_meta(markdown: &str) -> Result<SkillMeta, String> {"
+  },
+  {
+   "id": "crates/ax-sync/src/git_hooks.rs:299",
+   "query": "Give hooks that ax wrote a shebang and execute bit. Hooks without an ax line are left alone.",
+   "signature": "pub fn repair_git_hooks(project_root: &Path) -> Result<(), AxError> {"
+  },
+  {
+   "id": "crates/ax-sync/src/pending_registry.rs:20",
+   "query": "Stable key for a project root (forward slashes, absolute when possible).",
+   "signature": "pub fn project_key(project_root: &Path) -> String {"
+  },
+  {
+   "id": "crates/ax-sync/src/pending_registry.rs:28",
+   "query": "Replace the pending set for a project (called after every watcher mutation).",
+   "signature": "pub fn publish(project_root: &Path, pending: &[PendingFile]) {"
+  },
+  {
+   "id": "crates/ax-sync/src/pending_registry.rs:44",
+   "query": "Clear all pending entries for a project (watcher stop).",
+   "signature": "pub fn clear_project(project_root: &Path) {"
+  },
+  {
+   "id": "crates/ax-sync/src/pending_registry.rs:52",
+   "query": "Snapshot of pending files for a project (any Ax / MCP reader).",
+   "signature": "pub fn pending_files(project_root: &Path) -> Vec<PendingFile> {"
+  },
+  {
+   "id": "crates/ax-sync/src/pending_registry.rs:64",
+   "query": "Test helper: inject pending files without a live watcher.",
+   "signature": "pub fn publish_for_test(project_root: &Path, pending: Vec<PendingFile>) {"
+  },
+  {
+   "id": "crates/ax-sync/src/watcher.rs:156",
+   "query": "Paths quiet for at least `debounce_ms` and not currently indexing.",
+   "signature": "pub async fn get_ready_files(&self, debounce_ms: u64) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-sync/src/watcher.rs:30",
+   "query": "Debounce window for file-watcher auto-sync (`AX_WATCH_DEBOUNCE_MS`, default 2000ms).",
+   "signature": "pub fn resolve_watch_debounce_ms() -> u64 {"
+  },
+  {
+   "id": "crates/ax-telemetry/src/lib.rs:135",
+   "query": "Flush the global buffer. The telemetry lock is not held while the batch is sent.",
+   "signature": "pub async fn flush_global(timeout_ms: u64) {"
+  },
+  {
+   "id": "crates/ax-types/src/lib.rs:436",
+   "query": "Deterministic mapping from edge provenance to a baseline confidence.  Direct AST/SCIP edges are `Extracted`; heuristic edges are `Inferred`; LSP edges are `Exact`. Callers that know a resolution was ambiguous should override with `EdgeConfidence::Ambiguous` explicitly.",
+   "signature": "pub fn from_provenance(provenance: Option<Provenance>) -> Option<Self> {"
+  },
+  {
+   "id": "crates/ax-types/src/lib.rs:596",
+   "query": "The edge's stored confidence, or a value derived from its provenance when none was persisted. Falls back to `Ambiguous` when nothing is known.",
+   "signature": "pub fn effective_confidence(&self) -> EdgeConfidence {"
+  },
+  {
+   "id": "crates/ax-usage/src/activity.rs:232",
+   "query": "Ensure the activity table exists (idempotent).",
+   "signature": "pub async fn ensure_activity_schema(pool: &SqlitePool) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-usage/src/activity.rs:292",
+   "query": "Record one activity event. Idempotent on `(project_id, idempotency_key)`.",
+   "signature": "pub async fn record_activity("
+  },
+  {
+   "id": "crates/ax-usage/src/activity.rs:462",
+   "query": "List recent activity for a project (newest first).",
+   "signature": "pub async fn list_activity("
+  },
+  {
+   "id": "crates/ax-usage/src/activity.rs:543",
+   "query": "Convenience: record a CLI command lifecycle event.",
+   "signature": "pub async fn record_cli_command("
+  },
+  {
+   "id": "crates/ax-usage/src/activity.rs:573",
+   "query": "JSON view used by CLI `--json` and web APIs.",
+   "signature": "pub fn event_to_json(event: &ActivityEvent) -> Value {"
+  },
+  {
+   "id": "crates/ax-usage/src/budget.rs:283",
+   "query": "Write budget fields into `~/.ax/config.json` without dropping other keys.",
+   "signature": "pub fn save_global_budget(patch: &BudgetSectionPatch) -> Result<std::path::PathBuf, String> {"
+  },
+  {
+   "id": "crates/ax-usage/src/budget.rs:355",
+   "query": "Write `context.budgetTokens` into the project's `ax.json` and leave every other key alone.",
+   "signature": "pub fn save_project_context_budget("
+  },
+  {
+   "id": "crates/ax-usage/src/budget.rs:563",
+   "query": "Nearest-rank percentile on a sorted copy. Empty input returns `None`.",
+   "signature": "pub fn cycle_stats(costs: &[f64]) -> Option<CycleStats> {"
+  },
+  {
+   "id": "crates/ax-usage/src/cache_status.rs:24",
+   "query": "Keep letters, digits, `_`, and `-`. Empty becomes `global`.",
+   "signature": "pub fn cache_group_key(session: Option<&str>) -> String {"
+  },
+  {
+   "id": "crates/ax-usage/src/context_cache.rs:242",
+   "query": "Project-bound variant used by MCP. Unknown roots never create references.",
+   "signature": "pub async fn cache_project_reply("
+  },
+  {
+   "id": "crates/ax-usage/src/context_cache.rs:360",
+   "query": "One line for the current session: row count, tokens kept out of the prompt, and tokens that stayed inline. No bodies.",
+   "signature": "pub fn format_session_ledger(rows: i64, stored_tokens: i64, inline_tokens: i64) -> String {"
+  },
+  {
+   "id": "crates/ax-usage/src/context_cache.rs:395",
+   "query": "Counts only. The SELECT lists no `body` column.",
+   "signature": "pub async fn context_cache_counts("
+  },
+  {
+   "id": "crates/ax-usage/src/context_cache.rs:461",
+   "query": "Canonical path is an existing project identity; never infer ownership from a body.",
+   "signature": "pub fn project_scope(root: &std::path::Path) -> String {"
+  },
+  {
+   "id": "crates/ax-usage/src/context_cache.rs:603",
+   "query": "Record one session event. Stores the body only when it is over the cache threshold and no cache id was already assigned.",
+   "signature": "pub async fn note_session_event("
+  },
+  {
+   "id": "crates/ax-usage/src/context_cache.rs:702",
+   "query": "Pull tool-result strings out of a Cursor or Claude JSONL transcript.",
+   "signature": "pub fn tool_chunks_from_jsonl(jsonl: &str) -> Vec<(String, String)> {"
+  },
+  {
+   "id": "crates/ax-usage/src/context_cache.rs:780",
+   "query": "Stash tool-result chunks that cross the token threshold. Returns how many were stored.",
+   "signature": "pub async fn ingest_jsonl_oversized("
+  },
+  {
+   "id": "crates/ax-usage/src/context_plan.rs:96",
+   "query": "Tokens left for optional preflight blocks after hard-required text is counted.  `None` means no context budget is configured. The caller keeps its existing caps. A zero room means optional blocks must be omitted. The hard-required text is not trimmed.",
+   "signature": "pub fn optional_room(already_sent: &str, budget_tokens: Option<u32>) -> Option<u32> {"
+  },
+  {
+   "id": "crates/ax-usage/src/cost.rs:58",
+   "query": "Price `usage` with an explicit catalog row.  `pricing == None` means the model is not in the user override table or the synced catalog. Built-in savings defaults are not consulted.",
+   "signature": "pub fn calculate(usage: &CostUsage, pricing: Option<ModelPricing>) -> Cost {"
+  },
+  {
+   "id": "crates/ax-usage/src/cost_report.rs:192",
+   "query": "Fill an empty usage-event report from imported agent sessions. Quoted usage events win: a non-empty event list is left unchanged.",
+   "signature": "pub fn apply_session_cost(report: &mut CostReport, coverage: &crate::savings::SessionCostCoverage) {"
+  },
+  {
+   "id": "crates/ax-usage/src/cost_report.rs:589",
+   "query": "Paint the six-line AX banner when `color` is set. The rest of the report stays uncolored.",
+   "signature": "pub fn color_cost_banner(text: &str, color: bool) -> String {"
+  },
+  {
+   "id": "crates/ax-usage/src/cursor_state.rs:108",
+   "query": "Path to the active Cursor session marker written by `ax session-hook`.",
+   "signature": "pub fn active_cursor_session_path() -> Option<PathBuf> {"
+  },
+  {
+   "id": "crates/ax-usage/src/cursor_state.rs:113",
+   "query": "Persist the latest Cursor `session_id` so MCP verbose lines can tag `session=`.",
+   "signature": "pub fn write_active_cursor_session(session_id: &str) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-usage/src/cursor_state.rs:126",
+   "query": "Read the active Cursor session id from `~/.ax/active-cursor-session`, if present.",
+   "signature": "pub fn read_active_cursor_session() -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-usage/src/cursor_state.rs:14",
+   "query": "Build a stable model label from Cursor `model_id` + boolean `model_params`.",
+   "signature": "pub fn normalize_cursor_model(model_id: &str, model_params: &[(String, String)]) -> String {"
+  },
+  {
+   "id": "crates/ax-usage/src/cursor_state.rs:141",
+   "query": "The active session id, only when the hook wrote it within `max_age`.",
+   "signature": "pub fn read_recent_cursor_session(max_age: std::time::Duration) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-usage/src/cursor_state.rs:152",
+   "query": "A file with an unknown age is treated as old.",
+   "signature": "pub fn session_if_recent("
+  },
+  {
+   "id": "crates/ax-usage/src/cursor_state.rs:211",
+   "query": "Legacy text records and malformed, future or mismatched bindings fail closed.",
+   "signature": "pub fn bound_session("
+  },
+  {
+   "id": "crates/ax-usage/src/cursor_state.rs:289",
+   "query": "Extract model label from `composerData.modelConfig`.",
+   "signature": "pub fn parse_composer_model_config(value: &Value) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-usage/src/cursor_state.rs:327",
+   "query": "Context-meter input tokens from `promptTokenBreakdown` / `contextTokensUsed`.",
+   "signature": "pub fn parse_composer_input_tokens(value: &Value) -> Option<i64> {"
+  },
+  {
+   "id": "crates/ax-usage/src/cursor_state.rs:368",
+   "query": "Parse one `composerData` JSON blob (session id without prefix).",
+   "signature": "pub fn parse_composer_data(session_id: &str, value: &Value) -> Option<ComposerStateRow> {"
+  },
+  {
+   "id": "crates/ax-usage/src/cursor_state.rs:417",
+   "query": "Load all `composerData:*` rows from Cursor `state.vscdb`.",
+   "signature": "pub async fn load_composer_state_rows(path: &Path) -> Result<Vec<ComposerStateRow>, String> {"
+  },
+  {
+   "id": "crates/ax-usage/src/cursor_state.rs:441",
+   "query": "Merge Composer state into `agent_session_log` without clobbering tool-call counts.",
+   "signature": "pub async fn upsert_composer_state_row(row: &ComposerStateRow) -> Result<bool, String> {"
+  },
+  {
+   "id": "crates/ax-usage/src/cursor_state.rs:489",
+   "query": "Import Composer metadata from Cursor `state.vscdb`.",
+   "signature": "pub async fn import_cursor_composer_state() -> Result<(usize, usize), String> {"
+  },
+  {
+   "id": "crates/ax-usage/src/cursor_state.rs:58",
+   "query": "Default Cursor global state database (read-only import source).",
+   "signature": "pub fn cursor_state_vscdb_path() -> Option<PathBuf> {"
+  },
+  {
+   "id": "crates/ax-usage/src/domain_log.rs:14",
+   "query": "Append one domain event to the project verbose log (no-op if root missing / verbose off).",
+   "signature": "pub fn log_domain_event(project_root: Option<&Path>, domain: &str, message: impl AsRef<str>) {"
+  },
+  {
+   "id": "crates/ax-usage/src/domain_log.rs:82",
+   "query": "Generic CLI readout (`explore`, `impact`, `status`, …).",
+   "signature": "pub fn log_cli(project_root: Option<&Path>, message: impl AsRef<str>) {"
+  },
+  {
+   "id": "crates/ax-usage/src/durable.rs:147",
+   "query": "Record a tool call when this chat already has a durable conversation.",
+   "signature": "pub async fn note_tool_if_open("
+  },
+  {
+   "id": "crates/ax-usage/src/durable.rs:42",
+   "query": "MCP conversations are namespaced by project, independently of hook session IDs. Unscoped legacy transcripts are retained but never silently assigned an owner.",
+   "signature": "pub async fn durable_project_apply("
+  },
+  {
+   "id": "crates/ax-usage/src/log_brand.rs:11",
+   "query": "`[ax] 🪓 …` line for domain logs, token-budget hints, and stderr chat output.",
+   "signature": "pub fn format_ax_tagged(message: impl AsRef<str>) -> String {"
+  },
+  {
+   "id": "crates/ax-usage/src/mcp_audit.rs:1418",
+   "query": "Run a quality audit for a project (rolling window or full session).",
+   "signature": "pub fn audit_project(project_root: &Path, opts: &AuditOptions) -> Result<QualitySnapshot, String> {"
+  },
+  {
+   "id": "crates/ax-usage/src/mcp_audit.rs:144",
+   "query": "Cursor folder slug for a workspace path (`C:\\gary\\ax` → `c-gary-ax`).",
+   "signature": "pub fn cursor_project_slug(project_root: &Path) -> String {"
+  },
+  {
+   "id": "crates/ax-usage/src/mcp_audit.rs:523",
+   "query": "Find recent Cursor transcript JSONL files for a workspace.",
+   "signature": "pub fn find_cursor_transcripts(project_root: &Path) -> Vec<PathBuf> {"
+  },
+  {
+   "id": "crates/ax-usage/src/mcp_verbose_log.rs:117",
+   "query": "Verified file layout for received logs. Native append/export never uses this directory.",
+   "signature": "pub fn replicated_log_files(project_root: &Path) -> Vec<(NaiveDate, PathBuf)> {"
+  },
+  {
+   "id": "crates/ax-usage/src/mcp_verbose_log.rs:226",
+   "query": "All dated log files for a project, oldest first.",
+   "signature": "pub fn list_dated_log_files(project_root: &Path) -> Vec<(NaiveDate, PathBuf)> {"
+  },
+  {
+   "id": "crates/ax-usage/src/mcp_verbose_log.rs:288",
+   "query": "Nearest existing dated log file strictly before `before`, skipping gaps (a day with verbose logging off, or a historical rotation bug) instead of dead-ending on the very next calendar day like `has_older_log_day` does. Returns the found day plus whether an even-older dated file exists beyond it.",
+   "signature": "pub fn nearest_dated_log_before("
+  },
+  {
+   "id": "crates/ax-usage/src/mcp_verbose_log.rs:303",
+   "query": "Merge all verbose logs (dated + any unmigrated legacy) for audit windows.",
+   "signature": "pub fn read_merged_verbose_log(project_root: &Path) -> String {"
+  },
+  {
+   "id": "crates/ax-usage/src/mcp_verbose_log.rs:328",
+   "query": "Idempotent: move or merge legacy monolithic log into a dated file.",
+   "signature": "pub fn migrate_legacy_log(project_root: Option<&Path>) -> std::io::Result<()> {"
+  },
+  {
+   "id": "crates/ax-usage/src/mcp_verbose_log.rs:35",
+   "query": "Path to today's log file for a project (after legacy migration attempt).",
+   "signature": "pub fn mcp_verbose_log_path(project_root: &Path) -> PathBuf {"
+  },
+  {
+   "id": "crates/ax-usage/src/mcp_verbose_log.rs:40",
+   "query": "Active dated log path for `project_root` (or `~/.ax/` when None).",
+   "signature": "pub fn current_log_path(project_root: Option<&Path>) -> PathBuf {"
+  },
+  {
+   "id": "crates/ax-usage/src/mcp_verbose_log.rs:62",
+   "query": "Calendar date in the configured rotation timezone at `instant`.",
+   "signature": "pub fn rotation_calendar_date(project_root: Option<&Path>, instant: DateTime<Utc>) -> NaiveDate {"
+  },
+  {
+   "id": "crates/ax-usage/src/mcp_verbose_log.rs:91",
+   "query": "Append trace lines with UTC ISO timestamps (one line per event).  Never creates a project `.ax/` folder. Quiet hooks in uninitialized checkouts must stay side-effect free (`hooks_without_ax` tests).",
+   "signature": "pub fn append_verbose_log(lines: &[String], project_root: Option<&Path>) {"
+  },
+  {
+   "id": "crates/ax-usage/src/output_format.rs:95",
+   "query": "Rewrite a tool reply. XML is the tagged preflight ax already emits.",
+   "signature": "pub fn render_mcp_output(text: &str, format: McpOutputFormat) -> String {"
+  },
+  {
+   "id": "crates/ax-usage/src/pricing.rs:203",
+   "query": "Invalidate cached DB prices (called after sync).",
+   "signature": "pub fn invalidate_price_cache() {"
+  },
+  {
+   "id": "crates/ax-usage/src/pricing.rs:211",
+   "query": "Load latest-per-model prices from usage.db into the in-memory cache.",
+   "signature": "pub async fn refresh_price_cache_from_db() -> Result<usize, String> {"
+  },
+  {
+   "id": "crates/ax-usage/src/pricing.rs:260",
+   "query": "Resolve pricing for a full model id (e.g. `claude-sonnet-4-5-20250929`) by longest substring key match. Falls back to the reference model.",
+   "signature": "pub fn price_for_model(model: &str) -> ModelPricing {"
+  },
+  {
+   "id": "crates/ax-usage/src/pricing.rs:268",
+   "query": "Catalog or user-override price for a cost quote.  Returns `None` when the model is absent. Does not fall back to the reference model or the built-in savings table.",
+   "signature": "pub fn price_for_cost(model: &str) -> Option<(ModelPricing, String)> {"
+  },
+  {
+   "id": "crates/ax-usage/src/pricing.rs:302",
+   "query": "Pricing for the configured reference model (used when the model is unknown).",
+   "signature": "pub fn reference_pricing() -> ModelPricing {"
+  },
+  {
+   "id": "crates/ax-usage/src/pricing.rs:324",
+   "query": "USD cost of `tokens` input tokens at the given per-million rate.",
+   "signature": "pub fn input_cost_usd(tokens: i64, pricing: ModelPricing) -> f64 {"
+  },
+  {
+   "id": "crates/ax-usage/src/pricing.rs:329",
+   "query": "Async as-of-date pricing for historical savings bars.",
+   "signature": "pub async fn price_as_of(model: Option<&str>, date: &str) -> (ModelPricing, String) {"
+  },
+  {
+   "id": "crates/ax-usage/src/pricing_fetch.rs:70",
+   "query": "Convert OpenRouter USD-per-token string to USD per million tokens.",
+   "signature": "pub fn per_token_to_per_mtok(raw: &str) -> Option<f64> {"
+  },
+  {
+   "id": "crates/ax-usage/src/pricing_fetch.rs:80",
+   "query": "Parse AA values that are already USD per million tokens.",
+   "signature": "pub fn aa_per_mtok(v: Option<f64>) -> Option<f64> {"
+  },
+  {
+   "id": "crates/ax-usage/src/pricing_sync.rs:258",
+   "query": "Force or no-op daily sync depending on `force` and whether today already succeeded.",
+   "signature": "pub async fn sync_pricing(force: bool) -> Result<PricingSyncReport, String> {"
+  },
+  {
+   "id": "crates/ax-usage/src/pricing_sync.rs:334",
+   "query": "Background-friendly: sync only if today has no successful snapshot yet.",
+   "signature": "pub async fn ensure_daily_pricing_sync() {"
+  },
+  {
+   "id": "crates/ax-usage/src/pricing_sync.rs:588",
+   "query": "Look up input/output rates for a model as of a calendar date (or latest ≤ date).",
+   "signature": "pub async fn lookup_price_as_of("
+  },
+  {
+   "id": "crates/ax-usage/src/replication.rs:427",
+   "query": "Keep accepted history available to new replicas after native cache/context cleanup. Current values replace matching keys; omission cannot erase history.",
+   "signature": "pub async fn retain("
+  },
+  {
+   "id": "crates/ax-usage/src/reuse_cache.rs:173",
+   "query": "`None` when there is nothing to verify freshness against, or a file cannot be read.",
+   "signature": "pub fn snapshot_files(root: &Path, files: &[String]) -> Option<Vec<(String, String)>> {"
+  },
+  {
+   "id": "crates/ax-usage/src/reuse_cache.rs:214",
+   "query": "The cited files and the whole index are as they were when the reply was stored.",
+   "signature": "pub fn index_matches(candidate: &ReuseCandidate, current: &IndexHashes) -> bool {"
+  },
+  {
+   "id": "crates/ax-usage/src/reuse_cache.rs:221",
+   "query": "Hash of every indexed path and content hash. A graph answer can depend on files it does not cite (a new caller, a removed callee), so any change to the index invalidates it.",
+   "signature": "pub fn index_fingerprint(index: &IndexHashes) -> String {"
+  },
+  {
+   "id": "crates/ax-usage/src/reuse_cache.rs:292",
+   "query": "The `session` argument, when it is a usable id.",
+   "signature": "pub fn session_from_args(args: &Value) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-usage/src/reuse_cache.rs:297",
+   "query": "Active chat id, or one id per MCP process when the IDE gives none.",
+   "signature": "pub fn conversation_key(active: Option<String>) -> String {"
+  },
+  {
+   "id": "crates/ax-usage/src/reuse_cache.rs:427",
+   "query": "Any error, stale file, or missing body is a miss.",
+   "signature": "pub async fn lookup("
+  },
+  {
+   "id": "crates/ax-usage/src/reuse_cache.rs:583",
+   "query": "`AX_CONTEXT_CACHE=off` (or `0`) turns conversation reuse off along with oversized-reply stubs.",
+   "signature": "pub fn reuse_enabled() -> bool {"
+  },
+  {
+   "id": "crates/ax-usage/src/reuse_cache.rs:76",
+   "query": "Compact JSON with object keys sorted at every level; top-level `fresh`, `session` and private `__ax*` keys dropped.",
+   "signature": "pub fn canonical_args(args: &Value) -> String {"
+  },
+  {
+   "id": "crates/ax-usage/src/savings.rs:1542",
+   "query": "Load one MCP call with tokenized preview chips for the Savings UI.",
+   "signature": "pub async fn query_call_token_detail(id: i64) -> Result<CallTokenDetail, String> {"
+  },
+  {
+   "id": "crates/ax-usage/src/savings.rs:1625",
+   "query": "Extract Cursor `session_id` from a sessionStart hook payload (model optional).",
+   "signature": "pub fn parse_cursor_hook_session_id(input: &Value) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-usage/src/savings.rs:1657",
+   "query": "Parse a Cursor hook stdin payload into `(session_id, model)` for sessionStart.",
+   "signature": "pub fn parse_cursor_hook_model(input: &Value) -> Option<(String, String)> {"
+  },
+  {
+   "id": "crates/ax-usage/src/savings.rs:1685",
+   "query": "Persist a model tag from a Cursor sessionStart hook without touching tool-call counts.",
+   "signature": "pub async fn record_session_model_tag("
+  },
+  {
+   "id": "crates/ax-usage/src/savings.rs:371",
+   "query": "Estimate context savings for one MCP call.  Response tokens are measured with the o200k BPE tokenizer. The counterfactual (what Read/Grep without ax would have cost) uses whole-file BPE when `AX_SAVINGS_CF_MODE=full` (default), symbol line spans when `range`, or the per-file max when `max`. Unreadable files fall back to line heuristics, inline `content` snippets, then avg file size.",
+   "signature": "pub fn estimate_savings("
+  },
+  {
+   "id": "crates/ax-usage/src/savings.rs:516",
+   "query": "MCP tool name for a CLI command that should appear on the Savings page. Commands without a twin (`install`, `web`, `mcp`, …) return `None`.",
+   "signature": "pub fn cli_mcp_tool(command: &str) -> Option<&'static str> {"
+  },
+  {
+   "id": "crates/ax-usage/src/savings.rs:539",
+   "query": "Keep the structured result of a CLI graph command until [`flush_cli_call`].",
+   "signature": "pub fn stash_cli_result(tool: &str, structured: &Value, response_text: &str) {"
+  },
+  {
+   "id": "crates/ax-usage/src/savings.rs:555",
+   "query": "Write one Savings row for a CLI command and wait for the insert. A command with no MCP twin writes nothing. Graph commands should [`stash_cli_result`] first so the counterfactual uses their payload.",
+   "signature": "pub async fn flush_cli_call("
+  },
+  {
+   "id": "crates/ax-usage/src/tokenizer.rs:148",
+   "query": "Exact BPE token count for an inclusive 1-indexed line range in a file. Returns `None` when the file cannot be read or the tokenizer is unavailable.",
+   "signature": "pub fn count_file_line_range_tokens(path: &Path, start_line: u32, end_line: u32) -> Option<i64> {"
+  },
+  {
+   "id": "crates/ax-usage/src/tokenizer.rs:169",
+   "query": "Exact token count of a file's current contents, cached by (mtime, size). Returns `None` when the file cannot be read or the tokenizer is unavailable.",
+   "signature": "pub fn count_file_tokens(path: &Path) -> Option<i64> {"
+  },
+  {
+   "id": "crates/ax-usage/src/tokenizer.rs:226",
+   "query": "In-process file-token cache counters. No paths and no file bytes.",
+   "signature": "pub fn token_cache_status() -> TokenCacheStatus {"
+  },
+  {
+   "id": "crates/ax-usage/src/tokenizer.rs:55",
+   "query": "Whether exact BPE counting is available (o200k_base loaded).",
+   "signature": "pub fn tokenizer_available() -> bool {"
+  },
+  {
+   "id": "crates/ax-usage/src/tokenizer.rs:61",
+   "query": "Count tokens in `text`. Exact (o200k_base BPE) when available, otherwise a conservative chars/4 heuristic.",
+   "signature": "pub fn count_tokens(text: &str) -> usize {"
+  },
+  {
+   "id": "crates/ax-usage/src/tokenizer.rs:69",
+   "query": "Truncate `text` to at most `max_bytes` on a UTF-8 char boundary.",
+   "signature": "pub fn truncate_utf8(text: &str, max_bytes: usize) -> String {"
+  },
+  {
+   "id": "crates/ax-usage/src/tokenizer.rs:85",
+   "query": "Split `text` into o200k token strings for chip visualization.  Caps input at [`TOKENIZE_MAX_INPUT_BYTES`] and returned chips at [`TOKENIZE_MAX_TOKENS`]. When the BPE encoder is unavailable, falls back to ~4-char chunks so the UI still has something to render.",
+   "signature": "pub fn tokenize_text(text: &str) -> TokenizeResult {"
+  },
+  {
+   "id": "crates/ax-usage/src/tool_trace.rs:29",
+   "query": "Log `inbound tool={tool} args={…}` and start the timer.",
+   "signature": "pub fn begin(project_root: Option<&Path>, tool: &str, args: &Value) -> Self {"
+  },
+  {
+   "id": "crates/ax-usage/src/tool_trace.rs:66",
+   "query": "Append `inbound tool=… args=…` (CLI brand).",
+   "signature": "pub fn log_tool_inbound(project_root: Option<&Path>, tool: &str, args: &Value) {"
+  },
+  {
+   "id": "crates/ax-usage/src/tool_trace.rs:73",
+   "query": "Append `outbound tool=…` and optional preview (CLI brand).",
+   "signature": "pub fn log_tool_outbound(project_root: Option<&Path>, tool: &str, duration_ms: i64, text: &str) {"
+  },
+  {
+   "id": "crates/ax-usage/src/turn_lifecycle.rs:185",
+   "query": "Begin a turn: create snapshot + activity event.",
+   "signature": "pub async fn turn_begin("
+  },
+  {
+   "id": "crates/ax-usage/src/turn_lifecycle.rs:264",
+   "query": "Append an agent-reported event to an open turn.",
+   "signature": "pub async fn turn_event("
+  },
+  {
+   "id": "crates/ax-usage/src/turn_lifecycle.rs:320",
+   "query": "Checkpoint open turn (activity + durable-friendly JSON).",
+   "signature": "pub async fn turn_checkpoint("
+  },
+  {
+   "id": "crates/ax-usage/src/turn_lifecycle.rs:383",
+   "query": "Finish a turn. Idempotent: a second finish returns the prior receipt.",
+   "signature": "pub async fn turn_finish("
+  },
+  {
+   "id": "crates/ax-usage/src/turn_lifecycle.rs:642",
+   "query": "Mark a turn failed without writing a successful memory.",
+   "signature": "pub async fn turn_fail("
+  },
+  {
+   "id": "crates/ax-usage/src/turn_lifecycle.rs:674",
+   "query": "Status of a turn, or list open turns for a session when turn_id is None.",
+   "signature": "pub fn turn_status(root: &Path, session_id: &str, turn_id: Option<&str>) -> Result<Value, String> {"
+  },
+  {
+   "id": "crates/ax-usage/src/working_context.rs:370",
+   "query": "One preflight line asking the agent to write or confirm its notes, or `None`. `turns` counts this preflight; `stale` is whether the notes block says `stale=true`.",
+   "signature": "pub fn session_nudge(turns: u32, stale: bool) -> Option<String> {"
+  },
+  {
+   "id": "crates/ax-usage/src/working_context.rs:595",
+   "query": "Preflight block. Empty when there is nothing to repeat, the switch is off, or the db is unreachable. One `unchanged` line when `known` is the current hash and the notes are not stale.",
+   "signature": "pub async fn working_context_block("
+  },
+  {
+   "id": "crates/ax-usage/src/working_context.rs:69",
+   "query": "SHA-256 of the objective and the five lists. Identical text, identical hash.",
+   "signature": "pub fn content_hash(ctx: &WorkingContext) -> String {"
+  },
+  {
+   "id": "crates/ax-utils/src/debounce.rs:9",
+   "query": "Debounce: only invoke after `delay` has passed since the last call.",
+   "signature": "pub async fn debounce<F, Fut>(delay: Duration, f: F)"
+  },
+  {
+   "id": "crates/ax-utils/src/file_lock.rs:160",
+   "query": "Remove lock file when the holder PID is dead, missing, or unreadable.",
+   "signature": "pub fn clear_stale_lock(lock_path: &Path) -> bool {"
+  },
+  {
+   "id": "crates/ax-utils/src/file_lock.rs:38",
+   "query": "Clear a stale lock file before attempting to acquire (safe to call always).",
+   "signature": "pub fn prepare(&self) {"
+  },
+  {
+   "id": "crates/ax-utils/src/file_lock.rs:45",
+   "query": "Wait up to [`DEFAULT_LOCK_WAIT`] for an exclusive lock.",
+   "signature": "pub fn acquire(&mut self) -> Result<(), AxError> {"
+  },
+  {
+   "id": "crates/ax-utils/src/file_lock.rs:50",
+   "query": "Wait up to `timeout` for an exclusive lock, clearing stale PIDs between attempts.",
+   "signature": "pub fn acquire_wait(&mut self, timeout: Duration) -> Result<(), AxError> {"
+  },
+  {
+   "id": "crates/ax-utils/src/lib.rs:26",
+   "query": "Process items in batches to avoid OOM on large result sets.",
+   "signature": "pub async fn process_in_batches<T, F, Fut>("
+  },
+  {
+   "id": "crates/ax-utils/src/memory.rs:55",
+   "query": "Current process RSS in bytes when the platform provides a reader; otherwise 0.",
+   "signature": "pub fn current_rss_bytes() -> u64 {"
+  },
+  {
+   "id": "crates/ax-utils/src/paths.rs:44",
+   "query": "The user's home directory. `AX_HOME_DIR` overrides it: on Windows `dirs::home_dir()` ignores `HOME` and `USERPROFILE`, so tests need their own way to point ax at a temp dir.",
+   "signature": "pub fn home_dir() -> Option<PathBuf> {"
+  },
+  {
+   "id": "crates/ax-utils/src/paths.rs:52",
+   "query": "`AX_GLOBAL_DB` when set and non-empty, else `<home>/.ax/global.db`.",
+   "signature": "pub fn resolve_global_db_path(home: Option<PathBuf>) -> Option<PathBuf> {"
+  },
+  {
+   "id": "crates/ax-utils/src/paths.rs:8",
+   "query": "Ensure a path resolves within the project root (no traversal escape).",
+   "signature": "pub fn validate_path_within_root(root: &Path, candidate: &Path) -> Result<PathBuf, AxError> {"
+  },
+  {
+   "id": "crates/ax-utils/src/process.rs:16",
+   "query": "Stop processes listening on `port`, excluding `self_pid`. Returns how many were stopped.",
+   "signature": "pub fn kill_listening_on_port(port: u16, self_pid: u32) -> Result<usize, String> {"
+  },
+  {
+   "id": "crates/ax-utils/src/security.rs:26",
+   "query": "Check if a node is a config leaf that should not expose values.",
+   "signature": "pub fn is_config_leaf_node(node: &Node) -> bool {"
+  },
+  {
+   "id": "crates/ax-utils/src/text_encoding.rs:8",
+   "query": "Read a project file as Unicode text, handling common encodings on Windows.",
+   "signature": "pub fn read_text_file(path: &Path) -> Result<String, FileError> {"
+  },
+  {
+   "id": "crates/ax-web/src/actions.rs:43",
+   "query": "Publish to the SSE bus and dual-write a verbose domain line when `project_root` is set.",
+   "signature": "pub fn publish_for("
+  },
+  {
+   "id": "crates/ax-web/src/changes.rs:58",
+   "query": "Topics whose fingerprint differs. A topic missing from `prev` is not a change.",
+   "signature": "pub fn changed_topics(prev: &Versions, next: &Versions) -> Vec<&'static str> {"
+  },
+  {
+   "id": "crates/ax-web/src/dav/folders.rs:20",
+   "query": "Run a disk operation off the async runtime.",
+   "signature": "pub async fn blocking<T, F>(op: F) -> FsResult<T>"
+  },
+  {
+   "id": "crates/ax-web/src/dav/folders.rs:40",
+   "query": "`root` joined with `rest`, refused unless the result (after following symlinks) stays inside `root`. A path that does not exist yet is checked through its parent.",
+   "signature": "pub fn resolve(root: &Path, rest: &str) -> FsResult<PathBuf> {"
+  },
+  {
+   "id": "crates/ax-web/src/dav/folders.rs:82",
+   "query": "Children as `name -> (is_dir, len, modified_ms)`. Symlinks are not listed.",
+   "signature": "pub fn children(root: &Path, rest: &str) -> FsResult<BTreeMap<String, (bool, u64, i64)>> {"
+  },
+  {
+   "id": "crates/ax-web/src/dav/mod.rs:35",
+   "query": "Routes for `/dav` and `/ax`. Must not sit behind the CORS layer: browsers may not reach it cross-origin.",
+   "signature": "pub fn router(hub: WebHub) -> Router {"
+  },
+  {
+   "id": "crates/ax-web/src/dav/mount.rs:138",
+   "query": "Only the local user's own browser may mount: no share sessions, LAN clients, or foreign pages.",
+   "signature": "pub fn allowed(headers: &HeaderMap, readonly: bool) -> bool {"
+  },
+  {
+   "id": "crates/ax-web/src/dav/mount.rs:47",
+   "query": "First unused drive letter, searching Z down to D.",
+   "signature": "pub fn free_letter(used: &[char]) -> Option<char> {"
+  },
+  {
+   "id": "crates/ax-web/src/dav/pages.rs:118",
+   "query": "Obsidian's settings as served. Missing keys get defaults that file new notes under `memories/`; a key the user set is never changed, and anything that is not a JSON object is served as stored.",
+   "signature": "pub fn app_json(stored: Option<&[u8]>) -> Vec<u8> {"
+  },
+  {
+   "id": "crates/ax-web/src/dav/pages.rs:173",
+   "query": "Turn a written rule page into a save. `Err` is the draft reason.",
+   "signature": "pub fn rule_from_page("
+  },
+  {
+   "id": "crates/ax-web/src/dav/pages.rs:201",
+   "query": "Turn a written skill page into a save. `Err` is the draft reason.",
+   "signature": "pub fn skill_from_page("
+  },
+  {
+   "id": "crates/ax-web/src/dav/pages.rs:307",
+   "query": "File stem per memory id. Clashing titles get ` (2)`, ` (3)` in creation order.",
+   "signature": "pub fn memory_stems(rows: &[MemoryRow]) -> Vec<(String, String)> {"
+  },
+  {
+   "id": "crates/ax-web/src/global_policy.rs:44",
+   "query": "The leading global items of one kind, by name. Reading never creates `global.db`.",
+   "signature": "pub async fn leaders(kind: Kind) -> Result<Vec<GlobalItem>, String> {"
+  },
+  {
+   "id": "crates/ax-web/src/lib.rs:675",
+   "query": "One-shot recovery for a poisoned browser origin (stale immutable `sw.js` / Cache Storage). Open `http://localhost:PORT/api/reset-client-cache` once, then reload — browsers treat `localhost` and `127.0.0.1` as separate origins, so only the origin you hit is cleared.",
+   "signature": "pub async fn handle_reset_client_cache() -> impl IntoResponse {"
+  },
+  {
+   "id": "crates/ax-web/src/mcp_trace.rs:30",
+   "query": "Follow this project's verbose log, or the most recently written log among recent workspaces when this project has never produced one (typical when Command Center is on one project but Cursor MCP `--path` is another repo).",
+   "signature": "pub fn pick_trace_project_root(hub_root: &Path, recent: &[PathBuf]) -> (PathBuf, Option<String>) {"
+  },
+  {
+   "id": "crates/ax-web/src/node_tracker.rs:24",
+   "query": "Compare `ids` with the previous snapshot; ids absent from it are recorded as created at `now_ms`. The first snapshot records nothing.",
+   "signature": "pub fn observe(&mut self, ids: HashSet<String>, now_ms: i64) {"
+  },
+  {
+   "id": "crates/ax-web/src/node_tracker.rs:37",
+   "query": "Created ids after `since_ms`, newest first, at most `limit`.",
+   "signature": "pub fn created_since(&self, since_ms: i64, limit: usize) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-web/src/node_tracker.rs:61",
+   "query": "Snapshot the node ids of the graph at `db_path` into its tracker.",
+   "signature": "pub async fn observe(pool: &SqlitePool, db_path: &Path) -> anyhow::Result<()> {"
+  },
+  {
+   "id": "crates/ax-web/src/node_tracker.rs:73",
+   "query": "Created ids for the graph at `db_path` after `since_ms`, newest first.",
+   "signature": "pub fn created_since(db_path: &Path, since_ms: i64, limit: usize) -> Vec<String> {"
+  },
+  {
+   "id": "crates/ax-web/src/project_purge.rs:120",
+   "query": "Delete only the selected file groups. Ignores unknown ids. Refuses symlinks.",
+   "signature": "pub fn remove_selected(project_root: &Path, groups: &[String]) -> PurgeReport {"
+  },
+  {
+   "id": "crates/ax-web/src/project_purge.rs:38",
+   "query": "Groups the modal can toggle. `recent` and `globalIndex` are applied by the HTTP handler.",
+   "signature": "pub fn file_groups(project_root: &Path) -> Vec<PurgeGroup> {"
+  },
+  {
+   "id": "crates/ax-web/src/project_purge.rs:87",
+   "query": "Switcher and global-index rows. These are not files inside the project folder.",
+   "signature": "pub fn leftover_groups() -> Vec<PurgeGroup> {"
+  },
+  {
+   "id": "crates/ax-web/src/queries.rs:55",
+   "query": "Build a force-directed graph payload: the top-`limit` nodes by degree (excluding structural `contains` edges) plus the edges between them. Community ids come from the persisted `node_communities` table. The nodes in `ids` (in that order) and every semantic edge that touches one of them.",
+   "signature": "pub async fn get_graph_for_ids(pool: &SqlitePool, ids: &[String]) -> anyhow::Result<GraphPayload> {"
+  },
+  {
+   "id": "crates/ax-web/src/replication_setup.rs:422",
+   "query": "Reuse or start the saved service when web/MCP starts. Child lifetime is independent of IDE refreshes, with authenticated local stop from Settings.",
+   "signature": "pub async fn auto_start(root: &Path) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-web/src/server_discovery.rs:148",
+   "query": "Periodically publish untrusted node hints on the configured LAN port. Broadcasting is opt-in; static primary URLs are still required for sync.",
+   "signature": "pub async fn announce(config: ServerConfig, url: String, port: u16) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-web/src/server_discovery.rs:167",
+   "query": "CLI presentation of the same bounded discovery used by Settings.",
+   "signature": "pub async fn discover(config: &ServerConfig, port: u16, seconds: u64) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-web/src/server_discovery.rs:53",
+   "query": "Validate a browser-safe advertised origin before starting UDP broadcasts.",
+   "signature": "pub fn validate_advertise(config: &ServerConfig, url: &str) -> Result<(), String> {"
+  },
+  {
+   "id": "crates/ax-web/src/server_discovery.rs:87",
+   "query": "Listen only for the requested duration and print all distinct candidates. No discovery response ever modifies the trusted primary_url in config.",
+   "signature": "pub async fn discover_candidates("
+  },
+  {
+   "id": "crates/ax-web/src/share_api.rs:30",
+   "query": "Themed HTML gate when share token is missing/invalid.",
+   "signature": "pub fn unauthorized_gate_html() -> Response {"
+  },
+  {
+   "id": "crates/ax-web/src/vault_folders.rs:119",
+   "query": "Import one folder into memory and remember the result for the Settings list.",
+   "signature": "pub async fn sync_one(hub: &WebHub, folder: &VaultFolder) -> Result<FolderSyncReport, String> {"
+  },
+  {
+   "id": "crates/ax-web/src/vault_folders.rs:138",
+   "query": "Sync every folder with indexing on. Used when `ax web` starts.",
+   "signature": "pub async fn sync_indexed(hub: &WebHub) {"
+  },
+  {
+   "id": "crates/ax-web/src/vault_folders.rs:148",
+   "query": "After a write through the drive: re-sync the folder once writes settle.",
+   "signature": "pub fn schedule_resync(hub: WebHub, root: PathBuf, name: String) {"
+  },
+  {
+   "id": "crates/ax-web/src/vault_folders.rs:50",
+   "query": "The configured folders. A missing or unreadable file is an empty list.",
+   "signature": "pub fn load(project_root: &Path) -> Vec<VaultFolder> {"
+  },
+  {
+   "id": "crates/ax-web/src/vault_folders.rs:62",
+   "query": "Check names and paths; paths come back canonical.",
+   "signature": "pub fn validate(list: Vec<VaultFolder>) -> Result<Vec<VaultFolder>, String> {"
+  },
+  {
+   "id": "crates/ax-web/src/workspace_state.rs:114",
+   "query": "Close the open graph database when `root` is the project currently served. File deletion can then remove `ax.db` instead of leaving a live inode.",
+   "signature": "pub async fn close_graph_pool_if_current(&self, root: &Path) -> bool {"
+  }
+ ]
+}

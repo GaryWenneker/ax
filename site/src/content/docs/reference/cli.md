@@ -1133,7 +1133,7 @@ ax costs model
 
 ### `ax agent economics`
 
-Estimated tokens and catalog cost for a Pi session recorded by the Ax adapter. Tool output tokens are estimates of what was delivered into context. Tool execution itself is not priced as model tokens. Missing rates stay unknown.
+Estimated tokens and catalog cost for a Pi session recorded by the Ax adapter. Tool output tokens are estimates of what was delivered into context. Tool execution itself is not priced as model tokens. Missing rates stay unknown. Without `--session` the totals cover every recorded session and the report says `(all sessions)`; `--session` limits every figure to that session. Each model is listed once.
 
 ```bash
 ax agent economics
@@ -1289,7 +1289,7 @@ ax offload clear
 
 ### `ax neural`
 
-Neural Intelligence is required. Project `ax.json` cannot turn it off. Memory embeddings stay `hash-v1`. The default binary does not link an ML runtime. Context ranking, prediction, and graph suggestions run in process and do not call a language model. CLI JSON matches the `ax_neural_*` MCP tools, and the flags use the same fields. `--path` and the current directory resolve to the nearest project with `.ax/ax.db`, the same root the MCP server uses.
+Neural Intelligence is required. Project `ax.json` cannot turn it off. Memory embeddings stay `hash-v1`. The default binary does not link an ML runtime. Context ranking, prediction, and graph suggestions run in process and do not call a language model. CLI JSON matches the `ax_neural_*` MCP tools, and the flags use the same fields. A value in the `neural` section of `ax.json` that is invalid keeps its default while every valid setting still applies; each invalid value and each unknown key (for example a misspelled section name) is listed in `configError`, which `explain` shows and a refused `feedback` or `predict` repeats. `--path` and the current directory resolve to the nearest project with `.ax/ax.db`, the same root the MCP server uses.
 
 ```bash
 ax neural status
@@ -1305,10 +1305,11 @@ ax neural export --out neural-feedback.json
 - `benchmark` scores the fused hash-v1 recall pipeline on the built-in coding fixture in a temporary database. It reports hits per question family and the measured query latency. It does not open `.ax/ax.db` and it does not download a model.
 - `evaluate` holds out each coding-fixture question in turn, predicts its memories from the rest, and stores precision, false-positive rate, and coverage for `status`.
 - `feedback` takes `--context-id`, `--skill-id`, and `--rule-id` (repeat each for more), plus `--retry-count`, `--input-tokens`, and `--output-tokens`. It is refused unless `neural.learning.feedback_collection` is true.
+- `learn` trains a ranking prior from this project's stored feedback and never promotes it. It reads stored feedback only while `neural.learning.feedback_collection` is true, and reports `applied: false` with a reason when collection is off or there are no feedback rows. The MCP tool also takes `rows` to train on rows you pass instead.
 - `graph` reads this project's edges and successful feedback and stores suggestions labeled `predicted`. It never writes edges. `--edges '<json array>'` previews suggestions for the edges you pass and stores nothing. It returns nothing while `neural.graph.enabled` is false.
 - `rank <query> --blocks '<json array>'` ranks blocks the way preflight does.
 - `register <model-id> <version> <checksum>` takes `--model-type`, `--dataset-version`, `--platforms`, and `--metrics '<json object>'`. Registering does not promote.
-- `promote` is refused unless you pass `--explicit`, `--beats-baseline`, and `--regressions-clear`.
+- `promote` is refused unless you pass `--explicit` and the version was registered with bake-off evidence in `--metrics`: a `bakeoff.families` object (`{family: {scored, hits}}`) that scores the same questions as the built-in coding fixture, hits every `named_trigger`, `abstention` and `delivery_budget` question, and beats hash-v1 on `paraphrase`. hash-v1 is scored on the fixture during the promote.
 - `export --out <file>` writes feedback rows for an offline trainer. It leaves out the project path, execution ids, and secret-shaped rows. It has no MCP tool and sends nothing.
 
 ---
