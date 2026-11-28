@@ -242,7 +242,7 @@ WSL2 notes:
 
 ```bash
 ax uninstall          # remove MCP config from agents
-ax uninit [path]      # remove .ax/ from a project
+ax uninit [path]      # remove .ax/ from a project (asks first; --yes in scripts)
 ```
 
 To remove the program itself on macOS, Linux or WSL2:

@@ -141,10 +141,7 @@ pub async fn apply(config: &ServerConfig, snapshot: &Snapshot) -> Result<ApplyRe
             continue;
         }
         remote_ids.insert(row.id.clone());
-        let local_id = format!(
-            "replica:{}",
-            blake3::hash(format!("{}\\0{}", source, row.id).as_bytes()).to_hex()
-        );
+        let local_id = replica_memory_id(&source, &row.id);
         let mut local = row.clone();
         local.id = local_id.clone();
         local.source = if row.source.starts_with("ax-cluster:") {
@@ -414,9 +411,19 @@ fn stage_policies(
     serde_json::to_writer_pretty(&mut temp, &ledger).map_err(|e| e.to_string())?;
     temp.write_all(b"\n").map_err(|e| e.to_string())?;
     temp.as_file().sync_all().map_err(|e| e.to_string())?;
-    temp.persist(&ledger_path)
-        .map_err(|e| e.error.to_string())?;
+    ax_utils::fs_safe::persist_temp(temp, &ledger_path).map_err(|e| e.to_string())?;
     Ok((queued, conflicts))
+}
+
+/// Local id of the replica copy of memory `remote_id` from `source`.
+///
+/// The separator is the two characters backslash and `0`, not a NUL byte.
+/// Ids already stored in replica ledgers depend on it, so it must not change.
+fn replica_memory_id(source: &str, remote_id: &str) -> String {
+    format!(
+        "replica:{}",
+        blake3::hash(format!("{source}\\0{remote_id}").as_bytes()).to_hex()
+    )
 }
 
 fn queue_policy(path: &Path, body: &str) -> Result<bool, String> {
@@ -466,10 +473,100 @@ fn policy_source(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::server_config::NodeRole;
+    use std::collections::BTreeMap;
+
     #[test]
-    fn projections_use_deterministic_namespaces() {
-        let a = format!("{}\\0{}", "ax-replica:one", "memory");
-        let b = format!("{}\\0{}", "ax-replica:two", "memory");
-        assert_ne!(blake3::hash(a.as_bytes()), blake3::hash(b.as_bytes()));
+    fn replica_memory_ids_are_stable_and_namespaced() {
+        let id = replica_memory_id("ax-replica:c:p:n", "memory");
+        assert_eq!(
+            id,
+            format!(
+                "replica:{}",
+                blake3::hash(b"ax-replica:c:p:n\\0memory").to_hex()
+            ),
+            "stored ledgers depend on the exact derivation"
+        );
+        assert_eq!(id, replica_memory_id("ax-replica:c:p:n", "memory"));
+        assert_ne!(id, replica_memory_id("ax-replica:c:p:other", "memory"));
+        assert_ne!(id, replica_memory_id("ax-replica:c:p:n", "memory2"));
+    }
+
+    fn config() -> ServerConfig {
+        ServerConfig {
+            schema_version: 1,
+            cluster_id: "cluster".into(),
+            node_id: "replica-node".into(),
+            role: NodeRole::Replica,
+            primary_url: None,
+            projects: Vec::new(),
+        }
+    }
+
+    fn snapshot(rules: serde_json::Value) -> Snapshot {
+        let mut files = BTreeMap::new();
+        files.insert(RULE_PATH.to_string(), rules.to_string());
+        files.insert(SKILL_PATH.to_string(), "[]".to_string());
+        Snapshot {
+            schema_version: 1,
+            cluster_id: "cluster".into(),
+            primary_node_id: "primary-node".into(),
+            project_id: "project".into(),
+            revision: "r1".into(),
+            files,
+        }
+    }
+
+    fn rule(id: &str, body: &str, origin: Option<&str>) -> serde_json::Value {
+        let mut value = serde_json::json!({
+            "id": id, "level": "CRITICAL", "alwaysApply": true, "globs": [],
+            "triggers": [], "tags": [], "priority": 1, "body": body, "sourcePath": ""
+        });
+        if let Some(origin) = origin {
+            value["properties"] = serde_json::json!({ crate::server_exchange::ORIGIN: origin });
+        }
+        value
+    }
+
+    fn pending_files(root: &Path) -> Vec<std::path::PathBuf> {
+        let dir = ax_policy::paths::pending_rules_dir(&root.join(".ax"));
+        let mut files: Vec<_> = fs::read_dir(dir)
+            .map(|entries| entries.flatten().map(|e| e.path()).collect())
+            .unwrap_or_default();
+        files.retain(|p| p.extension().is_some_and(|e| e == "mdc"));
+        files
+    }
+
+    #[test]
+    fn staged_policies_never_overwrite_a_reviewed_pending_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let config = config();
+
+        let first = snapshot(serde_json::json!([rule("r", "first body", None)]));
+        assert_eq!(stage_policies(&config, &first, root).unwrap(), (1, 0));
+        assert_eq!(
+            stage_policies(&config, &first, root).unwrap(),
+            (0, 0),
+            "an unchanged rule is not queued again"
+        );
+
+        let pending = pending_files(root);
+        assert_eq!(pending.len(), 1);
+        fs::write(&pending[0], "reviewer edit\n").unwrap();
+
+        let second = snapshot(serde_json::json!([rule("r", "second body", None)]));
+        assert_eq!(stage_policies(&config, &second, root).unwrap(), (0, 1));
+        assert_eq!(fs::read_to_string(&pending[0]).unwrap(), "reviewer edit\n");
+    }
+
+    #[test]
+    fn staged_policies_skip_rules_that_came_from_this_node() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = config();
+        let own = snapshot(serde_json::json!([rule("r", "body", Some("replica-node"))]));
+        assert_eq!(stage_policies(&config, &own, dir.path()).unwrap(), (0, 0));
+        assert!(pending_files(dir.path()).is_empty());
     }
 }

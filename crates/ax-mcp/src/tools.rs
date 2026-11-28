@@ -494,11 +494,13 @@ async fn status(ax: &mut Ax) -> Result<Value, String> {
     let last = ax.get_last_indexed_at().await.map_err(|e| e.to_string())?;
     let pending = ax.get_pending_files().await;
     let text = ax_core::stats_format::format_status_text(&stats, last, &pending);
+    let (pending, pending_total) = ax_core::stats_format::listed_pending(&pending);
     let mut out = json!({
         "text": text,
         "stats": stats,
         "lastIndexedAt": last,
         "pendingFiles": pending,
+        "pendingFilesTotal": pending_total,
         "integrity": ax_core::database_incident_value(ax.project_root()),
     });
     if let Some(note) = ax_core::database_incident_notice(ax.project_root()) {
@@ -1177,7 +1179,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         inject.push('\n');
     }
     if has_directive {
-        inject.push_str("<ax_capture_hint>Directive detected — a ready rule proposal is in captureProposal. Ask the user captureProposal.questions, then call ax_policy_capture({ action: \"save\", rule }) after they confirm.</ax_capture_hint>");
+        inject.push_str("<ax_capture_hint>Directive detected — the proposed rule and its questions follow. Ask the user each question, then call ax_policy_capture({ action: \"save\", rule }) after they confirm; ax_policy_capture({ action: \"propose\", prompt }) returns the rule again.</ax_capture_hint>");
         crate::verbose::push_line("enrich directive capture_hint appended");
     } else {
         crate::verbose::push_line("enrich directive none");
@@ -1335,6 +1337,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
             delivered.push((key, hash));
         }
     }
+    let (pending_listed, pending_total) = ax_core::stats_format::listed_pending(&pending);
     let mut out = json!({
         "policySources":sources,
         "project": { "path": ax_usage::project_scope(ax.project_root()) },
@@ -1351,7 +1354,8 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         "skills": result.skills,
         "memories": memories,
         "indexStats": index_stats,
-        "pendingFiles": pending,
+        "pendingFiles": pending_listed,
+        "pendingFilesTotal": pending_total,
         "integrity": ax_core::database_incident_value(ax.project_root()),
         "sourceContext": ice_context.as_ref().map(|c| serde_json::json!({
             "status": c.status,
@@ -2114,6 +2118,22 @@ fn attach_skill_audit(value: &mut Value, ax: &Ax, name: &str, source_path: &str)
     value["audit"] = json!(ax_skill_catalog::agent_brief(&report, &file));
 }
 
+/// The guarded path relative to the project root, with `/` separators, so
+/// `when:file:` globs match an absolute path the same way as a relative one.
+/// A path outside the root is returned as given.
+fn guard_relative_path(root: &std::path::Path, path: &std::path::Path) -> String {
+    let to_slash = |p: &std::path::Path| p.to_string_lossy().replace('\\', "/");
+    if let Ok(rel) = path.strip_prefix(root) {
+        return to_slash(rel);
+    }
+    if let (Ok(real_root), Ok(real_path)) = (root.canonicalize(), path.canonicalize()) {
+        if let Ok(rel) = real_path.strip_prefix(&real_root) {
+            return to_slash(rel);
+        }
+    }
+    to_slash(path)
+}
+
 async fn guard(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let paths = guard_paths_from_params(&params)?;
     let op = guard_op_from_params(&params);
@@ -2126,10 +2146,11 @@ async fn guard(ax: &mut Ax, params: Value) -> Result<Value, String> {
             .await
             .map_err(|e| e.to_string())?;
         let mut value = serde_json::to_value(&result).map_err(|e| e.to_string())?;
+        let rel_path = guard_relative_path(ax.project_root(), &path);
         if let Ok((memories, _)) = ax_memory::list(ax.db_pool(), 200, 0).await {
             let hits: Vec<_> = memories
                 .into_iter()
-                .filter(|m| !ax_memory::prospective_tags_for_path(&m.tags, path_str).is_empty())
+                .filter(|m| !ax_memory::prospective_tags_for_path(&m.tags, &rel_path).is_empty())
                 .take(2)
                 .map(|m| json!({ "id": m.id, "title": m.title, "kind": m.kind }))
                 .collect();
@@ -3130,8 +3151,8 @@ fn extra_tools() -> Vec<Value> {
         }),
         json!({
             "name": "ax_neural_promote",
-            "description": "Explicit model promotion; needs explicit, beatsBaseline, and regressionsClear. Automatic promotion is refused. CLI: ax neural promote",
-            "inputSchema": { "type": "object", "properties": { "modelId": { "type": "string" }, "version": { "type": "string" }, "explicit": { "type": "boolean" }, "beatsBaseline": { "type": "boolean" }, "regressionsClear": { "type": "boolean" } }, "required": ["modelId", "version"] }
+            "description": "Explicit model promotion; needs explicit and bake-off evidence registered with the version (metrics.bakeoff.families) that keeps the locked families and beats hash-v1 on the built-in fixture. Automatic promotion is refused. CLI: ax neural promote",
+            "inputSchema": { "type": "object", "properties": { "modelId": { "type": "string" }, "version": { "type": "string" }, "explicit": { "type": "boolean" } }, "required": ["modelId", "version"] }
         }),
         json!({
             "name": "ax_neural_rollback",
@@ -3417,6 +3438,30 @@ pub fn server_instructions(has_policy: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guard_matches_folder_globs_for_absolute_paths() {
+        let root = std::path::Path::new("/work/proj");
+        let tags = [
+            "when:file:src/*.rs".to_string(),
+            "when:file:crates/**/*.rs".to_string(),
+        ];
+        // A full path inside the project root.
+        let abs = root.join("src/a.rs");
+        let rel = guard_relative_path(root, &abs);
+        assert_eq!(rel, "src/a.rs");
+        assert_eq!(
+            ax_memory::prospective_tags_for_path(&tags, &rel),
+            vec!["when:file:src/*.rs".to_string()]
+        );
+        let nested = guard_relative_path(root, &root.join("crates/x/src/b.rs"));
+        assert_eq!(
+            ax_memory::prospective_tags_for_path(&tags, &nested),
+            vec!["when:file:crates/**/*.rs".to_string()]
+        );
+        let outside = guard_relative_path(root, std::path::Path::new("/elsewhere/src/a.rs"));
+        assert!(ax_memory::prospective_tags_for_path(&tags, &outside).is_empty());
+    }
 
     fn tool_names(v: &Value) -> Vec<String> {
         v["tools"]

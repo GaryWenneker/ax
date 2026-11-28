@@ -6,7 +6,7 @@ Ax quotes local agent usage against a price catalog and compares that quote to a
 
 Each imported turn is one event in `~/.ax/usage.db` (`agent_usage_event`). Claude Code JSONL can include input, output, cache read, and cache write. Those four counts stay separate. Cursor transcripts often have a model name and sometimes input tokens. Output and cache are unknown when the file does not contain them. OpenCode, Gemini, and Codex are installed as MCP clients only. Ax does not invent token counts for them.
 
-`ax costs` imports local Cursor transcripts, Claude transcripts, and Cursor composer state before it builds the report. When a period has no quoted usage events, `ax costs` uses the imported agent sessions already shown in Command Center (`agent_session_log`). That fills models, agents, input tokens, catalog spend, and the daily spend used for the month projection. Output and cache stay unknown when the session row has no count. Known cycles stay 0, because a cycle is still one quoted usage event. Session spend is not added on top of usage events. The text report opens with a block-letter AX banner and a line of period, spend, model, and recorded session minutes. Tokens, context efficiency, and cycle efficiency show that minute total instead of the word unknown when a token count was not recorded. Cost per minute and input tokens per minute use the same total.
+`ax costs` imports local Cursor transcripts, Claude transcripts, and Cursor composer state before it builds the report. When a period has no quoted usage events, `ax costs` uses the imported agent sessions already shown in Command Center (`agent_session_log`). That fills models, agents, input tokens, catalog spend, and the daily spend used for the month projection. Output and cache stay unknown when the session row has no count. Known cycles stay 0, because a cycle is still one quoted usage event. When a period has usage events, the two sources are merged per session: a session whose usage events have a catalog price is counted from those events, and every other imported session adds its catalog spend to the model, agent and daily totals, so the month projection and `ax budget check` include it. A session with usage events adds no tokens of its own. The report names how many imported sessions were added and how many were left out. The text report opens with a block-letter AX banner and a line of period, spend, model, and recorded session minutes. Tokens, context efficiency, and cycle efficiency show that minute total instead of the word unknown when a token count was not recorded. Cost per minute and input tokens per minute use the same total.
 
 ## Actual, estimated, unknown
 
@@ -41,6 +41,8 @@ A missing model price stays unknown. Ax does not fill it with the savings refere
   }
 }
 ```
+
+Each key is read on its own: numeric strings are accepted, and a wrongly typed or out-of-range value is ignored with a warning that names it. Thresholds must be above 0 and ordered `warning <= critical <= hardLimit`. A threshold above a higher one is lowered to it, so the hard limit is never raised: setting only `hardLimitPercent: 80` also lowers the default critical threshold to 80. `ax budget set` refuses values that would leave the set thresholds out of order. `workingDays` is 0 to 31, `hoursPerDay` is above 0 and at most 24. `ax budget set` refuses to rewrite a config file that is not valid JSON and writes atomically.
 
 EUR is compared only when `usdPerEur` is set (USD for 1 EUR). Without it, Ax prints the EUR budget and does not convert. Catalog math stays in USD.
 

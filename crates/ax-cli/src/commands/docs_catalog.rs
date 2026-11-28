@@ -2,11 +2,11 @@
 
 use ax_docs_catalog::{sync_catalog, SyncEvent, SyncOptions, SyncReport};
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 use crate::ui::{dim, info_line, kv_line, ok_line, warn_line};
 
 pub async fn run_sync(skip_wiki_pull: bool, dry_run: bool, json: bool) -> Result<(), String> {
-    let root = resolve_path(None);
+    let root = resolve_project_root(None);
     let report = sync_catalog(
         &root,
         SyncOptions {

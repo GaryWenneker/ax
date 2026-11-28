@@ -11,7 +11,7 @@ agent_suite() { (cd "$root" && cargo test -q -p ax-web --test agent_install_guar
 ts_suite() { (cd "$root/crates/ax-web/web-ui" && node --test src/vaultMount.test.ts src/ideInstall.test.ts); }
 
 pk="$root/crates/ax-web/src/folder_picker.rs"
-ax_mutate picker_suite "$pk" "    if !crate::dav::mount::allowed(&headers, hub.readonly) {" "    if false {"
+ax_mutate picker_suite "$pk" "    if !crate::dav::mount::allowed(&headers, hub.readonly, hub.port) {" "    if false {"
 ax_mutate picker_suite "$pk" "    if OPEN.swap(true, Ordering::SeqCst) {" "    if false {"
 ax_mutate picker_suite "$pk" "        if !out.status.success() {" "        if false {"
 ax_mutate picker_suite "$pk" "            continue;
@@ -29,7 +29,7 @@ ax_mutate picker_suite "$pk" "            own(
                 &[\"--getexistingdirectory\", \".\", \"--title\", PROMPT],
             )," ""
 ag="$root/crates/ax-web/src/agent.rs"
-ax_mutate agent_suite "$ag" "    } else if !crate::dav::mount::allowed(headers, false) {" "    } else if false {"
+ax_mutate agent_suite "$ag" "    } else if !crate::dav::mount::allowed(headers, false, hub.port) {" "    } else if false {"
 ax_mutate agent_suite "$ag" "    let error = if hub.readonly {" "    let error = if false {"
 ax_mutate agent_suite "$ag" "            \"results\": reports.iter().map(report_json).collect::<Vec<_>>()," ""
 ide="$root/crates/ax-web/web-ui/src/ideInstall.ts"

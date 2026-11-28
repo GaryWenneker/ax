@@ -3,23 +3,16 @@ use std::path::PathBuf;
 use ax_db::integrity::{check_database, repair_database, CheckOptions, RepairOptions};
 use ax_db::Database;
 
-fn temp_db(name: &str) -> (PathBuf, PathBuf) {
-    let root = std::env::temp_dir().join(format!(
-        "ax-vector-repair-{name}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
-    std::fs::create_dir_all(root.join(".ax")).unwrap();
-    let db = root.join(".ax").join("ax.db");
-    (root, db)
+fn temp_db() -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join(".ax")).unwrap();
+    let db = tmp.path().join(".ax").join("ax.db");
+    (tmp, db)
 }
 
 #[tokio::test]
 async fn reembed_stale_rewrites_a_foreign_model() {
-    let (root, path) = temp_db("reembed");
+    let (_tmp, path) = temp_db();
     let db = Database::open(&path).await.unwrap();
     sqlx::query(
         "INSERT INTO memories (id, title, body, tags, tier, embedding_model, created_at, updated_at)
@@ -37,12 +30,11 @@ async fn reembed_stale_rewrites_a_foreign_model() {
     let (_, active) = ax_memory::embed::embed_labeled("ax");
     assert_eq!(model, active);
     db.close().await;
-    let _ = std::fs::remove_dir_all(root);
 }
 
 #[tokio::test]
 async fn one_pass_rewrites_every_foreign_model_and_leaves_the_hash_row() {
-    let (root, path) = temp_db("reembed-all");
+    let (_tmp, path) = temp_db();
     let db = Database::open(&path).await.unwrap();
     sqlx::query(
         "INSERT INTO memories (id, title, body, tags, tier, embedding_model, enabled, created_at, updated_at)
@@ -73,12 +65,11 @@ async fn one_pass_rewrites_every_foreign_model_and_leaves_the_hash_row() {
         assert_eq!(model, "hash-v1");
     }
     db.close().await;
-    let _ = std::fs::remove_dir_all(root);
 }
 
 #[tokio::test]
 async fn rebuild_vector_index_replaces_a_dangling_map_after_backup() {
-    let (root, path) = temp_db("rebuild");
+    let (_tmp, path) = temp_db();
     let db = Database::open(&path).await.unwrap();
     let (vector, model) = ax_memory::embed::embed_labeled("Tokenizer use tiktoken");
     sqlx::query(
@@ -152,5 +143,4 @@ async fn rebuild_vector_index_replaces_a_dangling_map_after_backup() {
         .unwrap();
     assert_eq!(present, 1);
     db.close().await;
-    let _ = std::fs::remove_dir_all(root);
 }

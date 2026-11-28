@@ -109,7 +109,7 @@ The **Savings** page includes a compact **TokenViz-style path graph**: log-scale
 
 Per-call drill-down also shows color-coded o200k BPE chips for the truncated graph response versus the counterfactual file preview. New MCP graph calls store short local previews in `~/.ax/usage.db`; older rows use a synthetic count-based path until new calls arrive. The **Token playground** tokenizes arbitrary text the same way.
 
-**By model** rolls up imported Cursor / Claude Code sessions: input tokens, graph savings during each session window, and USD at each model's rate. Rates resolve in order: `~/.ax/pricing.toml` overrides → latest daily OpenRouter snapshot in `~/.ax/usage.db` → built-in defaults. Run **Import sessions** on the Savings page (or `ax savings import --all`) first — MCP-only periods without imported transcripts have no model breakdown.
+**By model** rolls up imported Cursor / Claude Code sessions: input tokens, graph savings during each session window, and USD at each model's rate. Rates resolve in order: `~/.ax/pricing.toml` overrides → latest daily OpenRouter snapshot in `~/.ax/usage.db` → built-in defaults. Run **Import sessions** on the Savings page (or `ax savings import --all`) first — MCP-only periods without imported transcripts have no model breakdown. Each MCP call counts toward at most one session: when session windows overlap, the call goes to the open session in the call's project, else to the session that started last. So the per-session and per-model savings never add up to more than the period total.
 
 **Agent vs model name:** The **Agent** column is the log source (`cursor` = Cursor Composer chats, `claude` = Claude Code CLI). The **Model** column is normally the provider API id from the transcript (e.g. `claude-opus-4-8`). Cursor Composer transcripts usually omit model metadata — install the **sessionStart hook** (below) so ax records labels like `composer-2.5-fast` when each chat starts.
 
@@ -121,7 +121,7 @@ Cursor knows your picker model (`Composer 2.5 Fast`, etc.) but does not write it
 ax savings hook install
 ```
 
-This copies a hook script into `~/.cursor/hooks/` and merges `sessionStart` into `~/.cursor/hooks.json`. The ax repo also ships project hooks under `.cursor/hooks/` for local development.
+This copies an executable hook script into `~/.cursor/hooks/` and merges `sessionStart` and `beforeSubmitPrompt` entries into `~/.cursor/hooks.json`, keeping your other hooks. If `hooks.json` is not plain JSON (comments, a trailing comma), ax leaves it untouched and prints a message naming the file; fix the file or add the ax entries by hand. The ax repo also ships project hooks under `.cursor/hooks/` for local development.
 
 Each new Composer chat runs the hook → `ax session-hook` (hidden) → `~/.ax/usage.db`. Then `ax savings import --all` merges transcript tool counts (read / grep / ax) without overwriting the tagged model.
 
@@ -153,6 +153,8 @@ Resolution order for USD estimates:
 1. Exact / longest-substring match in `~/.ax/pricing.toml` (user override)
 2. Latest OpenRouter snapshot in `~/.ax/usage.db`
 3. Built-in defaults
+
+In the snapshot an exact model id wins (with or without the `provider/` prefix). Otherwise the longest catalog id contained in the requested id wins, and only then the shortest catalog id that contains the requested id. So `gpt-4o` is priced as `openai/gpt-4o`, not `openai/gpt-4o-mini`.
 
 ### Cursor state.vscdb (automatic on import)
 
@@ -360,6 +362,8 @@ ax savings import --cursor          # Cursor only
 ax savings import --claude          # Claude Code only
 ```
 
+Each transcript's usage is stored under its project. The agent's project folder name (for example `-Users-me-app` or `users-me-app`) is mapped back to the one project path ax has logged calls for with that folder name; without a single match the folder name is kept. Only rows stored under a project path are included in that project's history export. One API response counts once, even when the transcript repeats its usage on every content-block line.
+
 ---
 
 ## Environment variables
@@ -371,6 +375,7 @@ ax savings import --claude          # Claude Code only
 | `AX_SAVINGS_TOKENS_PER_LINE` | 9 | Tokens per line for unreadable files |
 | `AX_SAVINGS_AVG_FILE_TOKENS` | 3500 | Fallback when no line count or path-only ref |
 | `AX_MCP_FULL` | unset | `1`/`true`/`yes` restores full `structuredContent` on every MCP tool |
+| `AX_MCP_STRUCTURED` | unset | `off` sends text-only replies (no `structuredContent`) to every client; `lean` sends the lean payload to every client. Unset: a client whose `initialize` name contains `claude` gets text-only replies, every other client the lean payload. `AX_MCP_FULL` wins over both |
 | `AX_MCP_VERBOSE` | unset | Legacy compatibility flag; MCP and CLI (from 8.4.4) always write inbound/outbound/internal traces to the project verbose log and optionally stderr (Cursor Output). See [MCP Logging & Quality](/guides/mcp-quality/). |
 | `AX_EXPLORE_MAX_LINES` | 40 | Max source lines per `ax_explore` snippet |
 | `AX_EXPLORE_MAX_SOURCE_CHARS` | 2000 | Max source characters per `ax_explore` snippet |

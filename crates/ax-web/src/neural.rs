@@ -21,7 +21,10 @@ async fn handle_status(State(hub): State<WebHub>) -> Json<serde_json::Value> {
         {
             Ok(value) => value,
             // Status still answers when the handler itself fails.
-            Err(_) => ax_neural::status::status_report(&root),
+            Err(_) => ax_neural::status::status_report_with(
+                &root,
+                ax_neural::bakeoff::challenger_admitted_async().await,
+            ),
         };
     Json(value)
 }

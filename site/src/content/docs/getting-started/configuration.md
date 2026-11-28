@@ -157,7 +157,9 @@ A few things to know:
 
 ## LLM offload (`"offload"`)
 
-Stored in `~/.ax/config.json` under a separate `"offload"` key. Lets ax delegate heavy reasoning queries to an OpenAI-compatible API:
+Stored in `~/.ax/config.json` under a separate `"offload"` key. Lets ax delegate heavy reasoning queries to an OpenAI-compatible API.
+
+Offload is off until you switch it on. When it is on, `ax explore` sends the explore text, which contains numbered project source, to that API. `ax init` never switches it on: when it finds a provider key such as `OPENAI_API_KEY` in the environment, it only prints the `ax offload set-endpoint` command that would. `ax explore --json` prints the structured result and never calls the offload API. Turn offload on with `ax offload set-endpoint <url> --key-env <VAR>` and off with `ax offload clear`.
 
 ```json
 {
@@ -165,7 +167,6 @@ Stored in `~/.ax/config.json` under a separate `"offload"` key. Lets ax delegate
     "url": "https://api.openai.com/v1",
     "model": "gpt-4o",
     "key_env": "OPENAI_API_KEY",
-    "effort": "low",
     "style": "plain"
   }
 }
@@ -173,13 +174,30 @@ Stored in `~/.ax/config.json` under a separate `"offload"` key. Lets ax delegate
 
 | Key | Default | Description |
 |---|---|---|
-| `url` | — | OpenAI-compatible base URL (required to enable offload) |
-| `model` | `gpt-oss-120b` | Model name |
-| `key_env` | — | Name of the env var that holds the API key |
-| `effort` | `low` | `low` / `medium` / `high` |
+| `url` | — | OpenAI-compatible base URL. Offload is on only when this (or `AX_OFFLOAD_URL`) is set |
+| `model` | the provider's default | Model name. Without it, a known provider uses its default model (OpenAI `gpt-4o`, Cerebras `gpt-oss-120b`, Groq `llama-3.3-70b-versatile`, Ollama `llama3`). Together AI, Fireworks and OpenRouter have no default: offload stays off and `ax offload status` shows a `problem` until you set a model. Other endpoints fall back to `gpt-oss-120b` |
+| `key_env` | — | Name of the env var that holds the API key. It is sent only to the configured `url`: when `AX_OFFLOAD_URL` points to a different endpoint, ax sends no key there (set `AX_OFFLOAD_KEY` for it) |
+| `effort` | not sent | `low` / `medium` / `high`, sent as `reasoning_effort`. Set it only for a reasoning model: non-reasoning models such as `gpt-4o` reject the parameter |
 | `style` | `plain` | Response style hint |
 
+`ax offload set-endpoint`, `ax offload clear` and `ax init` change only their own section of `~/.ax/config.json` and replace the file atomically. When the file is not valid JSON, or its top level is not an object, they stop with an error naming the file and leave it as it is.
+
 All keys can also be set via environment variables (`AX_OFFLOAD_URL`, `AX_OFFLOAD_MODEL`, `AX_OFFLOAD_KEY`, `AX_OFFLOAD_EFFORT`, `AX_OFFLOAD_STYLE`). Env vars take precedence over the file.
+
+Offload is off by default. An API key in your environment (`OPENAI_API_KEY`, `CEREBRAS_API_KEY`, and so on) does not turn it on: ax sends explore context to an outside model only after you save an endpoint with `ax offload set-endpoint <url> --key-env <VAR>` or set `AX_OFFLOAD_URL`. `ax init` and `ax offload status` name a provider whose key they find, as a suggestion. `AX_OFFLOAD_DISABLE=1` turns offload off even when an endpoint is configured.
+
+Request limits are set with environment variables only:
+
+| Variable | Default | Description |
+|---|---|---|
+| `AX_OFFLOAD_TIMEOUT_MS` | `20000` | Longest wait for one request. Zero or an invalid value uses the default. Connecting to the endpoint (DNS and connect) is limited to 2 seconds |
+| `AX_OFFLOAD_MAXTOKENS` | `12000` | `max_tokens` sent with each request. Zero or an invalid value uses the default |
+| `AX_OFFLOAD_BACKOFF_MS` | `30000` | After the endpoint cannot be reached (refused, unreachable, or no answer within the 2 s connect timeout) or drops the connection without a reply, explores skip offload for this long and return the plain output at once. A slow reply that hits `AX_OFFLOAD_TIMEOUT_MS` does not start the back-off. `0` retries on every explore |
+| `AX_OFFLOAD_STRIP` | off | `1` removes ax's own navigation hints from the explore output before it is sent; retrieved source lines are never changed |
+
+`ax offload status` shows every one of these values.
+
+When the provider rejects a request or cannot be reached, ax falls back to the plain explore output and logs a warning with the status code and the start of the provider's reply (once per process; every time with `AX_OFFLOAD_DEBUG=1`). The API key is never logged.
 
 MCP graph calls log estimated context-token savings in **`~/.ax/usage.db`**. Query with [`ax savings`](/reference/cli/#ax-savings) or the **Savings** page in `ax web`. See [Token savings](/guides/token-savings/). Imported agent turns are quoted separately with [`ax costs`](/reference/cli/#ax-costs) and compared to a local plan with [`ax budget`](/reference/cli/#ax-budget). See [Agent budget](/guides/budget/). Pi runs stay in Pi; Ax can record their estimates with [`ax agent economics`](/reference/cli/#ax-agent-economics). See [Pi integration](/guides/pi/).
 
@@ -208,9 +226,9 @@ Policy can live in **files** (`.ax/policy/` on disk) or **database** (`ax.db` ta
 
 ```bash
 ax policy storage status           # show effective mode (project + global)
-ax policy storage database --migrate        # scan repo, show per-item interview (no import)
-ax policy storage database --migrate --yes  # switch + import all candidates into ax.db
-ax policy storage files --migrate           # export DB → files on switch
+ax policy storage database         # scan repo, show per-item interview (no import)
+ax policy storage database --yes   # import all candidates into ax.db, then switch
+ax policy storage files --yes      # export DB → files, then switch
 ```
 
 The migration scan walks the **entire codebase** for `.mdc` rules and `SKILL.md` skills — including `.cursor/rules/`, `.cursor/skills/`, and other paths — not only `.ax/policy/`. Bootstrap files (e.g. `.cursor/rules/ax.mdc`) are skipped. Each candidate includes interview questions (import yes/no, id, level, triggers, globs, priority, storage destination).

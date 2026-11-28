@@ -790,3 +790,110 @@ async fn remote_authorized_writer_can_remember_but_cannot_save_global_policy() {
             call("ax_policy_capture",json!({"action":"save","rule":{"frontmatter":frontmatter,"body":"foreign policy"}}))).await.0, StatusCode::FORBIDDEN);
     }
 }
+
+async fn initialize_as(app: &Router, project: &str, token: &str, client: &str) -> String {
+    let (status, headers, body) = post(app, project, Some(token), None,
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":client,"version":"1"}}})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    headers["mcp-session-id"].to_str().unwrap().to_owned()
+}
+
+fn between<'a>(text: &'a str, start: &str, stops: &[char]) -> &'a str {
+    let rest = text.split(start).nth(1).unwrap_or("");
+    rest.split(stops).next().unwrap_or("")
+}
+
+/// A Claude client gets text-only replies, and the server still learns the chat
+/// and cache ids it issued, so the connection keeps owning them.
+#[tokio::test]
+async fn remote_claude_client_gets_text_only_replies_and_keeps_its_chats_and_caches() {
+    let (_dir, app, _) = fixture().await;
+    let a = initialize_as(&app, "alpha", "test-ide-key", "claude-code").await;
+    let b = initialize_as(&app, "alpha", "test-ide-key", "claude-code").await;
+    let call = |name: &str, arguments: Value| json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":name,"arguments":arguments}});
+    let key = Some("test-ide-key");
+
+    let (_, _, first) = post(
+        &app,
+        "alpha",
+        key,
+        Some(&a),
+        call("ax_preflight", json!({})),
+    )
+    .await;
+    assert!(
+        first["result"].get("structuredContent").is_none(),
+        "{first}"
+    );
+    let text = first["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("# Ax context"), "{text}");
+    let chat = between(text, "<ax_chat session=", &[' ', '>']).to_owned();
+    assert!(chat.starts_with("axs_"), "no chat id in the text: {text}");
+
+    // The chat this connection was given stays usable by it, and only by it.
+    let (status, _, second) = post(
+        &app,
+        "alpha",
+        key,
+        Some(&a),
+        call("ax_preflight", json!({"session":chat})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    assert!(!second.to_string().contains("\"isError\":true"), "{second}");
+    assert!(
+        second["result"].get("structuredContent").is_none(),
+        "{second}"
+    );
+    let (status, _, _) = post(
+        &app,
+        "alpha",
+        key,
+        Some(&b),
+        call("ax_preflight", json!({"session":chat})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (_, _, stash) = post(
+        &app,
+        "alpha",
+        key,
+        Some(&a),
+        call("ax_stash", json!({"text":"PRIVATE-REMOTE-CLAUDE"})),
+    )
+    .await;
+    assert!(
+        stash["result"].get("structuredContent").is_none(),
+        "{stash}"
+    );
+    let text = stash["result"]["content"][0]["text"].as_str().unwrap();
+    let id = format!("cc_{}", between(text, "cc_", &[' ', '.', '\n']));
+    assert!(id.len() > 6, "no cache id in the text: {text}");
+    let (status, _, expanded) = post(
+        &app,
+        "alpha",
+        key,
+        Some(&a),
+        call("ax_expand", json!({"id":id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{expanded}");
+    assert!(
+        expanded.to_string().contains("PRIVATE-REMOTE-CLAUDE"),
+        "{expanded}"
+    );
+    assert!(
+        expanded["result"].get("structuredContent").is_none(),
+        "{expanded}"
+    );
+    let (status, _, _) = post(
+        &app,
+        "alpha",
+        key,
+        Some(&b),
+        call("ax_expand", json!({"id":id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}

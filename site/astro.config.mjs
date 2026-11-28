@@ -15,7 +15,7 @@ export default defineConfig({
 			title: 'ax',
 			description:
 				'Understand code. Preserve context. Guide every agent. Ax connects code intelligence, memory, policy and MCP.',
-			favicon: '/logo.png',
+			favicon: '/favicon.svg',
 				head: [
 					{
 					tag: 'script',

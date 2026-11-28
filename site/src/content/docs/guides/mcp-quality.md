@@ -87,7 +87,7 @@ Filter these on the Logging page kind chips (also via `/logging?kind=lsp`). Qual
 |-------|------|
 | `ShipCiFailed` | `ship-ci status=failed` in window |
 | `PluginExtractErrors` | `plugin … fail` lines |
-| `LspAvailableUnused` | Runnable language server on PATH (`--version` ok), no `lsp enrich` while MCP is active |
+| `LspAvailableUnused` | Runnable language server on PATH (`--version` succeeds within 2 seconds), no `lsp enrich` while MCP is active. The PATH check runs only when the window has MCP calls and no `lsp enrich`, and its result is reused for 10 minutes |
 | `ShareReadonlyWrite` | Mutating API blocked in share/read-only |
 | `EmbedBackend` | Informational: `embed backend=…` line |
 
@@ -103,6 +103,10 @@ Lines go to:
 - Optionally Cursor **Output → MCP** (stderr)
 
 When a Cursor session id is known, lines include `session=<uuid>` for tighter correlation.
+
+CLI tool lines (`[ax] inbound`, `outbound preview`, `error`) are redacted before they are written: string arguments under keys such as `password`, `token`, `secret` or `api_key` become `[redacted]`, and `key=value` secrets, the value after `password:`, `token:`, `api-key:`, `Authorization:` or `Bearer`, `sk-…` and `AKIA…` keys and long key-like runs inside text are replaced the same way. UUIDs and 40- or 64-digit hex commit ids are kept, and so are plain numbers after a marker (`tokens: 1200`). Activity summaries and turn prompts and outcomes use the same rules.
+
+The audit reads only the dated files that can overlap what it checks: for a rolling window, the files from the day before the window start onward; for `--session`, the files from the day before the transcript's first timed event (all files when the transcript has no timestamps). Older files stay on disk and are not pruned automatically; remove them by hand if you do not want to keep the prompts they contain.
 
 ## 2. Logging page (`ax web` → Logging)
 
@@ -146,6 +150,8 @@ The status-bar **Q** chip shows a live score (and a critical badge when needed).
 | **Findings** | Ranked checks with severity and waste hints |
 | **Actions** | **Copy fixpack**, Run full session audit, Open Logging, Refresh |
 
+The live score reruns the audit only when the project's verbose log changes, and at most once every 5 seconds; when there is no verbose log it keeps the last result. Once the Q chip or the quality stream has been opened, a background check looks for log changes every 5 seconds. **Run full session audit** always runs a new audit.
+
 CLI equivalent:
 
 ```bash
@@ -157,6 +163,8 @@ ax mcp audit --session path/to/transcript.jsonl --json
 
 Exit code **2** when critical findings are present (CI-friendly). Snapshots land in `.ax/audit/latest.json`.
 
+Without `--session`, the audit reads transcripts from `~/.cursor/projects/<slug>/agent-transcripts/`, where `<slug>` is the project path in lower case with each run of other characters replaced by one `-`. A folder whose name differs only in case or punctuation also counts; a parent or sibling workspace's folder never does. Subagent chats (in `subagents/` folders) are skipped.
+
 ## 4. Cursor sessionStart hook (correlation + model tags)
 
 Cursor Composer transcripts often omit the picker model. Install once:
@@ -167,7 +175,8 @@ ax savings hook install
 
 This installs hooks under `~/.cursor/hooks/` and merges `sessionStart` into `~/.cursor/hooks.json`. Each new Composer chat runs `ax session-hook` (hidden) so:
 
-- `~/.ax/active-cursor-session` is written **even when Cursor omits the model** (required for `session=` on verbose lines)
+- `~/.ax/active-cursor-session` (one line, the chat id) is written **even when Cursor omits the model** (required for `session=` on verbose lines)
+- When the hook knows the window and project, `~/.ax/cursor-sessions/<hash>.json` binds that window to the chat; each window has its own file
 - Verbose lines can carry `session=<uuid>`
 - `ax savings import --all` keeps the tagged model for by-model rollups (when model is present)
 - `ax mcp audit` prefers the ax-heaviest transcript and aligns windows more accurately
@@ -231,6 +240,6 @@ Related surfaces:
 | Q score stuck / muted | Need inbound traffic + verbose file; open Logging and trigger a preflight (MCP) or `ax preflight` / `ax explore` (CLI) |
 | ExploreBeforeGrep false alarm | Install session hook; prefer timed transcripts; re-run audit after a real ax-heavy chat; quiet/DEGRADED MCP should not flag this |
 | Correlation near 0% | Wrong project; MCP disconnected; missing `session=` (reinstall hook / restart MCP); or audit without matching transcript — pass `--session` |
-| UncorrelatedTool (medium) despite a project log | Usually ax MCP is offline after a reinstall — reconnect MCP; live rolling audits no longer score-penalize this when `verbose_mcp=true` |
-| LspAvailableUnused | Run `ax lsp enrich` (or Unresolved → Enrich with LSP) while MCP is active; domain-only windows no longer false-flag |
+| UncorrelatedTool (medium) despite a project log | Usually ax MCP is offline after a reinstall — reconnect MCP; a rolling-window audit with no MCP calls in the window ignores the transcript calls, because verbose logging is always on |
+| LspAvailableUnused | Run `ax lsp enrich` (or Unresolved → Enrich with LSP) while MCP is active; only `[ax] lsp enrich …` log lines count, not prompts that mention it |
 | Fixpack empty | No findings in window — widen `--window-minutes` or run a fuller agent turn first |

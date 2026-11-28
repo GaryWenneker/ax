@@ -3,10 +3,11 @@
 use crate::economics::display_amount;
 use crate::store::{ModelRow, OptimizationRow, PersistedSnapshot, TurnRow};
 use crate::types::{BudgetSnapshot, ToolEconomicsRecord};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct EconomicsReport {
+    /// The session the report is filtered to; `None` when it covers every session.
     pub session_id: Option<String>,
     pub turns: usize,
     pub models: Vec<String>,
@@ -20,6 +21,10 @@ pub struct EconomicsReport {
     pub largest_tool: Option<String>,
     pub currency: String,
     pub budget: Option<BudgetSnapshot>,
+    /// Why a configured monthly budget is not in `budget`; absent when there
+    /// is no monthly budget or it is compared.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget_omitted: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -37,15 +42,44 @@ pub struct OptimizationGroup {
     pub estimated_reduction_percent: f64,
 }
 
+/// Borrowed rows a report is built from, so a live integration can report
+/// without copying its state.
+pub(crate) struct ReportRows<'a> {
+    pub turns: &'a [TurnRow],
+    pub tools: &'a [ToolEconomicsRecord],
+    pub models: &'a [ModelRow],
+    pub optimizations: &'a [OptimizationRow],
+}
+
+impl<'a> ReportRows<'a> {
+    fn of(snapshot: &'a PersistedSnapshot) -> Self {
+        Self {
+            turns: &snapshot.turns,
+            tools: &snapshot.tools,
+            models: &snapshot.models,
+            optimizations: &snapshot.optimizations,
+        }
+    }
+}
+
 pub fn economics_from(
     snapshot: &PersistedSnapshot,
     session_filter: Option<&str>,
     currency: &str,
     budget: Option<BudgetSnapshot>,
 ) -> EconomicsReport {
-    let tools = filter_tools(&snapshot.tools, session_filter);
-    let turns = filter_turns(&snapshot.turns, session_filter);
-    let models = filter_models(&snapshot.models, session_filter);
+    economics_of(&ReportRows::of(snapshot), session_filter, currency, budget)
+}
+
+pub(crate) fn economics_of(
+    rows: &ReportRows<'_>,
+    session_filter: Option<&str>,
+    currency: &str,
+    budget: Option<BudgetSnapshot>,
+) -> EconomicsReport {
+    let tools = filter_tools(rows.tools, session_filter);
+    let turns = filter_turns(rows.turns, session_filter);
+    let models = filter_models(rows.models, session_filter);
     let mut tool_output_tokens: BTreeMap<String, u64> = BTreeMap::new();
     let mut repeated_output_tokens = 0u64;
     for tool in &tools {
@@ -67,53 +101,70 @@ pub fn economics_from(
         .filter_map(|model| model.cached_input_tokens)
         .sum();
     let estimated_model_cost = sum_optional(models.iter().map(|model| model.estimated_cost));
-    let session_id = session_filter
-        .map(str::to_string)
-        .or_else(|| snapshot.sessions.last().map(|session| session.id.clone()));
     EconomicsReport {
-        session_id,
+        session_id: session_filter.map(str::to_string),
         turns: turns.len(),
-        models: models
-            .iter()
-            .filter_map(|model| model.model.clone())
-            .collect(),
+        models: distinct_models(&models),
         input_tokens,
         output_tokens,
         cached_input_tokens,
         tool_output_tokens,
         repeated_output_tokens,
         estimated_model_cost,
-        potential_optimization_cost: potential_cost(&snapshot.optimizations, &tools),
+        potential_optimization_cost: potential_cost(rows.optimizations, &tools),
         largest_tool,
         currency: currency.to_string(),
         budget,
+        budget_omitted: None,
     }
 }
 
 pub fn optimization_from(snapshot: &PersistedSnapshot) -> OptimizationReport {
-    let mut groups: BTreeMap<String, OptimizationGroup> = BTreeMap::new();
+    optimization_of(&snapshot.optimizations)
+}
+
+pub(crate) fn optimization_of(optimizations: &[OptimizationRow]) -> OptimizationReport {
+    // Per group: the group itself and its saved tokens.
+    let mut groups: BTreeMap<String, (OptimizationGroup, u64)> = BTreeMap::new();
     let mut total = 0u64;
-    for row in &snapshot.optimizations {
-        let saved = row
-            .alternative
-            .estimated_current_tokens
-            .saturating_sub(row.alternative.estimated_alternative_tokens);
-        total += u64::from(saved);
-        let entry = groups
+    for row in optimizations {
+        let saved = u64::from(
+            row.alternative
+                .estimated_current_tokens
+                .saturating_sub(row.alternative.estimated_alternative_tokens),
+        );
+        total += saved;
+        let (entry, group_saved) = groups
             .entry(row.alternative.tool_name.clone())
-            .or_insert(OptimizationGroup {
-                label: row.alternative.tool_name.clone(),
-                calls: 0,
-                tokens: 0,
-                alternative: row.alternative.tool_name.clone(),
-                estimated_reduction_percent: 0.0,
+            .or_insert_with(|| {
+                (
+                    OptimizationGroup {
+                        label: row.alternative.tool_name.clone(),
+                        calls: 0,
+                        tokens: 0,
+                        alternative: row.alternative.tool_name.clone(),
+                        estimated_reduction_percent: 0.0,
+                    },
+                    0,
+                )
             });
         entry.calls += 1;
         entry.tokens += u64::from(row.alternative.estimated_current_tokens);
-        entry.estimated_reduction_percent = row.alternative.estimated_reduction_percent;
+        *group_saved += saved;
     }
+    let items = groups
+        .into_values()
+        .map(|(mut group, saved)| {
+            group.estimated_reduction_percent = if group.tokens == 0 {
+                0.0
+            } else {
+                saved as f64 * 100.0 / group.tokens as f64
+            };
+            group
+        })
+        .collect();
     OptimizationReport {
-        items: groups.into_values().collect(),
+        items,
         total_estimated_avoidable_tokens: total,
     }
 }
@@ -152,7 +203,7 @@ pub fn format_economics(report: &EconomicsReport) -> String {
         String::new(),
         format!(
             "Session:\n{}",
-            report.session_id.as_deref().unwrap_or("(none)")
+            report.session_id.as_deref().unwrap_or("(all sessions)")
         ),
         String::new(),
         format!("Turns:\n{}", report.turns),
@@ -209,6 +260,9 @@ pub fn format_economics(report: &EconomicsReport) -> String {
             plain(budget.remaining),
             plain(budget.projected)
         ));
+    } else if let Some(reason) = &report.budget_omitted {
+        lines.push(String::new());
+        lines.push(format!("Budget:\n{reason}"));
     }
     lines.join("\n")
 }
@@ -268,7 +322,8 @@ fn filter_models<'a>(models: &'a [ModelRow], session: Option<&str>) -> Vec<&'a M
 }
 
 fn potential_cost(rows: &[OptimizationRow], tools: &[&ToolEconomicsRecord]) -> Option<f64> {
-    let _ = tools;
+    let by_id: HashMap<&str, &ToolEconomicsRecord> =
+        tools.iter().map(|tool| (tool.id.as_str(), *tool)).collect();
     let mut total = 0.0;
     let mut any = false;
     for row in rows {
@@ -276,7 +331,7 @@ fn potential_cost(rows: &[OptimizationRow], tools: &[&ToolEconomicsRecord]) -> O
             .alternative
             .estimated_current_tokens
             .saturating_sub(row.alternative.estimated_alternative_tokens);
-        if let Some(tool) = tools.iter().find(|tool| tool.id == row.tool_call_id) {
+        if let Some(tool) = by_id.get(row.tool_call_id.as_str()) {
             if let Some(cost) = tool.context_cost_usd {
                 if tool.output_tokens > 0 {
                     total += cost * (f64::from(saved) / f64::from(tool.output_tokens));
@@ -286,6 +341,17 @@ fn potential_cost(rows: &[OptimizationRow], tools: &[&ToolEconomicsRecord]) -> O
         }
     }
     any.then_some(total)
+}
+
+/// Model names in first-seen order, each listed once.
+fn distinct_models(models: &[&ModelRow]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    models
+        .iter()
+        .filter_map(|model| model.model.as_deref())
+        .filter(|name| seen.insert(*name))
+        .map(str::to_string)
+        .collect()
 }
 
 fn sum_optional<I>(values: I) -> Option<f64>
@@ -345,6 +411,7 @@ mod tests {
             largest_tool: None,
             currency: "USD".into(),
             budget: None,
+            budget_omitted: None,
         };
         apply_display_currency(&mut report, "EUR", Some(1.08));
         assert_eq!(report.currency, "EUR");
@@ -370,9 +437,199 @@ mod tests {
             largest_tool: None,
             currency: "EUR".into(),
             budget: None,
+            budget_omitted: None,
         };
         apply_display_currency(&mut report, "EUR", None);
         assert_eq!(report.currency, "USD");
         assert!((report.estimated_model_cost.unwrap() - 2.0).abs() < 0.001);
+    }
+
+    fn report_with_budget(currency: &str) -> EconomicsReport {
+        EconomicsReport {
+            session_id: None,
+            turns: 0,
+            models: Vec::new(),
+            input_tokens: 0,
+            output_tokens: 0,
+            cached_input_tokens: 0,
+            tool_output_tokens: BTreeMap::new(),
+            repeated_output_tokens: 0,
+            estimated_model_cost: None,
+            potential_optimization_cost: None,
+            largest_tool: None,
+            currency: currency.into(),
+            budget: Some(BudgetSnapshot {
+                spent: 10.8,
+                remaining: 54.0,
+                projected: 21.6,
+                currency: "USD".into(),
+                days_elapsed: 10,
+                days_remaining: 20,
+            }),
+            budget_omitted: None,
+        }
+    }
+
+    #[test]
+    fn eur_display_converts_every_budget_figure_and_labels_it() {
+        let mut report = report_with_budget("USD");
+        apply_display_currency(&mut report, "EUR", Some(1.08));
+        assert_eq!(report.currency, "EUR");
+        let budget = report.budget.expect("budget");
+        assert_eq!(budget.currency, "EUR");
+        assert!((budget.spent - 10.0).abs() < 1e-9, "{budget:?}");
+        assert!((budget.remaining - 50.0).abs() < 1e-9, "{budget:?}");
+        assert!((budget.projected - 20.0).abs() < 1e-9, "{budget:?}");
+        assert_eq!((budget.days_elapsed, budget.days_remaining), (10, 20));
+    }
+
+    #[test]
+    fn eur_display_without_a_rate_leaves_the_budget_in_usd() {
+        let mut report = report_with_budget("EUR");
+        apply_display_currency(&mut report, "EUR", None);
+        assert_eq!(report.currency, "USD");
+        let budget = report.budget.expect("budget");
+        assert_eq!(budget.currency, "USD");
+        assert!((budget.spent - 10.8).abs() < 1e-9, "{budget:?}");
+        assert!((budget.remaining - 54.0).abs() < 1e-9, "{budget:?}");
+    }
+}
+
+#[cfg(test)]
+mod aggregate_tests {
+    use super::*;
+    use crate::store::SessionRow;
+    use crate::types::{Confidence, ToolAlternative};
+
+    fn session(id: &str) -> SessionRow {
+        SessionRow {
+            id: id.into(),
+            project_id: "p".into(),
+            created_at: 1,
+            updated_at: 2,
+            repository_root: None,
+            active_branch: None,
+            cache_namespace: String::new(),
+        }
+    }
+
+    fn model(id: &str, session_id: &str, name: &str) -> ModelRow {
+        ModelRow {
+            id: id.into(),
+            session_id: session_id.into(),
+            turn_id: None,
+            provider: Some("anthropic".into()),
+            model: Some(name.into()),
+            input_tokens: Some(10),
+            output_tokens: Some(1),
+            cached_input_tokens: None,
+            estimated_cost: Some(0.01),
+            created_at: 1,
+        }
+    }
+
+    fn tool(id: &str, output_tokens: u32, cost: f64) -> ToolEconomicsRecord {
+        ToolEconomicsRecord {
+            id: id.into(),
+            session_id: "s1".into(),
+            turn_id: "t1".into(),
+            tool_name: "rg".into(),
+            input_hash: "h".into(),
+            input_bytes: None,
+            output_bytes: None,
+            output_tokens,
+            token_confidence: "estimated".into(),
+            duration_ms: 0,
+            execution_cost_usd: 0.0,
+            context_cost_usd: Some(cost),
+            cache_hit: false,
+            repeated: false,
+            alternative: None,
+        }
+    }
+
+    fn optimization(id: &str, call: &str, current: u32, alternative: u32) -> OptimizationRow {
+        let percent = if current == 0 {
+            0.0
+        } else {
+            f64::from(current - alternative) * 100.0 / f64::from(current)
+        };
+        OptimizationRow {
+            id: id.into(),
+            tool_call_id: call.into(),
+            accepted: false,
+            alternative: ToolAlternative {
+                tool_name: "ax_explore".into(),
+                estimated_current_tokens: current,
+                estimated_alternative_tokens: alternative,
+                estimated_reduction_percent: percent,
+                confidence: Confidence::High,
+                reason: "graph".into(),
+                rule: "rg-symbol".into(),
+            },
+        }
+    }
+
+    fn snapshot() -> PersistedSnapshot {
+        PersistedSnapshot {
+            sessions: vec![session("s1"), session("s2")],
+            turns: Vec::new(),
+            tools: Vec::new(),
+            models: vec![
+                model("m1", "s1", "claude"),
+                model("m2", "s2", "claude"),
+                model("m3", "s1", "gpt"),
+                model("m4", "s1", "claude"),
+            ],
+            optimizations: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn unfiltered_report_is_labelled_as_all_sessions() {
+        let report = economics_from(&snapshot(), None, "USD", None);
+        assert_eq!(report.session_id, None, "the totals cover every session");
+        assert_eq!(report.input_tokens, 40);
+        assert!(format_economics(&report).contains("Session:\n(all sessions)"));
+        let filtered = economics_from(&snapshot(), Some("s2"), "USD", None);
+        assert_eq!(filtered.session_id.as_deref(), Some("s2"));
+        assert_eq!(filtered.input_tokens, 10);
+    }
+
+    #[test]
+    fn report_lists_each_model_once_in_first_seen_order() {
+        let report = economics_from(&snapshot(), None, "USD", None);
+        assert_eq!(report.models, vec!["claude".to_string(), "gpt".to_string()]);
+        assert!(format_economics(&report).contains("Model:\nclaude, gpt\n"));
+    }
+
+    #[test]
+    fn group_reduction_is_saved_over_current_for_the_whole_group() {
+        let report = optimization_of(&[
+            optimization("o1", "c1", 7423, 668),
+            optimization("o2", "c2", 0, 0),
+        ]);
+        let group = &report.items[0];
+        assert_eq!((group.calls, group.tokens), (2, 7423));
+        let expected = f64::from(7423 - 668) * 100.0 / 7423.0;
+        assert!(
+            (group.estimated_reduction_percent - expected).abs() < 1e-9,
+            "{group:?}"
+        );
+        assert_eq!(report.total_estimated_avoidable_tokens, 7423 - 668);
+    }
+
+    #[test]
+    fn potential_cost_matches_each_optimization_to_its_tool_call() {
+        let tools = [tool("c1", 1000, 0.10), tool("c2", 500, 0.20)];
+        let refs: Vec<&ToolEconomicsRecord> = tools.iter().collect();
+        let rows = [
+            optimization("o1", "c1", 1000, 500),
+            optimization("o2", "c2", 500, 0),
+            optimization("o3", "missing", 900, 0),
+        ];
+        let cost = potential_cost(&rows, &refs).expect("a cost");
+        assert!((cost - (0.05 + 0.20)).abs() < 1e-9, "{cost}");
+        assert_eq!(potential_cost(&rows[2..], &refs), None);
     }
 }

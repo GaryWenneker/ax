@@ -1,8 +1,8 @@
 use crate::config::load;
-use crate::graph::{suggest_report_capped, GraphReport, InputEdge};
+use crate::graph::{suggest_report_capped, GraphReport, InputEdge, EDGE_LIMIT};
 use crate::learning::{validate_feedback, FeedbackInput};
 use crate::share::{packet_for, ModelManifest, SharePolicy};
-use crate::status::status_report;
+use crate::status::status_report_with;
 use crate::store::{
     feedback_count, insert_feedback, last_evaluation, list_models, observations, outcome_counts,
     project_edges, promote, promoted_checksum, promoted_models, rank_totals, record_evaluation,
@@ -12,7 +12,6 @@ use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
 use std::path::Path;
 
-const EDGE_LIMIT: usize = 200_000;
 const FEEDBACK_ROWS: usize = 2_000;
 
 async fn models_reply(pool: Option<&SqlitePool>) -> Result<Value, String> {
@@ -32,7 +31,7 @@ async fn models_reply(pool: Option<&SqlitePool>) -> Result<Value, String> {
     } else {
         vec![]
     };
-    let admitted = crate::bakeoff::challenger_admitted();
+    let admitted = crate::bakeoff::challenger_admitted_async().await;
     let mut value = json!({ "models": models });
     if admitted {
         value["bakeOffChallenger"] = json!(crate::lexical::CHALLENGER_ID);
@@ -52,6 +51,29 @@ async fn models_reply(pool: Option<&SqlitePool>) -> Result<Value, String> {
     Ok(value)
 }
 
+/// Runs CPU-bound work on the blocking pool so it never holds an async
+/// runtime thread.
+async fn off_runtime<T, F>(work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|error| format!("neural task failed: {error}"))
+}
+
+/// Runs a fixture harness on the blocking pool. The harness scores in its own
+/// temporary database and is CPU-bound, so it gets a thread of its own.
+async fn harness<F, Fut>(run: F) -> Result<Value, String>
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<Value, String>>,
+{
+    let runtime = tokio::runtime::Handle::current();
+    off_runtime(move || runtime.block_on(run())).await?
+}
+
 /// Strip optional `ax_neural_` / `ax-neural-` prefix and map hyphenated CLI names to underscores.
 pub(crate) fn normalize_dispatch_tool(tool: &str) -> String {
     let stripped = tool
@@ -68,9 +90,16 @@ pub async fn handle(
     pool: Option<&SqlitePool>,
 ) -> Result<Value, String> {
     let name = normalize_dispatch_tool(tool);
+    if let Some(pool) = pool {
+        adopted_project_id(pool, root).await;
+    }
     match name.as_str() {
         "status" => {
-            let mut value = status_report(root);
+            // The admission is computed on the blocking pool and passed in,
+            // so the report never scores the fixture on the runtime thread,
+            // even when that computation failed and was not cached.
+            let admitted = crate::bakeoff::challenger_admitted_async().await;
+            let mut value = status_report_with(root, admitted);
             if let Some(pool) = pool {
                 add_measured(&mut value, pool, &project_id(root)).await;
             }
@@ -120,26 +149,37 @@ pub async fn handle(
         "predict" => {
             let cfg = load(root);
             if !cfg.prediction_active() {
-                return Ok(json!({ "applied": false, "predictions": [] }));
+                let mut value = json!({ "applied": false, "predictions": [] });
+                if let Some(error) = &cfg.config_error {
+                    value["configError"] = json!(error);
+                }
+                return Ok(value);
             }
             let Some(pool) = pool else {
                 return Ok(json!({ "applied": false, "predictions": [], "reason": "no database" }));
             };
-            let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("");
+            let task = args
+                .get("task")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let rows = observations(pool, &project_id(root)).await?;
-            let edge_pairs: Vec<(String, String)> = match project_edges(pool, EDGE_LIMIT).await {
-                Ok((edges, _)) => edges
+            // Edges only add links between ids of matching feedback, so they
+            // are read only when some feedback matches the task.
+            let edge_pairs: Vec<(String, String)> = if crate::predict::any_matches(&rows, &task) {
+                let (edges, _) = project_edges(pool, EDGE_LIMIT).await?;
+                edges
                     .into_iter()
                     .map(|edge| (edge.source, edge.target))
-                    .collect(),
-                Err(_) => Vec::new(),
+                    .collect()
+            } else {
+                Vec::new()
             };
-            let predictions = crate::predict::predict_with_edges(
-                &rows,
-                task,
-                cfg.minimum_confidence,
-                &edge_pairs,
-            );
+            let minimum = cfg.minimum_confidence;
+            let predictions = off_runtime(move || {
+                crate::predict::predict_with_edges(&rows, &task, minimum, &edge_pairs)
+            })
+            .await?;
             Ok(json!({
                 "applied": true,
                 "label": "predicted",
@@ -166,7 +206,10 @@ pub async fn handle(
         "feedback" => {
             let cfg = load(root);
             if !cfg.feedback_active() {
-                return Err("feedback collection is disabled".into());
+                return Err(match &cfg.config_error {
+                    Some(error) => format!("feedback collection is disabled; ax.json: {error}"),
+                    None => "feedback collection is disabled".into(),
+                });
             }
             let Some(pool) = pool else {
                 return Err("no database".into());
@@ -205,7 +248,8 @@ pub async fn handle(
             }
             let passed = input_edges(args);
             if !passed.is_empty() {
-                let report = suggest_report_capped(&passed, &[], EDGE_LIMIT);
+                let report =
+                    off_runtime(move || suggest_report_capped(&passed, &[], EDGE_LIMIT)).await?;
                 return Ok(graph_reply(&report, report.edge_limit_reached, 0, 0));
             }
             let Some(pool) = pool else {
@@ -214,12 +258,14 @@ pub async fn handle(
             let project = project_id(root);
             let (edges, edge_limit_reached) = project_edges(pool, EDGE_LIMIT).await?;
             let rows = success_context_sets(pool, &project, FEEDBACK_ROWS).await?;
-            let report = suggest_report_capped(&edges, &rows, EDGE_LIMIT);
+            let feedback_rows = rows.len();
+            let report =
+                off_runtime(move || suggest_report_capped(&edges, &rows, EDGE_LIMIT)).await?;
             let stored = replace_suggestions(pool, &project, &report.suggestions).await?;
             Ok(graph_reply(
                 &report,
                 edge_limit_reached || report.edge_limit_reached,
-                rows.len(),
+                feedback_rows,
                 stored,
             ))
         }
@@ -240,19 +286,17 @@ pub async fn handle(
                 "promotedChecksum": checksum
             }))
         }
-        "benchmark" => crate::bakeoff::baseline_report(crate::CODING_FIXTURE).await,
-        "benchmark_abc" => crate::benchmark_abc::run_abc(crate::CODING_FIXTURE).await,
-        "embed_bakeoff" => crate::embed_bakeoff::run_embed_bakeoff(crate::CODING_FIXTURE),
-        "path_validate" => crate::path_validate::run_path_validate(crate::CODING_FIXTURE).await,
-        "agent_eval" => crate::agent_eval::run_agent_eval(crate::CODING_FIXTURE).await,
+        "benchmark" => harness(|| crate::bakeoff::baseline_report(crate::CODING_FIXTURE)).await,
+        "benchmark_abc" => harness(|| crate::benchmark_abc::run_abc(crate::CODING_FIXTURE)).await,
+        "embed_bakeoff" => {
+            off_runtime(|| crate::embed_bakeoff::run_embed_bakeoff(crate::CODING_FIXTURE)).await?
+        }
+        "path_validate" => {
+            harness(|| crate::path_validate::run_path_validate(crate::CODING_FIXTURE)).await
+        }
+        "agent_eval" => harness(|| crate::agent_eval::run_agent_eval(crate::CODING_FIXTURE)).await,
         "learn" | "train" => {
             let cfg = load(root);
-            if !cfg.feedback_active() && pool.is_none() {
-                return Ok(serde_json::json!({
-                    "applied": false,
-                    "reason": "feedback collection disabled and no database rows"
-                }));
-            }
             let seed = args.get("seed").and_then(|v| v.as_u64()).unwrap_or(1);
             let ratio = args
                 .get("validationRatio")
@@ -266,8 +310,15 @@ pub async fn handle(
                 .get("modelVersion")
                 .and_then(|v| v.as_str())
                 .unwrap_or("rank-prior-1");
+            // Passed rows are trained as given. Stored feedback is read only
+            // while feedback collection is on.
             let rows = if let Some(arr) = args.get("rows").and_then(|v| v.as_array()) {
                 arr.clone()
+            } else if !cfg.feedback_active() {
+                return Ok(json!({
+                    "applied": false,
+                    "reason": "feedback collection is disabled"
+                }));
             } else if let Some(pool) = pool {
                 let export = training_export(pool, &project_id(root)).await?;
                 export
@@ -278,6 +329,9 @@ pub async fn handle(
             } else {
                 Vec::new()
             };
+            if rows.is_empty() {
+                return Ok(json!({ "applied": false, "reason": "no feedback rows" }));
+            }
             let mut report = crate::learning::train_ranking_prior(
                 &rows,
                 ratio,
@@ -292,7 +346,7 @@ pub async fn handle(
         "share" => {
             let cfg = load(root);
             let (models, counts) = if let Some(pool) = pool {
-                let rows = list_models(pool).await.unwrap_or_default();
+                let rows = list_models(pool).await?;
                 let models = rows
                     .into_iter()
                     .map(|row| ModelManifest {
@@ -302,9 +356,7 @@ pub async fn handle(
                         platforms: vec![row.get::<String, _>("platforms")],
                     })
                     .collect::<Vec<_>>();
-                let counts = outcome_counts(pool, &project_id(root))
-                    .await
-                    .unwrap_or_default();
+                let counts = outcome_counts(pool, &project_id(root)).await?;
                 (models, counts)
             } else {
                 (Vec::new(), Vec::new())
@@ -321,18 +373,22 @@ pub async fn handle(
             let Some(pool) = pool else {
                 return Err("no database".into());
             };
+            // The gate reads the evidence registered with the model. A caller
+            // claim that it beats the baseline is refused rather than ignored,
+            // so nobody relies on a check that does not exist.
+            for claim in ["beatsBaseline", "regressionsClear"] {
+                if args.get(claim).and_then(|v| v.as_bool()) == Some(true) {
+                    return Err(format!(
+                        "{claim} is not accepted: promotion checks the bake-off evidence registered with the model (metrics.bakeoff.families)"
+                    ));
+                }
+            }
             promote(
                 pool,
                 &project_id(root),
                 &required_str(args, "modelId")?,
                 &required_str(args, "version")?,
                 args.get("explicit")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false),
-                args.get("beatsBaseline")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false),
-                args.get("regressionsClear")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false),
             )
@@ -483,8 +539,65 @@ fn graph_reply(
     value
 }
 
+/// The key every per-project neural table uses. The same folder reached
+/// through a symlink, a trailing slash, `.`/`..` parts, or another letter
+/// case on a case-insensitive volume gets the same id. A path that cannot be
+/// resolved keeps its own spelling without trailing separators.
 pub fn project_id(root: &Path) -> String {
-    root.to_string_lossy().to_string()
+    let path = std::fs::canonicalize(root)
+        .unwrap_or_else(|_| root.components().collect::<std::path::PathBuf>());
+    let text = path.to_string_lossy();
+    if cfg!(windows) {
+        let text = text.strip_prefix(r"\\?\").unwrap_or(&text);
+        text.replace('\\', "/")
+    } else {
+        text.into_owned()
+    }
+}
+
+/// [`project_id`] for a caller that reads or writes per-project rows. Rows
+/// stored under an older spelling of this root (see [`legacy_project_keys`])
+/// first move to the canonical key, so they are never missing from a read.
+/// Each database, root spelling and canonical key is adopted once per
+/// process; a failure leaves the rows where they are and the next call tries
+/// again.
+pub async fn adopted_project_id(pool: &SqlitePool, root: &Path) -> String {
+    /// Database file, canonical key and the legacy keys already adopted.
+    type Adopted = (std::path::PathBuf, String, Vec<String>);
+    static ADOPTED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<Adopted>>> =
+        std::sync::OnceLock::new();
+    let canonical = project_id(root);
+    let legacy = legacy_project_keys(root);
+    if legacy.iter().all(|key| *key == canonical) {
+        return canonical;
+    }
+    let database = pool.connect_options().get_filename().to_path_buf();
+    let key = (database, canonical.clone(), legacy);
+    let adopted = ADOPTED.get_or_init(Default::default);
+    if adopted.lock().is_ok_and(|done| done.contains(&key)) {
+        return canonical;
+    }
+    if crate::store::adopt_project_keys(pool, &canonical, &key.2)
+        .await
+        .is_ok()
+    {
+        if let Ok(mut done) = adopted.lock() {
+            done.insert(key);
+        }
+    }
+    canonical
+}
+
+/// Keys earlier versions stored for this root: the path exactly as given, and
+/// the same text without trailing separators.
+fn legacy_project_keys(root: &Path) -> Vec<String> {
+    let raw = root.to_string_lossy().into_owned();
+    let trimmed = raw.trim_end_matches(['/', '\\']).to_string();
+    let mut keys = vec![raw];
+    if !trimmed.is_empty() && trimmed != keys[0] {
+        keys.push(trimmed);
+    }
+    keys
 }
 
 fn required_str(args: &Value, key: &str) -> Result<String, String> {
@@ -563,6 +676,12 @@ mod tests {
     }
 
     fn bakeoff_report_without_timing(mut value: Value) -> Value {
+        // Process RSS changes between runs; keep only whether it was measured.
+        if let Some(memory) = value.get_mut("memory") {
+            if let Some(kind) = memory.get("kind").cloned() {
+                *memory = json!({ "kind": kind });
+            }
+        }
         if let Some(candidates) = value.get_mut("candidates").and_then(|v| v.as_array_mut()) {
             for candidate in candidates {
                 if let Some(latency) = candidate.get_mut("latency") {
@@ -700,6 +819,70 @@ mod tests {
         assert_eq!(stored as usize, found.len());
     }
 
+    /// Runs `tool` on a single-thread runtime and counts how often another
+    /// task got to run before the call returned. Zero means the call held the
+    /// only runtime thread for its whole computation.
+    async fn ticks_while(root: &Path, tool: &str, args: Value) -> usize {
+        ticks_while_on(root, tool, args, None).await
+    }
+
+    /// [`ticks_while`] with a database for commands that need one.
+    async fn ticks_while_on(
+        root: &Path,
+        tool: &str,
+        args: Value,
+        pool: Option<&SqlitePool>,
+    ) -> usize {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let ticks = Arc::new(AtomicUsize::new(0));
+        let counter = ticks.clone();
+        let ticker = tokio::spawn(async move {
+            loop {
+                counter.fetch_add(1, Ordering::SeqCst);
+                tokio::task::yield_now().await;
+            }
+        });
+        let result = handle(root, tool, &args, pool).await;
+        let seen = ticks.load(Ordering::SeqCst);
+        ticker.abort();
+        result.unwrap();
+        seen
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn heavy_neural_work_leaves_the_runtime_thread_free() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("ax.json"),
+            r#"{"neural":{"graph":{"enabled":true}}}"#,
+        )
+        .unwrap();
+        let edges: Vec<Value> = (0..2_000)
+            .map(|i| json!({ "source": format!("n{i}"), "target": format!("hub{}", i % 7) }))
+            .collect();
+        let graph = ticks_while(dir.path(), "graph", json!({ "edges": edges })).await;
+        assert!(graph > 0, "graph ran on the runtime thread");
+        let bakeoff = ticks_while(dir.path(), "embed_bakeoff", json!({})).await;
+        assert!(bakeoff > 0, "embed bake-off ran on the runtime thread");
+        let database = open(dir.path()).await;
+        let pool = database.pool();
+        let evidence: Value = serde_json::from_str(crate::learning::PASSING_EVIDENCE).unwrap();
+        let model = json!({ "modelId": "x", "version": "1", "checksum": "c", "metrics": evidence });
+        handle(dir.path(), "register", &model, Some(pool))
+            .await
+            .unwrap();
+        let args = json!({ "modelId": "x", "version": "1", "explicit": true });
+        crate::bakeoff::SCORED_ON_THIS_THREAD.with(|count| count.set(0));
+        let promote = ticks_while_on(dir.path(), "promote", args, Some(pool)).await;
+        assert!(promote > 0, "promote held the runtime thread");
+        let scored_here = crate::bakeoff::SCORED_ON_THIS_THREAD.with(|count| count.get());
+        assert_eq!(
+            scored_here, 0,
+            "promotion scored the baseline on the runtime thread"
+        );
+    }
+
     #[tokio::test]
     async fn passed_edges_are_a_preview_that_stores_nothing() {
         let dir = tempfile::tempdir().unwrap();
@@ -800,10 +983,10 @@ mod tests {
             dataset_version: "ds",
             checksum: "abc",
             platforms: "macos-arm64",
-            metrics_json: "{}",
+            metrics_json: crate::learning::PASSING_EVIDENCE,
         };
         register(pool, &model).await.unwrap();
-        crate::store::promote(pool, &project, "candidate", "1", true, true, true)
+        crate::store::promote(pool, &project, "candidate", "1", true)
             .await
             .unwrap();
 
@@ -975,7 +1158,17 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(status["metrics"]["feedbackCount"]["value"], 0);
-        assert_eq!(project_id(first.path()), first.path().to_string_lossy());
+        let canonical = std::fs::canonicalize(first.path()).unwrap();
+        let canonical = canonical.to_string_lossy();
+        // On Windows `canonicalize` returns a verbatim `\\?\C:\...` path; the
+        // project id drops that prefix and uses forward slashes.
+        #[cfg(windows)]
+        let canonical = canonical
+            .strip_prefix(r"\\?\")
+            .unwrap_or(&canonical)
+            .replace('\\', "/");
+        assert_eq!(project_id(first.path()), canonical);
+        assert_ne!(project_id(first.path()), project_id(second.path()));
     }
 
     #[tokio::test]
@@ -1028,6 +1221,34 @@ mod tests {
         )
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn share_and_predict_report_a_failed_database_read() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("ax.json"),
+            r#"{"neural":{"prediction":{"enabled":true},"distribution":{"enabled":true,"share_learning_data":true},"learning":{"feedback_collection":true}}}"#,
+        )
+        .unwrap();
+        let database = open(dir.path()).await;
+        let pool = database.pool();
+        sqlx::query("DROP TABLE neural_model")
+            .execute(pool)
+            .await
+            .unwrap();
+        let error = handle(dir.path(), "share", &json!({}), Some(pool))
+            .await
+            .unwrap_err();
+        assert!(error.contains("neural_model"), "{error}");
+
+        parser_feedback(dir.path(), pool).await;
+        sqlx::query("DROP TABLE edges").execute(pool).await.unwrap();
+        let task = json!({ "task": "fix the parser" });
+        let error = handle(dir.path(), "predict", &task, Some(pool))
+            .await
+            .unwrap_err();
+        assert!(error.contains("edges"), "{error}");
     }
 
     #[tokio::test]
@@ -1143,6 +1364,194 @@ mod tests {
         assert_eq!(pairs, vec![("memory:a", "rule:b")]);
     }
 
+    #[tokio::test]
+    async fn learn_uses_stored_feedback_only_while_collection_is_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let on = r#"{"neural":{"learning":{"feedback_collection":true}}}"#;
+        std::fs::write(dir.path().join("ax.json"), on).unwrap();
+        let database = open(dir.path()).await;
+        let pool = database.pool();
+        let empty = handle(dir.path(), "learn", &json!({}), Some(pool))
+            .await
+            .unwrap();
+        assert_eq!(
+            empty,
+            json!({ "applied": false, "reason": "no feedback rows" })
+        );
+        for execution in ["e1", "e2", "e3", "e4"] {
+            let context = json!(["memory:a"]);
+            outcome_feedback(dir.path(), pool, execution, "success", context).await;
+        }
+        let trained = handle(dir.path(), "learn", &json!({}), Some(pool))
+            .await
+            .unwrap();
+        assert_eq!(trained["applied"], true, "{trained}");
+        assert_eq!(trained["rowCount"], 4);
+
+        std::fs::write(dir.path().join("ax.json"), "{}").unwrap();
+        let off = handle(dir.path(), "learn", &json!({}), Some(pool))
+            .await
+            .unwrap();
+        assert_eq!(
+            off,
+            json!({ "applied": false, "reason": "feedback collection is disabled" })
+        );
+        let rows = json!({ "rows": [
+            { "outcome": "success", "contextIds": ["memory:a"] },
+            { "outcome": "success", "contextIds": ["memory:a"] },
+            { "outcome": "success", "contextIds": ["memory:a"] },
+            { "outcome": "success", "contextIds": ["memory:a"] }
+        ]});
+        let passed = handle(dir.path(), "learn", &rows, None).await.unwrap();
+        assert_eq!(passed["applied"], true, "{passed}");
+        assert_eq!(passed["rowCount"], 4);
+    }
+
+    #[test]
+    fn project_id_is_the_same_for_every_spelling_of_one_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("Project");
+        std::fs::create_dir(&root).unwrap();
+        let id = project_id(&root);
+        let with_slash = format!("{}/", root.display());
+        assert_eq!(project_id(Path::new(&with_slash)), id);
+        let dotted = root.join(".").join("..").join("Project");
+        assert_eq!(project_id(&dotted), id);
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("link");
+            std::os::unix::fs::symlink(&root, &link).unwrap();
+            assert_eq!(project_id(&link), id);
+        }
+        let other_case = dir.path().join("project");
+        if other_case.exists() {
+            assert_eq!(project_id(&other_case), id, "case-insensitive volume");
+        }
+        let missing = dir.path().join("missing");
+        let missing_slash = format!("{}/", missing.display());
+        assert_eq!(project_id(Path::new(&missing_slash)), project_id(&missing));
+    }
+
+    #[tokio::test]
+    async fn promote_reads_the_registered_evidence_and_refuses_caller_claims() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = open(dir.path()).await;
+        let pool = database.pool();
+        let register = |version: &str, metrics: Value| json!({ "modelId": "x", "version": version, "checksum": "c", "metrics": metrics });
+        handle(
+            dir.path(),
+            "register",
+            &register("1", json!({})),
+            Some(pool),
+        )
+        .await
+        .unwrap();
+        let evidence: Value = serde_json::from_str(crate::learning::PASSING_EVIDENCE).unwrap();
+        handle(dir.path(), "register", &register("2", evidence), Some(pool))
+            .await
+            .unwrap();
+        let promote = |version: &str, extra: Value| {
+            let mut args = json!({ "modelId": "x", "version": version, "explicit": true });
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            args
+        };
+        let bare = handle(dir.path(), "promote", &promote("1", json!({})), Some(pool)).await;
+        assert!(bare.unwrap_err().contains("no bake-off evidence"));
+        let claimed = json!({ "beatsBaseline": true, "regressionsClear": true });
+        let claim = handle(dir.path(), "promote", &promote("1", claimed), Some(pool)).await;
+        assert!(claim.unwrap_err().contains("beatsBaseline is not accepted"));
+        let unset = json!({ "beatsBaseline": false, "regressionsClear": false });
+        let done = handle(dir.path(), "promote", &promote("2", unset), Some(pool))
+            .await
+            .unwrap();
+        assert_eq!(done["promoted"], true);
+    }
+
+    #[tokio::test]
+    async fn rows_written_under_the_old_raw_project_key_are_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        #[cfg(unix)]
+        let root = {
+            let link = dir.path().join("link");
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            link
+        };
+        #[cfg(not(unix))]
+        let root = real.clone();
+        std::fs::write(
+            real.join("ax.json"),
+            r#"{"neural":{"prediction":{"enabled":true},"learning":{"feedback_collection":true}}}"#,
+        )
+        .unwrap();
+        let database = open(dir.path()).await;
+        let pool = database.pool();
+        parser_feedback(&root, pool).await;
+        crate::store::record_rank(pool, &project_id(&root), 1, 50, 200)
+            .await
+            .unwrap();
+        let evaluation = json!({ "precision": 0.5, "source": "fixture", "predictions": 2 });
+        crate::store::record_evaluation(pool, &project_id(&root), &evaluation)
+            .await
+            .unwrap();
+        // Rewrite every row to the spelling older versions stored: the path as
+        // given, with a trailing separator.
+        let legacy = format!("{}{}", root.to_string_lossy(), std::path::MAIN_SEPARATOR);
+        assert_ne!(legacy, project_id(&root));
+        for table in ["neural_feedback", "neural_audit", "neural_rank_total"] {
+            sqlx::query(&format!("UPDATE {table} SET project_id = ?"))
+                .bind(&legacy)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+        // A newer row under the canonical key must merge, not collide.
+        crate::store::record_rank(pool, &project_id(&root), 1, 10, 100)
+            .await
+            .unwrap();
+        let status = handle(Path::new(&legacy), "status", &json!({}), Some(pool))
+            .await
+            .unwrap();
+        assert_eq!(status["metrics"]["feedbackCount"]["value"], 2);
+        assert_eq!(status["metrics"]["tokenDelta"]["value"], -60);
+        assert_eq!(status["metrics"]["tokenDelta"]["preflights"], 2);
+        assert_eq!(status["metrics"]["predictionAccuracy"]["value"], 0.5);
+        let task = json!({ "task": "fix the parser" });
+        let predicted = handle(&real, "predict", &task, Some(pool)).await.unwrap();
+        assert!(predicted["predictions"].as_array().unwrap().len() >= 3);
+        let canonical = project_id(&root);
+        for table in ["neural_feedback", "neural_audit", "neural_rank_total"] {
+            let sql = format!("SELECT COUNT(*) FROM {table} WHERE project_id != '{canonical}'");
+            assert_eq!(count(pool, &sql).await, 0, "{table} keeps a legacy key");
+        }
+    }
+
+    #[tokio::test]
+    async fn adopted_project_id_moves_legacy_rows_without_a_dispatch_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let database = open(dir.path()).await;
+        let pool = database.pool();
+        let legacy = format!("{}{}", root.to_string_lossy(), std::path::MAIN_SEPARATOR);
+        crate::store::record_rank(pool, &legacy, 1, 50, 200)
+            .await
+            .unwrap();
+        let canonical = adopted_project_id(pool, Path::new(&legacy)).await;
+        assert_eq!(canonical, project_id(&root));
+        let totals = crate::store::rank_totals(pool, &canonical).await.unwrap();
+        assert_eq!(totals.map(|totals| totals.preflights), Some(1));
+        let sql =
+            format!("SELECT COUNT(*) FROM neural_rank_total WHERE project_id != '{canonical}'");
+        assert_eq!(count(pool, &sql).await, 0);
+        // The canonical spelling has nothing to adopt and leaves the rows alone.
+        assert_eq!(adopted_project_id(pool, &root).await, canonical);
+        let totals = crate::store::rank_totals(pool, &canonical).await.unwrap();
+        assert_eq!(totals.map(|totals| totals.preflights), Some(1));
+    }
+
     async fn parser_feedback(root: &Path, pool: &SqlitePool) {
         for execution in ["e1", "e2"] {
             handle(
@@ -1223,6 +1632,35 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(missing, "taskCategory is required");
+    }
+
+    #[tokio::test]
+    async fn refused_feedback_and_predict_name_the_config_error() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("ax.json"),
+            r#"{"neural":{"learning":{"feedback_colection":true}}}"#,
+        )
+        .unwrap();
+        let args = json!({ "executionId": "e1", "taskCategory": "parser", "outcome": "success" });
+        let error = handle(dir.path(), "feedback", &args, None)
+            .await
+            .unwrap_err();
+        assert!(
+            error.starts_with("feedback collection is disabled; ax.json: "),
+            "{error}"
+        );
+        assert!(error.contains("feedback_colection"), "{error}");
+        let off = handle(dir.path(), "predict", &json!({ "task": "x" }), None)
+            .await
+            .unwrap();
+        assert_eq!(off["applied"], false);
+        assert!(
+            off["configError"]
+                .as_str()
+                .is_some_and(|text| text.contains("feedback_colection")),
+            "{off}"
+        );
     }
 
     #[tokio::test]
@@ -1315,12 +1753,9 @@ mod tests {
             stored["challengerAdmitted"],
             crate::bakeoff::challenger_admitted()
         );
-        let expected_model = if crate::runtime_built() && crate::bakeoff::challenger_admitted() {
-            crate::runtime::semantic_search_model(true)
-        } else {
-            "hash-v1"
-        };
-        assert_eq!(stored["model"], expected_model);
+        // The only built-in runtime backend is a text hash, so search never
+        // reports it as the model that ranked the hits.
+        assert_eq!(stored["model"], "hash-v1");
         std::fs::write(
             dir.path().join("ax.json"),
             r#"{"neural":{"semantic":{"enabled":false}}}"#,
@@ -1342,17 +1777,21 @@ mod tests {
             "modelType": "reranker",
             "datasetVersion": "coding-v1",
             "platforms": "macos-arm64",
-            "metrics": { "precision": 0.8 }
+            "metrics": evidence_with_precision()
         })
+    }
+
+    fn evidence_with_precision() -> Value {
+        let mut metrics: Value = serde_json::from_str(crate::learning::PASSING_EVIDENCE).unwrap();
+        metrics["precision"] = json!(0.8);
+        metrics
     }
 
     fn promote_args(version: &str) -> Value {
         json!({
             "modelId": "candidate",
             "version": version,
-            "explicit": true,
-            "beatsBaseline": true,
-            "regressionsClear": true
+            "explicit": true
         })
     }
 
@@ -1408,7 +1847,7 @@ mod tests {
         assert_eq!(row.get::<String, _>("dataset_version"), "coding-v1");
         assert_eq!(row.get::<String, _>("platforms"), "macos-arm64");
         let metrics: Value = serde_json::from_str(&row.get::<String, _>("metrics_json")).unwrap();
-        assert_eq!(metrics, json!({ "precision": 0.8 }));
+        assert_eq!(metrics, evidence_with_precision());
         assert_eq!(row.get::<i64, _>("promoted"), 0);
 
         let missing = handle(

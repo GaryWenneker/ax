@@ -1,7 +1,7 @@
 //! Command Center list of versioned specs.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::Json,
     routing::{get, post},
     Router,
@@ -51,12 +51,19 @@ enum HierarchyWrite {
     Classify,
 }
 
+impl HierarchyWrite {
+    /// Tree, Provenance and Compare only read, so read-only viewers may use them.
+    fn writes(&self) -> bool {
+        !matches!(self, Self::Tree | Self::Provenance | Self::Compare)
+    }
+}
+
 async fn write_hierarchy(
     hub: WebHub,
     body: serde_json::Value,
     kind: HierarchyWrite,
 ) -> Json<serde_json::Value> {
-    if hub.readonly {
+    if hub.readonly && kind.writes() {
         return Json(serde_json::json!({ "ok": false, "error": "readonly" }));
     }
     let pool = hub.read().await.graph_pool.clone();
@@ -240,7 +247,51 @@ async fn signed_in_member(
         .ok_or_else(|| "no active owner".to_string())
 }
 
-async fn list(State(hub): State<WebHub>) -> Json<serde_json::Value> {
+/// How long a listing reuses the last plan import before it rescans the plan
+/// folders on disk. `?refresh=1` rescans at once.
+const PLAN_IMPORT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// When each project root last imported its plans successfully.
+fn last_plan_import(
+) -> &'static std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, std::time::Instant>> {
+    static LAST: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, std::time::Instant>>,
+    > = std::sync::OnceLock::new();
+    LAST.get_or_init(Default::default)
+}
+
+fn plan_import_due(root: &std::path::Path, refresh: bool) -> bool {
+    if refresh {
+        return true;
+    }
+    let last = last_plan_import()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    last.get(root)
+        .is_none_or(|at| at.elapsed() >= PLAN_IMPORT_INTERVAL)
+}
+
+fn mark_plan_import(root: &std::path::Path) {
+    last_plan_import()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .insert(root.to_path_buf(), std::time::Instant::now());
+}
+
+#[derive(Deserialize, Default)]
+struct ListQuery {
+    #[serde(default)]
+    refresh: Option<String>,
+}
+
+async fn list(
+    State(hub): State<WebHub>,
+    Query(query): Query<ListQuery>,
+) -> Json<serde_json::Value> {
+    let refresh = query
+        .refresh
+        .as_deref()
+        .is_some_and(|value| matches!(value, "1" | "true"));
     let ws = hub.read().await;
     let root = ws.project_root.clone();
     let pool = ws.graph_pool.clone();
@@ -255,8 +306,13 @@ async fn list(State(hub): State<WebHub>) -> Json<serde_json::Value> {
                 .unwrap_or_default();
         return Json(ax_usage::gated_list(&pool, &project).await);
     }
-    if let Err(error) = ax_usage::import_workspace_plans(&pool, &root, "local").await {
-        return Json(serde_json::json!({ "specs": [], "error": error }));
+    // A read-only hub opens ax.db read-only, so it lists what is stored and
+    // never imports. Otherwise plans are imported at most once per interval.
+    if !hub.readonly && plan_import_due(&root, refresh) {
+        if let Err(error) = ax_usage::import_workspace_plans(&pool, &root, "local").await {
+            return Json(serde_json::json!({ "specs": [], "error": error }));
+        }
+        mark_plan_import(&root);
     }
     match ax_usage::list_specs(&pool).await {
         Ok(items) => Json(serde_json::json!({

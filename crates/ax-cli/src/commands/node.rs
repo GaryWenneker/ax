@@ -1,11 +1,11 @@
 use ax_types::SearchOptions;
 use serde_json::json;
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 use crate::ui::SpinnerGuard;
 
 pub async fn run(name: Option<String>) -> Result<(), String> {
-    let root = resolve_path(None);
+    let root = resolve_project_root(None);
     let label = name.clone().unwrap_or_else(|| "symbol".into());
     let trace = ax_usage::ToolTrace::begin(Some(&root), "ax_node", &json!({ "symbol": label }));
     let _spinner = SpinnerGuard::new(format!("Looking up \"{}\"...", label), false);

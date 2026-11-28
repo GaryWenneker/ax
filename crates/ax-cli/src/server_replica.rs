@@ -16,20 +16,34 @@ use std::{
     time::Duration,
 };
 
+/// One replica synchronization at a time in this process. The periodic poll
+/// and a UDP change hint both call [`sync_with_apply`]; without this they post
+/// two exchanges back to back and stage the same revision at the same time.
+static SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// A `.staging-*` folder older than this belongs to a run that crashed.
+const STALE_STAGING: Duration = Duration::from_secs(3600);
+
 const MAX_WIRE_BYTES: usize = server_snapshot::MAX_SNAPSHOT_BYTES + 1024 * 1024;
 
 fn safe_dir(path: &Path) -> Result<(), String> {
-    if path.exists() {
-        let meta = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
-        if !meta.is_dir() || meta.file_type().is_symlink() {
+    match fs::create_dir(path) {
+        Ok(()) => return Ok(()),
+        // Another sync may have created it a moment ago; check what is there.
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => {
             return Err(format!(
-                "replica storage must be a real directory: {}",
+                "cannot create replica directory {}: {error}",
                 path.display()
-            ));
+            ))
         }
-    } else {
-        fs::create_dir(path)
-            .map_err(|e| format!("cannot create replica directory {}: {e}", path.display()))?;
+    }
+    let meta = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    if !meta.is_dir() || meta.file_type().is_symlink() {
+        return Err(format!(
+            "replica storage must be a real directory: {}",
+            path.display()
+        ));
     }
     Ok(())
 }
@@ -69,8 +83,7 @@ fn save_selected(root: &Path, revision: &str, staged: bool) -> Result<(), String
     serde_json::to_writer_pretty(&mut file, &selected).map_err(|e| e.to_string())?;
     file.write_all(b"\n").map_err(|e| e.to_string())?;
     file.as_file().sync_all().map_err(|e| e.to_string())?;
-    file.persist(root.join("current.json"))
-        .map_err(|e| e.error.to_string())?;
+    ax_utils::fs_safe::persist_temp(file, &root.join("current.json")).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -96,6 +109,39 @@ fn verify_staged_revision(directory: &Path, snapshot: &Snapshot) -> Result<(), S
     Ok(())
 }
 
+/// Remove revision folders other than the selected one, and staging folders
+/// left by runs that crashed. Only real directories whose names Ax created are
+/// touched. A failure is logged and leaves the folder for the next sync.
+fn prune_revisions(root: &Path, selected: &str) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Ok(meta) = fs::symlink_metadata(entry.path()) else {
+            continue;
+        };
+        if !meta.is_dir() || meta.file_type().is_symlink() || name == selected {
+            continue;
+        }
+        let revision = name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit());
+        let stale_staging = name.starts_with(".staging-")
+            && meta
+                .modified()
+                .ok()
+                .and_then(|modified| modified.elapsed().ok())
+                .is_some_and(|age| age > STALE_STAGING);
+        if revision || stale_staging {
+            if let Err(error) = fs::remove_dir_all(entry.path()) {
+                tracing::warn!(path = %entry.path().display(), "cannot remove old replica revision: {}", error);
+            }
+        }
+    }
+}
+
 fn stage(
     config: &ServerConfig,
     project: &ProjectRegistration,
@@ -110,6 +156,7 @@ fn stage(
             if value.get("revision").and_then(|x| x.as_str()) == Some(snapshot.revision.as_str()) {
                 verify_staged_revision(&revision_path, snapshot)?;
                 save_selected(&root, &snapshot.revision, false)?;
+                prune_revisions(&root, &snapshot.revision);
                 return Ok("unchanged".into());
             }
         }
@@ -129,10 +176,17 @@ fn stage(
                 .map_err(|e| e.to_string())?;
             file.sync_all().map_err(|e| e.to_string())?;
         }
-        fs::rename(temp.path(), &revision_path).map_err(|e| e.to_string())?;
+        // A concurrent stage of the same revision may have won the rename; its
+        // folder is accepted when it verifies below.
+        if let Err(error) = fs::rename(temp.path(), &revision_path) {
+            if verify_staged_revision(&revision_path, snapshot).is_err() {
+                return Err(error.to_string());
+            }
+        }
     }
     verify_staged_revision(&revision_path, snapshot)?;
     save_selected(&root, &snapshot.revision, true)?;
+    prune_revisions(&root, &snapshot.revision);
     Ok("mirrored_not_applied".into())
 }
 
@@ -191,7 +245,7 @@ pub(crate) fn record_attempt(
     serde_json::to_writer_pretty(&mut temp, &state).map_err(|e| e.to_string())?;
     temp.write_all(b"\n").map_err(|e| e.to_string())?;
     temp.as_file().sync_all().map_err(|e| e.to_string())?;
-    temp.persist(&file_path).map_err(|e| e.error.to_string())?;
+    ax_utils::fs_safe::persist_temp(temp, &file_path).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -343,6 +397,7 @@ pub async fn sync(config_path: &Path) -> Result<(), String> {
 
 /// Projection is opt-in; transport always stages a verified separate mirror.
 pub async fn sync_with_apply(config_path: &Path, apply_memories: bool) -> Result<(), String> {
+    let _one_at_a_time = SYNC_LOCK.lock().await;
     let config = server_cli::load(config_path)?;
     if config.role != NodeRole::Replica {
         return Err("only replicas can run ax server sync".into());
@@ -464,6 +519,145 @@ mod tests {
         };
         assert!(stage(&config, &project, &snapshot).is_err());
         assert!(!project_path.join(".ax/server").exists());
+    }
+
+    fn staging_fixture() -> (tempfile::TempDir, ServerConfig, ProjectRegistration) {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join(".ax")).unwrap();
+        let project = ProjectRegistration {
+            id: "project".into(),
+            path: tmp.path().into(),
+            token_env: "AX_TEST_UNUSED_STAGE_TOKEN".into(),
+        };
+        let config = ServerConfig {
+            schema_version: 1,
+            cluster_id: "cluster".into(),
+            node_id: "replica".into(),
+            role: NodeRole::Replica,
+            primary_url: Some("https://example.test".into()),
+            projects: vec![project.clone()],
+        };
+        (tmp, config, project)
+    }
+
+    fn snapshot_with_rules(rules: &str) -> Snapshot {
+        let mut item = Snapshot {
+            schema_version: 2,
+            cluster_id: "cluster".into(),
+            primary_node_id: "primary".into(),
+            project_id: "project".into(),
+            revision: String::new(),
+            files: BTreeMap::from([
+                ("state/memories.json".to_string(), "[]".to_string()),
+                ("state/rules.json".to_string(), rules.to_string()),
+                ("state/skills.json".to_string(), "[]".to_string()),
+            ]),
+        };
+        item.revision = server_snapshot::revision(&item).unwrap();
+        server_snapshot::validate(&item, "cluster", "project").unwrap();
+        item
+    }
+
+    #[test]
+    fn concurrent_stages_of_one_revision_all_succeed() {
+        for _ in 0..20 {
+            let (tmp, config, project) = staging_fixture();
+            let snapshot = snapshot_with_rules("[]");
+            let barrier = std::sync::Barrier::new(8);
+            let results: Vec<Result<String, String>> = std::thread::scope(|scope| {
+                let handles: Vec<_> = (0..8)
+                    .map(|_| {
+                        scope.spawn(|| {
+                            barrier.wait();
+                            stage(&config, &project, &snapshot)
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(|h| h.join().unwrap()).collect()
+            });
+            for result in results {
+                assert!(result.is_ok(), "{result:?}");
+            }
+            drop(tmp);
+        }
+    }
+
+    #[tokio::test]
+    async fn replica_synchronizations_in_one_process_run_one_at_a_time() {
+        let guard = SYNC_LOCK.lock().await;
+        let missing = std::path::PathBuf::from("/nonexistent/ax-server.json");
+        let mut waiting = tokio::spawn(async move { sync_with_apply(&missing, false).await });
+        let early = tokio::time::timeout(Duration::from_millis(200), &mut waiting).await;
+        assert!(
+            early.is_err(),
+            "a second synchronization must wait for the first"
+        );
+        drop(guard);
+        let finished = tokio::time::timeout(Duration::from_secs(5), waiting)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(finished.is_err());
+    }
+
+    /// A handle on a directory that can change its timestamps. Windows opens a
+    /// directory only with backup semantics and needs write-attributes access;
+    /// a plain `File::open` there fails with "Access is denied".
+    fn open_directory_for_times(path: &Path) -> fs::File {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+            const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+            fs::OpenOptions::new()
+                .access_mode(FILE_WRITE_ATTRIBUTES)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                .open(path)
+                .unwrap()
+        }
+        #[cfg(not(windows))]
+        {
+            fs::File::open(path).unwrap()
+        }
+    }
+
+    #[test]
+    fn staging_a_new_revision_removes_older_revisions_and_staging_leftovers() {
+        let (tmp, config, project) = staging_fixture();
+        let first = snapshot_with_rules("[]");
+        let second = snapshot_with_rules("[ ]");
+        let third = snapshot_with_rules("[  ]");
+        assert_ne!(first.revision, second.revision);
+        let root = tmp
+            .path()
+            .join(".ax/server/replicas/cluster/project/primary");
+        stage(&config, &project, &first).unwrap();
+        stage(&config, &project, &second).unwrap();
+        // A staging folder left by a crashed run long ago.
+        let leftover = root.join(".staging-crashed");
+        fs::create_dir(&leftover).unwrap();
+        let old = std::time::SystemTime::now() - Duration::from_secs(2 * 3600);
+        open_directory_for_times(&leftover)
+            .set_modified(old)
+            .unwrap();
+        // A staging folder another process is writing right now stays.
+        let active = root.join(".staging-active");
+        fs::create_dir(&active).unwrap();
+        stage(&config, &project, &third).unwrap();
+        let mut names: Vec<String> = fs::read_dir(&root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        let mut expected = vec![
+            ".staging-active".to_string(),
+            third.revision.clone(),
+            "current.json".to_string(),
+        ];
+        expected.sort();
+        assert_eq!(names, expected);
+        // The selected revision still verifies.
+        assert_eq!(stage(&config, &project, &third).unwrap(), "unchanged");
     }
 }
 

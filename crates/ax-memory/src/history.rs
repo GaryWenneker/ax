@@ -258,10 +258,18 @@ fn turn_entry(row: &MemoryRow) -> HistoryEntry {
     }
 }
 
-/// Commits touching `pathspecs`, newest first. Empty outside a git repository.
+/// Which commits `git_commits` lists.
+enum CommitFilter<'a> {
+    /// Commits that touched one of these paths.
+    Paths(&'a [String]),
+    /// Commits whose message has every one of these words, in any letter case.
+    Words(&'a BTreeSet<String>),
+}
+
+/// Commits matching `filter`, newest first. Empty outside a git repository.
 async fn git_commits(
     root: &Path,
-    pathspecs: &[String],
+    filter: CommitFilter<'_>,
     since_ms: Option<i64>,
     limit: usize,
 ) -> Vec<HistoryEntry> {
@@ -276,7 +284,18 @@ async fn git_commits(
     if let Some(since) = since_ms {
         cmd.arg(format!("--since=@{}", since.div_euclid(1000)));
     }
-    cmd.arg("--").args(pathspecs);
+    match filter {
+        CommitFilter::Paths(pathspecs) => {
+            cmd.arg("--").args(pathspecs);
+        }
+        CommitFilter::Words(words) => {
+            if words.is_empty() {
+                return Vec::new();
+            }
+            cmd.args(["--fixed-strings", "--regexp-ignore-case", "--all-match"]);
+            cmd.args(words.iter().map(|word| format!("--grep={word}")));
+        }
+    }
     let Ok(output) = cmd.output().await else {
         return Vec::new();
     };
@@ -335,7 +354,9 @@ pub async fn history(
             crate::store::matching_turn_rows(pool, query.since_ms, &[], &files, Some(text), limit)
                 .await?;
         let mut found: Vec<HistoryEntry> = turns.iter().map(turn_entry).collect();
-        found.extend(git_commits(root, &pathspecs, query.since_ms, limit).await);
+        found.extend(
+            git_commits(root, CommitFilter::Paths(&pathspecs), query.since_ms, limit).await,
+        );
         found
     } else {
         let words = significant_words(text);
@@ -349,11 +370,13 @@ pub async fn history(
             recalled.len(),
         )
         .await?;
-        turns
+        let mut found: Vec<HistoryEntry> = turns
             .iter()
             .filter(|row| shared_words(&words, row) >= 1)
             .map(turn_entry)
-            .collect()
+            .collect();
+        found.extend(git_commits(root, CommitFilter::Words(&words), query.since_ms, limit).await);
+        found
     };
     if query.archive {
         if let Ok(archived) = crate::brain::archive_history(pool, text, query.since_ms).await {

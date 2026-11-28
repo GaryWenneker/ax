@@ -68,13 +68,41 @@ pub async fn run(action: Option<String>) -> Result<(), String> {
     Ok(())
 }
 
-pub fn ask_installer_consent() -> bool {
+/// Ask whether to share usage data. `None` when no one could be asked
+/// (stdin or stderr is not a terminal, or the prompt failed): the caller then
+/// stores no choice, so the question comes back on the next interactive run.
+pub fn ask_installer_consent() -> Option<bool> {
     use dialoguer::Confirm;
-    Confirm::new()
-        .with_prompt(
-            "Share anonymous ax usage data? (no code, paths, or names — see docs/TELEMETRY.md)",
-        )
-        .default(true)
-        .interact()
-        .unwrap_or(true)
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+        return None;
+    }
+    consent_answer(
+        Confirm::new()
+            .with_prompt(
+                "Share anonymous ax usage data? (no code, paths, or names — see docs/TELEMETRY.md)",
+            )
+            .default(true)
+            .interact(),
+    )
+}
+
+fn consent_answer(answer: dialoguer::Result<bool>) -> Option<bool> {
+    answer.ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_prompt_that_cannot_be_shown_records_no_choice() {
+        let failed = dialoguer::Result::<bool>::Err(dialoguer::Error::IO(std::io::Error::new(
+            std::io::ErrorKind::NotConnected,
+            "not a terminal",
+        )));
+        assert_eq!(consent_answer(failed), None);
+        assert_eq!(consent_answer(Ok(true)), Some(true));
+        assert_eq!(consent_answer(Ok(false)), Some(false));
+    }
 }

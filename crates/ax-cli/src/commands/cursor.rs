@@ -4,7 +4,7 @@ use ax_agent::{
     active_profile_name, cursor_process_running, enrich_snapshot_metadata, jwt_issued_at,
     jwt_subject, list_cursor_auth_profiles, load_cursor_auth_profile,
     read_legacy_auth_json_snapshot, read_live_snapshot, save_cursor_auth_profile,
-    use_cursor_auth_profile,
+    use_cursor_auth_profile, CursorAuthSnapshot,
 };
 
 pub fn run_status(json: bool) -> Result<(), String> {
@@ -152,7 +152,7 @@ pub fn run_show(name: String, json: bool) -> Result<(), String> {
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&snapshot).unwrap_or_default()
+            serde_json::to_string_pretty(&show_json(&name, &snapshot)).unwrap_or_default()
         );
     } else {
         println!("Profile '{name}'");
@@ -165,4 +165,71 @@ pub fn run_show(name: String, json: bool) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// The JSON view of a saved profile for `ax cursor auth show --json`.
+///
+/// Built field by field so the saved access and refresh tokens never reach stdout.
+fn show_json(name: &str, snapshot: &CursorAuthSnapshot) -> serde_json::Value {
+    serde_json::json!({
+        "name": name,
+        "email": snapshot.email,
+        "membership": snapshot.membership,
+        "subscriptionStatus": snapshot.subscription_status,
+        "signUpType": snapshot.sign_up_type,
+        "label": snapshot.label,
+        "savedAt": snapshot.saved_at,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ax_agent::cursor_auth::AuthJsonFile;
+    use std::collections::HashMap;
+
+    #[test]
+    fn show_json_never_contains_tokens() {
+        let mut keys = HashMap::new();
+        keys.insert(
+            "cursorAuth/accessToken".to_string(),
+            "VSCDB-ACCESS-SECRET".to_string(),
+        );
+        keys.insert(
+            "cursorAuth/refreshToken".to_string(),
+            "VSCDB-REFRESH-SECRET".to_string(),
+        );
+        let snapshot = CursorAuthSnapshot {
+            version: 1,
+            saved_at: 42,
+            label: Some("work".into()),
+            email: "dev@example.com".into(),
+            membership: "pro".into(),
+            subscription_status: "active".into(),
+            sign_up_type: "Auth_0".into(),
+            scoped_profile: "default".into(),
+            auth_json: AuthJsonFile {
+                access_token: "JSON-ACCESS-SECRET".into(),
+                refresh_token: "JSON-REFRESH-SECRET".into(),
+            },
+            vscdb_keys: keys,
+        };
+        let value = show_json("work", &snapshot);
+        let text = value.to_string();
+        for secret in [
+            "JSON-ACCESS-SECRET",
+            "JSON-REFRESH-SECRET",
+            "VSCDB-ACCESS-SECRET",
+            "VSCDB-REFRESH-SECRET",
+        ] {
+            assert!(!text.contains(secret), "token leaked: {text}");
+        }
+        assert_eq!(value["name"], "work");
+        assert_eq!(value["email"], "dev@example.com");
+        assert_eq!(value["membership"], "pro");
+        assert_eq!(value["subscriptionStatus"], "active");
+        assert_eq!(value["signUpType"], "Auth_0");
+        assert_eq!(value["label"], "work");
+        assert_eq!(value["savedAt"], 42);
+    }
 }
