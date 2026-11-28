@@ -1,28 +1,68 @@
+import { ApiError, ensureOk, errorMessage } from './lib/apiError.ts';
+import { readSseJson } from './lib/sse.ts';
 import type { MemoryDiff } from './memoryDetail';
+import type { DomainOverlay } from './lib/domainLayout.ts';
 import type { Stats, NodeRow, NodeDetail, FileRow, FileRoot, SearchResult, UnresolvedSummary, UnresolvedRow } from './types';
+
+export { ApiError, ensureOk };
 
 const BASE = '/api';
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
+/**
+ * Fetch a JSON endpoint. A string body is sent as JSON unless the caller
+ * names another Content-Type; caller headers extend the default. A non-2xx
+ * reply, or a reply that is not JSON (an HTML error or login page from a
+ * proxy), throws an {@link ApiError} with the status and the server's
+ * message (and field errors). An empty 2xx body, such as a 204, resolves to
+ * `undefined`.
+ */
+export async function apiFetch<T>(url: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  if (typeof init.body === 'string' && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
   }
-  return res.json() as Promise<T>;
+  const res = await fetch(url, { ...init, headers });
+  const text = await res.text();
+  let data: unknown;
+  let parsed = true;
+  if (text.trim() !== '') {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      parsed = false;
+    }
+  }
+  if (!res.ok) {
+    throw new ApiError(errorMessage(data) ?? `HTTP ${res.status}`, res.status, parsed ? (data ?? null) : null);
+  }
+  if (!parsed) throw new ApiError(`The server reply was not JSON (HTTP ${res.status})`, res.status);
+  return data as T;
+}
+
+/**
+ * Call a JSON endpoint under `/api`, with the error rules of {@link apiFetch}.
+ */
+export function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  init?: { signal?: AbortSignal; credentials?: RequestCredentials },
+): Promise<T> {
+  return apiFetch<T>(`${BASE}${path}`, {
+    method,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(init?.signal ? { signal: init.signal } : {}),
+    ...(init?.credentials ? { credentials: init.credentials } : {}),
+  });
+}
+
+function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return request<T>('GET', path, undefined, { signal });
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({})) as T & { error?: string };
-  if (!res.ok) {
-    throw new Error(data.error ?? `HTTP ${res.status}`);
-  }
-  return data;
+  // An empty success body has always meant "no fields" for POST callers.
+  return (await request<T>('POST', path, body)) ?? ({} as T);
 }
 
 export function fetchStats(): Promise<Stats> {
@@ -154,23 +194,11 @@ export async function updateMemory(id: string, input: {
   tags?: string[];
   files?: string[];
 }): Promise<void> {
-  const res = await fetch(`${BASE}/memory/${encodeURIComponent(id)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
-  }
+  await request<unknown>('PUT', `/memory/${encodeURIComponent(id)}`, input);
 }
 
 export async function deleteMemory(id: string): Promise<void> {
-  const res = await fetch(`${BASE}/memory/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
-  }
+  await request<unknown>('DELETE', `/memory/${encodeURIComponent(id)}`);
 }
 
 export function captureGitMemories(limit = 100): Promise<GitCaptureResult> {
@@ -212,6 +240,8 @@ export interface OkfConfigInfo {
   enabled: boolean;
   outDir: string;
   outDirAbs: string;
+  /** Set when `outDir` is refused (absolute, `..` or a link out of the project). */
+  outDirError?: string;
   kinds: string[];
   autoExportOnSync: boolean;
   wikiEnabled: boolean;
@@ -270,17 +300,7 @@ export function publishOkf(opts?: {
 }
 
 export function setMemoryEnabled(id: string, enabled: boolean): Promise<{ ok: boolean }> {
-  return fetch(`${BASE}/memory/${encodeURIComponent(id)}/enabled`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled }),
-  }).then(async (res) => {
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      throw new Error(body.error ?? `HTTP ${res.status}`);
-    }
-    return res.json() as Promise<{ ok: boolean }>;
-  });
+  return request<{ ok: boolean }>('PATCH', `/memory/${encodeURIComponent(id)}/enabled`, { enabled });
 }
 
 export function fetchSource(params: {
@@ -408,13 +428,16 @@ export interface GraphPayload {
   systems?: { origin: string; node_count: number }[];
 }
 
-export function fetchGraph(params: { limit?: number; recompute?: boolean; origin?: string } = {}): Promise<GraphPayload> {
+export function fetchGraph(
+  params: { limit?: number; recompute?: boolean; origin?: string } = {},
+  signal?: AbortSignal,
+): Promise<GraphPayload> {
   const sp = new URLSearchParams();
   if (params.limit != null) sp.set('limit', String(params.limit));
   if (params.recompute) sp.set('recompute', 'true');
   if (params.origin) sp.set('origin', params.origin);
   const qs = sp.toString();
-  return get<GraphPayload>(`/graph${qs ? `?${qs}` : ''}`);
+  return get<GraphPayload>(`/graph${qs ? `?${qs}` : ''}`, signal);
 }
 
 /** Nodes indexed after `sinceMs`, plus the edges that touch them. */
@@ -469,12 +492,16 @@ export interface GraphStreamHandlers {
   onNodes?: (nodes: GraphNode[]) => void;
   onEdges?: (edges: GraphEdge[]) => void;
   onDone?: () => void;
+  /** Called once when both the stream and the one-shot fallback fail, or the stream breaks off. */
+  onError?: (error: Error) => void;
 }
 
 /**
  * Stream the graph as Server-Sent Events so it can be rendered gradually.
  * Falls back to the one-shot `fetchGraph` if streaming is unavailable.
- * Returns an abort function that cancels the in-flight stream.
+ * Every run ends in exactly one `onDone` or `onError`, unless it is aborted;
+ * after abort no handler is called.
+ * Returns an abort function that cancels the in-flight stream and fallback.
  */
 export function streamGraph(
   params: { limit?: number; recompute?: boolean; origin?: string },
@@ -487,6 +514,14 @@ export function streamGraph(
   if (params.origin) sp.set('origin', params.origin);
   const qs = sp.toString();
 
+  let finished = false;
+  const live = () => !ctrl.signal.aborted && !finished;
+  const done = () => {
+    if (!live()) return;
+    finished = true;
+    handlers.onDone?.();
+  };
+
   (async () => {
     try {
       const res = await fetch(`${BASE}/graph/stream${qs ? `?${qs}` : ''}`, {
@@ -495,7 +530,8 @@ export function streamGraph(
       });
       if (!res.ok || !res.body) {
         // Fallback: one-shot fetch, delivered through the same handlers.
-        const p = await fetchGraph(params);
+        const p = await fetchGraph(params, ctrl.signal);
+        if (!live()) return;
         handlers.onMeta?.({
           total_nodes: p.total_nodes,
           truncated: p.truncated,
@@ -505,36 +541,26 @@ export function streamGraph(
         });
         handlers.onNodes?.(p.nodes);
         handlers.onEdges?.(p.edges);
-        handlers.onDone?.();
+        done();
         return;
       }
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let buf = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        const parts = buf.split('\n\n');
-        buf = parts.pop() ?? '';
-        for (const part of parts) {
-          for (const line of part.split('\n')) {
-            if (!line.startsWith('data: ')) continue;
-            let ev: { type: string; nodes?: GraphNode[]; edges?: GraphEdge[] } & GraphStreamMeta;
-            try {
-              ev = JSON.parse(line.slice(6));
-            } catch {
-              continue;
-            }
-            if (ev.type === 'meta') handlers.onMeta?.(ev);
-            else if (ev.type === 'nodes' && ev.nodes) handlers.onNodes?.(ev.nodes);
-            else if (ev.type === 'edges' && ev.edges) handlers.onEdges?.(ev.edges);
-            else if (ev.type === 'done') handlers.onDone?.();
-          }
-        }
-      }
+      type StreamEvent = { type: string; nodes?: GraphNode[]; edges?: GraphEdge[] } & GraphStreamMeta;
+      await readSseJson<StreamEvent>(
+        res.body,
+        (ev) => {
+          if (ev.type === 'meta') handlers.onMeta?.(ev);
+          else if (ev.type === 'nodes' && ev.nodes) handlers.onNodes?.(ev.nodes);
+          else if (ev.type === 'edges' && ev.edges) handlers.onEdges?.(ev.edges);
+          else if (ev.type === 'done') done();
+        },
+        live,
+      );
+      // A stream that closes without a `done` event has still delivered all it will.
+      done();
     } catch (e) {
-      if ((e as Error).name !== 'AbortError') throw e;
+      if (!live()) return;
+      finished = true;
+      handlers.onError?.(e instanceof Error ? e : new Error(String(e)));
     }
   })();
 
@@ -589,29 +615,7 @@ export function fetchInsights(resolution = 1.0): Promise<GraphInsights> {
   return get<GraphInsights>(`/insights?${sp}`);
 }
 
-export type DomainKind = 'domain' | 'flow' | 'step';
-export type DomainEdgeKind = 'contains_flow' | 'flow_step' | 'cross_domain';
-
-export interface DomainOverlayNode {
-  id: string;
-  kind: DomainKind;
-  name: string;
-  summary?: string;
-  codeNodeIds?: string[];
-}
-
-export interface DomainOverlayEdge {
-  source: string;
-  target: string;
-  kind: DomainEdgeKind;
-  order?: number;
-}
-
-export interface DomainOverlay {
-  version: number;
-  nodes: DomainOverlayNode[];
-  edges: DomainOverlayEdge[];
-}
+export type { DomainKind, DomainEdgeKind, DomainOverlayNode, DomainOverlayEdge, DomainOverlay } from './lib/domainLayout.ts';
 
 export function fetchDomainGraph(): Promise<DomainOverlay> {
   return get<DomainOverlay>('/domain-graph');
@@ -949,4 +953,49 @@ export function fetchCodingAgents(days = 30): Promise<CodingAgentRow[]> {
 
 export function syncPricing(force = true): Promise<PricingSyncReport> {
   return post<PricingSyncReport>('/usage/pricing/sync', { force });
+}
+
+/** The project's Smart Output context budget; `tokens` is null when no override is set. */
+export interface ContextBudget {
+  tokens?: number | null;
+  min?: number;
+  max?: number;
+}
+
+export function fetchContextBudget(): Promise<ContextBudget> {
+  return get<ContextBudget>('/context-budget/');
+}
+
+/** Store the context budget override in the project's ax.json. */
+export function saveContextBudget(tokens: number): Promise<ContextBudget> {
+  return request<ContextBudget>('PUT', '/context-budget/', { tokens });
+}
+
+/** Language servers the LSP enrich run can use, as `/api/lsp/status` reports them. */
+export function fetchLspStatus(): Promise<{ servers?: unknown[] }> {
+  return get<{ servers?: unknown[] }>('/lsp/status');
+}
+
+/** Progress of the LSP enrich run; parse it with `parseProgress`. */
+export function fetchLspProgress(): Promise<unknown> {
+  return get<unknown>('/lsp/progress');
+}
+
+export interface LspActionReply {
+  ok?: boolean;
+  error?: string;
+  output?: string;
+  report?: Record<string, unknown>;
+}
+
+export function installLspServer(id: string): Promise<LspActionReply> {
+  return request<LspActionReply>('POST', '/lsp/install', { id });
+}
+
+export function cancelLspEnrich(): Promise<LspActionReply> {
+  return request<LspActionReply>('POST', '/lsp/cancel');
+}
+
+export function runLspEnrich(limit: number): Promise<LspActionReply> {
+  return request<LspActionReply>('POST', '/lsp/enrich', { limit });
 }

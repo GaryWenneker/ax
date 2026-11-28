@@ -17,3 +17,23 @@ export function specForSession<T extends { sessions: string }>(
   if (!needle) return undefined;
   return specs.find((spec) => spec.sessions.split(/\s+/).includes(needle));
 }
+
+/** One button in the session hop: where it goes, in route terms. */
+export type SessionHopTarget =
+  | { label: 'Logging'; route: { page: 'logging'; session: string } }
+  | { label: 'Memory'; route: { page: 'memory'; session: string } }
+  | { label: 'Plan'; route: { page: 'specs'; specId: string } };
+
+/** Logging, Memory, and the session's plan; the current page's own button is left out. */
+export function sessionHopTargets(
+  session: string,
+  here: 'memory' | 'logging',
+  plan: { id: string } | null,
+): SessionHopTarget[] {
+  if (!isChatSession(session)) return [];
+  const targets: SessionHopTarget[] = [];
+  if (here !== 'logging') targets.push({ label: 'Logging', route: { page: 'logging', session } });
+  if (here !== 'memory') targets.push({ label: 'Memory', route: { page: 'memory', session } });
+  if (plan) targets.push({ label: 'Plan', route: { page: 'specs', specId: plan.id } });
+  return targets;
+}

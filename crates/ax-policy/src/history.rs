@@ -3,7 +3,6 @@
 //! Seed reads the latest action. `removed` means the file stays absent.
 //! A later ax version still creates an id this record has never seen.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -29,40 +28,67 @@ pub fn global_history_path(global_policy_root: &Path) -> PathBuf {
     global_policy_root.join("history.jsonl")
 }
 
+/// Reads every event. A line that does not parse (a torn write, a hand
+/// edit) is skipped with a warning, so one damaged line cannot stop seeding.
 pub fn read_events(path: &Path) -> std::io::Result<Vec<PolicyEvent>> {
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let text = std::fs::read_to_string(path)?;
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err),
+    };
+    let text = String::from_utf8_lossy(&bytes);
     let mut events = Vec::new();
     for (line_no, line) in text.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
-        let event: PolicyEvent = serde_json::from_str(line).map_err(|err| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("{}:{}: {err}", path.display(), line_no + 1),
-            )
-        })?;
-        events.push(event);
+        match serde_json::from_str::<PolicyEvent>(line) {
+            Ok(event) => events.push(event),
+            Err(err) => eprintln!(
+                "[ax policy] skipping damaged line {}:{}: {err}",
+                path.display(),
+                line_no + 1
+            ),
+        }
     }
     Ok(events)
 }
 
+/// Appends one event as a single write under an exclusive lock on the file,
+/// so parallel writers (CLI and MCP server) never interleave a line. A last
+/// line left without its newline by a killed process gets one first, so the
+/// new event starts on its own line.
 fn append_event(path: &Path, event: &PolicyEvent) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
+    use fs2::FileExt;
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)?;
     }
+    let mut line = serde_json::to_string(event)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string()))?;
+    line.push('\n');
     let mut file = std::fs::OpenOptions::new()
         .create(true)
+        .read(true)
         .append(true)
         .open(path)?;
-    let line = serde_json::to_string(event)
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string()))?;
-    writeln!(file, "{line}")?;
-    Ok(())
+    file.lock_exclusive()?;
+    let result = (|| {
+        let len = file.seek(SeekFrom::End(0))?;
+        if len > 0 {
+            let mut last = [0u8; 1];
+            file.seek(SeekFrom::Start(len - 1))?;
+            file.read_exact(&mut last)?;
+            if last[0] != b'\n' {
+                line.insert(0, '\n');
+            }
+        }
+        file.write_all(line.as_bytes())
+    })();
+    let _ = FileExt::unlock(&file);
+    result
 }
 
 pub fn latest<'a>(events: &'a [PolicyEvent], kind: &str, item_id: &str) -> Option<&'a str> {
@@ -314,5 +340,55 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(nodes_after, 1);
+    }
+
+    #[test]
+    fn a_damaged_line_is_skipped_instead_of_failing_every_seed() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        push(&path, "rule", "kept", "removed").unwrap();
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str("{\"kind\":\"rule\",\"item\n");
+        std::fs::write(&path, &text).unwrap();
+        push(&path, "skill", "later", "present").unwrap();
+        let events = read_events(&path).unwrap();
+        assert_eq!(latest(&events, "rule", "kept"), Some("removed"));
+        assert_eq!(latest(&events, "skill", "later"), Some("present"));
+        assert!(leave_absent(&path, "rule", "kept", false).unwrap());
+    }
+
+    #[test]
+    fn an_append_after_a_torn_last_line_starts_on_a_new_line() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        push(&path, "rule", "first", "present").unwrap();
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str("{\"kind\":\"rule\",\"item_id\":\"torn");
+        std::fs::write(&path, &text).unwrap();
+        push(&path, "rule", "second", "present").unwrap();
+        let events = read_events(&path).unwrap();
+        assert_eq!(latest(&events, "rule", "first"), Some("present"));
+        assert_eq!(latest(&events, "rule", "second"), Some("present"));
+    }
+
+    #[test]
+    fn parallel_appends_keep_every_line_whole() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        std::thread::scope(|scope| {
+            for t in 0..8 {
+                let path = &path;
+                scope.spawn(move || {
+                    for i in 0..50 {
+                        push(path, "rule", &format!("t{t}-{i}"), "present").unwrap();
+                    }
+                });
+            }
+        });
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(text.lines().count(), 400);
+        for line in text.lines() {
+            serde_json::from_str::<PolicyEvent>(line).unwrap();
+        }
     }
 }

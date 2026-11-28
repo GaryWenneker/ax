@@ -149,10 +149,11 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
             continue;
         }
         let open_paren = match_start + open_paren.unwrap();
-        let close_paren = match_delim(&safe, open_paren, '(', ')');
-        if close_paren <= open_paren {
+        // An unbalanced call (a half-typed file, or a `(` inside a regex
+        // literal) has no closing paren: keep the route node, skip the args.
+        let Some(close_paren) = match_delim(&safe, open_paren, '(', ')') else {
             continue;
-        }
+        };
         let args = safe[open_paren + 1..close_paren].to_string();
 
         if let Some(arrow_at) = args.find("=>") {
@@ -255,8 +256,7 @@ fn extract_arrow_body(after_arrow: &str) -> &str {
     let brace_at = after_arrow.find('{');
     if let Some(b) = brace_at {
         if after_arrow[..b].trim().is_empty() {
-            let end = match_delim(after_arrow, b, '{', '}');
-            if end > b {
+            if let Some(end) = match_delim(after_arrow, b, '{', '}') {
                 return &after_arrow[b + 1..end];
             }
         }
@@ -264,7 +264,9 @@ fn extract_arrow_body(after_arrow: &str) -> &str {
     after_arrow
 }
 
-fn match_delim(s: &str, open: usize, open_ch: char, close_ch: char) -> usize {
+/// Index of the delimiter that closes the one at `open`, skipping quoted
+/// strings. `None` when the text ends before the depth returns to zero.
+fn match_delim(s: &str, open: usize, open_ch: char, close_ch: char) -> Option<usize> {
     let bytes = s.as_bytes();
     let open_b = open_ch as u8;
     let close_b = close_ch as u8;
@@ -288,15 +290,47 @@ fn match_delim(s: &str, open: usize, open_ch: char, close_ch: char) -> usize {
         } else if b == close_b {
             depth -= 1;
             if depth == 0 {
-                return i;
+                return Some(i);
             }
         }
         i += 1;
     }
-    usize::MAX
+    None
 }
 
 fn call_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"\b([A-Za-z_$][\w$]*)\s*\(").expect("call regex"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unbalanced_route_call_does_not_panic() {
+        // A half-typed file: the route call never closes.
+        let src = "app.get('/a', (req, res) => {\n  res.send(1\n";
+        let out = extract_file("src/app.js", src);
+        assert_eq!(out.nodes.len(), 1, "the route node is still recorded");
+    }
+
+    #[test]
+    fn regex_literal_paren_does_not_panic() {
+        let src = "app.get('/a', (req, res) => res.send(/\\(/.source))\n";
+        let out = extract_file("src/app.js", src);
+        assert_eq!(out.nodes.len(), 1);
+    }
+
+    #[test]
+    fn unbalanced_arrow_body_does_not_panic() {
+        assert_eq!(extract_arrow_body(" { a(); "), " { a(); ");
+    }
+
+    #[test]
+    fn balanced_route_call_still_yields_handler_calls() {
+        let src = "app.get('/a', (req, res) => { handle(req); })\n";
+        let out = extract_file("src/app.js", src);
+        assert!(out.references.iter().any(|r| r.reference_name == "handle"));
+    }
 }

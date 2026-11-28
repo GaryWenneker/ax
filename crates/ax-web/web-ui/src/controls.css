@@ -90,7 +90,7 @@ html[data-ax-layout] .sv-hero-stat { display: grid; grid-template-rows: 2.8em au
 html[data-ax-layout] .sv-hero-stat-label { align-self: end; align-items: center; font-size: 12px; line-height: 1.4; letter-spacing: .02em; }
 html[data-ax-layout] .sv-hero-stat-value { align-self: baseline; font-size: 22px; line-height: 1.25; white-space: nowrap; }
 html[data-ax-layout] .sv-hero-stat-sub { font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
-:is(.sv-hero-stat-value, .sv-session-stat-value, .sv-insight-value, .ship-metric-value, .mcp-q-metric-value, .mem-stat-value, .settings-status-pill-value, .page-info) { font-variant-numeric: tabular-nums; }
+:is(.sv-hero-stat-value, .sv-session-stat-value, .sv-insight-value, .mcp-q-metric-value, .mem-stat-value, .settings-status-pill-value, .page-info) { font-variant-numeric: tabular-nums; }
 .review-actions { margin-block-start: 12px; }
 @media (max-width: 639px) { .review-comparison { grid-template-columns: 1fr; } }
 
@@ -166,7 +166,7 @@ html[data-ax-layout] .portal-data-cell:focus-within { overflow:visible; }
 
 /* Respond to panel width, so an open detail pane gets the same compact fallback. */
 html[data-ax-layout="portal"] .page-item-list { container-type:inline-size;container-name:ax-list; }
-html[data-ax-layout="portal"] body :is(.page-item:not(.mcp-trace-row):not(.mcp-blade-step),.list-item,.edge-item) { padding-block:4px;min-height:34px; }
+html[data-ax-layout="portal"] body :is(.page-item:not(.mcp-trace-row):not(.mcp-blade-step), .edge-item) { padding-block:4px;min-height:34px; }
 html[data-ax-layout="portal"] body :is(.portal-data-row,.portal-data-header) { padding:4px 12px;min-height:34px;width:100%;min-width:0;box-sizing:border-box; }
 html[data-ax-layout="portal"] .page-table :is(th,td) { padding-block:5px; }
 /* Name takes the spare width. Level and scope match the 100px chips.

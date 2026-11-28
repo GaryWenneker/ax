@@ -1,6 +1,9 @@
 ---
 title: Command Center
 description: Local web UI for policy, memory, the code graph, MCP logging, and savings.
+banner:
+  content: |
+    This page describes part of the full ax, which is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 ax ships a **Command Center** (`ax web`) — a local web UI for policy (rules, skills, memory), the code graph, MCP logging and savings, with CLI quality gates and optional draft PRs (Azure DevOps or GitHub). The API answers the browser that loaded it. Another website cannot read it.
@@ -174,6 +177,32 @@ When the workspace is not itself a git repository, the gate works on the reposit
 git_roots = ["services/api", "services/web"]
 ```
 
+### SonarQube scanner token
+
+Sonar setup saves the generated scanner token in `.ax/sonar.token`. On Unix the file is readable and writable by its owner only (mode 0600). The scanner reads the token from that file and gets it passed explicitly; ax does not export it into its own process environment. ax passes it to the scanner in the `SONAR_TOKEN` environment variable of the scanner process only, never on its command line. A native `sonar-scanner` on PATH must be SonarScanner CLI 5.0 or newer, because older versions do not read `SONAR_TOKEN`: ax checks `sonar-scanner --version` and refuses an older one with a message, instead of scanning without the token. Without a native scanner, ax runs the scanner container, which is always new enough. On Windows ax also stores the token in the user environment variable named by `token_env`. That name must be a plain variable name (letters, digits and `_`, not starting with a digit); any other name is skipped with a warning.
+
+### SonarQube network exposure
+
+When `host` is a loopback address (`localhost`, `127.0.0.1` or `[::1]`), ax publishes the SonarQube container on `127.0.0.1` only, so other machines on the network cannot reach it or try the default `admin` login. A container scanner joins the `ax-sonar-net` network and talks to the SonarQube container directly: the container named by `podman_container` (`sonarqube` when it is unset), found on whichever installed runtime holds it when `container_runtime` is `auto`. To reach SonarQube from other machines, set `host` to a name or address other than loopback (for example `http://sonarqube.vsc:9000`); the port is then published on all interfaces. A container created before this change keeps its old port binding until you reset the stack.
+
+### SonarQube containers ax manages
+
+ax labels the SonarQube and PostgreSQL containers it creates with `ax.managed=true`. Install replaces an existing SonarQube container that still uses the embedded H2 database only when it carries that label. A container with the configured name that ax did not create (for example your own `sonarqube` container) is never removed: Install stops with a message instead. To let ax set up its own stack, back up what you need, remove the container yourself (`podman rm -f sonarqube`, or `docker rm -f sonarqube`) and run Install again, or set `podman_container` in `.ax/ship.toml` to another name.
+
+Every `podman`/`docker` command ax runs has a time limit (30 seconds for status queries, 2 minutes for start, stop and remove, 5 minutes for creating a container, 30 minutes for an image pull), and its output is captured in the install log rather than printed to the terminal.
+
+### SonarQube project keys
+
+ax records the SonarQube projects it creates in `.ax/sonar-projects.json`. When `project_key` changes, a project that ax created under the old workspace key (`<folder>-<repo>`) is renamed to the new key (`<project_key>-<repo>`) before a scan. Projects that ax did not create are never renamed, and ax never deletes a project: when both the old and the new key exist, the old project stays and the log says so, so you can delete it in SonarQube yourself.
+
+Older ax versions created `<folder>-<repo>` projects without keeping that record, so those projects are not renamed by default and a scan creates a new project under the current key next to them. To move their analysis history to the current key, set `migrate_legacy_keys = true` under `[sonar]` in `.ax/ship.toml`. The next scan or project setup then records every existing `<folder>-<repo>` project of this workspace's repos in `.ax/sonar-projects.json` as created by ax and renames it the same way (the log lists each adopted project). It still deletes nothing, and you can set the option back to `false` afterwards.
+
+A scan of one repo in a workspace with several git repos writes to `<project_key>-<repo>`, and its quality gate is read from that same key.
+
+### Reading the SonarQube quality gate
+
+After a scan, ax waits until SonarQube has processed the uploaded report (it polls `/api/ce/component` every 3 seconds, for at most 10 minutes) and then reads the gate of that analysis, not the previous one. The gate passes on `OK` or `WARN`. It fails on `ERROR`, on `NONE` (no gate was computed), when the analysis task failed (`ANALYSIS_FAILED`), and when the report is still queued at the deadline (`PENDING`). If the token may not read the Compute Engine status, ax polls the gate for about 30 seconds while it reports `NONE`.
+
 ### Auto-commit / rollback (`[auto_commit]`)
 
 Off by default — a deliberate automation feature, not a silent behavior change. With `enabled = true`, every `ax ship --evaluate` commits the current uncommitted diff as a checkpoint before running index/diff/TIA/tests/Sonar/policy, across every git root under this workspace. If the gate passes, the checkpoint stays. If it fails, or a step stops the run with an error after the checkpoint, and `revert_on_fail = true`, ax undoes *that exact commit* with `git reset --mixed HEAD~1` — never `--hard` — so the edits remain on disk, uncommitted, for the agent or user to fix and re-run. Rollback refuses if `HEAD` has moved since the checkpoint (e.g. something else was committed in between), rather than resetting the wrong commit.
@@ -315,7 +344,7 @@ When you run `ax ship --evaluate` (or when git hooks trigger evaluation), ax run
 2. **diff** — changed files and dirty symbols vs `target_branch`
 3. **tia** — test-impact analysis via `Covers` edges in the graph
 4. **tests** — runs impacted tests (when any are found)
-5. **sonar** — optional SonarQube scan + quality gate (when enabled). If SonarQube is offline but a Podman container already exists, the gate **always tries to start it** (up to **3** `podman start` retries, then waits for the API) before failing.
+5. **sonar** — optional SonarQube scan + quality gate (when enabled). If SonarQube is offline but a Podman container already exists, the gate **always tries to start it** (up to **3** `podman start` retries, then waits until `/api/system/status` reports `UP`; `STARTING` and `DB_MIGRATION_NEEDED` count as not ready, and each status request is cut off after 5 seconds) before failing.
 6. **policy** — business-rule and breaking-change warnings
 
 CLI quality-gate output remains available through `ax ship`; the shared event API is retained.

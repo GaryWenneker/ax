@@ -364,7 +364,7 @@ pub fn prune_chunks(root: &Path) -> Result<()> {
 }
 async fn columns(pool: &SqlitePool, table: &str) -> Result<Vec<String>> {
     ensure!(TABLES.contains(&table), "unregistered table");
-    // Safe: `table` is checked against the `TABLES` allowlist above.
+    // Safe: `table` is checked against `TABLES` above.
     Ok(sqlx::query(sqlx::AssertSqlSafe(format!(
         "PRAGMA table_info(\"{table}\")"
     )))
@@ -414,7 +414,7 @@ pub async fn export(root: &Path, origin: &str, _pool: &SqlitePool) -> Result<Dat
             .collect::<Vec<_>>()
             .join(",");
         // Safe: `table` comes from `TABLES`, columns from the local schema, and the
-        // filter is a static fragment.
+        // filter is a literal from `native_filter`.
         sqlx::query(sqlx::AssertSqlSafe(format!("INSERT OR REPLACE INTO main.\"{table}\" ({cols}) SELECT {cols} FROM native.\"{table}\" WHERE {} ORDER BY rowid", native_filter(table)))).execute(&mut *tx).await?;
     }
     sqlx::query("UPDATE schema_versions SET applied_at=0")
@@ -595,19 +595,13 @@ fn mapped(table: &str, column: &str, prefix: &str, community_offset: i64) -> Str
         name
     }
 }
-pub async fn project(
-    root: &Path,
-    local_node: &str,
-    pool: &SqlitePool,
-    items: &[Dataset],
-) -> Result<()> {
-    validate(items)?;
-    let foreign: Vec<_> = items
-        .iter()
-        .filter(|d| d.origin != local_node)
-        .cloned()
-        .collect();
-    let prepared = prepare(root, pool, &foreign).await?;
+fn manifest_digest(item: &Dataset) -> Result<String> {
+    Ok(blake3::hash(&serde_json::to_vec(item)?)
+        .to_hex()
+        .to_string())
+}
+
+async fn ensure_ledger(pool: &SqlitePool) -> Result<()> {
     sqlx::query("CREATE TABLE IF NOT EXISTS ax_replica_datasets (origin TEXT PRIMARY KEY,graph_digest TEXT NOT NULL,manifest_digest TEXT NOT NULL,nodes INTEGER NOT NULL,edges INTEGER NOT NULL,files INTEGER NOT NULL,source_bytes INTEGER NOT NULL,log_files INTEGER NOT NULL,log_bytes INTEGER NOT NULL,agent_sessions INTEGER NOT NULL,updated_at INTEGER NOT NULL)").execute(pool).await?;
     let ledger_columns: Vec<String> = sqlx::query("PRAGMA table_info(ax_replica_datasets)")
         .fetch_all(pool)
@@ -622,14 +616,24 @@ pub async fn project(
         .execute(pool)
         .await?;
     }
-    let mut names = BTreeMap::new();
-    for table in TABLES {
-        names.insert(*table, columns(pool, table).await?);
-    }
-    for prepared in prepared {
-        let item = &prepared.item;
-        let serialized = serde_json::to_vec(item)?;
-        let digest = blake3::hash(&serialized).to_hex().to_string();
+    Ok(())
+}
+
+/// Projects every foreign dataset whose manifest changed since the last
+/// projection. Unchanged datasets are skipped before any chunk is assembled
+/// or validated; `verify` remains the explicit full check.
+pub async fn project(
+    root: &Path,
+    local_node: &str,
+    pool: &SqlitePool,
+    items: &[Dataset],
+) -> Result<()> {
+    validate(items)?;
+    ensure_ledger(pool).await?;
+    let mut changed = Vec::new();
+    let mut ledger = Vec::new();
+    for item in items.iter().filter(|d| d.origin != local_node) {
+        let digest = manifest_digest(item)?;
         let old: Option<(String, String)> = sqlx::query_as(
             "SELECT graph_digest,manifest_digest FROM ax_replica_datasets WHERE origin=?",
         )
@@ -639,86 +643,20 @@ pub async fn project(
         if old.as_ref().is_some_and(|(_, d)| d == &digest) {
             continue;
         }
-        let prefix = format!("{PREFIX}{}/", item.origin);
-        let mut conn = pool.acquire().await?;
-        sqlx::query("ATTACH DATABASE ? AS replicated")
-            .bind(prepared.graph.to_string_lossy().as_ref())
-            .execute(&mut *conn)
-            .await?;
-        let mut tx = conn.begin().await?;
-        if old
-            .as_ref()
-            .is_none_or(|(graph, _)| graph != &item.graph.digest)
-        {
-            for table in [
-                "edges",
-                "unresolved_refs",
-                "node_communities",
-                "nodes",
-                "files",
-                "file_contents",
-                "project_metadata",
-                "agent_optimizations",
-                "agent_tool_calls",
-                "agent_model_calls",
-                "agent_turns",
-                "agent_sessions",
-                "agent_context_cache",
-            ] {
-                // Safe: literal table list and a static identity column.
-                sqlx::query(sqlx::AssertSqlSafe(format!(
-                    "DELETE FROM \"{table}\" WHERE \"{}\" GLOB ?",
-                    identity(table)
-                )))
-                .bind(format!("{prefix}*"))
-                .execute(&mut *tx)
-                .await?;
-            }
-            let community_offset: i64 =
-                sqlx::query_scalar("SELECT COALESCE(MAX(community_id),0)+1 FROM node_communities")
-                    .fetch_one(&mut *tx)
-                    .await?;
-            for table in TABLES {
-                let cols: Vec<_> = names[table]
-                    .iter()
-                    .filter(|c| {
-                        !(matches!(*table, "edges" | "unresolved_refs") && c.as_str() == "id")
-                    })
-                    .collect();
-                let into = cols
-                    .iter()
-                    .map(|c| format!("\"{c}\""))
-                    .collect::<Vec<_>>()
-                    .join(",");
-                let select = cols
-                    .iter()
-                    .map(|c| mapped(table, c, &prefix, community_offset))
-                    .collect::<Vec<_>>()
-                    .join(",");
-                // Safe: `table` comes from `TABLES`, columns from the local schema,
-                // and `prefix` embeds an origin that `validate` limits to [A-Za-z0-9_-].
-                sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO main.\"{table}\" ({into}) SELECT {select} FROM replicated.\"{table}\" ORDER BY rowid"))).execute(&mut *tx).await?;
-            }
-            // Candidate IDs are JSON arrays and need the same namespace as resolved edges.
-            let rows: Vec<(i64, Option<String>)> = sqlx::query_as(
-                "SELECT id,candidates FROM unresolved_refs WHERE from_node_id GLOB ?",
-            )
-            .bind(format!("{prefix}*"))
-            .fetch_all(&mut *tx)
-            .await?;
-            for (id, candidates) in rows {
-                if let Some(raw) = candidates {
-                    if let Ok(ids) = serde_json::from_str::<Vec<String>>(&raw) {
-                        let ids: Vec<_> = ids.iter().map(|id| format!("{prefix}{id}")).collect();
-                        sqlx::query("UPDATE unresolved_refs SET candidates=? WHERE id=?")
-                            .bind(serde_json::to_string(&ids)?)
-                            .bind(id)
-                            .execute(&mut *tx)
-                            .await?;
-                    }
-                }
-            }
-        }
+        changed.push(item.clone());
+        ledger.push((old, digest));
+    }
+    if changed.is_empty() {
+        return Ok(());
+    }
+    let prepared = prepare(root, pool, &changed).await?;
+    let mut names = BTreeMap::new();
+    for table in TABLES {
+        names.insert(*table, columns(pool, table).await?);
+    }
+    for (prepared, (old, digest)) in prepared.into_iter().zip(ledger) {
+        let item = &prepared.item;
+        // Logs are validated and staged; moving them needs no open transaction.
         let root_owned = root.to_path_buf();
         let origin = item.origin.clone();
         let stage = prepared.logs.path().to_path_buf();
@@ -735,12 +673,22 @@ pub async fn project(
             Ok(())
         })
         .await??;
-        sqlx::query("INSERT INTO ax_replica_datasets(origin,graph_digest,manifest_digest,nodes,edges,files,source_bytes,log_files,log_bytes,agent_sessions,updated_at,history_rows) VALUES (?,?,?,?,?,?,?,?,?,?,strftime('%s','now'),?) ON CONFLICT(origin) DO UPDATE SET graph_digest=excluded.graph_digest,manifest_digest=excluded.manifest_digest,nodes=excluded.nodes,edges=excluded.edges,files=excluded.files,source_bytes=excluded.source_bytes,log_files=excluded.log_files,log_bytes=excluded.log_bytes,agent_sessions=excluded.agent_sessions,updated_at=excluded.updated_at,history_rows=excluded.history_rows")
-            .bind(&item.origin).bind(&item.graph.digest).bind(&digest).bind(item.nodes as i64).bind(item.edges as i64).bind(item.files as i64).bind(item.source_bytes as i64).bind(item.logs.len() as i64).bind(item.logs.values().map(|f| f.bytes as i64).sum::<i64>()).bind(item.agent_sessions as i64).bind(item.history_rows as i64).execute(&mut *tx).await?;
-        tx.commit().await?;
-        sqlx::query("DETACH DATABASE replicated")
+        let mut conn = pool.acquire().await?;
+        sqlx::query("ATTACH DATABASE ? AS replicated")
+            .bind(prepared.graph.to_string_lossy().as_ref())
             .execute(&mut *conn)
             .await?;
+        let outcome = write_attached(&mut conn, item, old.as_ref(), &digest, &names).await;
+        // Always detach, also after an error: the connection goes back to the
+        // shared pool and must not keep the replica attached.
+        let detached = sqlx::query("DETACH DATABASE replicated")
+            .execute(&mut *conn)
+            .await;
+        if detached.is_err() {
+            conn.close_on_drop();
+        }
+        outcome?;
+        detached?;
         drop(conn);
         pin(root, item)?;
         // The live projection and pinned chunks retain the data. Old assembled databases are disposable.
@@ -756,6 +704,109 @@ pub async fn project(
             }
         }
     }
+    Ok(())
+}
+
+/// Copies one attached replica into the namespaced tables in one transaction.
+/// On error the transaction is rolled back before returning, so the caller can
+/// detach the replica.
+async fn write_attached(
+    conn: &mut sqlx::SqliteConnection,
+    item: &Dataset,
+    old: Option<&(String, String)>,
+    digest: &str,
+    names: &BTreeMap<&str, Vec<String>>,
+) -> Result<()> {
+    let mut tx = conn.begin().await?;
+    match fill_attached(&mut tx, item, old, digest, names).await {
+        Ok(()) => {
+            tx.commit().await?;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = tx.rollback().await;
+            Err(error)
+        }
+    }
+}
+
+async fn fill_attached(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    item: &Dataset,
+    old: Option<&(String, String)>,
+    digest: &str,
+    names: &BTreeMap<&str, Vec<String>>,
+) -> Result<()> {
+    let prefix = format!("{PREFIX}{}/", item.origin);
+    if old.is_none_or(|(graph, _)| graph != &item.graph.digest) {
+        for table in [
+            "edges",
+            "unresolved_refs",
+            "node_communities",
+            "nodes",
+            "files",
+            "file_contents",
+            "project_metadata",
+            "agent_optimizations",
+            "agent_tool_calls",
+            "agent_model_calls",
+            "agent_turns",
+            "agent_sessions",
+            "agent_context_cache",
+        ] {
+            // Safe: literal table list and a static identity column.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DELETE FROM \"{table}\" WHERE \"{}\" GLOB ?",
+                identity(table)
+            )))
+            .bind(format!("{prefix}*"))
+            .execute(&mut **tx)
+            .await?;
+        }
+        let community_offset: i64 =
+            sqlx::query_scalar("SELECT COALESCE(MAX(community_id),0)+1 FROM node_communities")
+                .fetch_one(&mut **tx)
+                .await?;
+        for table in TABLES {
+            let cols: Vec<_> = names[table]
+                .iter()
+                .filter(|c| !(matches!(*table, "edges" | "unresolved_refs") && c.as_str() == "id"))
+                .collect();
+            let into = cols
+                .iter()
+                .map(|c| format!("\"{c}\""))
+                .collect::<Vec<_>>()
+                .join(",");
+            let select = cols
+                .iter()
+                .map(|c| mapped(table, c, &prefix, community_offset))
+                .collect::<Vec<_>>()
+                .join(",");
+            // Safe: `table` comes from `TABLES`, columns from the local schema, and
+            // `prefix` embeds an origin that `validate` limits to [A-Za-z0-9_-].
+            sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO main.\"{table}\" ({into}) SELECT {select} FROM replicated.\"{table}\" ORDER BY rowid"))).execute(&mut **tx).await?;
+        }
+        // Candidate IDs are JSON arrays and need the same namespace as resolved edges.
+        let rows: Vec<(i64, Option<String>)> =
+            sqlx::query_as("SELECT id,candidates FROM unresolved_refs WHERE from_node_id GLOB ?")
+                .bind(format!("{prefix}*"))
+                .fetch_all(&mut **tx)
+                .await?;
+        for (id, candidates) in rows {
+            if let Some(raw) = candidates {
+                if let Ok(ids) = serde_json::from_str::<Vec<String>>(&raw) {
+                    let ids: Vec<_> = ids.iter().map(|id| format!("{prefix}{id}")).collect();
+                    sqlx::query("UPDATE unresolved_refs SET candidates=? WHERE id=?")
+                        .bind(serde_json::to_string(&ids)?)
+                        .bind(id)
+                        .execute(&mut **tx)
+                        .await?;
+                }
+            }
+        }
+    }
+    sqlx::query("INSERT INTO ax_replica_datasets(origin,graph_digest,manifest_digest,nodes,edges,files,source_bytes,log_files,log_bytes,agent_sessions,updated_at,history_rows) VALUES (?,?,?,?,?,?,?,?,?,?,strftime('%s','now'),?) ON CONFLICT(origin) DO UPDATE SET graph_digest=excluded.graph_digest,manifest_digest=excluded.manifest_digest,nodes=excluded.nodes,edges=excluded.edges,files=excluded.files,source_bytes=excluded.source_bytes,log_files=excluded.log_files,log_bytes=excluded.log_bytes,agent_sessions=excluded.agent_sessions,updated_at=excluded.updated_at,history_rows=excluded.history_rows")
+        .bind(&item.origin).bind(&item.graph.digest).bind(digest).bind(item.nodes as i64).bind(item.edges as i64).bind(item.files as i64).bind(item.source_bytes as i64).bind(item.logs.len() as i64).bind(item.logs.values().map(|f| f.bytes as i64).sum::<i64>()).bind(item.agent_sessions as i64).bind(item.history_rows as i64).execute(&mut **tx).await?;
     Ok(())
 }
 pub async fn counts(pool: &SqlitePool) -> Result<Vec<Counts>> {
@@ -1022,6 +1073,96 @@ mod tests {
         invalid.origin = "../../escape".into();
         assert!(validate(&[invalid]).is_err());
     }
+
+    fn assembled_graphs(root: &Path, origin: &str) -> Vec<PathBuf> {
+        let dir = directory(root, "datasets").unwrap().join(origin);
+        std::fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("db"))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn unchanged_dataset_is_not_reassembled_or_revalidated() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let da = db(a.path()).await;
+        let db = db(b.path()).await;
+        seed(da.pool(), "fn hello() {}\n").await;
+        let item = export(a.path(), "a_1", da.pool()).await.unwrap();
+        transfer(a.path(), b.path(), std::slice::from_ref(&item));
+        project(b.path(), "b", db.pool(), std::slice::from_ref(&item))
+            .await
+            .unwrap();
+        let graphs = assembled_graphs(b.path(), "a_1");
+        assert_eq!(graphs.len(), 1, "{graphs:?}");
+        std::fs::remove_file(&graphs[0]).unwrap();
+        project(b.path(), "b", db.pool(), std::slice::from_ref(&item))
+            .await
+            .unwrap();
+        assert!(
+            assembled_graphs(b.path(), "a_1").is_empty(),
+            "an unchanged dataset was assembled again"
+        );
+        // `verify` stays the explicit full check.
+        verify(b.path(), db.pool(), std::slice::from_ref(&item))
+            .await
+            .unwrap();
+        assert_eq!(assembled_graphs(b.path(), "a_1").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_projection_does_not_leave_the_replica_attached() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let da = db(a.path()).await;
+        let db = db(b.path()).await;
+        seed(da.pool(), "fn hello() {}\n").await;
+        let item = export(a.path(), "a_1", da.pool()).await.unwrap();
+        transfer(a.path(), b.path(), std::slice::from_ref(&item));
+        sqlx::query(
+            "CREATE TRIGGER fail_turns BEFORE INSERT ON agent_turns BEGIN SELECT RAISE(ABORT,'blocked'); END",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+        for _ in 0..4 {
+            assert!(
+                project(b.path(), "b", db.pool(), std::slice::from_ref(&item))
+                    .await
+                    .is_err()
+            );
+        }
+        let mut held = Vec::new();
+        for _ in 0..db.pool().options().get_max_connections() {
+            held.push(db.pool().acquire().await.unwrap());
+        }
+        for conn in &mut held {
+            let names: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_database_list")
+                .fetch_all(&mut **conn)
+                .await
+                .unwrap();
+            assert!(
+                !names.iter().any(|n| n == "replicated"),
+                "pooled connection still has the replica attached: {names:?}"
+            );
+        }
+        drop(held);
+        sqlx::query("DROP TRIGGER fail_turns")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        for _ in 0..4 {
+            project(b.path(), "b", db.pool(), std::slice::from_ref(&item))
+                .await
+                .unwrap();
+        }
+    }
 }
 
 /// Compare schema meaning rather than column order: upgraded databases may have
@@ -1078,7 +1219,7 @@ pub async fn table_contract(pool: &SqlitePool, table: &str) -> Result<TableContr
                 .all(|b| b.is_ascii_alphanumeric() || b == b'_'),
         "Invalid contract table name"
     );
-    // Safe (all three PRAGMAs): `table` is validated as [A-Za-z0-9_]+ above.
+    // Safe: `table` passed the [A-Za-z0-9_] check above.
     let mut columns: Vec<_> = sqlx::query(sqlx::AssertSqlSafe(format!(
         "PRAGMA table_xinfo(\"{table}\")"
     )))
@@ -1170,8 +1311,8 @@ pub async fn validate_table_values(
         } else {
             String::new()
         };
-        // Safe: `table` and `column` come from the local schema contract (the
-        // incoming contract must equal it); `types` is a static fragment.
+        // Safe: `table` is a registered table and `contract` is the local schema
+        // (the incoming contract must equal it); `types` is a literal.
         let invalid:bool=sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM \"{table}\" WHERE {null}(\"{column}\" IS NOT NULL AND typeof(\"{column}\") NOT IN ({types})))"))).fetch_one(pool).await?;
         ensure!(
             !invalid,

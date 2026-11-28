@@ -36,19 +36,22 @@ fn looks_local(raw: &str) -> bool {
         || Path::new(raw).exists()
 }
 
+/// Owner and repository names as GitHub allows them: ASCII letters, digits,
+/// `.`, `-` and `_`.
+fn github_name(part: &str) -> bool {
+    !part.is_empty()
+        && part
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+}
+
 fn parse_github_shorthand(raw: &str) -> Result<SkillSource, String> {
     let mut parts = raw.split('/');
     let owner = parts.next().unwrap_or("");
-    let repo = parts.next().unwrap_or("");
-    if owner.is_empty()
-        || repo.is_empty()
-        || parts.next().is_some()
-        || owner.contains(' ')
-        || repo.contains(' ')
-    {
+    let repo = parts.next().unwrap_or("").trim_end_matches(".git");
+    if parts.next().is_some() || !github_name(owner) || !github_name(repo) {
         return Err(format!("unrecognized skill source: {raw}"));
     }
-    let repo = repo.trim_end_matches(".git");
     Ok(SkillSource::Git {
         host: GitHost::GitHub,
         clone_url: format!("https://github.com/{owner}/{repo}.git"),
@@ -58,14 +61,26 @@ fn parse_github_shorthand(raw: &str) -> Result<SkillSource, String> {
     })
 }
 
+/// `user@host:path` with no scheme, as git accepts for ssh remotes.
+fn scp_host(raw: &str) -> Option<&str> {
+    if raw.contains("://") {
+        return None;
+    }
+    let (user_host, path) = raw.split_once(':')?;
+    let (user, host) = user_host.split_once('@')?;
+    if user.is_empty() || host.is_empty() || path.is_empty() || host.contains('/') {
+        return None;
+    }
+    Some(host)
+}
+
 fn parse_url_full(raw: &str) -> Option<SkillSource> {
-    if raw.starts_with("git@github.com:") {
-        let path = raw.trim_start_matches("git@github.com:");
+    if let Some(path) = raw.strip_prefix("git@github.com:") {
         let path = path.trim_end_matches(".git");
         let mut parts = path.split('/');
         let owner = parts.next()?;
         let repo = parts.next()?;
-        if parts.next().is_some() {
+        if parts.next().is_some() || !github_name(owner) || !github_name(repo) {
             return None;
         }
         return Some(SkillSource::Git {
@@ -79,20 +94,22 @@ fn parse_url_full(raw: &str) -> Option<SkillSource> {
     if !raw.starts_with("http://") && !raw.starts_with("https://") {
         return None;
     }
-    let (base, query) = raw.split_once('?').unwrap_or((raw, ""));
-    let without_scheme = base.split_once("://")?.1;
-    let (host, path) = without_scheme
-        .split_once('/')
-        .unwrap_or((without_scheme, ""));
-    let host = host.split('@').next_back()?.split(':').next()?;
+    let url = reqwest::Url::parse(raw).ok()?;
+    let host = url.host_str()?;
+    let path = url.path().trim_start_matches('/');
     if host == "github.com" {
         return parse_github_url(path);
     }
     if host == "dev.azure.com" || host.ends_with(".visualstudio.com") {
-        return parse_azure_url(host, path, query);
+        return parse_azure_url(host, path, &url);
     }
     if host == "gitlab.com" || host.contains("gitlab") || path.contains("/-/") {
-        return parse_gitlab_url(host, path);
+        // Clones always use https; a self-hosted port is kept.
+        let authority = match url.port() {
+            Some(port) => format!("{host}:{port}"),
+            None => host.to_string(),
+        };
+        return parse_gitlab_url(&authority, path);
     }
     Some(parse_well_known_url(raw))
 }
@@ -158,7 +175,7 @@ fn parse_gitlab_url(host: &str, path: &str) -> Option<SkillSource> {
     })
 }
 
-fn parse_azure_url(host: &str, path: &str, query: &str) -> Option<SkillSource> {
+fn parse_azure_url(host: &str, path: &str, url: &reqwest::Url) -> Option<SkillSource> {
     let path = path.trim_matches('/');
     let (org, project, repo) = if host == "dev.azure.com" {
         let mut parts = path.split('/');
@@ -183,15 +200,12 @@ fn parse_azure_url(host: &str, path: &str, query: &str) -> Option<SkillSource> {
     };
     let mut skill_path = None;
     let mut reference = None;
-    for pair in query.split('&') {
-        let Some((k, v)) = pair.split_once('=') else {
-            continue;
-        };
+    for (k, v) in url.query_pairs() {
         if k == "path" {
             skill_path = Some(v.trim_start_matches('/').to_string());
         }
         if k == "version" {
-            reference = Some(v.strip_prefix("GB").unwrap_or(v).to_string());
+            reference = Some(v.strip_prefix("GB").unwrap_or(&v).to_string());
         }
     }
     let clone_url = if host == "dev.azure.com" {
@@ -236,14 +250,81 @@ pub fn parse_source(input: &str) -> Result<SkillSource, String> {
         return Err("source is empty".into());
     }
     if let Some(source) = parse_url_full(raw) {
-        return Ok(source);
+        return checked_skill_path(source);
     }
     if looks_local(raw) {
         return Ok(SkillSource::Local {
             path: raw.to_string(),
         });
     }
+    if let Some(host) = scp_host(raw) {
+        return Err(format!(
+            "unrecognized skill source: {raw}: user@host:path is only read for github.com; \
+             use the https URL of the {host} repository"
+        ));
+    }
     parse_github_shorthand(raw)
+}
+
+/// Refuses a git source whose skill folder is absolute or contains `..`, so
+/// it can never point outside the clone. The kept path is the cleaned one
+/// (`.` and empty segments dropped, `/` separators).
+fn checked_skill_path(source: SkillSource) -> Result<SkillSource, String> {
+    match source {
+        SkillSource::Git {
+            host,
+            clone_url,
+            source_id,
+            reference,
+            path: Some(path),
+        } => Ok(SkillSource::Git {
+            host,
+            clone_url,
+            source_id,
+            reference,
+            path: Some(clean_skill_path(&path)?),
+        }),
+        other => Ok(other),
+    }
+}
+
+/// `path` as a plain relative folder with `/` separators, or an error when it
+/// is absolute or contains `..`.
+pub(crate) fn clean_skill_path(path: &str) -> Result<String, String> {
+    let rel = ax_utils::safe_relative(path)
+        .map_err(|e| format!("skill path {path:?} is not inside the repository: {e}"))?;
+    Ok(rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/"))
+}
+
+/// The most branch-path segments a tree URL is retried with.
+const MAX_REF_SEGMENTS: usize = 8;
+
+/// The (reference, path) pairs to try for a tree URL, in order. A URL such as
+/// `.../tree/feature/x/skills/pdf` cannot say where a branch name with a slash
+/// ends, so each later pair moves one more path segment into the reference.
+pub fn ref_candidates(
+    reference: Option<&str>,
+    path: Option<&str>,
+) -> Vec<(Option<String>, Option<String>)> {
+    let first = (reference.map(str::to_string), path.map(str::to_string));
+    let (Some(reference), Some(path)) = (reference, path) else {
+        return vec![first];
+    };
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let mut out = vec![first];
+    for taken in 1..=segments.len().min(MAX_REF_SEGMENTS) {
+        let reference = std::iter::once(reference)
+            .chain(segments[..taken].iter().copied())
+            .collect::<Vec<_>>()
+            .join("/");
+        let rest = segments[taken..].join("/");
+        out.push((Some(reference), (!rest.is_empty()).then_some(rest)));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -333,6 +414,100 @@ mod tests {
         );
         let other = parse_source("https://example.com/docs").unwrap();
         assert!(matches!(other, SkillSource::WellKnown { .. }));
+    }
+
+    #[test]
+    fn shorthand_rejects_names_github_does_not_allow() {
+        for bad in [
+            "git@gitlab.com:group/repo.git",
+            "owner/repo#main",
+            "owner/re%po",
+            "own:er/repo",
+        ] {
+            let err = parse_source(bad).unwrap_err();
+            assert!(err.contains("unrecognized skill source"), "{bad}: {err}");
+        }
+        assert!(parse_source("my.org_1/skills-repo.git").is_ok());
+    }
+
+    #[test]
+    fn scp_style_source_for_another_host_says_to_use_https() {
+        let err = parse_source("git@gitlab.com:group/repo.git").unwrap_err();
+        assert!(err.contains("https"), "{err}");
+    }
+
+    #[test]
+    fn self_hosted_gitlab_keeps_its_port() {
+        match parse_source("https://gitlab.internal:8443/team/skills").unwrap() {
+            SkillSource::Git { clone_url, .. } => {
+                assert_eq!(clone_url, "https://gitlab.internal:8443/team/skills.git")
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn azure_query_values_are_percent_decoded() {
+        let src = parse_source(
+            "https://dev.azure.com/org/project/_git/repo?path=%2Fskills%2Fpdf&version=GBfeature%2Fx",
+        )
+        .unwrap();
+        match src {
+            SkillSource::Git {
+                reference, path, ..
+            } => {
+                assert_eq!(path.as_deref(), Some("skills/pdf"));
+                assert_eq!(reference.as_deref(), Some("feature/x"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn ref_candidates_move_path_segments_into_the_branch() {
+        assert_eq!(
+            ref_candidates(Some("feature"), Some("x/skills/pdf")),
+            vec![
+                (
+                    Some("feature".to_string()),
+                    Some("x/skills/pdf".to_string())
+                ),
+                (
+                    Some("feature/x".to_string()),
+                    Some("skills/pdf".to_string())
+                ),
+                (
+                    Some("feature/x/skills".to_string()),
+                    Some("pdf".to_string())
+                ),
+                (Some("feature/x/skills/pdf".to_string()), None),
+            ]
+        );
+        assert_eq!(
+            ref_candidates(None, Some("a")),
+            vec![(None, Some("a".to_string()))]
+        );
+        assert_eq!(
+            ref_candidates(Some("main"), None),
+            vec![(Some("main".to_string()), None)]
+        );
+    }
+
+    #[test]
+    fn a_skill_path_that_leaves_the_repository_is_refused() {
+        for bad in [
+            "https://dev.azure.com/o/p/_git/r?path=%2F..%2F..%2Fx",
+            "https://dev.azure.com/o/p/_git/r?path=skills/../../x",
+            "https://o.visualstudio.com/p/_git/r?path=..%5C..%5Cx",
+        ] {
+            let err = parse_source(bad).unwrap_err();
+            assert!(err.contains("skill path"), "{bad}: {err}");
+        }
+        // `.` segments and a leading slash are still fine.
+        match parse_source("https://dev.azure.com/o/p/_git/r?path=%2F.%2Fskills%2Fpdf").unwrap() {
+            SkillSource::Git { path, .. } => assert_eq!(path.as_deref(), Some("skills/pdf")),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

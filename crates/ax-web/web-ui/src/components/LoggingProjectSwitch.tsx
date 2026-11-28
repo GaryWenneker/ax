@@ -11,7 +11,6 @@ import {
 } from '../workspaceApi';
 import { notifyWorkspaceSwitched } from '../workspaceEvents';
 import ProjectPurgeModal from './ProjectPurgeModal';
-import { chromeAfterTrashClick } from './projectSwitchChrome';
 
 type Props = {
   /** Highlight the active project path when known. */
@@ -48,13 +47,19 @@ export default function LoggingProjectSwitch({
   usePinnedPopover(menuShown && !isInline, btnRef, menuRef, { prefer: 'below', align: 'end', watch: recent.length });
 
   const refresh = useCallback(async () => {
-    const [cur, rec] = await Promise.all([fetchWorkspaceCurrent(), fetchWorkspaceRecent()]);
-    if (cur.workspace) {
-      setPath(cur.workspace.path);
-      setLabel(cur.workspace.label);
+    try {
+      const [cur, rec] = await Promise.all([fetchWorkspaceCurrent(), fetchWorkspaceRecent()]);
+      // Both requests failed: keep the last known list.
+      if (!cur.ok && !rec.ok) return;
+      if (cur.workspace) {
+        setPath(cur.workspace.path);
+        setLabel(cur.workspace.label);
+      }
+      const list = rec.ok ? rec.recent : cur.recent ?? [];
+      setRecent(list);
+    } catch {
+      // Server unreachable or not JSON: keep the last known list.
     }
-    const list = rec.ok ? rec.recent : cur.recent ?? [];
-    setRecent(list);
   }, []);
 
   useEffect(() => {
@@ -85,16 +90,21 @@ export default function LoggingProjectSwitch({
     }
     setBusy(true);
     setErr(null);
-    const res = await switchWorkspace(nextPath);
-    setBusy(false);
-    if (res.ok && res.switched) {
-      if (!isInline) setOpen(false);
-      notifyWorkspaceSwitched(res.path);
-      onSwitched?.();
-      void refresh();
-      return;
+    try {
+      const res = await switchWorkspace(nextPath);
+      if (res.ok && res.switched) {
+        if (!isInline) setOpen(false);
+        notifyWorkspaceSwitched(res.path);
+        onSwitched?.();
+        void refresh();
+        return;
+      }
+      setErr(res.error ?? 'Switch failed');
+    } catch {
+      setErr('Switch failed: the server did not answer. Try again.');
+    } finally {
+      setBusy(false);
     }
-    setErr(res.error ?? 'Switch failed');
   }
 
   const list = (
@@ -129,9 +139,8 @@ export default function LoggingProjectSwitch({
                     disabled={busy}
                     onClick={(e) => {
                       e.stopPropagation();
-                      const next = chromeAfterTrashClick(p);
-                      setOpen(next.menuOpen);
-                      setPurge(next.project);
+                      setOpen(false);
+                      setPurge(p);
                     }}
                   >
                     <Codicon name="trash" />

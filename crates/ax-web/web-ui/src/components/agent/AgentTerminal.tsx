@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   fetchAgentStatus,
-  isCliReady,
   saveAgentConfig,
   setActiveProfile,
   streamAgentChat,
@@ -25,6 +24,7 @@ import {
   type ActivitySnapshot,
 } from './activityModel';
 import AgentPtyTerminal from './AgentPtyTerminal';
+import { agentLabel, chatFailureLine, initialAgentPlan, profileForAgent, profileSwitchLine } from './agentTerminalModel';
 import Codicon from '../Codicon';
 import WorkspacePicker from '../WorkspacePicker';
 import SettingsSelect from '../ui/SettingsSelect';
@@ -39,12 +39,6 @@ type ChatLine =
 interface Props {
   maximized: boolean;
   onToggleMaximize: () => void;
-}
-
-function resolveInitialAgent(cfg: AgentsConfig): string {
-  if (cfg.last_terminal_agent) return cfg.last_terminal_agent;
-  if (cfg.terminal_mode === 'builtin') return 'builtin';
-  return cfg.preferred_external ?? 'cursor';
 }
 
 function patchActivity(
@@ -62,11 +56,6 @@ function patchActivity(
   }
   if (!seen) next.push({ kind: 'activity', activity: update(emptyActivity()) });
   return next;
-}
-
-function profileForAgent(cfg: AgentsConfig | null, agent: string): string {
-  if (!cfg) return 'default';
-  return cfg.active_profile?.[agent] ?? cfg.profiles?.[agent]?.[0]?.id ?? 'default';
 }
 
 export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
@@ -109,13 +98,7 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
     setLines((l) => [...l, { kind: 'system', text }]);
   }, []);
 
-  const labelFor = useCallback(
-    (id: string) =>
-      catalog.find((t) => t.id === id)?.display_name ??
-      TERMINAL_EXTERNAL_AGENTS.find((a) => a.id === id)?.label ??
-      id,
-    [catalog],
-  );
+  const labelFor = (id: string) => agentLabel(catalog, id);
 
   useEffect(() => {
     let cancelled = false;
@@ -124,27 +107,23 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
       if (cancelled || !data.config) return;
       if (userPickedAgentRef.current) return;
 
-      const initialAgent = resolveInitialAgent(data.config);
-      const pid = profileForAgent(data.config, initialAgent);
-      setAgent(initialAgent);
-      setProfileId(pid);
-
-      if (initialAgent === 'builtin') return;
-
-      const target = (data.catalog ?? data.targets ?? []).find((t) => t.id === initialAgent);
-      const label = labelFor(initialAgent);
-      if (target && !isCliReady(target) && target.cli_installable !== false) {
-        pushSystem(
-          `${label} CLI not installed — install it manually, then select ${label} again.`,
-        );
-      } else {
-        pushSystem(`Interactive ${label} CLI · profile ${pid}`);
-      }
-    })();
+      const plan = initialAgentPlan(data.config, data.catalog ?? data.targets ?? []);
+      setAgent(plan.agent);
+      setProfileId(plan.profileId);
+      if (plan.notice) pushSystem(plan.notice);
+    })().catch((e) => {
+      if (!cancelled) pushSystem(`Could not load agent status: ${e instanceof Error ? e.message : String(e)}`);
+    });
     return () => {
       cancelled = true;
     };
-  }, [refreshConfig, pushSystem, labelFor]);
+  }, [refreshConfig, pushSystem]);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -160,8 +139,12 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
       preferred_external: nextAgent !== 'builtin' ? nextAgent : cfg.preferred_external,
     };
     setConfig(next);
-    const res = await saveAgentConfig(next);
-    if (!res.ok) pushSystem(res.error ?? 'Could not save agent preference');
+    try {
+      const res = await saveAgentConfig(next);
+      if (!res.ok) pushSystem(res.error ?? 'Could not save agent preference');
+    } catch (e) {
+      pushSystem(`Could not save agent preference: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   async function onAgentChange(nextAgent: string) {
@@ -261,6 +244,9 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
       },
       ac.signal,
     );
+    } catch (e) {
+      const line = chatFailureLine(e);
+      if (line) pushSystem(line);
     } finally {
       setBusy(false);
       setLines((l) =>
@@ -277,9 +263,12 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
 
   async function onProfileChange(id: string) {
     setProfileId(id);
-    await setActiveProfile(agent, id);
-    pushSystem(`Switched profile to ${id} (${agent})`);
-    void refreshConfig();
+    try {
+      pushSystem(profileSwitchLine(await setActiveProfile(agent, id), id, agent));
+    } catch (e) {
+      pushSystem(`Could not switch profile to ${id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    void refreshConfig().catch(() => {});
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {

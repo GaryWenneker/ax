@@ -1,6 +1,9 @@
 ---
 title: Expose Command Center with Cloudflare
 description: Publish the local Ax Command Center on a public HTTPS name without opening the process to the network.
+banner:
+  content: |
+    The Command Center is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 Command Center listens on `127.0.0.1:7070`. A Cloudflare Tunnel can give that loopback server a public HTTPS name such as `https://admin.example.com`. The browser talks to Cloudflare. Cloudflare talks to Ax on this computer. Ax does not bind a public interface.

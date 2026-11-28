@@ -47,6 +47,33 @@ export type TraceKind =
   | 'agent'
   | 'other';
 
+/** The short badge for each kind, as the filter chips show it. */
+const TRACE_KIND_BADGES: Record<TraceKind, string> = {
+  inbound: 'IN',
+  enrich: 'ENR',
+  internal: 'INT',
+  outbound: 'OUT',
+  preview: 'PREV',
+  error: 'ERR',
+  plugin: 'PLG',
+  lsp: 'LSP',
+  ship: 'SHIP',
+  share: 'SHR',
+  workspace: 'WS',
+  embed: 'EMB',
+  action: 'ACT',
+  memory: 'MEM',
+  policy: 'POL',
+  cli: 'CLI',
+  hook: 'HOOK',
+  agent: 'AGT',
+  other: 'LOG',
+};
+
+export function traceKindBadge(kind: TraceKind): string {
+  return TRACE_KIND_BADGES[kind];
+}
+
 /** Human-readable text option keys (and leaf path segments) to promote in Logging. */
 export const TEXT_PAYLOAD_KEYS = ['prompt', 'query', 'text', 'message', 'q'] as const;
 export type TextPayloadKey = (typeof TEXT_PAYLOAD_KEYS)[number];
@@ -328,7 +355,37 @@ export function tryParseJson(raw: string): unknown | null {
  * Pull the primary payload blob from a trace line (args=, text=, message=)
  * and parse it when it is JSON from the agent/tool.
  */
+type EntryKey = Pick<TraceEntry, 'kind' | 'message'> & { tool?: string | null };
+type EntryMemo<T> = WeakMap<object, { kind: string; message: string; tool: string | null; value: T }>;
+
+/**
+ * Derived view of a trace entry, computed once per entry object. The Logging list renders
+ * every row many times; this keeps it from re-parsing the same JSON payload. The cached
+ * value is recomputed when the entry's kind, tool or message changes.
+ */
+export function memoByEntry<T>(cache: EntryMemo<T>, entry: EntryKey, compute: () => T): T {
+  const tool = entry.tool ?? null;
+  const hit = cache.get(entry);
+  if (hit && hit.kind === entry.kind && hit.message === entry.message && hit.tool === tool) {
+    return hit.value;
+  }
+  const value = compute();
+  cache.set(entry, { kind: entry.kind, message: entry.message, tool, value });
+  return value;
+}
+
+export function newEntryMemo<T>(): EntryMemo<T> {
+  return new WeakMap();
+}
+
+const payloadMemo = newEntryMemo<unknown | null>();
+
+/** Parsed JSON payload of the entry (shared per entry: treat it as read-only). */
 export function extractPayloadJson(entry: TraceEntry): unknown | null {
+  return memoByEntry(payloadMemo, entry, () => parsePayloadJson(entry));
+}
+
+function parsePayloadJson(entry: TraceEntry): unknown | null {
   const msg = entry.message;
   let candidate: string | null = null;
   switch (entry.kind) {
@@ -370,6 +427,16 @@ export function entryHasQueryPayload(entry: TraceEntry): boolean {
  * `key=value` fields (`prompt`, `query`, `text`, `message`, `q`).
  */
 export function entryTextPayloads(entry: TraceEntry): TextPayload[] {
+  return cachedTextPayloads(entry).slice();
+}
+
+const textPayloadMemo = newEntryMemo<readonly TextPayload[]>();
+
+function cachedTextPayloads(entry: TraceEntry): readonly TextPayload[] {
+  return memoByEntry(textPayloadMemo, entry, () => collectTextPayloads(entry));
+}
+
+function collectTextPayloads(entry: TraceEntry): TextPayload[] {
   const out: TextPayload[] = [];
   const seen = new Set<string>();
 
@@ -408,12 +475,12 @@ export function entryTextPayloads(entry: TraceEntry): TextPayload[] {
 
 /** True when the entry has any promoted text option (prompt/query/text/…). */
 export function entryHasTextPayload(entry: TraceEntry): boolean {
-  return entryTextPayloads(entry).length > 0;
+  return cachedTextPayloads(entry).length > 0;
 }
 
 /** Best text payload for list summary: prompt > query > text > message > q. */
 export function primaryTextPayload(entry: TraceEntry): TextPayload | null {
-  const all = entryTextPayloads(entry);
+  const all = cachedTextPayloads(entry);
   if (all.length === 0) return null;
   for (const leaf of TEXT_KEY_PRIORITY) {
     const hit = all.find((p) => p.leaf === leaf);
@@ -642,30 +709,52 @@ export function summarizeTraceLine(line: string): string {
   return parsed.badge;
 }
 
+/**
+ * Leading token of a trace body (after the `[ax]` / `[ax-mcp]` logger prefix) → kind.
+ * MCP trace lines lead with their event (`inbound`, `outbound preview`, …); domain lines
+ * lead with their domain (`memory remember ok …`). Free text later in the line never
+ * decides the kind.
+ */
+const LEADING_KINDS: readonly [RegExp, TraceKind][] = [
+  [/^inbound\b/, 'inbound'],
+  [/^outbound preview\b/, 'preview'],
+  [/^outbound\b/, 'outbound'],
+  [/^internal\b/, 'internal'],
+  [/^error\b/, 'error'],
+  [/^enrich\b/, 'enrich'],
+  [/^mcp-activity\b/, 'inbound'],
+  [/^plugin\b/, 'plugin'],
+  [/^lsp\b/, 'lsp'],
+  [/^ship(?:-ci)?\b/, 'ship'],
+  [/^share\b/, 'share'],
+  [/^workspace\b/, 'workspace'],
+  [/^embed\b/, 'embed'],
+  [/^action\b/, 'action'],
+  [/^memory\b/, 'memory'],
+  [/^policy\b/, 'policy'],
+  [/^cli\b/, 'cli'],
+  [/^hook\b/, 'hook'],
+  [/^agent\b/, 'agent'],
+];
+
+/** Explicit `source=` values (activity lines) → kind, used when the leading token is unknown. */
+const SOURCE_KINDS: Readonly<Record<string, TraceKind>> = {
+  cli: 'cli',
+  hook: 'hook',
+  agent: 'agent',
+  mcp: 'inbound',
+};
+
 function classify(body: string): { kind: TraceKind; badge: string } {
-  if (body.includes('inbound tool=')) return { kind: 'inbound', badge: 'IN' };
-  if (body.includes('enrich ')) return { kind: 'enrich', badge: 'ENR' };
-  if (body.includes('internal tool=')) return { kind: 'internal', badge: 'INT' };
-  if (body.includes('outbound preview')) return { kind: 'preview', badge: 'PREV' };
-  if (body.includes('outbound tool=')) return { kind: 'outbound', badge: 'OUT' };
-  if (body.includes('error tool=')) return { kind: 'error', badge: 'ERR' };
-  // v4 domain lines: `[ax] plugin …` / `plugin extract …`
-  if (/\bplugin\b/.test(body)) return { kind: 'plugin', badge: 'PLG' };
-  if (/\blsp\b/.test(body)) return { kind: 'lsp', badge: 'LSP' };
-  if (/\bship-ci\b/.test(body) || /\bship ci\b/.test(body) || /\[ax]\s*(?:🪓\s*)?ship\b/.test(body)) {
-    return { kind: 'ship', badge: 'SHIP' };
+  const lead = body.replace(/^\[(?:ax|ax-mcp)\]\s*/, '').replace(/^🪓\s*/, '').trimStart();
+  for (const [pattern, kind] of LEADING_KINDS) {
+    // MCP activity lines count as inbound but keep their own badge.
+    if (pattern.test(lead)) return { kind, badge: lead.startsWith('mcp-activity') ? 'MCP' : TRACE_KIND_BADGES[kind] };
   }
-  if (/\bshare\b/.test(body)) return { kind: 'share', badge: 'SHR' };
-  if (/\bworkspace\b/.test(body)) return { kind: 'workspace', badge: 'WS' };
-  if (/\bembed\b/.test(body)) return { kind: 'embed', badge: 'EMB' };
-  if (/\baction\b/.test(body)) return { kind: 'action', badge: 'ACT' };
-  if (/\bmemory\b/.test(body)) return { kind: 'memory', badge: 'MEM' };
-  if (/\bpolicy\b/.test(body)) return { kind: 'policy', badge: 'POL' };
-  if (/\[ax]\s*(?:🪓\s*)?cli\b/.test(body) || /\bcli cmd=/.test(body) || /\bsource=cli\b/.test(body)) return { kind: 'cli', badge: 'CLI' };
-  if (/\[ax]\s*(?:🪓\s*)?hook\b/.test(body) || /\bsource=hook\b/.test(body)) return { kind: 'hook', badge: 'HOOK' };
-  if (/\[ax]\s*(?:🪓\s*)?agent\b/.test(body) || /\bsource=agent\b/.test(body)) return { kind: 'agent', badge: 'AGT' };
-  if (/\bmcp-activity\b/.test(body) || /\bsource=mcp\b/.test(body)) return { kind: 'inbound', badge: 'MCP' };
-  return { kind: 'other', badge: 'LOG' };
+  const source = lead.match(/(?:^|\s)source=([\w-]+)/)?.[1];
+  const sourceKind = source ? SOURCE_KINDS[source] : undefined;
+  if (sourceKind) return { kind: sourceKind, badge: source === 'mcp' ? 'MCP' : TRACE_KIND_BADGES[sourceKind] };
+  return { kind: 'other', badge: TRACE_KIND_BADGES.other };
 }
 
 /** Exported for smoke / unit checks of domain kind mapping. */
@@ -744,9 +833,38 @@ export function isTraceLogLine(data: string): boolean {
   return (
     s.includes('[ax-mcp]') ||
     s.includes('[ax]') ||
-    s.includes('ts=') ||
+    /^ts=\d+\s/.test(s) ||
     /^\d{4}-\d{2}-\d{2}T/.test(s)
   );
+}
+
+/**
+ * Most trace rows the Logging view keeps in memory. Past this the oldest rows
+ * are dropped, so a tab left open through a long session stays fast.
+ */
+export const MCP_TRACE_MAX_ENTRIES = 5000;
+
+/** Append newer rows; past `cap` the oldest rows are dropped (`trimmed`). */
+export function appendTraceEntries(
+  prev: TraceEntry[],
+  batch: TraceEntry[],
+  cap = MCP_TRACE_MAX_ENTRIES,
+): { entries: TraceEntry[]; trimmed: boolean } {
+  const total = prev.length + batch.length;
+  if (total <= cap) return { entries: [...prev, ...batch], trimmed: false };
+  if (batch.length >= cap) return { entries: batch.slice(batch.length - cap), trimmed: true };
+  return { entries: [...prev.slice(total - cap), ...batch], trimmed: true };
+}
+
+/** Prepend an older day; past `cap` the oldest of those older rows are dropped. */
+export function prependTraceEntries(
+  older: TraceEntry[],
+  prev: TraceEntry[],
+  cap = MCP_TRACE_MAX_ENTRIES,
+): { entries: TraceEntry[]; trimmed: boolean } {
+  const room = Math.max(0, cap - prev.length);
+  if (older.length <= room) return { entries: [...older, ...prev], trimmed: false };
+  return { entries: [...older.slice(older.length - room), ...prev], trimmed: true };
 }
 
 export function traceEntriesFromLines(lines: string[]): TraceEntry[] {
@@ -780,6 +898,10 @@ export async function fetchMcpTraceChunk(beforeDay: string): Promise<{
   error?: string;
 }> {
   const r = await fetch(`${MCP_TRACE_CHUNK_URL}?day=${encodeURIComponent(beforeDay)}`);
+  if (!r.ok) {
+    const body = (await r.json().catch(() => null)) as { error?: string } | null;
+    return { ok: false, error: body?.error || `HTTP ${r.status}` };
+  }
   return r.json() as Promise<{
     ok: boolean;
     day?: string | null;

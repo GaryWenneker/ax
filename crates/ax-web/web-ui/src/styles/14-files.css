@@ -1,0 +1,999 @@
+/* ---- File tree (Cursor-style explorer) ---- */
+.file-tree {
+  font-size: var(--fs-sm);
+  user-select: none;
+}
+
+.file-tree-root {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px 4px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-side);
+}
+
+.file-tree-root-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-tree-root-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.file-tree-root:hover .file-tree-root-actions,
+.file-tree-root:focus-within .file-tree-root-actions {
+  opacity: 1;
+}
+
+.file-tree-root-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.file-tree-root-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-hi);
+}
+
+.file-tree-root-btn .codicon {
+  font-size: 14px;
+}
+
+.file-tree-row--loading .file-tree-chevron,
+.file-tree-row--loading .file-tree-icon {
+  animation: ship-pulse 1.1s ease-in-out infinite;
+}
+
+.file-tree-row--loading .file-tree-folder-count {
+  display: inline-flex;
+  align-items: center;
+}
+
+.file-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 2px 12px 2px 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: default;
+}
+
+.file-tree-row--folder {
+  cursor: pointer;
+}
+
+.file-tree-row--folder:hover,
+.file-tree-row--file:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.file-tree-spacer {
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.file-tree-chevron {
+  width: 14px;
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-dim);
+  transition: transform 0.12s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.file-tree-chevron.open {
+  transform: rotate(90deg);
+}
+
+.file-tree-icon {
+  flex-shrink: 0;
+  width: 16px;
+  font-size: 11px;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.file-tree-icon--folder {
+  color: #c9b87a;
+}
+
+.file-tree-icon--file {
+  color: var(--text-dim);
+  font-size: 9px;
+}
+
+.file-tree-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-hi);
+}
+
+.file-tree-row--file .file-tree-name {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--text);
+}
+
+.file-tree-folder-count {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  opacity: 0.7;
+  padding-right: 4px;
+}
+
+.file-tree-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: 12px;
+}
+
+.file-tree-meta-item {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.file-tree-meta .page-item-badge {
+  font-size: 10px;
+  padding: 1px 5px;
+}
+
+@media (max-width: 767px) {
+  .file-tree-meta-item:not(:last-child) {
+    display: none;
+  }
+}
+
+/* ---- VS Code codicons ---- */
+.codicon {
+  font-size: 16px;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.nav-icon .codicon {
+  font-size: 16px;
+  opacity: 0.9;
+}
+
+.page-item-codicon,
+.edge-item-icon,
+.detail-title-icon {
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+.file-tree-icon.codicon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.file-type-icon {
+  flex-shrink: 0;
+  display: block;
+  object-fit: contain;
+}
+
+.file-tree-icon.file-type-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.files-preview-icon.file-type-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.file-tree-icon--folder.codicon {
+  color: #c9b87a;
+}
+
+.file-tree-chevron.codicon {
+  width: 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.file-tree-root-icon {
+  font-size: 14px;
+  opacity: 0.8;
+}
+
+.file-tree-row--file.selected,
+.file-tree-row--file.selected:hover {
+  background: var(--bg-active);
+}
+
+.file-tree-row--file {
+  cursor: pointer;
+  border: none;
+  width: 100%;
+}
+
+/* ---- Files page layout ---- */
+.files-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.files-page .settings-stack {
+  flex: 1;
+  min-height: 0;
+}
+
+.files-page .settings-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.files-page .settings-card-header,
+.files-page .page-filter-bar {
+  flex-shrink: 0;
+}
+
+.files-page .settings-card-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+/* ---- Files split + preview ---- */
+.files-split {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  border-top: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.files-split--with-preview {
+  grid-template-columns: minmax(240px, 40%) minmax(280px, 60%);
+}
+
+.files-split--with-preview.files-split--with-detail {
+  grid-template-columns: minmax(160px, 22%) minmax(200px, 1fr) auto;
+}
+
+/* ---- Page split (list + inline detail blade) ---- */
+.page-split {
+  display: grid;
+  grid-template-columns: 1fr;
+  min-height: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+}
+
+/* Fill viewport when the split is the primary scroll region (single-card pages) */
+.settings-page:not(.memory-page):not(.unresolved-page):has(.page-split) .settings-stack > .settings-card:only-child .page-split {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
+.settings-page.memory-page .settings-stack > .settings-card:last-child .page-split {
+  flex: 1;
+  min-height: clamp(240px, 40vh, 560px);
+}
+
+.page-split--with-detail {
+  grid-template-columns: 1fr auto;
+}
+
+.settings-card:has(.page-split--with-detail) .page-split {
+  flex: 1;
+  min-height: clamp(360px, 55vh, 720px);
+}
+
+.page-split-main {
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.settings-card:has(.page-split--with-detail) {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Direct child only — nested inline Metadata/Editor panes must not become flex
+   containers, or their settings-rows shrink and overlap instead of scrolling. */
+.settings-card:has(.page-split--with-detail) > .settings-card-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.files-tree-pane {
+  overflow: auto;
+  min-height: 0;
+  height: 100%;
+  background: var(--bg-side);
+}
+
+.files-preview-pane {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+}
+
+.files-preview-toolbar {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.files-preview-toolbar .preview-zoom-bar {
+  flex: 1;
+  border-bottom: none;
+}
+
+.files-preview-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.files-preview-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-hi);
+}
+
+.files-preview-body {
+  padding: 12px 16px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.files-preview-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.files-preview-header-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.files-preview-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.files-preview-path {
+  font-family: var(--font-mono);
+  font-size: inherit;
+  word-break: break-all;
+  color: var(--text-hi);
+  display: block;
+  margin-bottom: 8px;
+}
+
+.files-preview-meta {
+  display: grid;
+  gap: 6px;
+}
+
+.files-preview-meta--inline {
+  font-size: 0.92em;
+}
+
+.files-preview-meta div {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 8px;
+}
+
+.files-preview-meta dt {
+  color: var(--text-dim);
+  font-size: 0.92em;
+}
+
+.files-preview-meta dd {
+  font-family: var(--font-mono);
+  margin: 0;
+}
+
+.files-preview-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.files-preview-tab {
+  appearance: none;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 4px 10px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.files-preview-tab--active {
+  color: var(--text);
+  border-bottom-color: var(--accent-text);
+}
+
+.files-preview-section-title {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.files-preview-empty-inline {
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  padding: 8px 0;
+}
+
+.files-index-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.files-index-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  grid-template-areas:
+    "icon name lines badges"
+    "icon sig sig sig";
+  gap: 2px 8px;
+  align-items: center;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.files-index-row:hover {
+  background: var(--bg-hover);
+}
+
+.files-index-icon {
+  grid-area: icon;
+  color: var(--accent-text);
+  font-size: 14px;
+}
+
+.files-index-name {
+  grid-area: name;
+  font-family: var(--font-mono);
+  color: var(--text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-index-lines {
+  grid-area: lines;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  font-size: 0.9em;
+}
+
+.files-index-badges {
+  grid-area: badges;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.files-index-sig {
+  grid-area: sig;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-index-truncated {
+  margin-top: 8px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+/* ---- Symbol outline tree (file index preview) ---- */
+.symbol-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.symbol-tree-section-label {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  padding: 8px 8px 2px;
+  margin-top: 4px;
+}
+
+.symbol-tree-section:first-child .symbol-tree-section-label {
+  margin-top: 0;
+  padding-top: 2px;
+}
+
+.symbol-tree-row-wrap {
+  display: flex;
+  align-items: stretch;
+  min-height: 26px;
+}
+
+.symbol-tree-guides {
+  display: flex;
+  flex-shrink: 0;
+  align-items: stretch;
+}
+
+.symbol-tree-guide {
+  width: 14px;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.symbol-tree-guide::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--border-hi);
+}
+
+.symbol-tree-guide--blank::before {
+  display: none;
+}
+
+.symbol-tree-guide--joint::before {
+  top: 0;
+  bottom: 50%;
+}
+
+.symbol-tree-guide--joint::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  width: 8px;
+  border-top: 1px solid var(--border-hi);
+}
+
+.symbol-tree-guide--last::before {
+  bottom: 50%;
+}
+
+.symbol-tree-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  grid-template-areas:
+    "icon name lines badges"
+    "icon sig sig sig";
+  gap: 2px 8px;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px 4px 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.symbol-tree-row:hover {
+  background: var(--bg-hover);
+}
+
+.symbol-tree-row--selected {
+  background: var(--bg-active, rgba(56, 139, 253, 0.15));
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.symbol-tree-row--parent .symbol-tree-name {
+  color: var(--text-hi);
+  font-weight: 500;
+}
+
+.symbol-tree-icon {
+  grid-area: icon;
+  color: var(--accent-text);
+  font-size: 14px;
+}
+
+.symbol-tree-name {
+  grid-area: name;
+  font-family: var(--font-mono);
+  color: var(--text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.symbol-tree-lines {
+  grid-area: lines;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  font-size: 0.9em;
+}
+
+.symbol-tree-badges {
+  grid-area: badges;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.symbol-tree-sig {
+  grid-area: sig;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-preview-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-dim);
+  padding: 24px;
+  text-align: center;
+}
+
+.files-preview-empty-icon {
+  font-size: 32px;
+  opacity: 0.4;
+}
+
+/* ---- Preview zoom toolbar ---- */
+.preview-zoom-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  flex-shrink: 0;
+}
+
+.preview-zoom-label {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  margin-right: auto;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.detail-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.detail-close .codicon {
+  font-size: 14px;
+}
+
+@media (max-width: 899px) {
+  .files-split--with-preview {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(180px, 40%) minmax(200px, 60%);
+  }
+
+  .files-preview-pane {
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+}
+
+/* ---- Theme chooser ---- */
+.share-provider-chooser {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  width: 100%;
+}
+
+.share-provider-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: 1 1 140px;
+  min-width: 130px;
+  max-width: 200px;
+  padding: 14px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  position: relative;
+  transition: border-color 0.12s, box-shadow 0.12s, background 0.12s;
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+}
+
+.share-provider-card:hover:not(:disabled) {
+  border-color: var(--border-hi);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.share-provider-card--active {
+  border-color: var(--accent-text);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.share-provider-card:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.share-provider-icon {
+  width: 28px;
+  height: 28px;
+  opacity: 0.9;
+}
+
+.share-provider-card-label {
+  font-weight: 600;
+}
+
+.share-provider-card-check {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  font-size: var(--fs-xs);
+  color: var(--accent-text);
+}
+
+.share-device-code-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.share-device-code-label {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.share-device-code-value {
+  font-family: var(--font-mono);
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--text-hi);
+}
+
+.settings-row--stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.settings-row--stack .settings-row-control {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.theme-chooser {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 6px 0;
+  width: 100%;
+}
+
+.theme-swatch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 130px;
+  min-width: 120px;
+  max-width: 160px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  position: relative;
+  transition: border-color 0.12s, box-shadow 0.12s;
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+}
+
+.theme-swatch:hover {
+  border-color: var(--border-hi);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.theme-swatch--active {
+  border-color: var(--accent-text);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.theme-swatch-preview {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.theme-swatch-sidebar {
+  width: 24%;
+  height: 100%;
+  flex-shrink: 0;
+}
+
+.theme-swatch-content {
+  flex: 1;
+  padding: 12% 10% 10%;
+  display: flex;
+  flex-direction: column;
+  gap: 12%;
+}
+
+.theme-swatch-bar {
+  height: 3px;
+  width: 55%;
+  border-radius: 2px;
+}
+
+.theme-swatch-line {
+  height: 2px;
+  width: 80%;
+  border-radius: 1px;
+  opacity: 0.6;
+}
+
+.theme-swatch-line--short {
+  width: 50%;
+}
+
+.theme-swatch-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.theme-swatch-label {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.theme-swatch--active .theme-swatch-label {
+  color: var(--text-hi);
+  font-weight: 600;
+}
+
+.theme-swatch-check {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font-size: 11px;
+  font-weight: 700;
+}

@@ -4,6 +4,8 @@ version = "10.1.2"
 edition = "2021"
 
 [dependencies]
+ax-utils = { workspace = true }
+tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }

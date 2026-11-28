@@ -105,6 +105,20 @@ pub fn ensure_within(root: &Path, path: &Path) -> Result<(), PathEscape> {
 /// content, never a partial file: write a temporary file next to it, flush it
 /// to disk, then rename it over `path`. Keeps the old file's permissions.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_replacing(path, bytes, false)
+}
+
+/// [`atomic_write`] for a secret: the temporary file is created with mode
+/// 0600 on Unix before any byte is written, and `path` ends up 0600 whatever
+/// its permissions were, so the content is never readable by other users,
+/// not even briefly.
+pub fn atomic_write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_replacing(path, bytes, true)
+}
+
+/// Writes `bytes` to a temporary file next to `path`, then moves it over
+/// `path` through [`replace_file`].
+fn write_replacing(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> {
     let dir = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -120,11 +134,21 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let seq = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = dir.join(format!(".{name}.{}.{seq}.tmp", std::process::id()));
     let result = (|| {
-        let mut f = File::create(&tmp)?;
+        let mut opts = OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        if private {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut f = opts.open(&tmp)?;
         f.write_all(bytes)?;
         f.sync_all()?;
-        if let Ok(meta) = fs::metadata(path) {
-            fs::set_permissions(&tmp, meta.permissions())?;
+        drop(f);
+        if !private {
+            if let Ok(meta) = fs::metadata(path) {
+                fs::set_permissions(&tmp, meta.permissions())?;
+            }
         }
         replace_file(&tmp, path)
     })();
@@ -188,17 +212,31 @@ pub fn update_locked<F>(path: &Path, update: F) -> io::Result<bool>
 where
     F: FnOnce(Option<Vec<u8>>) -> io::Result<Option<Vec<u8>>>,
 {
+    let mut lock_name = path.as_os_str().to_owned();
+    lock_name.push(".lock");
+    update_locked_at(path, Path::new(&lock_name), update)
+}
+
+/// [`update_locked`] with the advisory lock on `lock_path` instead of
+/// `<path>.lock`, for a file whose folder should not get a lock file next to
+/// it (such as a project's `ax.json`). Every writer of `path` must use the
+/// same `lock_path`.
+pub fn update_locked_at<F>(path: &Path, lock_path: &Path, update: F) -> io::Result<bool>
+where
+    F: FnOnce(Option<Vec<u8>>) -> io::Result<Option<Vec<u8>>>,
+{
     if let Some(dir) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         fs::create_dir_all(dir)?;
     }
-    let mut lock_name = path.as_os_str().to_owned();
-    lock_name.push(".lock");
+    if let Some(dir) = lock_path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(dir)?;
+    }
     let lock = OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
-        .open(PathBuf::from(lock_name))?;
+        .open(lock_path)?;
     lock.lock_exclusive()?;
     let current = match fs::read(path) {
         Ok(b) => Some(b),
@@ -250,6 +288,48 @@ pub fn read_to_end_bounded<R: Read>(reader: R, max_bytes: u64) -> io::Result<Vec
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn update_locked_at_keeps_the_lock_where_it_is_told() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ax.json");
+        let lock = dir.path().join(".ax").join("ax.json.lock");
+        let changed = super::update_locked_at(&path, &lock, |current| {
+            assert!(current.is_none());
+            Ok(Some(b"{}".to_vec()))
+        })
+        .unwrap();
+        assert!(changed);
+        assert!(lock.is_file());
+        assert!(!dir.path().join("ax.json.lock").exists());
+        assert_eq!(std::fs::read(&path).unwrap(), b"{}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_private_leaves_a_0600_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sub").join("token");
+        super::atomic_write_private(&path, b"one").unwrap();
+        let mode = |p: &std::path::Path| fs_mode(p) & 0o777;
+        fn fs_mode(p: &std::path::Path) -> u32 {
+            std::fs::metadata(p).unwrap().permissions().mode()
+        }
+        assert_eq!(mode(&path), 0o600);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        super::atomic_write_private(&path, b"two").unwrap();
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(std::fs::read(&path).unwrap(), b"two");
+        // The plain variant keeps the existing permissions.
+        super::atomic_write(&path, b"three").unwrap();
+        assert_eq!(mode(&path), 0o600);
+        let names: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["token"]);
+    }
+
     use super::*;
 
     #[test]

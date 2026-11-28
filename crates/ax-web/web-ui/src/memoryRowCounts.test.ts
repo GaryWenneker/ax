@@ -28,3 +28,13 @@ test('the commits section ends at the next section', () => {
   const body = `Fix${commits}\n\nChanges:\nM a.rs\n- 1234567 x`;
   assert.equal(memoryRowCounts({ files: ['a.rs'], body }), '1 file · 2 commits');
 });
+
+test('a body with CRLF line endings counts its commits like the detail view', () => {
+  const body = 'Fix\r\n\r\nCommits:\r\n- abc1234 First\r\n- def5678 Second\r\n\r\nOutcome: done';
+  assert.equal(memoryRowCounts({ files: [], body }), '2 commits');
+});
+
+test('the commit count agrees with splitMemoryBody for an outcome without a space', () => {
+  const body = 'Fix\n\nOutcome:\nI ran\n\nCommits:\n- abc1234 quoted';
+  assert.equal(memoryRowCounts({ files: [], body }), '');
+});

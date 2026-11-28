@@ -24,10 +24,10 @@ export function isShareablePolicyItem(scope?: string, enabled?: boolean): boolea
   return s === 'project' || s === 'workspace';
 }
 
-export function defaultRestoreAction(status: string, newer?: string): 'overwrite' | 'skip' | null {
+/** New items are restored by default; a conflict keeps the local copy until the user picks overwrite. */
+export function defaultRestoreAction(status: string): 'overwrite' | 'skip' | null {
   if (status === 'invalid') return null;
   if (status === 'new') return 'overwrite';
-  if (newer === 'local') return 'skip';
   return 'skip';
 }
 

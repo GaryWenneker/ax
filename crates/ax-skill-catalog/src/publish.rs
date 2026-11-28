@@ -1,4 +1,5 @@
 use crate::install::discover_skills;
+use crate::validate::read_catalog_meta;
 use std::fs;
 use std::path::Path;
 
@@ -17,12 +18,25 @@ pub fn stage_one_skill(skills_root: &Path, name: &str, dest: &Path) -> Result<()
         fs::remove_dir_all(&target).map_err(|e| e.to_string())?;
     }
     fs::create_dir_all(&target).map_err(|e| e.to_string())?;
-    copy_dir(&skill.directory, &target)?;
-    let staged = discover_skills(&dest.join("skills"))?;
-    if staged.len() != 1 || staged[0].name != name {
-        return Err("publish staged more than one skill".into());
+    // Check only the staged skill: the destination may already hold skills
+    // published earlier. A failed copy or check leaves no half-staged skill.
+    let staged = copy_dir(&skill.directory, &target).and_then(|()| staged_name(&target));
+    match staged {
+        Ok(staged) if staged == name => Ok(()),
+        Ok(staged) => {
+            let _ = fs::remove_dir_all(&target);
+            Err(format!("staged skill is named {staged}, not {name}"))
+        }
+        Err(err) => {
+            let _ = fs::remove_dir_all(&target);
+            Err(err)
+        }
     }
-    Ok(())
+}
+
+fn staged_name(target: &Path) -> Result<String, String> {
+    let raw = fs::read_to_string(target.join("SKILL.md")).map_err(|e| e.to_string())?;
+    Ok(read_catalog_meta(&raw)?.name)
 }
 
 fn copy_dir(src: &Path, dest: &Path) -> Result<(), String> {
@@ -67,5 +81,24 @@ mod tests {
         stage_one_skill(root.path(), "pdf", dest.path()).unwrap();
         assert!(dest.path().join("skills/pdf/SKILL.md").is_file());
         assert!(!dest.path().join("skills/review").exists());
+    }
+
+    #[test]
+    fn stages_next_to_skills_published_earlier() {
+        let root = tempfile::tempdir().unwrap();
+        let dest = tempfile::tempdir().unwrap();
+        for name in ["pdf", "review"] {
+            let dir = root.path().join(name);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(
+                dir.join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: Use {name}.\n---\n"),
+            )
+            .unwrap();
+        }
+        stage_one_skill(root.path(), "pdf", dest.path()).unwrap();
+        stage_one_skill(root.path(), "review", dest.path()).unwrap();
+        assert!(dest.path().join("skills/pdf/SKILL.md").is_file());
+        assert!(dest.path().join("skills/review/SKILL.md").is_file());
     }
 }

@@ -16,7 +16,9 @@ use crate::parse::{
     serialize_skill_stub,
 };
 use crate::paths::{resolve_item_write_dir, resolve_source_path, rule_file, skill_file};
-use crate::types::{PolicyRuleDoc, PolicyScope, PolicySkillDoc, RuleFrontmatter, SkillFrontmatter};
+use crate::types::{
+    PolicyItemKind, PolicyRuleDoc, PolicyScope, PolicySkillDoc, RuleFrontmatter, SkillFrontmatter,
+};
 
 pub struct PolicyStore {
     pool: sqlx::SqlitePool,
@@ -93,7 +95,11 @@ impl PolicyStore {
         if let Some(row) = crate::index::get_rule(&self.pool, id).await? {
             return Ok(Some(rule_row_to_doc(&row, &self.project_root)));
         }
-        // Fallback: search layer dirs by filename.
+        // Fallback: search layer dirs by filename. Only a valid id names a
+        // file, so a path-like id cannot reach outside the layer folders.
+        if !is_valid_item_id(id) {
+            return Ok(None);
+        }
         for layer in crate::hierarchy::policy_layers(&self.project_root) {
             let path = rule_file(&layer.dir.join("rules"), id);
             if path.is_file() {
@@ -110,6 +116,9 @@ impl PolicyStore {
     pub async fn get_skill_doc(&self, name: &str) -> Result<Option<PolicySkillDoc>, AxError> {
         if let Some(row) = crate::index::get_skill(&self.pool, name).await? {
             return Ok(Some(skill_row_to_doc(&row, &self.project_root)));
+        }
+        if !is_valid_item_id(name) {
+            return Ok(None);
         }
         for layer in crate::hierarchy::policy_layers(&self.project_root) {
             let path = skill_file(&layer.dir.join("skills"), name);
@@ -129,6 +138,10 @@ impl PolicyStore {
         mut frontmatter: RuleFrontmatter,
         body: String,
     ) -> Result<PolicyRuleDoc, ValidationError> {
+        // The id becomes a file name: validate it before anything is written.
+        if !is_valid_item_id(&frontmatter.id) {
+            return Err(item_id_error("id", &frontmatter.id));
+        }
         let scope = PolicyScope::parse(&frontmatter.scope).unwrap_or(PolicyScope::Project);
         frontmatter.scope = scope.as_str().into();
         if let Some(ref s) = frontmatter.storage {
@@ -338,14 +351,39 @@ impl PolicyStore {
             });
         }
 
-        self.delete_rule(old_id)
-            .await
-            .map_err(|e| ValidationError {
-                error: e.to_string(),
+        // Save the new rule first: if that fails, the old one is untouched.
+        let new_doc = self.save_rule(frontmatter, body).await?;
+        if let Err(e) = self.delete_renamed_rule(old_id, &new_doc).await {
+            return Err(ValidationError {
+                error: format!(
+                    "saved `{}`, but the old rule `{old_id}` could not be removed: {e}",
+                    new_doc.frontmatter.id
+                ),
                 fields: Default::default(),
-            })?;
+            });
+        }
+        Ok(new_doc)
+    }
 
-        self.save_rule(frontmatter, body).await
+    /// Remove the old rule after a rename, keeping any file the new rule now
+    /// uses (a shared `source:` file).
+    async fn delete_renamed_rule(
+        &self,
+        old_id: &str,
+        new_doc: &PolicyRuleDoc,
+    ) -> Result<(), AxError> {
+        if let Some(doc) = self.get_rule_doc(old_id).await? {
+            let eff = self.item_effective_storage(doc.frontmatter.storage.as_deref());
+            if eff == PolicyStorage::Files {
+                let keep = [
+                    Some(new_doc.source_path.as_str()),
+                    new_doc.stub_path.as_deref(),
+                ];
+                self.remove_rule_files_except(&doc, &keep)?;
+            }
+        }
+        delete_rule_by_id(&self.pool, old_id).await?;
+        Ok(())
     }
 
     pub async fn save_skill(
@@ -353,6 +391,10 @@ impl PolicyStore {
         mut frontmatter: SkillFrontmatter,
         body: String,
     ) -> Result<PolicySkillDoc, ValidationError> {
+        // The name becomes a folder name: validate it before anything is written.
+        if !is_valid_item_id(&frontmatter.name) {
+            return Err(item_id_error("name", &frontmatter.name));
+        }
         let scope = PolicyScope::parse(&frontmatter.scope).unwrap_or(PolicyScope::Project);
         frontmatter.scope = scope.as_str().into();
         if let Some(ref s) = frontmatter.storage {
@@ -535,15 +577,27 @@ impl PolicyStore {
     }
 
     fn remove_rule_files(&self, doc: &PolicyRuleDoc) -> Result<(), AxError> {
+        self.remove_rule_files_except(doc, &[])
+    }
+
+    /// Remove a rule's files, leaving any path listed in `keep`.
+    fn remove_rule_files_except(
+        &self,
+        doc: &PolicyRuleDoc,
+        keep: &[Option<&str>],
+    ) -> Result<(), AxError> {
+        let kept = |p: &Path| keep.iter().flatten().any(|k| Path::new(k) == p);
         if let Some(ref stub) = doc.stub_path {
             let p = Path::new(stub);
-            if p.is_file() {
+            if p.is_file() && !kept(p) {
                 std::fs::remove_file(p).map_err(|e| AxError::Other(e.to_string()))?;
             }
         }
         let path = Path::new(&doc.source_path);
         if path.is_file() {
-            std::fs::remove_file(path).map_err(|e| AxError::Other(e.to_string()))?;
+            if !kept(path) {
+                std::fs::remove_file(path).map_err(|e| AxError::Other(e.to_string()))?;
+            }
         } else {
             let scope = PolicyScope::parse(&doc.frontmatter.scope).unwrap_or(PolicyScope::Project);
             let fallback = rule_file(
@@ -602,37 +656,59 @@ impl PolicyStore {
         .map_err(|e| AxError::Other(e.to_string()))
     }
 
+    /// Find the rule or skill an id names. With `kind`, only that kind is
+    /// looked up. Without it, an id that names both a rule and a skill is an
+    /// error, so one of them is never changed by mistake.
+    async fn find_item(
+        &self,
+        id_or_name: &str,
+        kind: Option<PolicyItemKind>,
+    ) -> Result<Option<FoundItem>, AxError> {
+        let rule = if kind != Some(PolicyItemKind::Skill) {
+            self.get_rule_doc(id_or_name).await?
+        } else {
+            None
+        };
+        let skill = if kind != Some(PolicyItemKind::Rule) {
+            self.get_skill_doc(id_or_name).await?
+        } else {
+            None
+        };
+        match (rule, skill) {
+            (Some(_), Some(_)) => Err(AxError::Other(format!(
+                "both a rule and a skill are named '{id_or_name}': use rule:{id_or_name} or skill:{id_or_name}"
+            ))),
+            (Some(rule), None) => Ok(Some(FoundItem::Rule(Box::new(rule)))),
+            (None, Some(skill)) => Ok(Some(FoundItem::Skill(Box::new(skill)))),
+            (None, None) => Ok(None),
+        }
+    }
+
     /// Migrate a single rule/skill between files and database storage.
-    /// A rule wins when a rule and a skill share the name; use
-    /// [`Self::set_rule_storage`] or [`Self::set_skill_storage`] when the kind
-    /// is known.
     pub async fn set_item_storage(
         &self,
+        kind: Option<PolicyItemKind>,
         id_or_name: &str,
         target: PolicyStorage,
         keep_file: bool,
     ) -> Result<serde_json::Value, AxError> {
-        if let Some(v) = self.set_rule_storage(id_or_name, target, keep_file).await? {
-            return Ok(v);
-        }
-        if let Some(v) = self
-            .set_skill_storage(id_or_name, target, keep_file)
+        self.try_set_item_storage(kind, id_or_name, target, keep_file)
             .await?
-        {
-            return Ok(v);
-        }
-        Err(AxError::Other("not found".into()))
+            .ok_or_else(|| AxError::Other("not found".into()))
     }
 
-    /// Migrate one rule between files and database storage. `None` when no
-    /// rule has this id.
-    pub async fn set_rule_storage(
+    /// Like [`Self::set_item_storage`], but `None` when no item of `kind` has
+    /// this id, so a caller can tell "not found" from a failure.
+    pub async fn try_set_item_storage(
         &self,
+        kind: Option<PolicyItemKind>,
         id_or_name: &str,
         target: PolicyStorage,
         keep_file: bool,
     ) -> Result<Option<serde_json::Value>, AxError> {
-        if let Some(mut doc) = self.get_rule_doc(id_or_name).await? {
+        let found = self.find_item(id_or_name, kind).await?;
+        if let Some(FoundItem::Rule(doc)) = found {
+            let mut doc = *doc;
             let before = self.item_effective_storage(doc.frontmatter.storage.as_deref());
             doc.frontmatter.storage = Some(target.as_str().into());
             if target == PolicyStorage::Database {
@@ -677,18 +753,8 @@ impl PolicyStore {
             })));
         }
 
-        Ok(None)
-    }
-
-    /// Migrate one skill between files and database storage. `None` when no
-    /// skill has this name.
-    pub async fn set_skill_storage(
-        &self,
-        id_or_name: &str,
-        target: PolicyStorage,
-        keep_file: bool,
-    ) -> Result<Option<serde_json::Value>, AxError> {
-        if let Some(mut doc) = self.get_skill_doc(id_or_name).await? {
+        if let Some(FoundItem::Skill(doc)) = found {
+            let mut doc = *doc;
             let before = self.item_effective_storage(doc.frontmatter.storage.as_deref());
             doc.frontmatter.storage = Some(target.as_str().into());
             if target == PolicyStorage::Database {
@@ -733,22 +799,30 @@ impl PolicyStore {
     }
 
     /// Clear per-item storage override (inherit project default again).
-    pub async fn clear_item_storage_override(&self, id_or_name: &str) -> Result<bool, AxError> {
-        if let Some(mut doc) = self.get_rule_doc(id_or_name).await? {
-            doc.frontmatter.storage = None;
-            self.save_rule(doc.frontmatter, doc.body)
-                .await
-                .map_err(|e| AxError::Other(e.error))?;
-            return Ok(true);
+    pub async fn clear_item_storage_override(
+        &self,
+        kind: Option<PolicyItemKind>,
+        id_or_name: &str,
+    ) -> Result<bool, AxError> {
+        match self.find_item(id_or_name, kind).await? {
+            Some(FoundItem::Rule(doc)) => {
+                let mut doc = *doc;
+                doc.frontmatter.storage = None;
+                self.save_rule(doc.frontmatter, doc.body)
+                    .await
+                    .map_err(|e| AxError::Other(e.error))?;
+                Ok(true)
+            }
+            Some(FoundItem::Skill(doc)) => {
+                let mut doc = *doc;
+                doc.frontmatter.storage = None;
+                self.save_skill(doc.frontmatter, doc.body)
+                    .await
+                    .map_err(|e| AxError::Other(e.error))?;
+                Ok(true)
+            }
+            None => Ok(false),
         }
-        if let Some(mut doc) = self.get_skill_doc(id_or_name).await? {
-            doc.frontmatter.storage = None;
-            self.save_skill(doc.frontmatter, doc.body)
-                .await
-                .map_err(|e| AxError::Other(e.error))?;
-            return Ok(true);
-        }
-        Ok(false)
     }
 
     pub async fn import_from_files(&self) -> Result<crate::types::PolicyIndexResult, AxError> {
@@ -763,36 +837,54 @@ impl PolicyStore {
     }
 
     /// Enable or disable a rule or skill by id/name (writes frontmatter + DB).
-    /// A rule wins when a rule and a skill share the name; use
-    /// [`Self::set_rule_enabled`] or [`Self::set_skill_enabled`] when the kind
-    /// is known.
-    pub async fn set_enabled(&self, id_or_name: &str, enabled: bool) -> Result<bool, AxError> {
-        Ok(self.set_rule_enabled(id_or_name, enabled).await?
-            || self.set_skill_enabled(id_or_name, enabled).await?)
+    /// `kind` picks the rule or the skill when both share the name.
+    pub async fn set_enabled(
+        &self,
+        kind: Option<PolicyItemKind>,
+        id_or_name: &str,
+        enabled: bool,
+    ) -> Result<bool, AxError> {
+        match self.find_item(id_or_name, kind).await? {
+            Some(FoundItem::Rule(doc)) => {
+                let mut doc = *doc;
+                doc.frontmatter.enabled = enabled;
+                self.save_rule(doc.frontmatter, doc.body)
+                    .await
+                    .map_err(|e| AxError::Other(e.error))?;
+                Ok(true)
+            }
+            Some(FoundItem::Skill(doc)) => {
+                let mut doc = *doc;
+                doc.frontmatter.enabled = enabled;
+                self.save_skill(doc.frontmatter, doc.body)
+                    .await
+                    .map_err(|e| AxError::Other(e.error))?;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
+}
 
-    /// Enable or disable one rule. `false` when no rule has this id.
-    pub async fn set_rule_enabled(&self, id: &str, enabled: bool) -> Result<bool, AxError> {
-        let Some(mut doc) = self.get_rule_doc(id).await? else {
-            return Ok(false);
-        };
-        doc.frontmatter.enabled = enabled;
-        self.save_rule(doc.frontmatter, doc.body)
-            .await
-            .map_err(|e| AxError::Other(e.error))?;
-        Ok(true)
-    }
+enum FoundItem {
+    Rule(Box<PolicyRuleDoc>),
+    Skill(Box<PolicySkillDoc>),
+}
 
-    /// Enable or disable one skill. `false` when no skill has this name.
-    pub async fn set_skill_enabled(&self, name: &str, enabled: bool) -> Result<bool, AxError> {
-        let Some(mut doc) = self.get_skill_doc(name).await? else {
-            return Ok(false);
-        };
-        doc.frontmatter.enabled = enabled;
-        self.save_skill(doc.frontmatter, doc.body)
-            .await
-            .map_err(|e| AxError::Other(e.error))?;
-        Ok(true)
+/// A rule id or skill name that can name a file: kebab-case, not empty.
+fn is_valid_item_id(id: &str) -> bool {
+    !id.is_empty() && crate::parse::is_kebab_case(id)
+}
+
+fn item_id_error(field: &str, value: &str) -> ValidationError {
+    let message = if value.is_empty() {
+        "required"
+    } else {
+        "must be kebab-case"
+    };
+    ValidationError {
+        error: "validation_failed".into(),
+        fields: [(field.into(), message.into())].into_iter().collect(),
     }
 }
 
@@ -830,4 +922,231 @@ pub async fn open_rw_pool(db_path: &Path) -> Result<sqlx::SqlitePool, AxError> {
     })
     .await
     .map_err(|e| AxError::Database(ax_utils::errors::DatabaseError::new(e.to_string())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn test_store(root: &Path) -> PolicyStore {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        ax_db::schema::apply_initial_schema(&pool).await.unwrap();
+        ax_db::migrations::run_migrations(&pool, 0).await.unwrap();
+        PolicyStore::new(pool, root.to_path_buf())
+    }
+
+    fn rule_frontmatter(id: &str) -> RuleFrontmatter {
+        let mut fm = parse_rule_file(
+            Path::new("r.mdc"),
+            "---\nid: placeholder\nlevel: INFO\nalwaysApply: true\n---\n\nBody.\n",
+        )
+        .unwrap()
+        .frontmatter;
+        fm.id = id.into();
+        fm
+    }
+
+    #[tokio::test]
+    async fn save_rule_refuses_a_bad_id_before_writing_any_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = test_store(dir.path()).await;
+        let err = store
+            .save_rule(rule_frontmatter("My Rule"), "Body.".into())
+            .await
+            .expect_err("a non-kebab id must be refused");
+        assert_eq!(
+            err.fields.get("id").map(String::as_str),
+            Some("must be kebab-case")
+        );
+        let rules = crate::agents_share::agents_dir(dir.path()).join("rules");
+        assert!(!rules.join("My Rule.mdc").exists());
+        let err = store
+            .save_rule(rule_frontmatter(""), "Body.".into())
+            .await
+            .expect_err("an empty id must be refused");
+        assert_eq!(err.fields.get("id").map(String::as_str), Some("required"));
+        assert!(!rules.join(".mdc").exists());
+    }
+
+    #[tokio::test]
+    async fn a_rename_that_fails_validation_keeps_the_old_rule() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = test_store(dir.path()).await;
+        let saved = store
+            .save_rule(rule_frontmatter("old-rule"), "Keep me.".into())
+            .await
+            .unwrap();
+        let old_file = PathBuf::from(&saved.source_path);
+        assert!(old_file.is_file());
+
+        let err = store
+            .rename_rule("old-rule", rule_frontmatter("Api Rules"), "Keep me.".into())
+            .await
+            .expect_err("a non-kebab id must be refused");
+        assert_eq!(
+            err.fields.get("id").map(String::as_str),
+            Some("must be kebab-case")
+        );
+        let mut bad_storage = rule_frontmatter("new-rule");
+        bad_storage.storage = Some("cloud".into());
+        store
+            .rename_rule("old-rule", bad_storage, "Keep me.".into())
+            .await
+            .expect_err("an unknown storage must be refused");
+
+        assert!(old_file.is_file());
+        let old = store.get_rule_doc("old-rule").await.unwrap().unwrap();
+        assert_eq!(old.body.trim(), "Keep me.");
+    }
+
+    #[tokio::test]
+    async fn a_rename_moves_the_rule_to_its_new_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = test_store(dir.path()).await;
+        let saved = store
+            .save_rule(rule_frontmatter("old-rule"), "Moved.".into())
+            .await
+            .unwrap();
+        let renamed = store
+            .rename_rule("old-rule", rule_frontmatter("new-rule"), "Moved.".into())
+            .await
+            .unwrap();
+        assert!(!Path::new(&saved.source_path).exists());
+        assert!(Path::new(&renamed.source_path).is_file());
+        assert!(store.get_rule_doc("old-rule").await.unwrap().is_none());
+        let new = store.get_rule_doc("new-rule").await.unwrap().unwrap();
+        assert_eq!(new.body.trim(), "Moved.");
+    }
+
+    #[tokio::test]
+    async fn a_rename_keeps_the_shared_source_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = dir.path().join("docs").join("team-rule.mdc");
+        std::fs::create_dir_all(shared.parent().unwrap()).unwrap();
+        std::fs::write(&shared, "placeholder\n").unwrap();
+        let store = test_store(dir.path()).await;
+        let mut fm = rule_frontmatter("old-rule");
+        fm.source = Some("docs/team-rule.mdc".into());
+        store.save_rule(fm.clone(), "Shared.".into()).await.unwrap();
+
+        fm.id = "new-rule".into();
+        let renamed = store
+            .rename_rule("old-rule", fm, "Shared.".into())
+            .await
+            .unwrap();
+        assert!(
+            shared.is_file(),
+            "the shared source must survive the rename"
+        );
+        assert!(std::fs::read_to_string(&shared)
+            .unwrap()
+            .contains("Shared."));
+        assert_ne!(renamed.stub_path, None);
+        assert!(store.get_rule_doc("old-rule").await.unwrap().is_none());
+    }
+
+    fn skill_frontmatter(name: &str) -> SkillFrontmatter {
+        let mut fm = parse_skill_file(
+            Path::new("SKILL.md"),
+            "---\nname: placeholder\ndescription: d\n---\n\nBody.\n",
+        )
+        .unwrap()
+        .frontmatter;
+        fm.name = name.into();
+        fm
+    }
+
+    #[tokio::test]
+    async fn disabling_a_skill_leaves_the_rule_with_the_same_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = test_store(dir.path()).await;
+        store
+            .save_rule(rule_frontmatter("subagents"), "Rule.".into())
+            .await
+            .unwrap();
+        store
+            .save_skill(skill_frontmatter("subagents"), "Skill.".into())
+            .await
+            .unwrap();
+        let err = store
+            .set_enabled(None, "subagents", false)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("skill:subagents"), "{err}");
+        assert!(store
+            .set_enabled(Some(PolicyItemKind::Skill), "subagents", false)
+            .await
+            .unwrap());
+        let rule = store.get_rule_doc("subagents").await.unwrap().unwrap();
+        let skill = store.get_skill_doc("subagents").await.unwrap().unwrap();
+        assert!(rule.frontmatter.enabled, "the rule must stay enabled");
+        assert!(!skill.frontmatter.enabled, "the skill must be disabled");
+
+        store
+            .set_item_storage(
+                Some(PolicyItemKind::Rule),
+                "subagents",
+                PolicyStorage::Database,
+                true,
+            )
+            .await
+            .unwrap();
+        let rule = store.get_rule_doc("subagents").await.unwrap().unwrap();
+        let skill = store.get_skill_doc("subagents").await.unwrap().unwrap();
+        assert_eq!(rule.frontmatter.storage.as_deref(), Some("database"));
+        assert_eq!(skill.frontmatter.storage, None);
+        assert!(store
+            .clear_item_storage_override(Some(PolicyItemKind::Rule), "subagents")
+            .await
+            .unwrap());
+        let rule = store.get_rule_doc("subagents").await.unwrap().unwrap();
+        assert_eq!(rule.frontmatter.storage, None);
+    }
+
+    #[tokio::test]
+    async fn lookups_ignore_a_path_like_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("project");
+        let rules = crate::agents_share::agents_dir(&root).join("rules");
+        std::fs::create_dir_all(&rules).unwrap();
+        std::fs::write(
+            dir.path().join("outside.mdc"),
+            "---\nid: outside\nlevel: INFO\nalwaysApply: true\n---\n\nOutside.\n",
+        )
+        .unwrap();
+        let store = test_store(&root).await;
+        let id = "../../../outside";
+        assert!(store.get_rule_doc(id).await.unwrap().is_none());
+        assert!(store.get_skill_doc(id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn save_skill_refuses_a_name_that_is_not_kebab_case_before_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap();
+        let store = PolicyStore::new(pool, root.clone());
+        let doc = parse_skill_file(
+            Path::new("SKILL.md"),
+            "---\nname: placeholder\ndescription: d\n---\n\nBody.\n",
+        )
+        .unwrap();
+        let mut fm = doc.frontmatter;
+        fm.name = "../../escaped".into();
+        let err = store
+            .save_skill(fm, "Body.".into())
+            .await
+            .expect_err("a path-like skill name must be refused");
+        assert_eq!(
+            err.fields.get("name").map(String::as_str),
+            Some("must be kebab-case")
+        );
+        assert!(!dir.path().join("escaped").exists());
+        assert!(!root.join("escaped").exists());
+    }
 }

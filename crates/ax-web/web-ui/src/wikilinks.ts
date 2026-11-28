@@ -129,7 +129,7 @@ export function linkHref(ref: LinkRef): string {
     params.set('name', ref.id);
   } else {
     path = '/memory';
-    params.set('id', ref.id);
+    params.set('memory', ref.id);
   }
   if (ref.origin === 'global') {
     params.set('origin', 'global');

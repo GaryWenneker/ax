@@ -136,6 +136,25 @@ export type ContinuityDraft = {
   task: string;
 };
 
+/**
+ * Fold new derived continuity values into the draft the user is editing.
+ * Fields the user edited keep their text while the values describe the same
+ * session; a different session replaces the whole draft and forgets the edits.
+ */
+export function mergeContinuityDraft(
+  draft: ContinuityDraft,
+  incoming: ContinuityDraft,
+  previousIncoming: ContinuityDraft,
+  edited: ReadonlySet<keyof ContinuityDraft>,
+): { draft: ContinuityDraft; edited: Set<keyof ContinuityDraft> } {
+  if (incoming.axSessionId !== previousIncoming.axSessionId || edited.size === 0) {
+    return { draft: incoming, edited: new Set() };
+  }
+  const next = { ...incoming } as Record<keyof ContinuityDraft, ContinuityDraft[keyof ContinuityDraft]>;
+  for (const key of edited) next[key] = draft[key];
+  return { draft: next as ContinuityDraft, edited: new Set(edited) };
+}
+
 type TraceFact = {
   sessionId?: string | null;
   turnId?: string | null;

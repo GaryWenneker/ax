@@ -1,0 +1,271 @@
+/* ---- Sidebar (flush left, full row height — never inside .container) ---- */
+.sidebar {
+  min-width: 0;
+  min-height: 0;
+  align-self: stretch;
+  background: var(--bg-side);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+  overflow-y: auto;
+}
+
+.sidebar-logo {
+  position: relative;
+  flex-shrink: 0;
+  align-self: center;
+  width: 96px;
+  height: 96px;
+  margin: 20px auto 16px;
+  isolation: isolate;
+}
+
+.sidebar-logo::before {
+  content: '';
+  position: absolute;
+  inset: -28px;
+  z-index: -1;
+  pointer-events: none;
+  background-image: radial-gradient(circle, #e0a526 0.9px, transparent 1.5px);
+  background-size: 6px 6px;
+  -webkit-mask-image: radial-gradient(closest-side, #000 25%, rgba(0, 0, 0, 0.45) 60%, transparent 100%);
+  mask-image: radial-gradient(closest-side, #000 25%, rgba(0, 0, 0, 0.45) 60%, transparent 100%);
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+
+.sidebar-logo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  mix-blend-mode: screen;
+  opacity: 0.85;
+  user-select: none;
+  transition: opacity 0.35s ease, filter 0.35s ease;
+}
+
+.sidebar-logo:hover::before {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.sidebar-logo:hover img {
+  opacity: 1;
+  filter: drop-shadow(0 0 6px rgba(224, 165, 38, 0.55));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-logo::before,
+  .sidebar-logo img {
+    transition: none;
+  }
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  font-size: calc(var(--fs-base) * var(--ui-scale));
+  font-weight: 400;
+  color: var(--text-dim);
+  cursor: pointer;
+  border: none;
+  background: none;
+  text-align: left;
+  width: 100%;
+  min-height: 26px;
+  transition: background 0.08s, color 0.08s;
+}
+
+.nav-item:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.nav-item.active {
+  color: var(--text-hi);
+  background: linear-gradient(90deg, var(--ax-project-bg, color-mix(in srgb, var(--accent) 10%, transparent)), transparent 85%);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.nav-item.active .nav-icon,
+.nav-item.active .codicon {
+  color: var(--accent-text);
+}
+
+.nav-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.nav-section:first-child .nav-section-label {
+  margin-top: 6px;
+}
+
+.nav-section-label {
+  margin: 10px 12px 2px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+  opacity: 0.9;
+}
+
+/* Live updates: a row that just appeared (lib/useLive.ts, GLOW_MS). */
+.graph-live-notice {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border: 1px solid var(--accent-text);
+  background: var(--bg-panel);
+  color: var(--text-hi);
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* live-new-chase */
+@keyframes live-new-chase {
+  0% { -webkit-mask-position: 100% 0; mask-position: 100% 0; }
+  100% { -webkit-mask-position: 0% 0; mask-position: 0% 0; }
+}
+
+/* A copy of the glyphs carries a narrow light. The title keeps its color.
+   Clipping the title itself fights overflow:hidden and paints a bar. */
+.live-new .page-item-title,
+.live-new .page-item-sub,
+.graph-live-notice.live-new {
+  position: relative;
+}
+
+.live-new .page-item-title::after,
+.live-new .page-item-sub::after,
+.graph-live-notice.live-new::after {
+  content: attr(data-chase);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+  color: color-mix(in srgb, var(--live-glow, white) 20%, white);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0 48.5%, #000 50%, transparent 51.5% 100%);
+  mask-image: linear-gradient(90deg, transparent 0 48.5%, #000 50%, transparent 51.5% 100%);
+  -webkit-mask-size: 240% 100%;
+  mask-size: 240% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  animation: live-new-chase 1.25s linear 1 both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-new .page-item-title::after,
+  .live-new .page-item-sub::after,
+  .graph-live-notice.live-new::after {
+    content: none;
+    animation: none;
+  }
+}
+/* live-new-chase-end */
+
+/* Same solids as the MCP kind badges and the workbench accent. */
+.nav-section[data-nav="policy"] .nav-section-label { color: #e0b341; }
+.nav-section[data-nav="code"] .nav-section-label { color: #3ee4b2; }
+.nav-section[data-nav="activity"] .nav-section-label { color: #4fa8ff; }
+.nav-section[data-nav="system"] .nav-section-label { color: #8fa6c4; }
+
+.nav-divider {
+  height: 1px;
+  margin: 8px 12px;
+  background: var(--border);
+  opacity: 0.85;
+}
+
+.nav-item--action {
+  margin-top: 4px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 8px;
+  margin-left: 8px;
+  margin-right: 8px;
+  width: calc(100% - 16px);
+}
+
+.nav-item--action:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.nav-item--action .codicon {
+  margin-right: 2px;
+}
+
+.mcp-reload-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 10px 12px 0;
+  z-index: 5;
+}
+
+.mcp-reload-toast-dismiss {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+
+.mcp-reload-toast-dismiss:hover {
+  opacity: 1;
+}
+
+.sidebar-resize-handle {
+  width: 4px;
+  min-width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 20;
+  touch-action: none;
+  transition: background 0.12s;
+}
+
+.sidebar-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+}
+
+.sidebar-resize-handle:hover,
+body.sidebar-resizing .sidebar-resize-handle {
+  background: var(--accent);
+}
+
+body.sidebar-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.sidebar-resizing .workspace,
+body.sidebar-resizing .sidebar {
+  pointer-events: none;
+}

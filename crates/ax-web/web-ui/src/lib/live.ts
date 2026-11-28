@@ -37,16 +37,26 @@ const browserScheduler: Scheduler = {
   clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
 };
 
-/** Collapse a burst of triggers into one call `ms` after the last trigger. */
-export function createDebouncer(ms: number, fn: () => void, sched: Scheduler = browserScheduler): () => void {
+export type Debounced = (() => void) & { cancel: () => void };
+
+/**
+ * Collapse a burst of triggers into one call `ms` after the last trigger.
+ * `cancel` drops a pending call; call it when the owner goes away.
+ */
+export function createDebouncer(ms: number, fn: () => void, sched: Scheduler = browserScheduler): Debounced {
   let handle: unknown = null;
-  return () => {
+  const trigger = () => {
     if (handle !== null) sched.clear(handle);
     handle = sched.set(() => {
       handle = null;
       fn();
     }, ms);
   };
+  const cancel = () => {
+    if (handle !== null) sched.clear(handle);
+    handle = null;
+  };
+  return Object.assign(trigger, { cancel });
 }
 
 export const SPARK_CAP = 20;

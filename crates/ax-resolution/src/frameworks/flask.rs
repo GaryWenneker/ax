@@ -270,20 +270,22 @@ async fn resolve_by_kind(
     let nodes = queries.get_nodes_by_name(name).await.unwrap_or_default();
     let filtered: Vec<Node> = nodes
         .into_iter()
-        .filter(|n| kinds.contains(&n.kind))
+        .filter(|n| kinds.contains(&n.kind) && n.language == Language::Python)
         .collect();
-    if filtered.is_empty() {
-        return None;
+    pick_python_target(filtered, dirs)
+}
+
+/// The one candidate to link, or none. With preferred `dirs`, exactly one
+/// candidate must live in them; without, exactly one candidate must exist.
+/// Never an arbitrary first match.
+fn pick_python_target(candidates: Vec<Node>, dirs: &[&str]) -> Option<Node> {
+    let mut chosen = candidates
+        .into_iter()
+        .filter(|n| dirs.is_empty() || dirs.iter().any(|d| n.file_path.contains(d)));
+    match (chosen.next(), chosen.next()) {
+        (Some(n), None) => Some(n),
+        _ => None,
     }
-    if dirs.is_empty() {
-        return filtered.first().cloned();
-    }
-    let preferred: Vec<Node> = filtered
-        .iter()
-        .filter(|n| dirs.iter().any(|d| n.file_path.contains(d)))
-        .cloned()
-        .collect();
-    preferred.first().or_else(|| filtered.first()).cloned()
 }
 
 fn merge_extract(dst: &mut FrameworkExtractResult, src: FrameworkExtractResult) {

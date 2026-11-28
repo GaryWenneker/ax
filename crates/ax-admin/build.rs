@@ -18,11 +18,25 @@ fn main() {
     ] {
         println!("cargo:rerun-if-changed=web-ui/{path}");
     }
+    // vite.config.ts aliases `@cc` to the Command Center sources, and their bare
+    // imports resolve through that package's own dependencies.
+    for path in ["src", "package-lock.json"] {
+        println!("cargo:rerun-if-changed=../ax-web/web-ui/{path}");
+    }
     println!("cargo:rerun-if-env-changed=AX_SKIP_WEB_BUILD");
 
     if std::env::var("AX_SKIP_WEB_BUILD").is_err() {
         let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
-        for args in [&["install", "--prefer-offline"][..], &["run", "build"][..]] {
+        // `npm ci` installs exactly what package-lock.json lists and never
+        // rewrites it. It runs only when node_modules is missing or older than
+        // the lock file, so an ordinary rebuild needs no network.
+        let install = &["ci", "--prefer-offline"][..];
+        let steps: Vec<&[&str]> = if needs_install(&web_ui) {
+            vec![install, &["run", "build"][..]]
+        } else {
+            vec![&["run", "build"][..]]
+        };
+        for args in steps {
             let ok = Command::new(npm)
                 .args(args)
                 .current_dir(&web_ui)
@@ -49,6 +63,20 @@ fn main() {
             "<!doctype html><html lang=\"en\"><head><meta charset=\"UTF-8\"><title>ax-admin</title></head><body><p>ax-admin was built without its UI. Run <code>npm run build</code> in crates/ax-admin/web-ui and rebuild.</p></body></html>\n",
         )
         .expect("write placeholder page");
+    }
+}
+
+/// True when `node_modules` does not match `package-lock.json`: npm writes
+/// `node_modules/.package-lock.json` on every install, so a lock file newer
+/// than that copy (or no copy) means the dependencies must be installed.
+fn needs_install(web_ui: &Path) -> bool {
+    let modified = |path: &Path| std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    match (
+        modified(&web_ui.join("package-lock.json")),
+        modified(&web_ui.join("node_modules/.package-lock.json")),
+    ) {
+        (Some(lock), Some(installed)) => lock > installed,
+        _ => true,
     }
 }
 

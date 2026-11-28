@@ -55,7 +55,7 @@ describe('policyDbAccent', () => {
 describe('policyOverviewMenuItems', () => {
   it('M1 project menu includes move to global', () => {
     const ids = policyOverviewMenuItems('project', true).map((i) => i.id);
-    assert.deepEqual(ids, ['open', 'edit', 'disable', 'move-global', 'delete']);
+    assert.deepEqual(ids, ['open', 'edit', 'properties', 'disable', 'move-global', 'delete']);
   });
 
   it('M2 disabled project offers enable', () => {
@@ -64,7 +64,7 @@ describe('policyOverviewMenuItems', () => {
 
   it('M3 global menu includes open, edit, move back, delete', () => {
     const ids = policyOverviewMenuItems('global', true).map((i) => i.id);
-    assert.deepEqual(ids, ['open', 'edit', 'move-project', 'delete']);
+    assert.deepEqual(ids, ['open', 'edit', 'properties', 'move-project', 'delete']);
   });
 });
 

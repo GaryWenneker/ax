@@ -242,8 +242,10 @@ fn security_audits(html: &str) -> Vec<SkillAudit> {
         return Vec::new();
     };
     let window = &html[idx..];
-    let end = window.find("</main>").unwrap_or(window.len().min(12_000));
-    let mut rest = &window[..end];
+    let mut rest = match window.find("</main>") {
+        Some(end) => &window[..end],
+        None => ax_utils::prefix_bytes(window, 12_000),
+    };
     let mut audits = Vec::new();
     while let Some(start) = rest.find("<a ") {
         rest = &rest[start..];
@@ -408,6 +410,18 @@ mod tests {
         assert_eq!(format_star_count(35_700), "35.7K");
         assert_eq!(format_star_count(999), "999");
         assert_eq!(format_star_count(1_000), "1K");
+    }
+
+    #[test]
+    fn security_audits_without_main_cut_at_a_char_boundary() {
+        // No </main> after the heading, and a multi-byte character straddles
+        // the 12000-byte window end.
+        let mut html = String::from("Security Audits");
+        html.push_str(&"x".repeat(12_000 - "Security Audits".len() - 1));
+        html.push_str(&"\u{2014}".repeat(10));
+        assert!(!html.is_char_boundary(12_000));
+        let card = parse_skill_card(&html);
+        assert!(card.audits.is_empty());
     }
 
     #[test]

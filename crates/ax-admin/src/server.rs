@@ -68,6 +68,8 @@ pub struct App {
     remotes: Mutex<Remotes>,
     /// How long a finished sign-in may wait to be saved before it is dropped.
     sign_in_grace: Duration,
+    /// How often an open sign-in is asked where it stands.
+    sign_in_poll: Duration,
     pending: Mutex<HashMap<String, PendingLogin>>,
     /// Addresses with tokens from a finished sign-in that nobody saved, kept
     /// because another attempt for the address was open at that moment.
@@ -97,12 +99,26 @@ impl App {
         port: u16,
         sign_in_grace: Duration,
     ) -> Result<Arc<Self>, String> {
+        Self::with_sign_in_timing(home, secrets, logins, port, sign_in_grace, ABANDON_POLL)
+    }
+
+    /// Like `with_sign_in_grace`, and `sign_in_poll` sets how often an open
+    /// sign-in is asked where it stands.
+    pub fn with_sign_in_timing(
+        home: PathBuf,
+        secrets: Arc<dyn SecretStore>,
+        logins: Arc<dyn LoginBackend>,
+        port: u16,
+        sign_in_grace: Duration,
+        sign_in_poll: Duration,
+    ) -> Result<Arc<Self>, String> {
         Ok(Arc::new(Self {
             store: Arc::new(std::sync::Mutex::new(Store::open(&home)?)),
             secrets,
             logins,
             remotes: Mutex::new(Remotes::default()),
             sign_in_grace,
+            sign_in_poll,
             pending: Mutex::new(HashMap::new()),
             leftovers: Mutex::new(std::collections::HashSet::new()),
             csrf: format!(
@@ -543,19 +559,24 @@ impl App {
     }
 }
 
+/// How many polls of an open sign-in fit in its lifetime.
+fn polls_until_expiry(poll: Duration) -> u128 {
+    LOGIN_TTL.as_millis() / poll.as_millis().max(1)
+}
+
 /// Follows one sign-in to its end. The page normally saves it within a second
 /// of the browser answering. If the page is gone by then (closed, reloaded,
 /// lost its connection to ax-admin), the attempt is dropped after a grace
 /// period and its tokens removed, so no sign-in is left behind unseen.
 fn watch_sign_in(app: Arc<App>, id: String, url: String) {
     tokio::spawn(async move {
-        for _ in 0..(LOGIN_TTL.as_secs() * 2) {
+        for _ in 0..polls_until_expiry(app.sign_in_poll) {
             // Saved or cancelled meanwhile: those paths clean up themselves.
             if !app.pending.lock().await.contains_key(&id) {
                 return;
             }
             match app.logins.status(&id).await {
-                Some(LoginState::Pending) => tokio::time::sleep(ABANDON_POLL).await,
+                Some(LoginState::Pending) => tokio::time::sleep(app.sign_in_poll).await,
                 Some(LoginState::Connected) => {
                     tokio::time::sleep(app.sign_in_grace).await;
                     if app.pending.lock().await.remove(&id).is_some() {
@@ -579,9 +600,9 @@ fn watch_sign_in(app: Arc<App>, id: String, url: String) {
 /// its outcome and remove the tokens it stored, so nothing is left behind.
 fn abandon(app: Arc<App>, id: String, url: String) {
     tokio::spawn(async move {
-        for _ in 0..(LOGIN_TTL.as_secs() * 2) {
+        for _ in 0..polls_until_expiry(app.sign_in_poll) {
             match app.logins.status(&id).await {
-                Some(LoginState::Pending) => tokio::time::sleep(ABANDON_POLL).await,
+                Some(LoginState::Pending) => tokio::time::sleep(app.sign_in_poll).await,
                 Some(LoginState::Connected) => {
                     app.drop_unused_sign_in(&url).await;
                     return;
@@ -696,13 +717,12 @@ async fn update_connection(
     if url_changed && new_key.is_none() {
         return Err(bad_request("Enter the key again to use another address"));
     }
-    let mut updated = saved.clone();
-    updated.url = url.to_string();
-    if let Some(name) = input.name {
-        updated.name = connection_name(Some(name), &url)?;
-    }
+    let new_name = match input.name {
+        Some(name) => Some(connection_name(Some(name), &url)?),
+        None => None,
+    };
     if let Some(key) = &new_key {
-        probe(url, Arc::new(StaticToken(key.clone()))).await?;
+        probe(url.clone(), Arc::new(StaticToken(key.clone()))).await?;
     }
     // From here the key and the entry change. A client built in between is
     // not cached (see `Remotes`), and none is left over afterwards.
@@ -721,24 +741,34 @@ async fn update_connection(
         }
         None => None,
     };
-    let to_save = updated.clone();
+    // The edit is applied to the entry as it is now, in one step: a removal
+    // that finished meanwhile is not undone by writing back an older copy.
+    let (edit_id, new_url) = (id.clone(), url.to_string());
     let result = app
         .store(move |store| {
             store
-                .upsert(to_save, false)
-                .map(|()| store.active_id().map(str::to_owned))
+                .update(&edit_id, |connection| {
+                    connection.url = new_url;
+                    if let Some(name) = new_name {
+                        connection.name = name;
+                    }
+                })
+                .map(|updated| updated.map(|c| (c, store.active_id().map(str::to_owned))))
         })
         .await
-        .and_then(|r| r.map_err(internal));
-    let active = match result {
-        Ok(active) => active,
+        .and_then(|r| r.map_err(internal))
+        .and_then(|r| r.ok_or_else(unknown_connection));
+    let (updated, active) = match result {
+        Ok(saved) => saved,
         Err(e) => {
-            // The entry still names the old address: put its key back.
             if let Some(previous) = previous_key {
+                // The entry still names the old address: put its key back. A
+                // connection that is gone keeps no key at all.
+                let gone = e.1 == "unknown_connection";
                 let (secrets, id) = (app.secrets.clone(), id.clone());
                 let undo = blocking(move || match previous {
-                    Some(key) => secrets.set(&id, &key),
-                    None => secrets.delete(&id),
+                    Some(key) if !gone => secrets.set(&id, &key),
+                    _ => secrets.delete(&id),
                 })
                 .await;
                 if let Err(undo) = undo {

@@ -184,7 +184,9 @@ pub fn install_builtin_pack(
                 .chain(report.skipped_user_edit)
                 .collect(),
             overwritten: report.updated,
-            policy_dir: project_root.join(".agents").display().to_string(),
+            policy_dir: crate::agents_share::agents_dir(project_root)
+                .display()
+                .to_string(),
         });
     }
     let pack = find_pack(name).ok_or_else(|| {
@@ -246,5 +248,20 @@ mod tests {
             .path()
             .join(".agents/rules/azdo-traceability.mdc")
             .is_file());
+    }
+
+    #[test]
+    fn stack_install_reports_the_configured_agents_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("ax.json"),
+            r#"{"policy":{"agentsDir":"team-policy"}}"#,
+        )
+        .unwrap();
+        let r = install_builtin_pack(dir.path(), "react", false).unwrap();
+        assert_eq!(
+            r.policy_dir,
+            dir.path().join("team-policy").display().to_string()
+        );
     }
 }

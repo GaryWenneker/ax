@@ -5,9 +5,9 @@ description: Run only the tests a change actually touches.
 
 `ax affected` traces import dependencies transitively to find which test files are affected by a set of changed source files — so CI can run only the relevant tests.
 
-For symbol-level test-function impact (via `Covers` edges in the graph), use `ax test-impact --base main`. See [Command Center](/guides/command-center/).
+For symbol-level test-function impact (via `Covers` edges in the graph), use `ax test-impact --base main`. See [`ax test-impact`](/reference/cli/#ax-test-impact).
 
-For a full headless quality gate (index → TIA → run impacted tests via cargo/pytest/jest/vitest/go → policy), use:
+For a full quality gate without a dashboard (index → TIA → run impacted tests via cargo/pytest/jest/vitest/go → policy), use:
 
 ```bash
 ax ship --ci
@@ -30,6 +30,8 @@ ax affected --base main --stdin               # compare against base branch
 | `-f, --filter <glob>` | Custom glob to identify test files | auto-detect |
 | `-j, --json` | Output as JSON | `false` |
 | `-q, --quiet` | Output file paths only | `false` |
+
+Without `--filter`, a file counts as a test when it sits under a `test/`, `tests/` or `__tests__/` directory, when its name matches `*_test.*`, `*.test.*` or `*.spec.*`, or when it is a Python `test_*.py` file. The indexer uses the same rule to mark test functions.
 
 ## CI / hook example
 

@@ -90,16 +90,7 @@ impl FileWatcher {
                     if !pending_path_is_kept(&root, &rel) {
                         continue;
                     }
-                    map.entry(rel.clone()).or_insert_with(|| PendingFile {
-                        path: rel.clone(),
-                        first_seen_ms: now,
-                        last_seen_ms: now,
-                        indexing: false,
-                    });
-                    if let Some(p) = map.get_mut(&rel) {
-                        p.last_seen_ms = now;
-                        p.indexing = false;
-                    }
+                    record_seen(&mut map, &rel, now);
                 }
                 let snapshot: Vec<PendingFile> = map.values().cloned().collect();
                 drop(map);
@@ -165,11 +156,42 @@ impl FileWatcher {
             .collect()
     }
 
-    pub async fn mark_indexing(&self, paths: &[String]) {
+    /// Marks `paths` as being indexed and returns each one's `last_seen_ms`
+    /// at that moment. Pass the result to [`Self::finish_indexing`].
+    pub async fn mark_indexing(&self, paths: &[String]) -> Vec<(String, i64)> {
         let mut map = self.pending.lock().await;
+        let mut taken = Vec::with_capacity(paths.len());
         for p in paths {
             if let Some(entry) = map.get_mut(p) {
                 entry.indexing = true;
+                taken.push((p.clone(), entry.last_seen_ms));
+            }
+        }
+        drop(map);
+        self.publish_pending().await;
+        taken
+    }
+
+    /// Ends a batch started with [`Self::mark_indexing`].
+    ///
+    /// On success an entry is removed only when it was not seen again while
+    /// the batch ran; a newer save stays pending so it is indexed next. On
+    /// failure every entry stays pending and becomes ready again after one
+    /// more debounce window.
+    pub async fn finish_indexing(&self, taken: &[(String, i64)], succeeded: bool) {
+        let now = now_ms();
+        let mut map = self.pending.lock().await;
+        for (path, seen_at_start) in taken {
+            let Some(entry) = map.get_mut(path) else {
+                continue;
+            };
+            if succeeded && entry.last_seen_ms <= *seen_at_start {
+                map.remove(path);
+            } else {
+                entry.indexing = false;
+                if !succeeded {
+                    entry.last_seen_ms = entry.last_seen_ms.max(now);
+                }
             }
         }
         drop(map);
@@ -180,6 +202,18 @@ impl FileWatcher {
         tokio::time::sleep(Duration::from_millis(timeout_ms.min(100))).await;
         true
     }
+}
+
+/// Records a file-system event for `rel` at `now`.
+fn record_seen(map: &mut HashMap<String, PendingFile>, rel: &str, now: i64) {
+    let entry = map.entry(rel.to_string()).or_insert_with(|| PendingFile {
+        path: rel.to_string(),
+        first_seen_ms: now,
+        last_seen_ms: now,
+        indexing: false,
+    });
+    entry.last_seen_ms = now;
+    entry.indexing = false;
 }
 
 fn now_ms() -> i64 {
@@ -256,6 +290,52 @@ mod tests {
         let pending = w.get_pending_files().await;
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].path, "b.ts");
+    }
+
+    #[tokio::test]
+    async fn a_save_during_indexing_stays_pending_after_success() {
+        let w = FileWatcher::new(PathBuf::from("."));
+        insert_pending(&w, "a.ts", now_ms() - 10_000).await;
+        insert_pending(&w, "b.ts", now_ms() - 10_000).await;
+        let batch = vec!["a.ts".to_string(), "b.ts".to_string()];
+        let taken = w.mark_indexing(&batch).await;
+
+        // a.ts is saved again while the batch is being indexed.
+        record_seen(&mut *w.pending.lock().await, "a.ts", now_ms() + 1);
+        w.finish_indexing(&taken, true).await;
+
+        let pending = w.get_pending_files().await;
+        assert_eq!(pending.len(), 1, "{pending:?}");
+        assert_eq!(pending[0].path, "a.ts");
+        assert!(!pending[0].indexing);
+    }
+
+    #[tokio::test]
+    async fn a_failed_batch_stays_pending_and_retries_after_debounce() {
+        let w = FileWatcher::new(PathBuf::from("."));
+        insert_pending(&w, "a.ts", now_ms() - 10_000).await;
+        let batch = vec!["a.ts".to_string()];
+        let taken = w.mark_indexing(&batch).await;
+        w.finish_indexing(&taken, false).await;
+
+        let pending = w.get_pending_files().await;
+        assert_eq!(pending.len(), 1);
+        assert!(!pending[0].indexing);
+        assert!(
+            w.get_ready_files(500).await.is_empty(),
+            "a failed file waits one more debounce window"
+        );
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert_eq!(w.get_ready_files(10).await, batch);
+    }
+
+    #[tokio::test]
+    async fn a_successful_batch_clears_its_entries() {
+        let w = FileWatcher::new(PathBuf::from("."));
+        insert_pending(&w, "a.ts", now_ms() - 10_000).await;
+        let taken = w.mark_indexing(&["a.ts".to_string()]).await;
+        w.finish_indexing(&taken, true).await;
+        assert!(w.get_pending_files().await.is_empty());
     }
 
     #[tokio::test]

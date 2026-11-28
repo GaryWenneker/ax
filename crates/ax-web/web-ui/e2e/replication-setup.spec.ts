@@ -1,5 +1,6 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 import { chooseSelect } from './chooseSelect';
+import { baseReply, shipConfigStub, statsStub } from './fixtures';
 
 async function fixture(page: Page, options: { readonly?: boolean; failPairing?: boolean; conflicts?: boolean; syncFailed?: boolean; configuredRole?: 'primary' | 'replica'; stopped?: boolean } = {}) {
   const calls: { path: string; body: any }[] = [];
@@ -27,8 +28,9 @@ async function fixture(page: Page, options: { readonly?: boolean; failPairing?: 
       else if (path.endsWith('/stop')) { running = false; data = { stopped: true }; }
       else if (options.failPairing) { await route.fulfill({ status: 400, json: { error: 'Primary connection failed. Previous settings were kept.' } }); return; }
       else { running = true; const generated = !settings && !body.token && body.role === 'primary'; storedToken = body.token || storedToken; settings = { config: { ...body, cluster_id: body.cluster_id || 'cluster_generated', node_id: 'stable', projects: [{ id: body.project_id || 'project_generated' }] }, port: body.port || 9877, advertise: body.advertise?.replace(':0', ':9877') }; data = { started: true, credential: generated ? { token: storedToken } : null }; }
-    } else if (path === '/api/stats') data = { readonly: false, project_name: 'Fixture', node_count:0, edge_count:0, file_count:0, db_size_bytes:0, languages: [] };
-    else if (path === '/api/ship/config') data = { config: { ship: {target_branch:'main',web_port:7070}, remote: {provider:'github'}, quality_gate: { steps: [], tests:{runner:'cargo test'} }, sonar: {}, ui: {} } };
+    } else if (path === '/api/stats') data = statsStub();
+    else if (path === '/api/ship/config') data = shipConfigStub();
+    else data = baseReply(path);
     await route.fulfill({ status: data === undefined ? 404 : 200, json: data ?? {error:'Fixture endpoint not provided'} });
   });
   if (process.env.AX_ACCESS_SCREENSHOTS) await page.addInitScript(() => localStorage.setItem('ax-theme','azure-dark'));

@@ -71,6 +71,14 @@ pub async fn run_index(path: Option<String>, force: bool) -> Result<(), String> 
             );
         }
     }
+    for skip in &result.skipped {
+        eprintln!(
+            "Skipped {} ({}): {}",
+            skip.path,
+            skip.outcome(),
+            skip.reason
+        );
+    }
     Ok(())
 }
 
@@ -930,8 +938,9 @@ pub async fn run_storage_set_item(
         .ok_or_else(|| "storage must be files or database".to_string())?;
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let store = ax_policy::PolicyStore::new(ax.db_pool().clone(), root);
+    let (kind, bare_id) = ax_policy::PolicyItemKind::split_prefixed(&id);
     let result = store
-        .set_item_storage(&id, target, keep_file)
+        .set_item_storage(kind, bare_id, target, keep_file)
         .await
         .map_err(|e| e.to_string())?;
     if json {
@@ -1166,7 +1175,7 @@ pub async fn run_capture(
         .into_iter()
         .map(|r| r.id)
         .collect();
-    proposal = ax_policy::finalize_proposal(proposal, &existing);
+    proposal = ax_policy::finalize_proposal(proposal, &existing, &root);
 
     if !yes {
         if json {
@@ -1239,8 +1248,9 @@ async fn set_enabled(path: Option<String>, id: &str, enabled: bool) -> Result<()
     let root = resolve_project_root(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let store = ax_policy::PolicyStore::new(ax.db_pool().clone(), root.clone());
+    let (kind, bare_id) = ax_policy::PolicyItemKind::split_prefixed(id);
     let found = store
-        .set_enabled(id, enabled)
+        .set_enabled(kind, bare_id, enabled)
         .await
         .map_err(|e| e.to_string())?;
     if !found {
@@ -1307,6 +1317,9 @@ pub async fn run_pack_import(
             result.skipped,
             result.conflicts
         );
+        for invalid in &result.invalid {
+            eprintln!("Not imported: {invalid}");
+        }
         println!("IDE bootstrap refreshed (all agents) + MCP for detected agents.");
     }
     Ok(())
@@ -1408,28 +1421,40 @@ pub async fn run_pack_install(
 
 pub async fn run_review_list(path: Option<String>, json: bool) -> Result<(), String> {
     let root = resolve_project_root(path);
-    let items = ax_policy::list_pending(&root).map_err(|e| e.to_string())?;
+    let queue = ax_policy::list_pending_report(&root).map_err(|e| e.to_string())?;
+    let items = &queue.items;
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&items).unwrap_or_default()
+            serde_json::to_string_pretty(items).unwrap_or_default()
         );
-    } else if items.is_empty() {
+    } else if items.is_empty() && queue.invalid.is_empty() {
         println!("No pending policy items.");
     } else {
-        for item in &items {
+        for item in items {
             println!(
                 "[{}] {} — {} ({})",
                 item.kind, item.id, item.level_or_description, item.status
             );
         }
     }
+    for bad in &queue.invalid {
+        eprintln!(
+            "[{}] {} — cannot be read: {}: {}",
+            bad.kind, bad.id, bad.path, bad.error
+        );
+    }
     Ok(())
 }
 
 pub async fn run_review_show(path: Option<String>, id: String, json: bool) -> Result<(), String> {
     let root = resolve_project_root(path);
-    let diff = ax_policy::pending_diff(&root, &id).map_err(|e| e.to_string())?;
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let store = ax_policy::PolicyStore::new(ax.db_pool().clone(), root.clone());
+    let (kind, bare_id) = ax_policy::PolicyItemKind::split_prefixed(&id);
+    let diff = ax_policy::pending_diff(&store, bare_id, kind.map(|k| k.as_str()))
+        .await
+        .map_err(|e| e.to_string())?;
     if json {
         println!(
             "{}",

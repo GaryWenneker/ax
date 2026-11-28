@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { centerDiffPopup, commitsForMemory, diffLineClass, fileChangeClass, gitFileLinkProps, memoryImageCount, memoryImageUrl, placeDiffPopup, shouldDismissDiffPopup, splitMemoryBody, zoomAt } from './memoryDetail.ts';
+import { anchorOwnsEvent, centerDiffPopup, commitsForMemory, diffLineClass, fileChangeClass, gitFileLinkProps, memoryImageCount, memoryImageUrl, placeDiffPopup, shouldDismissDiffPopup, splitMemoryBody, zoomAt } from './memoryDetail.ts';
 
 describe('splitMemoryBody', () => {
   it('splits a turn body into prompt, files, commits, and outcome', () => {
@@ -177,5 +177,17 @@ describe('zoomAt', () => {
 
   it('clamps at the minimum and centers again there', () => {
     assert.deepEqual(zoomAt({ scale: 2, x: -100, y: -40 }, 0.25, 10, 10), { scale: 1, x: 0, y: 0 });
+  });
+});
+
+describe('anchorOwnsEvent', () => {
+  const popupChild = { id: 'tab' };
+  const popup = { contains: (node: unknown) => node === popupChild };
+  it('ignores clicks and keys that bubble up from the popup portal', () => {
+    assert.equal(anchorOwnsEvent(popupChild, popup), false);
+  });
+  it('handles events on the commit itself', () => {
+    assert.equal(anchorOwnsEvent({ id: 'commit' }, popup), true);
+    assert.equal(anchorOwnsEvent({ id: 'commit' }, null), true);
   });
 });

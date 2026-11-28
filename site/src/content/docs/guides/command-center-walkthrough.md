@@ -1,6 +1,9 @@
 ---
 title: Command Center walkthrough
 description: Find every Ax page and setting, follow common workflows and understand which operations require the local host.
+banner:
+  content: |
+    This page describes part of the full ax, which is being phased out. <a href="/guides/phase-out/">ax-admin becomes the only visual interface</a>.
 ---
 
 Start Ax in your project, then open Command Center:

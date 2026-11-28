@@ -19,50 +19,32 @@ const pkg = JSON.parse(read('package.json'));
 
 // The approved copy, colors, and typography must stay in sync between
 // the visible homepage, metadata, locally bundled font, and responsive rules.
-test('approved three-line slogan, only control receives lime accent', () => {
+test('approved three-line slogan, only control receives the accent', () => {
   assert.match(home, /<h1 class="ax-headline">\s*<span>Your context\.<\/span><span>Your rules\.<\/span><span class="ax-headline-accent">Your control\.<\/span><\/h1>/);
-  assert.match(css, /\.ax-headline \.ax-headline-accent\s*\{color:var\(--ax-lime\)\}/);
+  assert.match(css, /\.ax-headline \.ax-headline-accent\s*\{color:var\(--ax-accent\)\}/);
   assert.doesNotMatch(home, /Your codebase|understood\.|Code context kept/);
   assert.match(page, /Your context\. Your rules\. Your control\./);
 });
 
-test('Oxanium is bundled and used for the heading, not loaded from Google Fonts', () => {
-  assert.equal(pkg.dependencies['@fontsource-variable/oxanium'], '^5.3.0');
-  assert.match(page, /@fontsource-variable\/oxanium\/wght\.css/);
-  assert.match(css, /\.ax-headline\{[^}]*font-family:'Oxanium Variable'/);
+test('the homepage uses the system font stack and loads no web fonts', () => {
+  assert.match(css, /--ax-font: -apple-system, BlinkMacSystemFont, "Segoe UI"/);
+  assert.match(css, /\.ax-landing \.ax-headline \{[^}]*font-family: var\(--ax-font\)/);
+  assert.doesNotMatch(page + css, /fontsource|Oxanium|Archivo|IBM Plex/);
   assert.doesNotMatch(page, /fonts\.googleapis\.com|fonts\.gstatic\.com/);
 });
 
-test('homepage backdrop is the deck backdrop (halftone, silk ring, vignette), not the CMY moiré', () => {
-  const backdrop = read('src/components/DeckBackdrop.astro');
-  const script = read('src/scripts/deck-backdrop.ts');
-  const styles = read('src/styles/deck-backdrop.css');
-  assert.match(home, /<DeckBackdrop\s*\/>/);
-  assert.doesNotMatch(home + css, /ax-halftone|ax-moire/);
-  assert.match(backdrop, /data-ax-backdrop-root data-ax-variant=\{variant\} aria-hidden="true"/);
-  for (const hook of ['data-ax-backdrop-dots', 'data-ax-silk-fog', 'data-ax-silk', 'ax-backdrop-vignette']) assert.ok(backdrop.includes(hook), hook);
-  assert.match(backdrop, /mountDeckBackdrop\(root\)/);
-  assert.match(backdrop, /astro:before-swap/);
-  for (const ink of ['#6d28d9', '#7c3aed', '#a78bfa', '#d946ef', '#c4b5fd', '#b9ff6a']) assert.ok(script.includes(ink), ink);
-  // Motion: the visible Pause motion control and hidden tabs stop the loop on a still frame.
-  assert.match(script, /html\.dataset\.axMotion === 'paused' \|\| document\.hidden/);
-  assert.match(script, /attributeFilter: \['data-theme', 'data-ax-motion'\]/);
-  assert.match(script, /addEventListener\('resize', onResize\)/);
-  assert.match(script, /addEventListener\('pagehide', save\)/);
-  assert.match(home, /<MotionControl\s*\/>/);
-  // The deck's vignette keeps the copy readable; the light docs theme hides the glow.
-  assert.match(styles, /\.ax-backdrop-vignette\{[^}]*radial-gradient\(ellipse at 30% 50%,rgba\(8,10,9,\.66\)/);
-  assert.match(styles, /\.ax-backdrop\{position:fixed;z-index:0;inset:0;pointer-events:none/);
-  // Nothing over the animated canvases forces a per-frame recomposite.
-  assert.doesNotMatch(styles, /mix-blend-mode|filter:blur|backdrop-filter/);
-  assert.match(styles, /:root\[data-theme='light'\] \.ax-backdrop\{display:none\}/);
-  // Deck kicker and lime chips on the hero.
-  assert.match(css, /\.ax-eyebrow\{[^}]*color:var\(--ax-lime\)/);
-  assert.match(css, /\.ax-feature-strip>\*\{[^}]*border-radius:99em/);
-  assert.match(css, /\.ax-install-command\{[^}]*position:absolute[^}]*backdrop-filter:blur\(18px\)/);
-  assert.doesNotMatch(css, /data-ax-install-panel\]:not\(\[hidden\]\).*overflow-y:auto/);
-  assert.match(css, /prefers-reduced-motion:reduce/);
+test('the homepage is calm: no backdrop, no motion control, no reveal, no effects', () => {
+  assert.doesNotMatch(home, /DeckBackdrop|MotionControl|ScrollReveal|data-ax-reveal/);
+  assert.doesNotMatch(css, /animation|@keyframes|transition|backdrop-filter|filter:|box-shadow|gradient|mix-blend-mode/);
   assert.doesNotMatch(css, /background-image:\s*url\(/);
+  // One accent: Cursor frost for text, lines and fills, with dark text on fills.
+  assert.match(css, /--ax-accent: #88c0d0;/);
+  assert.match(css, /--ax-accent-fill: #88c0d0;/);
+  assert.match(css, /\.ax-landing \.ax-download-primary \{[^}]*background: var\(--ax-accent-fill\);[^}]*color: var\(--ax-on-accent\)/);
+  assert.match(css, /\.ax-landing \.ax-eyebrow \{[^}]*color: var\(--ax-dim\)/);
+  // The page scrolls like a normal page.
+  assert.doesNotMatch(css, /overflow:\s*hidden/);
+  assert.match(css, /\.ax-landing \.ax-page \{[^}]*min-height: 100svh/);
 });
 
 test('backdrop layout: hero clears the copy, docs pages each get their own stable composition', async () => {
@@ -452,21 +434,16 @@ test('copied install popup closes for another choice and fades out after 1.5 sec
   }
 });
 
-test('phone landing fits the viewport and the platform menu overlays with a blur', () => {
-  const phone = css.split('\n').find((line) => line.includes('@media(max-width:600px)') && line.includes('.ax-main'));
-  assert.ok(phone, 'missing phone layout');
-  assert.match(phone, /\.ax-main\{[^}]*padding:8px 20px 4px/);
-  assert.match(phone, /\.ax-display-word\{[^}]*font-size:48px/);
-  assert.match(phone, /\.ax-platform-panel\{[^}]*position:absolute[^}]*bottom:calc\(100% \+ 8px\)/);
-  assert.doesNotMatch(phone, /position:relative;bottom:auto/);
-  assert.match(css, /\.ax-platform-panel\{[^}]*backdrop-filter:blur\(18px\)/);
-  assert.match(css, /\.ax-platform-panel\{[^}]*background:rgba\(18,23,19,\.62\)/);
+test('phone landing stacks the install controls and opens menus on a solid surface', () => {
+  const phone = css.slice(css.indexOf('@media (max-width: 600px)'));
+  assert.ok(phone.startsWith('@media'), 'missing phone layout');
+  assert.match(phone, /\.ax-download-row \{ flex-direction: column; \}/);
+  assert.match(phone, /\.ax-other-platforms \{ width: 100%; min-height: 44px; \}/);
+  assert.match(css, /\.ax-landing \.ax-platform-panel \{[^}]*position: absolute;[^}]*top: calc\(100% \+ 8px\);[^}]*background: var\(--ax-surface\)/);
+  assert.match(css, /\.ax-landing \.ax-install-command \{[^}]*position: absolute;[^}]*background: var\(--ax-surface\)/);
 });
 
-test('copied install button throws sparks so the copy stays visible', () => {
-  assert.match(css, /@keyframes ax-copied-spark\{0%\{opacity:1\}100%\{opacity:0/);
-  assert.match(css, /\.ax-download-primary\[data-copied="true"\]::after\{[^}]*animation:ax-copied-spark/);
-  assert.match(css, /\.ax-install-command button\[data-copied="true"\]::after\{[^}]*animation:ax-copied-spark/);
-  assert.match(css, /data-ax-motion='paused'\] \.ax-landing \.ax-download-primary\[data-copied="true"\]::after\{animation:none/);
-  assert.doesNotMatch(css, /border-radius:50%/);
+test('a copied install button changes colour without animation', () => {
+  assert.match(css, /\.ax-landing \.ax-download-primary\[data-copied="true"\],\s*\.ax-landing \.ax-install-command button\[data-copied="true"\] \{[^}]*background: var\(--ax-ink\)/);
+  assert.doesNotMatch(css, /ax-copied-spark/);
 });

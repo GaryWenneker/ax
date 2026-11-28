@@ -50,6 +50,10 @@ Each concept page includes:
 | `outDir` | **Relative** path from the project root where the OKF bundle is written |
 | `kinds` | Optional kind filter (`function`, `method`, …); empty = all code symbols |
 | `azdoWiki` | Optional git wiki publish target (Azure DevOps Wiki or any git remote) |
+| `azdoWiki.local` | **Relative** path from the project root for the local wiki clone |
+| `azdoWiki.subdir` | **Relative** folder inside the wiki clone that publish replaces |
+
+`outDir`, `azdoWiki.local` and `azdoWiki.subdir` must stay inside their folder: an absolute path, a `..` segment, or a link that leads outside is refused with an error before anything is written or deleted. `subdir` must name a real subfolder of the clone, so `.` and `.git` are refused too. An explicit `--out` on the command line is not limited this way.
 
 ## Validate
 
@@ -65,7 +69,7 @@ Checks for a root `index.md` and dangling relative Markdown links inside the OKF
 No Azure DevOps API token is stored in ax. Publishing uses **git** against `okf.azdoWiki.remote` (same pattern as `ax docs-catalog` wiki pull).
 
 1. Set `okf.azdoWiki.enabled` to `true` and `remote` to your wiki git URL.
-2. Ensure git credentials work for that remote on your machine or CI agent.
+2. Ensure git credentials work for that remote on your machine or CI agent. Git runs with credential prompts off, so a missing login fails instead of waiting for input.
 3. Run:
 
 ```bash
@@ -74,23 +78,17 @@ ax export okf --publish-wiki
 ax export okf --publish-wiki --no-push
 ```
 
-`--dry-run` previews the destination without cloning or pushing. Live publish clones/pulls the wiki, copies the OKF tree into `subdir`, commits, and pushes.
+`--dry-run` previews the destination without cloning or pushing. Live publish clones/pulls the wiki, copies the OKF tree into `subdir`, commits, and pushes. A `remote` that starts with `-` is refused, because git would read it as an option.
 
 To ship OKF via the **code repo** instead of a wiki, point `okf.outDir` at a tracked folder (for example `knowledge/`) and commit/push normally.
 
-## Command Center
+## ax-admin
 
-With `ax web` open, go to **Settings → Open Knowledge Format (OKF)**:
-
-1. **Generate OKF bundle** — writes the Markdown tree to `okf.outDir` (same engine as `ax export okf`)
-2. **Validate** — checks `index.md` and relative links
-3. **Publish to wiki** — shown when `okf.azdoWiki.enabled` is true; confirm with dry-run by default
-
-APIs: `GET /api/okf/config`, `POST /api/okf/export`, `POST /api/okf/validate`, `POST /api/okf/publish`.
+OKF export, validation and wiki publish run from the CLI, as above. [ax-admin](/guides/remote-admin/) has no page for them. Run `ax export okf` on the machine that holds the project, or in CI.
 
 ## Related
 
 - [Configuration](/getting-started/configuration/) — `ax.json` overview
 - [CLI reference](/reference/cli/) — `ax export okf`
-- [Command Center](/guides/command-center/) — Settings card
+- [ax-admin](/guides/remote-admin/) — the visual interface for a remote Ax
 - [Architecture Insights](/guides/architecture-insights/) — communities and `ax report`

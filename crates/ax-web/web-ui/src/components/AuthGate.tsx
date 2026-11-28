@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { signInPasskey } from '../lib/passkeys';
+import { checkSession, nextAuthState, retryDelayMs, type AuthState } from '../lib/authSession';
 
-type Session = { authenticated: boolean; member?: { display_name: string; roles: string[] } };
 async function checkedJson(url: string, init?: RequestInit) {
   const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store', ...init });
   const data = await response.json();
@@ -9,7 +9,8 @@ async function checkedJson(url: string, init?: RequestInit) {
   return data;
 }
 export default function AuthGate({ children }: { children: ReactNode }) {
-  const [mode, setMode] = useState<'loading' | 'open' | 'login' | 'error'>('loading');
+  const [auth, setAuth] = useState<AuthState>({ mode: 'loading', notice: null, failures: 0 });
+  const mode = auth.mode;
   const [identity, setIdentity] = useState('');
   const [password, setPassword] = useState('');
   const [useRecovery, setUseRecovery] = useState(false);
@@ -17,18 +18,17 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   const [passkeyOrigin, setPasskeyOrigin] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inspect = useCallback(async () => {
-    try {
-      const status = await checkedJson('/api/web-auth/status') as { enabled: boolean; origin?: string };
-      setPasskeyOrigin(status.origin ?? null);
-      if (!status.enabled) { setMode('open'); return; }
-      const session = await fetch('/api/web-auth/session', { cache: 'no-store' });
-      setMode(session.ok ? 'open' : session.status === 401 ? 'login' : 'error');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Cannot check authentication');
-      setMode('error');
-    }
+    const outcome = await checkSession();
+    if (outcome.kind !== 'unavailable') setPasskeyOrigin(outcome.origin);
+    setAuth((current) => nextAuthState(current, outcome));
   }, []);
   useEffect(() => { void inspect(); }, [inspect]);
+  // A failed check is retried with backoff; while the app is open it stays mounted meanwhile.
+  useEffect(() => {
+    if (auth.failures === 0) return;
+    const timer = window.setTimeout(() => { void inspect(); }, retryDelayMs(auth.failures));
+    return () => window.clearTimeout(timer);
+  }, [inspect, auth.failures]);
   useEffect(() => {
     if (mode !== 'open') return;
     const interval = window.setInterval(() => { void inspect(); }, 30_000);
@@ -60,8 +60,14 @@ export default function AuthGate({ children }: { children: ReactNode }) {
     finally { setBusy(false); }
   }
   if (mode === 'loading') return <div className="auth-loading" role="status">Checking authentication…</div>;
-  if (mode === 'error') return <main className="auth-page" role="alert"><h1>Authentication unavailable</h1><p>{error || 'Unable to reach the server.'}</p><button onClick={() => void inspect()} type="button" className="btn">Retry</button></main>;
-  if (mode === 'open') return <>{children}</>;
+  if (mode === 'error') return <main className="auth-page" role="alert"><h1>Authentication unavailable</h1><p>{auth.notice || 'Unable to reach the server.'}</p><button onClick={() => void inspect()} type="button" className="btn">Retry</button></main>;
+  if (mode === 'open') return <>
+    {auth.notice && <div className="auth-offline settings-toast settings-toast--warn" role="status">
+      Cannot reach the server ({auth.notice}). Retrying…
+      <button type="button" className="btn" onClick={() => void inspect()}>Retry now</button>
+    </div>}
+    {children}
+  </>;
   return <main className="auth-page">
     <form className="auth-card" onSubmit={submitPassword}>
       <span className="auth-eyebrow">Ax · Command Center</span>

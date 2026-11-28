@@ -18,7 +18,7 @@ This scans for:
 - Cargo workspace members (`Cargo.toml` `[workspace].members`)
 - Nested directories that already contain `.ax/`
 
-It writes a `members` array into root `ax.json` (`.ax.json` is also accepted as an alias when reading):
+It writes a `members` array into root `ax.json`. A folder that has `.ax.json` and no `ax.json` uses `.ax.json` instead, for every setting ax reads or writes there (members, `policySync`, the `policy` section). When both files exist, `ax.json` wins:
 
 ```json
 {
@@ -99,7 +99,7 @@ Company and private scopes are never exported by `ax policy pack export`.
 
 ### API contract federation
 
-During `ax sync` / `ax index`, OpenAPI (YAML/JSON), `.proto`, and `.graphql` / `.gql` files become `Doc` + `Route` nodes with stable ids such as `contract:openapi:GET:/users`. Matching operations across files are linked with inferred `References` edges.
+During `ax sync` / `ax index`, OpenAPI (YAML/JSON), `.proto`, and `.graphql` / `.gql` files become `Doc` + `Route` nodes. Each operation gets one node per file, with an id such as `contract:openapi:openapi.yaml:GET:/users`; its signature holds the shared key `contract:openapi:GET:/users`. Operations with the same key in different files are linked with inferred `References` edges. A YAML or JSON file counts as OpenAPI when its name says so (`openapi`, `swagger`, `api.yaml`) or its first 400 bytes contain an `openapi` or `swagger` key. The `exclude` patterns in `ax.json` apply with the same gitignore rules as the code scan.
 
 ## Shared memory sync
 
@@ -127,4 +127,4 @@ See the [CLI reference](/reference/cli/) for all formats.
 
 ## Further reading
 
-Monorepo federation, `ship --ci`, plugins, LSP enrich, and `ax share` are all available. Memory embeddings are the local hash model `hash-v1`. See [`docs/ROADMAP.md`](https://github.com/GaryWenneker/ax/blob/main/docs/ROADMAP.md).
+Monorepo federation, `ship --ci`, plugins, and LSP enrich are all available. Memory embeddings are the local hash model `hash-v1`. See [`docs/ROADMAP.md`](https://github.com/GaryWenneker/ax/blob/main/docs/ROADMAP.md).

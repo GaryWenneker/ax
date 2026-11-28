@@ -1,8 +1,6 @@
-import { expect, test } from '@playwright/test';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { expect, test, type Page } from '@playwright/test';
 
+import { emptyQualitySnapshot } from '../src/lib/mcpQuality';
 import {
   classifyTraceBody,
   entryHasTextPayload,
@@ -11,8 +9,32 @@ import {
   primaryTextPayload,
 } from '../src/lib/mcpTrace';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MARKER = `logging-text-e2e-${Date.now()}`;
+
+// Serve the trace lines through page.route so the spec never touches the
+// verbose log of the Command Center it runs against.
+async function serveTrace(page: Page, lines: string[]): Promise<void> {
+  let sent = false;
+  await page.route('**/api/**', (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/usage/mcp-trace/events') {
+      const body = sent ? ': heartbeat\n\n' : `event: batch\ndata: ${JSON.stringify(lines)}\n\n`;
+      sent = true;
+      return route.fulfill({ contentType: 'text/event-stream', body });
+    }
+    const json =
+      path === '/api/usage/mcp-quality'
+        ? { ...emptyQualitySnapshot(), projectLabel: 'Logging text', verbosePresent: true, verboseEnabled: true }
+        : path === '/api/usage/mcp-trace/path'
+          ? { projectLabel: 'Logging text', projectRoot: '/fixtures/logging', logDay: '2026-07-26', logExists: true }
+          : path === '/api/ship/config'
+            ? { config: { ship: {}, ui: {} }, sonar: {} }
+            : path === '/api/stats'
+              ? { project_name: 'Logging text', node_count: 0, edge_count: 0, file_count: 0, languages: [], db_size_bytes: 0 }
+              : {};
+    return route.fulfill({ json });
+  });
+}
 
 test.describe('logging text + domain kinds', () => {
   test('TOOL column labels domain and cli cmd lines', () => {
@@ -29,23 +51,13 @@ test.describe('logging text + domain kinds', () => {
   });
 
   test('Logging UI shows TOOL=memory for domain line (not dash)', async ({ page }) => {
-    const pathRes = await page.request.get('/api/usage/mcp-trace/path');
-    expect(pathRes.ok(), `mcp-trace/path → ${pathRes.status()}`).toBeTruthy();
-    const meta = (await pathRes.json()) as { path?: string };
-    expect(meta.path).toBeTruthy();
-    const logPath = meta.path as string;
-    fs.mkdirSync(path.dirname(logPath), { recursive: true });
     const marker = `mem-tool-${Date.now()}`;
-    fs.appendFileSync(
-      logPath,
-      `2026-07-26T12:00:00.000Z [ax] memory remember ok id=${marker} tool=memory\n`,
-      'utf8',
-    );
+    await serveTrace(page, [`2026-07-26T12:00:00.000Z [ax] memory remember ok id=${marker} tool=memory`]);
 
     await page.goto('/logging');
-    const row = page.locator('.mcp-trace-row', { hasText: marker }).first();
-    await expect(row).toBeVisible({ timeout: 20_000 });
-    await expect(row.locator('.mcp-col-tool')).toContainText('memory');
+    const rows = page.locator('.mcp-trace-row');
+    await expect(rows).toHaveCount(1, { timeout: 20_000 });
+    await expect(rows.first().locator('.page-item-title')).toContainText(/memory/i);
   });
 
   test('classify domain prefixes memory / policy / cli', () => {
@@ -71,23 +83,11 @@ test.describe('logging text + domain kinds', () => {
   });
 
   test('Logging UI shows text badge and Prompt / text hero', async ({ page }) => {
-    const pathRes = await page.request.get('/api/usage/mcp-trace/path');
-    expect(pathRes.ok(), `mcp-trace/path → ${pathRes.status()}`).toBeTruthy();
-    const meta = (await pathRes.json()) as { path?: string; ok?: boolean };
-    expect(meta.path, 'verbose log path from API').toBeTruthy();
-    const logPath = meta.path as string;
+    await serveTrace(page, [
+      `2026-07-26T12:00:00.000Z [ax-mcp] inbound tool=ax_preflight args={"prompt":"${MARKER} verify inspector"}`,
+    ]);
 
-    const dir = path.dirname(logPath);
-    fs.mkdirSync(dir, { recursive: true });
-    const line =
-      `2026-07-26T12:00:00.000Z [ax-mcp] inbound tool=ax_preflight args={"prompt":"${MARKER} verify inspector"}` +
-      '\n';
-    fs.appendFileSync(logPath, line, 'utf8');
-
-    await page.goto('/logging?hasText=1');
-    await expect(page.locator('.mcp-trace-filter-chip-label', { hasText: 'Has text' })).toBeVisible({
-      timeout: 15_000,
-    });
+    await page.goto('/logging');
 
     const row = page.locator('.mcp-trace-row', { hasText: MARKER }).first();
     await expect(row).toBeVisible({ timeout: 20_000 });

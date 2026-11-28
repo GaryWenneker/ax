@@ -1,0 +1,1 @@
+function e(e){return(e??[]).join(`, `)}function t({load:e,saving:t}){return e===`ready`&&!t}function n(e){return e===`loading`?`spinner`:e===`failed`?`retry`:`form`}export{t as n,n as r,e as t};
