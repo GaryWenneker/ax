@@ -1,6 +1,6 @@
 //! Roll up recorded usage events with the catalog cost quote.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Datelike, Local, NaiveDate};
 
@@ -79,6 +79,14 @@ pub struct CostReport {
     pub session_sourced: bool,
     /// Recorded session minutes for this period. Set only when the report is session-sourced.
     pub session_minutes: Option<u64>,
+    /// Imported sessions with no priced usage event whose catalog spend was added to this report.
+    pub sessions_merged: usize,
+    /// Imported sessions left out because their priced usage events already count them.
+    pub sessions_excluded: usize,
+    /// `(agent, session_id)` of every usage event in the report.
+    event_sessions: BTreeSet<(String, String)>,
+    /// `(agent, session_id)` of every usage event with a catalog price.
+    priced_sessions: BTreeSet<(String, String)>,
 }
 
 pub fn quote_recorded(row: &RecordedUsage, pricing: Option<ModelPricing>) -> Cost {
@@ -122,8 +130,18 @@ pub fn build_report(
     let mut spend = 0.0;
     let mut known = 0i64;
     let mut unknown = 0i64;
+    let mut event_sessions = BTreeSet::new();
+    let mut priced_sessions = BTreeSet::new();
     for item in &quoted {
         add_tokens(&mut tokens, &item.recorded);
+        let key = (
+            item.recorded.agent.clone(),
+            item.recorded.session_id.clone(),
+        );
+        if item.cost.total_confidence == CostConfidence::Estimated {
+            priced_sessions.insert(key.clone());
+        }
+        event_sessions.insert(key);
         let label = item
             .recorded
             .model
@@ -184,13 +202,30 @@ pub fn build_report(
         selected_context_tokens: 0,
         session_sourced: false,
         session_minutes: None,
+        sessions_merged: 0,
+        sessions_excluded: 0,
+        event_sessions,
+        priced_sessions,
     }
 }
 
-/// Fill an empty usage-event report from imported agent sessions.
-/// Quoted usage events win: a non-empty event list is left unchanged.
+/// Add spend known only from imported agent sessions.
+///
+/// With no usage events at all, the report is filled from the session totals.
+/// Otherwise the two sources are merged per session: a session whose usage events
+/// carry a catalog price is already counted and is left out, and every other session
+/// adds its catalog spend to the model, agent and day totals. Its token counts are added
+/// only when it has no usage events at all, so tokens are never counted twice.
 pub fn apply_session_cost(report: &mut CostReport, coverage: &crate::savings::SessionCostCoverage) {
-    if report.events != 0 || (coverage.models.is_empty() && coverage.agents.is_empty()) {
+    if report.events == 0 {
+        fill_from_sessions(report, coverage);
+    } else {
+        merge_sessions(report, coverage);
+    }
+}
+
+fn fill_from_sessions(report: &mut CostReport, coverage: &crate::savings::SessionCostCoverage) {
+    if coverage.models.is_empty() && coverage.agents.is_empty() {
         return;
     }
     report.by_model = coverage
@@ -227,6 +262,63 @@ pub fn apply_session_cost(report: &mut CostReport, coverage: &crate::savings::Se
         .collect();
     report.session_minutes = Some(coverage.minutes);
     report.session_sourced = true;
+    report.sessions_merged = coverage.sessions.len();
+}
+
+fn merge_sessions(report: &mut CostReport, coverage: &crate::savings::SessionCostCoverage) {
+    let mut by_model = regroup(&report.by_model);
+    let mut by_agent = regroup(&report.by_agent);
+    let mut by_day: BTreeMap<NaiveDate, f64> =
+        report.by_day.iter().map(|d| (d.date, d.usd)).collect();
+    for session in &coverage.sessions {
+        let key = (session.agent.clone(), session.session_id.clone());
+        if report.priced_sessions.contains(&key) {
+            report.sessions_excluded += 1;
+            continue;
+        }
+        report.sessions_merged += 1;
+        let agent = match session.agent.trim() {
+            "" => "unknown".to_string(),
+            name => name.to_string(),
+        };
+        by_model.entry(session.model.clone()).or_default().0 += session.usd;
+        by_agent.entry(agent).or_default().0 += session.usd;
+        report.spend_usd += session.usd;
+        if let Some(date) = session.day.as_deref().and_then(parse_iso_date) {
+            *by_day.entry(date).or_default() += session.usd;
+        }
+        if report.event_sessions.contains(&key) {
+            continue;
+        }
+        if let Some(n) = session.input_tokens {
+            report.tokens.input += n;
+            report.tokens.input_known = true;
+        }
+        if let Some(n) = session.output_tokens {
+            report.tokens.output += n;
+            report.tokens.output_known = true;
+        }
+    }
+    report.by_model = groups(by_model);
+    report.by_agent = groups(by_agent);
+    report.by_day = by_day
+        .into_iter()
+        .map(|(date, usd)| DaySpend { date, usd })
+        .collect();
+}
+
+fn regroup(rows: &[GroupSpend]) -> BTreeMap<String, (f64, i64)> {
+    rows.iter()
+        .map(|row| (row.label.clone(), (row.usd, row.unknown_events)))
+        .collect()
+}
+
+fn plural_sessions(n: usize) -> String {
+    if n == 1 {
+        "1 imported session".to_string()
+    } else {
+        format!("{n} imported sessions")
+    }
 }
 
 fn parse_iso_date(value: &str) -> Option<NaiveDate> {
@@ -390,6 +482,19 @@ pub fn format_summary(
         out.push_str(
             "Models, agents, input tokens, and spend come from imported agent sessions.\n",
         );
+    } else {
+        if report.sessions_merged > 0 {
+            out.push_str(&format!(
+                "Spend includes {} without usage events.\n",
+                plural_sessions(report.sessions_merged)
+            ));
+        }
+        if report.sessions_excluded > 0 {
+            out.push_str(&format!(
+                "Left out {} with usage events; those events count instead.\n",
+                plural_sessions(report.sessions_excluded)
+            ));
+        }
     }
     let minutes = report.session_minutes;
     out.push_str("\nTokens\n--------------------------------\n");
@@ -817,7 +922,39 @@ mod tests {
                 usd: 1.75,
             }],
             minutes: 46,
+            sessions: vec![
+                session_entry("cursor", "c1", "grok-4.7", 1.25, Some(100)),
+                session_entry("cursor", "c2", "claude-opus-5-5", 0.5, Some(40)),
+            ],
         }
+    }
+
+    fn session_entry(
+        agent: &str,
+        session_id: &str,
+        model: &str,
+        usd: f64,
+        input: Option<i64>,
+    ) -> crate::savings::SessionCostEntry {
+        crate::savings::SessionCostEntry {
+            agent: agent.into(),
+            session_id: session_id.into(),
+            model: model.into(),
+            usd,
+            day: Some("2026-10-05".into()),
+            input_tokens: input,
+            output_tokens: None,
+        }
+    }
+
+    fn day(report: &CostReport, iso: &str) -> f64 {
+        let date = parse_iso_date(iso).unwrap();
+        report
+            .by_day
+            .iter()
+            .filter(|d| d.date == date)
+            .map(|d| d.usd)
+            .sum()
     }
 
     #[test]
@@ -925,14 +1062,90 @@ mod tests {
     }
 
     #[test]
-    fn usage_events_are_not_replaced_by_sessions() {
+    fn sessions_without_usage_events_add_to_event_spend() {
         let mut report = build_report(&[row("known", Some(1_000_000), Some(0))], price, 0, 0.0);
-        let spend = report.spend_usd;
+        let event_spend = report.spend_usd;
         apply_session_cost(&mut report, &coverage_fixture());
-        assert!((report.spend_usd - spend).abs() < 1e-9);
+        assert!((report.spend_usd - (event_spend + 1.75)).abs() < 1e-9);
         assert!(!report.session_sourced);
+        assert_eq!(report.sessions_merged, 2);
+        assert_eq!(report.sessions_excluded, 0);
         assert!(report.by_agent.iter().any(|row| row.label == "claude"));
+        assert!(report
+            .by_agent
+            .iter()
+            .any(|row| row.label == "cursor" && (row.usd - 1.75).abs() < 1e-9));
         assert!(report.by_model.iter().any(|m| m.label == "known"));
-        assert!(!report.by_model.iter().any(|m| m.label == "grok-4.7"));
+        assert!(report.by_model.iter().any(|m| m.label == "grok-4.7"));
+        assert!((day(&report, "2026-10-05") - 1.75).abs() < 1e-9);
+        assert_eq!(report.tokens.input, 1_000_000 + 140);
+    }
+
+    #[test]
+    fn one_cheap_event_does_not_hide_imported_spend_from_the_budget() {
+        let mut cheap = row("known", Some(10_000), Some(0));
+        cheap.session_id = "claude-run".into();
+        let mut report = build_report(&[cheap], price, 0, 0.0);
+        let mut coverage = coverage_fixture();
+        coverage.sessions = vec![session_entry("cursor", "c1", "grok-4.7", 55.0, Some(1))];
+        coverage.spend_usd = 55.0;
+        apply_session_cost(&mut report, &coverage);
+        let total: f64 = report.by_day.iter().map(|d| d.usd).sum();
+        assert!(total > 55.0, "{total}");
+        let settings = BudgetSettings {
+            enabled: true,
+            monthly: 60.0,
+            ..BudgetSettings::default()
+        };
+        let snapshot = project_budget(
+            &settings,
+            chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2026, 10, 31).unwrap(),
+            &report.by_day,
+        );
+        assert!(snapshot.usage_percent.unwrap_or(0.0) > 90.0, "{snapshot:?}");
+    }
+
+    #[test]
+    fn unpriced_events_do_not_hide_session_spend() {
+        let mut report = build_report(&[row("missing", Some(5), Some(0))], price, 0, 0.0);
+        assert_eq!(report.known_events, 0);
+        apply_session_cost(&mut report, &coverage_fixture());
+        assert!((report.spend_usd - 1.75).abs() < 1e-9);
+        assert_eq!(report.sessions_merged, 2);
+    }
+
+    #[test]
+    fn a_session_with_quoted_events_is_counted_once() {
+        let mut report = build_report(&[row("known", Some(1_000_000), Some(0))], price, 0, 0.0);
+        let event_spend = report.spend_usd;
+        let mut coverage = coverage_fixture();
+        coverage
+            .sessions
+            .push(session_entry("claude", "s", "known", 9.0, Some(1_000_000)));
+        apply_session_cost(&mut report, &coverage);
+        assert!((report.spend_usd - (event_spend + 1.75)).abs() < 1e-9);
+        assert_eq!(report.sessions_merged, 2);
+        assert_eq!(report.sessions_excluded, 1);
+        assert_eq!(report.tokens.input, 1_000_000 + 140);
+        let text = format_summary(
+            &report,
+            &project_budget(
+                &BudgetSettings::default(),
+                chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(),
+                chrono::NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
+                &report.by_day,
+            ),
+            &BudgetSettings::default(),
+            "October 2026",
+        );
+        assert!(
+            text.contains("2 imported sessions without usage events"),
+            "{text}"
+        );
+        assert!(
+            text.contains("1 imported session with usage events"),
+            "{text}"
+        );
     }
 }

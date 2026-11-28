@@ -733,7 +733,11 @@ ax durable doc-get --session "$SESSION" --kind brief
 
 ### `ax turn`
 
-Explicit turn lifecycle without IDE hooks. Finish writes a memory with `source=cli-turn`.
+Explicit turn lifecycle without IDE hooks. Finish writes a memory with `source=cli-turn`. When the finish input has `decisions` or `open_questions`, finish also adds them to the session's working context (the notes `ax_session` keeps). That needs an index; when the write fails, the receipt lists the reason in `warnings` and the turn still finishes.
+
+The receipt's `files` are the files git reports as changed during the turn, renames by their new path. Files that were already modified or untracked when the turn began are left out unless they changed again during the turn. At most 200 files are listed; a larger set adds a `warnings` entry with the full count. Each git call stops after 30 seconds.
+
+Snapshots are stored under `.ax/cli-turns/<session>/<turn>.json`. The `--session` and `--turn` values must be 1 to 128 ASCII letters, digits, `-`, `_`, `.` or `:`, and not dots only; any other value is rejected, so a turn cannot read or write files outside that folder.
 
 ```bash
 TURN=$(printf '%s' "$PROMPT" | ax turn begin --session "$SESSION" --prompt-stdin --json | jq -r .turnId)
@@ -1100,7 +1104,7 @@ Daily model price sync from [OpenRouter](https://openrouter.ai/models) (no API k
 | `sync` | Fetch today's prices (`--force` re-fetches even if already synced) |
 | `status` | Last sync, row counts |
 | `list` | Latest OpenRouter rates (`--json`) |
-| `history <model>` | Daily series for a model id/substring (`--days`, `--json`) |
+| `history <model>` | Daily series for the one catalog model that best matches the id or name, over the last `--days` calendar days (`--json`) |
 
 ```bash
 ax pricing sync
@@ -1931,6 +1935,12 @@ Not for daily use — invoked by agents, installers, or upgrade helpers.
 
 `ax spec <id>` prints the stored body (`id` or `id@version`). Specifications and plans can also be stored as separate rows. That hierarchy stays off until you turn it on, and turning it off restores the flat list and the previous capture path. Rows already written stay. Nothing is dropped.
 
+When a turn finishes, each changed `docs/specs/*.md` or `docs/plans/*.md` file is stored as a draft. `docs/specs/<id>/SPEC.md` belongs to spec `<id>`. The Markdown copy of an existing spec, such as the `SPEC.md` written on approval, is compared with the approved body instead of being stored as another spec. A body equal to the latest revision adds no draft, and a changed file binds the session only when it has no spec yet. Trailing newlines are ignored when bodies and the Markdown copy are compared.
+
+Preflight also scans the IDE plan folders. A session named in a plan file, and the live session for the newest plan in `~/.cursor/plans`, are bound to that plan only when the session has no spec yet or was bound by an earlier scan. A spec bound by a capture or an edit in the session stays bound.
+
+A plan file's spec id is the slug of its file name. When another plan file already has that id, such as `plan.md` in a second project, the new file's id gets the first 8 hex digits of its path's SHA-256 (`plan-1a2b3c4d`). A file keeps its id when it changes later. Spec ids from a plan request or another file path are a slug of at most 48 characters; a longer one is cut and gets the 8-digit hash of the full text, so two requests that start the same stay two specs. A scan reads at most 400 plan files.
+
 ```bash
 ax spec billing-spec
 ax spec-flag
@@ -1977,7 +1987,7 @@ ax spec-import '{"projectId":"ax","specId":"billing-rules","specTitle":"Billing 
 ax spec-classify '{"allPlanMode":true,"docType":"spec","actor":"owner","reason":"These plan-mode documents are specifications."}'
 ```
 
-Approving a new spec body marks selections of plans written against the previous spec hash as `compatibility_review_required`. Other specs are left alone, and the plan text is not rewritten. `ax spec-compatibility` records that the selection was checked.
+Approving a new spec body marks selections of plans written against the previous spec hash as `compatibility_review_required`. Selecting a plan revision later gets the same mark when that revision was written against another spec body than the approved one. An edited plan revision keeps the spec revision its parent was written against. Other specs are left alone, and the plan text is not rewritten. `ax spec-compatibility` records that the selection was checked. Revising a spec id that does not exist returns `missing spec`.
 
 `ax spec-policy` records which policy revision applies. A `body` field is rejected. The stored link has the revision id and content hash, not the rule text. Sending the same link again keeps the one row.
 
