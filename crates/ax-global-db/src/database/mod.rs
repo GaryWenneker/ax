@@ -35,6 +35,21 @@ pub async fn initialize_schema(pool: &SqlitePool) -> Result<()> {
     }
     add_column_if_missing(pool, "team_members", "avatar_image", "TEXT").await?;
     widen_member_role_check(pool).await?;
+    repair_admin_role_projection(pool).await?;
+    Ok(())
+}
+
+/// team_members.role once ranked Approver above Admin, so a member holding
+/// both was stored as 'approver' and lost the admin scopes. Store 'admin'.
+async fn repair_admin_role_projection(pool: &SqlitePool) -> Result<()> {
+    sqlx::query(
+        "UPDATE team_members SET role = 'admin'
+         WHERE role = 'approver'
+           AND EXISTS (SELECT 1 FROM member_roles r
+                       WHERE r.member_id = team_members.id AND r.role = 'admin')",
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
