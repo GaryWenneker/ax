@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use ax_usage::{select_context, ContextBlock, ContextClass};
 
-use crate::economics::estimate_text;
+use crate::economics::{estimate_text, path_ends_with};
 use crate::types::{
     CachedContext, ContextCacheKey, ContextRequest, ContextResult, ContextSection, SectionType,
 };
@@ -114,6 +114,9 @@ fn density(section: &ContextSection) -> f64 {
     f64::from(section.priority) / f64::from(section.token_estimate.max(1))
 }
 
+/// Selected contexts kept at most; inserting past this drops the oldest.
+pub const MAX_CONTEXT_CACHE_ENTRIES: usize = 256;
+
 #[derive(Debug, Default)]
 pub struct ContextCache {
     entries: HashMap<String, CachedContext>,
@@ -135,6 +138,17 @@ impl ContextCache {
         value.policy_version = key.policy_version;
         value.skill_version = key.skill_version;
         value.graph_version = key.graph_version;
+        if !self.entries.contains_key(&value.key) && self.entries.len() >= MAX_CONTEXT_CACHE_ENTRIES
+        {
+            if let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.created_at)
+                .map(|(key, _)| key.clone())
+            {
+                self.entries.remove(&oldest);
+            }
+        }
         self.entries.insert(value.key.clone(), value);
     }
 
@@ -143,7 +157,7 @@ impl ContextCache {
             !entry.source_hashes.iter().any(|source| {
                 paths
                     .iter()
-                    .any(|path| source == path || source.ends_with(path) || path.ends_with(source))
+                    .any(|path| path_ends_with(source, path) || path_ends_with(path, source))
             })
         });
     }
@@ -299,6 +313,40 @@ mod tests {
         cache.invalidate_paths(&["src/UserService.cs".into()]);
         assert!(cache.get(&base).is_none());
         assert!(cache.get(&other).is_some());
+    }
+
+    #[test]
+    fn path_invalidation_matches_whole_components_only() {
+        let mut cache = ContextCache::default();
+        let key = sample_key("p");
+        cache.insert(key.clone(), cached(&key, vec!["src/mylib.rs".into()]));
+        cache.invalidate_paths(&["lib.rs".into()]);
+        assert!(cache.get(&key).is_some(), "lib.rs is not src/mylib.rs");
+        cache.invalidate_paths(&["/repo/src/mylib.rs".into()]);
+        assert!(cache.get(&key).is_none());
+    }
+
+    #[test]
+    fn the_cache_keeps_a_bounded_number_of_entries_and_drops_the_oldest() {
+        let mut cache = ContextCache::default();
+        let total = MAX_CONTEXT_CACHE_ENTRIES + 10;
+        let keys: Vec<ContextCacheKey> = (0..total)
+            .map(|n| {
+                let mut key = sample_key("p");
+                key.intent_hash = intent_hash(&format!("task {n}"));
+                key
+            })
+            .collect();
+        for (n, key) in keys.iter().enumerate() {
+            let mut entry = cached(key, Vec::new());
+            entry.created_at = n as u64;
+            cache.insert(key.clone(), entry);
+        }
+        assert_eq!(cache.len(), MAX_CONTEXT_CACHE_ENTRIES);
+        assert!(cache.get(&keys[0]).is_none());
+        assert!(cache.get(&keys[9]).is_none());
+        assert!(cache.get(&keys[10]).is_some());
+        assert!(cache.get(&keys[total - 1]).is_some());
     }
 
     #[test]

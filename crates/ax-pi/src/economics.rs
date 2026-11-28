@@ -82,9 +82,11 @@ impl RepeatDetector {
         context_cost: Option<f64>,
     ) -> (bool, RepeatRecord) {
         if let Some(prior) = self.seen.get_mut(identity) {
-            prior.count += 1;
+            prior.count = prior.count.saturating_add(1);
             prior.latest_call_id = call_id.to_string();
-            prior.tokens_repeated += u64::from(output_tokens);
+            prior.tokens_repeated = prior
+                .tokens_repeated
+                .saturating_add(u64::from(output_tokens));
             if let Some(cost) = context_cost {
                 prior.repeated_cost = Some(prior.repeated_cost.unwrap_or(0.0) + cost);
             }
@@ -150,6 +152,35 @@ fn graph_tool(name: &str) -> bool {
     )
 }
 
+/// Tools whose output depends only on their arguments and the repository
+/// state, so an earlier result can stand in for a repeat. Shell commands,
+/// edits and anything else that may change state or read the clock are not
+/// on this list.
+fn read_only_tool(name: &str) -> bool {
+    read_tool(name)
+        || search_tool(name)
+        || graph_tool(name)
+        || matches!(name.trim().to_ascii_lowercase().as_str(), "ax_search")
+}
+
+fn known_repository_state(state: &str) -> bool {
+    let state = state.trim();
+    !state.is_empty() && !state.eq_ignore_ascii_case("unknown")
+}
+
+/// A result may be replayed for an exact repeat only when it came from a
+/// read-only tool, succeeded, and was taken at a known repository state.
+pub(crate) fn replayable(observation: &ToolCallObservation) -> bool {
+    observation.success
+        && read_only_tool(&observation.tool_name)
+        && known_repository_state(&observation.repository_state)
+}
+
+/// A call that is not read-only may have changed what earlier reads saw.
+pub(crate) fn may_change_state(tool_name: &str) -> bool {
+    !read_only_tool(tool_name)
+}
+
 fn query_text(arguments: &Value) -> String {
     match arguments {
         Value::String(text) => text.clone(),
@@ -172,8 +203,93 @@ fn target_path(arguments: &Value) -> Option<String> {
     }
 }
 
+/// Entity names shorter than this (`id`, `new`) match too many unrelated
+/// searches to say anything about the symbol.
+const MIN_ENTITY_CHARS: usize = 4;
+
+fn identifier_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// `needle` occurs in `text` with no identifier character directly before or
+/// after it, so `new` is not found in `renewal`.
+fn contains_on_boundary(text: &str, needle: &str) -> bool {
+    if needle.chars().count() < MIN_ENTITY_CHARS {
+        return false;
+    }
+    text.match_indices(needle).any(|(start, found)| {
+        let before = text[..start].chars().next_back();
+        let after = text[start + found.len()..].chars().next();
+        !before.is_some_and(identifier_char) && !after.is_some_and(identifier_char)
+    })
+}
+
+/// The last segment of a qualified name (`a::b::Name` → `Name`), when the
+/// entity has more than one segment.
+fn last_segment(entity: &str) -> Option<&str> {
+    let segment = entity
+        .rsplit(|c: char| !identifier_char(c))
+        .find(|part| !part.is_empty())?;
+    (segment.len() < entity.len()).then_some(segment)
+}
+
+/// The first graph entity the search text names. The whole name on identifier
+/// boundaries is a high-confidence match; only the last segment of a
+/// qualified name is a medium-confidence one, so it is never applied
+/// automatically.
+fn known_entity_in<'a>(query: &str, entities: &'a [String]) -> Option<(&'a str, Confidence)> {
+    if let Some(entity) = entities
+        .iter()
+        .find(|entity| contains_on_boundary(query, entity.trim()))
+    {
+        return Some((entity.trim(), Confidence::High));
+    }
+    entities.iter().find_map(|entity| {
+        let segment = last_segment(entity.trim())?;
+        contains_on_boundary(query, segment).then_some((entity.trim(), Confidence::Medium))
+    })
+}
+
+fn path_components(path: &str) -> Vec<&str> {
+    path.split(['/', '\\'])
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect()
+}
+
+/// `known`'s path components are the trailing components of `path`, so
+/// `lib.rs` matches `src/lib.rs` but not `src/mylib.rs`. Separators may be
+/// `/` or `\`.
+pub(crate) fn path_ends_with(path: &str, known: &str) -> bool {
+    let path = path_components(path);
+    let known = path_components(known);
+    !known.is_empty() && path.ends_with(&known)
+}
+
 pub fn advise_observation(
     observation: &ToolCallObservation,
+    already_seen: bool,
+    mode: OptimizationMode,
+    oversized_tokens: u32,
+    expose: bool,
+) -> ToolCallAdvice {
+    advise_with(
+        observation,
+        &observation.known_graph_entities,
+        &observation.indexed_paths,
+        already_seen,
+        mode,
+        oversized_tokens,
+        expose,
+    )
+}
+
+/// [`advise_observation`] with the graph entities and indexed paths passed
+/// separately, so a caller that keeps them can lend them instead of copying
+/// them into every observation.
+pub(crate) fn advise_with(
+    observation: &ToolCallObservation,
+    known_graph_entities: &[String],
+    indexed_paths: &[String],
     already_seen: bool,
     mode: OptimizationMode,
     oversized_tokens: u32,
@@ -190,11 +306,7 @@ pub fn advise_observation(
 
     if search_tool(&observation.tool_name) {
         let query = query_text(&observation.arguments);
-        if let Some(entity) = observation
-            .known_graph_entities
-            .iter()
-            .find(|entity| !entity.is_empty() && query.contains(entity.as_str()))
-        {
+        if let Some((entity, confidence)) = known_entity_in(&query, known_graph_entities) {
             let alternative_tokens = if current > GRAPH_EXPLORE_TOKEN_ESTIMATE {
                 GRAPH_EXPLORE_TOKEN_ESTIMATE
             } else {
@@ -205,7 +317,7 @@ pub fn advise_observation(
                 estimated_current_tokens: current,
                 estimated_alternative_tokens: alternative_tokens,
                 estimated_reduction_percent: reduction_percent(current, alternative_tokens),
-                confidence: Confidence::High,
+                confidence,
                 reason: format!("{entity} exists as a known graph entity."),
                 rule: "known-symbol-search".into(),
             });
@@ -214,10 +326,9 @@ pub fn advise_observation(
 
     if found.is_none() && read_tool(&observation.tool_name) {
         if let Some(path) = target_path(&observation.arguments) {
-            let indexed = observation
-                .indexed_paths
+            let indexed = indexed_paths
                 .iter()
-                .any(|known| known == &path || path.ends_with(known));
+                .any(|known| path_ends_with(&path, known));
             if indexed {
                 let alternative_tokens = if current > GRAPH_EXPLORE_TOKEN_ESTIMATE {
                     GRAPH_EXPLORE_TOKEN_ESTIMATE
@@ -243,7 +354,15 @@ pub fn advise_observation(
             estimated_current_tokens: current,
             estimated_alternative_tokens: 0,
             estimated_reduction_percent: reduction_percent(current, 0),
-            confidence: Confidence::High,
+            // Only a read-only call at a known repository state is safe to
+            // replay automatically; anything else stays a suggestion.
+            confidence: if read_only_tool(&observation.tool_name)
+                && known_repository_state(&observation.repository_state)
+            {
+                Confidence::High
+            } else {
+                Confidence::Medium
+            },
             reason: "The same tool, arguments, and repository state already ran.".into(),
             rule: "exact-repeat".into(),
         });
@@ -366,16 +485,28 @@ pub fn budget_snapshot(
     }
 }
 
+/// A USD amount in the display currency. Only EUR has a rate (`usd_per_eur`);
+/// every other case, EUR without a rate included, stays labelled USD.
 pub fn display_amount(usd: f64, currency: &str, usd_per_eur: Option<f64>) -> (f64, String) {
-    if currency.eq_ignore_ascii_case("eur") {
-        if let Some(rate) = usd_per_eur.filter(|rate| *rate > 0.0) {
-            return (usd / rate, "EUR".into());
-        }
+    match eur_rate(currency, usd_per_eur) {
+        Some(rate) => (usd / rate, "EUR".into()),
+        None => (usd, "USD".into()),
     }
-    if currency.eq_ignore_ascii_case("eur") {
-        return (usd, "USD".into());
+}
+
+/// A budget in `currency` as USD, or `None` when no rate converts it.
+pub fn amount_in_usd(amount: f64, currency: &str, usd_per_eur: Option<f64>) -> Option<f64> {
+    if currency.eq_ignore_ascii_case("usd") {
+        return Some(amount);
     }
-    (usd, currency.to_ascii_uppercase())
+    eur_rate(currency, usd_per_eur).map(|rate| amount * rate)
+}
+
+fn eur_rate(currency: &str, usd_per_eur: Option<f64>) -> Option<f64> {
+    if !currency.eq_ignore_ascii_case("eur") {
+        return None;
+    }
+    usd_per_eur.filter(|rate| rate.is_finite() && *rate > 0.0)
 }
 
 #[cfg(test)]
@@ -513,6 +644,63 @@ mod tests {
     }
 
     #[test]
+    fn entity_inside_a_longer_word_is_not_a_known_symbol() {
+        let mut obs = observation("rg", json!({"pattern": "renewal", "path": "src/"}), 7_000);
+        obs.known_graph_entities = vec!["new".into(), "renew".into()];
+        let advice = advise_observation(&obs, false, OptimizationMode::Optimize, 9_000, true);
+        assert!(advice.alternatives.is_empty(), "{:?}", advice.alternatives);
+        assert!(advice.apply.is_none());
+    }
+
+    #[test]
+    fn entity_on_identifier_boundaries_still_matches() {
+        let obs = observation(
+            "rg",
+            json!({"pattern": "fn UserService(", "path": "src/"}),
+            7_000,
+        );
+        let advice = advise_observation(&obs, false, OptimizationMode::Optimize, 9_000, true);
+        assert_eq!(advice.alternatives[0].rule, "known-symbol-search");
+        assert_eq!(advice.alternatives[0].confidence, Confidence::High);
+        let obs = observation("rg", json!({"pattern": "UserServiceImpl"}), 7_000);
+        let advice = advise_observation(&obs, false, OptimizationMode::Advise, 9_000, true);
+        assert!(advice.alternatives.is_empty(), "{:?}", advice.alternatives);
+    }
+
+    #[test]
+    fn short_entity_names_never_match() {
+        let mut obs = observation("rg", json!({"pattern": "id"}), 7_000);
+        obs.known_graph_entities = vec!["id".into()];
+        let advice = advise_observation(&obs, false, OptimizationMode::Advise, 9_000, true);
+        assert!(advice.alternatives.is_empty(), "{:?}", advice.alternatives);
+    }
+
+    #[test]
+    fn last_segment_of_a_qualified_entity_is_a_partial_match() {
+        let mut obs = observation("rg", json!({"pattern": "advise_observation"}), 7_000);
+        obs.known_graph_entities = vec!["ax_pi::economics::advise_observation".into()];
+        let advice = advise_observation(&obs, false, OptimizationMode::Optimize, 9_000, true);
+        assert_eq!(advice.alternatives[0].rule, "known-symbol-search");
+        assert_eq!(advice.alternatives[0].confidence, Confidence::Medium);
+        assert!(advice.apply.is_none(), "a partial match is never applied");
+    }
+
+    #[test]
+    fn indexed_path_matches_whole_components_only() {
+        let mut obs = observation("read", json!({"path": "src/mylib.rs"}), 7_000);
+        obs.indexed_paths = vec!["lib.rs".into()];
+        let advice = advise_observation(&obs, false, OptimizationMode::Advise, 9_000, true);
+        assert!(advice.alternatives.is_empty(), "{:?}", advice.alternatives);
+        obs.arguments = json!({"path": "./crates/x/src/lib.rs"});
+        obs.indexed_paths = vec!["src/lib.rs".into()];
+        let advice = advise_observation(&obs, false, OptimizationMode::Advise, 9_000, true);
+        assert_eq!(advice.alternatives[0].rule, "indexed-read");
+        obs.arguments = json!({"path": "src\\lib.rs"});
+        let advice = advise_observation(&obs, false, OptimizationMode::Advise, 9_000, true);
+        assert_eq!(advice.alternatives[0].rule, "indexed-read");
+    }
+
+    #[test]
     fn empty_text_estimates_zero_tokens() {
         assert_eq!(estimate_text(""), 0);
     }
@@ -565,6 +753,15 @@ mod tests {
         let (usd, label) = display_amount(1.08, "eur", None);
         assert_eq!(label, "USD");
         assert!((usd - 1.08).abs() < 0.001);
+    }
+
+    #[test]
+    fn a_currency_without_a_rate_keeps_the_usd_label() {
+        assert_eq!(
+            display_amount(1.08, "GBP", Some(1.08)),
+            (1.08, "USD".into())
+        );
+        assert_eq!(display_amount(1.08, "usd", None), (1.08, "USD".into()));
     }
 
     #[test]

@@ -105,7 +105,7 @@ Command: `cargo test -p ax-usage --lib context_authority`. Result: 16 passed, 0 
 
 ## Manifest summaries (B5 start)
 
-`list_manifest_summaries` returns each sealed manifest with approval, integrity, latest replay score, and an explicit `uncertainties` list (`unapproved`, `integrity_failed`, `not_run`, `not_tested`). It never invents a confident green state. Web surface: `GET /api/context-authority/manifests`.
+`list_manifest_summaries` returns each sealed manifest with approval, integrity, latest replay score, and an explicit `uncertainties` list (`unapproved`, `integrity_failed`, `legacy_seal`, `not_run`, `not_tested`). `legacy_seal` marks an unchanged row sealed with the earlier `ax-manifest-v1` format; it verifies and is not `integrity_failed`. It never invents a confident green state. Web surface: `GET /api/context-authority/manifests`.
 
 Command: `cargo test -p ax-usage --lib context_authority`. Result after summaries: see latest suite.
 

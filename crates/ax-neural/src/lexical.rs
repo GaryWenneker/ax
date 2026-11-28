@@ -219,10 +219,7 @@ mod tests {
             .iter()
             .filter_map(|q| {
                 let family = q["family"].as_str()?.to_string();
-                if !matches!(
-                    family.as_str(),
-                    "named_trigger" | "paraphrase" | "abstention" | "delivery_budget"
-                ) {
+                if !crate::fixture::is_locked(&family) {
                     return None;
                 }
                 let relevant = q["relevant"]

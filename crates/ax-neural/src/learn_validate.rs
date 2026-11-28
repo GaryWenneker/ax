@@ -1,18 +1,12 @@
 //! §4 learning validation: before/after + held-out eval + restart stability.
 //! Never auto-promotes; never trains on the evaluation fold.
 
+use crate::fixture::LOCKED;
 use ax_memory::bench::{load_coding_fixture, CodingFixture};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 
 use crate::metrics::{Acc, SummaryStyle, LEARN_VALIDATE};
-
-pub(crate) const LOCKED: &[&str] = &[
-    "named_trigger",
-    "paraphrase",
-    "abstention",
-    "delivery_budget",
-];
 
 fn feedback_from_fixture(fixture: &CodingFixture, exclude_ids: &HashSet<String>) -> Vec<Value> {
     fixture

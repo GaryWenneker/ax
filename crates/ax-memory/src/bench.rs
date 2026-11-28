@@ -433,13 +433,22 @@ pub struct CodingReport {
 pub struct DatasetScore {
     pub status: String,
     pub source: Option<String>,
-    /// Primary summary: ax retrieval when scored with a vault, else BM25-only.
+    /// What produced `summary`: [`SCORER_TEXT_STACK`] or [`SCORER_BM25`]; `None` when skipped.
+    pub scorer: Option<String>,
+    /// Primary summary from `scorer`. Neither scorer runs `store::recall`, so this
+    /// number does not measure FTS5 weights, RRF fusion, the vector leg or abstention.
     pub summary: Option<PublicSummary>,
     /// Plain BM25 evidence baseline (same docs/prompts as `summary` when both set).
     pub bm25_summary: Option<PublicSummary>,
     /// `summary.recall_at_5 - bm25_summary.recall_at_5` when both are present.
     pub recall_at_5_delta: Option<f64>,
 }
+
+/// In-memory ax text stack (search-text normalization, stemming, dual BM25 mix,
+/// sibling boost). Not `store::recall`; its constants were tuned on these public sets.
+pub const SCORER_TEXT_STACK: &str = "text_stack";
+/// Plain BM25 over the evidence docs.
+pub const SCORER_BM25: &str = "bm25";
 
 const BENCH_NOW_MS: i64 = 1_794_700_800_000;
 const DAY_MS: i64 = 86_400_000;
@@ -485,16 +494,13 @@ pub fn score_dataset_path(kind: &str, path: Option<&Path>) -> Result<DatasetScor
     Ok(score)
 }
 
-/// Score a public evidence set with ax recall against the same BM25 baseline.
+/// Score a public evidence set with the in-memory ax text stack against plain BM25.
 ///
-/// Each evidence doc is seeded as a memory (`title` = evidence id). Optional
-/// `AX_PUBLIC_BENCH_LIMIT` caps the number of scored questions (after skipping
-/// empty-evidence rows).
-pub async fn score_dataset_with_ax(
-    kind: &str,
-    path: Option<&Path>,
-    _pool: &SqlitePool,
-) -> Result<DatasetScore, AxError> {
+/// Nothing is written to a vault and `store::recall` is not called: see
+/// [`score_public_with_ax`]. The result's `scorer` is [`SCORER_TEXT_STACK`].
+/// Optional `AX_PUBLIC_BENCH_LIMIT` caps the number of scored questions (after
+/// skipping empty-evidence rows).
+pub fn score_dataset_text_stack(kind: &str, path: Option<&Path>) -> Result<DatasetScore, AxError> {
     let Some(path) = path else {
         return Ok(skipped_dataset());
     };
@@ -518,8 +524,10 @@ pub async fn score_dataset_with_ax(
     score_public_with_ax(&cases)
 }
 
-/// Score public evidence with ax's Phase-6 text stack (normalize + stem + BM25)
-/// against the harness's plain BM25 baseline. Fast in-memory; no vault writes.
+/// Score public evidence with ax's text stack (normalize + stem + BM25 mix +
+/// sibling boost) against the harness's plain BM25 baseline. Fast, in memory, no
+/// vault writes. This is not `store::recall`, and its constants were tuned on
+/// LongMemEval-S and LoCoMo, so the numbers are not held-out recall quality.
 pub fn score_public_with_ax(cases: &[EvidenceCase]) -> Result<DatasetScore, AxError> {
     let limit = std::env::var("AX_PUBLIC_BENCH_LIMIT")
         .ok()
@@ -571,6 +579,7 @@ pub fn score_public_with_ax(cases: &[EvidenceCase]) -> Result<DatasetScore, AxEr
     Ok(DatasetScore {
         status: "scored".into(),
         source: Some("dataset".into()),
+        scorer: Some(SCORER_TEXT_STACK.into()),
         summary: Some(ax.clone()),
         bm25_summary: Some(bm25.clone()),
         recall_at_5_delta: Some(ax.recall_at_5 - bm25.recall_at_5),
@@ -898,6 +907,7 @@ pub fn score_shape_text(kind: &str, text: &str) -> Result<DatasetScore, String> 
     Ok(DatasetScore {
         status: "scored".into(),
         source: Some("shape-sample".into()),
+        scorer: Some(SCORER_BM25.into()),
         summary: Some(summary.clone()),
         bm25_summary: Some(summary),
         recall_at_5_delta: Some(0.0),
@@ -1095,6 +1105,7 @@ fn skipped_dataset() -> DatasetScore {
     DatasetScore {
         status: "skipped".into(),
         source: None,
+        scorer: None,
         summary: None,
         bm25_summary: None,
         recall_at_5_delta: None,
@@ -1133,6 +1144,7 @@ fn dataset_value(score: &DatasetScore) -> Value {
     serde_json::json!({
         "status": score.status,
         "source": score.source,
+        "scorer": score.scorer,
         "questions": score.summary.as_ref().map(|summary| summary.questions),
         "recall_at_5": score.summary.as_ref().map(|summary| summary.recall_at_5),
         "recall_at_10": score.summary.as_ref().map(|summary| summary.recall_at_10),
@@ -1252,5 +1264,25 @@ mod tests {
         assert_eq!(summary.questions, 1);
         assert!((summary.recall_at_5 - 1.0).abs() < 1e-9);
         assert!((summary.ndcg_at_10 - 1.0).abs() < 1e-9);
+    }
+
+    /// The public-set score comes from the in-memory text stack, not from
+    /// `store::recall`; the result must say so instead of passing as ax recall.
+    #[test]
+    fn public_score_is_labelled_as_the_text_stack() {
+        let cases = vec![EvidenceCase {
+            id: "q1".into(),
+            prompt: "ledger retention policy".into(),
+            relevant: vec!["s1".into()],
+            docs: vec![
+                doc("s1", "ledger retention policy for the archive"),
+                doc("s2", "webhook tenant routing"),
+            ],
+        }];
+        let score = score_public_with_ax(&cases).unwrap();
+        assert_eq!(score.scorer.as_deref(), Some(SCORER_TEXT_STACK));
+        let value = dataset_value(&score);
+        assert_eq!(value["scorer"], SCORER_TEXT_STACK);
+        assert_eq!(dataset_value(&skipped_dataset())["scorer"], Value::Null);
     }
 }
