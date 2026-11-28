@@ -148,10 +148,55 @@ fn replace_file(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> {
                 fs::set_permissions(&tmp, meta.permissions())?;
             }
         }
-        fs::rename(&tmp, path)
+        replace_file(&tmp, path)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&tmp);
+    }
+    result
+}
+
+/// How often [`replace_file`] retries a replace that Windows refused.
+const REPLACE_RETRIES: u32 = 25;
+
+/// Renames `from` over `to`, replacing a file that is already there.
+///
+/// Unix replaces atomically even while other processes have `to` open. On
+/// Windows a replace can fail with "Access is denied" (os error 5) for a
+/// moment: while another handle holds `to` open without delete sharing, while
+/// another writer replaces the same `to` at the same instant, or while a
+/// scanner or indexer looks at the new file. Those refusals are retried with a
+/// growing pause (about 1.6 s in all) before the error is returned.
+pub fn replace_file(from: &Path, to: &Path) -> io::Result<()> {
+    let mut attempt = 0u32;
+    loop {
+        match fs::rename(from, to) {
+            Err(error)
+                if cfg!(windows)
+                    && error.kind() == io::ErrorKind::PermissionDenied
+                    && attempt < REPLACE_RETRIES =>
+            {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(5 * u64::from(attempt)));
+            }
+            other => return other,
+        }
+    }
+}
+
+/// Moves a finished temporary file over `path`, like
+/// [`tempfile::NamedTempFile::persist`], but closes the file first and
+/// replaces through [`replace_file`], so concurrent readers and writers of
+/// `path` on Windows do not make the replace fail. The temporary file is
+/// removed when the replace fails.
+pub fn persist_temp(file: tempfile::NamedTempFile, path: &Path) -> io::Result<()> {
+    // `keep` clears the Windows "temporary" attribute and disarms the
+    // delete-on-drop; dropping the handle lets the rename move a closed file.
+    let (handle, temp) = file.keep().map_err(|e| e.error)?;
+    drop(handle);
+    let result = replace_file(&temp, path);
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
     }
     result
 }
@@ -450,5 +495,72 @@ mod tests {
         );
         assert_eq!(read_to_end_bounded(&b"abc"[..], 3).unwrap(), b"abc");
         assert!(read_to_end_bounded(&b"abcd"[..], 3).is_err());
+    }
+
+    /// Writers replacing one file while readers keep opening it: every
+    /// replace succeeds (Windows refuses a plain replace of an open file) and
+    /// every read sees one whole version.
+    #[test]
+    fn concurrent_replaces_and_reads_of_one_file_all_succeed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("current.json");
+        fs::write(&path, vec![b'0'; 4096]).unwrap();
+        let barrier = std::sync::Barrier::new(12);
+        std::thread::scope(|scope| {
+            for writer in 0..8u8 {
+                let (path, barrier, dir) = (&path, &barrier, dir.path());
+                scope.spawn(move || {
+                    barrier.wait();
+                    for round in 0..40u8 {
+                        let byte = b'a' + (writer * 3 + round) % 26;
+                        if round % 2 == 0 {
+                            let mut temp = tempfile::NamedTempFile::new_in(dir).unwrap();
+                            temp.write_all(&vec![byte; 4096]).unwrap();
+                            persist_temp(temp, path).unwrap();
+                        } else {
+                            atomic_write(path, &vec![byte; 4096]).unwrap();
+                        }
+                    }
+                });
+            }
+            for _ in 0..4 {
+                let (path, barrier) = (&path, &barrier);
+                scope.spawn(move || {
+                    barrier.wait();
+                    for _ in 0..200 {
+                        let mut file = File::open(path).unwrap();
+                        let mut bytes = Vec::new();
+                        file.read_to_end(&mut bytes).unwrap();
+                        assert_eq!(bytes.len(), 4096, "a read saw a partial file");
+                        assert!(
+                            bytes.iter().all(|b| *b == bytes[0]),
+                            "a read mixed versions"
+                        );
+                    }
+                });
+            }
+        });
+        // No temporary file is left next to the target.
+        let names: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("current.json")]);
+    }
+
+    #[test]
+    fn a_failed_persist_removes_the_temporary_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("occupied");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("inside"), b"x").unwrap();
+        let temp = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+        assert!(persist_temp(temp, &target).is_err());
+        let mut names: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec![std::ffi::OsString::from("occupied")]);
     }
 }
