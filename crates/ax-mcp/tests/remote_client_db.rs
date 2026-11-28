@@ -63,6 +63,7 @@ async fn initialize(app: &Router, token: &str) -> StatusCode {
     app.clone().oneshot(request).await.unwrap().status()
 }
 
+#[cfg(unix)]
 fn remove_db(path: &Path) {
     for suffix in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -82,10 +83,22 @@ async fn client_tokens_use_one_shared_pool_instead_of_opening_the_database_per_r
     let junk = format!("axc_{}", "0".repeat(64));
     assert_eq!(initialize(&app, &junk).await, StatusCode::UNAUTHORIZED);
     assert!(global.exists());
+    // A request that opens the database again resolves its path again, so it
+    // would create the database at the new path.
+    let moved = dir.path().join("global-moved.db");
+    std::env::set_var("AX_GLOBAL_DB", &moved);
+    // Where an open file can be deleted (not on Windows, where the pool's open
+    // handle keeps it), a reopen of the same path would also recreate it.
+    #[cfg(unix)]
     remove_db(&global);
     for _ in 0..3 {
         assert_eq!(initialize(&app, &junk).await, StatusCode::UNAUTHORIZED);
     }
+    assert!(
+        !moved.exists(),
+        "a request opened and re-initialized the global database again"
+    );
+    #[cfg(unix)]
     assert!(
         !global.exists(),
         "a request opened and re-initialized the global database again"
@@ -115,7 +128,7 @@ async fn client_tokens_use_one_shared_pool_instead_of_opening_the_database_per_r
     let app = build(state(config(&project, "member-1")).with_client_db(pool));
     assert_eq!(initialize(&app, &issued.token).await, StatusCode::OK);
     assert!(
-        !global.exists(),
+        !moved.exists(),
         "the server's own pool was not used for client tokens"
     );
 }
