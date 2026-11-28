@@ -1315,12 +1315,9 @@ mod tests {
             stored["challengerAdmitted"],
             crate::bakeoff::challenger_admitted()
         );
-        let expected_model = if crate::runtime_built() && crate::bakeoff::challenger_admitted() {
-            crate::runtime::semantic_search_model(true)
-        } else {
-            "hash-v1"
-        };
-        assert_eq!(stored["model"], expected_model);
+        // The only built-in runtime backend is a text hash, so search never
+        // reports it as the model that ranked the hits.
+        assert_eq!(stored["model"], "hash-v1");
         std::fs::write(
             dir.path().join("ax.json"),
             r#"{"neural":{"semantic":{"enabled":false}}}"#,

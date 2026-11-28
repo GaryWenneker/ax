@@ -133,6 +133,11 @@ pub async fn search_semantic(pool: &SqlitePool) -> Result<serde_json::Value, Str
 }
 
 /// Semantic search over `neural_embedding` only. Never reads `memories.embedding`.
+///
+/// Stored vectors are ranked only when the lexical challenger is admitted and
+/// the runtime backend is a semantic model. The built-in `cpu-blake3` backend
+/// hashes the whole text, so it never ranks; the reply stays on the hash-v1
+/// fallback and says why.
 pub async fn search_semantic_query(
     pool: &SqlitePool,
     query: Option<&str>,
@@ -140,77 +145,108 @@ pub async fn search_semantic_query(
 ) -> Result<serde_json::Value, String> {
     let count = embedding_count(pool).await?;
     let admitted = crate::bakeoff::challenger_admitted();
-    let mut hits = Vec::new();
-    let mut query_embedded_with_runtime = false;
-    if admitted {
-        if let Some(prompt) = query.map(str::trim).filter(|s| !s.is_empty()) {
-            let Some(backend) = crate::runtime::active() else {
-                return Ok(serde_json::json!({
-                    "hits": [],
-                    "fallback": "hash-v1",
-                    "storedVectors": count,
-                    "scannedMemoryColumn": false,
-                    "challengerAdmitted": true,
-                    "model": ax_memory::embed::ACTIVE_MODEL,
-                    "reason": "runtime backend unavailable"
-                }));
-            };
-            let query_vec = backend.embed(prompt)?;
-            query_embedded_with_runtime = true;
-            let query_dim = query_vec.len() as i64;
-            let expected_bytes = ax_memory::embed::embedding_blob_byte_len(query_vec.len());
-            let mut ranked: Vec<(f32, serde_json::Value)> = Vec::new();
-            let mut rows = if let Some(model_id) = model_id.filter(|id| !id.is_empty()) {
-                sqlx::query(
-                    "SELECT entity_kind, entity_id, model_id, embedding FROM neural_embedding
-                     WHERE model_id = ? AND dim = ?",
-                )
-                .bind(model_id)
-                .bind(query_dim)
-                .fetch(pool)
-            } else {
-                sqlx::query(
-                    "SELECT entity_kind, entity_id, model_id, embedding FROM neural_embedding
-                     WHERE dim = ?",
-                )
-                .bind(query_dim)
-                .fetch(pool)
-            };
-            use futures_util::TryStreamExt;
-            while let Some(row) = rows.try_next().await.map_err(|e| e.to_string())? {
-                let blob: Vec<u8> = row.get("embedding");
-                if blob.len() != expected_bytes {
-                    continue;
-                }
-                let Some(vector) = ax_memory::embed::blob_to_embedding(&blob) else {
-                    continue;
-                };
-                if vector.len() != query_vec.len() {
-                    continue;
-                }
-                let score = ax_memory::embed::cosine(&query_vec, &vector);
-                ranked.push((
-                    score,
-                    serde_json::json!({
-                        "entityKind": row.get::<String, _>("entity_kind"),
-                        "entityId": row.get::<String, _>("entity_id"),
-                        "modelId": row.get::<String, _>("model_id"),
-                        "score": score
-                    }),
-                ));
-            }
-            ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
-            hits = ranked.into_iter().take(10).map(|(_, hit)| hit).collect();
-        }
+    let fallback = |reason: &str| {
+        serde_json::json!({
+            "hits": [],
+            "fallback": "hash-v1",
+            "storedVectors": count,
+            "scannedMemoryColumn": false,
+            "challengerAdmitted": admitted,
+            "model": ax_memory::embed::ACTIVE_MODEL,
+            "reason": reason
+        })
+    };
+    if !admitted {
+        return Ok(serde_json::json!({
+            "hits": [],
+            "fallback": "hash-v1",
+            "storedVectors": count,
+            "scannedMemoryColumn": false,
+            "challengerAdmitted": false,
+            "model": ax_memory::embed::ACTIVE_MODEL,
+        }));
     }
+    let Some(prompt) = query.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(serde_json::json!({
+            "hits": [],
+            "fallback": "hash-v1",
+            "storedVectors": count,
+            "scannedMemoryColumn": false,
+            "challengerAdmitted": true,
+            "model": ax_memory::embed::ACTIVE_MODEL,
+        }));
+    };
+    let Some(backend) = crate::runtime::active() else {
+        return Ok(fallback("runtime backend unavailable"));
+    };
+    if !backend.semantic() {
+        return Ok(fallback(
+            "no semantic embedding backend admitted; the runtime backend is a text hash",
+        ));
+    }
+    let query_vec = backend.embed(prompt)?;
+    let hits = rank_stored_vectors(pool, &query_vec, model_id).await?;
     Ok(serde_json::json!({
         "hits": hits,
         "fallback": "hash-v1",
         "storedVectors": count,
         "scannedMemoryColumn": false,
-        "challengerAdmitted": admitted,
-        "model": crate::runtime::semantic_search_model(query_embedded_with_runtime),
+        "challengerAdmitted": true,
+        "model": crate::runtime::semantic_search_model(true),
     }))
+}
+
+/// Top 10 stored vectors by cosine similarity to `query_vec`, skipping rows of
+/// another width or (when given) another model id.
+async fn rank_stored_vectors(
+    pool: &SqlitePool,
+    query_vec: &[f32],
+    model_id: Option<&str>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let query_dim = query_vec.len() as i64;
+    let expected_bytes = ax_memory::embed::embedding_blob_byte_len(query_vec.len());
+    let mut ranked: Vec<(f32, serde_json::Value)> = Vec::new();
+    let mut rows = if let Some(model_id) = model_id.filter(|id| !id.is_empty()) {
+        sqlx::query(
+            "SELECT entity_kind, entity_id, model_id, embedding FROM neural_embedding
+             WHERE model_id = ? AND dim = ?",
+        )
+        .bind(model_id)
+        .bind(query_dim)
+        .fetch(pool)
+    } else {
+        sqlx::query(
+            "SELECT entity_kind, entity_id, model_id, embedding FROM neural_embedding
+             WHERE dim = ?",
+        )
+        .bind(query_dim)
+        .fetch(pool)
+    };
+    use futures_util::TryStreamExt;
+    while let Some(row) = rows.try_next().await.map_err(|e| e.to_string())? {
+        let blob: Vec<u8> = row.get("embedding");
+        if blob.len() != expected_bytes {
+            continue;
+        }
+        let Some(vector) = ax_memory::embed::blob_to_embedding(&blob) else {
+            continue;
+        };
+        if vector.len() != query_vec.len() {
+            continue;
+        }
+        let score = ax_memory::embed::cosine(query_vec, &vector);
+        ranked.push((
+            score,
+            serde_json::json!({
+                "entityKind": row.get::<String, _>("entity_kind"),
+                "entityId": row.get::<String, _>("entity_id"),
+                "modelId": row.get::<String, _>("model_id"),
+                "score": score
+            }),
+        ));
+    }
+    ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
+    Ok(ranked.into_iter().take(10).map(|(_, hit)| hit).collect())
 }
 
 /// Replaces the project's earlier suggestion rows in one transaction.
@@ -979,106 +1015,70 @@ mod tests {
         assert_eq!(value["scannedMemoryColumn"], false);
     }
 
-    #[tokio::test]
-    async fn search_semantic_skips_wrong_dim_and_filters_by_model_id() {
-        if !crate::runtime_built() {
-            return;
-        }
-        let (_dir, database) = db().await;
-        let pool = database.pool();
-        let backend = crate::runtime::active().expect("runtime");
-        let query_dim = backend.embed("target").unwrap();
-        let wrong_dim = ax_memory::embed::embed_text("legacy hash width");
-        insert_embedding(
-            pool,
-            "memory",
-            "m-match",
-            "hash-a",
-            crate::lexical::CHALLENGER_ID,
-            &query_dim,
-            true,
-        )
-        .await
-        .unwrap();
-        insert_embedding(
-            pool,
-            "memory",
-            "m-wrong-dim",
-            "hash-b",
-            "legacy-onnx",
-            &wrong_dim,
-            true,
-        )
-        .await
-        .unwrap();
-        let other_model = backend.embed("noise").unwrap();
-        insert_embedding(
-            pool,
-            "memory",
-            "m-other-model",
-            "hash-c",
-            "other-challenger",
-            &other_model,
-            true,
-        )
-        .await
-        .unwrap();
-
-        let unfiltered = search_semantic_query(pool, Some("target"), None)
-            .await
-            .unwrap();
-        let hit_ids: Vec<_> = unfiltered["hits"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|h| h["entityId"].as_str().unwrap())
-            .collect();
-        assert!(hit_ids.contains(&"m-match"));
-        assert!(!hit_ids.contains(&"m-wrong-dim"));
-
-        let filtered =
-            search_semantic_query(pool, Some("target"), Some(crate::lexical::CHALLENGER_ID))
-                .await
-                .unwrap();
-        let filtered_ids: Vec<_> = filtered["hits"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|h| h["entityId"].as_str().unwrap())
-            .collect();
-        assert_eq!(filtered_ids, vec!["m-match"]);
+    fn unit(values: &[f32]) -> Vec<f32> {
+        let norm = values.iter().map(|v| v * v).sum::<f32>().sqrt();
+        values.iter().map(|v| v / norm).collect()
     }
 
     #[tokio::test]
-    async fn admitted_search_ranks_stored_vectors_without_scanning_memory() {
+    async fn ranking_skips_wrong_dim_and_filters_by_model_id() {
+        let (_dir, database) = db().await;
+        let pool = database.pool();
+        let query = unit(&[1.0, 0.0, 0.0, 0.0]);
+        let near = unit(&[0.9, 0.1, 0.0, 0.0]);
+        let far = unit(&[0.0, 0.0, 1.0, 0.0]);
+        let wrong_dim = ax_memory::embed::embed_text("legacy hash width");
+        insert_embedding(pool, "memory", "m-near", "a", "semantic", &near, true)
+            .await
+            .unwrap();
+        insert_embedding(pool, "memory", "m-far", "b", "semantic", &far, true)
+            .await
+            .unwrap();
+        insert_embedding(pool, "memory", "m-wide", "c", "legacy", &wrong_dim, true)
+            .await
+            .unwrap();
+        insert_embedding(pool, "memory", "m-other", "d", "other", &near, true)
+            .await
+            .unwrap();
+
+        let ids = |hits: &[Value]| -> Vec<String> {
+            hits.iter()
+                .map(|h| h["entityId"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let unfiltered = rank_stored_vectors(pool, &query, None).await.unwrap();
+        let unfiltered_ids = ids(&unfiltered);
+        assert!(!unfiltered_ids.contains(&"m-wide".to_string()));
+        assert_eq!(unfiltered_ids.last().map(String::as_str), Some("m-far"));
+        assert!(unfiltered[0]["score"].as_f64().unwrap() > 0.99);
+
+        let filtered = rank_stored_vectors(pool, &query, Some("semantic"))
+            .await
+            .unwrap();
+        assert_eq!(ids(&filtered), vec!["m-near", "m-far"]);
+    }
+
+    #[tokio::test]
+    async fn a_hash_backend_never_ranks_semantic_search_even_when_the_lexical_challenger_is_admitted(
+    ) {
         if !crate::runtime_built() {
             return;
         }
         let (_dir, database) = db().await;
         let pool = database.pool();
         let backend = crate::runtime::active().expect("runtime");
-        let vector = backend.embed("parser").unwrap();
-        insert_embedding(
-            pool,
-            "memory",
-            "m-parser",
-            "hash",
-            crate::lexical::CHALLENGER_ID,
-            &vector,
-            true,
-        )
-        .await
-        .unwrap();
-        let value = search_semantic_query(pool, Some("parser"), None)
+        let vector = backend.embed("parser errors").unwrap();
+        insert_embedding(pool, "memory", "m-parser", "hash", "cpu", &vector, true)
             .await
             .unwrap();
-        assert_eq!(value["scannedMemoryColumn"], false);
+        let value = search_semantic_query(pool, Some("parser errors"), None)
+            .await
+            .unwrap();
+        assert_eq!(value["hits"], json!([]), "{value}");
         assert_eq!(value["fallback"], "hash-v1");
-        assert_eq!(value["challengerAdmitted"], true);
-        assert_eq!(value["hits"][0]["entityId"], "m-parser");
-        assert!(value["hits"][0]["score"].as_f64().unwrap() > 0.99);
-        assert_eq!(value["model"], crate::runtime::semantic_search_model(true),);
-        assert_ne!(value["model"], crate::lexical::CHALLENGER_ID);
+        assert_eq!(value["model"], ax_memory::embed::ACTIVE_MODEL);
+        assert_eq!(value["storedVectors"], 1);
+        assert!(value["reason"].as_str().unwrap_or("").contains("semantic"));
     }
 
     fn wall_clock_seconds() -> i64 {
