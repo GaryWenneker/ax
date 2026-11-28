@@ -16,8 +16,21 @@ const FAMILIES: [(&str, &str); 4] = [
 
 /// True when `neural-runtime` is on and the lexical challenger beats the known
 /// hash-v1 locked-family hits on the embedded coding fixture (ADR 002).
-/// Deterministic and sync — no process-global bake-off cache.
+/// Deterministic and sync. The fixture is embedded, so the answer cannot change
+/// within a process: it is computed once and kept. The bake-off report data is
+/// not cached.
 pub fn challenger_admitted() -> bool {
+    static ADMITTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ADMITTED.get_or_init(compute_challenger_admitted)
+}
+
+#[cfg(test)]
+static ADMISSION_COMPUTATIONS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+fn compute_challenger_admitted() -> bool {
+    #[cfg(test)]
+    ADMISSION_COMPUTATIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     if !crate::runtime_built() {
         return false;
     }
@@ -292,6 +305,18 @@ fn median(mut values: Vec<f64>) -> f64 {
 mod tests {
     use super::*;
     use ax_memory::bench::QuestionScore;
+
+    #[test]
+    fn challenger_admission_is_computed_once_per_process() {
+        let first = challenger_admitted();
+        for _ in 0..3 {
+            assert_eq!(challenger_admitted(), first);
+        }
+        assert_eq!(
+            ADMISSION_COMPUTATIONS.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
 
     #[tokio::test]
     async fn coding_fixture_keeps_hash_v1_and_admits_nobody() {
