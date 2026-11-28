@@ -298,6 +298,9 @@ pub async fn record_activity(
     .map_err(|e| e.to_string())?;
 
     let inserted = result.rows_affected() > 0;
+    if inserted {
+        crate::retention::maybe_prune_activity(&pool, root, &project_id).await;
+    }
     let stored = load_by_idempotency(&pool, &project_id, &event.idempotency_key)
         .await?
         .ok_or_else(|| {
@@ -810,5 +813,55 @@ mod tests {
         assert!(path.is_dir());
         drop(root);
         assert!(!path.exists());
+    }
+
+    async fn insert_old_event(root: &Path, id: &str) {
+        let pool = open_pool().await.unwrap();
+        sqlx::query(
+            "INSERT INTO ax_activity_event (event_id, idempotency_key, timestamp_ms, source,
+               project_id, operation, status, summary)
+             VALUES (?, ?, 0, 'cli', ?, 'old.op', 'success', 'old')",
+        )
+        .bind(id)
+        .bind(id)
+        .bind(project_scope(root))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    fn record(key: &str) -> ActivityRecord {
+        ActivityRecord {
+            idempotency_key: key.into(),
+            operation: "graph.explore".into(),
+            summary: "now".into(),
+            source: Some(ActivitySource::Cli),
+            ..ActivityRecord::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn activity_is_kept_without_a_retention_setting() {
+        let (root, _guard) = tmp_root().await;
+        insert_old_event(&root, "ancient").await;
+        record_activity(&root, record("fresh")).await.unwrap();
+        let listed = list_activity(&root, None, None, 10).await.unwrap();
+        assert_eq!(listed.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn activity_retention_from_ship_toml_prunes_old_events_on_write() {
+        let (root, _guard) = tmp_root().await;
+        std::fs::create_dir_all(root.join(".ax")).unwrap();
+        std::fs::write(
+            root.join(".ax/ship.toml"),
+            "[retention]\nactivity_days = 90\n",
+        )
+        .unwrap();
+        insert_old_event(&root, "ancient").await;
+        record_activity(&root, record("fresh")).await.unwrap();
+        let listed = list_activity(&root, None, None, 10).await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].idempotency_key, "fresh");
     }
 }

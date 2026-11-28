@@ -250,6 +250,7 @@ ax seeds `.ax/ship.toml` on `ax init` when missing. It configures the ship quali
 | `[remote]` | GitHub or Azure DevOps draft PR provider |
 | `[sonar]` | Optional local SonarQube via Podman |
 | `[reviewers]` | Map git blame emails to reviewer identities |
+| `[retention]` | Opt-in deletion of old activity events, durable transcripts and MCP verbose logs (off by default) |
 
 See [Command Center](/guides/command-center/) for the full reference.
 

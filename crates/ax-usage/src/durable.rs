@@ -99,6 +99,7 @@ async fn project_apply_with(
         }
     }
     let text = apply_with(pool, &conversation, request).await?;
+    crate::retention::maybe_prune_durable(pool, root).await;
     if matches!(action, "fork" | "handoff") {
         if let Some(child) = text
             .split("child=")
@@ -139,6 +140,7 @@ pub async fn note_project_tool_if_open(
             )
             .await?;
             fire_hooks(&pool, &conversation, "tool").await?;
+            crate::retention::maybe_prune_durable(&pool, root).await;
         }
     }
     Ok(())
@@ -1424,5 +1426,70 @@ mod tests {
         )
         .await
         .is_ok());
+    }
+
+    async fn insert_old_entry(pool: &SqlitePool, conversation: &str, body: &str) {
+        sqlx::query(
+            "INSERT INTO ax_durable_entry (conversation_id, kind, body, created_at)
+             VALUES (?, 'user', ?, 0)",
+        )
+        .bind(conversation)
+        .bind(body)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn durable_entries_are_kept_without_a_retention_setting() {
+        let pool = pool().await;
+        let root = tempfile::tempdir().unwrap();
+        let conversation = project_conversation(&pool, root.path(), "s").await.unwrap();
+        ensure_conversation(&pool, &conversation, None, None)
+            .await
+            .unwrap();
+        insert_old_entry(&pool, &conversation, "ANCIENT").await;
+        project_apply_with(
+            &pool,
+            root.path(),
+            "s",
+            &json!({"action":"append","body":"now"}),
+        )
+        .await
+        .unwrap();
+        let read = project_apply_with(&pool, root.path(), "s", &json!({"action":"read"}))
+            .await
+            .unwrap();
+        assert!(read.contains("ANCIENT"), "{read}");
+    }
+
+    #[tokio::test]
+    async fn durable_retention_from_ship_toml_prunes_old_entries_on_write() {
+        let pool = pool().await;
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join(".ax")).unwrap();
+        std::fs::write(
+            root.path().join(".ax/ship.toml"),
+            "[retention]\ndurable_days = 30\n",
+        )
+        .unwrap();
+        let conversation = project_conversation(&pool, root.path(), "s").await.unwrap();
+        ensure_conversation(&pool, &conversation, None, None)
+            .await
+            .unwrap();
+        insert_old_entry(&pool, &conversation, "ANCIENT").await;
+        project_apply_with(
+            &pool,
+            root.path(),
+            "s",
+            &json!({"action":"append","body":"now"}),
+        )
+        .await
+        .unwrap();
+        let read = project_apply_with(&pool, root.path(), "s", &json!({"action":"read"}))
+            .await
+            .unwrap();
+        assert!(!read.contains("ANCIENT"), "{read}");
+        assert!(read.contains("now"), "{read}");
     }
 }

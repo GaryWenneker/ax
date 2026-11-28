@@ -210,6 +210,7 @@ ax_session({ "action": "compact", "objective": "Understand authentication", "fac
 - **`doc_put` / `doc_get`** store one JSON document per kind.
 - **Tasks:** `task_start`, `task_checkpoint`, `task_resume`, `task_finish`. `task_resume` returns the last checkpoint after the database is reopened. A finished task returns `task is finished`.
 - **`hook`** registers a name. When that event runs (`append`, `compact`, `fork`, `handoff`, `tool`), a `hook` entry is written.
+- **Retention:** entries are kept until you delete them. `durable_days` and `durable_max_bytes` under `[retention]` in `.ax/ship.toml` delete this project's older entries (see [History retention](/guides/command-center/#history-retention-retention)).
 - Bodies are capped at 8000 bytes. This is not a second agent loop: generation, automatic summarization, and tool replay stay with the host that calls the model.
 
 ## Lean responses (token savings)

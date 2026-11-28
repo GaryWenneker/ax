@@ -103,9 +103,18 @@ pub fn append_verbose_log(lines: &[String], project_root: Option<&Path>) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
+    // A new day's file means the log rotated: apply the project's opt-in
+    // `[retention]` limits to the older files.
+    let rotated = !path.exists();
     let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&path) else {
         return;
     };
+    if let (true, Some(root)) = (rotated, project_root) {
+        let root = strip_verbatim_prefix(root);
+        let limit = crate::retention::read_retention_settings(&root).verbose_log;
+        let today = rotation_calendar_date(Some(&root), Utc::now());
+        crate::retention::prune_verbose_logs(&root, limit, today);
+    }
     let ts = iso_timestamp_utc();
     let (session, turn) = correlation(project_root);
     for line in lines {
@@ -696,5 +705,27 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0)
+    }
+
+    #[test]
+    fn rotation_keeps_old_logs_without_a_retention_setting() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ax = tmp.path().join(".ax");
+        fs::create_dir_all(&ax).unwrap();
+        fs::write(ax.join("mcp-verbose-2020-01-01.log"), "old\n").unwrap();
+        append_verbose_log(&["inbound tool=ax_explore".to_string()], Some(tmp.path()));
+        assert!(ax.join("mcp-verbose-2020-01-01.log").is_file());
+    }
+
+    #[test]
+    fn rotation_applies_the_verbose_log_retention_setting() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ax = tmp.path().join(".ax");
+        fs::create_dir_all(&ax).unwrap();
+        fs::write(ax.join("ship.toml"), "[retention]\nverbose_log_days = 30\n").unwrap();
+        fs::write(ax.join("mcp-verbose-2020-01-01.log"), "old\n").unwrap();
+        append_verbose_log(&["inbound tool=ax_explore".to_string()], Some(tmp.path()));
+        assert!(!ax.join("mcp-verbose-2020-01-01.log").exists());
+        assert!(current_log_path(Some(tmp.path())).is_file());
     }
 }
