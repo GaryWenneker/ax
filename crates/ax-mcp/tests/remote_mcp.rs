@@ -855,12 +855,14 @@ fn between<'a>(text: &'a str, start: &str, stops: &[char]) -> &'a str {
 }
 
 /// A Claude client gets text-only replies, and the server still learns the chat
-/// and cache ids it issued, so the connection keeps owning them.
+/// and cache ids it issued, so the principal keeps owning them.
 #[tokio::test]
 async fn remote_claude_client_gets_text_only_replies_and_keeps_its_chats_and_caches() {
     let (_dir, app, _) = fixture().await;
     let a = initialize_as(&app, "alpha", "test-ide-key", "claude-code").await;
-    let b = initialize_as(&app, "alpha", "test-ide-key", "claude-code").await;
+    // Ids are owned per principal and project, so the outsider is another principal.
+    let other_token = token(&claims("alpha"));
+    let b = initialize_as(&app, "alpha", &other_token, "claude-code").await;
     let call = |name: &str, arguments: Value| json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":name,"arguments":arguments}});
     let key = Some("test-ide-key");
 
@@ -881,7 +883,7 @@ async fn remote_claude_client_gets_text_only_replies_and_keeps_its_chats_and_cac
     let chat = between(text, "<ax_chat session=", &[' ', '>']).to_owned();
     assert!(chat.starts_with("axs_"), "no chat id in the text: {text}");
 
-    // The chat this connection was given stays usable by it, and only by it.
+    // The chat this principal was given stays usable by it, and only by it.
     let (status, _, second) = post(
         &app,
         "alpha",
@@ -896,15 +898,15 @@ async fn remote_claude_client_gets_text_only_replies_and_keeps_its_chats_and_cac
         second["result"].get("structuredContent").is_none(),
         "{second}"
     );
-    let (status, _, _) = post(
+    let (status, _, body) = post(
         &app,
         "alpha",
-        key,
+        Some(&other_token),
         Some(&b),
         call("ax_preflight", json!({"session":chat})),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_unknown_handle(status, &body, "omit `session` to start a new chat");
 
     let (_, _, stash) = post(
         &app,
@@ -938,13 +940,13 @@ async fn remote_claude_client_gets_text_only_replies_and_keeps_its_chats_and_cac
         expanded["result"].get("structuredContent").is_none(),
         "{expanded}"
     );
-    let (status, _, _) = post(
+    let (status, _, body) = post(
         &app,
         "alpha",
-        key,
+        Some(&other_token),
         Some(&b),
         call("ax_expand", json!({"id":id})),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_unknown_handle(status, &body, "Unknown cache id");
 }
