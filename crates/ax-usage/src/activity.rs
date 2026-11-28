@@ -567,7 +567,15 @@ mod tests {
 
     impl Drop for TempRoot {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+            // A closed pool's SQLite worker thread can hold the database file a
+            // moment longer, and Windows refuses to remove an open file, so try
+            // again for up to two seconds.
+            for _ in 0..100 {
+                if std::fs::remove_dir_all(&self.0).is_ok() || !self.0.exists() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
         }
     }
 

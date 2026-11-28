@@ -622,8 +622,16 @@ mod tests {
         drop(first);
         #[cfg(not(unix))]
         first.close().await;
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        // After `close` the SQLite worker thread can hold the file a moment
+        // longer, and Windows refuses to remove an open file: retry briefly.
+        for _ in 0..100 {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+            if !path.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
         assert!(!path.exists(), "the database file was not removed");
         let second = open_pool().await.unwrap();
