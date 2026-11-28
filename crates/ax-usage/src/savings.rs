@@ -2220,17 +2220,33 @@ fn transcript_needs_import(stored: Option<i64>, mtime: Option<i64>) -> bool {
 }
 
 /// The mtime stored at the last import of this session, if any.
+///
+/// A session that has token usage but no per-turn usage events was imported
+/// by a version without those events (before v10.0.0). It reports no stored
+/// mtime, so its unchanged transcript is read once more and the events are
+/// backfilled. The current import writes an event for every usage it counts,
+/// so this does not repeat.
 async fn stored_source_mtime(agent: &str, session_id: &str) -> Result<Option<i64>, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
-    let stored: Option<Option<i64>> = sqlx::query_scalar(
-        "SELECT source_mtime FROM agent_session_log WHERE agent = ? AND session_id = ?",
+    let stored: Option<(Option<i64>, bool)> = sqlx::query_as(
+        "SELECT s.source_mtime,
+           COALESCE(s.session_input_tokens, 0) + COALESCE(s.session_output_tokens, 0)
+             + COALESCE(s.cache_read_tokens, 0) + COALESCE(s.cache_write_tokens, 0) > 0
+           AND NOT EXISTS (
+             SELECT 1 FROM agent_usage_event e
+             WHERE e.agent = s.agent AND e.session_id = s.session_id
+           )
+         FROM agent_session_log s WHERE s.agent = ? AND s.session_id = ?",
     )
     .bind(agent)
     .bind(session_id)
     .fetch_optional(&pool)
     .await
     .map_err(|e| e.to_string())?;
-    Ok(stored.flatten())
+    Ok(match stored {
+        Some((_, true)) | None => None,
+        Some((mtime, false)) => mtime,
+    })
 }
 
 /// Move the usage events of an unchanged transcript to the project it maps to
@@ -3277,6 +3293,28 @@ mod tests {
         // The unchanged file is imported again, events included.
         assert!(import_claude_file(&claude, &[]).await.unwrap());
         assert_eq!(usage_event_projects(&pool).await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_session_imported_before_usage_events_gets_them_backfilled() {
+        let _env = UsageDbEnv::new().await;
+        let pool = open_pool().await.expect("pool");
+        let tmp = tempfile::tempdir().unwrap();
+        let claude = tmp.path().join("claude/-p-app/sess-1.jsonl");
+        std::fs::create_dir_all(claude.parent().unwrap()).unwrap();
+        std::fs::write(&claude, format!("{IMPORT_LINE}\n")).unwrap();
+        assert!(import_claude_file(&claude, &[]).await.unwrap());
+        // A version without per-turn events stored the session row and its
+        // mtime but no event rows.
+        sqlx::query("DELETE FROM agent_usage_event")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // The unchanged file is imported once more to backfill its events.
+        assert!(import_claude_file(&claude, &[]).await.unwrap());
+        assert_eq!(usage_event_projects(&pool).await.len(), 1);
+        // With the events in place, the unchanged file is skipped again.
+        assert!(!import_claude_file(&claude, &[]).await.unwrap());
     }
 
     #[test]
