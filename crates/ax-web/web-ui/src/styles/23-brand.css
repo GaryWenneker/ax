@@ -30,6 +30,7 @@
 /* Share Tech Mono (OFL, reserved name "Share"). License: public/ShareTechMono-LICENSE.txt */
 @font-face{font-family:"Share Tech Mono";font-style:normal;font-weight:400;font-display:swap;src:url("../assets/share-tech-mono-latin-400-normal.woff2") format("woff2")}
 .ax-app-wordmark{text-decoration:none}
+.ax-app-wordmark .ax-mark{display:block;height:.76em;width:auto}
 .ax-app-wordmark:focus-visible{outline:2px solid #b9ff6a;outline-offset:4px;border-radius:2px}
 @media(max-width:600px){.titlebar-brand .ax-app-wordmark{font-size:22px}}
 html[data-ax-layout="portal"] .titlebar-brand .ax-app-wordmark{color:#f0f3ed;text-shadow:none}

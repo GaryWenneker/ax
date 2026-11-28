@@ -1,8 +1,8 @@
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 use crate::ui::SpinnerGuard;
 
 pub async fn run(limit: usize, json: bool) -> Result<(), String> {
-    let root = resolve_path(None);
+    let root = resolve_project_root(None);
     ax_usage::log_cli(Some(&root), format!("cmd=cycles start limit={limit}"));
     let _spinner = SpinnerGuard::new("Finding call-graph cycles...", false);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;

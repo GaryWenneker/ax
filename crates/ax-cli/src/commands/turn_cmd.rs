@@ -5,7 +5,7 @@ use std::io::Read;
 use serde_json::{json, Value};
 
 use crate::commands::preflight::invoke_shared_tool;
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 
 #[derive(Debug, Clone)]
 pub enum TurnAction {
@@ -31,7 +31,7 @@ pub struct TurnArgs {
 }
 
 pub async fn run(args: TurnArgs) -> Result<(), String> {
-    let root = resolve_path(args.path.clone());
+    let root = resolve_project_root(args.path.clone());
     match args.action {
         TurnAction::Begin => {
             let prompt = if args.prompt_stdin {
@@ -121,6 +121,9 @@ pub async fn run(args: TurnArgs) -> Result<(), String> {
                     receipt.turn_id, receipt.memory_id, receipt.idempotent
                 ),
             )?;
+            for warning in &receipt.warnings {
+                eprintln!("warning: {warning}");
+            }
         }
         TurnAction::Fail => {
             let turn_id = require_turn(&args)?;
@@ -253,4 +256,196 @@ fn read_stdin() -> Result<String, String> {
         .read_to_string(&mut buf)
         .map_err(|e| e.to_string())?;
     Ok(buf)
+}
+
+/// Command-line form of `ax turn`, mapped onto [`TurnArgs`].
+#[derive(clap::Subcommand)]
+pub enum TurnCliAction {
+    Begin {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "prompt-stdin", action = clap::ArgAction::SetTrue)]
+        prompt_stdin: bool,
+        #[arg(long)]
+        agent: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    Event {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        turn: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
+        input_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Checkpoint {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        turn: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
+        input_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Finish {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        turn: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "outcome-stdin", action = clap::ArgAction::SetTrue)]
+        outcome_stdin: bool,
+        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
+        input_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Fail {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        turn: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "reason-stdin", action = clap::ArgAction::SetTrue)]
+        reason_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Status {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        turn: Option<String>,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+impl From<TurnCliAction> for TurnArgs {
+    fn from(action: TurnCliAction) -> Self {
+        match action {
+            TurnCliAction::Begin {
+                session,
+                path,
+                prompt_stdin,
+                agent,
+                json,
+            } => TurnArgs {
+                action: TurnAction::Begin,
+                session,
+                turn: None,
+                path,
+                prompt_stdin,
+                input_stdin: false,
+                outcome_stdin: false,
+                reason_stdin: false,
+                agent,
+                json,
+            },
+            TurnCliAction::Event {
+                session,
+                turn,
+                path,
+                input_stdin,
+                json,
+            } => TurnArgs {
+                action: TurnAction::Event,
+                session,
+                turn: Some(turn),
+                path,
+                prompt_stdin: false,
+                input_stdin,
+                outcome_stdin: false,
+                reason_stdin: false,
+                agent: None,
+                json,
+            },
+            TurnCliAction::Checkpoint {
+                session,
+                turn,
+                path,
+                input_stdin,
+                json,
+            } => TurnArgs {
+                action: TurnAction::Checkpoint,
+                session,
+                turn: Some(turn),
+                path,
+                prompt_stdin: false,
+                input_stdin,
+                outcome_stdin: false,
+                reason_stdin: false,
+                agent: None,
+                json,
+            },
+            TurnCliAction::Finish {
+                session,
+                turn,
+                path,
+                outcome_stdin,
+                input_stdin,
+                json,
+            } => TurnArgs {
+                action: TurnAction::Finish,
+                session,
+                turn: Some(turn),
+                path,
+                prompt_stdin: false,
+                input_stdin,
+                outcome_stdin,
+                reason_stdin: false,
+                agent: None,
+                json,
+            },
+            TurnCliAction::Fail {
+                session,
+                turn,
+                path,
+                reason_stdin,
+                json,
+            } => TurnArgs {
+                action: TurnAction::Fail,
+                session,
+                turn: Some(turn),
+                path,
+                prompt_stdin: false,
+                input_stdin: false,
+                outcome_stdin: false,
+                reason_stdin,
+                agent: None,
+                json,
+            },
+            TurnCliAction::Status {
+                session,
+                turn,
+                path,
+                json,
+            } => TurnArgs {
+                action: TurnAction::Status,
+                session,
+                turn,
+                path,
+                prompt_stdin: false,
+                input_stdin: false,
+                outcome_stdin: false,
+                reason_stdin: false,
+                agent: None,
+                json,
+            },
+        }
+    }
 }

@@ -27,8 +27,12 @@ export interface SpecWriteReply {
 
 const enc = encodeURIComponent;
 
-export function fetchSpecList(): Promise<SpecListReply> {
-  return request<SpecListReply>('GET', '/specs');
+/**
+ * The spec list. With `refresh` the server rescans the plan folders first,
+ * so a plan written on disk shows up at once.
+ */
+export function fetchSpecList(options: { refresh?: boolean } = {}): Promise<SpecListReply> {
+  return request<SpecListReply>('GET', options.refresh ? '/specs?refresh=1' : '/specs');
 }
 
 export function fetchSpecRevisions(specId: string): Promise<RevisionsReply> {

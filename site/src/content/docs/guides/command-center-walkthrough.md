@@ -33,6 +33,8 @@ Open **Rules** or **Skills**, select an item to read it, and edit only when you 
 - **Document (center):** the approved text, editing under **Content** (Markdown, WYSIWYG, Split, and Diff), and the version list under **History**.
 - **Context & evidence (right):** the sessions bound to the open document, each with Logging and Memory links. Evidence that is not indexed yet says so, instead of showing an empty history.
 
+The Specs page imports finished plans from the plan folders (`.cursor/plans`, `.claude/plans` and the like) each time it opens or saves, so a plan written on disk shows up after a reload. Other panels that list specs reuse an import from the last 30 seconds. A read-only Command Center (`ax share`) lists what is stored without importing, and its viewers can still open the tree, provenance and plan comparisons.
+
 **All documents** switches to the flat list. Below 1280 px the context panel becomes a drawer, and on a phone one pane shows at a time.
 
 Use **Memory** to recall a decision or convention. **New memory** opens a composer; **Capture from git** imports relevant history. **Sync docs catalog** refreshes documentation knowledge. Column filters apply to loaded rows; use the page search for broader retrieval.
@@ -160,7 +162,9 @@ The configured origin must exactly match the address used in the browser. Passke
 6. Open **Settings → Users & roles** to assign multiple roles to a team member. Roles combine their permissions. At least one active Owner is always preserved.
 7. To turn web sign-in off, reauthenticate as Owner and disable it from a trusted local management session. This does not delete users, roles, or passkeys.
 
-**Security boundaries:** the interactive browser session is separate from MCP client tokens, OAuth, share tokens and Primary/Replica node credentials. Disabling web sign-in does not grant anonymous access to a remotely hosted Command Center.
+**Security boundaries:** the interactive browser session is separate from MCP client tokens, OAuth, share tokens and Primary/Replica node credentials. Disabling web sign-in does not grant anonymous access to a remotely hosted Command Center. A client token (`axc_`) keeps working on the APIs its scopes allow (for example `memory:read` or `context:read`) whether web sign-in is on or off; without such a token, data APIs need a signed-in session.
+
+**Sign-in limits:** each address gets 5 password or recovery-code attempts per identity and 30 attempts in total every 5 minutes; further attempts get `429 Too Many Requests`. A successful sign-in clears the count for that identity. Behind a reverse proxy or tunnel on the same computer every client shares the proxy's address, so only the limit of 5 attempts per identity applies there; the 30-attempt limit would let one client lock everyone out.
 
 ## CLI, MCP and HTTP features
 

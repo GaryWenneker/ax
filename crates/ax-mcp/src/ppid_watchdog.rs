@@ -66,7 +66,9 @@ pub fn parse_host_ppid(raw: Option<String>) -> Option<u32> {
 
 pub fn parent_pid() -> u32 {
     let pid = Pid::from_u32(std::process::id());
-    let mut sys = System::new();
+    let Ok(mut sys) = System::new() else {
+        return 0;
+    };
     sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
     sys.process(pid)
         .and_then(|p| p.parent())
@@ -79,7 +81,9 @@ pub fn is_process_alive(pid: u32) -> bool {
         return false;
     }
     let pid = Pid::from_u32(pid);
-    let mut sys = System::new();
+    let Ok(mut sys) = System::new() else {
+        return false;
+    };
     sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
     sys.process(pid).is_some()
 }

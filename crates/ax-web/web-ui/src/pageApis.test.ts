@@ -60,6 +60,12 @@ test('an expired share token on a spec call reports the server message and statu
 });
 
 test('spec calls keep their URLs and bodies', async () => {
+  reply(200, JSON.stringify({ specs: [] }));
+  await fetchSpecList();
+  assert.equal(calls[0].url, '/api/specs');
+  await fetchSpecList({ refresh: true });
+  assert.equal(calls[1].url, '/api/specs?refresh=1');
+
   reply(200, JSON.stringify({ revisions: [] }));
   await fetchSpecRevisions('a/b');
   assert.equal(calls[0].url, '/api/specs/a%2Fb/revisions');

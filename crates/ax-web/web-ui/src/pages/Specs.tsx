@@ -249,7 +249,9 @@ export default function SpecsPage() {
 
   async function load() {
     try {
-      const data = await fetchSpecList();
+      // The Specs page rescans the plan folders each time it loads or saves,
+      // so a plan written on disk shows up at once.
+      const data = await fetchSpecList({ refresh: true });
       setError(data.error ? String(data.error) : '');
       const parsed = parseSpecPayload(data);
       if (parsed.mode === 'hierarchy') {

@@ -43,7 +43,7 @@ pub fn project_root(path: Option<String>) -> Result<PathBuf, String> {
         Some(path) => PathBuf::from(path),
         None => std::env::current_dir().map_err(|error| error.to_string())?,
     };
-    if let Some(root) = ax_context::directory::find_nearest_ax_root(&start) {
+    if let Some(root) = super::find_project_root(&start) {
         return Ok(root);
     }
     start
@@ -153,7 +153,7 @@ pub async fn write_export(root: &Path, out: &Path) -> Result<Value, String> {
     let db = Database::open(&db_path)
         .await
         .map_err(|error| error.to_string())?;
-    let project = ax_neural::dispatch::project_id(root);
+    let project = ax_neural::dispatch::adopted_project_id(db.pool(), root).await;
     let export = ax_neural::store::training_export(db.pool(), &project).await?;
     let text = serde_json::to_string_pretty(&export).map_err(|error| error.to_string())?;
     std::fs::write(out, text).map_err(|error| format!("{}: {error}", out.display()))?;
@@ -314,6 +314,40 @@ mod tests {
         assert_eq!(written["format"], "ax-neural-feedback-v1");
         assert_eq!(written["rows"][0]["taskCategory"], "parser");
         assert!(!text.contains(&*root.to_string_lossy()), "{text}");
+    }
+
+    #[tokio::test]
+    async fn export_includes_feedback_stored_under_a_legacy_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::write(
+            root.join("ax.json"),
+            r#"{"neural":{"learning":{"feedback_collection":true}}}"#,
+        )
+        .unwrap();
+        std::fs::create_dir(root.join(".ax")).unwrap();
+        let db = Database::open(&root.join(".ax").join("ax.db"))
+            .await
+            .unwrap();
+        ax_neural::dispatch::handle(
+            &root,
+            "feedback",
+            &json!({"executionId":"e1","taskCategory":"parser","outcome":"success"}),
+            Some(db.pool()),
+        )
+        .await
+        .unwrap();
+        // The spelling older versions stored: the root with a trailing separator.
+        let legacy = format!("{}{}", root.to_string_lossy(), std::path::MAIN_SEPARATOR);
+        sqlx::query("UPDATE neural_feedback SET project_id = ?")
+            .bind(&legacy)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        drop(db);
+        let out = root.join("export.json");
+        let summary = write_export(Path::new(&legacy), &out).await.unwrap();
+        assert_eq!(summary["exported"], 1);
     }
 
     #[tokio::test]

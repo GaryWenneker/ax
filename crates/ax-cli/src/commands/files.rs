@@ -1,7 +1,7 @@
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 
 pub async fn run(_format: Option<String>, json: bool) -> Result<(), String> {
-    let root = resolve_path(None);
+    let root = resolve_project_root(None);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let files = ax
         .queries()

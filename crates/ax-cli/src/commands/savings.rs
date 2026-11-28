@@ -176,6 +176,18 @@ pub fn run_hook_install() -> Result<(), String> {
     let cursor_dir = ax_utils::paths::home_dir()
         .map(|h| h.join(".cursor"))
         .ok_or("could not resolve home directory")?;
+    let script_path = install_cursor_hook(&cursor_dir)?;
+
+    println!("Installed Cursor sessionStart and beforeSubmitPrompt hooks:");
+    println!("  {}", script_path.display());
+    println!("  {}", cursor_dir.join("hooks.json").display());
+    println!("Start a new Composer chat to tag the model, then run `ax savings import --all`.");
+    Ok(())
+}
+
+/// Writes the session-model hook script under `cursor_dir/hooks` and
+/// registers it in `cursor_dir/hooks.json`. Returns the script path.
+fn install_cursor_hook(cursor_dir: &Path) -> Result<std::path::PathBuf, String> {
     let hooks_dir = cursor_dir.join("hooks");
     fs::create_dir_all(&hooks_dir).map_err(|e| e.to_string())?;
 
@@ -188,14 +200,17 @@ pub fn run_hook_install() -> Result<(), String> {
     let script_body = if is_windows { HOOK_PS1 } else { HOOK_SH };
     let script_path = hooks_dir.join(script_name);
     write_utf8_no_bom(&script_path, script_body)?;
+    // hooks.json runs the script directly (`./hooks/<name>`), so it must be
+    // executable; fs::write leaves it at 0644 under the default umask.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("{}: {e}", script_path.display()))?;
+    }
 
     merge_hooks_json(&cursor_dir.join("hooks.json"), script_name)?;
-
-    println!("Installed Cursor sessionStart and beforeSubmitPrompt hooks:");
-    println!("  {}", script_path.display());
-    println!("  {}", cursor_dir.join("hooks.json").display());
-    println!("Start a new Composer chat to tag the model, then run `ax savings import --all`.");
-    Ok(())
+    Ok(script_path)
 }
 
 fn write_utf8_no_bom(path: &Path, content: &str) -> Result<(), String> {
@@ -206,24 +221,33 @@ fn merge_hooks_json(path: &Path, script_name: &str) -> Result<(), String> {
     let command = format!("./hooks/{script_name}");
     let entry = json!({ "command": command });
 
+    // A file we cannot parse (JSONC, a trailing comma, a half-written file)
+    // is left untouched: rewriting it would drop the user's own hooks.
     let mut root: Value = if path.exists() {
-        let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).unwrap_or_else(|_| json!({ "version": 1, "hooks": {} }))
+        let raw = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        serde_json::from_str(&raw).map_err(|e| {
+            format!(
+                "{} is not valid JSON ({e}); not modified. Fix it or add the ax hooks by hand.",
+                path.display()
+            )
+        })?
     } else {
         json!({ "version": 1, "hooks": {} })
     };
 
-    if root.get("version").is_none() {
-        root["version"] = json!(1);
-    }
-    let hooks = root
+    let not_object = || {
+        format!(
+            "{} does not have the expected {{\"version\", \"hooks\": {{...}}}} shape; not modified.",
+            path.display()
+        )
+    };
+    let obj = root.as_object_mut().ok_or_else(not_object)?;
+    obj.entry("version").or_insert_with(|| json!(1));
+    let hooks = obj
+        .entry("hooks")
+        .or_insert_with(|| json!({}))
         .as_object_mut()
-        .and_then(|o| {
-            o.entry("hooks")
-                .or_insert_with(|| json!({}))
-                .as_object_mut()
-        })
-        .ok_or("invalid hooks.json shape")?;
+        .ok_or_else(not_object)?;
 
     let session_start = hooks
         .entry("sessionStart")
@@ -253,7 +277,11 @@ fn merge_hooks_json(path: &Path, script_name: &str) -> Result<(), String> {
     }
 
     let pretty = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
-    write_utf8_no_bom(path, &(pretty + "\n"))
+    // A symlinked hooks.json (a dotfiles setup) is written through to its
+    // target, so the rename does not replace the link with a regular file.
+    let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    ax_utils::atomic_write(&target, (pretty + "\n").as_bytes())
+        .map_err(|e| format!("{}: {e}", path.display()))
 }
 
 fn hook_points_to_ax_session_model(item: &Value, command: &str) -> bool {
@@ -293,4 +321,119 @@ fn format_num(n: i64) -> String {
         out.push(c);
     }
     out.chars().rev().collect()
+}
+
+#[cfg(test)]
+mod hook_install_tests {
+    use super::*;
+
+    fn temp_cursor_dir(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("ax-savings-hook-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hook_script_is_executable() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_cursor_dir("exec");
+        let script = install_cursor_hook(&dir).unwrap();
+        let mode = fs::metadata(&script).unwrap().permissions().mode();
+        assert_eq!(
+            mode & 0o111,
+            0o111,
+            "script mode {mode:o} is not executable"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_hooks_json_keeps_its_link() {
+        let dir = temp_cursor_dir("symlink");
+        let dotfiles = dir.join("dotfiles");
+        fs::create_dir_all(&dotfiles).unwrap();
+        let target = dotfiles.join("hooks.json");
+        fs::write(
+            &target,
+            "{\"version\":1,\"hooks\":{\"preToolUse\":[{\"command\":\"./hooks/mine.sh\"}]}}",
+        )
+        .unwrap();
+        let link = dir.join("hooks.json");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        install_cursor_hook(&dir).unwrap();
+
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "hooks.json is still a symlink"
+        );
+        let merged: Value = serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
+        assert_eq!(
+            merged["hooks"]["preToolUse"][0]["command"],
+            "./hooks/mine.sh"
+        );
+        assert_eq!(
+            merged["hooks"]["sessionStart"][0]["command"],
+            "./hooks/ax-session-model.sh"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unparsable_hooks_json_is_left_untouched() {
+        let dir = temp_cursor_dir("invalid");
+        let hooks = dir.join("hooks.json");
+        let original = "{\n  // mine\n  \"version\": 1,\n  \"hooks\": { \"preToolUse\": [{ \"command\": \"./hooks/mine.sh\" }], },\n}\n";
+        fs::write(&hooks, original).unwrap();
+        let err = install_cursor_hook(&dir).unwrap_err();
+        assert!(err.contains("hooks.json"), "error names the file: {err}");
+        assert_eq!(fs::read_to_string(&hooks).unwrap(), original);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn non_object_hooks_json_is_refused_without_panic() {
+        let dir = temp_cursor_dir("array");
+        let hooks = dir.join("hooks.json");
+        fs::write(&hooks, "[1, 2]").unwrap();
+        assert!(install_cursor_hook(&dir).is_err());
+        assert_eq!(fs::read_to_string(&hooks).unwrap(), "[1, 2]");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn foreign_hooks_survive_and_install_is_idempotent() {
+        let dir = temp_cursor_dir("merge");
+        let hooks = dir.join("hooks.json");
+        fs::write(
+            &hooks,
+            r#"{"version":1,"hooks":{"sessionStart":[{"command":"./hooks/mine.sh"}],"preToolUse":[{"command":"x"}]}}"#,
+        )
+        .unwrap();
+        install_cursor_hook(&dir).unwrap();
+        let first = fs::read_to_string(&hooks).unwrap();
+        install_cursor_hook(&dir).unwrap();
+        assert_eq!(
+            fs::read_to_string(&hooks).unwrap(),
+            first,
+            "second install changes nothing"
+        );
+        let v: Value = serde_json::from_str(&first).unwrap();
+        let start = v["hooks"]["sessionStart"].as_array().unwrap();
+        assert_eq!(start.len(), 2);
+        assert_eq!(start[0]["command"], "./hooks/mine.sh");
+        assert_eq!(v["hooks"]["preToolUse"][0]["command"], "x");
+        assert_eq!(
+            v["hooks"]["beforeSubmitPrompt"].as_array().unwrap().len(),
+            1
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

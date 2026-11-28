@@ -54,16 +54,39 @@ fn wanted_file(name: &str) -> bool {
             .is_some_and(|e| EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
 }
 
-/// Candidate files as `rel -> size`, sorted. Symlinks are never followed.
-fn candidates(root: &Path) -> BTreeMap<String, u64> {
-    let mut out = BTreeMap::new();
+/// The files found under a folder root.
+struct Walk {
+    /// Candidate files as `rel -> size`, sorted.
+    files: BTreeMap<String, u64>,
+    /// A subfolder or entry could not be read, so files may exist that were not seen.
+    incomplete: bool,
+}
+
+/// Walk `root` for candidate files. Symlinks are never followed. A root that is
+/// missing or cannot be listed is an error, so a sync never mistakes an
+/// unmounted drive for an empty folder.
+fn candidates(root: &Path) -> std::io::Result<Walk> {
+    let mut walk = Walk {
+        files: BTreeMap::new(),
+        incomplete: false,
+    };
     let mut stack = vec![(root.to_path_buf(), String::new())];
     while let Some((dir, rel)) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) if rel.is_empty() => return Err(e),
+            Err(_) => {
+                walk.incomplete = true;
+                continue;
+            }
         };
-        for entry in entries.flatten() {
+        for entry in entries {
+            let Ok(entry) = entry else {
+                walk.incomplete = true;
+                continue;
+            };
             let Ok(meta) = entry.path().symlink_metadata() else {
+                walk.incomplete = true;
                 continue;
             };
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -75,11 +98,11 @@ fn candidates(root: &Path) -> BTreeMap<String, u64> {
             if meta.is_dir() && !skipped_dir(&name) {
                 stack.push((entry.path(), child));
             } else if meta.is_file() && wanted_file(&name) {
-                out.insert(child, meta.len());
+                walk.files.insert(child, meta.len());
             }
         }
     }
-    out
+    Ok(walk)
 }
 
 fn title_of(rel: &str, text: &str) -> String {
@@ -114,24 +137,43 @@ async fn existing(
     Ok(rows.into_iter().map(|(id, t, b)| (id, (t, b))).collect())
 }
 
-/// Read every wanted file under `root` within the limits, plus how many were skipped.
-fn read_folder(root: &Path) -> (Vec<(String, String)>, usize) {
-    let mut files = Vec::new();
-    let mut skipped = 0usize;
-    for (rel, size) in candidates(root) {
-        if size > MAX_FOLDER_FILE_BYTES || files.len() >= MAX_FOLDER_FILES {
-            skipped += 1;
+/// What one read of a folder produced.
+struct FolderRead {
+    /// Files read within the limits, as `(rel, text)`.
+    files: Vec<(String, String)>,
+    /// Files that exist but were not read (too large, over the file limit, or unreadable).
+    skipped: Vec<String>,
+    /// Part of the folder could not be listed.
+    incomplete: bool,
+}
+
+/// Read every wanted file under `root` within the limits.
+fn read_folder(root: &Path) -> std::io::Result<FolderRead> {
+    let walk = candidates(root)?;
+    let mut read = FolderRead {
+        files: Vec::new(),
+        skipped: Vec::new(),
+        incomplete: walk.incomplete,
+    };
+    for (rel, size) in walk.files {
+        if size > MAX_FOLDER_FILE_BYTES || read.files.len() >= MAX_FOLDER_FILES {
+            read.skipped.push(rel);
             continue;
         }
         match std::fs::read_to_string(root.join(&rel)) {
-            Ok(text) => files.push((rel, text)),
-            Err(_) => skipped += 1,
+            Ok(text) => read.files.push((rel, text)),
+            Err(_) => read.skipped.push(rel),
         }
     }
-    (files, skipped)
+    Ok(read)
 }
 
 /// Import `root` under the folder `folder`: add new files, update changed ones, remove gone ones.
+///
+/// A missing or unreadable root is an error and changes nothing. A file that
+/// exists but was skipped (too large, over the file limit, unreadable) keeps
+/// its memory as it was. When part of the folder could not be listed, no
+/// memory is removed, because a file that was not seen is not known to be gone.
 pub async fn sync_folder(
     pool: &SqlitePool,
     folder: &str,
@@ -140,11 +182,18 @@ pub async fn sync_folder(
     let mut report = FolderSyncReport::default();
     let mut stale = existing(pool, folder).await?;
     let owned = root.to_path_buf();
-    let (files, skipped) = tokio::task::spawn_blocking(move || read_folder(&owned))
+    let read = tokio::task::spawn_blocking(move || read_folder(&owned))
         .await
-        .map_err(|e| AxError::Other(format!("folder read task failed: {e}")))?;
-    report.skipped = skipped;
-    for (rel, text) in files {
+        .map_err(|e| AxError::Other(format!("folder read task failed: {e}")))?
+        .map_err(|e| AxError::Other(format!("cannot read folder {}: {e}", root.display())))?;
+    report.skipped = read.skipped.len();
+    for rel in &read.skipped {
+        stale.remove(&doc_memory_id(folder, rel));
+    }
+    if read.incomplete {
+        stale.clear();
+    }
+    for (rel, text) in read.files {
         let id = doc_memory_id(folder, &rel);
         let title = title_of(&rel, &text);
         let body = body_of(folder, &rel, &text);

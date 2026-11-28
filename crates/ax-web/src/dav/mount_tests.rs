@@ -13,6 +13,16 @@ fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
     h
 }
 
+/// Headers as `request_guard::guard` leaves them for a loopback socket peer.
+fn local(pairs: &[(&'static str, &str)]) -> HeaderMap {
+    let mut h = headers(pairs);
+    h.insert(
+        crate::request_guard::LOCAL_PEER,
+        HeaderValue::from_static("1"),
+    );
+    h
+}
+
 #[test]
 fn b6_name_rules() {
     assert!(valid_name("ax"));
@@ -127,29 +137,80 @@ fn b7_linux_commands() {
 
 #[test]
 fn n1_loopback_only() {
-    assert!(allowed(&headers(&[("host", "127.0.0.1:7070")]), false));
-    assert!(allowed(&headers(&[("host", "localhost")]), false));
-    assert!(allowed(&headers(&[("host", "[::1]:7070")]), false));
+    // Loopback headers alone are not enough: the socket peer must be local.
+    assert!(!allowed(
+        &headers(&[("host", "127.0.0.1:7070")]),
+        false,
+        7070
+    ));
+    assert!(allowed(&local(&[("host", "127.0.0.1:7070")]), false, 7070));
+    assert!(allowed(&local(&[("host", "localhost")]), false, 7070));
+    assert!(allowed(&local(&[("host", "[::1]:7070")]), false, 7070));
     assert!(allowed(
-        &headers(&[
+        &local(&[
             ("host", "127.0.0.1:7070"),
-            ("origin", "http://localhost:5173")
+            ("origin", "http://localhost:7070")
         ]),
-        false
+        false,
+        7070
     ));
-    assert!(!allowed(&headers(&[("host", "127.0.0.1:7070")]), true));
-    assert!(!allowed(&headers(&[]), false));
-    assert!(!allowed(&headers(&[("host", "192.168.1.5:7070")]), false));
-    assert!(!allowed(&headers(&[("host", "127.0.0.1.evil.com")]), false));
+    assert!(!allowed(&local(&[("host", "127.0.0.1:7070")]), true, 7070));
+    assert!(!allowed(&local(&[]), false, 7070));
     assert!(!allowed(
-        &headers(&[("host", "127.0.0.1:7070"), ("origin", "https://evil.com")]),
-        false
+        &local(&[("host", "192.168.1.5:7070")]),
+        false,
+        7070
     ));
     assert!(!allowed(
-        &headers(&[
+        &local(&[("host", "127.0.0.1.evil.com")]),
+        false,
+        7070
+    ));
+    assert!(!allowed(
+        &local(&[("host", "127.0.0.1:7070"), ("origin", "https://evil.com")]),
+        false,
+        7070
+    ));
+    assert!(!allowed(
+        &local(&[
             ("host", "127.0.0.1:7070"),
             ("origin", "http://localhost.evil.com")
         ]),
-        false
+        false,
+        7070
     ));
+}
+
+#[test]
+fn n1_origin_must_be_command_center() {
+    assert!(origin_allowed("http://127.0.0.1:7070", 7070, false));
+    assert!(origin_allowed("http://[::1]:7070", 7070, false));
+    assert!(!origin_allowed("http://localhost:3000", 7070, false));
+    assert!(!origin_allowed("http://localhost:5173", 7070, false));
+    assert!(origin_allowed("http://localhost:5173", 7070, true));
+    assert!(!origin_allowed("http://localhost:3000", 7070, true));
+    assert!(!origin_allowed("http://evil.example:7070", 7070, true));
+}
+
+// The folder check guards the macOS home-folder mount; Windows mounts a drive
+// letter, and its `is_mount_root` treats any existing folder as a mount root.
+#[cfg(unix)]
+#[test]
+fn n2_mount_dir_must_not_hide_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("ax");
+    assert!(usable_mount_dir(&missing).is_ok());
+    std::fs::create_dir(&missing).unwrap();
+    assert!(usable_mount_dir(&missing).is_ok());
+    std::fs::write(missing.join(".DS_Store"), "").unwrap();
+    assert!(usable_mount_dir(&missing).is_ok());
+    std::fs::write(missing.join("notes.md"), "x").unwrap();
+    assert!(usable_mount_dir(&missing)
+        .unwrap_err()
+        .contains("already holds files"));
+    let file = dir.path().join("plain");
+    std::fs::write(&file, "x").unwrap();
+    assert!(usable_mount_dir(&file)
+        .unwrap_err()
+        .contains("not a folder"));
 }

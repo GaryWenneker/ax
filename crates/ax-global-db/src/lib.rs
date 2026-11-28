@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 
-use ax_db::{busy_timeout, connect_options};
+use ax_db::{busy_timeout, connect_options, with_busy_retry};
 
 pub use ax_utils::paths::AX_GLOBAL_DB_ENV;
 
@@ -34,12 +34,18 @@ pub async fn open_pool(path: &Path, create_if_missing: bool) -> Result<SqlitePoo
     }
     let options = connect_options(path, create_if_missing);
     let timeout = busy_timeout();
-    let pool = SqlitePoolOptions::new()
-        .max_connections(3)
-        .acquire_timeout(timeout)
-        .connect_with(options)
-        .await
-        .with_context(|| format!("open sqlite {}", path.display()))?;
+    // The first connection switches the file to WAL. While another process
+    // or pool writes a file that is still in rollback-journal mode, that
+    // switch fails at once with "database is locked": SQLite does not call
+    // the busy handler there. Retry it like `ax_db::Database::open` does.
+    let pool = with_busy_retry(|| {
+        SqlitePoolOptions::new()
+            .max_connections(3)
+            .acquire_timeout(timeout)
+            .connect_with(options.clone())
+    })
+    .await
+    .with_context(|| format!("open sqlite {}", path.display()))?;
     Ok(pool)
 }
 

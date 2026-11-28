@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use ax_graph::analysis::is_semantic_edge;
 use serde_json::json;
 
-use crate::commands::resolve_path;
+use crate::commands::resolve_project_root;
 use crate::ui::SpinnerGuard;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,7 +92,7 @@ pub async fn run_graph(
     limit: usize,
 ) -> Result<(), String> {
     let fmt = GraphFormat::parse(format)?;
-    let root = resolve_path(path);
+    let root = resolve_project_root(path);
     let resolution = if resolution > 0.0 { resolution } else { 1.0 };
     let limit = limit.max(1);
 

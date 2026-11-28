@@ -40,6 +40,7 @@ pub fn router(hub: WebHub) -> Router {
 
 fn prefix_router(hub: WebHub, prefix: &'static str) -> Router {
     let readonly = hub.readonly;
+    let port = hub.port;
     let dav = DavHandler::builder()
         .strip_prefix(prefix)
         .locksystem(FakeLs::new())
@@ -48,7 +49,7 @@ fn prefix_router(hub: WebHub, prefix: &'static str) -> Router {
     let handle = move |req: Request| {
         let dav = dav.clone();
         async move {
-            if let Some(status) = refuse(&req, readonly) {
+            if let Some(status) = refuse(&req, readonly, port) {
                 return status.into_response();
             }
             dav.handle(req).await.map(Body::new).into_response()
@@ -93,7 +94,7 @@ fn is_global_page(raw: &str) -> bool {
         .is_some_and(|p| matches!(pages::classify(&p), Target::Page(area, _) if area.is_global()))
 }
 
-fn refuse(req: &Request, readonly: bool) -> Option<StatusCode> {
+fn refuse(req: &Request, readonly: bool, port: u16) -> Option<StatusCode> {
     if vault_path(req.uri().path()).is_none() {
         return Some(StatusCode::BAD_REQUEST);
     }
@@ -105,7 +106,7 @@ fn refuse(req: &Request, readonly: bool) -> Option<StatusCode> {
         .map(|u| u.path().to_string());
     let touches_folder =
         is_folder(req.uri().path()) || destination.as_deref().is_some_and(is_folder);
-    if touches_folder && !mount::allowed(req.headers(), false) {
+    if touches_folder && !mount::allowed(req.headers(), false, port) {
         return Some(StatusCode::FORBIDDEN);
     }
     let method = req.method();

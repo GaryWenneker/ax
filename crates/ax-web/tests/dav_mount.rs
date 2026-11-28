@@ -55,6 +55,15 @@ async fn fixture(readonly: bool) -> (TempDir, Router) {
     (dir, hub.nest_routers(cors))
 }
 
+/// The server's connection layer records the socket peer; requests in these
+/// tests come from this computer.
+fn from_loopback(mut req: Request<Body>) -> Request<Body> {
+    let peer: std::net::SocketAddr = "127.0.0.1:50000".parse().unwrap();
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo(peer));
+    req
+}
+
 async fn send(
     app: &Router,
     method: &str,
@@ -68,7 +77,9 @@ async fn send(
     }
     let res = app
         .clone()
-        .oneshot(req.body(Body::from(body.to_string())).unwrap())
+        .oneshot(from_loopback(
+            req.body(Body::from(body.to_string())).unwrap(),
+        ))
         .await
         .unwrap();
     let status = res.status();
@@ -174,4 +185,62 @@ async fn n1_foreign_host_origin_and_readonly_are_403() {
     let (_d2, ro) = fixture(true).await;
     let (status, _) = send(&ro, "POST", "/api/dav/mount", &[LOCAL, JSON], "{}").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn n1_page_on_another_local_port_is_403() {
+    // Another web server on this computer (a dev server, a local tool) is not Command Center.
+    let (_d, app) = fixture(false).await;
+    let other = [LOCAL, ("origin", "http://localhost:3000"), JSON];
+    let (status, _) = send(&app, "POST", "/api/dav/mount", &other, "{}").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = send(
+        &app,
+        "POST",
+        "/api/agent/install",
+        &other,
+        r#"{"targets":[]}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = send(
+        &app,
+        "PROPFIND",
+        "/ax/folders/",
+        &[LOCAL, ("origin", "http://localhost:3000"), ("Depth", "1")],
+        "",
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let own = [LOCAL, ("origin", "http://127.0.0.1:7070"), JSON];
+    let (status, body) = send(&app, "GET", "/api/dav/mount", &own, "").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn n2_mount_never_covers_a_folder_with_files() {
+    let home = isolate_home();
+    let docs = home.join("Documents");
+    std::fs::create_dir_all(&docs).unwrap();
+    std::fs::write(docs.join("taxes.pdf"), "keep me").unwrap();
+    let (_d, app) = fixture(false).await;
+    let (status, body) = send(
+        &app,
+        "POST",
+        "/api/dav/mount",
+        &[LOCAL, JSON],
+        r#"{"name":"Documents","autostart":true}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(
+        json(&body)["error"].as_str().unwrap().contains("Documents"),
+        "{body}"
+    );
+    assert!(json(&body).get("commands").is_none(), "{body}");
+    assert_eq!(
+        std::fs::read_to_string(docs.join("taxes.pdf")).unwrap(),
+        "keep me"
+    );
 }

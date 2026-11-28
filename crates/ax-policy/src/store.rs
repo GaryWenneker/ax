@@ -603,12 +603,35 @@ impl PolicyStore {
     }
 
     /// Migrate a single rule/skill between files and database storage.
+    /// A rule wins when a rule and a skill share the name; use
+    /// [`Self::set_rule_storage`] or [`Self::set_skill_storage`] when the kind
+    /// is known.
     pub async fn set_item_storage(
         &self,
         id_or_name: &str,
         target: PolicyStorage,
         keep_file: bool,
     ) -> Result<serde_json::Value, AxError> {
+        if let Some(v) = self.set_rule_storage(id_or_name, target, keep_file).await? {
+            return Ok(v);
+        }
+        if let Some(v) = self
+            .set_skill_storage(id_or_name, target, keep_file)
+            .await?
+        {
+            return Ok(v);
+        }
+        Err(AxError::Other("not found".into()))
+    }
+
+    /// Migrate one rule between files and database storage. `None` when no
+    /// rule has this id.
+    pub async fn set_rule_storage(
+        &self,
+        id_or_name: &str,
+        target: PolicyStorage,
+        keep_file: bool,
+    ) -> Result<Option<serde_json::Value>, AxError> {
         if let Some(mut doc) = self.get_rule_doc(id_or_name).await? {
             let before = self.item_effective_storage(doc.frontmatter.storage.as_deref());
             doc.frontmatter.storage = Some(target.as_str().into());
@@ -631,29 +654,40 @@ impl PolicyStore {
                         upsert_rule_doc(&self.pool, &again).await?;
                     }
                 }
-                return Ok(serde_json::json!({
+                return Ok(Some(serde_json::json!({
                     "ok": true,
                     "kind": "rule",
                     "id": id_or_name,
                     "storage": target.as_str(),
                     "effectiveStorage": target.as_str(),
                     "storageIsOverride": true,
-                }));
+                })));
             }
             // to files
             self.save_rule(doc.frontmatter, doc.body)
                 .await
                 .map_err(|e| AxError::Other(e.error))?;
-            return Ok(serde_json::json!({
+            return Ok(Some(serde_json::json!({
                 "ok": true,
                 "kind": "rule",
                 "id": id_or_name,
                 "storage": target.as_str(),
                 "effectiveStorage": target.as_str(),
                 "storageIsOverride": true,
-            }));
+            })));
         }
 
+        Ok(None)
+    }
+
+    /// Migrate one skill between files and database storage. `None` when no
+    /// skill has this name.
+    pub async fn set_skill_storage(
+        &self,
+        id_or_name: &str,
+        target: PolicyStorage,
+        keep_file: bool,
+    ) -> Result<Option<serde_json::Value>, AxError> {
         if let Some(mut doc) = self.get_skill_doc(id_or_name).await? {
             let before = self.item_effective_storage(doc.frontmatter.storage.as_deref());
             doc.frontmatter.storage = Some(target.as_str().into());
@@ -673,29 +707,29 @@ impl PolicyStore {
                         upsert_skill_doc(&self.pool, &again).await?;
                     }
                 }
-                return Ok(serde_json::json!({
+                return Ok(Some(serde_json::json!({
                     "ok": true,
                     "kind": "skill",
                     "name": id_or_name,
                     "storage": target.as_str(),
                     "effectiveStorage": target.as_str(),
                     "storageIsOverride": true,
-                }));
+                })));
             }
             self.save_skill(doc.frontmatter, doc.body)
                 .await
                 .map_err(|e| AxError::Other(e.error))?;
-            return Ok(serde_json::json!({
+            return Ok(Some(serde_json::json!({
                 "ok": true,
                 "kind": "skill",
                 "name": id_or_name,
                 "storage": target.as_str(),
                 "effectiveStorage": target.as_str(),
                 "storageIsOverride": true,
-            }));
+            })));
         }
 
-        Err(AxError::Other("not found".into()))
+        Ok(None)
     }
 
     /// Clear per-item storage override (inherit project default again).
@@ -729,22 +763,36 @@ impl PolicyStore {
     }
 
     /// Enable or disable a rule or skill by id/name (writes frontmatter + DB).
+    /// A rule wins when a rule and a skill share the name; use
+    /// [`Self::set_rule_enabled`] or [`Self::set_skill_enabled`] when the kind
+    /// is known.
     pub async fn set_enabled(&self, id_or_name: &str, enabled: bool) -> Result<bool, AxError> {
-        if let Some(mut doc) = self.get_rule_doc(id_or_name).await? {
-            doc.frontmatter.enabled = enabled;
-            self.save_rule(doc.frontmatter, doc.body)
-                .await
-                .map_err(|e| AxError::Other(e.error))?;
-            return Ok(true);
-        }
-        if let Some(mut doc) = self.get_skill_doc(id_or_name).await? {
-            doc.frontmatter.enabled = enabled;
-            self.save_skill(doc.frontmatter, doc.body)
-                .await
-                .map_err(|e| AxError::Other(e.error))?;
-            return Ok(true);
-        }
-        Ok(false)
+        Ok(self.set_rule_enabled(id_or_name, enabled).await?
+            || self.set_skill_enabled(id_or_name, enabled).await?)
+    }
+
+    /// Enable or disable one rule. `false` when no rule has this id.
+    pub async fn set_rule_enabled(&self, id: &str, enabled: bool) -> Result<bool, AxError> {
+        let Some(mut doc) = self.get_rule_doc(id).await? else {
+            return Ok(false);
+        };
+        doc.frontmatter.enabled = enabled;
+        self.save_rule(doc.frontmatter, doc.body)
+            .await
+            .map_err(|e| AxError::Other(e.error))?;
+        Ok(true)
+    }
+
+    /// Enable or disable one skill. `false` when no skill has this name.
+    pub async fn set_skill_enabled(&self, name: &str, enabled: bool) -> Result<bool, AxError> {
+        let Some(mut doc) = self.get_skill_doc(name).await? else {
+            return Ok(false);
+        };
+        doc.frontmatter.enabled = enabled;
+        self.save_skill(doc.frontmatter, doc.body)
+            .await
+            .map_err(|e| AxError::Other(e.error))?;
+        Ok(true)
     }
 }
 

@@ -1,1 +1,0 @@
-import{r,w as i,s as b,ah as d,ai as S}from"./index-BOczttG-.js";function p(s,u=""){const[a,t]=r.useState(()=>i(s,u)),o=r.useCallback(e=>{t(e),b(s,e)},[s]);return[a,o]}function v(s,u,a,t){const[o,e]=r.useState(()=>d(s,u,a,t)),c=r.useCallback(l=>{const n=Math.min(t,Math.max(a,l));e(n),S(s,n)},[s,a,t]);return[o,c]}export{v as a,p as u};

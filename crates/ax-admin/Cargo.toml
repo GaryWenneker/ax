@@ -28,7 +28,7 @@ ax-mcp = { workspace = true }
 ax-core = { workspace = true }
 ax-extraction = { workspace = true }
 tempfile = "3"
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 tower = { version = "0.5", features = ["util"] }
 jsonwebtoken = "10.3.0"

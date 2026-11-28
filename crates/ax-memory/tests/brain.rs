@@ -1,5 +1,7 @@
 //! Brain-scale memory: cues, demotion, archive ANN, episodes, and consolidation.
 
+mod common;
+
 use ax_memory::{
     capture_activity_engrams, capture_graph_episodes, capture_graph_episodes_on, confirm_memory,
     consolidate, memories_for_preflight, prune_turns, recall, recall_for_prompt, remember,
@@ -876,6 +878,11 @@ async fn a_foreign_embedding_is_not_inserted_into_the_vector_index() {
     ax_memory::brain::index_archive_vector(db.pool(), &other.id)
         .await
         .unwrap();
+    assert_eq!(
+        vec_map_rows(db.pool(), &other.id).await,
+        1,
+        "an active-model vector must be in the index before the removal is checked"
+    );
     sqlx::query("UPDATE memories SET embedding_model = 'other-model' WHERE id = ?")
         .bind(&other.id)
         .execute(db.pool())
@@ -884,13 +891,17 @@ async fn a_foreign_embedding_is_not_inserted_into_the_vector_index() {
     ax_memory::brain::index_archive_vector(db.pool(), &other.id)
         .await
         .unwrap();
-    let indexed: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM memory_vec_map WHERE memory_id = ?")
-            .bind(&other.id)
-            .fetch_one(db.pool())
-            .await
-            .unwrap_or(0);
-    assert_eq!(indexed, 0);
+    assert_eq!(vec_map_rows(db.pool(), &other.id).await, 0);
+}
+
+/// Counts the vector-map rows for one memory. The table must exist: a query error fails the
+/// test instead of passing for zero rows.
+async fn vec_map_rows(pool: &sqlx::SqlitePool, id: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM memory_vec_map WHERE memory_id = ?")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .expect("memory_vec_map must exist once an archive vector was indexed")
 }
 
 fn archive(query: &str) -> SearchRequest {
@@ -976,19 +987,8 @@ async fn a_git_capture_lands_in_the_archive() {
     let repo = dir.path().join("repo");
     std::fs::create_dir_all(repo.join("src")).unwrap();
     std::fs::write(repo.join("src/note.txt"), "hello\n").unwrap();
-    let git = |args: &[&str]| {
-        let status = std::process::Command::new("git")
-            .args(args)
-            .current_dir(&repo)
-            .env("GIT_AUTHOR_NAME", "Test")
-            .env("GIT_AUTHOR_EMAIL", "test@example.com")
-            .env("GIT_COMMITTER_NAME", "Test")
-            .env("GIT_COMMITTER_EMAIL", "test@example.com")
-            .status()
-            .unwrap();
-        assert!(status.success(), "{args:?}");
-    };
-    git(&["init"]);
+    let git = |args: &[&str]| common::git(&repo, &[], args);
+    git(&["init", "-q"]);
     git(&["add", "src/note.txt"]);
     git(&[
         "commit",
@@ -1888,4 +1888,151 @@ fn suggested_triggers_prefer_title_nouns_then_anchors_then_prompt_words() {
         vec!["archive", "local", "ax-memory", "brain", "vector", "index"]
     );
     assert!(ax_memory::suggested_triggers("Update the function", &[], "the", &[]).is_empty());
+}
+
+#[tokio::test]
+async fn graph_episode_ignores_line_shifts() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    for n in 0..3 {
+        sqlx::query(
+            "INSERT INTO nodes (id, kind, name, qualified_name, file_path, language, start_line, end_line, start_column, end_column, signature, updated_at)
+             VALUES (?, 'function', ?, ?, 'src/shift.rs', 'rust', ?, ?, 0, 1, 'fn f()', 1)",
+        )
+        .bind(format!("shift-{n}"))
+        .bind(format!("f_{n}"))
+        .bind(format!("shift::f_{n}"))
+        .bind(10 * n + 1)
+        .bind(10 * n + 5)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    }
+    assert_eq!(capture_graph_episodes(db.pool()).await.unwrap(), 0);
+    // An import added at the top moves every symbol down one line.
+    sqlx::query("UPDATE nodes SET start_line = start_line + 1, end_line = end_line + 1")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        capture_graph_episodes(db.pool()).await.unwrap(),
+        0,
+        "moving lines is not a change"
+    );
+    let episodes: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM memories WHERE kind = 'graph_diff'")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(episodes, 0);
+    db.close().await;
+}
+
+#[tokio::test]
+async fn graph_episode_accepts_fingerprints_that_still_carry_line_numbers() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    sqlx::query(
+        "INSERT INTO nodes (id, kind, name, qualified_name, file_path, language, start_line, end_line, start_column, end_column, signature, updated_at)
+         VALUES ('legacy-1', 'function', 'run', 'run', 'src/run.rs', 'rust', 3, 9, 0, 1, 'fn run(a: u8 | u16)', 1)",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+    // State written before line numbers left the fingerprint.
+    sqlx::query(
+        "INSERT INTO graph_symbol_state (symbol_id, fingerprint)
+         VALUES ('legacy-1', 'run|function|src/run.rs|fn run(a: u8 | u16)|1|7')",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(capture_graph_episodes(db.pool()).await.unwrap(), 0);
+    let stored: String = sqlx::query_scalar(
+        "SELECT fingerprint FROM graph_symbol_state WHERE symbol_id = 'legacy-1'",
+    )
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(stored, "run|function|src/run.rs|fn run(a: u8 | u16)");
+    db.close().await;
+}
+
+/// A capture that is cancelled mid-loop must not hand its pooled connection
+/// back while it is still inside the write transaction.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_graph_capture_leaves_no_open_transaction() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    let mut tx = db.pool().begin().await.unwrap();
+    for n in 0..4000 {
+        sqlx::query(
+            "INSERT INTO nodes (id, kind, name, qualified_name, file_path, language, start_line, end_line, start_column, end_column, signature, updated_at)
+             VALUES (?, 'function', ?, ?, 'src/cancel.rs', 'rust', 1, 2, 0, 1, 'fn old()', 1)",
+        )
+        .bind(format!("sym-{n}"))
+        .bind(format!("fn_{n}"))
+        .bind(format!("cancel::fn_{n}"))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
+    assert_eq!(capture_graph_episodes(db.pool()).await.unwrap(), 0);
+    sqlx::query("UPDATE nodes SET signature = 'fn new()'")
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    let single = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(dir.path().join("ax.db"))
+                .busy_timeout(std::time::Duration::from_secs(5)),
+        )
+        .await
+        .unwrap();
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_millis(150),
+        capture_graph_episodes(&single),
+    )
+    .await;
+    assert!(outcome.is_err(), "capture finished before the timeout");
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let mut conn = single.acquire().await.unwrap();
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *conn)
+        .await
+        .expect("the reused connection is still inside the cancelled transaction");
+    sqlx::query("ROLLBACK").execute(&mut *conn).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_git_capture_redacts_secrets_in_the_title() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::write(repo.join("a.txt"), "a\n").unwrap();
+    let git = |args: &[&str]| common::git(&repo, &[], args);
+    git(&["init", "-q"]);
+    git(&["add", "a.txt"]);
+    git(&[
+        "commit",
+        "-m",
+        "Point staging at postgres://app:hunter2@db/prod",
+    ]);
+    let db = open_db(dir.path()).await;
+    let result = ax_memory::capture_git_history(db.pool(), &repo, 10)
+        .await
+        .unwrap();
+    assert_eq!(result.captured, 1);
+    let (title, body): (String, String) =
+        sqlx::query_as("SELECT title, body FROM memories WHERE kind = 'git'")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert!(!title.contains("hunter2"), "{title}");
+    assert!(!body.contains("hunter2"), "{body}");
 }

@@ -16,19 +16,38 @@ const REQUEST_TIMEOUT_SECS: u64 = 120;
 pub fn apply_pending_upgrade() {
     #[cfg(windows)]
     apply_pending_upgrade_windows();
-    refresh_cwd_ide_files();
 }
 
-/// After an upgrade, and on later ax commands in a project, rewrite managed
-/// IDE instruction files when the seeded Ax section has changed.
-fn refresh_cwd_ide_files() {
+/// File in `.ax/` holding the ax version that last refreshed the IDE files.
+const IDE_SEED_STAMP: &str = "ide-seed-version";
+
+/// Rewrite managed IDE instruction files in the current project the first
+/// time a new ax version runs there.
+pub fn refresh_cwd_ide_files() {
     let Ok(cwd) = std::env::current_dir() else {
         return;
     };
-    if !cwd.join(".ax").is_dir() {
-        return;
+    refresh_ide_files_once_per_version(&cwd, env!("CARGO_PKG_VERSION"));
+}
+
+/// Seed the managed IDE files of `project_root` when its `.ax/` stamp names a
+/// different ax version than `version`. Returns whether the seed ran.
+fn refresh_ide_files_once_per_version(project_root: &Path, version: &str) -> bool {
+    let ax_dir = project_root.join(".ax");
+    if !ax_dir.is_dir() {
+        return false;
     }
-    let _ = ax_policy::seed_ide_agent_workflow(&cwd);
+    let stamp = ax_dir.join(IDE_SEED_STAMP);
+    if std::fs::read_to_string(&stamp)
+        .map(|seen| seen.trim() == version)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    if ax_policy::seed_ide_agent_workflow(project_root).is_ok() {
+        let _ = ax_utils::atomic_write(&stamp, version.as_bytes());
+    }
+    true
 }
 
 pub async fn run(
@@ -84,7 +103,7 @@ pub async fn run(
 
     if !explicit_version && !local_install {
         if let Some(cmp) = version_check::compare_versions(&target_version, current) {
-            if cmp < 0 {
+            if cmp == std::cmp::Ordering::Less {
                 return Err(format!(
                     "Refusing to downgrade from {} to {} (getax latest.txt may be stale). \
                      Use `ax upgrade {}` to pin a version, or install from GitHub Releases.",
@@ -136,7 +155,9 @@ pub async fn run(
     let bytes = if local_install {
         let path = resolve_local_archive_path(local.as_deref(), &bundle, ext)?;
         let _spin = SpinnerGuard::new(format!("Loading {}…", path.display()), false);
-        std::fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?
+        let bytes = std::fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+        verify_local_archive(&path, &bytes)?;
+        bytes
     } else {
         let _spin = SpinnerGuard::new(format!("Downloading {archive_name}…"), false);
         let bytes = download_archive(&target_version, &bundle, ext)?;
@@ -250,11 +271,26 @@ fn resolve_local_archive_path(
 }
 
 fn download_archive(version: &str, bundle: &str, ext: &str) -> Result<Vec<u8>, String> {
+    download_archive_with(version, bundle, ext, &download_bytes)
+}
+
+/// Signature of the HTTP fetch used by [`download_archive_with`]: URL and optional token.
+type Fetch<'a> = &'a dyn Fn(&str, Option<&str>) -> Result<Vec<u8>, String>;
+
+fn download_archive_with(
+    version: &str,
+    bundle: &str,
+    ext: &str,
+    fetch: Fetch<'_>,
+) -> Result<Vec<u8>, String> {
     let name = format!("ax-{bundle}.{ext}");
     let repo = version_check::github_repo();
-    let gh = format!("https://github.com/{repo}/releases/download/{version}/{name}");
-    match download_bytes(&gh, github_token().as_deref()) {
-        Ok(bytes) => return Ok(bytes),
+    let token = github_token();
+    let gh_base = format!("https://github.com/{repo}/releases/download/{version}");
+    let cdn_base = format!("{CDN_BASE}/{version}");
+    let gh = format!("{gh_base}/{name}");
+    let bytes = match fetch(&gh, token.as_deref()) {
+        Ok(bytes) => bytes,
         Err(e) => {
             eprintln!(
                 "{}",
@@ -262,11 +298,65 @@ fn download_archive(version: &str, bundle: &str, ext: &str) -> Result<Vec<u8>, S
                     "GitHub download failed ({e}); trying getax redirect…"
                 ))
             );
+            fetch(&format!("{cdn_base}/{name}"), None)?
         }
-    }
+    };
 
-    let cdn = format!("{CDN_BASE}/{version}/{name}");
-    download_bytes(&cdn, None)
+    // The checksum list comes from GitHub when it can, so a bad CDN copy cannot vouch for itself.
+    let sums = fetch(&format!("{gh_base}/SHA256SUMS"), token.as_deref())
+        .or_else(|_| fetch(&format!("{cdn_base}/SHA256SUMS"), None))
+        .map_err(|e| {
+            format!("could not download SHA256SUMS for {version} ({e}); refusing to install an unverified archive")
+        })?;
+    verify_against_sums(&bytes, &String::from_utf8_lossy(&sums), &name)?;
+    Ok(bytes)
+}
+
+/// Fails unless `SHA256SUMS` lists `name` with the digest of `bytes`.
+fn verify_against_sums(bytes: &[u8], sums: &str, name: &str) -> Result<(), String> {
+    let expected = expected_sha256(sums, name)
+        .ok_or_else(|| format!("SHA256SUMS has no entry for {name}; refusing to install"))?;
+    let actual = sha256_hex(bytes);
+    if actual != expected {
+        return Err(format!(
+            "{name} does not match SHA256SUMS (expected {expected}, got {actual}); refusing to install"
+        ));
+    }
+    Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// The digest `SHA256SUMS` lists for `name` (`sha256sum` text or binary format), lowercased.
+fn expected_sha256(sums: &str, name: &str) -> Option<String> {
+    sums.lines().find_map(|line| {
+        let (digest, rest) = line.trim().split_once(char::is_whitespace)?;
+        let file = rest.trim_start().trim_start_matches('*');
+        (file == name).then(|| digest.to_ascii_lowercase())
+    })
+}
+
+/// Checks a local archive against a `SHA256SUMS` in the same folder, when there is one.
+///
+/// A local build usually has no checksum list; the user picked the file, so it is used as is.
+fn verify_local_archive(archive: &Path, bytes: &[u8]) -> Result<(), String> {
+    let Some(sums_path) = archive.parent().map(|dir| dir.join("SHA256SUMS")) else {
+        return Ok(());
+    };
+    let Ok(sums) = std::fs::read_to_string(&sums_path) else {
+        return Ok(());
+    };
+    let name = archive
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    verify_against_sums(bytes, &sums, &name).map_err(|e| format!("{e} ({})", sums_path.display()))
 }
 
 fn download_bytes(url: &str, token: Option<&str>) -> Result<Vec<u8>, String> {
@@ -376,37 +466,13 @@ fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) {
 }
 
 #[cfg(windows)]
+/// Ends every other ax process so the binary can be replaced. The list comes from
+/// `sysinfo`, so it does not depend on `wmic`, which current Windows no longer ships.
 fn stop_other_ax_processes(self_pid: u32) -> Result<usize, String> {
-    use std::os::windows::process::CommandExt;
-    let mut killed = 0usize;
-    let procs = std::process::Command::new("wmic")
-        .args([
-            "process",
-            "where",
-            "name='ax.exe'",
-            "get",
-            "ProcessId",
-            "/format:csv",
-        ])
-        .creation_flags(windows_no_window())
-        .output()
-        .map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&procs.stdout);
-    for line in text.lines() {
-        let pid: u32 = match line.split(',').nth(1).and_then(|s| s.trim().parse().ok()) {
-            Some(p) if p != self_pid => p,
-            _ => continue,
-        };
-        if std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/F"])
-            .creation_flags(windows_no_window())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-        {
-            killed += 1;
-        }
-    }
+    let killed = crate::commands::ax_process::other_ax_pids(self_pid)
+        .into_iter()
+        .filter(|&pid| crate::commands::ax_process::force_kill(pid))
+        .count();
     Ok(killed)
 }
 
@@ -1140,6 +1206,122 @@ fn clear_promotion(install_root: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ide_files_refresh_once_per_ax_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        assert!(!refresh_ide_files_once_per_version(root, "1.0.0"));
+        std::fs::create_dir(root.join(".ax")).unwrap();
+
+        assert!(refresh_ide_files_once_per_version(root, "1.0.0"));
+        let agents = root.join("AGENTS.md");
+        assert!(agents.is_file(), "the first run seeds the IDE files");
+
+        let stale = "<!-- AX_START -->\nstale\n<!-- AX_END -->\n";
+        std::fs::write(&agents, stale).unwrap();
+        assert!(!refresh_ide_files_once_per_version(root, "1.0.0"));
+        assert_eq!(
+            std::fs::read_to_string(&agents).unwrap(),
+            stale,
+            "the same version does not touch the project again"
+        );
+
+        assert!(refresh_ide_files_once_per_version(root, "1.1.0"));
+        assert_ne!(
+            std::fs::read_to_string(&agents).unwrap(),
+            stale,
+            "a new version refreshes the files"
+        );
+    }
+
+    /// A fake release host: GitHub fails for the archive, the CDN serves `cdn_archive`,
+    /// and SHA256SUMS lists the digest of `genuine`.
+    fn fake_release(
+        genuine: &'static [u8],
+        cdn_archive: &'static [u8],
+    ) -> impl Fn(&str, Option<&str>) -> Result<Vec<u8>, String> {
+        move |url: &str, _token: Option<&str>| {
+            if url.ends_with("/SHA256SUMS") {
+                return Ok(format!("{}  ax-linux-x64.tar.gz\n", sha256_hex(genuine)).into_bytes());
+            }
+            if url.starts_with("https://github.com/") {
+                return Err("HTTP 503".into());
+            }
+            Ok(cdn_archive.to_vec())
+        }
+    }
+
+    #[test]
+    fn download_refuses_an_archive_whose_digest_does_not_match_sha256sums() {
+        let fetch = fake_release(b"genuine archive", b"tampered archive");
+        let got = download_archive_with("v1.2.3", "linux-x64", "tar.gz", &fetch);
+        assert!(got.is_err(), "a tampered CDN archive must be refused");
+    }
+
+    #[test]
+    fn download_accepts_an_archive_that_matches_sha256sums() {
+        let fetch = fake_release(b"genuine archive", b"genuine archive");
+        let got = download_archive_with("v1.2.3", "linux-x64", "tar.gz", &fetch).unwrap();
+        assert_eq!(got, b"genuine archive");
+    }
+
+    #[test]
+    fn download_refuses_when_sha256sums_is_missing_or_lacks_the_entry() {
+        let no_sums = |url: &str, _: Option<&str>| -> Result<Vec<u8>, String> {
+            if url.ends_with("/SHA256SUMS") {
+                Err("HTTP 404".into())
+            } else {
+                Ok(b"archive".to_vec())
+            }
+        };
+        assert!(download_archive_with("v1", "linux-x64", "tar.gz", &no_sums).is_err());
+        let other_entry = |url: &str, _: Option<&str>| -> Result<Vec<u8>, String> {
+            if url.ends_with("/SHA256SUMS") {
+                Ok(format!("{}  ax-darwin-arm64.tar.gz\n", sha256_hex(b"archive")).into_bytes())
+            } else {
+                Ok(b"archive".to_vec())
+            }
+        };
+        assert!(download_archive_with("v1", "linux-x64", "tar.gz", &other_entry).is_err());
+    }
+
+    #[test]
+    fn sha256sums_parsing_accepts_text_and_binary_markers() {
+        let sums = "abc123  ax-linux-x64.tar.gz\nDEF456 *ax-win32-x64.zip\n";
+        assert_eq!(
+            expected_sha256(sums, "ax-linux-x64.tar.gz").as_deref(),
+            Some("abc123")
+        );
+        assert_eq!(
+            expected_sha256(sums, "ax-win32-x64.zip").as_deref(),
+            Some("def456")
+        );
+        assert_eq!(expected_sha256(sums, "ax-linux-x64.tar"), None);
+    }
+
+    #[test]
+    fn local_archive_is_checked_against_sha256sums_next_to_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("ax-linux-x64.tar.gz");
+        std::fs::write(&archive, b"local build").unwrap();
+        assert!(
+            verify_local_archive(&archive, b"local build").is_ok(),
+            "no SHA256SUMS: allowed"
+        );
+        std::fs::write(
+            dir.path().join("SHA256SUMS"),
+            format!("{}  ax-linux-x64.tar.gz\n", sha256_hex(b"something else")),
+        )
+        .unwrap();
+        assert!(verify_local_archive(&archive, b"local build").is_err());
+        std::fs::write(
+            dir.path().join("SHA256SUMS"),
+            format!("{}  ax-linux-x64.tar.gz\n", sha256_hex(b"local build")),
+        )
+        .unwrap();
+        assert!(verify_local_archive(&archive, b"local build").is_ok());
+    }
 
     fn marker(dir: &Path, name: &str, text: &str) {
         std::fs::create_dir_all(dir).unwrap();
