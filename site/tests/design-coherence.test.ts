@@ -12,14 +12,14 @@ test('docs use the landing graphite/lime theme, the deck backdrop and deck build
   const header = file('site/src/components/Header.astro');
   const title = file('site/src/components/SiteTitle.astro');
   const astro = file('site/astro.config.mjs');
-  assert.match(theme, /--ax-lime:#b9ff6a/);
-  assert.match(theme, /--sl-color-accent: #b9ff6a/);
+  assert.match(theme, /--ax-accent:#8fbfff/);
+  assert.match(theme, /--sl-color-accent: #1372da/);
   assert.match(header, /<DeckBackdrop variant="page" \/>/);
   assert.match(header, /axParkDocBackdrop/);
   assert.doesNotMatch(header + theme, /ax-doc-moire|ax-halftone/);
   // Deck building blocks, dark theme only.
   assert.match(theme, /:root:not\(\[data-theme='light'\]\) \.expressive-code \.frame\{[^}]*border-radius:\.7em/);
-  assert.match(theme, /:root:not\(\[data-theme='light'\]\) \.sl-markdown-content :not\(pre\) > code\{color:var\(--ax-lime\);background:var\(--ax-lime-soft\)/);
+  assert.match(theme, /:root:not\(\[data-theme='light'\]\) \.sl-markdown-content :not\(pre\) > code\{color:var\(--ax-accent\);background:var\(--ax-accent-soft\)/);
   assert.match(theme, /:root:not\(\[data-theme='light'\]\) \.sl-markdown-content table\{[^}]*border-radius:\.7em/);
   assert.match(theme, /ul:not\(\[role\]\):not\(\.contains-task-list\):not\(\.sl-steps\) > li::before\{[^}]*transform:rotate\(45deg\)/);
   assert.match(theme, /content-panel::before\{[^}]*linear-gradient\(90deg,rgba\(8,10,9,\.94\)/);

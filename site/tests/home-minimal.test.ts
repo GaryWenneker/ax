@@ -21,7 +21,7 @@ const pkg = JSON.parse(read('package.json'));
 // the visible homepage, metadata, locally bundled font, and responsive rules.
 test('approved three-line slogan, only control receives lime accent', () => {
   assert.match(home, /<h1 class="ax-headline">\s*<span>Your context\.<\/span><span>Your rules\.<\/span><span class="ax-headline-accent">Your control\.<\/span><\/h1>/);
-  assert.match(css, /\.ax-headline \.ax-headline-accent\s*\{color:var\(--ax-lime\)\}/);
+  assert.match(css, /\.ax-headline \.ax-headline-accent\s*\{color:var\(--ax-accent\)\}/);
   assert.doesNotMatch(home, /Your codebase|understood\.|Code context kept/);
   assert.match(page, /Your context\. Your rules\. Your control\./);
 });
@@ -43,7 +43,7 @@ test('homepage backdrop is the deck backdrop (halftone, silk ring, vignette), no
   for (const hook of ['data-ax-backdrop-dots', 'data-ax-silk-fog', 'data-ax-silk', 'ax-backdrop-vignette']) assert.ok(backdrop.includes(hook), hook);
   assert.match(backdrop, /mountDeckBackdrop\(root\)/);
   assert.match(backdrop, /astro:before-swap/);
-  for (const ink of ['#6d28d9', '#7c3aed', '#a78bfa', '#d946ef', '#c4b5fd', '#b9ff6a']) assert.ok(script.includes(ink), ink);
+  for (const ink of ['#6d28d9', '#7c3aed', '#a78bfa', '#d946ef', '#c4b5fd', '#8fbfff']) assert.ok(script.includes(ink), ink);
   // Motion: the visible Pause motion control and hidden tabs stop the loop on a still frame.
   assert.match(script, /html\.dataset\.axMotion === 'paused' \|\| document\.hidden/);
   assert.match(script, /attributeFilter: \['data-theme', 'data-ax-motion'\]/);
@@ -57,7 +57,7 @@ test('homepage backdrop is the deck backdrop (halftone, silk ring, vignette), no
   assert.doesNotMatch(styles, /mix-blend-mode|filter:blur|backdrop-filter/);
   assert.match(styles, /:root\[data-theme='light'\] \.ax-backdrop\{display:none\}/);
   // Deck kicker and lime chips on the hero.
-  assert.match(css, /\.ax-eyebrow\{[^}]*color:var\(--ax-lime\)/);
+  assert.match(css, /\.ax-eyebrow\{[^}]*color:var\(--ax-accent\)/);
   assert.match(css, /\.ax-feature-strip>\*\{[^}]*border-radius:99em/);
   assert.match(css, /\.ax-install-command\{[^}]*position:absolute[^}]*backdrop-filter:blur\(18px\)/);
   assert.doesNotMatch(css, /data-ax-install-panel\]:not\(\[hidden\]\).*overflow-y:auto/);
