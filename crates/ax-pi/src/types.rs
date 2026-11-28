@@ -96,6 +96,24 @@ pub enum AxAgentEvent {
     SessionWrite(AxEventBase),
 }
 
+impl AxAgentEvent {
+    /// The common fields every event carries.
+    pub fn base(&self) -> &AxEventBase {
+        match self {
+            Self::SessionStarted(base)
+            | Self::SessionEnded(base)
+            | Self::TurnStarted(base)
+            | Self::TurnEnded(base)
+            | Self::Compaction(base)
+            | Self::SessionWrite(base) => base,
+            Self::ModelRequest(model) | Self::ModelResponse(model) => &model.base,
+            Self::ToolStarted(start) => &start.base,
+            Self::ToolOutput(output) => &output.base,
+            Self::ToolEnded(end) => &end.base,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelEvent {
     #[serde(flatten)]

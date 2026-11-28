@@ -136,6 +136,8 @@ struct State {
     repository_state: String,
     output_cache: OutputCache,
     pending_tools: PendingTools,
+    /// First and last event time per session, in milliseconds.
+    session_times: HashMap<String, (u64, u64)>,
     /// Sequence for generated tool call ids when the host sends none.
     tool_seq: u64,
     started: bool,
@@ -714,6 +716,7 @@ pub fn create_pi_integration(options: PiOptions) -> PiIntegration {
             repository_state: "unknown".into(),
             output_cache: OutputCache::default(),
             pending_tools: PendingTools::default(),
+            session_times: HashMap::new(),
             tool_seq: 0,
             started: false,
             model_seq: 0,
@@ -723,6 +726,13 @@ pub fn create_pi_integration(options: PiOptions) -> PiIntegration {
 }
 
 fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw: &Value) {
+    let base = event.base();
+    let times = state
+        .session_times
+        .entry(base.session_id.clone())
+        .or_insert((base.timestamp, base.timestamp));
+    times.0 = times.0.min(base.timestamp);
+    times.1 = times.1.max(base.timestamp);
     match event {
         AxAgentEvent::SessionStarted(base) => {
             state
@@ -1019,14 +1029,24 @@ fn snapshot_of(state: &State) -> PersistedSnapshot {
         sessions: state
             .sessions
             .values()
-            .map(|session| SessionRow {
-                id: session.session_id.clone(),
-                project_id: session.project_id.clone(),
-                created_at: 0,
-                updated_at: 0,
-                repository_root: session.repository_root.clone(),
-                active_branch: session.active_branch.clone(),
-                cache_namespace: session.cache_namespace.clone(),
+            .map(|session| {
+                let (created_at, updated_at) = state
+                    .session_times
+                    .get(&session.session_id)
+                    .copied()
+                    .unwrap_or_else(|| {
+                        let now = now_ms();
+                        (now, now)
+                    });
+                SessionRow {
+                    id: session.session_id.clone(),
+                    project_id: session.project_id.clone(),
+                    created_at,
+                    updated_at,
+                    repository_root: session.repository_root.clone(),
+                    active_branch: session.active_branch.clone(),
+                    cache_namespace: session.cache_namespace.clone(),
+                }
             })
             .collect(),
         turns: state.turns.clone(),
@@ -1245,6 +1265,42 @@ mod tests {
             .unwrap();
         assert!(!pi.get_session_context(&request).unwrap().cache_hit);
         assert!(pi.get_session_context(&request).unwrap().cache_hit);
+    }
+
+    async fn run_session(db: &Path, times: &[u64]) {
+        let pi = create_pi_integration(PiOptions {
+            session_id: Some("s".into()),
+            db_path: Some(db.to_path_buf()),
+            ..PiOptions::default()
+        });
+        pi.start().unwrap();
+        let (first, rest) = times.split_first().unwrap();
+        pi.ingest(&json!({"type": "agent_start", "timestamp": first}))
+            .unwrap();
+        for time in rest {
+            pi.ingest(&json!({"type": "turn_start", "timestamp": time}))
+                .unwrap();
+        }
+        pi.stop().await.unwrap();
+    }
+
+    async fn session_times(db: &Path) -> (u64, u64) {
+        let snapshot = store::load(db).await.unwrap();
+        let row = snapshot.sessions.iter().find(|row| row.id == "s").unwrap();
+        (row.created_at, row.updated_at)
+    }
+
+    #[tokio::test]
+    async fn session_rows_carry_first_and_last_event_times() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("ax.db");
+        run_session(&db, &[1_000, 1_500, 2_000]).await;
+        assert_eq!(session_times(&db).await, (1_000, 2_000));
+        run_session(&db, &[5_000, 6_000]).await;
+        assert_eq!(session_times(&db).await, (1_000, 6_000));
+        // An older run flushed later never moves the times backwards.
+        run_session(&db, &[3_000, 3_500]).await;
+        assert_eq!(session_times(&db).await, (1_000, 6_000));
     }
 
     #[test]

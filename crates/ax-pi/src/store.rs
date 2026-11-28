@@ -153,7 +153,7 @@ pub async fn flush(path: &Path, snapshot: &PersistedSnapshot) -> Result<(), Stri
         sqlx::query(
             "INSERT INTO agent_sessions (id, project_id, created_at, updated_at, repository_root, active_branch, cache_namespace)
              VALUES (?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, repository_root = excluded.repository_root, active_branch = excluded.active_branch",
+             ON CONFLICT(id) DO UPDATE SET created_at = CASE WHEN agent_sessions.created_at = 0 THEN excluded.created_at ELSE MIN(agent_sessions.created_at, excluded.created_at) END, updated_at = MAX(agent_sessions.updated_at, excluded.updated_at), repository_root = excluded.repository_root, active_branch = excluded.active_branch",
         )
         .bind(&session.id)
         .bind(&session.project_id)
@@ -418,7 +418,7 @@ pub async fn record_advice(
     sqlx::query(
         "INSERT INTO agent_sessions (id, project_id, created_at, updated_at, cache_namespace)
          VALUES (?, 'read-guard', ?, ?, '')
-         ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at",
+         ON CONFLICT(id) DO UPDATE SET updated_at = MAX(agent_sessions.updated_at, excluded.updated_at)",
     )
     .bind(&observation.session_id)
     .bind(now)
