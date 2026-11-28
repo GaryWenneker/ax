@@ -358,7 +358,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
       - name: Push distroless image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: image
           target: runtime
@@ -372,7 +372,7 @@ jobs:
             org.opencontainers.image.description=Headless ax (CLI + MCP server) for Linux containers
             org.opencontainers.image.version=${{ steps.image.outputs.version }}
       - name: Push Ubuntu image (shell and git)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: image
           target: ubuntu
@@ -386,7 +386,7 @@ jobs:
             org.opencontainers.image.description=Headless ax (CLI + MCP server) with git, for Linux containers
             org.opencontainers.image.version=${{ steps.image.outputs.version }}
       - name: Push server image (ax-serve-repo entry point)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: image
           target: server
