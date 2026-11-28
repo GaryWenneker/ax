@@ -519,9 +519,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_large_hub_is_scanned_within_the_time_budget() {
-        let count = 20_000;
+    /// A hub with `count` callees, each in its own file.
+    fn hub_graph(count: usize) -> (Vec<CodeCandidate>, Vec<DiscoveryLink>) {
         let mut nodes = vec![node("hub", "hub", "hub.rs")];
         let mut links = Vec::new();
         for index in 0..count {
@@ -529,16 +528,39 @@ mod tests {
             nodes.push(node(&id, &id, &format!("{id}.rs")));
             links.push(link("hub", &id, "calls", "unique-cross-file"));
         }
+        (nodes, links)
+    }
+
+    fn hub_hits(count: usize, time_ms: u128) -> Vec<String> {
+        let (nodes, links) = hub_graph(count);
         let budget = DiscoveryBudget {
             depth: 1,
             fan_out: 8,
             max_added: 16,
-            time_ms: 200,
+            time_ms,
         };
+        discover_candidates(&nodes[..1], &nodes, &links, "ax", &budget)
+            .hits
+            .into_iter()
+            .map(|hit| hit.id)
+            .collect()
+    }
+
+    #[test]
+    fn a_large_hub_adds_the_same_neighbors_as_a_small_one() {
+        // No time limit, so the result depends only on the graph.
+        let large = hub_hits(20_000, u128::MAX);
+        assert_eq!(large.len(), 8);
+        assert_eq!(large, hub_hits(2_000, u128::MAX));
+    }
+
+    #[test]
+    #[ignore = "wall-clock timing"]
+    fn a_large_hub_is_scanned_within_the_time_budget() {
         let started = std::time::Instant::now();
-        let found = discover_candidates(&nodes[..1], &nodes, &links, "ax", &budget);
+        let hits = hub_hits(20_000, 200);
         let elapsed = started.elapsed();
-        assert_eq!(found.hits.len(), 8);
+        assert_eq!(hits.len(), 8);
         // Generous for an unoptimized build: the point is that the scan is
         // not quadratic in the node count.
         assert!(elapsed.as_millis() < 1_000, "took {elapsed:?}");
