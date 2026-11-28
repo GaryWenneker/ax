@@ -398,17 +398,9 @@ impl PiIntegration {
                     self.options.oversized_token_threshold,
                     true,
                 );
-                let replaying = advice
-                    .apply
-                    .as_ref()
-                    .is_some_and(|item| item.rule == "exact-repeat");
-                if self.options.mode == OptimizationMode::Optimize && replaying {
-                    match state.output_cache.get(&identity) {
-                        Some(cached) => advice.cached_output = Some(cached.clone()),
-                        // Nothing safe to replay (the earlier call failed or a
-                        // later call may have changed its result): run it.
-                        None => advice.apply = None,
-                    }
+                let cached = state.output_cache.get(&identity);
+                if withhold_replay(&mut advice, self.options.mode, cached.is_some()) {
+                    advice.cached_output = cached.cloned();
                 }
                 Ok(advice)
             },
@@ -910,6 +902,24 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
     }
 }
 
+/// In optimize mode, withdraws an exact-repeat approval when nothing safe is
+/// cached for the call (the earlier call failed, or a later call may have
+/// changed its result), so the call runs. Returns true when the advice still
+/// replays a cached result.
+fn withhold_replay(advice: &mut ToolCallAdvice, mode: OptimizationMode, cached: bool) -> bool {
+    let replaying = advice
+        .apply
+        .as_ref()
+        .is_some_and(|item| item.rule == "exact-repeat");
+    if mode != OptimizationMode::Optimize || !replaying {
+        return false;
+    }
+    if !cached {
+        advice.apply = None;
+    }
+    cached
+}
+
 fn record_tool(
     state: &mut State,
     options: &PiOptions,
@@ -931,6 +941,7 @@ fn record_tool(
     });
     let context_cost = context_token_cost(output_tokens, options.pricing);
     let already = state.repeats.contains(&identity);
+    let had_cached = state.output_cache.get(&identity).is_some();
     let (repeated, _) =
         state
             .repeats
@@ -940,7 +951,7 @@ fn record_tool(
         OptimizationMode::Observe => OptimizationMode::Advise,
         mode => mode,
     };
-    let advice = advise_with(
+    let mut advice = advise_with(
         observation,
         entities,
         indexed_paths,
@@ -949,6 +960,9 @@ fn record_tool(
         options.oversized_token_threshold,
         true,
     );
+    // Log the decision advise_tool_call made: a replay only counts as
+    // accepted when a cached result existed before this call.
+    withhold_replay(&mut advice, options.mode, had_cached);
     if may_change_state(&observation.tool_name) {
         // An edit, shell command or unknown tool may have changed what the
         // cached reads saw, so none of them can be replayed any more.
@@ -1203,6 +1217,52 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(pending_count(&pi), MAX_PENDING_TOOLS);
+    }
+
+    fn read_like(tool: &str, path: &str, call_id: &str) -> ToolCallObservation {
+        ToolCallObservation {
+            session_id: "s".into(),
+            turn_id: "t".into(),
+            call_id: call_id.into(),
+            tool_name: tool.into(),
+            arguments: json!({ "path": path }),
+            repository_state: "head".into(),
+            known_graph_entities: Vec::new(),
+            indexed_paths: Vec::new(),
+            output_text_for_estimate: Some(format!("{call_id}-body")),
+            output_token_estimate: Some(3_000),
+            output_bytes: None,
+            duration_ms: 1,
+            success: true,
+        }
+    }
+
+    fn exact_repeat_accepted(pi: &PiIntegration, call_id: &str) -> Option<bool> {
+        let state = pi.state.lock().unwrap();
+        state
+            .optimizations
+            .iter()
+            .find(|row| row.tool_call_id == call_id && row.alternative.rule == "exact-repeat")
+            .map(|row| row.accepted)
+    }
+
+    #[test]
+    fn a_repeat_that_could_not_be_replayed_is_not_logged_as_accepted() {
+        let pi = create_pi_integration(PiOptions {
+            mode: OptimizationMode::Optimize,
+            ..PiOptions::default()
+        });
+        pi.record_tool_result(&read_like("read", "notes.txt", "r1"))
+            .unwrap();
+        pi.record_tool_result(&read_like("read", "notes.txt", "r2"))
+            .unwrap();
+        assert_eq!(exact_repeat_accepted(&pi, "r2"), Some(true));
+        pi.record_tool_result(&read_like("edit", "notes.txt", "e1"))
+            .unwrap();
+        let again = read_like("read", "notes.txt", "r3");
+        assert_eq!(pi.advise_tool_call(&again).unwrap().apply, None);
+        pi.record_tool_result(&again).unwrap();
+        assert_eq!(exact_repeat_accepted(&pi, "r3"), Some(false));
     }
 
     #[test]
