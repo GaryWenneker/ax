@@ -464,11 +464,15 @@ pub struct GuardState {
 }
 
 impl GuardState {
-    pub fn load(path: &Path) -> Self {
-        let Ok(raw) = std::fs::read_to_string(path) else {
-            return Self::default();
-        };
-        let entries = serde_json::from_str::<Value>(&raw)
+    #[cfg(test)]
+    fn load(path: &Path) -> Self {
+        std::fs::read(path)
+            .map(|raw| Self::parse(&raw))
+            .unwrap_or_default()
+    }
+
+    fn parse(raw: &[u8]) -> Self {
+        let entries = serde_json::from_slice::<Value>(raw)
             .ok()
             .and_then(|v| v.get("entries").and_then(Value::as_array).cloned())
             .unwrap_or_default()
@@ -485,17 +489,37 @@ impl GuardState {
         Self { entries }
     }
 
-    pub fn save(&self, path: &Path) -> Result<(), String> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        let body = json!({ "entries": self.entries.iter().map(|(k, t, ts)| json!([k, t, ts])).collect::<Vec<_>>() });
-        let tmp = path.with_extension(format!("tmp{}", std::process::id()));
-        std::fs::write(&tmp, body.to_string()).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, path).map_err(|e| {
-            let _ = std::fs::remove_file(&tmp);
-            e.to_string()
+    fn to_bytes(&self) -> Vec<u8> {
+        json!({ "entries": self.entries.iter().map(|(k, t, ts)| json!([k, t, ts])).collect::<Vec<_>>() })
+            .to_string()
+            .into_bytes()
+    }
+
+    #[cfg(test)]
+    fn save(&self, path: &Path) -> Result<(), String> {
+        ax_utils::atomic_write(path, &self.to_bytes()).map_err(|e| e.to_string())
+    }
+
+    /// Records `(key, target)` in the state file at `path` and returns true
+    /// when this call is the first one to see it (the probe is denied), or
+    /// false when it was already seen within the TTL (the retry is allowed).
+    ///
+    /// Hook calls run as separate processes, often in parallel, so the whole
+    /// load-check-record-save runs under an exclusive lock on a sibling
+    /// `.lock` file; otherwise two writers would drop each other's entries.
+    pub fn claim(path: &Path, key: &str, target: &str, now: i64) -> Result<bool, String> {
+        let mut first = false;
+        ax_utils::update_locked(path, |current| {
+            let mut state = current.as_deref().map(Self::parse).unwrap_or_default();
+            if state.seen(key, target, now) {
+                return Ok(None);
+            }
+            state.record(key, target, now);
+            first = true;
+            Ok(Some(state.to_bytes()))
         })
+        .map_err(|e| e.to_string())?;
+        Ok(first)
     }
 
     pub fn seen(&self, key: &str, target: &str, now: i64) -> bool {
@@ -748,12 +772,9 @@ pub async fn evaluate(input: &Value, state_path: &Path, now: i64) -> Option<Deni
         }
     };
     let key = conversation_key(input);
-    let mut state = GuardState::load(state_path);
-    if state.seen(&key, &target, now) {
+    if !GuardState::claim(state_path, &key, &target, now).ok()? {
         return None;
     }
-    state.record(&key, &target, now);
-    state.save(state_path).ok()?;
     note_pi_advice(input).await;
     Some(denial)
 }
@@ -1235,6 +1256,39 @@ mod tests {
         assert_eq!(state.entries.len(), 2_000);
         assert!(!state.seen("c", "t0", 3_100));
         assert!(state.seen("c", "t2004", 3_100));
+    }
+
+    #[test]
+    fn concurrent_claims_keep_every_entry() {
+        let dir = temp_dir("concurrent");
+        let path = dir.join("read-guard.json");
+        let n = 24;
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(n));
+        let handles: Vec<_> = (0..n)
+            .map(|i| {
+                let path = path.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    GuardState::claim(&path, "c", &format!("t{i}"), 100)
+                })
+            })
+            .collect();
+        for h in handles {
+            assert_eq!(h.join().unwrap(), Ok(true), "first sighting is denied");
+        }
+        let state = GuardState::load(&path);
+        for i in 0..n {
+            assert!(
+                state.seen("c", &format!("t{i}"), 101),
+                "entry t{i} was lost by a concurrent writer"
+            );
+            assert_eq!(
+                GuardState::claim(&path, "c", &format!("t{i}"), 101),
+                Ok(false)
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

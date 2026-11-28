@@ -121,7 +121,7 @@ Cursor knows your picker model (`Composer 2.5 Fast`, etc.) but does not write it
 ax savings hook install
 ```
 
-This copies a hook script into `~/.cursor/hooks/` and merges `sessionStart` into `~/.cursor/hooks.json`. The ax repo also ships project hooks under `.cursor/hooks/` for local development.
+This copies an executable hook script into `~/.cursor/hooks/` and merges `sessionStart` and `beforeSubmitPrompt` entries into `~/.cursor/hooks.json`, keeping your other hooks. If `hooks.json` is not plain JSON (comments, a trailing comma), ax leaves it untouched and prints a message naming the file; fix the file or add the ax entries by hand. The ax repo also ships project hooks under `.cursor/hooks/` for local development.
 
 Each new Composer chat runs the hook → `ax session-hook` (hidden) → `~/.ax/usage.db`. Then `ax savings import --all` merges transcript tool counts (read / grep / ax) without overwriting the tagged model.
 

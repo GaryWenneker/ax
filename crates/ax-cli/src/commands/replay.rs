@@ -102,13 +102,6 @@ fn finish_json(result: serde_json::Value) -> Result<(), String> {
 }
 
 fn project_root() -> Result<PathBuf, String> {
-    let mut dir = std::env::current_dir().map_err(|error| error.to_string())?;
-    loop {
-        if dir.join(".ax").join("ax.db").is_file() {
-            return Ok(dir);
-        }
-        if !dir.pop() {
-            return Err("no ax project database found".into());
-        }
-    }
+    let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+    super::find_project_root(&cwd).ok_or_else(|| "no ax project database found".into())
 }
