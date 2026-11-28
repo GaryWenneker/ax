@@ -2,6 +2,8 @@
 //! A candidate moves only for exact symbol identity or an extracted graph edge.
 //! Shared prefixes and suffixes do not count.
 
+use std::collections::HashSet;
+
 #[derive(Clone, Debug)]
 pub struct CodeCandidate {
     pub id: String,
@@ -53,10 +55,32 @@ pub fn select(
     edges: &[VerifiedEdge],
     config: &CodeAwareConfig,
 ) -> Selection {
+    select_parts(query, candidates, edges, config).selection
+}
+
+/// A selection plus the ids it promoted, as data rather than trace text.
+struct Selected {
+    selection: Selection,
+    /// Exact symbol matches, in candidate order.
+    exact: Vec<String>,
+    /// Candidates linked to an exact match by a verified edge, in edge order.
+    linked: Vec<String>,
+}
+
+fn select_parts(
+    query: &str,
+    candidates: &[CodeCandidate],
+    edges: &[VerifiedEdge],
+    config: &CodeAwareConfig,
+) -> Selected {
     if !config.enabled {
-        return Selection {
-            ids: candidates.iter().map(|item| item.id.clone()).collect(),
-            trace: vec!["baseline".to_string()],
+        return Selected {
+            selection: Selection {
+                ids: candidates.iter().map(|item| item.id.clone()).collect(),
+                trace: vec!["baseline".to_string()],
+            },
+            exact: Vec::new(),
+            linked: Vec::new(),
         };
     }
     let mut trace = Vec::new();
@@ -72,6 +96,7 @@ pub fn select(
             !foreign
         })
         .collect();
+    let allowed_ids: HashSet<&str> = allowed.iter().map(|item| item.id.as_str()).collect();
     let exact: Vec<String> = allowed
         .iter()
         .filter(|item| exact_symbol(query, &item.name))
@@ -80,14 +105,16 @@ pub fn select(
     for id in &exact {
         trace.push(format!("exact:{id}"));
     }
+    let exact_ids: HashSet<&str> = exact.iter().map(String::as_str).collect();
     let mut linked = Vec::new();
+    let mut linked_ids: HashSet<String> = HashSet::new();
     for edge in edges {
         if !verified(edge) {
             continue;
         }
-        let other = if exact.iter().any(|id| id == &edge.source) {
+        let other = if exact_ids.contains(edge.source.as_str()) {
             Some(edge.target.as_str())
-        } else if exact.iter().any(|id| id == &edge.target) {
+        } else if exact_ids.contains(edge.target.as_str()) {
             Some(edge.source.as_str())
         } else {
             None
@@ -95,28 +122,30 @@ pub fn select(
         let Some(other) = other else {
             continue;
         };
-        if exact.iter().any(|id| id == other) || linked.iter().any(|id: &String| id == other) {
+        if exact_ids.contains(other) || linked_ids.contains(other) {
             continue;
         }
-        if allowed.iter().any(|item| item.id == other) {
+        if allowed_ids.contains(other) {
+            linked_ids.insert(other.to_string());
             linked.push(other.to_string());
             trace.push(format!("edge:{other}"));
         }
     }
     let mut ids = Vec::new();
+    let mut kept: HashSet<String> = HashSet::new();
     for item in &allowed {
-        if item.mandatory && !ids.iter().any(|id| id == &item.id) {
+        if item.mandatory && kept.insert(item.id.clone()) {
             ids.push(item.id.clone());
             trace.push(format!("mandatory:{}", item.id));
         }
     }
-    for id in exact.into_iter().chain(linked) {
-        if !ids.iter().any(|kept| kept == &id) {
-            ids.push(id);
+    for id in exact.iter().chain(&linked) {
+        if kept.insert(id.clone()) {
+            ids.push(id.clone());
         }
     }
     for item in &allowed {
-        if !ids.iter().any(|id| id == &item.id) {
+        if kept.insert(item.id.clone()) {
             ids.push(item.id.clone());
         }
     }
@@ -128,7 +157,11 @@ pub fn select(
         }
         ids.truncate(room);
     }
-    Selection { ids, trace }
+    Selected {
+        selection: Selection { ids, trace },
+        exact,
+        linked,
+    }
 }
 
 /// Production order, with exact symbols and extracted edges moved ahead.
@@ -141,7 +174,19 @@ pub fn hybrid_rank(
     edges: &[VerifiedEdge],
     limit: usize,
 ) -> Selection {
-    let selected = select(
+    hybrid_rank_promoted(query, baseline, candidates, edges, limit).0
+}
+
+/// `hybrid_rank` plus how many leading ids it promoted ahead of the baseline
+/// (before any limit is applied).
+pub(crate) fn hybrid_rank_promoted(
+    query: &str,
+    baseline: &[String],
+    candidates: &[CodeCandidate],
+    edges: &[VerifiedEdge],
+    limit: usize,
+) -> (Selection, usize) {
+    let selected = select_parts(
         query,
         candidates,
         edges,
@@ -152,35 +197,29 @@ pub fn hybrid_rank(
         },
     );
     let mut ids = Vec::new();
-    for line in &selected.trace {
-        let Some(id) = line
-            .strip_prefix("exact:")
-            .or_else(|| line.strip_prefix("edge:"))
-        else {
-            continue;
-        };
-        if ids.iter().any(|kept| kept == id) {
-            continue;
-        }
-        if candidates.iter().any(|item| item.id == id) {
-            ids.push(id.to_string());
-        }
-    }
-    for id in baseline {
-        if !ids.iter().any(|kept| kept == id) {
+    let mut kept: HashSet<String> = HashSet::new();
+    for id in selected.exact.iter().chain(&selected.linked) {
+        if kept.insert(id.clone()) {
             ids.push(id.clone());
         }
     }
-    let mut trace = selected.trace;
+    let promoted = ids.len();
+    for id in baseline {
+        if kept.insert(id.clone()) {
+            ids.push(id.clone());
+        }
+    }
+    let mut trace = selected.selection.trace;
     if limit > 0 && ids.len() > limit {
+        let head: HashSet<&str> = ids.iter().take(limit).map(String::as_str).collect();
         for id in baseline.iter().take(limit) {
-            if !ids.iter().take(limit).any(|kept| kept == id) {
+            if !head.contains(id.as_str()) {
                 trace.push(format!("displaced:{id}"));
             }
         }
         ids.truncate(limit);
     }
-    Selection { ids, trace }
+    (Selection { ids, trace }, promoted)
 }
 
 fn is_mandatory(candidates: &[CodeCandidate], id: &str) -> bool {
@@ -203,6 +242,7 @@ fn query_tokens(query: &str) -> impl Iterator<Item = &str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixture::ranked_metrics;
 
     fn candidate(id: &str, name: &str) -> CodeCandidate {
         CodeCandidate {
@@ -360,42 +400,10 @@ mod tests {
         assert!(quiet.ids.is_empty());
     }
 
-    fn ranked_metrics(ranked: &[String], gold: &[String]) -> (f64, f64, f64, f64) {
-        let mut reciprocal = 0.0;
-        for (index, id) in ranked.iter().enumerate() {
-            if gold.iter().any(|item| item == id) {
-                reciprocal = 1.0 / (index as f64 + 1.0);
-                break;
-            }
-        }
-        let mut dcg = 0.0;
-        let mut hits = 0.0;
-        for (index, id) in ranked.iter().take(10).enumerate() {
-            if gold.iter().any(|item| item == id) {
-                dcg += 1.0 / ((index as f64) + 2.0).ln();
-                if index < 3 {
-                    hits += 1.0;
-                }
-            }
-        }
-        let ideal_len = gold.len().min(10);
-        let mut ideal = 0.0;
-        for index in 0..ideal_len {
-            ideal += 1.0 / ((index as f64) + 2.0).ln();
-        }
-        let ndcg = if ideal == 0.0 { 0.0 } else { dcg / ideal };
-        let precision = hits / 3.0;
-        let recall = if gold.is_empty() {
-            0.0
-        } else {
-            hits / gold.len() as f64
-        };
-        (reciprocal, ndcg, precision, recall)
-    }
-
     #[tokio::test]
     #[ignore]
     async fn frozen_code_retrieval_comparison() {
+        let _env = crate::BENCH_ENV.lock().await;
         for name in [
             "AX_MEMORY_BENCH_RAW",
             "AX_MEMORY_BENCH_SKIP_RELATIVE_COVERAGE",
@@ -581,7 +589,11 @@ mod tests {
         report.insert("promoted".to_string(), serde_json::json!(false));
         report.insert("arms".to_string(), serde_json::Value::Object(arms_json));
         let text = serde_json::to_string_pretty(&report).unwrap();
-        std::fs::write("/tmp/code-aware-retrieval-results.json", &text).unwrap();
+        std::fs::write(
+            crate::measurement_output("code-aware-retrieval-results.json"),
+            &text,
+        )
+        .unwrap();
         println!("{text}");
     }
 }

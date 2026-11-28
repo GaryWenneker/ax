@@ -121,6 +121,9 @@ pub async fn run(args: TurnArgs) -> Result<(), String> {
                     receipt.turn_id, receipt.memory_id, receipt.idempotent
                 ),
             )?;
+            for warning in &receipt.warnings {
+                eprintln!("warning: {warning}");
+            }
         }
         TurnAction::Fail => {
             let turn_id = require_turn(&args)?;

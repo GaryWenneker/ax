@@ -256,6 +256,14 @@ async fn any_success_today(pool: &SqlitePool, date: &str) -> Result<bool, String
 
 /// Force or no-op daily sync depending on `force` and whether today already succeeded.
 pub async fn sync_pricing(force: bool) -> Result<PricingSyncReport, String> {
+    sync_pricing_with(force, fetch_all_sources).await
+}
+
+async fn sync_pricing_with<F, Fut>(force: bool, fetch: F) -> Result<PricingSyncReport, String>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<crate::pricing_fetch::FetchBundle, String>>,
+{
     let date = today_local();
     let pool = open_pool().await.map_err(|e| e.to_string())?;
 
@@ -273,49 +281,36 @@ pub async fn sync_pricing(force: bool) -> Result<PricingSyncReport, String> {
         });
     }
 
-    let bundle = fetch_all_sources().await?;
+    // A failed fetch is recorded so the status shows it, while the last
+    // successful date and time are kept.
+    let bundle = match fetch().await {
+        Ok(bundle) => bundle,
+        Err(err) => {
+            record_meta(&pool, SOURCE_OPENROUTER, "error", Some(&err), 0, None).await?;
+            return Err(err);
+        }
+    };
     upsert_prices(&pool, &date, SOURCE_OPENROUTER, &bundle.openrouter).await?;
 
-    let or_status = if bundle.openrouter.is_empty() {
-        "error"
-    } else if bundle.warnings.iter().any(|w| w.contains("OpenRouter")) {
-        "partial"
-    } else {
+    // An Ok bundle always has OpenRouter models; warnings make it partial.
+    let overall = if bundle.warnings.is_empty() {
         "ok"
-    };
-    let or_err = if or_status == "ok" {
-        None
     } else {
-        bundle
-            .warnings
-            .iter()
-            .find(|w| w.contains("OpenRouter"))
-            .map(|s| s.as_str())
+        "partial"
     };
+    let warning = bundle.warnings.first().map(String::as_str);
     record_meta(
         &pool,
         SOURCE_OPENROUTER,
-        or_status,
-        or_err,
+        overall,
+        warning,
         bundle.openrouter.len() as i64,
-        if or_status != "error" {
-            Some(&date)
-        } else {
-            None
-        },
+        Some(&date),
     )
     .await?;
 
     invalidate_price_cache();
     let _ = refresh_price_cache_from_db().await;
-
-    let overall = if bundle.openrouter.is_empty() {
-        "error"
-    } else if bundle.warnings.is_empty() {
-        "ok"
-    } else {
-        "partial"
-    };
 
     Ok(PricingSyncReport {
         date,
@@ -511,24 +506,27 @@ pub async fn price_history(
 ) -> Result<Vec<PricingHistoryPoint>, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
     let days = days.clamp(1, 365);
-    let like = format!("%{model}%");
     let source = source.unwrap_or(SOURCE_OPENROUTER);
+    let Some(model_id) = resolve_catalog_model(&pool, source, model).await? else {
+        return Ok(Vec::new());
+    };
+    let since = (Local::now().date_naive() - chrono::Duration::days(days - 1))
+        .format("%Y-%m-%d")
+        .to_string();
     type Row = (String, String, f64, f64, Option<f64>);
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT date, source, input_per_mtok, output_per_mtok, blended_3_to_1
          FROM model_price_daily
-         WHERE source = ? AND (model_id LIKE ? OR display_name LIKE ?)
-         ORDER BY date DESC
-         LIMIT ?",
+         WHERE source = ? AND model_id = ? AND date >= ?
+         ORDER BY date ASC",
     )
     .bind(source)
-    .bind(&like)
-    .bind(&like)
-    .bind(days)
+    .bind(&model_id)
+    .bind(&since)
     .fetch_all(&pool)
     .await
     .map_err(|e| e.to_string())?;
-    let mut out: Vec<PricingHistoryPoint> = rows
+    Ok(rows
         .into_iter()
         .map(
             |(date, source, input_per_mtok, output_per_mtok, blended_3_to_1)| PricingHistoryPoint {
@@ -539,9 +537,43 @@ pub async fn price_history(
                 blended_3_to_1,
             },
         )
-        .collect();
-    out.reverse();
-    Ok(out)
+        .collect())
+}
+
+/// Resolve a requested model name to one catalog `model_id` of `source`, using
+/// the same matcher as cost pricing; the display name counts as a second key.
+/// Ties go to the alphabetically first id so the answer is stable.
+async fn resolve_catalog_model(
+    pool: &SqlitePool,
+    source: &str,
+    model: &str,
+) -> Result<Option<String>, String> {
+    let lowered = model.trim().to_ascii_lowercase();
+    if lowered.is_empty() {
+        return Ok(None);
+    }
+    let ids: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT model_id, MAX(display_name) FROM model_price_daily
+         WHERE source = ? GROUP BY model_id ORDER BY model_id",
+    )
+    .bind(source)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let mut best: Option<((u8, usize), String)> = None;
+    for (id, display) in ids {
+        let by_id = crate::pricing::catalog_match_score(&lowered, &id);
+        let by_name = display
+            .as_deref()
+            .and_then(|d| crate::pricing::catalog_match_score(&lowered, d));
+        let Some(score) = by_id.max(by_name) else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(s, _)| score > *s) {
+            best = Some((score, id));
+        }
+    }
+    Ok(best.map(|(_, id)| id))
 }
 
 pub async fn list_coding_agents(days: i64) -> Result<Vec<CodingAgentRow>, String> {
@@ -584,60 +616,98 @@ pub async fn list_coding_agents(days: i64) -> Result<Vec<CodingAgentRow>, String
         .collect())
 }
 
+/// One catalog price row: `(date, input, output, cache_read, cache_write, source, model_id)`.
+pub(crate) type CatalogPriceRow = (String, f64, f64, Option<f64>, Option<f64>, String, String);
+
+/// Catalog rows on or before `until` whose model id matches `model`, newest
+/// first and Artificial Analysis first within a day. Model ids are matched
+/// once; only the matching models' rows are read.
+pub(crate) async fn matching_price_rows(
+    pool: &SqlitePool,
+    model: &str,
+    until: &str,
+) -> Result<Vec<CatalogPriceRow>, String> {
+    #[cfg(test)]
+    CATALOG_SCANS.with(|n| n.set(n.get() + 1));
+    let lowered = model.to_ascii_lowercase();
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT DISTINCT model_id FROM model_price_daily WHERE date <= ?")
+            .bind(until)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    let matching: Vec<String> = ids
+        .into_iter()
+        .filter(|id| crate::pricing::catalog_match_score(&lowered, id).is_some())
+        .collect();
+    if matching.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids_json = serde_json::to_string(&matching).map_err(|e| e.to_string())?;
+    sqlx::query_as(
+        "SELECT date, input_per_mtok, output_per_mtok, cache_read_per_mtok, cache_write_per_mtok,
+                source, model_id
+         FROM model_price_daily
+         WHERE date <= ? AND model_id IN (SELECT value FROM json_each(?))
+         ORDER BY date DESC,
+                  CASE source WHEN 'artificial_analysis' THEN 0 ELSE 1 END",
+    )
+    .bind(until)
+    .bind(ids_json)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Pick the price for `model` as of `date` from rows ordered as
+/// [`matching_price_rows`] returns them: the best id match wins, then
+/// OpenRouter, then the newest row.
+pub(crate) fn pick_price_as_of(
+    model: &str,
+    date: &str,
+    rows: &[CatalogPriceRow],
+) -> Option<(crate::pricing::ModelPricing, String)> {
+    let lowered = model.to_ascii_lowercase();
+    let mut best: Option<((u8, usize), i32, &CatalogPriceRow)> = None;
+    for row in rows.iter().filter(|row| row.0.as_str() <= date) {
+        let or_rank = if row.5 == "openrouter" { 0 } else { 1 };
+        let Some(score) = crate::pricing::catalog_match_score(&lowered, &row.6) else {
+            continue;
+        };
+        match &best {
+            Some((s, r, _)) if *s > score || (*s == score && *r <= or_rank) => {}
+            _ => best = Some((score, or_rank, row)),
+        }
+    }
+    best.map(
+        |(_, _, (_, input, output, cache_read, cache_write, source, _))| {
+            (
+                crate::pricing::ModelPricing {
+                    input_per_mtok: *input,
+                    output_per_mtok: *output,
+                    cache_read_per_mtok: *cache_read,
+                    cache_write_per_mtok: *cache_write,
+                },
+                source.clone(),
+            )
+        },
+    )
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Catalog reads made on this thread, so tests can count them.
+    pub(crate) static CATALOG_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Look up input/output rates for a model as of a calendar date (or latest ≤ date).
 pub async fn lookup_price_as_of(
     model: &str,
     date: &str,
 ) -> Result<Option<(crate::pricing::ModelPricing, String)>, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
-    let lowered = model.to_ascii_lowercase();
-    type Row = (f64, f64, Option<f64>, Option<f64>, String, String);
-    // Prefer AA over OpenRouter when both match.
-    let rows: Vec<Row> = sqlx::query_as(
-        "SELECT input_per_mtok, output_per_mtok, cache_read_per_mtok, cache_write_per_mtok, source, model_id
-         FROM model_price_daily
-         WHERE date <= ?
-         ORDER BY date DESC,
-                  CASE source WHEN 'artificial_analysis' THEN 0 ELSE 1 END",
-    )
-    .bind(date)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let mut best: Option<(usize, i32, Row)> = None;
-    for row in rows {
-        let key = row.5.to_ascii_lowercase();
-        let short = key.rsplit('/').next().unwrap_or(&key).to_string();
-        let or_rank = if row.4 == "openrouter" { 0 } else { 1 };
-        let matched = if lowered == key
-            || lowered == short
-            || lowered.contains(&short) && short.len() >= 4
-            || short.contains(&lowered) && lowered.len() >= 4
-        {
-            Some(short.len())
-        } else {
-            None
-        };
-        let Some(score) = matched else { continue };
-        match &best {
-            Some((s, r, _)) if *s > score || (*s == score && *r <= or_rank) => {}
-            _ => best = Some((score, or_rank, row)),
-        }
-    }
-    Ok(best.map(
-        |(_, _, (input, output, cache_read, cache_write, source, _))| {
-            (
-                crate::pricing::ModelPricing {
-                    input_per_mtok: input,
-                    output_per_mtok: output,
-                    cache_read_per_mtok: cache_read,
-                    cache_write_per_mtok: cache_write,
-                },
-                source,
-            )
-        },
-    ))
+    let rows = matching_price_rows(&pool, model, date).await?;
+    Ok(pick_price_as_of(model, date, &rows))
 }
 
 #[cfg(test)]
@@ -657,6 +727,158 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lookup_price_as_of_prefers_exact_id_over_superstring() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let db = temp_db("exact");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+
+        let pool = open_pool().await.expect("pool");
+        let rows = parse_openrouter_models(&json!({
+            "data": [
+                {
+                    "id": "openai/gpt-4o-mini-search-preview",
+                    "name": "GPT-4o mini search",
+                    "pricing": { "prompt": "0.00000015", "completion": "0.0000006" }
+                },
+                {
+                    "id": "openai/gpt-4o",
+                    "name": "GPT-4o",
+                    "pricing": { "prompt": "0.0000025", "completion": "0.00001" }
+                }
+            ]
+        }));
+        upsert_prices(&pool, "2026-07-26", SOURCE_OPENROUTER, &rows)
+            .await
+            .unwrap();
+        let found = lookup_price_as_of("gpt-4o", "2026-07-26")
+            .await
+            .unwrap()
+            .expect("price");
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(&db);
+        assert!(
+            (found.0.input_per_mtok - 2.5).abs() < 1e-9,
+            "gpt-4o priced at {}",
+            found.0.input_per_mtok
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_sync_is_recorded_as_error() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let db = temp_db("syncfail");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+        let pool = open_pool().await.expect("pool");
+        // A previous good run.
+        record_meta(&pool, SOURCE_OPENROUTER, "ok", None, 10, Some("2026-01-01"))
+            .await
+            .unwrap();
+
+        let result = sync_pricing_with(true, || async {
+            Err::<crate::pricing_fetch::FetchBundle, String>("OpenRouter fetch: timed out".into())
+        })
+        .await;
+        let status = pricing_status().await.unwrap();
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(&db);
+
+        assert!(result.is_err());
+        let or = status
+            .sources
+            .iter()
+            .find(|s| s.source == SOURCE_OPENROUTER)
+            .expect("openrouter meta row");
+        assert_eq!(or.status.as_deref(), Some("error"));
+        assert!(or.error.as_deref().is_some_and(|e| e.contains("timed out")));
+        assert_eq!(or.last_success_date.as_deref(), Some("2026-01-01"));
+    }
+
+    #[tokio::test]
+    async fn successful_sync_is_recorded_as_ok() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let db = temp_db("syncok");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+        let _ = open_pool().await.expect("pool");
+        let result = sync_pricing_with(true, || async {
+            Ok(crate::pricing_fetch::FetchBundle {
+                openrouter: parse_openrouter_models(&json!({
+                    "data": [{
+                        "id": "openai/gpt-4o",
+                        "name": "GPT-4o",
+                        "pricing": { "prompt": "0.0000025", "completion": "0.00001" }
+                    }]
+                })),
+                ..Default::default()
+            })
+        })
+        .await;
+        let status = pricing_status().await.unwrap();
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(&db);
+
+        let report = result.expect("sync ok");
+        assert_eq!(report.status, "ok");
+        let or = status
+            .sources
+            .iter()
+            .find(|s| s.source == SOURCE_OPENROUTER)
+            .expect("openrouter meta row");
+        assert_eq!(or.status.as_deref(), Some("ok"));
+        assert_eq!(or.error, None);
+        assert_eq!(or.models_count, Some(1));
+        assert!(status.synced_today);
+    }
+
+    fn days_ago(n: i64) -> String {
+        (Local::now().date_naive() - chrono::Duration::days(n))
+            .format("%Y-%m-%d")
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn price_history_is_one_model_over_calendar_days() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let db = temp_db("histone");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+        let pool = open_pool().await.expect("pool");
+        let rows = parse_openrouter_models(&json!({
+            "data": [
+                {
+                    "id": "anthropic/claude-sonnet-4",
+                    "name": "Claude Sonnet 4",
+                    "pricing": { "prompt": "0.000003", "completion": "0.000015" }
+                },
+                {
+                    "id": "anthropic/claude-sonnet-4.5",
+                    "name": "Claude Sonnet 4.5",
+                    "pricing": { "prompt": "0.000005", "completion": "0.000025" }
+                }
+            ]
+        }));
+        for n in 0..5 {
+            upsert_prices(&pool, &days_ago(n), SOURCE_OPENROUTER, &rows)
+                .await
+                .unwrap();
+        }
+        let exact = price_history("claude-sonnet-4", None, 3).await.unwrap();
+        let wildcard = price_history("%", None, 30).await.unwrap();
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(&db);
+
+        // Three calendar days of one model, oldest first.
+        assert_eq!(exact.len(), 3, "{exact:?}");
+        assert!(exact.iter().all(|p| (p.input_per_mtok - 3.0).abs() < 1e-9));
+        assert_eq!(exact[0].date, days_ago(2));
+        assert_eq!(exact[2].date, days_ago(0));
+        // `%` is not a wildcard.
+        assert!(wildcard.is_empty(), "{wildcard:?}");
+    }
+
+    #[tokio::test]
     async fn upsert_and_history() {
         let _guard = USAGE_ENV_LOCK.lock().await;
         let db = temp_db("hist");
@@ -664,6 +886,7 @@ mod tests {
         std::env::set_var("AX_USAGE_DB", &db);
 
         let pool = open_pool().await.expect("pool");
+        let (yesterday, today) = (days_ago(1), days_ago(0));
         let body = json!({
             "data": [{
                 "id": "anthropic/claude-sonnet-4",
@@ -672,10 +895,10 @@ mod tests {
             }]
         });
         let rows = parse_openrouter_models(&body);
-        upsert_prices(&pool, "2026-07-25", SOURCE_OPENROUTER, &rows)
+        upsert_prices(&pool, &yesterday, SOURCE_OPENROUTER, &rows)
             .await
             .unwrap();
-        upsert_prices(&pool, "2026-07-26", SOURCE_OPENROUTER, &rows)
+        upsert_prices(&pool, &today, SOURCE_OPENROUTER, &rows)
             .await
             .unwrap();
 
@@ -693,14 +916,14 @@ mod tests {
                 "evaluations": { "artificial_analysis_coding_index": 55.0 }
             }]
         }));
-        upsert_prices(&pool, "2026-07-26", SOURCE_ARTIFICIAL_ANALYSIS, &aa_prices)
+        upsert_prices(&pool, &today, SOURCE_ARTIFICIAL_ANALYSIS, &aa_prices)
             .await
             .unwrap();
-        upsert_benchmarks(&pool, "2026-07-26", SOURCE_ARTIFICIAL_ANALYSIS, &aa_benches)
+        upsert_benchmarks(&pool, &today, SOURCE_ARTIFICIAL_ANALYSIS, &aa_benches)
             .await
             .unwrap();
 
-        let found = lookup_price_as_of("claude-sonnet-4", "2026-07-26")
+        let found = lookup_price_as_of("claude-sonnet-4", &today)
             .await
             .unwrap()
             .expect("price");

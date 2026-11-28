@@ -62,22 +62,30 @@ async fn columns(pool: &SqlitePool, table: &str) -> Result<Vec<String>, String> 
 fn conversations() -> String {
     "SELECT conversation FROM native.ax_durable_scope WHERE project=?1 AND session NOT GLOB 'replica_*'".into()
 }
-fn filter(table: &str) -> String {
-    if matches!(
+/// Global price and benchmark catalog tables. They are not project data: every
+/// node syncs its own prices, so they are never exported or imported. They stay
+/// in `TABLES` so files from peers that still carry them pass the schema and
+/// row-count checks.
+fn catalog(table: &str) -> bool {
+    matches!(
         table,
         "model_price_daily" | "model_benchmark_daily" | "coding_agent_daily"
-    ) {
-        // Catalog rows are global reference data. The project bind stays so
-        // every export uses the same parameter shape.
-        return "?1 = ?1".into();
+    )
+}
+fn filter(table: &str) -> String {
+    if catalog(table) {
+        // The project bind stays so every export uses the same parameter shape.
+        return "0 AND ?1 = ?1".into();
     }
     let owned = conversations();
-    let sessions="SELECT session FROM native.ax_durable_scope WHERE project=?1 AND session NOT GLOB 'replica_*' UNION SELECT substr(scope,1,length(scope)-length(?1)-1) FROM native.mcp_working_context WHERE substr(scope,-length(?1))=?1 AND scope NOT GLOB 'replica_*'";
+    // Scoped keys are `session || char(31) || project`; the separator is part
+    // of the match so a project whose path ends with this one never matches.
+    let sessions="SELECT session FROM native.ax_durable_scope WHERE project=?1 AND session NOT GLOB 'replica_*' UNION SELECT substr(scope,1,length(scope)-length(?1)-1) FROM native.mcp_working_context WHERE substr(scope,-length(?1)-1)=char(31)||?1 AND scope NOT GLOB 'replica_*'";
     let core=match table {
         "mcp_call_log"|"agent_usage_event"=>"project=?1".into(),
         "mcp_context_cache"=>"project=?1 AND id NOT GLOB 'cc_replica_*'".into(),
-        "mcp_working_context"=>"substr(scope,-length(?1))=?1 AND scope NOT GLOB 'replica_*'".into(),
-        "mcp_reuse_cache"=>"substr(conversation,-length(?1))=?1 AND conversation NOT GLOB 'replica_*'".into(),
+        "mcp_working_context"=>"substr(scope,-length(?1)-1)=char(31)||?1 AND scope NOT GLOB 'replica_*'".into(),
+        "mcp_reuse_cache"=>"substr(conversation,-length(?1)-1)=char(31)||?1 AND conversation NOT GLOB 'replica_*'".into(),
         "ax_durable_scope"=>"project=?1 AND session NOT GLOB 'replica_*'".into(),
         "ax_durable_conversation"=>format!("id IN ({owned})"),
         "ax_durable_entry"|"ax_durable_document"|"ax_durable_task"|"ax_durable_hook"=>format!("conversation_id IN ({owned})"),
@@ -380,7 +388,7 @@ async fn project_with(
     }
     let project = crate::context_cache::project_scope(root);
     let quote = |v: &str| v.replace('\'', "''");
-    for table in TABLES {
+    for table in TABLES.iter().filter(|table| !catalog(table)) {
         let remote: Vec<String> = sqlx::query_scalar(&format!(
             "SELECT name FROM received_history.pragma_table_info('{table}')"
         ))
@@ -473,7 +481,7 @@ pub async fn retain(
         .map_err(err)?;
     let mut tx = conn.begin().await.map_err(err)?;
     for source in ["previous", "current"] {
-        for table in TABLES {
+        for table in TABLES.iter().filter(|table| !catalog(table)) {
             let remote: Vec<String> = sqlx::query_scalar(&format!(
                 "SELECT name FROM {source}.pragma_table_info('{table}')"
             ))
@@ -530,6 +538,103 @@ pub async fn retain(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn export_leaves_out_projects_whose_path_ends_with_this_one() {
+        let source = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(source.path().join(".ax/server/datasets")).unwrap();
+        let path = source.path().join("usage.db");
+        let native = crate::store::open_pool_at(&path).await.unwrap();
+        let scope = crate::project_scope(source.path());
+        // Another project whose canonical path ends with this project's path.
+        let other = format!("/backup{scope}");
+        for (session, project) in [("mine", &scope), ("theirs", &other)] {
+            sqlx::query("INSERT INTO mcp_working_context(scope,objective,content_hash,updated_at) VALUES (?,?,'hash',1)")
+                .bind(format!("{session}\u{1f}{project}"))
+                .bind(format!("objective of {session}"))
+                .execute(&native)
+                .await
+                .unwrap();
+            sqlx::query("INSERT INTO mcp_reuse_cache(reuse_key,conversation,tool,args_summary,cache_id,body_bytes,original_tokens,files_json,turn,created_at) VALUES (?,?,'ax_node','',?,1,1,'[]',1,1)")
+                .bind(format!("key-{session}"))
+                .bind(format!("{session}\u{1f}{project}"))
+                .bind(format!("cc-{session}"))
+                .execute(&native)
+                .await
+                .unwrap();
+        }
+        let exported = export_with(source.path(), &native, &path).await.unwrap();
+        let output = crate::store::open_pool_at(&exported.path).await.unwrap();
+        let scopes: Vec<String> =
+            sqlx::query_scalar("SELECT scope FROM mcp_working_context ORDER BY scope")
+                .fetch_all(&output)
+                .await
+                .unwrap();
+        let conversations: Vec<String> =
+            sqlx::query_scalar("SELECT conversation FROM mcp_reuse_cache ORDER BY conversation")
+                .fetch_all(&output)
+                .await
+                .unwrap();
+        assert_eq!(scopes, ["mine"]);
+        assert_eq!(conversations, ["mine"]);
+    }
+
+    const PRICE_ROW: &str = "INSERT INTO model_price_daily(date,source,model_id,input_per_mtok,output_per_mtok) VALUES ('2026-11-27','openrouter','openai/gpt-4o',?,?)";
+
+    #[tokio::test]
+    async fn export_leaves_out_the_global_price_catalog() {
+        let source = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(source.path().join(".ax/server/datasets")).unwrap();
+        let path = source.path().join("usage.db");
+        let native = crate::store::open_pool_at(&path).await.unwrap();
+        sqlx::query(PRICE_ROW)
+            .bind(2.5)
+            .bind(10.0)
+            .execute(&native)
+            .await
+            .unwrap();
+        let exported = export_with(source.path(), &native, &path).await.unwrap();
+        assert_eq!(exported.rows, 0);
+    }
+
+    #[tokio::test]
+    async fn received_history_never_replaces_local_prices() {
+        let target = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(target.path().join(".ax/server/datasets")).unwrap();
+        let received = crate::store::open_pool_at(&target.path().join("usage.db"))
+            .await
+            .unwrap();
+        sqlx::query(PRICE_ROW)
+            .bind(2.5)
+            .bind(10.0)
+            .execute(&received)
+            .await
+            .unwrap();
+        // A peer file (as an older peer could send) with a zero price for the same key.
+        let incoming_path = target.path().join("incoming.db");
+        let incoming = crate::store::open_pool_at(&incoming_path).await.unwrap();
+        sqlx::query(PRICE_ROW)
+            .bind(0.0)
+            .bind(0.0)
+            .execute(&incoming)
+            .await
+            .unwrap();
+        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(&incoming)
+            .await
+            .unwrap();
+        incoming.close().await;
+        project_with(target.path(), "a_1", &incoming_path, 1, &received)
+            .await
+            .unwrap();
+        let price: f64 = sqlx::query_scalar(
+            "SELECT input_per_mtok FROM model_price_daily WHERE model_id='openai/gpt-4o'",
+        )
+        .fetch_one(&received)
+        .await
+        .unwrap();
+        assert!((price - 2.5).abs() < 1e-9, "local price replaced: {price}");
+    }
+
     #[tokio::test]
     async fn complete_project_history_is_scoped_persistent_queryable_and_never_echoed() {
         let source = tempfile::tempdir().unwrap();

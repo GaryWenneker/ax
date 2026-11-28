@@ -94,7 +94,9 @@ pub use turns::{
     DIFF_LINE_CAP, FILE_CHANGE_KIND, HUNK_CAP_BYTES, OUTCOME_MARKER, TURN_KIND,
     TURN_RETENTION_DAYS, TURN_SOURCE,
 };
-pub use types::{MemoryFilter, MemoryMatch, MemoryRow, RememberInput, MEMORY_KINDS};
+pub use types::{
+    MemoryFilter, MemoryMatch, MemoryRow, RememberInput, MEMORY_KINDS, RECALL_ONLY_KINDS,
+};
 
 use ax_utils::errors::{AxError, DatabaseError};
 use sqlx::SqlitePool;

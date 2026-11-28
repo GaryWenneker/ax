@@ -6,7 +6,9 @@ use sha2::Digest;
 use sqlx::Row;
 use sqlx::SqlitePool;
 
-const SCHEMA: &str = r#"
+/// The spec tables both the registry and the hierarchy use. One definition,
+/// so the table shape does not depend on which module creates it first.
+pub(crate) const SPEC_TABLES: &str = r#"
 CREATE TABLE IF NOT EXISTS specs (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
@@ -29,6 +31,9 @@ CREATE TABLE IF NOT EXISTS spec_revisions (
     created_at INTEGER NOT NULL,
     PRIMARY KEY (spec_id, version)
 );
+"#;
+
+const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS plans (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
@@ -113,6 +118,17 @@ CREATE TABLE IF NOT EXISTS plan_selections (
     compatibility TEXT NOT NULL DEFAULT 'current',
     UNIQUE (workstream_id, plan_id, plan_version, session_id, turn_id)
 );
+CREATE TABLE IF NOT EXISTS import_review (
+    id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (id, turn_id, source)
+);
 "#;
 
 fn now_ms() -> i64 {
@@ -148,6 +164,43 @@ pub struct CreatedSpecPlan {
     pub plan_version: i64,
 }
 
+/// Remembers which pools already ran a schema migration, so the migration
+/// (which writes) runs once per pool and later reads stay read-only.
+///
+/// A pool is identified by its shared connect options. Each entry keeps a weak
+/// reference to them, so the address cannot be reused by a new pool while the
+/// entry exists; entries of dropped pools are pruned.
+pub(crate) struct MigratedPools(
+    std::sync::Mutex<Vec<std::sync::Weak<sqlx::sqlite::SqliteConnectOptions>>>,
+);
+
+impl MigratedPools {
+    pub(crate) const fn new() -> Self {
+        Self(std::sync::Mutex::new(Vec::new()))
+    }
+
+    pub(crate) fn contains(&self, pool: &SqlitePool) -> bool {
+        let options = pool.connect_options();
+        let mut seen = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
+        seen.retain(|entry| entry.strong_count() > 0);
+        seen.iter()
+            .any(|entry| std::ptr::eq(entry.as_ptr(), std::sync::Arc::as_ptr(&options)))
+    }
+
+    pub(crate) fn insert(&self, pool: &SqlitePool) {
+        if self.contains(pool) {
+            return;
+        }
+        let options = pool.connect_options();
+        self.0
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .push(std::sync::Arc::downgrade(&options));
+    }
+}
+
+static HIERARCHY_MIGRATED: MigratedPools = MigratedPools::new();
+
 /// Columns added after the first schema; each must exist for the schema to be complete.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("specs", "needs_plan", "INTEGER NOT NULL DEFAULT 0"),
@@ -163,9 +216,9 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
 /// so nothing needs writing. A read-only connection depends on this: it can
 /// read a complete schema but cannot run the `INSERT` or `ALTER` statements.
 async fn hierarchy_schema_complete(pool: &SqlitePool) -> bool {
-    let tables: Vec<&str> = SCHEMA
-        .split("CREATE TABLE IF NOT EXISTS ")
-        .skip(1)
+    let tables: Vec<&str> = [SPEC_TABLES, SCHEMA]
+        .iter()
+        .flat_map(|script| script.split("CREATE TABLE IF NOT EXISTS ").skip(1))
         .filter_map(|rest| rest.split_whitespace().next())
         .collect();
     let present: Vec<String> =
@@ -204,11 +257,23 @@ async fn hierarchy_schema_complete(pool: &SqlitePool) -> bool {
     true
 }
 
+/// Create or upgrade the hierarchy tables. The work runs once per pool; later
+/// calls return at once, so read paths never take the write lock. A schema
+/// that is already complete is not written to, so a read-only pool works too.
 pub async fn ensure_hierarchy_schema(pool: &SqlitePool) -> Result<(), String> {
-    if hierarchy_schema_complete(pool).await {
+    if HIERARCHY_MIGRATED.contains(pool) {
         return Ok(());
     }
-    for statement in SCHEMA.split(';') {
+    if !hierarchy_schema_complete(pool).await {
+        migrate_hierarchy_schema(pool).await?;
+    }
+    HIERARCHY_MIGRATED.insert(pool);
+    Ok(())
+}
+
+/// Run each `;`-separated statement of a schema script.
+pub(crate) async fn run_schema(pool: &SqlitePool, script: &str) -> Result<(), String> {
+    for statement in script.split(';') {
         let statement = statement.trim();
         if statement.is_empty() {
             continue;
@@ -218,6 +283,12 @@ pub async fn ensure_hierarchy_schema(pool: &SqlitePool) -> Result<(), String> {
             .await
             .map_err(|error| error.to_string())?;
     }
+    Ok(())
+}
+
+async fn migrate_hierarchy_schema(pool: &SqlitePool) -> Result<(), String> {
+    run_schema(pool, SPEC_TABLES).await?;
+    run_schema(pool, SCHEMA).await?;
     for (table, column, definition) in ADDED_COLUMNS {
         add_column_if_missing(pool, table, column, definition).await?;
     }
@@ -367,7 +438,14 @@ pub struct ApprovalRequest {
     pub reason: String,
 }
 
-pub async fn approve_artifact(pool: &SqlitePool, request: ApprovalRequest) -> Result<(), String> {
+/// Role check on caller-supplied roles, kept for tests of the approval rules.
+/// Production approval goes through `approve_for_member`, which reads the
+/// roles from the membership database.
+#[cfg(test)]
+pub(crate) async fn approve_artifact(
+    pool: &SqlitePool,
+    request: ApprovalRequest,
+) -> Result<(), String> {
     ensure_hierarchy_schema(pool).await?;
     if request.actor_kind != "human" {
         return Err("agent cannot approve".into());
@@ -557,6 +635,18 @@ async fn mark_approved(
     Ok(())
 }
 
+/// The error a revision returns when its `based_on` is not the latest version.
+pub(crate) const CONFLICT: &str = "conflict";
+
+/// A unique violation on the revision key means another edit stored the same
+/// version first, which is a conflict, not a database failure.
+fn revision_insert_error(error: sqlx::Error) -> String {
+    match &error {
+        sqlx::Error::Database(db) if db.is_unique_violation() => CONFLICT.into(),
+        _ => error.to_string(),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PlanEdit {
     pub plan_id: String,
@@ -573,7 +663,12 @@ pub async fn revise_plan(pool: &SqlitePool, edit: PlanEdit) -> Result<i64, Strin
     if body.is_empty() {
         return Err("empty plan".into());
     }
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    // IMMEDIATE takes the write lock before the read, so two edits of one
+    // version run one after the other and the second sees a conflict.
+    let mut tx = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|error| error.to_string())?;
     let current: Option<(i64, String, i64, String)> = sqlx::query_as(
         "SELECT version, spec_id, spec_version, spec_content_hash
          FROM plan_revisions WHERE plan_id = ?1
@@ -587,9 +682,12 @@ pub async fn revise_plan(pool: &SqlitePool, edit: PlanEdit) -> Result<i64, Strin
         return Err("missing plan".into());
     };
     if edit.based_on != latest {
-        return Err("conflict".into());
+        return Err(CONFLICT.into());
     }
     let next = latest + 1;
+    // An edit keeps the spec revision its parent was written against. Only a
+    // compatibility confirmation on a selection accepts it for a newer spec;
+    // rebasing here would hide the spec change from review.
     sqlx::query(
         "INSERT INTO plan_revisions
          (plan_id, version, status, body, content_hash, source, session_id, turn_id, agent_id,
@@ -610,7 +708,7 @@ pub async fn revise_plan(pool: &SqlitePool, edit: PlanEdit) -> Result<i64, Strin
     .bind(now_ms())
     .execute(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(revision_insert_error)?;
     tx.commit().await.map_err(|error| error.to_string())?;
     Ok(next)
 }
@@ -990,8 +1088,8 @@ pub async fn create_workstream(pool: &SqlitePool, input: NewWorkstream) -> Resul
 
 pub async fn select_plan(pool: &SqlitePool, input: PlanSelection) -> Result<(), String> {
     ensure_hierarchy_schema(pool).await?;
-    let owner: Option<String> = sqlx::query_scalar(
-        "SELECT p.owner_spec_id
+    let owner: Option<(String, String)> = sqlx::query_as(
+        "SELECT p.owner_spec_id, r.spec_content_hash
          FROM plans p
          JOIN plan_revisions r ON r.plan_id = p.id AND r.version = ?2
          WHERE p.id = ?1",
@@ -1001,7 +1099,7 @@ pub async fn select_plan(pool: &SqlitePool, input: PlanSelection) -> Result<(), 
     .fetch_optional(pool)
     .await
     .map_err(|error| error.to_string())?;
-    let Some(owner) = owner else {
+    let Some((owner, written_against)) = owner else {
         return Err("missing plan".into());
     };
     let spec_id: Option<String> =
@@ -1016,14 +1114,29 @@ pub async fn select_plan(pool: &SqlitePool, input: PlanSelection) -> Result<(), 
     if owner != spec_id {
         return Err("plan belongs to another spec".into());
     }
+    // A plan revision written against another spec body than the approved one
+    // needs a compatibility review, whenever it is selected.
+    let approved: Option<String> = sqlx::query_scalar(
+        "SELECT content_hash FROM spec_revisions
+         WHERE spec_id = ?1 AND status = 'approved'
+         ORDER BY version DESC LIMIT 1",
+    )
+    .bind(&spec_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    let compatibility = match approved {
+        Some(hash) if hash != written_against => "compatibility_review_required",
+        _ => "current",
+    };
     let id = format!(
         "{}:{}:{}:{}:{}",
         input.workstream_id, input.plan_id, input.plan_version, input.session_id, input.turn_id
     );
     sqlx::query(
         "INSERT OR IGNORE INTO plan_selections
-         (id, workstream_id, plan_id, plan_version, session_id, turn_id, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+         (id, workstream_id, plan_id, plan_version, session_id, turn_id, created_at, compatibility)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
     )
     .bind(&id)
     .bind(&input.workstream_id)
@@ -1032,6 +1145,7 @@ pub async fn select_plan(pool: &SqlitePool, input: PlanSelection) -> Result<(), 
     .bind(&input.session_id)
     .bind(&input.turn_id)
     .bind(now_ms())
+    .bind(compatibility)
     .execute(pool)
     .await
     .map_err(|error| error.to_string())?;
@@ -1327,18 +1441,26 @@ pub async fn revise_spec(pool: &SqlitePool, edit: SpecEdit) -> Result<i64, Strin
     if body.is_empty() {
         return Err("empty spec".into());
     }
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
-    let latest: Option<i64> =
-        sqlx::query_scalar("SELECT MAX(version) FROM spec_revisions WHERE spec_id = ?1")
-            .bind(&edit.spec_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(|error| error.to_string())?;
+    // IMMEDIATE takes the write lock before the read; see revise_plan.
+    let mut tx = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|error| error.to_string())?;
+    // `MAX(version)` always returns a row and decodes NULL as 0, so read the
+    // head row itself, and only for a spec that exists.
+    let latest: Option<i64> = sqlx::query_scalar(
+        "SELECT r.version FROM spec_revisions r JOIN specs s ON s.id = r.spec_id
+         WHERE r.spec_id = ?1 ORDER BY r.version DESC LIMIT 1",
+    )
+    .bind(&edit.spec_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
     let Some(latest) = latest else {
         return Err("missing spec".into());
     };
     if edit.based_on != latest {
-        return Err("conflict".into());
+        return Err(CONFLICT.into());
     }
     let next = latest + 1;
     sqlx::query(
@@ -1356,7 +1478,7 @@ pub async fn revise_spec(pool: &SqlitePool, edit: SpecEdit) -> Result<i64, Strin
     .bind(now_ms())
     .execute(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(revision_insert_error)?;
     tx.commit().await.map_err(|error| error.to_string())?;
     Ok(next)
 }
@@ -1396,63 +1518,18 @@ pub async fn revise_spec_from_json(
             "specId": parsed.spec_id,
             "specVersion": version,
         }),
-        Err(error) => spec_conflict_json(pool, &parsed, error).await,
-    }
-}
-
-async fn spec_conflict_json(
-    pool: &SqlitePool,
-    parsed: &SpecReviseBody,
-    error: String,
-) -> serde_json::Value {
-    if !error.contains("conflict") {
-        return serde_json::json!({ "ok": false, "error": error });
-    }
-    let head_version: Option<i64> =
-        sqlx::query_scalar("SELECT MAX(version) FROM spec_revisions WHERE spec_id = ?1")
-            .bind(&parsed.spec_id)
-            .fetch_optional(pool)
+        Err(error) => {
+            conflict_json(
+                pool,
+                Revisions::Spec,
+                &parsed.spec_id,
+                parsed.based_on,
+                &parsed.body,
+                error,
+            )
             .await
-            .ok()
-            .flatten();
-    let mut value = serde_json::json!({
-        "ok": false,
-        "error": error,
-        "incoming": { "body": parsed.body.trim() },
-    });
-    if let Ok(Some((body, hash))) = spec_side(pool, &parsed.spec_id, parsed.based_on).await {
-        value["base"] = serde_json::json!({
-            "version": parsed.based_on,
-            "body": body,
-            "hash": hash,
-        });
-    }
-    if let Some(version) = head_version {
-        if let Ok(Some((body, hash))) = spec_side(pool, &parsed.spec_id, version).await {
-            value["head"] = serde_json::json!({
-                "version": version,
-                "body": body,
-                "hash": hash,
-            });
         }
     }
-    value
-}
-
-async fn spec_side(
-    pool: &SqlitePool,
-    spec_id: &str,
-    version: i64,
-) -> Result<Option<(String, String)>, String> {
-    ensure_hierarchy_schema(pool).await?;
-    sqlx::query_as(
-        "SELECT body, content_hash FROM spec_revisions WHERE spec_id = ?1 AND version = ?2",
-    )
-    .bind(spec_id)
-    .bind(version)
-    .fetch_optional(pool)
-    .await
-    .map_err(|error| error.to_string())
 }
 
 pub async fn revise_plan_from_json(
@@ -1481,35 +1558,100 @@ pub async fn revise_plan_from_json(
             "planId": parsed.plan_id,
             "planVersion": version,
         }),
-        Err(error) => conflict_json(pool, &parsed, error).await,
+        Err(error) => {
+            conflict_json(
+                pool,
+                Revisions::Plan,
+                &parsed.plan_id,
+                parsed.based_on,
+                &parsed.body,
+                error,
+            )
+            .await
+        }
     }
 }
 
-async fn conflict_json(pool: &SqlitePool, parsed: &ReviseBody, error: String) -> serde_json::Value {
-    if !error.contains("conflict") {
+/// Which revision table a conflict or a side-by-side view reads.
+#[derive(Clone, Copy)]
+enum Revisions {
+    Plan,
+    Spec,
+}
+
+impl Revisions {
+    fn head_sql(self) -> &'static str {
+        match self {
+            Self::Plan => {
+                "SELECT version FROM plan_revisions WHERE plan_id = ?1 ORDER BY version DESC LIMIT 1"
+            }
+            Self::Spec => {
+                "SELECT version FROM spec_revisions WHERE spec_id = ?1 ORDER BY version DESC LIMIT 1"
+            }
+        }
+    }
+
+    fn side_sql(self) -> &'static str {
+        match self {
+            Self::Plan => {
+                "SELECT body, content_hash FROM plan_revisions WHERE plan_id = ?1 AND version = ?2"
+            }
+            Self::Spec => {
+                "SELECT body, content_hash FROM spec_revisions WHERE spec_id = ?1 AND version = ?2"
+            }
+        }
+    }
+}
+
+/// Body and hash of one revision.
+async fn revision_side(
+    pool: &SqlitePool,
+    kind: Revisions,
+    id: &str,
+    version: i64,
+) -> Result<Option<(String, String)>, String> {
+    ensure_hierarchy_schema(pool).await?;
+    sqlx::query_as(kind.side_sql())
+        .bind(id)
+        .bind(version)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// The error payload of a failed edit. A conflict also carries the incoming
+/// body, the base it was written against and the current head.
+async fn conflict_json(
+    pool: &SqlitePool,
+    kind: Revisions,
+    id: &str,
+    based_on: i64,
+    incoming: &str,
+    error: String,
+) -> serde_json::Value {
+    if error != CONFLICT {
         return serde_json::json!({ "ok": false, "error": error });
     }
-    let head_version: Option<i64> =
-        sqlx::query_scalar("SELECT MAX(version) FROM plan_revisions WHERE plan_id = ?1")
-            .bind(&parsed.plan_id)
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten();
+    let head_version: Option<i64> = sqlx::query_scalar(kind.head_sql())
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
     let mut value = serde_json::json!({
         "ok": false,
         "error": error,
-        "incoming": { "body": parsed.body.trim() },
+        "incoming": { "body": incoming.trim() },
     });
-    if let Ok(Some((body, hash))) = plan_side(pool, &parsed.plan_id, parsed.based_on).await {
+    if let Ok(Some((body, hash))) = revision_side(pool, kind, id, based_on).await {
         value["base"] = serde_json::json!({
-            "version": parsed.based_on,
+            "version": based_on,
             "body": body,
             "hash": hash,
         });
     }
     if let Some(version) = head_version {
-        if let Ok(Some((body, hash))) = plan_side(pool, &parsed.plan_id, version).await {
+        if let Ok(Some((body, hash))) = revision_side(pool, kind, id, version).await {
             value["head"] = serde_json::json!({
                 "version": version,
                 "body": body,
@@ -1716,12 +1858,12 @@ pub async fn compare_plan_from_json(
         Ok(parsed) => parsed,
         Err(error) => return serde_json::json!({ "ok": false, "error": error.to_string() }),
     };
-    let left = match plan_side(pool, &parsed.plan_id, parsed.left).await {
+    let left = match revision_side(pool, Revisions::Plan, &parsed.plan_id, parsed.left).await {
         Ok(Some(side)) => side,
         Ok(None) => return serde_json::json!({ "ok": false, "error": "missing revision" }),
         Err(error) => return serde_json::json!({ "ok": false, "error": error }),
     };
-    let right = match plan_side(pool, &parsed.plan_id, parsed.right).await {
+    let right = match revision_side(pool, Revisions::Plan, &parsed.plan_id, parsed.right).await {
         Ok(Some(side)) => side,
         Ok(None) => return serde_json::json!({ "ok": false, "error": "missing revision" }),
         Err(error) => return serde_json::json!({ "ok": false, "error": error }),
@@ -1732,22 +1874,6 @@ pub async fn compare_plan_from_json(
         "left": { "version": parsed.left, "body": left.0, "hash": left.1 },
         "right": { "version": parsed.right, "body": right.0, "hash": right.1 },
     })
-}
-
-async fn plan_side(
-    pool: &SqlitePool,
-    plan_id: &str,
-    version: i64,
-) -> Result<Option<(String, String)>, String> {
-    ensure_hierarchy_schema(pool).await?;
-    sqlx::query_as(
-        "SELECT body, content_hash FROM plan_revisions WHERE plan_id = ?1 AND version = ?2",
-    )
-    .bind(plan_id)
-    .bind(version)
-    .fetch_optional(pool)
-    .await
-    .map_err(|error| error.to_string())
 }
 
 pub async fn list_plan_revisions(
@@ -1993,6 +2119,9 @@ pub async fn capture_plan_draft(pool: &SqlitePool, body: serde_json::Value) -> s
     revise_plan_from_json(pool, body).await
 }
 
+/// Queue a finished plan for import review. A body equal to the latest queued
+/// body for the same id is not stored again, so an unchanged file does not
+/// add a row on every turn.
 #[allow(clippy::too_many_arguments)]
 pub async fn queue_finished_plan(
     pool: &SqlitePool,
@@ -2006,25 +2135,14 @@ pub async fn queue_finished_plan(
 ) -> Result<(), String> {
     ensure_hierarchy_schema(pool).await?;
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS import_review (
-            id TEXT NOT NULL,
-            turn_id TEXT NOT NULL,
-            source TEXT NOT NULL,
-            project_id TEXT NOT NULL,
-            title TEXT NOT NULL,
-            body TEXT NOT NULL,
-            session_id TEXT NOT NULL,
-            created_at INTEGER NOT NULL,
-            PRIMARY KEY (id, turn_id, source)
-        )",
-    )
-    .execute(pool)
-    .await
-    .map_err(|error| error.to_string())?;
-    sqlx::query(
         "INSERT OR IGNORE INTO import_review
          (id, turn_id, source, project_id, title, body, session_id, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+         WHERE NOT EXISTS (
+             SELECT 1 FROM (
+                 SELECT body FROM import_review WHERE id = ?1 ORDER BY rowid DESC LIMIT 1
+             ) WHERE body = ?6
+         )",
     )
     .bind(spec_id)
     .bind(turn_id)
@@ -2049,16 +2167,7 @@ pub async fn import_review_from_json(pool: &SqlitePool) -> serde_json::Value {
 
 pub async fn import_review_ids(pool: &SqlitePool) -> Result<Vec<String>, String> {
     ensure_hierarchy_schema(pool).await?;
-    let table: Option<String> = sqlx::query_scalar(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'import_review'",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|error| error.to_string())?;
-    if table.is_none() {
-        return Ok(Vec::new());
-    }
-    sqlx::query_scalar("SELECT id FROM import_review ORDER BY id")
+    sqlx::query_scalar("SELECT DISTINCT id FROM import_review ORDER BY id")
         .fetch_all(pool)
         .await
         .map_err(|error| error.to_string())
@@ -3177,6 +3286,98 @@ mod tests {
         assert_eq!(count(&pool, "specs").await, 0);
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_edits_of_one_version_get_one_win_and_conflict_payloads() {
+        let (_dir, pool) = open().await;
+        create_spec_with_plan(&pool, sample("Record the ledger."))
+            .await
+            .unwrap();
+        let plans = (0..8).map(|index| {
+            let pool = pool.clone();
+            tokio::spawn(async move {
+                revise_plan_from_json(
+                    &pool,
+                    serde_json::json!({
+                        "planId": "plan-ledger",
+                        "basedOn": 1,
+                        "body": format!("Plan edit {index}."),
+                        "sessionId": "session-1",
+                        "turnId": format!("turn-plan-{index}"),
+                    }),
+                )
+                .await
+            })
+        });
+        let specs = (0..8).map(|index| {
+            let pool = pool.clone();
+            tokio::spawn(async move {
+                revise_spec_from_json(
+                    &pool,
+                    serde_json::json!({
+                        "specId": "spec-billing",
+                        "basedOn": 1,
+                        "body": format!("Spec edit {index}."),
+                        "sessionId": "session-1",
+                        "turnId": format!("turn-spec-{index}"),
+                    }),
+                )
+                .await
+            })
+        });
+        let tasks: Vec<_> = plans.chain(specs).collect();
+        let mut results = Vec::new();
+        for task in tasks {
+            results.push(task.await.unwrap());
+        }
+        for (label, group) in [("plan", &results[..8]), ("spec", &results[8..])] {
+            let wins = group.iter().filter(|value| value["ok"] == true).count();
+            assert_eq!(wins, 1, "{label}: {group:?}");
+            for value in group.iter().filter(|value| value["ok"] != true) {
+                assert_eq!(value["error"], "conflict", "{label}: {value}");
+                assert!(value["head"]["body"].is_string(), "{label}: {value}");
+                assert!(value["base"]["body"].is_string(), "{label}: {value}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_plan_is_queued_once_across_turns() {
+        let (_dir, pool) = open().await;
+        set_hierarchy_flag(&pool, true).await.unwrap();
+        for turn in ["turn-1", "turn-2", "turn-3"] {
+            queue_finished_plan(
+                &pool,
+                "ax",
+                "plan-x",
+                "X",
+                "Same body.",
+                "session-1",
+                turn,
+                "file",
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(count(&pool, "import_review").await, 1);
+        queue_finished_plan(
+            &pool,
+            "ax",
+            "plan-x",
+            "X",
+            "Changed body.",
+            "session-1",
+            "turn-4",
+            "file",
+        )
+        .await
+        .unwrap();
+        assert_eq!(count(&pool, "import_review").await, 2);
+        assert_eq!(
+            import_review_ids(&pool).await.unwrap(),
+            vec!["plan-x".to_string()]
+        );
+    }
+
     #[tokio::test]
     async fn turning_the_hierarchy_flag_off_restores_spec_capture() {
         let (_dir, pool) = open().await;
@@ -3718,6 +3919,193 @@ mod tests {
             .unwrap(),
             2
         );
+    }
+
+    #[tokio::test]
+    async fn revising_an_unknown_spec_is_a_missing_spec() {
+        let (_dir, pool) = open().await;
+        let edit = |based_on: i64| SpecEdit {
+            spec_id: "ghost".into(),
+            based_on,
+            body: "A body for nobody.".into(),
+            session_id: "session-1".into(),
+            turn_id: "turn-1".into(),
+        };
+        assert_eq!(
+            revise_spec(&pool, edit(0)).await,
+            Err("missing spec".into())
+        );
+        assert_eq!(
+            revise_spec(&pool, edit(3)).await,
+            Err("missing spec".into())
+        );
+        let orphans: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM spec_revisions WHERE spec_id = 'ghost'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(orphans, 0);
+        let json = revise_spec_from_json(
+            &pool,
+            serde_json::json!({
+                "specId": "ghost", "basedOn": 2, "body": "x",
+                "sessionId": "s", "turnId": "t",
+            }),
+        )
+        .await;
+        assert_eq!(json["error"], "missing spec");
+        assert!(json.get("head").is_none());
+    }
+
+    async fn approve_spec_v2(pool: &SqlitePool) {
+        let approve = |version: i64| ApprovalRequest {
+            artifact_kind: "spec".into(),
+            artifact_id: "spec-billing".into(),
+            version,
+            actor_member_id: "member-1".into(),
+            actor_kind: "human".into(),
+            roles: vec!["owner".into()],
+            reason: "checked".into(),
+        };
+        approve_artifact(pool, approve(1)).await.unwrap();
+        let v2 = revise_spec(
+            pool,
+            SpecEdit {
+                spec_id: "spec-billing".into(),
+                based_on: 1,
+                body: "Charge the recorded amount, then reconcile.".into(),
+                session_id: "session-1".into(),
+                turn_id: "turn-9".into(),
+            },
+        )
+        .await
+        .unwrap();
+        approve_artifact(pool, approve(v2)).await.unwrap();
+    }
+
+    async fn billing_workstream(pool: &SqlitePool) {
+        create_workstream(
+            pool,
+            NewWorkstream {
+                id: "ws-billing".into(),
+                project_id: "ax".into(),
+                spec_id: "spec-billing".into(),
+                name: "billing".into(),
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    fn pick(version: i64, turn: &str) -> PlanSelection {
+        PlanSelection {
+            workstream_id: "ws-billing".into(),
+            plan_id: "plan-ledger".into(),
+            plan_version: version,
+            session_id: "session-1".into(),
+            turn_id: turn.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn selecting_a_plan_written_against_a_superseded_spec_needs_review() {
+        let (_dir, pool) = open().await;
+        create_spec_with_plan(&pool, sample("Record the ledger."))
+            .await
+            .unwrap();
+        billing_workstream(&pool).await;
+        // Spec v2 is approved while no plan is selected yet.
+        approve_spec_v2(&pool).await;
+        select_plan(&pool, pick(1, "turn-10")).await.unwrap();
+        assert_eq!(
+            compatibility(&pool, "plan-ledger").await,
+            "compatibility_review_required"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_plan_edit_after_a_spec_change_still_needs_review() {
+        let (_dir, pool) = open().await;
+        create_spec_with_plan(&pool, sample("Record the ledger."))
+            .await
+            .unwrap();
+        billing_workstream(&pool).await;
+        approve_spec_v2(&pool).await;
+        let v2 = revise_plan(
+            &pool,
+            PlanEdit {
+                plan_id: "plan-ledger".into(),
+                based_on: 1,
+                body: "Record the ledger, then the receipt.".into(),
+                session_id: "session-1".into(),
+                turn_id: "turn-11".into(),
+                agent_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        select_plan(&pool, pick(v2, "turn-12")).await.unwrap();
+        assert_eq!(
+            compatibility(&pool, "plan-ledger").await,
+            "compatibility_review_required"
+        );
+    }
+
+    #[tokio::test]
+    async fn selecting_a_plan_for_the_approved_spec_stays_current() {
+        let (_dir, pool) = open().await;
+        create_spec_with_plan(&pool, sample("Record the ledger."))
+            .await
+            .unwrap();
+        billing_workstream(&pool).await;
+        select_plan(&pool, pick(1, "turn-2")).await.unwrap();
+        assert_eq!(compatibility(&pool, "plan-ledger").await, "current");
+    }
+
+    /// A pool on a WAL file with a short busy timeout, so a read that needs
+    /// the write lock fails fast instead of waiting.
+    async fn short_timeout_pool(path: &std::path::Path) -> SqlitePool {
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            .busy_timeout(std::time::Duration::from_millis(50));
+        sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(options)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn reads_do_not_need_the_write_lock_after_the_schema_exists() {
+        use sqlx::Connection;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reads.db");
+        let pool = short_timeout_pool(&path).await;
+        ensure_hierarchy_schema(&pool).await.unwrap();
+        // Warm every connection so none has to open while the lock is held.
+        let warm: Vec<_> = vec![pool.acquire().await.unwrap(), pool.acquire().await.unwrap()];
+        drop(warm);
+
+        let mut writer = sqlx::SqliteConnection::connect_with(
+            &sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .busy_timeout(std::time::Duration::from_millis(50)),
+        )
+        .await
+        .unwrap();
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut writer)
+            .await
+            .unwrap();
+
+        assert_eq!(hierarchy_enabled(&pool).await, Ok(false));
+        assert_eq!(specs_for_session(&pool, "s").await, Ok(Vec::new()));
+        assert_eq!(selected_plans(&pool, "w").await, Ok(Vec::new()));
+        assert_eq!(import_review_ids(&pool).await, Ok(Vec::new()));
+
+        sqlx::query("ROLLBACK").execute(&mut writer).await.unwrap();
     }
 
     async fn compatibility(pool: &SqlitePool, plan_id: &str) -> String {

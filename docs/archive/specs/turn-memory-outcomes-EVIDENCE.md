@@ -33,9 +33,9 @@
 | H2 | `h2_history_questions_are_recognised`, `tools::tests::h2_history_question_points_the_agent_to_ax_history` |
 | H3 | `h3_since_drops_older_entries`, `h3_since_drops_older_turns`, `h3_since_in_the_future_drops_a_commit_made_just_now`, `tools::tests::ax_history_since_filters_and_rejects_bad_dates`, layer 7 (`--since 2999-01-01`, bad date rejected) |
 | H4 | `h4_listing_cuts_the_outcome_and_the_id_gives_it_in_full`, `history_entry_is_only_for_turn_memories`, layer 7 (`ax history --id`) |
-| P1 | `p1_p2_turn_older_than_retention_is_backed_up_then_deleted`, `backups_append_to_the_same_day_file`, `the_backup_holds_only_turn_memories`, `retention_is_90_days`, layer 7 (91-day-old turn pruned at the next turn end, found in the backup) |
-| P2 | `p1_p2_turn_older_than_retention_is_backed_up_then_deleted` (89 days kept), `nothing_to_prune_writes_no_backup_file` |
-| P3 | `p3_failed_backup_deletes_nothing` |
+| P1 | `p1_p2_turn_older_than_retention_is_backed_up_then_archived`, `backups_append_to_the_same_day_file`, `the_backup_holds_only_turn_memories`, `retention_is_90_days`, layer 7 (91-day-old turn pruned at the next turn end, found in the backup) |
+| P2 | `p1_p2_turn_older_than_retention_is_backed_up_then_archived` (89 days kept), `nothing_to_prune_writes_no_backup_file` |
+| P3 | `p3_failed_backup_demotes_nothing` |
 | 1b: quoted marker | `a_prompt_quoting_the_outcome_marker_is_not_an_outcome` (red before the fix) |
 | Catalog | `tools::tests::ax_history_is_in_the_default_catalog`, `catalog_payload_size` |
 | Installer | `hooks::tests` (the `afterAgentResponse` entry shape, idempotence, removal), layer 7 (install twice gives one entry under `afterAgentResponse`; uninstall removes it) |
@@ -43,7 +43,7 @@
 | Must not change: turns never exported | existing `export_never_writes_turn_memories` passes; per-turn mutant M3 killed |
 | Must not change: hooks never block or print | existing `main::turn_hook_is_always_quiet`; layer 7 runs every `turn-hook` call through `quiet` (no stdout, no stderr, exit 0) |
 | Gauntlet leaves the user's agent hooks alone | layer 7 of both gauntlets runs with a temp `HOME` and fails if `~/.cursor/hooks.json` or `~/.claude/settings.json` changed |
-| Must not change: other memory kinds and preflight blocks | `prune_removes_only_old_turn_memories`, `the_backup_holds_only_turn_memories`, existing preflight tests pass unchanged |
+| Must not change: other memory kinds and preflight blocks | `prune_demotes_only_old_turn_memories`, `the_backup_holds_only_turn_memories`, existing preflight tests pass unchanged |
 
 ## Gauntlet (one run on `6690c81`)
 
