@@ -584,6 +584,39 @@ impl QueryBuilder {
         Ok(nodes)
     }
 
+    /// One page of non-exported nodes of `kinds` that no edge other than
+    /// `contains` points at, in a stable order (file, line, id). Callers page
+    /// with `offset` until a page comes back shorter than `limit`.
+    pub async fn get_unreferenced_nodes(
+        &self,
+        kinds: &[NodeKind],
+        limit: u32,
+        offset: u64,
+    ) -> Result<Vec<Node>, AxError> {
+        if kinds.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ph = kinds.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT n.* FROM nodes n \
+             WHERE n.kind IN ({ph}) AND COALESCE(n.is_exported, 0) = 0 \
+             AND NOT EXISTS (SELECT 1 FROM edges e WHERE e.target = n.id AND e.kind != ?) \
+             ORDER BY n.file_path, n.start_line, n.id LIMIT ? OFFSET ?"
+        );
+        let mut query = sqlx::query_as::<_, NodeRow>(&sql);
+        for kind in kinds {
+            query = query.bind(kind.as_str());
+        }
+        let rows = query
+            .bind(EdgeKind::Contains.as_str())
+            .bind(i64::from(limit))
+            .bind(i64::try_from(offset).unwrap_or(i64::MAX))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| self.sql_err(e))?;
+        Ok(rows.into_iter().map(|r| r.into_node()).collect())
+    }
+
     pub async fn get_nodes_by_name(&self, name: &str) -> Result<Vec<Node>, AxError> {
         // SQLite's lower() folds ASCII only, so the cache key does the same.
         let key = name.to_ascii_lowercase();
@@ -634,6 +667,22 @@ impl QueryBuilder {
             .await
             .map_err(|e| self.sql_err(e))?
         };
+        Ok(rows.into_iter().map(|r| r.into_edge()).collect())
+    }
+
+    /// Edges from doc and contract nodes (`doc:…`, `contract:…`) into nodes
+    /// of `file_path`. A scoped re-extract deletes those nodes, which drops
+    /// these edges by cascade; the caller stores them again afterwards.
+    pub async fn get_doc_edges_into_file(&self, file_path: &str) -> Result<Vec<Edge>, AxError> {
+        let rows = sqlx::query_as::<_, EdgeRow>(
+            "SELECT e.source, e.target, e.kind, e.metadata, e.line, e.col, e.provenance, e.confidence \
+             FROM edges e JOIN nodes n ON n.id = e.target \
+             WHERE n.file_path = ? AND (e.source LIKE 'doc:%' OR e.source LIKE 'contract:%')",
+        )
+        .bind(file_path)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| self.sql_err(e))?;
         Ok(rows.into_iter().map(|r| r.into_edge()).collect())
     }
 
@@ -729,6 +778,41 @@ impl QueryBuilder {
             .await
             .map_err(|e| self.sql_err(e))?;
         Ok(())
+    }
+
+    /// Remove every node whose id starts with `prefix` and is not in `keep`
+    /// (edges cascade via FK). Replica nodes are never touched.
+    ///
+    /// Used by passes that rewrite a whole id namespace, such as `contract:`,
+    /// so ids an older run wrote and the current run no longer produces do
+    /// not linger. Returns the number of nodes removed.
+    pub async fn delete_nodes_with_prefix_except(
+        &self,
+        prefix: &str,
+        keep: &std::collections::HashSet<String>,
+    ) -> Result<usize, AxError> {
+        let ids = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM nodes WHERE substr(id, 1, length(?1)) = ?1 \
+             AND id NOT GLOB 'ax-replica/*'",
+        )
+        .bind(prefix)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| self.sql_err(e))?;
+        let stale: Vec<String> = ids.into_iter().filter(|id| !keep.contains(id)).collect();
+        if stale.is_empty() {
+            return Ok(0);
+        }
+        let mut tx = self.pool.begin().await.map_err(|e| self.sql_err(e))?;
+        for id in &stale {
+            sqlx::query("DELETE FROM nodes WHERE id = ?")
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| self.sql_err(e))?;
+        }
+        tx.commit().await.map_err(|e| self.sql_err(e))?;
+        Ok(stale.len())
     }
 
     /// Node ids whose exact `qualified_name` or `name` equals `symbol`
@@ -875,18 +959,33 @@ impl QueryBuilder {
             })
             .collect();
 
-        results.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // One predicate for every row, so the exact-name supplement below
+        // honours the same kind, language and path filters as FTS/LIKE.
+        let passes_filters = |node: &Node| -> bool {
+            if let Some(kinds) = &opts.kinds {
+                if !kinds.contains(&node.kind) {
+                    return false;
+                }
+            }
+            if let Some(langs) = &opts.languages {
+                if !langs.contains(&node.language) {
+                    return false;
+                }
+            }
+            if let Some(patterns) = &opts.include_patterns {
+                if !patterns.iter().any(|p| node.file_path.contains(p)) {
+                    return false;
+                }
+            }
+            if let Some(patterns) = &opts.exclude_patterns {
+                if patterns.iter().any(|p| node.file_path.contains(p)) {
+                    return false;
+                }
+            }
+            true
+        };
 
-        if let Some(patterns) = &opts.include_patterns {
-            results.retain(|r| patterns.iter().any(|p| r.node.file_path.contains(p)));
-        }
-        if let Some(patterns) = &opts.exclude_patterns {
-            results.retain(|r| !patterns.iter().any(|p| r.node.file_path.contains(p)));
-        }
+        results.retain(|r| passes_filters(&r.node));
 
         // CG: exact name supplement when FTS/LIKE returned candidates.
         if !query.trim().is_empty() && !results.is_empty() {
@@ -895,7 +994,7 @@ impl QueryBuilder {
             for term in query.split_whitespace().filter(|t| t.len() >= 2) {
                 let exact = self.get_nodes_by_lower_name(term).await?;
                 for node in exact {
-                    if existing.insert(node.id.clone()) {
+                    if passes_filters(&node) && existing.insert(node.id.clone()) {
                         results.push(SearchResult {
                             node,
                             score: 1.0,
@@ -905,6 +1004,13 @@ impl QueryBuilder {
                 }
             }
         }
+
+        // Stable sort: supplement rows keep their place among equal scores.
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         if results.len() > limit as usize {
             results.truncate(limit as usize);

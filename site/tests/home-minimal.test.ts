@@ -37,9 +37,9 @@ test('the homepage is calm: no backdrop, no motion control, no reveal, no effect
   assert.doesNotMatch(home, /DeckBackdrop|MotionControl|ScrollReveal|data-ax-reveal/);
   assert.doesNotMatch(css, /animation|@keyframes|transition|backdrop-filter|filter:|box-shadow|gradient|mix-blend-mode/);
   assert.doesNotMatch(css, /background-image:\s*url\(/);
-  // One accent: blue for text and lines, a darker blue with white text for fills.
-  assert.match(css, /--ax-accent: #8fbfff;/);
-  assert.match(css, /--ax-accent-fill: #1372da;/);
+  // One accent: Cursor frost for text, lines and fills, with dark text on fills.
+  assert.match(css, /--ax-accent: #88c0d0;/);
+  assert.match(css, /--ax-accent-fill: #88c0d0;/);
   assert.match(css, /\.ax-landing \.ax-download-primary \{[^}]*background: var\(--ax-accent-fill\);[^}]*color: var\(--ax-on-accent\)/);
   assert.match(css, /\.ax-landing \.ax-eyebrow \{[^}]*color: var\(--ax-dim\)/);
   // The page scrolls like a normal page.

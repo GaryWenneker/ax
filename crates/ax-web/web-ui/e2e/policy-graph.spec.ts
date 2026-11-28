@@ -1,8 +1,54 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import { mockApi, policyRow, settledGraphNodes } from './fixtures';
+
 const overlay = (page: Page) => page.getByRole('dialog', { name: 'Policy graph' });
 
+const graphNode = (kind: 'rule' | 'skill' | 'memory', id: string, origin = 'project') => ({
+  key: `${kind}:${origin}:${id}`,
+  kind,
+  id,
+  label: id,
+  origin,
+  target: id,
+  tags: ['misc'],
+});
+
+const policyDoc = (id: string) => ({
+  frontmatter: policyRow({ id, name: id }),
+  body: `Saved body of ${id}.`,
+});
+
+async function servePolicy(page: Page): Promise<void> {
+  const rules = ['english-only', 'calm-lists'].map((id) => policyRow({ id, name: id, sourcePath: `.agents/rules/${id}.mdc` }));
+  const skills = [policyRow({ id: 'pr', name: 'pr', sourcePath: '.agents/skills/pr/SKILL.md' })];
+  await mockApi(page, {
+    '/api/links/graph': {
+      nodes: [
+        graphNode('rule', 'english-only'),
+        graphNode('rule', 'calm-lists'),
+        graphNode('skill', 'pr'),
+        graphNode('rule', 'house-style', 'global'),
+      ],
+      edges: [
+        { source: 'rule:project:english-only', target: 'skill:project:pr' },
+        { source: 'rule:project:calm-lists', target: 'skill:project:pr' },
+      ],
+    },
+    '/api/links': { outgoing: [], backlinks: [] },
+    '/api/policy/settings': { storage: 'files' },
+    '/api/policy/rules/catalog/audits': [],
+    '/api/policy/skills/catalog/audits': [],
+    '/api/policy/rules': { rules },
+    '/api/policy/skills': { skills },
+    '/api/policy/rules/english-only': policyDoc('english-only'),
+    '/api/policy/rules/calm-lists': policyDoc('calm-lists'),
+    '/api/policy/skills/pr': policyDoc('pr'),
+  });
+}
+
 async function openGraph(page: Page, path: string) {
+  await servePolicy(page);
   await page.goto(path);
   await page.evaluate(() => localStorage.removeItem('ax.graph.policy.settings'));
   await page.reload();
@@ -10,17 +56,12 @@ async function openGraph(page: Page, path: string) {
   await expect(overlay(page).locator('canvas.graph-canvas')).toBeVisible();
 }
 
-async function findNode(page: Page): Promise<{ x: number; y: number }> {
-  const wrap = overlay(page).locator('.graph-canvas-wrap');
-  await page.waitForTimeout(4000);
-  const box = (await overlay(page).locator('canvas.graph-canvas').boundingBox())!;
-  for (let y = box.y + 60; y < box.y + box.height - 60; y += 6) {
-    for (let x = box.x + 200; x < box.x + box.width - 200; x += 6) {
-      await page.mouse.move(x, y);
-      if (await wrap.getAttribute('data-hover')) return { x, y };
-    }
-  }
-  throw new Error('no node found under the cursor');
+/** A project rule or skill node the pointer can reach. */
+async function findNode(page: Page): Promise<{ key: string; x: number; y: number }> {
+  const found = await settledGraphNodes(page, overlay(page));
+  const node = found.find((n) => n.key.includes(':project:'));
+  if (!node) throw new Error('no project node on the canvas');
+  return node;
 }
 
 test.describe('Policy graph overlay', () => {
@@ -67,7 +108,9 @@ test.describe('Policy graph overlay', () => {
     await openGraph(page, '/policy/rules');
     const o = overlay(page);
     const at = await findNode(page);
-    const key = (await o.locator('.graph-canvas-wrap').getAttribute('data-hover'))!;
+    const key = at.key;
+    await page.mouse.move(at.x, at.y);
+    await expect(o.locator('.graph-canvas-wrap')).toHaveAttribute('data-hover', key);
     await page.mouse.click(at.x, at.y);
     await expect(o.locator('.graph-canvas-wrap')).toHaveAttribute('data-selected', key);
     const kind = key.split(':')[0];
@@ -82,6 +125,7 @@ test.describe('Auto-group', () => {
 
   for (const [path, noun] of [['/policy/rules', 'rules'], ['/policy/skills', 'skills']] as const) {
     test(`${noun} page previews suggestions without saving`, async ({ page }) => {
+      await servePolicy(page);
       await page.goto(path);
       await page.locator('#main-content').getByRole('button', { name: 'Auto-group', exact: true }).click();
       const dialog = page.getByRole('dialog', { name: `Auto-group ${noun}` });

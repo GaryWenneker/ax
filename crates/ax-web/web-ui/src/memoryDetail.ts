@@ -112,6 +112,14 @@ export function shouldDismissDiffPopup(hit: { onCommit: boolean; insidePopup: bo
   return !hit.onCommit && !hit.insidePopup;
 }
 
+/**
+ * The popup is a portal child of the commit, so its clicks and keys bubble to the
+ * commit's handlers. Only events that did not start inside the popup belong to the commit.
+ */
+export function anchorOwnsEvent(target: unknown, popup: { contains: (node: never) => boolean } | null): boolean {
+  return !popup?.contains(target as never);
+}
+
 /** File rows open the git host in a new tab when a URL is known. */
 export function gitFileLinkProps(
   url: string | undefined,

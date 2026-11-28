@@ -30,7 +30,9 @@ pub trait LoginBackend: Send + Sync {
     /// `None` when the attempt is unknown or has expired.
     fn status<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Option<LoginState>>;
     fn cancel<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<(), String>>;
-    /// Removes stored tokens for an address and revokes them when possible.
+    /// Stops ax-admin using the sign-in for an address. The stored tokens are
+    /// removed and revoked only when nothing else, such as `ax mcp remote`,
+    /// uses them; otherwise they stay for that user.
     fn logout<'a>(&'a self, url: &'a str) -> BoxFuture<'a, Result<(), String>>;
     fn tokens(&self, url: &str) -> Arc<dyn TokenSource>;
 }
@@ -66,8 +68,14 @@ impl LoginBackend for BrowserLogin {
     ) -> BoxFuture<'_, Result<LoginStarted, String>> {
         Box::pin(async move {
             // Discovery refuses anything but an https:// address.
-            let started =
-                ax_remote_client::client::start_login_scoped(url, client_id, write, admin).await?;
+            let started = ax_remote_client::client::start_login_as(
+                url,
+                client_id,
+                write,
+                admin,
+                ax_remote_client::credentials::USER_ADMIN,
+            )
+            .await?;
             Ok(LoginStarted {
                 id: started.id,
                 authorization_url: started.authorization_url,
@@ -90,7 +98,10 @@ impl LoginBackend for BrowserLogin {
         Box::pin(ax_remote_client::client::cancel_login(id))
     }
     fn logout<'a>(&'a self, url: &'a str) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(ax_remote_client::client::logout(url))
+        Box::pin(ax_remote_client::client::release(
+            url,
+            ax_remote_client::credentials::USER_ADMIN,
+        ))
     }
     fn tokens(&self, url: &str) -> Arc<dyn TokenSource> {
         Arc::new(StoredTokens(url.to_owned()))

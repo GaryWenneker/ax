@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLive, useNewKeys } from '../lib/useLive';
-import { fetchUnresolved, fetchUnresolvedSummary, reconcileUnresolved } from '../api';
+import {
+  cancelLspEnrich,
+  fetchLspProgress,
+  fetchLspStatus,
+  fetchUnresolved,
+  fetchUnresolvedSummary,
+  installLspServer,
+  reconcileUnresolved,
+  runLspEnrich as requestLspEnrich,
+} from '../api';
 import NodeDetailPanel from '../components/NodeDetail';
 import Codicon from '../components/Codicon';
 import ModalShell from '../components/ModalShell';
@@ -212,11 +221,11 @@ export default function UnresolvedPage({
   async function loadLspStatus() {
     setLspStatusLoading(true);
     try {
-      const r = await fetch('/api/lsp/status');
-      const d = await r.json();
-      setLspServers(Array.isArray(d.servers) ? d.servers : []);
-    } catch {
+      const d = await fetchLspStatus();
+      setLspServers(Array.isArray(d.servers) ? (d.servers as LspServer[]) : []);
+    } catch (e) {
       setLspServers([]);
+      setError(`Could not read the language servers: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setLspStatusLoading(false);
     }
@@ -236,12 +245,7 @@ export default function UnresolvedPage({
   async function installOne(s: LspServer) {
     setInstalling(s.id);
     try {
-      const r = await fetch('/api/lsp/install', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: s.id }),
-      });
-      const d = await r.json();
+      const d = await installLspServer(s.id);
       const body = d.ok ? String(d.output ?? '') : String(d.error ?? 'install failed');
       setInstallLog((log) => [...log, `$ ${s.install}\n${body.trim()}`]);
     } catch (e) {
@@ -272,8 +276,7 @@ export default function UnresolvedPage({
   const fetchProgress = useCallback(async () => {
     const seq = ++progressSeq.current;
     try {
-      const r = await fetch('/api/lsp/progress');
-      const d = parseProgress(await r.json());
+      const d = parseProgress(await fetchLspProgress());
       if (d && seq === progressSeq.current) setProgress(d);
       return d;
     } catch {
@@ -312,8 +315,7 @@ export default function UnresolvedPage({
   async function stopLspEnrich() {
     setStopping(true);
     try {
-      const r = await fetch('/api/lsp/cancel', { method: 'POST' });
-      const d = await r.json();
+      const d = await cancelLspEnrich();
       if (!d.ok) throw new Error(d.error || 'Could not stop the run');
     } catch (e) {
       setStopping(false);
@@ -330,12 +332,7 @@ export default function UnresolvedPage({
     setOk(null);
     setEnrichReport(null);
     try {
-      const r = await fetch('/api/lsp/enrich', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ limit: enrichLimit }),
-      });
-      const d = await r.json();
+      const d = await requestLspEnrich(enrichLimit);
       if (!d.ok) throw new Error(d.error || 'LSP enrich failed');
       const report = d.report ?? {};
       const examined = Number(report.examined ?? 0);

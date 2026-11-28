@@ -12,17 +12,25 @@ import {
   type ItemLinks,
   type LinkKind,
 } from '../wikilinks';
+import { itemLinksKey, visibleLinks } from '../lib/itemLinks';
 
 const KIND_ICON: Record<LinkKind, string> = { rule: 'law', skill: 'tools', memory: 'note' };
 
 const REFETCH_DELAY_MS = 400;
 
-/** Links of one item, refetched shortly after its body changes (links come from the saved
- *  body, so a link typed but not saved stays plain text). `null` until loaded or on error. */
-export function useItemLinks(kind: LinkKind, id: string | null | undefined, origin: string | undefined, body: string): ItemLinks | null {
+/** Links of one item, refetched shortly after its body changes and after each save (bump
+ *  `version`): links come from the saved body, so a link typed but not saved stays plain
+ *  text. `null` until the current item's links load, or on error. */
+export function useItemLinks(
+  kind: LinkKind,
+  id: string | null | undefined,
+  origin: string | undefined,
+  body: string,
+  version = 0,
+): ItemLinks | null {
   const [links, setLinks] = useState<ItemLinks | null>(null);
   const [loadedFor, setLoadedFor] = useState('');
-  const key = id ? `${kind}:${origin ?? ''}:${id}` : '';
+  const key = itemLinksKey(kind, id, origin);
   useEffect(() => {
     if (!key || !id) {
       setLinks(null);
@@ -36,8 +44,8 @@ export function useItemLinks(kind: LinkKind, id: string | null | undefined, orig
     const timer = setTimeout(load, loadedFor === key ? REFETCH_DELAY_MS : 0);
     return () => { live = false; clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- loadedFor only picks the delay
-  }, [key, body]);
-  return links;
+  }, [key, body, version]);
+  return visibleLinks(links, loadedFor, key);
 }
 
 /** Opens Command Center links in place; the missing-link marker goes nowhere. */

@@ -191,13 +191,25 @@ impl Default for UiSection {
     }
 }
 
+/// The ship settings of `project_root`, or defaults when there is no
+/// `.ax/ship.toml`. A file that cannot be read or parsed is logged and gives
+/// defaults; use [`try_load_ship_config`] to get that error instead.
 pub fn load_ship_config(project_root: &Path) -> ShipConfig {
-    let path = crate::config::config_path(project_root);
-    let mut config = if !path.exists() {
+    try_load_ship_config(project_root).unwrap_or_else(|error| {
+        tracing::warn!("{error}; using default ship settings");
         ShipConfig::default()
-    } else {
-        let text = std::fs::read_to_string(&path).unwrap_or_default();
-        toml::from_str(&text).unwrap_or_else(|_| ShipConfig::default())
+    })
+}
+
+/// Like [`load_ship_config`], but a `.ax/ship.toml` that cannot be read or
+/// parsed is an error that names the file and the problem.
+pub fn try_load_ship_config(project_root: &Path) -> Result<ShipConfig, String> {
+    let path = crate::config::config_path(project_root);
+    let mut config = match std::fs::read_to_string(&path) {
+        Ok(text) => toml::from_str(&text)
+            .map_err(|e| format!("Cannot parse {}: {}", path.display(), e.message()))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => ShipConfig::default(),
+        Err(e) => return Err(format!("Cannot read {}: {e}", path.display())),
     };
 
     // Migrate legacy single git_root into git_roots when the list is empty.
@@ -213,15 +225,23 @@ pub fn load_ship_config(project_root: &Path) -> ShipConfig {
         }
     }
 
-    config
+    Ok(config)
 }
 
+/// Writes `config` to `.ax/ship.toml`. Refuses while the file on disk cannot be
+/// read or parsed: the value to save was then built from defaults, and writing
+/// it would replace the user's settings. Fix or remove the file first.
 pub fn save_ship_config(project_root: &Path, config: &ShipConfig) -> Result<(), String> {
+    if let Err(error) = try_load_ship_config(project_root) {
+        return Err(format!(
+            "{error}. Not saving ship settings over it; fix or remove the file first"
+        ));
+    }
     let ax_dir = project_root.join(".ax");
     std::fs::create_dir_all(&ax_dir).map_err(|e| e.to_string())?;
     let path = crate::config::config_path(project_root);
     let text = toml::to_string_pretty(config).map_err(|e| e.to_string())?;
-    std::fs::write(&path, text + "\n").map_err(|e| e.to_string())
+    ax_utils::atomic_write(&path, (text + "\n").as_bytes()).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -275,5 +295,44 @@ mod tests {
         let text = toml::to_string_pretty(&config).unwrap();
         let parsed: ShipConfig = toml::from_str(&text).unwrap();
         assert_eq!(parsed.ui.timezone, "Europe/Amsterdam");
+    }
+
+    const BROKEN: &str = "[ship]\nweb_port = \"7070\"\n\n[remote]\nprovider = \"github\"\n\n[sonar]\nenabled = true\n";
+
+    #[test]
+    fn a_ship_toml_that_does_not_parse_is_reported_and_never_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = crate::config::config_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, BROKEN).unwrap();
+
+        let error = try_load_ship_config(dir.path()).unwrap_err();
+        assert!(error.contains("ship.toml"), "{error}");
+
+        // Callers that only need a value get the defaults ...
+        let mut config = load_ship_config(dir.path());
+        assert!(config.ship.git_roots.is_empty());
+        // ... but saving them back would destroy the user's settings.
+        config.ship.git_roots = vec!["repo-a".into()];
+        let refused = save_ship_config(dir.path(), &config).unwrap_err();
+        assert!(refused.contains("ship.toml"), "{refused}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), BROKEN);
+    }
+
+    #[test]
+    fn a_valid_or_missing_ship_toml_loads_and_saves() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            try_load_ship_config(dir.path()).unwrap().ship.target_branch,
+            ShipConfig::default().ship.target_branch
+        );
+        let mut config = ShipConfig::default();
+        config.ship.git_roots = vec!["repo-a".into()];
+        save_ship_config(dir.path(), &config).unwrap();
+        let loaded = try_load_ship_config(dir.path()).unwrap();
+        assert_eq!(loaded.ship.git_roots, vec!["repo-a".to_string()]);
+        config.ship.git_roots.push("repo-b".into());
+        save_ship_config(dir.path(), &config).unwrap();
+        assert_eq!(load_ship_config(dir.path()).ship.git_roots.len(), 2);
     }
 }

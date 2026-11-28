@@ -11,7 +11,9 @@ use crate::liveness_watchdog::install_main_thread_watchdog;
 use crate::ppid_watchdog::spawn_ppid_watchdog;
 use crate::proxy::attach_or_spawn;
 use crate::tools::{server_instructions, ToolHandler};
-use crate::transport::{is_notification, StdioTransport, METHOD_NOT_FOUND, PARSE_ERROR};
+use crate::transport::{
+    is_notification, StdioTransport, INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND, PARSE_ERROR,
+};
 use crate::verbose::{
     deliver_local, format_mcp_log_notification, push_error, push_inbound, push_internal, push_line,
     push_outbound, verbose_enabled, with_trace_buffer,
@@ -23,20 +25,38 @@ use ax_usage::{estimate_savings, spawn_record_mcp_call, McpCallRecord};
 pub struct RequestOutcome {
     pub result: Result<Value, String>,
     pub verbose_lines: Vec<String>,
+    /// The JSON-RPC error code to answer with when `result` is an error.
+    pub error_code: i32,
 }
 
 impl RequestOutcome {
     fn ok(value: Value) -> Self {
+        Self::with_lines(Ok(value), Vec::new())
+    }
+
+    /// A request that reached its handler: a failure is an internal error.
+    fn with_lines(result: Result<Value, String>, verbose_lines: Vec<String>) -> Self {
         Self {
-            result: Ok(value),
-            verbose_lines: Vec::new(),
+            result,
+            verbose_lines,
+            error_code: INTERNAL_ERROR,
         }
     }
 
-    fn err(msg: String) -> Self {
+    /// The request's arguments were rejected before any work ran.
+    fn invalid_params(message: String) -> Self {
         Self {
-            result: Err(msg),
+            result: Err(message),
             verbose_lines: Vec::new(),
+            error_code: INVALID_PARAMS,
+        }
+    }
+
+    fn method_not_found(method: &str) -> Self {
+        Self {
+            result: Err(format!("method not found: {method}")),
+            verbose_lines: Vec::new(),
+            error_code: METHOD_NOT_FOUND,
         }
     }
 }
@@ -93,7 +113,7 @@ pub async fn run_stdio_server(
                 let id = req.id.clone().unwrap_or(Value::Null);
                 match outcome.result {
                     Ok(value) => StdioTransport::send_result(id, value)?,
-                    Err(msg) => StdioTransport::send_error(Some(id), METHOD_NOT_FOUND, &msg)?,
+                    Err(msg) => StdioTransport::send_error(Some(id), outcome.error_code, &msg)?,
                 }
                 // Embedded stdio path (no daemon proxy): stderr + log file +
                 // MCP logging notifications on stdout for Cursor Output.
@@ -106,10 +126,12 @@ pub async fn run_stdio_server(
                         StdioTransport::send_notification_line(&format_mcp_log_notification(text));
                 }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
-            Err(e) => {
+            // The client closed stdin: stop instead of reading a closed pipe.
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
                 StdioTransport::send_error(None, PARSE_ERROR, &e.to_string())?;
             }
+            Err(e) => return Err(e.into()),
         }
     }
 }
@@ -175,28 +197,35 @@ pub async fn handle_request(engine: &mut McpEngine, method: &str, params: Value)
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let args = params.get("arguments").cloned().unwrap_or(Value::Null);
+            let args = crate::request_context::public_args(
+                params.get("arguments").cloned().unwrap_or(Value::Null),
+            );
+            if let Some(root) = project_root.as_deref() {
+                if let Err(message) = crate::request_context::validate(root, &args) {
+                    return RequestOutcome::invalid_params(message);
+                }
+            }
             let verbose = verbose_enabled(project_root.as_deref());
             if verbose {
-                let (result, verbose_lines) = with_trace_buffer(async {
+                // Resolved once per call; remote callers never get the host's Cursor session.
+                let session = if engine.is_remote() {
+                    None
+                } else {
+                    crate::verbose::active_session_id()
+                };
+                let (result, verbose_lines) = with_trace_buffer(session, async {
                     call_tool_and_wrap(engine, &name, args, project_root.as_deref(), true).await
                 })
                 .await;
-                RequestOutcome {
-                    result,
-                    verbose_lines,
-                }
+                RequestOutcome::with_lines(result, verbose_lines)
             } else {
                 let result =
                     call_tool_and_wrap(engine, &name, args, project_root.as_deref(), false).await;
-                RequestOutcome {
-                    result,
-                    verbose_lines: Vec::new(),
-                }
+                RequestOutcome::with_lines(result, Vec::new())
             }
         }
         "notifications/initialized" => RequestOutcome::ok(Value::Null),
-        _ => RequestOutcome::err(format!("method not found: {}", method)),
+        _ => RequestOutcome::method_not_found(method),
     }
 }
 
@@ -381,10 +410,7 @@ async fn call_tool_and_wrap_as(
     verbose: bool,
     mode: StructuredMode,
 ) -> Result<Value, String> {
-    let args = crate::request_context::public_args(args);
-    if let Some(root) = project_root {
-        crate::request_context::validate(root, &args)?;
-    }
+    // handle_request already removed private keys and validated the arguments.
     if is_policy_tool(name) {
         if let Err(e) = engine.ensure_policy_fresh().await {
             tracing::warn!("ensure_policy_fresh failed (tool {name} continues): {e}");
@@ -453,26 +479,9 @@ async fn call_tool_and_wrap_as(
             .unwrap_or_else(|e| e.into_inner())
             .push((root.to_path_buf(), name.to_string()));
     }
-    let result = if let Some(pool) = engine.query_pool() {
-        if pool.healthy() && crate::query_pool::is_read_tool(name) {
-            pool.run(|| async {
-                let mut guard = engine.lock_ax().await;
-                if let Some(ax) = guard.as_mut() {
-                    ToolHandler::call_tool(ax, name, args).await
-                } else {
-                    Err("ax not initialized".to_string())
-                }
-            })
-            .await
-        } else {
-            let mut guard = engine.lock_ax().await;
-            if let Some(ax) = guard.as_mut() {
-                ToolHandler::call_tool(ax, name, args).await
-            } else {
-                Err("ax not initialized".to_string())
-            }
-        }
-    } else {
+    engine.wait_for_catch_up(name).await;
+    // Calls on one engine run one at a time: they share its single Ax handle.
+    let result = {
         let mut guard = engine.lock_ax().await;
         if let Some(ax) = guard.as_mut() {
             ToolHandler::call_tool(ax, name, args).await
@@ -493,12 +502,13 @@ async fn call_tool_and_wrap_as(
             }
         }
     }
+    // Record in memory only; the background flush persists the queue off this task.
     if let Ok(mut t) = telemetry().lock() {
         t.record_usage("mcp_tool", name, result.is_ok(), None);
-        t.persist_sync();
     }
     ax_telemetry::trigger_background_flush();
     let result = result.map(|value| record_policy_delivery(engine, value));
+    let result = result.map(|value| engine.note_catch_up(name, value));
     let duration_ms = started.elapsed().as_millis() as i64;
     let project = project_root.map(|p| p.display().to_string());
     match &result {
@@ -548,7 +558,7 @@ async fn call_tool_and_wrap_as(
                         removed_tokens,
                     } => {
                         if let Some(line) = ax_usage::format_context_store_line(
-                            crate::verbose::active_session_id().as_deref(),
+                            crate::verbose::trace_session().as_deref(),
                             id,
                             *original_tokens,
                             *sent_tokens,
@@ -924,12 +934,15 @@ fn token_budget_hint(tool: &str, response_tokens: i64) -> Option<String> {
     if response_tokens < TOKEN_HINT_THRESHOLD || tool == "ax_preflight" {
         return None;
     }
+    // Advice names only parameters the tool's schema accepts.
     let advice = match tool {
-        "ax_explore" | "ax_context" => "narrow the question or pass a smaller depth",
-        "ax_search" | "ax_files" | "ax_recall" => "add a `limit` or a more specific query",
-        "ax_impact" | "ax_affected" | "ax_callers" | "ax_callees" => {
+        "ax_explore" => "narrow the question or pass a smaller depth or limit",
+        "ax_context" => "narrow the task",
+        "ax_search" | "ax_recall" => "add a `limit` or a more specific query",
+        "ax_impact" | "ax_callers" | "ax_callees" => {
             "reduce depth or target a more specific symbol"
         }
+        "ax_affected" => "pass fewer files",
         _ => "use a more specific query",
     };
     Some(ax_usage::format_ax_tagged(format!(
@@ -958,6 +971,33 @@ mod wrap_tests {
     fn preflight_gets_no_token_budget_banner() {
         assert!(token_budget_hint("ax_preflight", 9_000).is_none());
         assert!(token_budget_hint("ax_explore", 9_000).is_some());
+    }
+
+    #[test]
+    fn token_budget_advice_names_only_parameters_the_tool_accepts() {
+        let tools = [
+            "ax_explore",
+            "ax_context",
+            "ax_search",
+            "ax_files",
+            "ax_recall",
+            "ax_impact",
+            "ax_affected",
+            "ax_callers",
+            "ax_callees",
+        ];
+        let mut defs = crate::tools::ToolHandler::tool_definitions(&tools);
+        defs.push(crate::tools::explore_tool());
+        for name in tools {
+            let hint = token_budget_hint(name, 9_000).expect(name);
+            let def = defs.iter().find(|d| d["name"] == name).expect(name);
+            let props = &def["inputSchema"]["properties"];
+            for param in ["limit", "depth"] {
+                if hint.contains(param) {
+                    assert!(props.get(param).is_some(), "{name} lacks {param}: {hint}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -1097,26 +1137,84 @@ mod wrap_tests {
 #[cfg(test)]
 mod policy_integration {
     use super::*;
-    use std::path::PathBuf;
+    use std::path::Path;
 
-    fn repo_root() -> Option<PathBuf> {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .canonicalize()
-            .ok()?;
-        if root.join(".ax").join("ax.db").exists() {
-            Some(root)
-        } else {
-            None
+    const FIXTURE_RULES: [&str; 4] = [
+        "fixture-alpha",
+        "fixture-beta",
+        "fixture-gamma",
+        "fixture-delta",
+    ];
+
+    /// An indexed project with its own policy and code, so these tests assert
+    /// the same things on every machine and never read this repository's
+    /// live index or policy.
+    async fn policy_fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let rules = root.join(".agents").join("rules");
+        std::fs::create_dir_all(&rules).unwrap();
+        for id in FIXTURE_RULES {
+            std::fs::write(
+                rules.join(format!("{id}.mdc")),
+                format!(
+                    "---\nid: {id}\nlevel: WARNING\nalwaysApply: true\n---\n\n## Rule {id}\n\n{}",
+                    format!("- {id} applies to every change in this fixture.\n").repeat(20)
+                ),
+            )
+            .unwrap();
         }
+        let skill = root.join(".agents").join("skills").join("fixture-skill");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(
+            skill.join("SKILL.md"),
+            format!(
+                "---\nname: fixture-skill\ndescription: Steps for the policy integration fixture.\n---\n# Fixture skill\n\n## FIXTURE-SKILL-BODY\n\n{}",
+                "- Follow the fixture step.\n".repeat(20)
+            ),
+        )
+        .unwrap();
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let steps: String = (0..30)
+            .map(|i| format!("    let s{i} = value.rotate_left({i});\n"))
+            .collect();
+        std::fs::write(
+            src.join("server.rs"),
+            format!(
+                "pub fn lean_structured(name: &str, value: u64) -> u64 {{\n{steps}    let _ = name;\n    explore_entries_compact(value)\n}}\n\
+                 pub fn explore_entries_compact(value: u64) -> u64 {{ value }}\n\
+                 pub fn lean_caller() -> u64 {{ lean_structured(\"x\", 1) }}\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(src.join("tools.rs"), "pub fn skill() -> u32 { 1 }\n").unwrap();
+        std::fs::write(src.join("other.rs"), "pub fn skill() -> u32 { 2 }\n").unwrap();
+        let mut ax = ax_core::Ax::init(root).await.unwrap();
+        ax.index_all(
+            ax_extraction::orchestrator::IndexOptions {
+                quiet: true,
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        ax_policy::index_policy(ax.db_pool(), root, true)
+            .await
+            .unwrap();
+        dir
+    }
+
+    fn engine_for(root: &Path) -> McpEngine {
+        McpEngine::with_project_root(root.to_path_buf())
     }
 
     #[tokio::test]
     async fn mcp_ax_rules_returns_indexed_rules() {
-        let Some(root) = repo_root() else {
-            return;
-        };
-        let mut engine = McpEngine::with_project_root(root);
+        let _env = crate::test_env::shared().await;
+        let dir = policy_fixture().await;
+        let mut engine = engine_for(dir.path());
         let result = handle_request(
             &mut engine,
             "tools/call",
@@ -1132,11 +1230,13 @@ mod policy_integration {
             .get("rules")
             .and_then(|v| v.as_array())
             .expect("rules array");
-        assert!(
-            rules.len() >= 4,
-            "expected indexed rules, got {}",
-            rules.len()
-        );
+        let ids: Vec<&str> = rules
+            .iter()
+            .filter_map(|r| r.get("id").and_then(Value::as_str))
+            .collect();
+        for id in FIXTURE_RULES {
+            assert!(ids.contains(&id), "{id} missing from {ids:?}");
+        }
     }
 
     fn reply_text(result: &Value) -> String {
@@ -1148,8 +1248,9 @@ mod policy_integration {
 
     /// A project whose only policy is three always-apply rules without links, so reply sizes
     /// depend on session skipping alone and not on this repo's live policy.
-    async fn session_fixture() -> PathBuf {
-        let root = std::env::temp_dir().join(format!("ax-mcp-session-{}", uuid::Uuid::new_v4()));
+    async fn session_fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
         let rules = root.join(".agents").join("rules");
         std::fs::create_dir_all(&rules).unwrap();
         for id in ["alpha", "beta", "gamma"] {
@@ -1163,11 +1264,11 @@ mod policy_integration {
             )
             .unwrap();
         }
-        let ax = ax_core::Ax::init(&root).await.unwrap();
-        ax_policy::index_policy(ax.db_pool(), &root, true)
+        let ax = ax_core::Ax::init(root).await.unwrap();
+        ax_policy::index_policy(ax.db_pool(), root, true)
             .await
             .unwrap();
-        root
+        dir
     }
 
     #[test]
@@ -1208,8 +1309,8 @@ mod policy_integration {
     }
 
     async fn preflight_as(client: &str, prompt: &str) -> Value {
-        let root = session_fixture().await;
-        let mut engine = McpEngine::with_project_root(root.clone());
+        let dir = session_fixture().await;
+        let mut engine = McpEngine::with_project_root(dir.path().to_path_buf());
         handle_request(
             &mut engine,
             "initialize",
@@ -1221,7 +1322,7 @@ mod policy_integration {
             .await
             .result
             .expect("preflight");
-        let _ = std::fs::remove_dir_all(root);
+        drop(dir);
         out
     }
 
@@ -1240,8 +1341,8 @@ mod policy_integration {
     #[tokio::test]
     async fn a3_error_replies_are_text_only_for_claude_and_structured_for_others() {
         for (client, structured) in [("claude-code", false), ("gauntlet", true)] {
-            let root = session_fixture().await;
-            let mut engine = McpEngine::with_project_root(root.clone());
+            let dir = session_fixture().await;
+            let mut engine = McpEngine::with_project_root(dir.path().to_path_buf());
             handle_request(
                 &mut engine,
                 "initialize",
@@ -1253,7 +1354,7 @@ mod policy_integration {
                 .await
                 .result
                 .expect("error reply");
-            let _ = std::fs::remove_dir_all(root);
+            drop(dir);
             assert_eq!(out["isError"], true, "{client}: {out}");
             assert!(!out["content"][0]["text"].as_str().unwrap().is_empty());
             assert_eq!(
@@ -1296,8 +1397,9 @@ mod policy_integration {
 
     #[tokio::test]
     async fn second_preflight_on_a_connection_skips_unchanged_bodies() {
-        let root = session_fixture().await;
-        let mut engine = McpEngine::with_project_root(root.clone());
+        let _env = crate::test_env::shared().await;
+        let dir = session_fixture().await;
+        let mut engine = engine_for(dir.path());
         handle_request(
             &mut engine,
             "initialize",
@@ -1326,15 +1428,13 @@ mod policy_integration {
             first.len(),
             second.len()
         );
-        let _ = std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]
     async fn node_signature_mode_returns_location_and_declaration_only() {
-        let Some(root) = repo_root() else {
-            return;
-        };
-        let mut engine = McpEngine::with_project_root(root);
+        let _env = crate::test_env::shared().await;
+        let dir = policy_fixture().await;
+        let mut engine = engine_for(dir.path());
         let call = |mode: Option<&str>| {
             let mut args = json!({ "name": "lean_structured" });
             if let Some(m) = mode {
@@ -1351,7 +1451,7 @@ mod policy_integration {
             .result
             .expect("full");
         let (sig, full) = (reply_text(&sig), reply_text(&full));
-        assert!(sig.contains("crates/ax-mcp/src/server.rs"), "{sig}");
+        assert!(sig.contains("src/server.rs"), "{sig}");
         assert!(sig.contains("fn lean_structured"), "{sig}");
         assert!(!sig.contains("explore_entries_compact(value)"), "{sig}");
         assert!(!sig.contains("### Callers"), "{sig}");
@@ -1366,10 +1466,9 @@ mod policy_integration {
 
     #[tokio::test]
     async fn unchanged_catalog_and_memory_titles_are_sent_once_per_session() {
-        let Some(root) = repo_root() else {
-            return;
-        };
-        let mut engine = McpEngine::with_project_root(root);
+        let _env = crate::test_env::shared().await;
+        let dir = policy_fixture().await;
+        let mut engine = engine_for(dir.path());
         handle_request(
             &mut engine,
             "initialize",
@@ -1425,11 +1524,10 @@ mod policy_integration {
 
     #[tokio::test]
     async fn node_with_exact_qualified_name_returns_only_that_symbol() {
-        let Some(root) = repo_root() else {
-            return;
-        };
-        let mut engine = McpEngine::with_project_root(root);
-        let call = json!({ "name": "ax_node", "arguments": { "name": "crates/ax-mcp/src/tools.rs::skill" } });
+        let _env = crate::test_env::shared().await;
+        let dir = policy_fixture().await;
+        let mut engine = engine_for(dir.path());
+        let call = json!({ "name": "ax_node", "arguments": { "name": "src/tools.rs::skill" } });
         let text = reply_text(
             &handle_request(&mut engine, "tools/call", call)
                 .await
@@ -1437,15 +1535,15 @@ mod policy_integration {
                 .expect("node"),
         );
         assert_eq!(text.matches("## Entry").count(), 1, "{text}");
-        assert!(text.contains("crates/ax-mcp/src/tools.rs::skill"), "{text}");
+        assert!(text.contains("src/tools.rs::skill"), "{text}");
+        assert!(!text.contains("src/other.rs"), "{text}");
     }
 
     #[tokio::test]
     async fn second_skill_load_in_a_session_is_a_short_notice() {
-        let Some(root) = repo_root() else {
-            return;
-        };
-        let mut engine = McpEngine::with_project_root(root);
+        let _env = crate::test_env::shared().await;
+        let dir = policy_fixture().await;
+        let mut engine = engine_for(dir.path());
         handle_request(
             &mut engine,
             "initialize",
@@ -1457,7 +1555,7 @@ mod policy_integration {
             .await
             .result
             .expect("preflight");
-        let call = json!({ "name": "ax_skill", "arguments": { "name": "startup" } });
+        let call = json!({ "name": "ax_skill", "arguments": { "name": "fixture-skill" } });
         let first = reply_text(
             &handle_request(&mut engine, "tools/call", call.clone())
                 .await
@@ -1471,23 +1569,22 @@ mod policy_integration {
                 .expect("second"),
         );
         assert!(
-            first.contains("SS-00"),
+            first.contains("FIXTURE-SKILL-BODY"),
             "first load must carry the body:\n{first}"
         );
         assert!(
-            !second.contains("SS-00"),
+            !second.contains("FIXTURE-SKILL-BODY"),
             "second load resent the body:\n{second}"
         );
-        assert!(second.contains("startup"), "{second}");
+        assert!(second.contains("fixture-skill"), "{second}");
         assert!(second.len() < 400, "{second}");
     }
 
     #[tokio::test]
     async fn new_initialize_resends_bodies() {
-        let Some(root) = repo_root() else {
-            return;
-        };
-        let mut engine = McpEngine::with_project_root(root);
+        let _env = crate::test_env::shared().await;
+        let dir = policy_fixture().await;
+        let mut engine = engine_for(dir.path());
         let call = json!({ "name": "ax_preflight", "arguments": { "prompt": "fix a bug", "session": "policy-test-chat" } });
         handle_request(
             &mut engine,
@@ -1515,10 +1612,9 @@ mod policy_integration {
 
     #[tokio::test]
     async fn mcp_ax_status_policy_counts() {
-        let Some(root) = repo_root() else {
-            return;
-        };
-        let mut engine = McpEngine::with_project_root(root);
+        let _env = crate::test_env::shared().await;
+        let dir = policy_fixture().await;
+        let mut engine = engine_for(dir.path());
         let result = handle_request(
             &mut engine,
             "tools/call",
@@ -1532,7 +1628,40 @@ mod policy_integration {
             .expect("MCP structuredContent");
         let policy = structured.get("policy").expect("policy block");
         let rules = policy.get("rules").and_then(|v| v.as_u64()).unwrap_or(0);
-        assert!(rules >= 4, "policy.rules should be >= 4, got {rules}");
+        assert!(
+            rules >= FIXTURE_RULES.len() as u64,
+            "policy.rules should count the fixture rules, got {rules}"
+        );
+    }
+
+    async fn traced_search(engine: &mut McpEngine) -> Vec<String> {
+        let call = json!({ "name": "ax_search", "arguments": { "query": "lean_structured" } });
+        let outcome = handle_request(engine, "tools/call", call).await;
+        assert!(outcome.result.is_ok(), "{:?}", outcome.result);
+        outcome.verbose_lines
+    }
+
+    #[tokio::test]
+    async fn remote_traces_never_carry_the_host_cursor_session() {
+        let _env = crate::test_env::exclusive().await;
+        let _sid = crate::test_env::EnvVar::set("AX_CURSOR_SESSION_ID", "host-cursor-sid");
+        let dir = policy_fixture().await;
+
+        let mut local = engine_for(dir.path());
+        let lines = traced_search(&mut local).await;
+        assert!(!lines.is_empty());
+        assert!(
+            lines.iter().all(|l| l.contains("session=host-cursor-sid")),
+            "{lines:?}"
+        );
+
+        let mut remote = McpEngine::for_remote(dir.path().to_path_buf());
+        let lines = traced_search(&mut remote).await;
+        assert!(!lines.is_empty());
+        assert!(
+            lines.iter().all(|l| !l.contains("host-cursor-sid")),
+            "{lines:?}"
+        );
     }
 }
 
@@ -1594,22 +1723,13 @@ mod hook_repair {
 mod reuse_integration {
     use super::*;
 
-    async fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
-        static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-        LOCK.lock().await
-    }
-
-    fn isolate_usage_db() {
-        static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-        ONCE.get_or_init(|| {
-            let db =
-                std::env::temp_dir().join(format!("ax-reuse-usage-{}.db", uuid::Uuid::new_v4()));
-            std::env::set_var("AX_USAGE_DB", db);
-        });
+    /// These tests point `AX_HOME_DIR` at their own home, so they hold the
+    /// crate-wide environment lock alone.
+    async fn env_lock() -> tokio::sync::RwLockWriteGuard<'static, ()> {
+        crate::test_env::exclusive().await
     }
 
     async fn fixture() -> (tempfile::TempDir, McpEngine) {
-        isolate_usage_db();
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         std::fs::create_dir_all(root.join("src")).unwrap();
@@ -1701,22 +1821,12 @@ mod reuse_integration {
             .to_string()
     }
 
-    struct HomeGuard(Option<std::ffi::OsString>);
+    struct HomeGuard(#[allow(dead_code)] crate::test_env::EnvVar);
 
     impl HomeGuard {
+        /// Only while holding [`env_lock`].
         fn set(path: &std::path::Path) -> Self {
-            let prev = std::env::var_os("AX_HOME_DIR");
-            std::env::set_var("AX_HOME_DIR", path);
-            Self(prev)
-        }
-    }
-
-    impl Drop for HomeGuard {
-        fn drop(&mut self) {
-            match self.0.take() {
-                Some(value) => std::env::set_var("AX_HOME_DIR", value),
-                None => std::env::remove_var("AX_HOME_DIR"),
-            }
+            Self(crate::test_env::EnvVar::set("AX_HOME_DIR", path))
         }
     }
 
@@ -2893,5 +3003,38 @@ mod reuse_integration {
         assert!(text(&reply).contains("Context budget exceeded"));
         assert!(text(&reply).contains("[CRITICAL]"));
         assert!(!text(&reply).contains("<ax_memory_titles>"));
+    }
+}
+
+#[cfg(test)]
+mod error_codes {
+    use super::*;
+    use crate::transport::INVALID_PARAMS;
+
+    #[tokio::test]
+    async fn invalid_tool_arguments_answer_invalid_params() {
+        let _env = crate::test_env::shared().await;
+        let mine = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        for dir in [&mine, &other] {
+            ax_core::Ax::init(dir.path()).await.unwrap();
+        }
+        let mut engine = McpEngine::with_project_root(mine.path().canonicalize().unwrap());
+        for arguments in [
+            json!({ "projectPath": other.path() }),
+            json!({ "projectPath": "" }),
+            json!("not an object"),
+        ] {
+            let outcome = handle_request(
+                &mut engine,
+                "tools/call",
+                json!({ "name": "ax_rules", "arguments": arguments }),
+            )
+            .await;
+            assert!(outcome.result.is_err(), "{arguments}");
+            assert_eq!(outcome.error_code, INVALID_PARAMS, "{arguments}");
+        }
+        let unknown = handle_request(&mut engine, "resources/list", json!({})).await;
+        assert_eq!(unknown.error_code, METHOD_NOT_FOUND);
     }
 }

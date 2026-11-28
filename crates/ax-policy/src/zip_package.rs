@@ -1,7 +1,7 @@
 //! Portable Sitecore-style zip of selected `.agents` rules and skills.
 
 use std::collections::{HashMap, HashSet};
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Write};
 use std::path::Path;
 
 use serde::de::{self, Deserializer};
@@ -17,6 +17,15 @@ use crate::paths::{RULES_DIR, SKILLS_DIR, SKILL_FILENAME};
 use crate::types::PolicyScope;
 
 pub const ZIP_PACKAGE_MAX_BYTES: usize = 8 * 1024 * 1024;
+/// Largest size one member may have once decompressed.
+pub const ZIP_ENTRY_MAX_BYTES: u64 = 8 * 1024 * 1024;
+/// Largest size all members together may have once decompressed.
+pub const ZIP_TOTAL_MAX_BYTES: u64 = 32 * 1024 * 1024;
+/// Most members a package may hold.
+pub const ZIP_MAX_ENTRIES: usize = 4096;
+/// Most cells the line diff table may use; larger inputs get a plain
+/// remove-then-add diff of the differing middle part.
+const LCS_MAX_CELLS: usize = 4_000_000;
 const KIND: &str = "ax-policy-package";
 const FORMAT_VERSION: u32 = 1;
 
@@ -219,7 +228,12 @@ impl std::fmt::Display for ZipPkgError {
             Self::Empty => write!(f, "select at least one shareable rule or skill"),
             Self::Unknown(ids) => write!(f, "unknown or not shareable: {}", ids.join(", ")),
             Self::BadZip(m) => write!(f, "{m}"),
-            Self::TooLarge => write!(f, "package exceeds {ZIP_PACKAGE_MAX_BYTES} bytes"),
+            Self::TooLarge => write!(
+                f,
+                "package exceeds the size limits ({ZIP_PACKAGE_MAX_BYTES} bytes compressed, \
+                 {ZIP_ENTRY_MAX_BYTES} bytes per file, {ZIP_TOTAL_MAX_BYTES} bytes in all, \
+                 {ZIP_MAX_ENTRIES} files)"
+            ),
             Self::Io(m) => write!(f, "{m}"),
         }
     }
@@ -462,9 +476,14 @@ fn read_shareable_skill(dir: &Path, name: &str) -> Result<Vec<(String, Vec<u8>)>
     Ok(out)
 }
 
+/// A zip member name is accepted only when every segment is a plain name: no
+/// leading `/`, no empty, `.` or `..` segment, and no `:` (drive letters, streams).
 fn zip_entry_ok(name: &str) -> bool {
     let n = name.replace('\\', "/");
-    if n.contains("..") || n.starts_with('/') || n.starts_with("./") {
+    if n.contains(':')
+        || n.split('/')
+            .any(|seg| seg.is_empty() || seg == "." || seg == "..")
+    {
         return false;
     }
     n == "ax-package.json" || n.starts_with("rules/") || n.starts_with("skills/")
@@ -476,20 +495,28 @@ pub fn preview_policy_zip(project_root: &Path, bytes: &[u8]) -> Result<ZipPrevie
     }
     let files = read_zip_map(bytes)?;
     let manifest = parse_manifest(&files)?;
+    Ok(preview_parsed(project_root, &files, &manifest))
+}
+
+fn preview_parsed(
+    project_root: &Path,
+    files: &HashMap<String, Vec<u8>>,
+    manifest: &Manifest,
+) -> ZipPreview {
     let agents = agents_dir(project_root);
     let mut items = Vec::new();
     for r in &manifest.rules {
-        items.push(preview_rule(&agents, &files, r));
+        items.push(preview_rule(&agents, files, r));
     }
     for s in &manifest.skills {
-        items.push(preview_skill(&agents, &files, s));
+        items.push(preview_skill(&agents, files, s));
     }
-    Ok(ZipPreview {
-        name: manifest.name,
-        package_version: manifest.package_version,
-        author: manifest.author,
+    ZipPreview {
+        name: manifest.name.clone(),
+        package_version: manifest.package_version.clone(),
+        author: manifest.author.clone(),
         items,
-    })
+    }
 }
 
 fn preview_rule(
@@ -665,6 +692,30 @@ fn compare_local(
 }
 
 fn lcs_ops<'a>(a: &[&'a str], b: &[&'a str]) -> Vec<(char, &'a str)> {
+    let fits = (a.len() + 1)
+        .checked_mul(b.len() + 1)
+        .is_some_and(|cells| cells <= LCS_MAX_CELLS);
+    if fits {
+        return lcs_table_ops(a, b);
+    }
+    // Too large for the table: keep the common head and tail, and report the
+    // middle as removed then added.
+    let head = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    let tail = a[head..]
+        .iter()
+        .rev()
+        .zip(b[head..].iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    let mut ops: Vec<(char, &'a str)> = Vec::with_capacity(a.len() + b.len());
+    ops.extend(a[..head].iter().map(|l| (' ', *l)));
+    ops.extend(a[head..a.len() - tail].iter().map(|l| ('-', *l)));
+    ops.extend(b[head..b.len() - tail].iter().map(|l| ('+', *l)));
+    ops.extend(a[a.len() - tail..].iter().map(|l| (' ', *l)));
+    ops
+}
+
+fn lcs_table_ops<'a>(a: &[&'a str], b: &[&'a str]) -> Vec<(char, &'a str)> {
     let n = a.len();
     let m = b.len();
     let mut dp = vec![vec![0usize; m + 1]; n + 1];
@@ -978,7 +1029,7 @@ pub fn restore_policy_zip(
     }
     let files = read_zip_map(bytes)?;
     let manifest = parse_manifest(&files)?;
-    let preview = preview_policy_zip(project_root, bytes)?;
+    let preview = preview_parsed(project_root, &files, &manifest);
     let agents = agents_dir(project_root);
     let mut result = RestoreResult::default();
 
@@ -1056,10 +1107,15 @@ pub fn restore_policy_zip(
                         continue;
                     }
                     let rel = &path[prefix.len()..];
-                    if rel.is_empty() || rel.contains("..") {
+                    if rel.is_empty() {
                         continue;
                     }
-                    let dest = dest_root.join(rel);
+                    let Ok(dest) = ax_utils::contained_join(&dest_root, rel) else {
+                        result
+                            .errors
+                            .push(format!("{key}: refused zip path {path}"));
+                        continue;
+                    };
                     if let Some(p) = dest.parent() {
                         std::fs::create_dir_all(p)?;
                     }
@@ -1076,7 +1132,11 @@ pub fn restore_policy_zip(
 fn read_zip_map(bytes: &[u8]) -> Result<HashMap<String, Vec<u8>>, ZipPkgError> {
     let mut archive =
         ZipArchive::new(Cursor::new(bytes)).map_err(|e| ZipPkgError::BadZip(e.to_string()))?;
+    if archive.len() > ZIP_MAX_ENTRIES {
+        return Err(ZipPkgError::TooLarge);
+    }
     let mut files = HashMap::new();
+    let mut total: u64 = 0;
     for i in 0..archive.len() {
         let mut file = archive
             .by_index(i)
@@ -1091,8 +1151,15 @@ fn read_zip_map(bytes: &[u8]) -> Result<HashMap<String, Vec<u8>>, ZipPkgError> {
         if !zip_entry_ok(&name) {
             return Err(ZipPkgError::BadZip(format!("refused zip path: {name}")));
         }
-        let mut buf = Vec::new();
-        file.read_to_end(&mut buf)?;
+        let budget = ZIP_ENTRY_MAX_BYTES.min(ZIP_TOTAL_MAX_BYTES - total);
+        let buf = ax_utils::read_to_end_bounded(&mut file, budget).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::InvalidData {
+                ZipPkgError::TooLarge
+            } else {
+                ZipPkgError::Io(e.to_string())
+            }
+        })?;
+        total += buf.len() as u64;
         files.insert(name, buf);
     }
     Ok(files)
@@ -1195,6 +1262,7 @@ fn write_skill_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
 
     fn spec(rules: &[&str], skills: &[&str]) -> PackSpec {
         PackSpec {
@@ -1335,6 +1403,64 @@ mod tests {
             zw.finish().unwrap();
         }
         assert!(preview_policy_zip(dir.path(), &cursor.into_inner()).is_err());
+    }
+
+    fn repack_with_extra(zip: &[u8], extra_name: &str, extra: &[u8]) -> Vec<u8> {
+        let mut archive = ZipArchive::new(Cursor::new(zip)).unwrap();
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut zw = ZipWriter::new(&mut cursor);
+            for i in 0..archive.len() {
+                let mut f = archive.by_index(i).unwrap();
+                let name = f.name().unwrap().to_string();
+                let mut buf = Vec::new();
+                f.read_to_end(&mut buf).unwrap();
+                zw.start_file(name, zip_opts()).unwrap();
+                zw.write_all(&buf).unwrap();
+            }
+            zw.start_file(extra_name, zip_opts()).unwrap();
+            zw.write_all(extra).unwrap();
+            zw.finish().unwrap();
+        }
+        cursor.into_inner()
+    }
+
+    #[test]
+    fn restore_never_writes_a_double_slash_member_outside_agents() {
+        let src = tempfile::tempdir().unwrap();
+        write_skill_file(src.path(), "x", true, "project", None);
+        let zip = build_policy_zip(src.path(), &spec(&[], &["x"])).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let victim = outside.path().join("victim.txt");
+        std::fs::write(&victim, "keep me").unwrap();
+        let abs = victim.display().to_string().replace('\\', "/");
+        let evil = repack_with_extra(&zip, &format!("skills/x/{abs}"), b"pwned");
+        let dest = tempfile::tempdir().unwrap();
+        let _ = restore_policy_zip(dest.path(), &evil, &HashMap::new());
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep me");
+        assert!(preview_policy_zip(dest.path(), &evil).is_err());
+    }
+
+    #[test]
+    fn zip_entry_names_with_odd_segments_are_refused() {
+        for name in [
+            "skills/x//etc/passwd",
+            "skills/x/./a.md",
+            "skills/x/C:/a.md",
+            "skills/x/a:b.md",
+            "rules//a.mdc",
+            "skills/x/../../a",
+        ] {
+            assert!(!zip_entry_ok(name), "{name}");
+        }
+        for name in [
+            "ax-package.json",
+            "rules/a.mdc",
+            "skills/x/SKILL.md",
+            "skills/x/ref/a.md",
+        ] {
+            assert!(zip_entry_ok(name), "{name}");
+        }
     }
 
     #[test]
@@ -1683,5 +1809,75 @@ mod tests {
         let json = serde_json::to_string(&parsed).unwrap();
         assert!(json.contains("acceptHunks"));
         assert!(json.contains("merge"));
+    }
+
+    fn zip_of(entries: &[(&str, usize)]) -> Vec<u8> {
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut zw = ZipWriter::new(&mut cursor);
+            let chunk = vec![b'a'; 64 * 1024];
+            for (name, size) in entries {
+                zw.start_file(*name, zip_opts()).unwrap();
+                let mut left = *size;
+                while left > 0 {
+                    let n = left.min(chunk.len());
+                    zw.write_all(&chunk[..n]).unwrap();
+                    left -= n;
+                }
+            }
+            zw.finish().unwrap();
+        }
+        cursor.into_inner()
+    }
+
+    #[test]
+    fn zip_member_that_expands_past_the_entry_limit_is_refused() {
+        let zip = zip_of(&[("rules/bomb.mdc", ZIP_ENTRY_MAX_BYTES as usize + 1)]);
+        assert!(
+            zip.len() < ZIP_PACKAGE_MAX_BYTES,
+            "the compressed upload is small"
+        );
+        let err = read_zip_map(&zip).unwrap_err();
+        assert!(matches!(err, ZipPkgError::TooLarge), "{err}");
+    }
+
+    #[test]
+    fn zip_members_that_expand_past_the_total_limit_are_refused() {
+        let each = ZIP_ENTRY_MAX_BYTES as usize;
+        let count = (ZIP_TOTAL_MAX_BYTES as usize / each) + 1;
+        let names: Vec<String> = (0..count).map(|i| format!("rules/r{i}.mdc")).collect();
+        let entries: Vec<(&str, usize)> = names.iter().map(|n| (n.as_str(), each)).collect();
+        let err = read_zip_map(&zip_of(&entries)).unwrap_err();
+        assert!(matches!(err, ZipPkgError::TooLarge), "{err}");
+    }
+
+    #[test]
+    fn zip_with_too_many_members_is_refused() {
+        let names: Vec<String> = (0..=ZIP_MAX_ENTRIES)
+            .map(|i| format!("rules/r{i}.mdc"))
+            .collect();
+        let entries: Vec<(&str, usize)> = names.iter().map(|n| (n.as_str(), 1)).collect();
+        let err = read_zip_map(&zip_of(&entries)).unwrap_err();
+        assert!(matches!(err, ZipPkgError::TooLarge), "{err}");
+    }
+
+    #[test]
+    fn zip_members_within_the_limits_are_read() {
+        let zip = zip_of(&[("rules/ok.mdc", ZIP_ENTRY_MAX_BYTES as usize)]);
+        let files = read_zip_map(&zip).unwrap();
+        assert_eq!(files["rules/ok.mdc"].len(), ZIP_ENTRY_MAX_BYTES as usize);
+    }
+
+    #[test]
+    fn diff_of_huge_inputs_stays_bounded_and_correct() {
+        // Without a cap the LCS table would be 200k x 200k cells.
+        let old: String = (0..200_000).map(|i| format!("old {i}\n")).collect();
+        let new: String = (0..200_000).map(|i| format!("new {i}\n")).collect();
+        let hunks = split_diff_hunks(&old, &new);
+        let removed: usize = hunks.iter().map(|h| h.local.len()).sum();
+        let added: usize = hunks.iter().map(|h| h.package.len()).sum();
+        assert_eq!((removed, added), (200_000, 200_000));
+        let unified = unified_diff("same\n", "same\nmore\n", "a", "b");
+        assert!(unified.contains("+more"), "{unified}");
     }
 }

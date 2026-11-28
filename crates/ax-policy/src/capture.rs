@@ -220,10 +220,12 @@ pub fn interview_instruction_text() -> String {
     "Ask the user each question in plain language before save. Apply their answers to rule.frontmatter and rule.body. Save only after explicit yes — persisted to ax.db in database mode (not a disk-only file).".into()
 }
 
-/// Apply unique id resolution and refresh preview fields.
+/// Apply unique id resolution and refresh preview fields. The preview path
+/// names the project's agents folder (`policy.agentsDir`, `.agents` by default).
 pub fn finalize_proposal(
     mut proposal: CaptureProposal,
     existing_ids: &[String],
+    project_root: &std::path::Path,
 ) -> CaptureProposal {
     if !proposal.detected {
         return proposal;
@@ -232,9 +234,12 @@ pub fn finalize_proposal(
     if unique_id != proposal.suggested_id {
         proposal.frontmatter.id = unique_id.clone();
         proposal.suggested_id = unique_id.clone();
-        proposal.preview_path = format!(".agents/rules/{unique_id}.mdc");
         proposal.preview = crate::parse::serialize_rule(&proposal.frontmatter, &proposal.body);
     }
+    proposal.preview_path = format!(
+        "{}/rules/{unique_id}.mdc",
+        crate::config::agents_dir_name(project_root)
+    );
     proposal.questions = capture_interview_questions(&proposal);
     proposal
 }
@@ -284,11 +289,20 @@ fn empty_proposal() -> CaptureProposal {
     }
 }
 
-fn extract_directive_body(prompt: &str) -> Option<(&'static str, String)> {
-    let lower = prompt.to_lowercase();
+/// Byte offset of the first case-insensitive match of the ASCII `needle` in
+/// `haystack`. Searching the original text (not a lowercased copy, whose byte
+/// lengths can differ) keeps the offset valid for slicing `haystack`.
+fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
+    let (h, n) = (haystack.as_bytes(), needle.as_bytes());
+    if n.is_empty() || h.len() < n.len() {
+        return None;
+    }
+    (0..=h.len() - n.len()).find(|&i| h[i..i + n.len()].eq_ignore_ascii_case(n))
+}
 
+fn extract_directive_body(prompt: &str) -> Option<(&'static str, String)> {
     for marker in EXPLICIT_MARKERS {
-        if let Some(pos) = lower.find(marker) {
+        if let Some(pos) = find_ascii_ci(prompt, marker) {
             let rest = prompt[pos + marker.len()..].trim_start_matches([':', ' ', '-']);
             if rest.len() >= 8 {
                 return Some(("high", rest.to_string()));
@@ -398,8 +412,7 @@ fn title_from_body(text: &str) -> String {
     }
     let mut title = words.join(" ");
     if title.len() > 72 {
-        title.truncate(72);
-        title = title.trim_end().to_string();
+        title = ax_utils::prefix_bytes(&title, 72).trim_end().to_string();
     }
     title
 }
@@ -486,6 +499,53 @@ fn globs_from_files(open_files: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn non_ascii_prompts_produce_a_safe_proposal() {
+        let long = "ü".repeat(120);
+        for prompt in [
+            "🚀 je moet altijd één café-regel volgen voor de façade",
+            "Ärger vermeiden: you must always validate naïve input — überall",
+            "@rule 日本語のテキストは常にUTF-8で保存すること",
+            &format!("you must always {long}"),
+        ] {
+            let p = propose_rule_from_prompt(prompt, &[]);
+            assert!(p.detected, "{prompt}");
+            assert!(
+                crate::parse::is_kebab_case(&p.suggested_id),
+                "{}",
+                p.suggested_id
+            );
+            assert!(!p.suggested_id.is_empty());
+            assert!(p.preview.contains("---"));
+            let title = p.body.lines().next().unwrap_or_default();
+            assert!(title.len() <= 80, "{title}");
+        }
+        let jp = propose_rule_from_prompt("@rule 日本語のテキストは常に保存すること", &[]);
+        assert_eq!(jp.suggested_id, "captured-rule");
+        assert!(jp.body.contains("日本語"));
+    }
+
+    #[test]
+    fn finalized_preview_path_uses_the_configured_agents_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = propose_rule_from_prompt("you must always run the linter first", &[]);
+        let default = finalize_proposal(p.clone(), &[], dir.path());
+        assert!(default.preview_path.starts_with(".agents/rules/"));
+        std::fs::write(
+            dir.path().join("ax.json"),
+            r#"{"policy":{"agentsDir":"team-policy"}}"#,
+        )
+        .unwrap();
+        let id = p.suggested_id.clone();
+        let renamed = finalize_proposal(p.clone(), &[id], dir.path());
+        assert_eq!(
+            renamed.preview_path,
+            format!("team-policy/rules/{}.mdc", renamed.suggested_id)
+        );
+        let same = finalize_proposal(p, &[], dir.path());
+        assert!(same.preview_path.starts_with("team-policy/rules/"));
+    }
 
     #[test]
     fn detects_dutch_directive() {
@@ -612,5 +672,67 @@ mod tests {
     fn globs_from_open_files() {
         let p = propose_rule_from_prompt("je moet altijd types gebruiken", &["src/App.tsx".into()]);
         assert!(p.frontmatter.globs.iter().any(|g| g.contains("tsx")));
+    }
+    #[test]
+    fn a_prompt_whose_lowercase_changes_byte_length_does_not_panic() {
+        // 'İ' is 2 bytes but lowercases to 3, which shifts later offsets.
+        let proposal = propose_rule_from_prompt("İ you must öğren bunu lütfen", &[]);
+        assert!(proposal.detected);
+        assert!(
+            proposal.body.contains("öğren bunu lütfen"),
+            "{}",
+            proposal.body
+        );
+        // Same at the start of a sentence after a non-ASCII one.
+        let proposal = propose_rule_from_prompt("İİİ. Never öğren bunu lütfen", &[]);
+        assert!(proposal.detected);
+        assert!(
+            proposal.body.ends_with("Never öğren bunu lütfen"),
+            "{}",
+            proposal.body
+        );
+        // The Kelvin sign shrinks from 3 bytes to 1 when lowercased.
+        let proposal =
+            propose_rule_from_prompt("\u{212A}\u{212A}\u{212A} always use tabs in this repo", &[]);
+        assert!(proposal.detected);
+        assert!(
+            proposal.body.ends_with("always use tabs in this repo"),
+            "{}",
+            proposal.body
+        );
+    }
+
+    #[test]
+    fn a_marker_is_found_case_insensitively_on_the_original_text() {
+        let proposal = propose_rule_from_prompt("İİ @RULE: keep commits small please", &[]);
+        assert!(proposal.detected);
+        assert!(
+            proposal.body.contains("keep commits small please"),
+            "{}",
+            proposal.body
+        );
+    }
+
+    #[test]
+    fn a_long_non_ascii_title_is_cut_on_a_character_boundary() {
+        let prompt =
+            "always пишите комментарии ааааааааааа бббббббббббб вввввввввв гггггггг ддддддддд";
+        let proposal = propose_rule_from_prompt(prompt, &[]);
+        assert!(proposal.detected);
+        let title = title_from_body(
+            "пишите комментарии ааааааааааа бббббббббббб вввввввввв гггггггг ддддддддд",
+        );
+        assert!(title.len() <= 72);
+        assert!(title.starts_with("пишите"));
+    }
+    #[test]
+    fn directive_prefixes_and_markers_are_ascii_for_the_case_insensitive_search() {
+        for needle in PHRASE_PREFIXES
+            .iter()
+            .chain(SENTENCE_START_PREFIXES)
+            .chain(EXPLICIT_MARKERS)
+        {
+            assert!(needle.is_ascii(), "{needle}");
+        }
     }
 }

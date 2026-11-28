@@ -68,11 +68,93 @@ pub async fn import_policy_from_files(
         )));
     }
 
-    let mut rules_indexed = 0u32;
-    let mut skills_indexed = 0u32;
-    let mut seen_rules = Vec::new();
-    let mut seen_skills = Vec::new();
+    let MergedLayers {
+        rules,
+        skills,
+        skipped,
+        kept_paths,
+        notes,
+        rules_indexed,
+        skills_indexed,
+    } = merge_policy_layers(project_root);
+    for note in &notes {
+        eprintln!("{note}");
+    }
+    let seen_rules: Vec<String> = rules
+        .iter()
+        .map(|(d, _)| d.frontmatter.id.clone())
+        .collect();
+    let seen_skills: Vec<String> = skills
+        .iter()
+        .map(|(d, _)| d.frontmatter.name.clone())
+        .collect();
 
+    // One transaction: a reader never sees a half-updated policy, and rows whose content did
+    // not change are not rewritten (so the matcher cache generation stays the same).
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    let stored_rules = stored_state(&mut tx, PruneTable::Rules).await?;
+    let stored_skills = stored_state(&mut tx, PruneTable::Skills).await?;
+    let now = now_ms();
+    for (doc, hash) in &rules {
+        let current = StoredState::of(
+            hash,
+            &doc.frontmatter.scope,
+            &doc.source_path,
+            &doc.stub_path,
+        );
+        if stored_rules.get(&doc.frontmatter.id) != Some(&current) {
+            upsert_rule(&mut *tx, doc, hash, now).await?;
+        }
+    }
+    for (doc, hash) in &skills {
+        let current = StoredState::of(
+            hash,
+            &doc.frontmatter.scope,
+            &doc.source_path,
+            &doc.stub_path,
+        );
+        if stored_skills.get(&doc.frontmatter.name) != Some(&current) {
+            upsert_skill(&mut *tx, doc, hash, now).await?;
+        }
+    }
+
+    if mode == ImportMode::Replace {
+        // Hybrid-aware prune: keep per-item database overrides not present on disk.
+        // A file that exists but cannot be read, or whose frontmatter is not YAML,
+        // keeps the row it produced before. A file that parses but fails validation
+        // (unknown status or scope, a bad name, a missing field) loses its row, so
+        // an invalid rule never stays active as approved.
+        prune_hybrid(&mut tx, PruneTable::Rules, &seen_rules, &kept_paths).await?;
+        prune_hybrid(&mut tx, PruneTable::Skills, &seen_skills, &kept_paths).await?;
+    }
+    tx.commit()
+        .await
+        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+
+    Ok(PolicyIndexResult {
+        rules_indexed,
+        skills_indexed,
+        skipped,
+    })
+}
+
+/// Every policy layer parsed and merged the way an import writes it: the last
+/// layer wins per id, with the hash an import stores.
+struct MergedLayers {
+    rules: Vec<(PolicyRuleDoc, String)>,
+    skills: Vec<(PolicySkillDoc, String)>,
+    skipped: Vec<crate::types::PolicySkip>,
+    /// Skipped files whose stored row is kept (see [`LayerImport::kept`]).
+    kept_paths: Vec<String>,
+    notes: Vec<String>,
+    rules_indexed: u32,
+    skills_indexed: u32,
+}
+
+fn merge_policy_layers(project_root: &Path) -> MergedLayers {
     // Hierarchical merge: company → workspace → project → private (later upserts win).
     let layers = crate::hierarchy::policy_layers(project_root);
     let layer_list = if layers.is_empty() {
@@ -86,52 +168,105 @@ pub async fn import_policy_from_files(
         layers
     };
 
-    let global = crate::global_level::load_default().await;
+    // Later layers win: keep the last doc per id, in first-seen order.
+    let mut out = MergedLayers {
+        rules: Vec::new(),
+        skills: Vec::new(),
+        skipped: Vec::new(),
+        kept_paths: Vec::new(),
+        notes: Vec::new(),
+        rules_indexed: 0,
+        skills_indexed: 0,
+    };
     for layer in &layer_list {
-        let (r, s, mut rule_ids, mut skill_ids) = import_one_policy_dir(
-            pool,
+        let layer_import = import_one_policy_dir(
             project_root,
             &layer.dir,
             layer.scope,
             layer.preserve_item_scope,
-            global.as_ref(),
-        )
-        .await?;
-        rules_indexed += r;
-        skills_indexed += s;
-        seen_rules.append(&mut rule_ids);
-        seen_skills.append(&mut skill_ids);
+        );
+        out.rules_indexed += layer_import.rules.len() as u32;
+        out.skills_indexed += layer_import.skills.len() as u32;
+        for item in layer_import.rules {
+            last_wins(&mut out.rules, item, |(d, _)| d.frontmatter.id.as_str());
+        }
+        for item in layer_import.skills {
+            last_wins(&mut out.skills, item, |(d, _)| d.frontmatter.name.as_str());
+        }
+        out.skipped.extend(layer_import.skipped);
+        out.kept_paths.extend(layer_import.kept);
+        out.notes.extend(layer_import.notes);
     }
-
-    if mode == ImportMode::Replace {
-        // Hybrid-aware prune: keep per-item database overrides not present on disk.
-        seen_rules.sort();
-        seen_rules.dedup();
-        seen_skills.sort();
-        seen_skills.dedup();
-        prune_rules_hybrid(pool, &seen_rules).await?;
-        prune_skills_hybrid(pool, &seen_skills).await?;
-    }
-
-    Ok(PolicyIndexResult {
-        rules_indexed,
-        skills_indexed,
-    })
+    out
 }
 
-async fn import_one_policy_dir(
-    pool: &SqlitePool,
+fn last_wins<T>(items: &mut Vec<T>, item: T, key: impl Fn(&T) -> &str) {
+    match items
+        .iter()
+        .position(|existing| key(existing) == key(&item))
+    {
+        Some(i) => items[i] = item,
+        None => items.push(item),
+    }
+}
+
+/// The stored fields an import compares to decide whether a row needs rewriting.
+#[derive(Debug, PartialEq, Eq)]
+struct StoredState {
+    content_hash: String,
+    scope: String,
+    source_path: String,
+    stub_path: Option<String>,
+}
+
+impl StoredState {
+    fn of(hash: &str, scope: &str, source_path: &str, stub_path: &Option<String>) -> Self {
+        Self {
+            content_hash: hash.to_string(),
+            scope: crate::types::PolicyScope::parse(scope)
+                .unwrap_or(crate::types::PolicyScope::Project)
+                .as_str()
+                .to_string(),
+            source_path: source_path.to_string(),
+            stub_path: stub_path.clone(),
+        }
+    }
+}
+
+async fn stored_state(
+    conn: &mut sqlx::SqliteConnection,
+    table: PruneTable,
+) -> Result<std::collections::HashMap<String, StoredState>, AxError> {
+    let (table_name, key) = table.names();
+    let rows: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(&format!(
+        "SELECT {key}, content_hash, COALESCE(scope, 'project'), source_path, stub_path FROM {table_name}"
+    ))
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    Ok(rows
+        .into_iter()
+        .map(|(k, content_hash, scope, source_path, stub_path)| {
+            (
+                k,
+                StoredState {
+                    content_hash,
+                    scope,
+                    source_path,
+                    stub_path,
+                },
+            )
+        })
+        .collect())
+}
+
+fn import_one_policy_dir(
     project_root: &Path,
     policy_dir: &Path,
     scope: crate::types::PolicyScope,
     preserve_item_scope: bool,
-    // A longer global copy must not drop a project file of the same name.
-    _global: Option<&crate::global_level::GlobalLevel>,
-) -> Result<(u32, u32, Vec<String>, Vec<String>), AxError> {
-    let mut rules_indexed = 0u32;
-    let mut skills_indexed = 0u32;
-    let mut seen_rules = Vec::new();
-    let mut seen_skills = Vec::new();
+) -> LayerImport {
+    let mut out = LayerImport::default();
     let scope_s = scope.as_str().to_string();
 
     let rules_path = policy_dir.join(crate::paths::RULES_DIR);
@@ -152,18 +287,14 @@ async fn import_one_policy_dir(
             let raw = match std::fs::read_to_string(path) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("[ax policy] skip rule {}: {e}", path.display());
+                    out.skip("rule", path, e.to_string());
                     continue;
                 }
             };
             let mut doc = match parse_rule_file(path, &raw) {
                 Ok(d) => d,
                 Err(e) => {
-                    eprintln!(
-                        "[ax policy] skip rule {}: {}",
-                        path.display(),
-                        crate::parse::format_validation(&e)
-                    );
+                    out.skip_unparsed("rule", path, &raw, &e);
                     continue;
                 }
             };
@@ -171,13 +302,11 @@ async fn import_one_policy_dir(
                 doc.frontmatter.scope = scope_s.clone();
             }
             if let Err(e) = materialize_rule_stub(project_root, &mut doc) {
-                eprintln!("[ax policy] skip rule stub {}: {e}", path.display());
+                out.skip("rule stub", path, e);
                 continue;
             }
             let hash = blake3::hash(doc.raw.as_bytes()).to_hex().to_string();
-            upsert_rule(pool, &doc, &hash, now_ms()).await?;
-            seen_rules.push(doc.frontmatter.id.clone());
-            rules_indexed += 1;
+            out.rules.push((doc, hash));
         }
     }
 
@@ -201,18 +330,14 @@ async fn import_one_policy_dir(
             let raw = match std::fs::read_to_string(&skill_path) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("[ax policy] skip skill {}: {e}", skill_path.display());
+                    out.skip("skill", &skill_path, e.to_string());
                     continue;
                 }
             };
             let mut doc = match parse_skill_file(&skill_path, &raw) {
                 Ok(d) => d,
                 Err(e) => {
-                    eprintln!(
-                        "[ax policy] skip skill {}: {}",
-                        skill_path.display(),
-                        crate::parse::format_validation(&e)
-                    );
+                    out.skip_unparsed("skill", &skill_path, &raw, &e);
                     continue;
                 }
             };
@@ -220,17 +345,99 @@ async fn import_one_policy_dir(
                 doc.frontmatter.scope = scope_s.clone();
             }
             if let Err(e) = materialize_skill_stub(project_root, &mut doc) {
-                eprintln!("[ax policy] skip skill stub {}: {e}", skill_path.display());
+                out.skip("skill stub", &skill_path, e);
                 continue;
             }
             let hash = blake3::hash(doc.raw.as_bytes()).to_hex().to_string();
-            upsert_skill(pool, &doc, &hash, now_ms()).await?;
-            seen_skills.push(doc.frontmatter.name.clone());
-            skills_indexed += 1;
+            out.skills.push((doc, hash));
         }
     }
 
-    Ok((rules_indexed, skills_indexed, seen_rules, seen_skills))
+    out
+}
+
+fn skip_file_owned(
+    skipped: &mut Vec<crate::types::PolicySkip>,
+    what: &str,
+    path: &Path,
+    reason: String,
+) {
+    eprintln!(
+        "[ax policy] keep stored {what}, file-owned source {} unusable: {reason}",
+        path.display()
+    );
+    skipped.push(crate::types::PolicySkip {
+        path: path.to_string_lossy().into_owned(),
+        reason,
+        kept: true,
+    });
+}
+
+/// What one policy layer contributed to an import: parsed docs with their content hash.
+#[derive(Default)]
+struct LayerImport {
+    rules: Vec<(PolicyRuleDoc, String)>,
+    skills: Vec<(PolicySkillDoc, String)>,
+    skipped: Vec<crate::types::PolicySkip>,
+    /// Skipped files whose stored row an import keeps: the file could not be
+    /// read, its frontmatter is not YAML, or its stub source is unusable. A
+    /// file that parses but fails validation is skipped without being kept.
+    kept: Vec<String>,
+    /// One log line per skipped file.
+    notes: Vec<String>,
+}
+
+impl LayerImport {
+    /// Record a file the layer could not use. The caller decides whether to
+    /// report it, so a read-only staleness check stays quiet.
+    fn skip(&mut self, what: &str, path: &Path, reason: String) {
+        self.kept.push(path.to_string_lossy().into_owned());
+        self.record_skip(what, path, reason, true);
+    }
+
+    /// Record a file that did not parse. The stored row is kept only when the
+    /// frontmatter is not YAML at all (likely a typo mid-edit); a validation
+    /// failure drops the row, so the strict parser's default applies.
+    fn skip_unparsed(
+        &mut self,
+        what: &str,
+        path: &Path,
+        raw: &str,
+        err: &crate::types::ValidationError,
+    ) {
+        let reason = crate::parse::format_validation(err);
+        if frontmatter_is_yaml(raw) {
+            self.skip_dropping_row(what, path, reason);
+        } else {
+            self.skip(what, path, reason);
+        }
+    }
+
+    fn skip_dropping_row(&mut self, what: &str, path: &Path, reason: String) {
+        self.record_skip(what, path, reason, false);
+    }
+
+    fn record_skip(&mut self, what: &str, path: &Path, reason: String, kept: bool) {
+        let skip = crate::types::PolicySkip {
+            path: path.to_string_lossy().into_owned(),
+            reason,
+            kept,
+        };
+        self.notes.push(format!(
+            "[ax policy] skip {what} {} ({}): {}",
+            path.display(),
+            skip.outcome(),
+            skip.reason
+        ));
+        self.skipped.push(skip);
+    }
+}
+
+/// Whether `raw` has a `---` frontmatter block that parses as YAML.
+fn frontmatter_is_yaml(raw: &str) -> bool {
+    crate::parse::split_frontmatter(raw)
+        .ok()
+        .is_some_and(|(yaml, _)| serde_yaml::from_str::<serde_yaml::Value>(&yaml).is_ok())
 }
 
 /// If the doc is a stub (`source:` set), load body from the external file.
@@ -314,6 +521,13 @@ pub async fn export_policy_to_files_filtered(
             continue;
         }
         let doc = rule_row_to_doc(row, project_root);
+        if !is_single_component(&doc.frontmatter.id) {
+            eprintln!(
+                "[ax policy] export skips rule {:?}: the id is not a plain file name",
+                doc.frontmatter.id
+            );
+            continue;
+        }
         let path = rule_file(&rules_out, &doc.frontmatter.id);
         write_utf8(&path, &doc.raw)?;
         rules_n += 1;
@@ -327,6 +541,13 @@ pub async fn export_policy_to_files_filtered(
             continue;
         }
         let doc = skill_row_to_doc(row, project_root);
+        if !is_single_component(&doc.frontmatter.name) {
+            eprintln!(
+                "[ax policy] export skips skill {:?}: the name is not a plain folder name",
+                doc.frontmatter.name
+            );
+            continue;
+        }
         let dir = skills_out.join(&doc.frontmatter.name);
         std::fs::create_dir_all(&dir).map_err(|e| AxError::Other(e.to_string()))?;
         let path = skill_file(&skills_out, &doc.frontmatter.name);
@@ -339,6 +560,14 @@ pub async fn export_policy_to_files_filtered(
         skills_exported: skills_n,
         output_dir: out_dir.to_string_lossy().to_string(),
     })
+}
+
+/// `true` when `name` is exactly one normal path component (no separator, `.`, `..` or root).
+fn is_single_component(name: &str) -> bool {
+    let mut parts = Path::new(name).components();
+    matches!(parts.next(), Some(std::path::Component::Normal(_)))
+        && parts.next().is_none()
+        && !name.contains(['/', '\\'])
 }
 
 pub async fn upsert_rule_doc(pool: &SqlitePool, doc: &PolicyRuleDoc) -> Result<(), AxError> {
@@ -381,6 +610,7 @@ async fn db_counts(pool: &SqlitePool) -> Result<PolicyIndexResult, AxError> {
     Ok(PolicyIndexResult {
         rules_indexed: rules as u32,
         skills_indexed: skills as u32,
+        skipped: Vec::new(),
     })
 }
 
@@ -440,6 +670,19 @@ pub async fn ensure_policy_ready(
                 let _writer = crate::write_lock::policy_write_lock(project_root).await;
                 // Only rows explicitly authored in files may refresh in database mode.
                 // A stale export of a database-owned row is never imported here.
+                // A file that is missing, unreadable or renamed to another id keeps its stored
+                // row and is reported in `skipped`; it never fails the whole call.
+                let mut skipped = Vec::new();
+                let (stored_rules, stored_skills) = {
+                    let mut conn = pool
+                        .acquire()
+                        .await
+                        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+                    (
+                        stored_state(&mut conn, PruneTable::Rules).await?,
+                        stored_state(&mut conn, PruneTable::Skills).await?,
+                    )
+                };
                 for row in list_rules(pool).await? {
                     if effective_storage(config.storage, row.storage.as_deref())
                         != PolicyStorage::Files
@@ -447,25 +690,33 @@ pub async fn ensure_policy_ready(
                         continue;
                     }
                     let path = Path::new(&row.source_path);
-                    let raw =
-                        std::fs::read_to_string(path).map_err(|e| AxError::Other(e.to_string()))?;
-                    let mut doc =
-                        parse_rule_file(path, &raw).map_err(|e| AxError::Other(e.error))?;
-                    if doc.frontmatter.id != row.id {
-                        return Err(AxError::Other(
-                            "file-owned rule changed identity; explicitly re-index policy".into(),
-                        ));
-                    }
-                    doc.frontmatter.scope = row.scope;
-                    materialize_rule_stub(project_root, &mut doc).map_err(AxError::Other)?;
+                    let doc = std::fs::read_to_string(path)
+                        .map_err(|e| e.to_string())
+                        .and_then(|raw| {
+                            parse_rule_file(path, &raw)
+                                .map_err(|e| crate::parse::format_validation(&e))
+                        })
+                        .and_then(|mut doc| {
+                            if doc.frontmatter.id != row.id {
+                                return Err(format!(
+                                    "file now holds rule `{}` instead of `{}`; re-index policy",
+                                    doc.frontmatter.id, row.id
+                                ));
+                            }
+                            doc.frontmatter.scope = row.scope.clone();
+                            materialize_rule_stub(project_root, &mut doc)?;
+                            Ok(doc)
+                        });
+                    let doc = match doc {
+                        Ok(doc) => doc,
+                        Err(reason) => {
+                            skip_file_owned(&mut skipped, "rule", path, reason);
+                            continue;
+                        }
+                    };
                     let hash = blake3::hash(doc.raw.as_bytes()).to_hex().to_string();
-                    let previous: String =
-                        sqlx::query_scalar("SELECT content_hash FROM policy_rules WHERE id = ?")
-                            .bind(&doc.frontmatter.id)
-                            .fetch_one(pool)
-                            .await
-                            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
-                    if hash != previous {
+                    let previous = stored_rules.get(&row.id).map(|s| s.content_hash.as_str());
+                    if previous != Some(hash.as_str()) {
                         upsert_rule(pool, &doc, &hash, now_ms()).await?;
                     }
                 }
@@ -476,29 +727,39 @@ pub async fn ensure_policy_ready(
                         continue;
                     }
                     let path = Path::new(&row.source_path);
-                    let raw =
-                        std::fs::read_to_string(path).map_err(|e| AxError::Other(e.to_string()))?;
-                    let mut doc =
-                        parse_skill_file(path, &raw).map_err(|e| AxError::Other(e.error))?;
-                    if doc.frontmatter.name != row.name {
-                        return Err(AxError::Other(
-                            "file-owned skill changed identity; explicitly re-index policy".into(),
-                        ));
-                    }
-                    doc.frontmatter.scope = row.scope;
-                    materialize_skill_stub(project_root, &mut doc).map_err(AxError::Other)?;
+                    let doc = std::fs::read_to_string(path)
+                        .map_err(|e| e.to_string())
+                        .and_then(|raw| {
+                            parse_skill_file(path, &raw)
+                                .map_err(|e| crate::parse::format_validation(&e))
+                        })
+                        .and_then(|mut doc| {
+                            if doc.frontmatter.name != row.name {
+                                return Err(format!(
+                                    "file now holds skill `{}` instead of `{}`; re-index policy",
+                                    doc.frontmatter.name, row.name
+                                ));
+                            }
+                            doc.frontmatter.scope = row.scope.clone();
+                            materialize_skill_stub(project_root, &mut doc)?;
+                            Ok(doc)
+                        });
+                    let doc = match doc {
+                        Ok(doc) => doc,
+                        Err(reason) => {
+                            skip_file_owned(&mut skipped, "skill", path, reason);
+                            continue;
+                        }
+                    };
                     let hash = blake3::hash(doc.raw.as_bytes()).to_hex().to_string();
-                    let previous: String =
-                        sqlx::query_scalar("SELECT content_hash FROM policy_skills WHERE name = ?")
-                            .bind(&doc.frontmatter.name)
-                            .fetch_one(pool)
-                            .await
-                            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
-                    if hash != previous {
+                    let previous = stored_skills
+                        .get(&row.name)
+                        .map(|s| s.content_hash.as_str());
+                    if previous != Some(hash.as_str()) {
                         upsert_skill(pool, &doc, &hash, now_ms()).await?;
                     }
                 }
-                Ok(counts)
+                Ok(PolicyIndexResult { skipped, ..counts })
             }
         }
         PolicyStorage::Files => {
@@ -507,126 +768,135 @@ pub async fn ensure_policy_ready(
     }
 }
 
+/// Whether an import from the policy files would change the database: a winning
+/// file differs from its row, or a file-backed row has no file any more.
+///
+/// The files are merged across layers exactly as an import merges them (the last
+/// layer wins per id, stubs are resolved), so a shadowed lower-layer file or a
+/// stub never reads as changed. Stored state is loaded with one query per table.
 pub async fn policy_disk_stale(pool: &SqlitePool, project_root: &Path) -> Result<bool, AxError> {
-    for layer in crate::hierarchy::policy_layers(project_root) {
-        if policy_dir_disk_stale(pool, &layer.dir).await? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
+    let merged = merge_policy_layers(project_root);
+    let storage = load_policy_config(project_root).storage;
+    let kept_paths: std::collections::HashSet<&str> =
+        merged.kept_paths.iter().map(String::as_str).collect();
 
-async fn policy_dir_disk_stale(pool: &SqlitePool, policy_dir: &Path) -> Result<bool, AxError> {
-    let rules_path = policy_dir.join(crate::paths::RULES_DIR);
-    if rules_path.is_dir() {
-        for entry in walkdir::WalkDir::new(&rules_path)
-            .min_depth(1)
-            .max_depth(1)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("mdc") {
-                continue;
-            }
-            let Ok(raw) = std::fs::read_to_string(path) else {
-                continue;
-            };
-            let Ok(doc) = parse_rule_file(path, &raw) else {
-                continue;
-            };
-            let hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
-            let db_hash: Option<String> =
-                sqlx::query_scalar("SELECT content_hash FROM policy_rules WHERE id = ?")
-                    .bind(&doc.frontmatter.id)
-                    .fetch_optional(pool)
-                    .await
-                    .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
-            if db_hash.as_deref() != Some(hash.as_str()) {
-                return Ok(true);
-            }
-            if properties_differ(
-                pool,
-                "policy_rules",
-                "id",
-                &doc.frontmatter.id,
-                &doc.frontmatter.properties,
-            )
-            .await?
-            {
-                return Ok(true);
-            }
-        }
-    }
-
-    let skills_path = policy_dir.join(crate::paths::SKILLS_DIR);
-    if skills_path.is_dir() {
-        for entry in walkdir::WalkDir::new(&skills_path)
-            .min_depth(1)
-            .max_depth(1)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().to_string();
-            let skill_path = skill_file(&skills_path, &name);
-            if !skill_path.is_file() {
-                continue;
-            }
-            let Ok(raw) = std::fs::read_to_string(&skill_path) else {
-                continue;
-            };
-            let Ok(doc) = parse_skill_file(&skill_path, &raw) else {
-                continue;
-            };
-            let hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
-            let db_hash: Option<String> =
-                sqlx::query_scalar("SELECT content_hash FROM policy_skills WHERE name = ?")
-                    .bind(&doc.frontmatter.name)
-                    .fetch_optional(pool)
-                    .await
-                    .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
-            if db_hash.as_deref() != Some(hash.as_str()) {
-                return Ok(true);
-            }
-            if properties_differ(
-                pool,
-                "policy_skills",
-                "name",
-                &doc.frontmatter.name,
-                &doc.frontmatter.properties,
-            )
-            .await?
-            {
-                return Ok(true);
-            }
-        }
-    }
-
-    Ok(false)
-}
-
-async fn properties_differ(
-    pool: &SqlitePool,
-    table: &str,
-    id_col: &str,
-    id: &str,
-    parsed: &crate::types::PolicyProperties,
-) -> Result<bool, AxError> {
-    if parsed.is_empty() {
-        return Ok(false);
-    }
-    let sql = format!("SELECT properties FROM {table} WHERE {id_col} = ?");
-    let stored: Option<String> = sqlx::query_scalar(&sql)
-        .bind(id)
-        .fetch_optional(pool)
+    let mut conn = pool
+        .acquire()
         .await
         .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
-    let stored = stored.as_deref().map(parse_properties).unwrap_or_default();
-    Ok(stored != *parsed)
+    let stored_rules = stored_rows(&mut conn, PruneTable::Rules).await?;
+    let stored_skills = stored_rows(&mut conn, PruneTable::Skills).await?;
+
+    let rules = merged.rules.iter().map(|(doc, hash)| {
+        (
+            doc.frontmatter.id.as_str(),
+            StoredState::of(
+                hash,
+                &doc.frontmatter.scope,
+                &doc.source_path,
+                &doc.stub_path,
+            ),
+            &doc.frontmatter.properties,
+        )
+    });
+    let skills = merged.skills.iter().map(|(doc, hash)| {
+        (
+            doc.frontmatter.name.as_str(),
+            StoredState::of(
+                hash,
+                &doc.frontmatter.scope,
+                &doc.source_path,
+                &doc.stub_path,
+            ),
+            &doc.frontmatter.properties,
+        )
+    });
+    Ok(table_stale(rules, &stored_rules, storage, &kept_paths)
+        || table_stale(skills, &stored_skills, storage, &kept_paths))
+}
+
+/// One stored row as the staleness check needs it.
+struct StoredRow {
+    state: StoredState,
+    storage: Option<String>,
+    properties: crate::types::PolicyProperties,
+}
+
+async fn stored_rows(
+    conn: &mut sqlx::SqliteConnection,
+    table: PruneTable,
+) -> Result<std::collections::HashMap<String, StoredRow>, AxError> {
+    type Row = (
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let (table_name, key) = table.names();
+    let rows: Vec<Row> = sqlx::query_as(&format!(
+        "SELECT {key}, content_hash, COALESCE(scope, 'project'), source_path, stub_path, storage, properties FROM {table_name}"
+    ))
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(k, content_hash, scope, source_path, stub_path, storage, properties)| {
+                (
+                    k,
+                    StoredRow {
+                        state: StoredState {
+                            content_hash,
+                            scope,
+                            source_path,
+                            stub_path,
+                        },
+                        storage,
+                        properties: properties
+                            .as_deref()
+                            .map(parse_properties)
+                            .unwrap_or_default(),
+                    },
+                )
+            },
+        )
+        .collect())
+}
+
+fn table_stale<'a>(
+    on_disk: impl Iterator<Item = (&'a str, StoredState, &'a crate::types::PolicyProperties)>,
+    stored: &std::collections::HashMap<String, StoredRow>,
+    project_storage: PolicyStorage,
+    kept_paths: &std::collections::HashSet<&str>,
+) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    for (id, state, properties) in on_disk {
+        seen.insert(id);
+        let Some(row) = stored.get(id) else {
+            return true;
+        };
+        if row.state != state {
+            return true;
+        }
+        if !properties.is_empty() && row.properties != *properties {
+            return true;
+        }
+    }
+    // A file-backed row whose file is gone (and not merely unreadable) would be pruned.
+    stored.iter().any(|(id, row)| {
+        !seen.contains(id.as_str())
+            && effective_storage(project_storage, row.storage.as_deref()) == PolicyStorage::Files
+            && !kept_paths.contains(row.state.source_path.as_str())
+            && !row
+                .state
+                .stub_path
+                .as_deref()
+                .is_some_and(|p| kept_paths.contains(p))
+    })
 }
 
 /// Policy counts and storage mode for status / diagnostics.
@@ -644,8 +914,8 @@ pub async fn policy_status(
     })
 }
 
-async fn upsert_rule(
-    pool: &SqlitePool,
+async fn upsert_rule<'e>(
+    exec: impl sqlx::SqliteExecutor<'e>,
     doc: &PolicyRuleDoc,
     hash: &str,
     now: i64,
@@ -686,7 +956,7 @@ async fn upsert_rule(
     .bind(&doc.stub_path)
     .bind(&fm.group)
     .bind(properties_json(&fm.properties))
-    .execute(pool)
+    .execute(exec)
     .await
     .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(())
@@ -700,8 +970,8 @@ fn parse_properties(raw: &str) -> crate::types::PolicyProperties {
     serde_json::from_str(raw).unwrap_or_default()
 }
 
-async fn upsert_skill(
-    pool: &SqlitePool,
+async fn upsert_skill<'e>(
+    exec: impl sqlx::SqliteExecutor<'e>,
     doc: &PolicySkillDoc,
     hash: &str,
     now: i64,
@@ -742,58 +1012,59 @@ async fn upsert_skill(
     .bind(&doc.stub_path)
     .bind(&fm.group)
     .bind(properties_json(&fm.properties))
-    .execute(pool)
+    .execute(exec)
     .await
     .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(())
 }
 
-/// Delete file-backed rows not on disk; keep `storage = 'database'` overrides.
-async fn prune_rules_hybrid(pool: &SqlitePool, keep: &[String]) -> Result<(), AxError> {
-    if keep.is_empty() {
-        sqlx::query(
-            "DELETE FROM policy_rules WHERE COALESCE(NULLIF(storage, ''), 'files') != 'database'",
-        )
-        .execute(pool)
-        .await
-        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
-        return Ok(());
+#[derive(Clone, Copy)]
+enum PruneTable {
+    Rules,
+    Skills,
+}
+
+impl PruneTable {
+    fn names(self) -> (&'static str, &'static str) {
+        match self {
+            PruneTable::Rules => ("policy_rules", "id"),
+            PruneTable::Skills => ("policy_skills", "name"),
+        }
     }
-    let placeholders = keep.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-    let sql = format!(
-        "DELETE FROM policy_rules WHERE id NOT IN ({placeholders}) \
-         AND COALESCE(NULLIF(storage, ''), 'files') != 'database'"
+}
+
+/// Delete file-backed rows not on disk; keep `storage = 'database'` overrides and rows whose
+/// source file (or stub) is in `kept_paths` because it exists but could not be parsed.
+async fn prune_hybrid(
+    conn: &mut sqlx::SqliteConnection,
+    table: PruneTable,
+    keep: &[String],
+    kept_paths: &[String],
+) -> Result<(), AxError> {
+    let (table_name, key) = table.names();
+    let placeholders = |n: usize| vec!["?"; n].join(",");
+    let mut sql = format!(
+        "DELETE FROM {table_name} WHERE COALESCE(NULLIF(storage, ''), 'files') != 'database'"
     );
+    if !keep.is_empty() {
+        sql.push_str(&format!(" AND {key} NOT IN ({})", placeholders(keep.len())));
+    }
+    if !kept_paths.is_empty() {
+        let p = placeholders(kept_paths.len());
+        sql.push_str(&format!(
+            " AND source_path NOT IN ({p}) AND COALESCE(stub_path, '') NOT IN ({p})"
+        ));
+    }
     let mut q = sqlx::query(&sql);
     for id in keep {
         q = q.bind(id);
     }
-    q.execute(pool)
-        .await
-        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
-    Ok(())
-}
-
-async fn prune_skills_hybrid(pool: &SqlitePool, keep: &[String]) -> Result<(), AxError> {
-    if keep.is_empty() {
-        sqlx::query(
-            "DELETE FROM policy_skills WHERE COALESCE(NULLIF(storage, ''), 'files') != 'database'",
-        )
-        .execute(pool)
-        .await
-        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
-        return Ok(());
+    for _ in 0..2 {
+        for path in kept_paths {
+            q = q.bind(path);
+        }
     }
-    let placeholders = keep.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-    let sql = format!(
-        "DELETE FROM policy_skills WHERE name NOT IN ({placeholders}) \
-         AND COALESCE(NULLIF(storage, ''), 'files') != 'database'"
-    );
-    let mut q = sqlx::query(&sql);
-    for name in keep {
-        q = q.bind(name);
-    }
-    q.execute(pool)
+    q.execute(&mut *conn)
         .await
         .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(())
@@ -1164,48 +1435,13 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
     use tempfile::TempDir;
 
+    /// A database with the real migrations, so the tests see the real schema.
     async fn test_pool() -> (TempDir, SqlitePool) {
         let dir = TempDir::new().unwrap();
-        let db_path = dir.path().join("test.db");
-        let opts = sqlx::sqlite::SqliteConnectOptions::new()
-            .filename(&db_path)
-            .create_if_missing(true);
-        let pool = SqlitePoolOptions::new().connect_with(opts).await.unwrap();
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS policy_rules (
-                id TEXT PRIMARY KEY, level TEXT NOT NULL, always_apply INTEGER NOT NULL DEFAULT 0,
-                globs TEXT NOT NULL DEFAULT '[]', triggers TEXT NOT NULL DEFAULT '[]',
-                tags TEXT NOT NULL DEFAULT '[]', priority INTEGER NOT NULL DEFAULT 50,
-                body TEXT NOT NULL, source_path TEXT NOT NULL, content_hash TEXT NOT NULL,
-                updated_at INTEGER NOT NULL,
-                enabled INTEGER NOT NULL DEFAULT 1,
-                status TEXT NOT NULL DEFAULT 'approved',
-                scope TEXT NOT NULL DEFAULT 'project',
-                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT, skill_group TEXT,
-                properties TEXT NOT NULL DEFAULT '{}'
-            )",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS policy_skills (
-                name TEXT PRIMARY KEY, description TEXT NOT NULL,
-                always_apply INTEGER NOT NULL DEFAULT 0,
-                triggers TEXT NOT NULL DEFAULT '[]', tags TEXT NOT NULL DEFAULT '[]',
-                priority INTEGER NOT NULL DEFAULT 50, context_task TEXT,
-                body TEXT NOT NULL, source_path TEXT NOT NULL, content_hash TEXT NOT NULL,
-                updated_at INTEGER NOT NULL,
-                enabled INTEGER NOT NULL DEFAULT 1,
-                status TEXT NOT NULL DEFAULT 'approved',
-                scope TEXT NOT NULL DEFAULT 'project',
-                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT, skill_group TEXT,
-                properties TEXT NOT NULL DEFAULT '{}'
-            )",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        let db = ax_db::Database::open(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let pool = db.pool().clone();
         (dir, pool)
     }
 
@@ -1428,6 +1664,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_missing_file_owned_source_does_not_fail_database_mode() {
+        let (dir, pool) = test_pool().await;
+        let root = dir.path();
+        std::fs::write(root.join("ax.json"), r#"{"policy":{"storage":"database"}}"#).unwrap();
+        std::fs::create_dir_all(root.join(".agents/rules")).unwrap();
+        let file_rule = root.join(".agents/rules/file-owned.mdc");
+        std::fs::write(
+            &file_rule,
+            "---\nid: file-owned\nlevel: INFO\nalwaysApply: true\nstorage: files\n---\n\nfrom a file\n",
+        )
+        .unwrap();
+        write_skill(root, "kept-skill", "skill body");
+        let skill_file_path = root.join(".agents/skills/kept-skill/SKILL.md");
+        std::fs::write(
+            &skill_file_path,
+            "---\nname: kept-skill\ndescription: d\nstorage: files\n---\n\nskill body\n",
+        )
+        .unwrap();
+        write_rule(root, "db-owned", "database row");
+        ensure_policy_ready(&pool, root).await.unwrap();
+        assert!(list_rules(&pool)
+            .await
+            .unwrap()
+            .iter()
+            .any(|r| r.id == "file-owned"));
+
+        std::fs::remove_file(&file_rule).unwrap();
+        std::fs::write(&skill_file_path, "---\nname: [broken\n---\n").unwrap();
+        let ready = ensure_policy_ready(&pool, root)
+            .await
+            .expect("one missing file must not fail the whole call");
+        assert!(ready
+            .skipped
+            .iter()
+            .any(|s| s.path.ends_with("file-owned.mdc")));
+        assert!(ready.skipped.iter().any(|s| s.path.ends_with("SKILL.md")));
+        let rules = list_rules(&pool).await.unwrap();
+        assert!(rules.iter().any(|r| r.id == "file-owned"), "row is kept");
+        assert!(rules.iter().any(|r| r.id == "db-owned"));
+        assert!(list_skills(&pool)
+            .await
+            .unwrap()
+            .iter()
+            .any(|s| s.name == "kept-skill" && s.body.contains("skill body")));
+    }
+
+    #[tokio::test]
+    async fn export_refuses_a_skill_name_that_leaves_the_output_folder() {
+        let (dir, pool) = test_pool().await;
+        let root = dir.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let raw = "---\nname: placeholder\ndescription: d\n---\n\nEvil.\n";
+        let mut doc = parse_skill_file(Path::new("SKILL.md"), raw).unwrap();
+        doc.frontmatter.name = "../../escaped".into();
+        upsert_skill_doc(&pool, &doc).await.unwrap();
+        let mut good = parse_skill_file(Path::new("SKILL.md"), raw).unwrap();
+        good.frontmatter.name = "fine".into();
+        upsert_skill_doc(&pool, &good).await.unwrap();
+
+        let out = root.join("out");
+        let result = export_policy_to_files_filtered(&pool, &root, &out, false)
+            .await
+            .unwrap();
+        assert!(
+            !dir.path().join("escaped").exists(),
+            "wrote outside out_dir"
+        );
+        assert!(!root.join("escaped").exists(), "wrote outside out_dir");
+        assert!(out.join("skills/fine/SKILL.md").is_file());
+        assert_eq!(result.skills_exported, 1);
+    }
+
+    #[tokio::test]
     async fn skill_always_apply_persists() {
         let (_dir, pool) = test_pool().await;
         let raw = "---\nname: old-coder\ndescription: evidence\nalwaysApply: true\n---\n\nbody\n";
@@ -1567,6 +1876,196 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_rule_that_stops_parsing_keeps_its_row_and_is_reported() {
+        let (dir, pool) = test_pool().await;
+        let root = dir.path();
+        write_rule(root, "secrets", "Never commit secrets.");
+        write_skill(root, "review", "Review steps.");
+        import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .unwrap();
+
+        // A YAML typo in the frontmatter of both files.
+        std::fs::write(
+            root.join(".agents/rules/secrets.mdc"),
+            "---\nid: secrets\nlevel: [CRITICAL\n---\n\nNever commit secrets.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(".agents/skills/review/SKILL.md"),
+            "---\nname: review\ndescription: [d\n---\n\nReview steps.\n",
+        )
+        .unwrap();
+        let result = import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .unwrap();
+
+        let rules = list_rules(&pool).await.unwrap();
+        assert!(
+            rules
+                .iter()
+                .any(|r| r.id == "secrets" && r.body.contains("Never commit")),
+            "the previous row must survive a parse error: {rules:?}"
+        );
+        let skills = list_skills(&pool).await.unwrap();
+        assert!(skills.iter().any(|s| s.name == "review"), "{skills:?}");
+        // Only count files in this project; the user's global layers are not under test.
+        let here = |r: &PolicyIndexResult| {
+            r.skipped
+                .iter()
+                .filter(|s| Path::new(&s.path).starts_with(root))
+                .count()
+        };
+        assert_eq!(here(&result), 2, "{:?}", result.skipped);
+        assert!(result
+            .skipped
+            .iter()
+            .any(|s| s.path.ends_with("secrets.mdc") && !s.reason.is_empty() && s.kept));
+        assert!(result
+            .skipped
+            .iter()
+            .any(|s| s.path.ends_with("SKILL.md") && !s.reason.is_empty() && s.kept));
+
+        // Once the broken file is deleted, its row goes as before.
+        std::fs::remove_file(root.join(".agents/rules/secrets.mdc")).unwrap();
+        let result = import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .unwrap();
+        assert_eq!(here(&result), 1, "{:?}", result.skipped);
+        assert!(!list_rules(&pool)
+            .await
+            .unwrap()
+            .iter()
+            .any(|r| r.id == "secrets"));
+        assert!(list_skills(&pool)
+            .await
+            .unwrap()
+            .iter()
+            .any(|s| s.name == "review"));
+    }
+
+    #[tokio::test]
+    async fn a_file_that_parses_but_fails_validation_loses_its_row() {
+        let (dir, pool) = test_pool().await;
+        let root = dir.path();
+        write_rule(root, "typo-status", "Keep this pending.");
+        write_skill(root, "review", "Review steps.");
+        import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .unwrap();
+        // The rows an older parser stored: approved and matched.
+        let rules = list_rules(&pool).await.unwrap();
+        assert!(rules
+            .iter()
+            .any(|r| r.id == "typo-status" && r.status == "approved"));
+
+        // Valid YAML that fails validation: an unknown status, a non-kebab name.
+        std::fs::write(
+            root.join(".agents/rules/typo-status.mdc"),
+            "---\nid: typo-status\nlevel: INFO\nalwaysApply: true\nstatus: pendng\n---\n\nKeep this pending.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(".agents/skills/review/SKILL.md"),
+            "---\nname: My_Skill\ndescription: d\n---\n\nReview steps.\n",
+        )
+        .unwrap();
+        assert!(policy_disk_stale(&pool, root).await.unwrap());
+        let result = import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .unwrap();
+        assert!(result
+            .skipped
+            .iter()
+            .any(|s| s.path.ends_with("typo-status.mdc")
+                && s.reason.contains("status")
+                && !s.kept));
+
+        let rules = list_rules(&pool).await.unwrap();
+        assert!(
+            !rules.iter().any(|r| r.id == "typo-status"),
+            "an invalid rule must not stay approved: {rules:?}"
+        );
+        let skills = list_skills(&pool).await.unwrap();
+        assert!(
+            !skills
+                .iter()
+                .any(|s| s.name == "review" || s.name == "My_Skill"),
+            "{skills:?}"
+        );
+        let matched = crate::matcher::match_policy(
+            &pool,
+            &crate::types::MatchInput {
+                prompt: "keep this pending typo-status".into(),
+                cwd: root.to_path_buf(),
+                open_files: Vec::new(),
+                changed_files: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            !matched.rules.iter().any(|r| r.id == "typo-status"),
+            "the matcher must not return it"
+        );
+        assert!(!policy_disk_stale(&pool, root).await.unwrap());
+    }
+
+    async fn row_stamps(pool: &SqlitePool) -> Vec<(String, i64)> {
+        sqlx::query_as(
+            "SELECT id, updated_at FROM policy_rules
+             UNION ALL SELECT name, updated_at FROM policy_skills ORDER BY 1",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_import_writes_nothing() {
+        let (dir, pool) = test_pool().await;
+        let root = dir.path();
+        fixture_policy(root);
+        // A rule with the same id in a second layer must not flip back and forth either.
+        let private = root.join(".ax/policy-private");
+        std::fs::create_dir_all(private.join("rules")).unwrap();
+        std::fs::write(
+            private.join("rules/longrule.mdc"),
+            "---\nid: longrule\nlevel: INFO\nalwaysApply: true\n---\n\nthe private copy\n",
+        )
+        .unwrap();
+        import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .unwrap();
+        let before = row_stamps(&pool).await;
+        let generation = policy_generation_for_test(&pool).await;
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .unwrap();
+        assert_eq!(row_stamps(&pool).await, before);
+        assert_eq!(policy_generation_for_test(&pool).await, generation);
+
+        // A real edit is still written.
+        write_rule(root, "utf8", "an edited body");
+        import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .unwrap();
+        let rules = list_rules(&pool).await.unwrap();
+        let row = rules.iter().find(|r| r.id == "utf8").unwrap();
+        assert!(row.body.contains("an edited body"), "{}", row.body);
+    }
+
+    async fn policy_generation_for_test(pool: &SqlitePool) -> String {
+        sqlx::query_scalar(
+            "SELECT group_concat(id || content_hash || updated_at, '|') FROM policy_rules",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
     async fn import_without_global_db_keeps_everything() {
         let (dir, pool) = test_pool().await;
         let root = dir.path();
@@ -1600,6 +2099,137 @@ mod tests {
             assert!(rules.contains(&id.to_string()), "{id} missing: {rules:?}");
         }
         assert!(!root.join("missing-global.db").exists());
+    }
+
+    fn write_file(path: &Path, text: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    fn rule_text(id: &str, body: &str) -> String {
+        format!("---\nid: {id}\nlevel: INFO\nalwaysApply: true\n---\n\n{body}\n")
+    }
+
+    #[tokio::test]
+    async fn disk_stale_is_false_right_after_import_with_a_shadowed_id() {
+        let (dir, pool) = test_pool().await;
+        let root = dir.path().join("project");
+        let company = dir.path().join("company");
+        write_file(
+            &company.join("rules/shared.mdc"),
+            &rule_text("shared", "company text"),
+        );
+        write_file(
+            &root.join(".agents/rules/shared.mdc"),
+            &rule_text("shared", "project text"),
+        );
+        write_file(
+            &root.join("ax.json"),
+            &format!(
+                r#"{{"policy":{{"roots":[{{"id":"co","path":"{}","scope":"company"}}]}}}}"#,
+                company.display().to_string().replace('\\', "/")
+            ),
+        );
+        import_policy_from_files(&pool, &root, ImportMode::Replace)
+            .await
+            .unwrap();
+        assert!(!policy_disk_stale(&pool, &root).await.unwrap());
+
+        // Editing the shadowed (losing) file changes nothing an import would write.
+        write_file(
+            &company.join("rules/shared.mdc"),
+            &rule_text("shared", "company text, edited"),
+        );
+        assert!(!policy_disk_stale(&pool, &root).await.unwrap());
+
+        // Editing the winning file does.
+        write_file(
+            &root.join(".agents/rules/shared.mdc"),
+            &rule_text("shared", "project text, edited"),
+        );
+        assert!(policy_disk_stale(&pool, &root).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn disk_stale_is_false_right_after_import_of_a_stub() {
+        let (dir, pool) = test_pool().await;
+        let root = dir.path();
+        write_file(
+            &root.join("shared/rules/body.mdc"),
+            &rule_text("body", "external body"),
+        );
+        write_file(
+            &root.join(".agents/rules/stub.mdc"),
+            &format!(
+                "---\nid: stub\nlevel: INFO\nalwaysApply: true\nsource: shared/rules/body.mdc\n---\n\n{}\n",
+                crate::paths::STUB_BODY_MARKER
+            ),
+        );
+        import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .unwrap();
+        assert!(list_rules(&pool)
+            .await
+            .unwrap()
+            .iter()
+            .any(|r| r.id == "stub"));
+        assert!(!policy_disk_stale(&pool, root).await.unwrap());
+
+        write_file(
+            &root.join("shared/rules/body.mdc"),
+            &rule_text("body", "external body, edited"),
+        );
+        assert!(policy_disk_stale(&pool, root).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn disk_stale_sees_a_deleted_rule_and_skill() {
+        let (dir, pool) = test_pool().await;
+        let root = dir.path();
+        write_file(
+            &root.join(".agents/rules/keep.mdc"),
+            &rule_text("keep", "k"),
+        );
+        write_file(
+            &root.join(".agents/rules/gone.mdc"),
+            &rule_text("gone", "g"),
+        );
+        write_file(
+            &root.join(".agents/skills/gone-skill/SKILL.md"),
+            "---\nname: gone-skill\ndescription: d\n---\n\nSteps.\n",
+        );
+        import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .unwrap();
+        assert!(!policy_disk_stale(&pool, root).await.unwrap());
+
+        std::fs::remove_file(root.join(".agents/rules/gone.mdc")).unwrap();
+        assert!(policy_disk_stale(&pool, root).await.unwrap());
+        import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .unwrap();
+        assert!(!policy_disk_stale(&pool, root).await.unwrap());
+
+        std::fs::remove_dir_all(root.join(".agents/skills/gone-skill")).unwrap();
+        assert!(policy_disk_stale(&pool, root).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn disk_stale_ignores_database_owned_rows() {
+        let (dir, pool) = test_pool().await;
+        let root = dir.path();
+        write_file(
+            &root.join(".agents/rules/keep.mdc"),
+            &rule_text("keep", "k"),
+        );
+        import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .unwrap();
+        let raw =
+            "---\nid: db-only\nlevel: INFO\nalwaysApply: true\nstorage: database\n---\n\nBody.\n";
+        let doc = parse_rule_file(Path::new("db-only.mdc"), raw).unwrap();
+        upsert_rule_doc(&pool, &doc).await.unwrap();
+        assert!(!policy_disk_stale(&pool, root).await.unwrap());
     }
 }
 

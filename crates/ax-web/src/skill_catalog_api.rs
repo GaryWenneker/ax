@@ -95,10 +95,10 @@ async fn put_settings(
     refuse_readonly(&hub)?;
     let root = hub.read().await.project_root.clone();
     validate_publish_remote(&root, &body.publish_remote).map_err(bad)?;
-    let settings = ax_skill_catalog::CatalogSettings {
-        report_installs: body.report_installs,
-        publish_remote: body.publish_remote,
-    };
+    // Keep fields this page does not edit, such as `allowPrivateHosts`.
+    let mut settings = ax_skill_catalog::load_settings(&root).unwrap_or_default();
+    settings.report_installs = body.report_installs;
+    settings.publish_remote = body.publish_remote;
     ax_skill_catalog::save_settings(&root, &settings).map_err(bad)?;
     Ok(Json(json!({
         "reportInstalls": settings.report_installs,
@@ -402,12 +402,7 @@ fn install_blocking(
             |file| fetch_well_known_file(&base, &skill_name, file),
         )?]
     } else {
-        let tree = match &source {
-            ax_skill_catalog::SkillSource::Git {
-                path: Some(path), ..
-            } => fetched.tree.join(path),
-            _ => fetched.tree.clone(),
-        };
+        let tree = fetched.skill_tree()?;
         ax_skill_catalog::install_tree(&tree, &dest, skill, replace)?
     };
     let lock_path = root.join(".ax").join("skills-lock.json");
@@ -498,12 +493,7 @@ fn audit_source(
         report.sha = fetched.sha;
         return Ok(report);
     } else {
-        let tree = match &source {
-            ax_skill_catalog::SkillSource::Git {
-                path: Some(path), ..
-            } => fetched.tree.join(path),
-            _ => fetched.tree.clone(),
-        };
+        let tree = fetched.skill_tree()?;
         ax_skill_catalog::find_skill_dir(&tree, name)?
     };
     let mut report = ax_skill_catalog::audit_directory(&dir)?;

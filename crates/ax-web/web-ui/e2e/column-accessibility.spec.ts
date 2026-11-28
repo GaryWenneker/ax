@@ -1,11 +1,21 @@
 import {test,expect} from '@playwright/test';
-const policy={id:'responsive-row',name:'responsive-row',level:'INFO',scope:'project',body:'A readable description of a rule or skill.',enabled:true,status:'approved',alwaysApply:true,priority:1,tags:['graph','workflow'],globs:[],triggers:[],origin:'project',sourcePath:'rules/responsive-row.mdc',effectiveStorage:'files'};
+import {memoryRow,mockApi,policyRow,type Reply} from './fixtures';
+const policy=policyRow();
+/** Rules, skills and memory lists with one row each, plus the endpoints their pages read. */
+function listApi(overrides:Record<string,Reply>={}):Record<string,Reply>{
+ return {
+  '/api/policy/rules':{rules:[policy]},
+  '/api/policy/skills':{skills:[policy]},
+  '/api/policy/settings':{storage:'files'},
+  '/api/policy/rules/catalog/audits':[],
+  '/api/policy/skills/catalog/audits':[],
+  '/api/memory':{memories:[memoryRow()],total:1},
+  '/api/links':{outgoing:[],backlinks:[]},
+  ...overrides,
+ };
+}
 test.beforeEach(async({page})=>{
- await page.route('**/api/**',route=>{
-  const p=new URL(route.request().url()).pathname;
-  const json=p==='/api/policy/rules'?{rules:[policy]}:p==='/api/policy/skills'?{skills:[policy]}:p==='/api/memory'?{memories:[{id:'responsive-memory',kind:'note',title:'Responsive memory',body:'Keep useful context visible.',tags:['graph','workflow'],files:[],confidence:1,source:'manual',enabled:true,created_at:1791800000000,updated_at:1791800000000}],total:1}:p==='/api/ship/config'?{config:{ship:{},ui:{}},sonar:{}}:p==='/api/stats'?{project_name:'Responsive UI',node_count:0,edge_count:0,file_count:0,languages:[],db_size_bytes:0}:{};
-  return route.fulfill({json});
- });
+ await mockApi(page,listApi());
 });
 
 test('column separators keep visible focus in system high contrast',async({page})=>{

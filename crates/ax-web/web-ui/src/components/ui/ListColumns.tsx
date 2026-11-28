@@ -26,6 +26,10 @@ export function useListColumns(columns: readonly ListColumn[], id: string) {
     window.addEventListener('ax-list-widths', receive);
     return () => window.removeEventListener('ax-list-widths', receive);
   }, [storageKey, columns.length, minimumsKey]);
+  /** Shows widths during a drag without saving or broadcasting them; `resize` commits. */
+  function preview(next: number[]) {
+    setWidths(next);
+  }
   function resize(next: number[] | null) {
     setWidths(next);
     try { if (next) localStorage.setItem(storageKey, JSON.stringify(next)); else localStorage.removeItem(storageKey); } catch { /* Preferences are optional when storage is unavailable. */ }
@@ -35,7 +39,7 @@ export function useListColumns(columns: readonly ListColumn[], id: string) {
     setSort(current => current?.column !== index ? {column: index, direction: 'asc'} : current.direction === 'asc' ? {column: index, direction: 'desc'} : null);
   }
   const style = widths ? {'--list-columns': widths.map(w => `${w}px`).join(' '), '--column-total': `${widths.reduce((sum, width) => sum + width, 0) + (columns.length - 1) * 8 + 24}px`} as CSSProperties : undefined;
-  return {columns, widths, minimums, key: storageKey, resize, sort, filters, toggleSort, setFilter: (index: number, value: string) => setFilters(current => ({...current, [index]: value})), clear: () => {setSort(null); setFilters({}); resize(null);}, style,
+  return {columns, widths, minimums, key: storageKey, resize, preview, sort, filters, toggleSort, setFilter: (index: number, value: string) => setFilters(current => ({...current, [index]: value})), clear: () => {setSort(null); setFilters({}); resize(null);}, style,
     order: <T extends {values: readonly ColumnValue[]}>(rows: readonly T[]) => orderRows(rows, sort, filters)};
 }
 export type ListColumnControls = ReturnType<typeof useListColumns>;
@@ -67,11 +71,14 @@ function ColumnFilter({controls, index}: {controls: ListColumnControls; index: n
   const details = useRef<HTMLDetailsElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const label = controls.columns[index].label;
+  const [open, setOpen] = useState(false);
   useLayoutEffect(() => {
     // React 18's DOM typings predate popover; configure the native top layer through its DOM API.
     if (panel.current && typeof panel.current.showPopover === 'function') panel.current.popover = 'manual';
   }, []);
+  // Page-wide listeners exist only while this filter is open; a list can show many filters.
   useEffect(() => {
+    if (!open) return;
     const reposition = () => {
       if (details.current && panel.current && typeof panel.current.showPopover === 'function' && panel.current.matches(':popover-open')) positionFilter(details.current, panel.current);
     };
@@ -91,9 +98,11 @@ function ColumnFilter({controls, index}: {controls: ListColumnControls; index: n
       document.removeEventListener('pointerdown', dismiss);
       document.removeEventListener('focusin', dismiss);
     };
-  }, []);
+  }, [open]);
   return <details ref={details} className="column-filter" onKeyDown={filterKeys} onToggle={event => {
-    if (event.target !== event.currentTarget || !panel.current || typeof panel.current.showPopover !== 'function') return;
+    if (event.target !== event.currentTarget) return;
+    setOpen(event.currentTarget.open);
+    if (!panel.current || typeof panel.current.showPopover !== 'function') return;
     if (event.currentTarget.open) {panel.current.showPopover(); positionFilter(event.currentTarget, panel.current);}
     else if (panel.current.matches(':popover-open')) panel.current.hidePopover();
   }}>
@@ -122,7 +131,7 @@ export function ColumnTools({controls}: {controls: ListColumnControls}) {
 
 export function ColumnHeading({controls, index}: {controls: ListColumnControls; index: number}) {
   const cell = useRef<HTMLDivElement>(null);
-  const drag = useRef<{x: number; widths: number[]} | null>(null);
+  const drag = useRef<{x: number; widths: number[]; last: number[] | null} | null>(null);
   const column = controls.columns[index];
   const [measuredWidth, setMeasuredWidth] = useState(64);
   useEffect(() => {
@@ -139,15 +148,22 @@ export function ColumnHeading({controls, index}: {controls: ListColumnControls; 
     const parent = cell.current?.closest('tr') ?? cell.current?.parentElement;
     return parent ? Array.from(parent.children, (child, i) => clampWidth(child.getBoundingClientRect().width, controls.columns[i]?.minWidth ?? 64)) : controls.columns.map(c => c.minWidth ?? 64);
   };
-  const resize = (delta: number, original = measured()) => controls.resize(original.map((width, i) => i === index ? clampWidth(width + delta, column.minWidth ?? 64) : width));
+  const widen = (delta: number, original: number[]) => original.map((width, i) => i === index ? clampWidth(width + delta, column.minWidth ?? 64) : width);
+  const resize = (delta: number, original = measured()) => controls.resize(widen(delta, original));
+  // A drag only updates the shown widths; the final widths are saved and shared once, on release.
+  const endDrag = () => {
+    const last = drag.current?.last;
+    drag.current = null;
+    if (last) controls.resize(last);
+  };
   return <div ref={cell} className="column-heading" style={{minWidth:column.minWidth ?? 64}} role="group" aria-label={`${column.label} column`}>
     {column.sortable === false ? <span title={column.label}>{column.header ?? column.label}</span> : <button type="button" className="column-sort" onClick={() => controls.toggleSort(index)} aria-label={`Sort ${column.label}`} aria-pressed={controls.sort?.column === index} title={`${controls.sort?.column === index ? `Sorted ${controls.sort.direction}. ` : ''}Click to sort loaded rows; click again to reverse, then restore original order`}>{column.label}{controls.sort?.column === index ? controls.sort.direction === 'asc' ? ' ↑' : ' ↓' : ''}</button>}
     {column.filterable !== false && <ColumnFilter controls={controls} index={index} />}
     {(column.sortable !== false || column.filterable !== false) && <span className="column-resizer" role="separator" aria-orientation="vertical" aria-label={`Resize ${column.label} column`} aria-valuemin={column.minWidth ?? 64} aria-valuemax={1600} aria-valuenow={controls.widths?.[index] ?? measuredWidth} tabIndex={0} title="Drag or use arrow keys to resize. Double-click or Home restores automatic widths."
-      onPointerDown={e => {if(e.button !== 0) return; e.preventDefault(); e.stopPropagation(); e.currentTarget.focus({preventScroll:true}); drag.current = {x: e.clientX, widths: measured()}; e.currentTarget.setPointerCapture(e.pointerId);}}
-      onPointerMove={e => {if(drag.current) resize(e.clientX-drag.current.x, drag.current.widths);}}
-      onPointerUp={e => {drag.current = null; if(e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);}}
-      onLostPointerCapture={() => {drag.current = null;}}
+      onPointerDown={e => {if(e.button !== 0) return; e.preventDefault(); e.stopPropagation(); e.currentTarget.focus({preventScroll:true}); drag.current = {x: e.clientX, widths: measured(), last: null}; e.currentTarget.setPointerCapture(e.pointerId);}}
+      onPointerMove={e => {if(drag.current) {const next = widen(e.clientX-drag.current.x, drag.current.widths); drag.current.last = next; controls.preview(next);}}}
+      onPointerUp={e => {endDrag(); if(e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);}}
+      onLostPointerCapture={endDrag}
       onDoubleClick={() => controls.resize(null)}
       onKeyDown={e => {if(e.key === 'ArrowLeft' || e.key === 'ArrowRight') {e.preventDefault(); e.stopPropagation(); resize(e.key === 'ArrowRight' ? 10 : -10);} else if(e.key === 'Home') {e.preventDefault(); e.stopPropagation(); controls.resize(null);}}} />}
   </div>;

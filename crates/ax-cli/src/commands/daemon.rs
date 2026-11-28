@@ -110,14 +110,14 @@ async fn stop_recorded_daemon(
     };
     let pid = info.pid;
     if !process_running(pid) {
-        clear_daemon_record(root);
+        clear_daemon_record(root, pid);
         return Ok(format!(
             "no daemon running (removed the stale record of pid {pid})"
         ));
     }
     let hello_pid = connect_any(root).await.map(|(_, hello)| hello.pid);
     if !is_ax_daemon(pid, &info, hello_pid) {
-        clear_daemon_record(root);
+        clear_daemon_record(root, pid);
         return Ok(format!(
             "no daemon running (pid {pid} now belongs to another program; left it running and removed the stale record)"
         ));
@@ -131,16 +131,17 @@ async fn stop_recorded_daemon(
             ));
         }
     }
-    clear_daemon_record(root);
+    clear_daemon_record(root, pid);
     Ok(format!("stopped daemon pid {pid}"))
 }
 
-fn clear_daemon_record(root: &Path) {
-    use ax_mcp::daemon::remove_daemon_info;
-    use ax_mcp::daemon_lock::release_daemon_lock;
+/// Removes the record and lock of `pid` only; a daemon that started meanwhile keeps its own.
+fn clear_daemon_record(root: &Path, pid: u32) {
+    use ax_mcp::daemon::remove_daemon_info_if_owned;
+    use ax_mcp::daemon_lock::release_daemon_lock_if_owned;
     use ax_mcp::daemon_paths::daemon_pid_path;
-    remove_daemon_info(root);
-    release_daemon_lock(&daemon_pid_path(root));
+    remove_daemon_info_if_owned(root, pid);
+    release_daemon_lock_if_owned(&daemon_pid_path(root), pid);
 }
 
 /// Whether `pid` is the ax daemon described by `info`.
@@ -199,6 +200,8 @@ mod tests {
             version: env!("CARGO_PKG_VERSION").to_string(),
             project_root: root.to_string_lossy().into_owned(),
             exe,
+            token: None,
+            started_at: None,
         };
         std::fs::write(
             daemon_info_path(root),

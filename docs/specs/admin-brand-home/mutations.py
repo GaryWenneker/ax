@@ -11,7 +11,7 @@ def run(args: list[str], *, env: dict[str, str] | None = None) -> subprocess.Com
 def main() -> None:
     cases = [
         ('retired route restored', UI/'src/lib/routes.ts', "PATH_PAGE['/'] = 'stats';", "PATH_PAGE['/'] = 'stats';\nPATH_PAGE['/ship'] = 'stats';", None, 'Quality Gates page and navigation are retired'),
-        ('wrong logo font', UI/'src/index.css', 'font-family:"Archivo Variable",system-ui,sans-serif;', 'font-family:"Oxanium Variable",system-ui,sans-serif;', 'header matches', 'expect(style.font)'),
+        ('wrong logo font', UI/'src/styles/23-brand.css', 'font-family:"Archivo Variable",system-ui,sans-serif;', 'font-family:"Oxanium Variable",system-ui,sans-serif;', 'header matches', 'expect(style.font)'),
         ('fixed-width tags restored', UI/'src/controls.css', ':is(.page-level-badge,.page-scope-badge,.page-origin-badge,.mcp-kind-badge,.policy-pack-badge)', ':is(.page-level-badge,.page-scope-badge,.page-item-badge,.page-origin-badge,.mcp-kind-badge,.policy-pack-badge)', 'tags fit', 'expect(widths[0])'),
     ]
     for name, path, old, new, grep, marker in cases:

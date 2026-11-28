@@ -105,7 +105,14 @@ export function dailyReductionPct(d: DailySavingsRow): number {
   );
 }
 
-export function toolCategory(tool: string): 'graph' | 'policy' | 'other' {
+/**
+ * Bucket a tool for the Savings tables. The server counts graph calls only for
+ * savings-eligible graph tools, so a row with `graphCalls > 0` is a graph tool
+ * even when its name is not in the fallback list below. Without row data the
+ * name lists decide.
+ */
+export function toolCategory(tool: string, graphCalls = 0): 'graph' | 'policy' | 'other' {
+  if (graphCalls > 0) return 'graph';
   const graph = [
     'ax_explore', 'ax_context', 'ax_node', 'ax_search', 'ax_callers', 'ax_callees', 'ax_impact', 'ax_affected',
   ];
@@ -142,7 +149,7 @@ export function splitTools(tools: ToolSavingsRow[]) {
   const policy: ToolSavingsRow[] = [];
   const other: ToolSavingsRow[] = [];
   for (const t of tools) {
-    const c = toolCategory(t.tool);
+    const c = toolCategory(t.tool, t.graph_calls);
     if (c === 'graph') graph.push(t);
     else if (c === 'policy') policy.push(t);
     else other.push(t);

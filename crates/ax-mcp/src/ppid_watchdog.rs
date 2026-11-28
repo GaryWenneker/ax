@@ -9,22 +9,25 @@ pub const HOST_PPID_ENV: &str = "AX_HOST_PPID";
 pub const PPID_POLL_ENV: &str = "AX_PPID_POLL_MS";
 
 pub struct SupervisionState {
-    pub original_ppid: u32,
-    pub current_ppid: u32,
+    /// `None` while the parent pid could not be read.
+    pub original_ppid: Option<u32>,
+    pub current_ppid: Option<u32>,
     pub host_ppid: Option<u32>,
     pub is_windows: bool,
 }
 
 /// Returns a shutdown reason when supervision is lost, or `None` while supervised.
 pub fn supervision_lost_reason(state: &SupervisionState) -> Option<String> {
-    if state.current_ppid != state.original_ppid {
-        return Some(format!(
-            "ppid {} -> {}",
-            state.original_ppid, state.current_ppid
-        ));
+    // A lookup that failed says nothing about the parent; only two known pids compare.
+    if let (Some(original), Some(current)) = (state.original_ppid, state.current_ppid) {
+        if current != original {
+            return Some(format!("ppid {original} -> {current}"));
+        }
     }
-    if state.is_windows && state.original_ppid > 1 && !is_process_alive(state.original_ppid) {
-        return Some(format!("parent pid {} exited", state.original_ppid));
+    if let Some(original) = state.original_ppid.filter(|p| *p > 1) {
+        if state.is_windows && !is_process_alive(original) {
+            return Some(format!("parent pid {original} exited"));
+        }
     }
     if let Some(host) = state.host_ppid {
         if !is_process_alive(host) {
@@ -64,16 +67,25 @@ pub fn parse_host_ppid(raw: Option<String>) -> Option<u32> {
     }
 }
 
-pub fn parent_pid() -> u32 {
+/// This process's parent pid, or `None` when it cannot be read.
+#[cfg(unix)]
+pub fn parent_pid() -> Option<u32> {
+    // getppid cannot fail.
+    Some(std::os::unix::process::parent_id())
+}
+
+/// This process's parent pid, or `None` when it cannot be read.
+#[cfg(not(unix))]
+pub fn parent_pid() -> Option<u32> {
     let pid = Pid::from_u32(std::process::id());
     let Ok(mut sys) = System::new() else {
-        return 0;
+        return None;
     };
     sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
     sys.process(pid)
         .and_then(|p| p.parent())
         .map(|p| p.as_u32())
-        .unwrap_or(0)
+        .filter(|p| *p != 0)
 }
 
 pub fn is_process_alive(pid: u32) -> bool {
@@ -94,7 +106,7 @@ pub fn spawn_ppid_watchdog<F: Fn() + Send + Sync + 'static>(on_death: F) {
     if poll_ms == 0 {
         return;
     }
-    let original_ppid = parent_pid();
+    let mut original_ppid = parent_pid();
     let host_ppid = parse_host_ppid(std::env::var(HOST_PPID_ENV).ok());
     let is_windows = std::env::consts::OS == "windows";
 
@@ -102,9 +114,12 @@ pub fn spawn_ppid_watchdog<F: Fn() + Send + Sync + 'static>(on_death: F) {
         let mut interval = tokio::time::interval(Duration::from_millis(poll_ms));
         loop {
             interval.tick().await;
+            let current_ppid = parent_pid();
+            // A first lookup that failed takes the first pid that could be read.
+            original_ppid = original_ppid.or(current_ppid);
             let state = SupervisionState {
                 original_ppid,
-                current_ppid: parent_pid(),
+                current_ppid,
                 host_ppid,
                 is_windows,
             };
@@ -124,8 +139,8 @@ mod tests {
     #[test]
     fn posix_ppid_change_signals_loss() {
         let reason = supervision_lost_reason(&SupervisionState {
-            original_ppid: 100,
-            current_ppid: 1,
+            original_ppid: Some(100),
+            current_ppid: Some(1),
             host_ppid: None,
             is_windows: false,
         });
@@ -135,8 +150,8 @@ mod tests {
     #[test]
     fn windows_parent_death_signals_loss() {
         let reason = supervision_lost_reason(&SupervisionState {
-            original_ppid: 4242,
-            current_ppid: 4242,
+            original_ppid: Some(4242),
+            current_ppid: Some(4242),
             host_ppid: None,
             is_windows: true,
         });
@@ -149,13 +164,26 @@ mod tests {
     #[test]
     fn host_ppid_death_signals_loss() {
         let reason = supervision_lost_reason(&SupervisionState {
-            original_ppid: 100,
-            current_ppid: 100,
+            original_ppid: Some(100),
+            current_ppid: Some(100),
             host_ppid: Some(4242),
             is_windows: false,
         });
         if !is_process_alive(4242) {
             assert_eq!(reason, Some("host pid 4242 exited".to_string()));
+        }
+    }
+
+    #[test]
+    fn a_failed_parent_lookup_is_not_a_lost_parent() {
+        for (original, current) in [(Some(5120), None), (None, Some(5120))] {
+            let reason = supervision_lost_reason(&SupervisionState {
+                original_ppid: original,
+                current_ppid: current,
+                host_ppid: None,
+                is_windows: false,
+            });
+            assert_eq!(reason, None, "ppid {original:?} -> {current:?}");
         }
     }
 

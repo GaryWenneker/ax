@@ -31,5 +31,5 @@ tempfile = "3"
 sha2 = "0.11"
 hex = "0.4"
 tower = { version = "0.5", features = ["util"] }
-jsonwebtoken = "10.3.0"
+jsonwebtoken = "12.0.0"
 futures-core = "0.3"

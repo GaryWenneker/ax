@@ -1,16 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import Codicon from './Codicon';
-import {
-  browseWorkspace,
-  fetchWorkspaceCurrent,
-  mkdirWorkspace,
-  streamWorkspaceInit,
-  switchWorkspace,
-  type BrowseEntry,
-  type RecentProject,
-} from '../workspaceApi';
-import { notifyWorkspaceSwitched } from '../workspaceEvents';
+import { fetchWorkspaceCurrent, type RecentProject } from '../workspaceApi';
+import { useWorkspaceBrowser } from './useWorkspaceBrowser';
 
 interface Props {
   compact?: boolean;
@@ -22,13 +14,6 @@ export default function WorkspacePicker({ compact, onSwitched }: Props) {
   const [currentPath, setCurrentPath] = useState('');
   const [currentLabel, setCurrentLabel] = useState('');
   const [recent, setRecent] = useState<RecentProject[]>([]);
-  const [browsePath, setBrowsePath] = useState('');
-  const [entries, setEntries] = useState<BrowseEntry[]>([]);
-  const [parent, setParent] = useState<string | undefined>();
-  const [newName, setNewName] = useState('');
-  const [busy, setBusy] = useState<string | null>(null);
-  const [log, setLog] = useState<string[]>([]);
-  const [err, setErr] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async () => {
@@ -36,29 +21,30 @@ export default function WorkspacePicker({ compact, onSwitched }: Props) {
     if (data.workspace) {
       setCurrentPath(data.workspace.path);
       setCurrentLabel(data.workspace.label);
-      setBrowsePath(data.workspace.path);
     }
     if (data.recent) setRecent(data.recent);
   }, []);
 
-  const loadBrowse = useCallback(async (path: string) => {
-    const data = await browseWorkspace(path);
-    if (data.ok && data.path) {
-      setBrowsePath(data.path);
-      setParent(data.parent);
-      setEntries(data.entries ?? []);
-    } else {
-      setErr(data.error ?? 'Browse failed');
-    }
-  }, []);
+  const afterSwitch = useCallback(() => {
+    setOpen(false);
+    onSwitched?.();
+    void refresh();
+  }, [onSwitched, refresh]);
+
+  const { view, busy, log, err, newName, setNewName, loadBrowse, doSwitch, doMkdir, doInit } = useWorkspaceBrowser({
+    onSwitched: afterSwitch,
+  });
+  const { path: browsePath, parent, entries } = view;
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
+  // Opening the panel shows the current project once; every later move is one
+  // loadBrowse call from the button that was clicked.
   useEffect(() => {
-    if (open && browsePath) void loadBrowse(browsePath);
-  }, [open, browsePath, loadBrowse]);
+    if (open && currentPath) void loadBrowse(currentPath);
+  }, [open, currentPath, loadBrowse]);
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -67,68 +53,6 @@ export default function WorkspacePicker({ compact, onSwitched }: Props) {
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
-
-  async function doSwitch(path: string) {
-    setBusy('switch');
-    setErr(null);
-    const res = await switchWorkspace(path);
-    setBusy(null);
-    if (res.ok && res.switched) {
-      setLog(['Switched project — refreshing data…']);
-      setOpen(false);
-      notifyWorkspaceSwitched(res.path);
-      onSwitched?.();
-      void refresh();
-      return;
-    }
-    if (res.ok && res.reloading) {
-      setLog(['Switching project — reloading…']);
-      window.location.reload();
-      return;
-    }
-    if (res.needs_init) {
-      setErr('Project not initialized — use Initialize below.');
-      setBrowsePath(path);
-      return;
-    }
-    if (!res.ok) {
-      setErr(res.error ?? 'Switch failed');
-      return;
-    }
-    setOpen(false);
-    notifyWorkspaceSwitched(res.path);
-    onSwitched?.();
-    void refresh();
-  }
-
-  async function doMkdir() {
-    if (!newName.trim() || !browsePath) return;
-    setBusy('mkdir');
-    setErr(null);
-    const res = await mkdirWorkspace(browsePath, newName.trim());
-    setBusy(null);
-    if (!res.ok) {
-      setErr(res.error ?? 'Create failed');
-      return;
-    }
-    setNewName('');
-    if (res.path) await loadBrowse(res.path);
-    else await loadBrowse(browsePath);
-  }
-
-  async function doInit(path: string) {
-    setBusy('init');
-    setLog([]);
-    setErr(null);
-    await streamWorkspaceInit(path, (ev) => {
-      if (ev.type === 'line') setLog((l) => [...l, ev.text]);
-      if (ev.type === 'done') {
-        setBusy(null);
-        if (!ev.ok) setErr(ev.error ?? 'Init failed');
-        else if (ev.initialized) void doSwitch(path);
-      }
-    });
-  }
 
   return (
     <div className={`workspace-picker${compact ? ' workspace-picker--compact' : ''}`} ref={wrapRef}>

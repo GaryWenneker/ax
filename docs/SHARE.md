@@ -33,8 +33,9 @@ Close extra Command Center tabs if data still fails to load.
 ## PWA
 
 Manifest + icons ship with Command Center. The service worker is **opt-in**
-(`?pwa=1` or an already-installed standalone window) so local `ax web` never keeps
-a stale offline shell that can block live `/api/*` data.
+(`?pwa=1`, the stored opt-in, or an already-installed standalone window) so local
+`ax web` never keeps a stale offline shell that can block live `/api/*` data.
+`?pwa=0` opts out again: it clears the stored opt-in and unregisters the worker.
 
 `ax web --open` prefers `http://127.0.0.1:PORT` (browsers treat `localhost` as a
 separate origin). If an old service worker left `localhost` empty, open

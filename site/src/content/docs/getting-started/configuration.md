@@ -228,7 +228,7 @@ Policy can live in **files** (`.ax/policy/` on disk) or **database** (`ax.db` ta
 
 ```bash
 ax policy storage status           # show effective mode (project + global)
-ax policy storage database         # scan repo, show per-item interview (no import)
+ax policy storage database         # scan policy folders, show per-item interview (no import)
 ax policy storage database --yes   # import all candidates into ax.db, then switch
 ax policy storage files --yes      # export DB → files, then switch
 ```
@@ -252,6 +252,8 @@ ax seeds `.ax/ship.toml` on `ax init` when missing. It configures the ship quali
 | `[remote]` | GitHub or Azure DevOps draft PR provider |
 | `[sonar]` | Optional local SonarQube via Podman |
 | `[reviewers]` | Map git blame emails to reviewer identities |
+
+If `.ax/ship.toml` cannot be read or parsed (for example `web_port = "7070"` with quotes, or an unclosed string), ax logs the error with the file name and runs with default ship settings. While the file is broken, ax never writes to it: saving settings from the Command Center and the automatic update of `git_roots` are refused with that error, so your `[remote]`, `[sonar]` and other settings stay on disk. Fix or remove the file to save again.
 
 The keys of each section are listed in [Configuration (`.ax/ship.toml`)](/guides/command-center/#configuration-axshiptoml) of the Command Center guide. That guide describes the full ax, which is being phased out; the file and its quality-gate keys are the same in the headless build.
 

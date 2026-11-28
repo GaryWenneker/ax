@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { highlightLine } from '../lib/sourceHighlight';
+import { useEffect, useMemo, useState } from 'react';
+import { highlightLine, languageReady, loadLanguage } from '../lib/sourceHighlight';
 
 export interface SourceViewerLine {
   no: number;
@@ -13,12 +13,25 @@ interface Props {
 }
 
 export default function SourceViewer({ lines, language, highlightRange }: Props) {
+  // Plain text first; the grammar chunk loads in the background and the lines are colored when it arrives.
+  const [ready, setReady] = useState(() => languageReady(language));
+  useEffect(() => {
+    let live = true;
+    setReady(languageReady(language));
+    void loadLanguage(language).then((ok) => {
+      if (live && ok) setReady(true);
+    });
+    return () => {
+      live = false;
+    };
+  }, [language]);
   const highlighted = useMemo(
     () => lines.map((line) => ({
       no: line.no,
       html: highlightLine(line.text, language),
     })),
-    [lines, language],
+    // `ready` re-runs the highlight once the grammar has loaded.
+    [lines, language, ready],
   );
 
   return (

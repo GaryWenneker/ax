@@ -1,0 +1,184 @@
+/* ---- Command Center + Settings ---- */
+
+.ship-live-badge {
+  border-color: var(--accent-text);
+  color: var(--accent-text);
+  animation: ship-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes ship-pulse {
+  50% { opacity: 0.55; }
+}
+
+.ship-step {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  background: var(--bg-side);
+  border-left: 2px solid var(--border);
+}
+
+.ship-step-icon {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-sm);
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.ship-step-name {
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  color: var(--text-hi);
+  text-transform: capitalize;
+}
+
+.ship-step-meta {
+  font-size: var(--fs-xs);
+  margin-top: 2px;
+}
+
+.ok { color: var(--ok); }
+.warn { color: var(--warn); }
+
+.muted { color: var(--text-dim); }
+
+/* ---- Settings (Cursor-inspired) ---- */
+.settings-page {
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+  padding-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-page:has(.files-page),
+.settings-page:has(.page-split):not(.memory-page):not(.unresolved-page),
+.settings-page:has(.page-editor-grid),
+.settings-page.policy-editor-page {
+  flex: 1;
+  min-height: 0;
+}
+
+.settings-hero {
+  margin-bottom: 0;
+  flex-shrink: 0;
+}
+
+.settings-hero-title {
+  font-size: calc(18px * var(--ui-scale));
+  font-weight: 650;
+  color: var(--text-hi);
+  letter-spacing: -0.02em;
+  margin-bottom: 2px;
+  line-height: 1.2;
+}
+
+.settings-hero-sub {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  line-height: 1.35;
+}
+
+.settings-hero-sub code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+}
+
+.settings-toast {
+  padding: 8px 12px;
+  margin-bottom: 0;
+  border-radius: 6px;
+  font-size: var(--fs-sm);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.settings-toast--ok {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  background: rgba(63, 185, 80, 0.1);
+  border-color: rgba(63, 185, 80, 0.35);
+  color: var(--ok);
+}
+
+.settings-toast-copy {
+  margin-left: auto;
+}
+
+.settings-toast--err {
+  background: rgba(241, 76, 76, 0.1);
+  border-color: rgba(241, 76, 76, 0.35);
+  color: var(--danger);
+}
+
+.settings-toast--warn {
+  background: rgba(204, 167, 0, 0.1);
+  border-color: rgba(204, 167, 0, 0.35);
+  color: var(--warn);
+}
+
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-page .settings-hero-title {
+  font-size: calc(22px * var(--ui-scale));
+  letter-spacing: -0.03em;
+}
+
+.settings-page .settings-hero-sub {
+  font-size: var(--fs-sm);
+  max-width: 72ch;
+}
+
+.settings-page .settings-card {
+  border-radius: 14px;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--border-hi) 35%, transparent),
+    0 12px 40px rgba(0, 0, 0, 0.22);
+}
+
+.settings-page .settings-card-header {
+  padding: 18px var(--card-pad-x) 16px;
+}
+
+.settings-theme-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 8px 0 12px;
+  padding: 12px 0 4px;
+}
+
+.agent-path-chip {
+  font-size: 10px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.settings-page:has(.page-split):not(.memory-page):not(.unresolved-page) .settings-stack {
+  flex: 1;
+  min-height: 0;
+}

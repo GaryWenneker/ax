@@ -14,8 +14,14 @@ pub const TRACE_FIELD_MAX: usize = 3_072;
 /// Keep outbound previews short so the log stays one-line-per-event (no dump of explore bodies).
 const PREVIEW_LOG_MAX: usize = 160;
 
+/// One call's trace lines plus the session id resolved once when the call began.
+struct TraceBuffer {
+    session: Option<String>,
+    lines: Vec<String>,
+}
+
 tokio::task_local! {
-    static VERBOSE_TRACE: RefCell<Vec<String>>;
+    static VERBOSE_TRACE: RefCell<TraceBuffer>;
 }
 
 /// True when env override or project `[ui].verbose_mcp` is set.
@@ -24,30 +30,45 @@ pub fn verbose_enabled(project_root: Option<&Path>) -> bool {
 }
 
 /// Run `fut` with an empty per-task verbose buffer; returns `(result, lines)`.
-pub async fn with_trace_buffer<F, T>(fut: F) -> (T, Vec<String>)
+/// Every line gets `session=<id>` when `session` is set. Callers resolve it once
+/// per call, and pass `None` for remote callers, whose traces must never carry
+/// the host's Cursor session.
+pub async fn with_trace_buffer<F, T>(session: Option<String>, fut: F) -> (T, Vec<String>)
 where
     F: std::future::Future<Output = T>,
 {
+    let buffer = TraceBuffer {
+        session,
+        lines: Vec::new(),
+    };
     VERBOSE_TRACE
-        .scope(RefCell::new(Vec::new()), async move {
+        .scope(RefCell::new(buffer), async move {
             let out = fut.await;
-            let lines = VERBOSE_TRACE.with(|buf| std::mem::take(&mut *buf.borrow_mut()));
+            let lines = VERBOSE_TRACE.with(|buf| std::mem::take(&mut buf.borrow_mut().lines));
             (out, lines)
         })
         .await
 }
 
-/// Append a prefixed single-line entry when a trace buffer is active.
-/// When a Cursor session id is known (`AX_CURSOR_SESSION_ID` or
-/// `~/.ax/active-cursor-session`), append `session=<id>` for audit correlation.
+/// The session id of the active trace buffer, if any.
+pub fn trace_session() -> Option<String> {
+    VERBOSE_TRACE
+        .try_with(|buf| buf.borrow().session.clone())
+        .ok()
+        .flatten()
+}
+
+/// Append a prefixed single-line entry when a trace buffer is active,
+/// with `session=<id>` when the buffer has a session for audit correlation.
 pub fn push_line(msg: impl AsRef<str>) {
     let _ = VERBOSE_TRACE.try_with(|buf| {
         let clean = sanitize_one_line(msg.as_ref());
-        let line = match active_session_id() {
+        let mut buf = buf.borrow_mut();
+        let line = match buf.session.as_deref() {
             Some(sid) => ax_usage::format_ax_mcp_trace(format!("{clean} session={sid}")),
             None => ax_usage::format_ax_mcp_trace(clean),
         };
-        buf.borrow_mut().push(line);
+        buf.lines.push(line);
     });
 }
 

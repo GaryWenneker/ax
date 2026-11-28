@@ -37,7 +37,7 @@ sha2 = "0.11"
 hex = "0.4"
 axum = "0.8"
 reqwest = { workspace = true }
-jsonwebtoken = "10.3.0"
+jsonwebtoken = { version = "12.0.0", features = ["aws_lc_rs"] }
 oauth2 = { version = "5", default-features = false, features = ["reqwest", "rustls-tls", "timing-resistant-secret-traits"] }
 url = "2"
 subtle = "2"
@@ -46,5 +46,6 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "async-
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
 openssl = { version = "0.10.81", features = ["vendored"] }

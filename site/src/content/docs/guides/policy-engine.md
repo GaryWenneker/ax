@@ -139,7 +139,9 @@ source: "root:team-shared/rules/utf8-no-bom.mdc"
 <!-- ax:stub — body loaded from source -->
 ```
 
-Index loads the body from `source` (absolute path or `root:<id>/…`). Broken sources are skipped with a soft warning — preflight never crashes. Saving updates the external file and keeps the stub metadata.
+Index loads the body from `source` (`root:<id>/…`, a project-relative path, or an absolute path). Broken sources are skipped with a soft warning — preflight never crashes. Saving updates the external file and keeps the stub metadata.
+
+A `source` must name a `.mdc` or `.md` policy file inside the project, a configured policy root or a policy scope folder, and not inside a `.git` folder. Links are followed before the check. Any other `source`, including an absolute path to a folder outside those, is rejected for both reading and saving. To use a folder outside the project, add it under `policy.roots`.
 
 Both modes support the same **scopes**. Frontmatter field `scope` (and the DB column) records where an item lives. Capture interviews ask for scope; in a file, set `scope` in the frontmatter.
 
@@ -182,14 +184,16 @@ The cleanup runs after `ax sync`, `ax index` and the watch sync, after every pol
 
 ### Database migration scan
 
-When switching to **database** (`ax policy storage database`), ax does not import only `.ax/policy/`. It **recursively scans the project** for:
+When switching to **database** (`ax policy storage database`), ax scans the project's policy folders, not only `.ax/policy/`:
 
-| Pattern | Examples |
+| Kind | Folders |
 |---|---|
-| `*.mdc` with YAML frontmatter | `.agents/rules/`, `.ax/policy/rules/` (legacy), `.cursor/rules/`, nested packages |
-| `**/SKILL.md` with frontmatter | `.agents/skills/`, `.ax/policy/skills/` (legacy), `.cursor/skills/`, monorepo subfolders |
+| Rules (`*.mdc` with YAML frontmatter) | the agents folder (`policy.agentsDir`, default `.agents/rules/`), `.ax/policy/rules/` (legacy), `.cursor/rules/` (also in nested packages) |
+| Skills (`SKILL.md` with frontmatter) | the agents folder (`.agents/skills/`), `.ax/policy/skills/` (legacy), `.cursor/skills/` and `.claude/skills/` (also in nested packages) |
 
-Skipped automatically: `node_modules`, `target`, `dist`, IDE bootstrap (`.cursor/rules/ax.mdc`), invalid frontmatter, duplicate ids.
+Rule and skill files anywhere else (templates, fixtures, docs) are ignored. Pending items (`.ax/policy/pending/`), disabled items (`.ax/policy-inactive/`) and private items (`.ax/policy-private/`) are listed as skipped and never imported: approve or enable them first. Also skipped: `node_modules`, `target`, `dist`, IDE bootstrap (`.cursor/rules/ax.mdc`) and invalid frontmatter.
+
+When two files share a rule id or skill name, the one in the higher-precedence folder wins: the agents folder, then `.ax/policy/`, then `.cursor/`, then `.claude/`, then nested packages. The others are listed as duplicates.
 
 **Two-step flow:**
 
@@ -324,7 +328,7 @@ group: design
 | `triggers` | Match when user intent contains these phrases |
 | `priority` | Higher wins when multiple rules match |
 | `enabled` | When `false`, matcher/preflight skip the rule (default `true`) |
-| `status` | `approved` (active), `pending` (review queue), or `rejected` |
+| `status` | `approved` (active, the default), `pending` (review queue), or `rejected`. Any other value, and any unknown `scope`, fails validation, so the file is skipped on index and any row it produced before is removed, instead of being treated as approved |
 | `tags` | Free-form labels; give every rule at least one. `ax policy pack export --tag <tag>` selects by tag. Use `local` or `noshare` to opt out of pack export |
 | `group` | Optional catalog folder id that groups rules (same catalog as skills). Matching ignores this field |
 | `share` | Optional alias — normalized to tag `shared` on parse (legacy; default export no longer requires it) |
@@ -363,7 +367,9 @@ group: deploy-ops
 # Workflow steps (markdown)
 ```
 
-When `alwaysApply` is `true`, `ax_preflight` injects the skill body on **every** turn (including empty prompts) under **Skills (always apply)** — the same contract as always-apply rules. Otherwise the skill matches on triggers/description and appears under **Suggested skills**. Load a specific workflow anytime with `ax_skill({ name: "deploy" })`.
+The `name` is also the folder name, so it must be kebab-case (lowercase letters, digits and `-`), like a rule `id`. A `SKILL.md` with another name is skipped on index, a save with one is refused, and `ax policy export` never writes a skill or rule whose name is not a plain folder or file name.
+
+When `alwaysApply` is `true`, `ax_preflight` injects the skill body on **every** turn (including empty prompts) under **Skills (always apply)** — the same contract as always-apply rules. Otherwise the skill matches on triggers/description and appears under **Suggested skills**. A trigger matches only as a whole word or phrase, the same as a rule trigger: `pr` matches "open a pr" but not "improve". At most two suggested skills are sent per turn: the ones that match the prompt best (each trigger hit counts more than description words), with `priority` and then the name breaking a tie. Load a specific workflow anytime with `ax_skill({ name: "deploy" })`.
 
 Give every skill at least one `tags` value (same as rules).
 
@@ -395,6 +401,12 @@ guard: require-skill: "old-coder"
 
 `old-coder-mandatory` ships with `require-skill: "old-coder"` so implementation writes fail closed if the skill is missing or not always-apply.
 
+Before matching, `ax_guard` resolves the path: `.` and `..` segments and symbolic links are followed, and a relative path is taken from the project root. A path that ends up outside the project is refused (rule id `outside-project`). On macOS and Windows, glob matching ignores case, like the file system.
+
+A directive whose `/regex/` or glob does not compile, or a rule glob that does not compile on a rule with content directives, blocks every write and delete until the rule is fixed; the violation names the broken value. Writes to policy files (`.agents/**`, `.ax/policy/**`) stay allowed with a warning so the rule can be repaired. Content that is not valid UTF-8 is still checked, with invalid bytes replaced. When a write comes without content and a content directive applies, the result carries a `warnings` entry saying the content was not checked.
+
+Two built-in checks need no directive. A CRITICAL rule tagged `utf8` or `encoding` (or with `utf8` as a word in its id) blocks content with a UTF-8 BOM, a UTF-16 BOM, or null-padded ASCII. A CRITICAL rule tagged `secrets` (or with `secret` or `secrets` as a word in its id) blocks writing or deleting files that usually hold secrets: `.env`, `.env.*` and names ending in `.env` (such as `prod.env`), `id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, files ending in `.pem`, `.key`, `.p12`, `.pfx`, `.jks` or `.keystore`, and files with `secrets` or `credentials` as a whole word in the name, split on `-`, `_` and `.` (such as `secrets.json`, `aws-credentials.json` or `.aws/credentials`), and any file inside a folder named exactly `secrets` or `credentials` (such as `config/credentials/prod.json`). Files with a source-code or documentation extension (`credentials_form.tsx`, `src/credentials/form.tsx`, `secrets-handling.md`) are not blocked by these name and folder checks, and committed templates with an `example`, `sample`, `template` or `dist` part in the name (`.env.example`, `example.env`, `credentials.example.json`) stay writable.
+
 The full ax, which is being phased out, also has label filters, catalog groups and Auto-group for rules and skills in its Command Center; see [Command Center](/guides/command-center/).
 
 ---
@@ -415,6 +427,10 @@ ax policy pack import
 ax policy pack status
 ```
 
+`ax policy pack export --out <folder>` writes the pack somewhere else. The folder must be new, empty, or an earlier pack (it holds a `manifest.json`). Export replaces only `rules/`, `skills/` and `manifest.json` there and leaves other files alone; any other non-empty folder is refused.
+
+On import, each manifest entry must match the file it points to: a rule whose frontmatter `id` (or a skill whose `name`) differs from its manifest entry is skipped and listed under `invalid`, so a pack cannot overwrite a different local item under another name.
+
 Set `"policySync": true` in project `ax.json` so git hooks run export on post-commit and import on post-merge (run `ax sync` once after enabling).
 
 ### Built-in packs
@@ -431,7 +447,7 @@ ax policy pack install azdo-fullstack --force
 
 ### Stacks
 
-Core policy (startup, debugging, TDD, design-first, and the preflight rules) is seeded for every project. Language, frontend, and CMS skills are **not** copied on init. The on-disk folder is `policy.agentsDir` in `ax.json` (default `.agents`). `ax init` asks for that name when it is not set yet. Change it later with `ax policy agents-dir <name>`.
+Core policy (startup, debugging, TDD, design-first, and the preflight rules) is seeded for every project. Language, frontend, and CMS skills are **not** copied on init. The on-disk folder is `policy.agentsDir` in `ax.json` (default `.agents`); it must be a single folder name inside the project, and an unsafe value (a path, `..`, `.ax`, `.git`) is ignored in favor of `.agents`. `ax init` asks for that name when it is not set yet. Change it later with `ax policy agents-dir <name>`.
 
 ```bash
 ax policy stack detect
@@ -451,7 +467,7 @@ Save the choice in project `ax.json`:
 
 `ax init` asks which stacks to install on every run when stdin is a terminal, including a second init. The list is a colored checkbox menu, grouped into Platforms, Web, PHP, CMS, Systems, and Languages. Up and down arrows (or j and k) move through the stacks, Space toggles one, and Enter confirms. Installed stacks and newly detected stacks start checked. Clear every box for core policy only. If the menu cannot open, type ids separated by spaces, or `none`. A non-interactive run keeps the saved `policy.stacks` and does not block.
 
-`ax policy stack apply` writes `.ax/stacks.lock.json` (template version and content hash per file). Re-apply skips a file you edited unless you pass `--force`. `ax policy stack status` reports catalog drift; `ax policy stack upgrade` refreshes files that still match the lock.
+`ax policy stack apply` writes `.ax/stacks.lock.json` (template version and content hash per file). Re-apply skips a file you edited unless you pass `--force`. A file that was already in the folder before the first apply, with other content, stays yours: apply, upgrade and `remove` leave it alone, and only `--force` replaces it with the stack's copy. Applying more stacks adds them: `policy.stacks` in `ax.json` always lists every installed stack, the same set as the lock. `ax policy stack status` reports a file as drifted only when it is neither what ax wrote nor the current template; an unedited file from an older template shows as an available upgrade. `ax policy stack upgrade` refreshes files that still match the lock. Stack detection skips folders such as `node_modules`, `vendor` or `target` below the project, never the project folder itself.
 
 Language stacks follow the languages ax indexes: `rust`, `python`, `go`, `typescript`, `javascript`, `c`, `cpp`, `ruby`, `swift`, `kotlin`, `dart`, `svelte`, `astro`, `scala`, `lua`, `luau`, `objc`, `r`, and `pascal`, in addition to `dotnet` (C#), `java`, and `php`. C# stays on the `dotnet` stack. Config formats ax also parses (YAML, XML, properties) are not stacks.
 
@@ -497,6 +513,8 @@ Install writes project files under `.ax/policy/`, then **imports into `ax.db`** 
 
 Sitecore-style **item pick → zip → restore with conflict preview**. This is not git pack sync and not OneDrive.
 
+A package is refused when the zip is larger than 8 MiB, when one file in it unpacks to more than 8 MiB, when all files together unpack to more than 32 MiB, or when it holds more than 4096 files. Very large files still get a compare view, but past about four million line pairs it shows the differing middle part as removed and added instead of a line-by-line match.
+
 ```bash
 ax policy pack zip --out team.ax-policy.zip --name "Team pack" --rules utf8-no-bom --skills startup
 ax policy restore --preview team.ax-policy.zip
@@ -532,7 +550,7 @@ On every `ax policy pack import` (including the post-merge hook), ax:
 
 1. Indexes shared rules/skills into the local policy store
 2. Re-seeds **all** IDE bootstrap files (`.cursor/rules/ax.mdc`, `.continue/rules/ax.md`, Claude, AGENTS.md, …)
-3. Writes Continue MCP at `.continue/mcpServers/ax.json` (project-scoped, commit-friendly) and refreshes MCP for any other detected agents
+3. Writes Continue MCP at `.continue/mcpServers/ax.json` (project-scoped, commit-friendly) and refreshes MCP for any other detected agents. An edited `.continue/mcpServers/ax.json` (for example another `command` path) is kept; `ax policy sync --fix --force` replaces it with the template. Files ax owns as a whole, such as `.cursor/rules/ax.mdc`, are refreshed when they drift.
 
 Colleagues only need `ax` on PATH and their IDE open on the project. Continue is included in init seeding (`ax init` / `ax policy sync --fix`).
 
@@ -557,6 +575,8 @@ ax policy review show <id>
 ax policy review approve <id>
 ax policy review reject <id>
 ```
+
+A pending file with broken frontmatter does not block the queue: `review list` still lists the other items and names the bad file with its failing fields (for example `level: required`). `review show`, `approve` and pack import report the same detail. Fix the file or reject it.
 
 Pack sync, the review queue, remote share and enabling all go through the CLI: `ax policy pack …`, `ax policy review …`, `ax policy share …`, `ax policy enable|disable`. ax-admin has no policy review page and no policy sync page. Every rule and skill should carry at least one `tags` value so you can filter (e.g. `azdo`, `cicd`, `workflow`).
 
@@ -665,6 +685,9 @@ ax policy does not replace other systems:
 | Claude Code | `.claude/rules/ax.md` | marker block in `.claude/CLAUDE.md` |
 | Codex / opencode | — | marker block in `AGENTS.md` |
 | Gemini CLI | — | marker block in `GEMINI.md` |
+| Cline | — | marker block in `.clinerules` |
+
+In a shared instruction file (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.clinerules`, …) `ax init` only replaces or appends the block between `<!-- AX_START -->` and `<!-- AX_END -->`. Text before and after that block is kept. A `.clinerules/` folder is left alone.
 
 Legacy `.cursor/rules/ax-agent-workflow.mdc` is migrated to `ax.mdc` on init.
 
@@ -693,6 +716,10 @@ Run `ax policy sync` to verify managed policy files and warn about duplicate `.c
 2. Check DB: `ax policy rules` — should list indexed rules.
 3. If DB is empty but `.ax/policy/` exists: `ax policy import` or `ax policy index --force`.
 4. Restart daemon: `ax daemon stop`, then reload MCP.
+
+### A rule or skill file has a typo
+
+When a policy file exists but cannot be read or its frontmatter is not valid YAML (a typo mid-edit, for example), the index skips it and keeps the version it indexed before, so a broken edit never removes a CRITICAL rule. A file whose YAML parses but fails validation (an unknown `status` or `scope`, a skill name that is not kebab-case, a missing `id` or `level`) is skipped too, and the row it produced before is removed, so an invalid rule never stays active as approved. `ax policy index` prints each skipped file with the reason and says whether its previous version was kept or its indexed row was removed. `ax_policy_index` returns them in `skipped`, each with `path`, `reason` and `kept`. In database mode, a rule or skill with `storage: files` whose file is missing, unparseable or now holds another id keeps its stored row the same way. Fix the file and index again; delete the file to remove the rule.
 
 ### `ax policy guard` CLI errors
 

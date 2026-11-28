@@ -1,4 +1,10 @@
 //! ICE preflight acceptance: exact source, policy budget and negative prompts.
+//!
+//! Every test points the ax home at a temporary directory first, so the
+//! developer's global context budget and global policy cannot change what a
+//! preflight returns.
+mod common;
+
 use ax_core::Ax;
 use ax_extraction::orchestrator::IndexOptions;
 use ax_mcp::ToolHandler;
@@ -6,6 +12,7 @@ use serde_json::json;
 
 #[tokio::test]
 async fn preflight_returns_exact_indexed_manifest_line() {
+    common::isolate_process();
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     let body = (1..=325)
@@ -39,6 +46,7 @@ async fn preflight_returns_exact_indexed_manifest_line() {
 
 #[tokio::test]
 async fn preflight_keeps_required_policy_when_source_does_not_fit_budget() {
+    common::isolate_process();
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     std::fs::write(root.join("package.json"), "{\n\"scripts\":{}\n}\n").unwrap();
@@ -74,6 +82,7 @@ async fn preflight_keeps_required_policy_when_source_does_not_fit_budget() {
 
 #[tokio::test]
 async fn irrelevant_prompt_never_injects_source() {
+    common::isolate_process();
     let tmp = tempfile::tempdir().unwrap();
     let mut ax = Ax::init(tmp.path()).await.unwrap();
     let result = ToolHandler::call_tool(
@@ -90,6 +99,7 @@ async fn irrelevant_prompt_never_injects_source() {
 
 #[tokio::test]
 async fn approved_business_rule_supplies_search_terms_without_model() {
+    common::isolate_process();
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     std::fs::write(

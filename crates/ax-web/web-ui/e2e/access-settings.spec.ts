@@ -4,7 +4,7 @@ if (process.env.AX_CHROME_EXECUTABLE) {
   test.use({ launchOptions: { executablePath: process.env.AX_CHROME_EXECUTABLE } });
 }
 
-test('access management sends CSRF and shows new tokens only until dismissed', async ({ page }) => {
+test('access management sends CSRF and shows new tokens until dismissed', async ({ page }) => {
   const mutations: { path: string; body: unknown }[] = [];
   const member = { id: 'm1', display_name: 'Demo member', role: 'member', status: 'active', created_at: '2026-10-11' };
   const client = { id: 'c1', member_id: 'm1', display_name: 'Demo client', client_type: 'cli', scopes: ['memory:read'], status: 'active', created_at: '2026-10-11' };
@@ -36,22 +36,24 @@ test('access management sends CSRF and shows new tokens only until dismissed', a
     }
   });
   await page.goto('/settings');
-  // These controls also work after integration with the portal Settings panels.
+  // Access settings sit in their own panels; open each one from the Settings navigation.
   const teamNav = page.locator('.settings-navigation-item[aria-controls="settings-panel-team"]');
-  if (await teamNav.count()) await teamNav.click();
+  await teamNav.click();
   const team = page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Team', exact: true }) });
   await team.getByRole('group', { name: 'Roles for Demo member' }).getByLabel('Read-only').click();
   await expect.poll(() => (member as typeof member & { roles?: string[] }).roles).toContain('readonly');
   const clientsNav = page.locator('.settings-navigation-item[aria-controls="settings-panel-clients"]');
-  if (await clientsNav.count()) await clientsNav.click();
+  await clientsNav.click();
   const clients = page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Clients & tokens', exact: true }) });
   await clients.getByRole('button', { name: 'Issue token', exact: true }).click();
   await expect(page.getByText('axc_test_shown_once', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Dismiss', exact: true }).click();
-  await expect(page.getByText('axc_test_shown_once', { exact: true })).toHaveCount(0);
   await clients.getByLabel('context:read', { exact: true }).check();
   await clients.getByRole('button', { name: 'Save scopes' }).click();
   await expect.poll(() => client.scopes).toContain('context:read');
+  // The token cannot be shown again, so another change must not hide it.
+  await expect(page.getByText('axc_test_shown_once', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Dismiss', exact: true }).click();
+  await expect(page.getByText('axc_test_shown_once', { exact: true })).toHaveCount(0);
   await clients.getByRole('button', { name: 'Rotate tokens' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Rotate tokens', exact: true }).click();
   await expect(page.getByText('axc_test_shown_once', { exact: true })).toBeVisible();

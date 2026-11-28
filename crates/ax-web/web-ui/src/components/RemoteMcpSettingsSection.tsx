@@ -1,19 +1,37 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import RemoteMcpPublishSection from './RemoteMcpPublishSection';
 import ModalShell from './ModalShell';
 import { parseConnectionDetails } from '../connectionTransfer';
+import { signInTarget } from '../lib/safeNavigation';
 
 type Connection = { url: string; client_id: string; issuer: string; state: 'stored' | 'expired'; expires_at: number };
+/** A failed remote-mcp request; `status` is the HTTP status, or 0 when the server did not answer. */
+class RemoteRequestError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
 async function request(path: string, body?: unknown, csrf?: string) {
-  const response = await fetch(`/api/remote-mcp${path}`, {
-    method: body ? 'POST' : 'GET',
-    headers: body ? { 'Content-Type': 'application/json', 'X-Ax-Csrf': csrf ?? '' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const value = await response.json();
-  if (!response.ok) throw new Error(value.error ?? 'Remote connection request failed');
+  let response: Response;
+  try {
+    response = await fetch(`/api/remote-mcp${path}`, {
+      method: body ? 'POST' : 'GET',
+      headers: body ? { 'Content-Type': 'application/json', 'X-Ax-Csrf': csrf ?? '' } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new RemoteRequestError('The Command Center server did not answer.', 0);
+  }
+  const value = await response.json().catch(() => null);
+  if (!response.ok || value === null) {
+    throw new RemoteRequestError(value?.error ?? `Remote connection request failed (HTTP ${response.status})`, response.status);
+  }
   return value;
 }
+
+/** Poll failures in a row after which a pending browser sign-in is given up. */
+const MAX_POLL_FAILURES = 10;
 
 export default function RemoteMcpSettingsSection() {
   const [showPaste, setShowPaste] = useState(false);
@@ -35,18 +53,39 @@ export default function RemoteMcpSettingsSection() {
     setCsrf(data.csrf);
   }
   useEffect(() => { load().catch(e => setError(String(e.message))); }, []);
+  const loadRef = useRef(load);
+  loadRef.current = load;
   useEffect(() => {
     if (!attempt) return;
     let stopped = false;
+    let inFlight = false;
+    let failures = 0;
+    function drop(message: string) {
+      setAttempt(null); setBusy(false); setAuthorizationUrl(null); setError(message);
+      loadRef.current().catch(() => {});
+    }
+    // One poll at a time; a tick that finds a poll still running is skipped.
     const timer = setInterval(async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const status = await request(`/login/${encodeURIComponent(attempt)}`);
+        failures = 0;
         if (stopped || status.state === 'pending') return;
         setAttempt(null); setBusy(false); setAuthorizationUrl(null);
-        if (status.state === 'connected') { setMessage('Connected. Ax verified access to this project.'); await load(); }
+        if (status.state === 'connected') { setMessage('Connected. Ax verified access to this project.'); await loadRef.current(); }
         else setError(status.message ?? 'Sign-in did not complete');
       } catch (e) {
-        if (!stopped) { setError(e instanceof Error ? e.message : String(e)); setAttempt(null); setBusy(false); }
+        if (stopped) return;
+        const message = e instanceof Error ? e.message : String(e);
+        // The server no longer knows this sign-in: stop now. Any other failure (a dropped
+        // connection, a proxy error page) may pass, so keep polling for a while.
+        const status = e instanceof RemoteRequestError ? e.status : 0;
+        if (status === 404 || status === 410) { drop(message); return; }
+        failures++;
+        if (failures >= MAX_POLL_FAILURES) drop(`Lost contact with the sign-in: ${message}`);
+      } finally {
+        inFlight = false;
       }
     }, 1000);
     return () => { stopped = true; clearInterval(timer); };
@@ -67,8 +106,14 @@ export default function RemoteMcpSettingsSection() {
     if (popup) popup.opener = null;
     try {
       const value = await request('/login', { url: url.trim(), client_id: clientId.trim() }, csrf);
-      setAttempt(value.id); setAuthorizationUrl(value.authorization_url);
-      if (popup) popup.location.href = value.authorization_url;
+      const target = signInTarget(value.authorization_url);
+      if (!target) {
+        // Never open an unchecked address; end the sign-in the server just started.
+        request(`/login/${encodeURIComponent(value.id)}/cancel`, {}, csrf).catch(() => {});
+        throw new Error('The remote server returned a sign-in address that is not HTTPS.');
+      }
+      setAttempt(value.id); setAuthorizationUrl(target);
+      if (popup) popup.location.href = target;
     } catch (e) { popup?.close(); setBusy(false); setError(e instanceof Error ? e.message : String(e)); }
   }
   async function cancel() {

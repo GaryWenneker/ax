@@ -9,15 +9,14 @@ export interface ThemePreset {
   bgSide: string;
   bgInput: string;
   bgHover: string;
-  bgActive: string;
   bgPanel: string;
   border: string;
   borderHi: string;
   text: string;
   textDim: string;
   textHi: string;
-  statusbarBg: string;
-  layout?: 'portal';
+  /** Every preset uses the portal shell; `html[data-ax-layout="portal"]` styles rely on it. */
+  layout: 'portal';
   colorScheme?: 'light' | 'dark';
 }
 
@@ -26,15 +25,15 @@ export const THEMES: ThemePreset[] = [
     id: 'azure-light', label: 'Light', layout: 'portal', colorScheme: 'light',
     accent: '#386900', ok: '#107c10', danger: '#a4262c', warn: '#865d00',
     bg: '#f5f5f5', bgSide: '#fafafa', bgInput: '#ffffff', bgHover: '#eeeeee',
-    bgActive: '#deecf9', bgPanel: '#ffffff', border: '#d6d6d6', borderHi: '#8a8886',
-    text: '#323130', textDim: '#605e5c', textHi: '#201f1e', statusbarBg: '#0078d4',
+    bgPanel: '#ffffff', border: '#d6d6d6', borderHi: '#8a8886',
+    text: '#323130', textDim: '#605e5c', textHi: '#201f1e',
   },
   {
     id: 'azure-dark', label: 'Dark', layout: 'portal', colorScheme: 'dark',
     accent: '#b9ff6a', ok: '#6ccb5f', danger: '#ff8585', warn: '#f2c661',
     bg: '#1b1b1b', bgSide: '#202020', bgInput: '#252525', bgHover: '#333333',
-    bgActive: '#163b59', bgPanel: '#252525', border: '#444444', borderHi: '#797775',
-    text: '#f0f0f0', textDim: '#bdbdbd', textHi: '#ffffff', statusbarBg: '#2899f5',
+    bgPanel: '#252525', border: '#444444', borderHi: '#797775',
+    text: '#f0f0f0', textDim: '#bdbdbd', textHi: '#ffffff',
   },
 ];
 
@@ -65,8 +64,9 @@ const STORAGE_KEY = 'ax-theme';
 function normalizeThemeId(id: string | null): string {
   return id === 'azure-light' || id === 'light' ? 'azure-light' : 'azure-dark';
 }
+/** The stored theme id, mapped onto a current preset. Reading never writes storage. */
 export function loadThemeId(): string {
-  try { const id = normalizeThemeId(localStorage.getItem(STORAGE_KEY)); localStorage.setItem(STORAGE_KEY,id); return id; }
+  try { return normalizeThemeId(localStorage.getItem(STORAGE_KEY)); }
   catch { return 'azure-dark'; }
 }
 export function saveThemeId(id: string): void {
@@ -193,7 +193,7 @@ export function statusbarInk(accentHex: string): {
 export function applyTheme(theme: ThemePreset, accentId = loadAccentId()): void {
   theme = {...theme,accent:accentForTheme(theme, accentId)};
   const root = document.documentElement;
-  root.dataset.axLayout = theme.layout ?? 'workbench';
+  root.dataset.axLayout = theme.layout;
   root.style.colorScheme = theme.colorScheme ?? 'dark';
   const accentText = [theme.bg, theme.bgPanel, theme.bgInput, theme.bgHover].reduce((color, bg) => ensureTextContrast(color, bg), theme.accent);
   const fill = themeAccentFill(theme);
@@ -244,6 +244,8 @@ export const THEME_CHANGED = 'ax-theme-changed';
 
 export function initTheme(): string {
   const id = loadThemeId();
+  // Rewrite a removed or legacy theme id once, at startup.
+  try { if (localStorage.getItem(STORAGE_KEY) !== id) saveThemeId(id); } catch {}
   applyTheme(themeById(id));
   return id;
 }

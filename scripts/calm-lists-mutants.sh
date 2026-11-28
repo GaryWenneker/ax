@@ -34,6 +34,14 @@ mutant() {
   local name="$1" file="$2" from="$3" to="$4" runner="$5"
   if [[ -n "${ONLY:-}" && " $ONLY " != *" ${name%% *} "* ]]; then return; fi
   total=$((total + 1))
+  if [ "$file" = "src/index.css" ]; then
+    # index.css only imports src/styles/*.css; mutate the style file that holds the anchor.
+    file="$(FROM="$from" node -e '
+      const fs = require("fs");
+      const hit = fs.readdirSync("src/styles").find((f) => fs.readFileSync("src/styles/" + f, "utf8").includes(process.env.FROM));
+      if (hit) console.log("src/styles/" + hit);')"
+    [ -n "$file" ] || { echo "FAIL: $name anchor not found in src/styles"; exit 1; }
+  fi
   TARGET="$UI/$file"
   BACKUP="$(mktemp)"
   cp "$TARGET" "$BACKUP"
@@ -52,7 +60,7 @@ mutant() {
   cp "$BACKUP" "$TARGET"; rm -f "$BACKUP"; BACKUP=""
 }
 
-FILES=(src/components/ui/PolicyCalmList.tsx src/components/ui/PageLayout.tsx src/index.css src/lib/calmRows.ts src/components/McpTraceLive.tsx src/lib/contextMenuGuard.ts src/pages/Memory.tsx src/memoryCategory.ts src/lib/policySelection.ts)
+FILES=(src/components/ui/PolicyCalmList.tsx src/components/ui/PageLayout.tsx src/styles/*.css src/lib/calmRows.ts src/components/McpTraceLive.tsx src/lib/contextMenuGuard.ts src/pages/Memory.tsx src/memoryCategory.ts src/lib/policySelection.ts)
 before=$(shasum "${FILES[@]}")
 
 mutant "M1 rows lose graph variant" src/components/ui/PolicyCalmList.tsx 'variant="graph"' 'variant={undefined}' run_ui

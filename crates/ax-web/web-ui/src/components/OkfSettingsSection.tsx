@@ -209,7 +209,7 @@ export default function OkfSettingsSection() {
           <div className="settings-meta-row">
             <dt>Absolute</dt>
             <dd>
-              <code>{cfg.outDirAbs}</code>
+              {cfg.outDirError ? <span>{cfg.outDirError}</span> : <code>{cfg.outDirAbs}</code>}
             </dd>
           </div>
           {cfg.wikiEnabled && (

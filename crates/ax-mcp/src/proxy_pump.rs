@@ -4,10 +4,10 @@ use std::future::Future;
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncBufRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
-use crate::daemon_conn::DaemonSession;
+use crate::daemon_conn::{read_line_capped, DaemonSession, MAX_LINE_BYTES};
 
 pub const DAEMON_RESTARTED: &str = "ax daemon restarted; retry the call";
 
@@ -25,7 +25,8 @@ where
     tokio::spawn(async move {
         loop {
             let mut line = String::new();
-            match reader.read_line(&mut line).await {
+            // A line over the limit ends this reader like a closed peer.
+            match read_line_capped(&mut reader, &mut line, MAX_LINE_BYTES).await {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
                     if tx.send(line).await.is_err() {
@@ -59,6 +60,47 @@ fn response_id(msg: &Value) -> Option<&Value> {
         return None;
     }
     msg.get("id")
+}
+
+/// The id the proxy gives the `initialize` it replays to a new daemon; the
+/// answer to it stays in the proxy.
+const REPLAYED_INITIALIZE_ID: &str = "ax-proxy-replayed-initialize";
+
+/// The client's handshake, replayed to a daemon that replaced the one the
+/// client initialized against, so that daemon knows the client too.
+#[derive(Default)]
+struct Handshake {
+    initialize: Option<String>,
+    initialized: Option<String>,
+}
+
+impl Handshake {
+    fn record(&mut self, line: &str) {
+        let Some(mut msg) = parse(line) else {
+            return;
+        };
+        match msg.get("method").and_then(Value::as_str) {
+            Some("initialize") => {
+                msg["id"] = json!(REPLAYED_INITIALIZE_ID);
+                self.initialize = Some(msg.to_string());
+            }
+            Some("notifications/initialized") => self.initialized = Some(line.trim().to_owned()),
+            _ => {}
+        }
+    }
+
+    /// A failed write needs no handling here: the next line to the daemon fails too.
+    /// Nothing is replayed before the client sent `initialize`.
+    async fn replay(&self, daemon_tx: &mut DaemonWriter) {
+        if self.initialize.is_none() {
+            return;
+        }
+        for line in [&self.initialize, &self.initialized].into_iter().flatten() {
+            if write_line(daemon_tx, line).await.is_err() {
+                return;
+            }
+        }
+    }
 }
 
 async fn write_line<W: AsyncWrite + Unpin + ?Sized>(
@@ -100,6 +142,9 @@ async fn forward<W: AsyncWrite + Unpin>(
             }
         }
         if let Some(id) = response_id(msg) {
+            if id == REPLAYED_INITIALIZE_ID {
+                return Ok(());
+            }
             pending.retain(|p| p != id);
         }
     }
@@ -199,13 +244,23 @@ where
     let mut pending: Vec<Value> = Vec::new();
     // A client line the lost daemon never accepted; it goes to the next daemon first.
     let mut unsent: Option<String> = None;
+    let mut handshake = Handshake::default();
     loop {
         let alive = match unsent.take() {
-            Some(line) => send_to_daemon(&mut daemon_tx, line, &mut pending, &mut unsent).await,
+            Some(line) => {
+                send_to_daemon(
+                    &mut daemon_tx,
+                    line,
+                    &mut pending,
+                    &mut unsent,
+                    &mut handshake,
+                )
+                .await
+            }
             None => tokio::select! {
                 line = client_rx.recv() => match line {
                     None => return drain_after_client_left(&mut client_out, daemon_rx, daemon_tx, &mut pending).await,
-                    Some(line) => send_to_daemon(&mut daemon_tx, line, &mut pending, &mut unsent).await,
+                    Some(line) => send_to_daemon(&mut daemon_tx, line, &mut pending, &mut unsent, &mut handshake).await,
                 },
                 line = daemon_rx.recv() => match line {
                     Some(line) => {
@@ -221,7 +276,10 @@ where
         }
         fail_pending(&mut client_out, &mut pending).await?;
         match reconnect_within(&mut reconnect, deadline).await {
-            Ok(session) => (daemon_rx, daemon_tx) = attach(session),
+            Ok(session) => {
+                (daemon_rx, daemon_tx) = attach(session);
+                handshake.replay(&mut daemon_tx).await;
+            }
             Err(stop) => {
                 // Lines that reached the proxy but no daemon: their requests still need an answer.
                 pending.extend(unsent.take().iter().filter_map(|line| request_id(line)));
@@ -241,11 +299,13 @@ async fn send_to_daemon(
     line: String,
     pending: &mut Vec<Value>,
     unsent: &mut Option<String>,
+    handshake: &mut Handshake,
 ) -> bool {
     if write_line(daemon_tx, &line).await.is_err() {
         *unsent = Some(line);
         return false;
     }
+    handshake.record(&line);
     if let Some(id) = request_id(&line) {
         pending.push(id);
     }
@@ -603,6 +663,74 @@ mod tests {
             .await;
         let outcome = tokio::time::timeout(WAIT, task).await.unwrap().unwrap();
         assert_eq!(outcome, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn a_new_daemon_receives_the_clients_initialize_before_other_lines() {
+        let (s1, mut d1) = daemon();
+        let (s2, mut d2) = daemon();
+        let mut h = start(s1, vec![s2], WAIT);
+
+        h.client
+            .send(json!({"jsonrpc":"2.0","id":0,"method":"initialize",
+                "params":{"clientInfo":{"name":"cursor"}}}))
+            .await;
+        let init = d1.line().await.unwrap();
+        d1.send(json!({"jsonrpc":"2.0","id":init["id"],"result":{}}))
+            .await;
+        assert_eq!(h.client.line().await.unwrap()["id"], 0);
+        h.client
+            .send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))
+            .await;
+        d1.line().await.unwrap();
+
+        drop(d1);
+        h.client.send(request(1, "ax_status")).await;
+        let replay = d2.line().await.unwrap();
+        assert_eq!(replay["method"], "initialize");
+        assert_eq!(replay["params"]["clientInfo"]["name"], "cursor");
+        d2.send(json!({"jsonrpc":"2.0","id":replay["id"],"result":{}}))
+            .await;
+        assert_eq!(
+            d2.line().await.unwrap()["method"],
+            "notifications/initialized"
+        );
+        let req = d2.line().await.unwrap();
+        assert_eq!(req["id"], 1);
+        d2.send(result(&req["id"])).await;
+        assert_eq!(
+            h.client.line().await.unwrap()["id"],
+            1,
+            "the answer to the replayed initialize stays in the proxy"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_daemon_line_longer_than_the_limit_is_treated_as_a_lost_daemon() {
+        let (s1, mut d1) = daemon();
+        let mut h = start(s1, vec![], Duration::from_millis(400));
+
+        h.client.send(request(5, "ax_status")).await;
+        d1.line().await.unwrap();
+        let chunk = vec![b'a'; 1024 * 1024];
+        let writer = tokio::spawn(async move {
+            let mut left = crate::daemon_conn::MAX_LINE_BYTES + 1;
+            while left > 0 {
+                let n = left.min(chunk.len() as u64) as usize;
+                if d1.writer.write_all(&chunk[..n]).await.is_err() {
+                    break;
+                }
+                left -= n as u64;
+            }
+            d1
+        });
+        let reply = tokio::time::timeout(Duration::from_secs(20), h.client.line())
+            .await
+            .expect("the proxy kept reading an endless line")
+            .unwrap();
+        assert_eq!(reply["id"], 5);
+        assert_eq!(reply["error"]["code"], -32000);
+        drop(writer);
     }
 
     #[tokio::test]

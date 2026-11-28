@@ -117,18 +117,30 @@ impl Data {
     }
 }
 
+/// The file's content: a missing or empty file is an empty store; anything
+/// else that does not parse is an error, so it is never overwritten.
+fn parse(path: &Path, bytes: Option<&[u8]>) -> Result<Data, String> {
+    let mut data: Data = match bytes {
+        None => Data::default(),
+        Some(bytes) if bytes.iter().all(u8::is_ascii_whitespace) => Data::default(),
+        Some(bytes) => serde_json::from_slice(bytes)
+            .map_err(|_| format!("{} is not valid; fix or remove it", path.display()))?,
+    };
+    data.repair_active();
+    Ok(data)
+}
+
 impl Store {
     /// Opens `<dir>/connections.json`. A missing file is an empty store; an
     /// unreadable one is an error, so it is never overwritten by accident.
     pub fn open(dir: &Path) -> Result<Self, String> {
         let path = dir.join("connections.json");
-        let mut data: Data = match std::fs::read_to_string(&path) {
-            Ok(text) => serde_json::from_str(&text)
-                .map_err(|_| format!("{} is not valid; fix or remove it", path.display()))?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Data::default(),
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => Some(bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => return Err(format!("Cannot read {}: {e}", path.display())),
         };
-        data.repair_active();
+        let data = parse(&path, bytes.as_deref())?;
         Ok(Self { path, data })
     }
 
@@ -150,65 +162,100 @@ impl Store {
 
     /// Adds or replaces a connection and writes the file.
     pub fn upsert(&mut self, connection: SavedConnection, activate: bool) -> Result<(), String> {
-        let mut data = self.data.clone();
-        let id = connection.id.clone();
-        match data.connections.iter_mut().find(|c| c.id == id) {
-            Some(existing) => *existing = connection,
-            None => data.connections.push(connection),
-        }
-        if activate || data.active.is_none() {
-            data.active = Some(id);
-        }
-        self.commit(data)
+        self.change(|data| {
+            let id = connection.id.clone();
+            match data.connections.iter_mut().find(|c| c.id == id) {
+                Some(existing) => *existing = connection,
+                None => data.connections.push(connection),
+            }
+            if activate || data.active.is_none() {
+                data.active = Some(id);
+            }
+            Ok(())
+        })
+    }
+
+    /// Changes a saved connection in place and writes the file. Returns the
+    /// changed entry, or `None` when no connection has this id (it may have
+    /// been removed meanwhile); nothing is added then.
+    pub fn update(
+        &mut self,
+        id: &str,
+        edit: impl FnOnce(&mut SavedConnection),
+    ) -> Result<Option<SavedConnection>, String> {
+        self.change(|data| {
+            let Some(existing) = data.connections.iter_mut().find(|c| c.id == id) else {
+                return Ok(None);
+            };
+            edit(existing);
+            existing.id = id.to_owned();
+            Ok(Some(existing.clone()))
+        })
     }
 
     pub fn activate(&mut self, id: &str) -> Result<(), String> {
-        if self.get(id).is_none() {
-            return Err("Unknown connection".into());
-        }
-        let mut data = self.data.clone();
-        data.active = Some(id.to_owned());
-        self.commit(data)
+        self.change(|data| {
+            if !data.connections.iter().any(|c| c.id == id) {
+                return Err("Unknown connection".into());
+            }
+            data.active = Some(id.to_owned());
+            Ok(())
+        })
     }
 
     /// Removes a connection. When it was the active one, another becomes active.
     pub fn remove(&mut self, id: &str) -> Result<Option<SavedConnection>, String> {
-        let mut data = self.data.clone();
-        let Some(index) = data.connections.iter().position(|c| c.id == id) else {
-            return Ok(None);
-        };
-        let removed = data.connections.remove(index);
-        data.repair_active();
-        self.commit(data)?;
-        Ok(Some(removed))
+        self.change(|data| {
+            let Some(index) = data.connections.iter().position(|c| c.id == id) else {
+                return Ok(None);
+            };
+            Ok(Some(data.connections.remove(index)))
+        })
     }
 
-    /// Memory changes only after the file was written, so what the
-    /// application shows is always what a restart would load.
-    fn commit(&mut self, data: Data) -> Result<(), String> {
-        let parent = self.path.parent().ok_or("Invalid configuration path")?;
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Cannot create {}: {e}", parent.display()))?;
-        let temp = parent.join(format!("connections-{}.tmp", uuid::Uuid::new_v4()));
-        let bytes = serde_json::to_vec_pretty(&data).map_err(|e| e.to_string())?;
-        let written = (|| {
-            std::fs::write(&temp, bytes).map_err(|e| format!("Cannot write configuration: {e}"))?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600))
-                    .map_err(|e| format!("Cannot protect configuration: {e}"))?;
+    /// Applies `op` to the file as it is now, under an exclusive lock, so a
+    /// second ax-admin process on the same home directory never has its
+    /// changes overwritten. Memory changes only after the file was written,
+    /// so what the application shows is always what a restart would load.
+    fn change<T>(&mut self, op: impl FnOnce(&mut Data) -> Result<T, String>) -> Result<T, String> {
+        let path = self.path.clone();
+        let mut outcome: Option<Result<(T, Data), String>> = None;
+        let written = ax_utils::update_locked(&path, |current| {
+            let step = parse(&path, current.as_deref()).and_then(|mut data| {
+                let value = op(&mut data)?;
+                data.repair_active();
+                let bytes = serde_json::to_vec_pretty(&data).map_err(|e| e.to_string())?;
+                Ok((value, data, bytes))
+            });
+            match step {
+                Ok((value, data, bytes)) => {
+                    #[cfg(unix)]
+                    if current.is_none() {
+                        // A new file is private from the start: the rename
+                        // keeps the permissions of the file it replaces.
+                        use std::os::unix::fs::OpenOptionsExt;
+                        std::fs::OpenOptions::new()
+                            .write(true)
+                            .create(true)
+                            .truncate(false)
+                            .mode(0o600)
+                            .open(&path)?;
+                    }
+                    outcome = Some(Ok((value, data)));
+                    Ok(Some(bytes))
+                }
+                Err(e) => {
+                    outcome = Some(Err(e));
+                    Ok(None)
+                }
             }
-            // Replaces an existing file atomically, on Windows too.
-            std::fs::rename(&temp, &self.path)
-                .map_err(|e| format!("Cannot update configuration: {e}"))
-        })();
-        if written.is_err() {
-            let _ = std::fs::remove_file(&temp); // may never have been created
+        });
+        if let Err(e) = written {
+            return Err(format!("Cannot update configuration: {e}"));
         }
-        written?;
+        let (value, data) = outcome.ok_or("Configuration task failed")??;
         self.data = data;
-        Ok(())
+        Ok(value)
     }
 }
 
@@ -298,14 +345,21 @@ mod tests {
         assert_eq!(mode & 0o777, 0o600);
     }
 
-    #[cfg(unix)]
+    /// A directory where the lock file belongs makes every save fail, for
+    /// root too (file permissions do not stop root).
+    fn break_saves(dir: &Path) -> PathBuf {
+        let lock = dir.join("connections.json.lock");
+        let _ = std::fs::remove_file(&lock);
+        std::fs::create_dir(&lock).unwrap();
+        lock
+    }
+
     #[test]
     fn a_failed_save_changes_nothing_in_memory() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let mut store = Store::open(dir.path()).unwrap();
         store.upsert(connection("one"), true).unwrap();
-        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        let lock = break_saves(dir.path());
         assert!(store.upsert(connection("two"), true).is_err());
         assert!(store.remove("one").is_err());
         assert!(store
@@ -317,19 +371,77 @@ mod tests {
                 false
             )
             .is_err());
+        assert!(store.update("one", |c| c.name = "x".into()).is_err());
         assert_eq!(store.list().len(), 1);
         assert_eq!(store.list()[0].name, "one");
         assert_eq!(store.active_id(), Some("one"));
-        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::remove_dir(lock).unwrap();
         assert_eq!(Store::open(dir.path()).unwrap().list().len(), 1);
+    }
+
+    #[test]
+    fn update_changes_an_existing_entry_and_never_adds_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path()).unwrap();
+        store.upsert(connection("one"), true).unwrap();
+        let updated = store
+            .update("one", |c| c.name = "renamed".into())
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.name, "renamed");
+        assert_eq!(Store::open(dir.path()).unwrap().list()[0].name, "renamed");
+        assert!(store
+            .update("gone", |c| c.name = "x".into())
+            .unwrap()
+            .is_none());
+        assert_eq!(store.list().len(), 1);
+    }
+
+    /// Two ax-admin processes on one home directory: each change is made to
+    /// the file as it is now, so neither drops what the other saved.
+    #[test]
+    fn two_stores_on_one_file_keep_each_others_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut first = Store::open(dir.path()).unwrap();
+        let mut second = Store::open(dir.path()).unwrap();
+        first.upsert(connection("one"), true).unwrap();
+        second.upsert(connection("two"), false).unwrap();
+        assert_eq!(
+            second.list().len(),
+            2,
+            "the second store sees the first's entry"
+        );
+        first
+            .update("one", |c| c.name = "renamed".into())
+            .unwrap()
+            .unwrap();
+        // An entry the other process removed is not brought back.
+        second.remove("two").unwrap();
+        assert!(first
+            .update("two", |c| c.name = "x".into())
+            .unwrap()
+            .is_none());
+        first.activate("one").unwrap();
+        assert!(first.activate("two").is_err());
+        let names: Vec<_> = Store::open(dir.path())
+            .unwrap()
+            .list()
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        assert_eq!(names, ["renamed"]);
     }
 
     #[test]
     fn a_damaged_file_is_reported_and_left_alone() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("connections.json");
+        let mut store = Store::open(dir.path()).unwrap();
         std::fs::write(&path, "{not json").unwrap();
         assert!(Store::open(dir.path()).is_err());
+        // Damaged by someone else after it was opened: a change is refused.
+        assert!(store.upsert(connection("one"), true).is_err());
+        assert!(store.list().is_empty());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{not json");
     }
 }
