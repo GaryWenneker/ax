@@ -3,7 +3,7 @@
 use crate::economics::display_amount;
 use crate::store::{ModelRow, OptimizationRow, PersistedSnapshot, TurnRow};
 use crate::types::{BudgetSnapshot, ToolEconomicsRecord};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct EconomicsReport {
@@ -100,10 +100,7 @@ pub(crate) fn economics_of(
     EconomicsReport {
         session_id: session_filter.map(str::to_string),
         turns: turns.len(),
-        models: models
-            .iter()
-            .filter_map(|model| model.model.clone())
-            .collect(),
+        models: distinct_models(&models),
         input_tokens,
         output_tokens,
         cached_input_tokens,
@@ -317,6 +314,17 @@ fn potential_cost(rows: &[OptimizationRow], tools: &[&ToolEconomicsRecord]) -> O
         }
     }
     any.then_some(total)
+}
+
+/// Model names in first-seen order, each listed once.
+fn distinct_models(models: &[&ModelRow]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    models
+        .iter()
+        .filter_map(|model| model.model.as_deref())
+        .filter(|name| seen.insert(*name))
+        .map(str::to_string)
+        .collect()
 }
 
 fn sum_optional<I>(values: I) -> Option<f64>
