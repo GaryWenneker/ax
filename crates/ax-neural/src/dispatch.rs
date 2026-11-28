@@ -31,7 +31,7 @@ async fn models_reply(pool: Option<&SqlitePool>) -> Result<Value, String> {
     } else {
         vec![]
     };
-    let admitted = crate::bakeoff::challenger_admitted();
+    let admitted = crate::bakeoff::challenger_admitted_async().await;
     let mut value = json!({ "models": models });
     if admitted {
         value["bakeOffChallenger"] = json!(crate::lexical::CHALLENGER_ID);
@@ -95,6 +95,9 @@ pub async fn handle(
     }
     match name.as_str() {
         "status" => {
+            // status_report reads the admission synchronously; compute it on
+            // the blocking pool first so that read is a cached lookup.
+            crate::bakeoff::challenger_admitted_async().await;
             let mut value = status_report(root);
             if let Some(pool) = pool {
                 add_measured(&mut value, pool, &project_id(root)).await;

@@ -23,20 +23,70 @@ pub(crate) const FAMILIES: [(&str, &str); 4] = [
 /// computed once per process and kept. The synonym table in `lexical.rs` was
 /// written for the fixture's paraphrase question, so this admission says the
 /// challenger answers the questions it was tuned on, not that it generalizes.
+/// A failed computation (for example a temporary database error) answers
+/// "not admitted" for that call and is retried on the next one.
+///
+/// The first computation scores a fixture in a database and blocks the
+/// caller. Async code calls [`challenger_admitted_async`] instead.
 pub fn challenger_admitted() -> bool {
-    static ADMITTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ADMITTED.get_or_init(compute_challenger_admitted)
+    admitted_in(&ADMITTED, compute_challenger_admitted)
+}
+
+/// [`challenger_admitted`] for async callers: the first computation runs on
+/// the blocking pool, so it never holds an async runtime thread.
+pub async fn challenger_admitted_async() -> bool {
+    admitted_off_runtime(&ADMITTED, compute_challenger_admitted).await
+}
+
+static ADMITTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Returns the cached admission, or computes it and caches only a computed
+/// answer. An error answers false without being cached. Concurrent first
+/// callers wait for one computation instead of each running their own.
+fn admitted_in(
+    cell: &std::sync::OnceLock<bool>,
+    compute: impl FnOnce() -> Result<bool, String>,
+) -> bool {
+    static COMPUTING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    if let Some(admitted) = cell.get() {
+        return *admitted;
+    }
+    let _computing = COMPUTING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(admitted) = cell.get() {
+        return *admitted;
+    }
+    match compute() {
+        Ok(admitted) => *cell.get_or_init(|| admitted),
+        Err(_) => false,
+    }
+}
+
+/// [`admitted_in`] with the computation on the blocking pool.
+async fn admitted_off_runtime<F>(cell: &'static std::sync::OnceLock<bool>, compute: F) -> bool
+where
+    F: FnOnce() -> Result<bool, String> + Send + 'static,
+{
+    if let Some(admitted) = cell.get() {
+        return *admitted;
+    }
+    tokio::task::spawn_blocking(move || admitted_in(cell, compute))
+        .await
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
 static ADMISSION_COMPUTATIONS: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
-fn compute_challenger_admitted() -> bool {
+fn compute_challenger_admitted() -> Result<bool, String> {
     #[cfg(test)]
     ADMISSION_COMPUTATIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    crate::runtime_built()
-        && challenger_beats_measured_baseline(crate::CODING_FIXTURE).unwrap_or(false)
+    if !crate::runtime_built() {
+        return Ok(false);
+    }
+    challenger_beats_measured_baseline(crate::CODING_FIXTURE)
 }
 
 /// Scores hash-v1 and the lexical challenger on the fixture `text` and applies
@@ -274,6 +324,50 @@ fn micros(elapsed: Duration) -> f64 {
 mod tests {
     use super::*;
     use ax_memory::bench::QuestionScore;
+
+    #[test]
+    fn a_failed_admission_is_not_cached_and_is_retried() {
+        let cell = std::sync::OnceLock::new();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let compute = || {
+            let call = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if call == 0 {
+                Err("temporary database failed".to_string())
+            } else {
+                Ok(true)
+            }
+        };
+        assert!(!admitted_in(&cell, compute));
+        assert_eq!(cell.get(), None);
+        assert!(admitted_in(&cell, compute));
+        assert!(admitted_in(&cell, compute));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn async_admission_leaves_a_current_thread_runtime_free() {
+        static CELL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel::<()>();
+        let admitted = runtime.block_on(async move {
+            // This task can only run while the admission does not hold the
+            // runtime's single thread.
+            tokio::spawn(async move {
+                sender.send(()).unwrap();
+            });
+            admitted_off_runtime(&CELL, move || {
+                Ok(receiver
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .is_ok())
+            })
+            .await
+        });
+        assert!(admitted, "the runtime thread was blocked during admission");
+        assert_eq!(CELL.get(), Some(&true));
+    }
 
     #[test]
     fn admission_compares_with_hash_v1_measured_on_the_same_fixture() {

@@ -92,7 +92,7 @@ pub async fn run_agent_eval(fixture_text: &str) -> Result<Value, String> {
     let mut arm_predict = Acc::default(); // D: prediction leave-one-out memories as ranked list
     let mut arm_learn = Acc::default(); // E: ranking-prior after leave-one-out feedback
 
-    let lexical_on = crate::bakeoff::challenger_admitted();
+    let lexical_on = crate::bakeoff::challenger_admitted_async().await;
     let pred_report = crate::predict::evaluate_fixture(fixture_text, 0.75)?;
     let mut learn_train_reports = Vec::new();
 

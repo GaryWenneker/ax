@@ -33,7 +33,7 @@ pub async fn run_abc(fixture_text: &str) -> Result<Value, String> {
     let mut arm_b_held = Acc::default();
     let mut arm_c_held = Acc::default();
 
-    let lexical_active = crate::bakeoff::challenger_admitted();
+    let lexical_active = crate::bakeoff::challenger_admitted_async().await;
     let lex_started = Instant::now();
     let mut lexical_micros = Vec::new();
 

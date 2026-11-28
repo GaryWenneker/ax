@@ -144,7 +144,7 @@ pub async fn search_semantic_query(
     model_id: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let count = embedding_count(pool).await?;
-    let admitted = crate::bakeoff::challenger_admitted();
+    let admitted = crate::bakeoff::challenger_admitted_async().await;
     let fallback = |reason: &str| {
         serde_json::json!({
             "hits": [],
