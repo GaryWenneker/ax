@@ -3,8 +3,11 @@
 //! An index pass reads the policy files and then writes (and prunes) the
 //! rows; a save writes a file and then its row. Run side by side (the
 //! Command Center's background watcher indexes while a user saves), the pass
-//! can prune the new rule or put an older body back. Both take this lock.
-//! It covers writers in this process only.
+//! can prune the new rule or put an older body back. Every policy row writer
+//! takes this lock: the index pass, the database-mode refresh in
+//! `ensure_policy_ready`, saves, deletes and enable/disable (which reads and
+//! writes back under one hold). The lock is not reentrant, so a holder calls
+//! the `*_locked` helpers. It covers writers in this process only.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

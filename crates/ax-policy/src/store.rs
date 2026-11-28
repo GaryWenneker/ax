@@ -126,10 +126,19 @@ impl PolicyStore {
 
     pub async fn save_rule(
         &self,
-        mut frontmatter: RuleFrontmatter,
+        frontmatter: RuleFrontmatter,
         body: String,
     ) -> Result<PolicyRuleDoc, ValidationError> {
         let _writer = crate::write_lock::policy_write_lock(&self.project_root).await;
+        self.save_rule_locked(frontmatter, body).await
+    }
+
+    /// [`Self::save_rule`] for a caller that already holds the write lock.
+    async fn save_rule_locked(
+        &self,
+        mut frontmatter: RuleFrontmatter,
+        body: String,
+    ) -> Result<PolicyRuleDoc, ValidationError> {
         let scope = PolicyScope::parse(&frontmatter.scope).unwrap_or(PolicyScope::Project);
         frontmatter.scope = scope.as_str().into();
         if let Some(ref s) = frontmatter.storage {
@@ -351,10 +360,19 @@ impl PolicyStore {
 
     pub async fn save_skill(
         &self,
-        mut frontmatter: SkillFrontmatter,
+        frontmatter: SkillFrontmatter,
         body: String,
     ) -> Result<PolicySkillDoc, ValidationError> {
         let _writer = crate::write_lock::policy_write_lock(&self.project_root).await;
+        self.save_skill_locked(frontmatter, body).await
+    }
+
+    /// [`Self::save_skill`] for a caller that already holds the write lock.
+    async fn save_skill_locked(
+        &self,
+        mut frontmatter: SkillFrontmatter,
+        body: String,
+    ) -> Result<PolicySkillDoc, ValidationError> {
         let scope = PolicyScope::parse(&frontmatter.scope).unwrap_or(PolicyScope::Project);
         frontmatter.scope = scope.as_str().into();
         if let Some(ref s) = frontmatter.storage {
@@ -777,11 +795,13 @@ impl PolicyStore {
 
     /// Enable or disable one rule. `false` when no rule has this id.
     pub async fn set_rule_enabled(&self, id: &str, enabled: bool) -> Result<bool, AxError> {
+        // Read and write back under one lock, so a save in between is kept.
+        let _writer = crate::write_lock::policy_write_lock(&self.project_root).await;
         let Some(mut doc) = self.get_rule_doc(id).await? else {
             return Ok(false);
         };
         doc.frontmatter.enabled = enabled;
-        self.save_rule(doc.frontmatter, doc.body)
+        self.save_rule_locked(doc.frontmatter, doc.body)
             .await
             .map_err(|e| AxError::Other(e.error))?;
         Ok(true)
@@ -789,11 +809,13 @@ impl PolicyStore {
 
     /// Enable or disable one skill. `false` when no skill has this name.
     pub async fn set_skill_enabled(&self, name: &str, enabled: bool) -> Result<bool, AxError> {
+        // Read and write back under one lock, so a save in between is kept.
+        let _writer = crate::write_lock::policy_write_lock(&self.project_root).await;
         let Some(mut doc) = self.get_skill_doc(name).await? else {
             return Ok(false);
         };
         doc.frontmatter.enabled = enabled;
-        self.save_skill(doc.frontmatter, doc.body)
+        self.save_skill_locked(doc.frontmatter, doc.body)
             .await
             .map_err(|e| AxError::Other(e.error))?;
         Ok(true)
@@ -831,4 +853,59 @@ pub async fn open_rw_pool(db_path: &Path) -> Result<sqlx::SqlitePool, AxError> {
     })
     .await
     .map_err(|e| AxError::Database(ax_utils::errors::DatabaseError::new(e.to_string())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rule(id: &str, body: &str) -> (RuleFrontmatter, String) {
+        let raw = format!("---\nid: {id}\nlevel: WARNING\nalwaysApply: true\n---\n\n{body}");
+        let doc = crate::parse_rule_file(Path::new("x.mdc"), &raw).unwrap();
+        (doc.frontmatter, doc.body)
+    }
+
+    /// Enabling or disabling reads the rule and writes it back. A save that
+    /// lands between the read and the write must not be undone by the old
+    /// body coming back, so the read happens under the write lock too.
+    #[tokio::test]
+    async fn disabling_a_rule_keeps_a_body_saved_while_it_waited() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        std::fs::create_dir_all(root.join(".ax")).unwrap();
+        let db = ax_db::Database::open(&root.join(".ax").join("ax.db"))
+            .await
+            .unwrap();
+        let store = std::sync::Arc::new(PolicyStore::new(db.pool().clone(), root.clone()));
+        let (fm, body) = rule("toggled", "Old body.");
+        store.save_rule(fm, body).await.unwrap();
+
+        // Hold the lock so both writers queue: the save first, then the toggle.
+        let writer = crate::write_lock::policy_write_lock(&root).await;
+        let saver = {
+            let store = store.clone();
+            let (fm, body) = rule("toggled", "New body.");
+            tokio::spawn(async move { store.save_rule(fm, body).await.map(|_| ()) })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let toggler = {
+            let store = store.clone();
+            tokio::spawn(async move { store.set_rule_enabled("toggled", false).await })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        drop(writer);
+        saver.await.unwrap().unwrap();
+        assert!(toggler.await.unwrap().unwrap());
+
+        let row = crate::get_rule(store.pool(), "toggled")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            row.body.contains("New body."),
+            "lost the save: {}",
+            row.body
+        );
+        assert!(!row.enabled, "the rule stayed enabled");
+    }
 }

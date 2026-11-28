@@ -435,6 +435,9 @@ pub async fn ensure_policy_ready(
             {
                 import_policy_from_files(pool, project_root, ImportMode::Merge).await
             } else {
+                // This refresh writes rows, so it takes turns with saves and
+                // index passes (the import above takes the lock itself).
+                let _writer = crate::write_lock::policy_write_lock(project_root).await;
                 // Only rows explicitly authored in files may refresh in database mode.
                 // A stale export of a database-owned row is never imported here.
                 for row in list_rules(pool).await? {
@@ -1597,5 +1600,47 @@ mod tests {
             assert!(rules.contains(&id.to_string()), "{id} missing: {rules:?}");
         }
         assert!(!root.join("missing-global.db").exists());
+    }
+}
+
+#[cfg(test)]
+mod write_lock_tests {
+    use super::*;
+
+    /// The database-mode refresh of file-owned rows writes rows, so it waits
+    /// for a save that holds the policy write lock instead of putting an
+    /// older file body back underneath it.
+    #[tokio::test]
+    async fn the_database_mode_refresh_waits_for_the_policy_write_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        std::fs::create_dir_all(root.join(".ax")).unwrap();
+        let db = ax_db::Database::open(&root.join(".ax").join("ax.db"))
+            .await
+            .unwrap();
+        let pool = db.pool().clone();
+        std::fs::write(root.join("ax.json"), r#"{"policy":{"storage":"database"}}"#).unwrap();
+        let file = root.join(".agents/rules/held.mdc");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &file,
+            "---\nid: held\nlevel: INFO\nalwaysApply: true\n---\nbody\n",
+        )
+        .unwrap();
+        // The first call imports into the empty database.
+        ensure_policy_ready(&pool, &root).await.unwrap();
+
+        let writer = crate::write_lock::policy_write_lock(&root).await;
+        let mut refresh = {
+            let (pool, root) = (pool.clone(), root.clone());
+            tokio::spawn(async move { ensure_policy_ready(&pool, &root).await.map(|_| ()) })
+        };
+        let early = tokio::time::timeout(std::time::Duration::from_millis(300), &mut refresh).await;
+        assert!(
+            early.is_err(),
+            "the refresh wrote rows while another writer held the lock"
+        );
+        drop(writer);
+        refresh.await.unwrap().unwrap();
     }
 }
