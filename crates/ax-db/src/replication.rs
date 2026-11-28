@@ -385,6 +385,21 @@ fn native_filter(table: &str) -> &'static str {
 async fn numbers(pool: &SqlitePool) -> Result<(i64, i64, i64, i64, i64)> {
     Ok(sqlx::query_as("SELECT (SELECT COUNT(*) FROM nodes), (SELECT COUNT(*) FROM edges), (SELECT COUNT(*) FROM files), (SELECT COALESCE(SUM(byte_len),0) FROM file_contents), (SELECT COUNT(*) FROM agent_sessions)").fetch_one(pool).await?)
 }
+/// SQLite counts write transactions in the file header (the change counter at
+/// byte 24 and the matching version-valid-for number at byte 92). How many
+/// writes building a snapshot takes is not stable, so the same graph would get
+/// a different digest. Both are set to 1: a counter equal to version-valid-for
+/// keeps the in-header page count valid, and SQLite reads the file as before.
+fn normalize_change_counter(path: &Path) -> Result<()> {
+    use std::io::{Seek, SeekFrom, Write};
+    let mut file = std::fs::OpenOptions::new().write(true).open(path)?;
+    for offset in [24u64, 92] {
+        file.seek(SeekFrom::Start(offset))?;
+        file.write_all(&1u32.to_be_bytes())?;
+    }
+    file.sync_all()?;
+    Ok(())
+}
 pub async fn export(root: &Path, origin: &str, _pool: &SqlitePool) -> Result<Dataset> {
     ensure!(valid_id(origin), "invalid native origin");
     let root_owned = root.to_path_buf();
@@ -429,6 +444,7 @@ pub async fn export(root: &Path, origin: &str, _pool: &SqlitePool) -> Result<Dat
     let root_owned = root.to_path_buf();
     let origin = origin.to_owned();
     tokio::task::spawn_blocking(move || {
+        normalize_change_counter(&path)?;
         let graph = file_manifest(&root_owned, &path)?;
         let mut logs = BTreeMap::new();
         for entry in std::fs::read_dir(root_owned.join(".ax"))? {
@@ -951,6 +967,34 @@ mod tests {
             store_chunk(target, &hash, &read_chunk(source, &hash).unwrap()).unwrap();
         }
     }
+    #[tokio::test]
+    async fn exporting_the_same_graph_again_gives_the_same_digest() {
+        let a = tempfile::tempdir().unwrap();
+        let da = db(a.path()).await;
+        seed(da.pool(), "fn hello() {}\n").await;
+        let first = export(a.path(), "a_1", da.pool()).await.unwrap();
+        for _ in 0..5 {
+            let again = export(a.path(), "a_1", da.pool()).await.unwrap();
+            assert_eq!(again.graph, first.graph);
+        }
+        // The normalized snapshot is still a database SQLite opens and reads.
+        let copy = a.path().join("copy.db");
+        std::fs::write(&copy, read_chunk(a.path(), &first.graph.chunks[0]).unwrap()).unwrap();
+        let pool = SqlitePool::connect(&format!("sqlite://{}?mode=ro", copy.display()))
+            .await
+            .unwrap();
+        let check: (String,) = sqlx::query_as("PRAGMA integrity_check")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(check.0, "ok");
+        let nodes: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM nodes")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(nodes.0 as u64, first.nodes);
+    }
+
     #[tokio::test]
     async fn complete_graph_is_queryable_collision_safe_and_survives_reindex() {
         let a = tempfile::tempdir().unwrap();
