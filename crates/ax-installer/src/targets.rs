@@ -778,6 +778,13 @@ fn remove_claude_hook(
 /// Whether `command` runs an ax binary (basename `ax` or `ax.exe`, quoted or
 /// not) with exactly the tokens of `hook_subcommand` and nothing else.
 fn is_ax_hook_command(command: &str, hook_subcommand: &str) -> bool {
+    is_hook_command_of(command, hook_subcommand, &ax_bin())
+}
+
+/// As [`is_ax_hook_command`], but the program may also be `this_bin`, the exact path
+/// install writes. Without that, a hook written by a binary not named `ax` (no `ax` on
+/// PATH, so the running binary is used) could never be removed again.
+fn is_hook_command_of(command: &str, hook_subcommand: &str, this_bin: &str) -> bool {
     let command = command.trim();
     let (program, rest) = match command.strip_prefix('"') {
         Some(quoted) => match quoted.split_once('"') {
@@ -789,7 +796,11 @@ fn is_ax_hook_command(command: &str, hook_subcommand: &str) -> bool {
             .unwrap_or((command, "")),
     };
     let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
-    let is_ax = name.eq_ignore_ascii_case("ax") || name.eq_ignore_ascii_case("ax.exe");
+    let is_ax = name.eq_ignore_ascii_case("ax")
+        || name.eq_ignore_ascii_case("ax.exe")
+        || (!this_bin.is_empty()
+            && (program == this_bin
+                || program == crate::hooks::shell_bin(this_bin).trim_matches('"')));
     is_ax
         && rest
             .split_whitespace()
@@ -1725,6 +1736,36 @@ mod mcp_path_tests {
         }
         assert!(is_ax_hook_command("ax turn-hook start", "turn-hook start"));
         assert!(!is_ax_hook_command("ax turn-hook stop", "turn-hook start"));
+    }
+
+    #[test]
+    fn a_hook_written_by_a_binary_not_named_ax_is_still_recognised() {
+        let bin = "/opt/build/ax_installer-1234";
+        assert!(is_hook_command_of(
+            "/opt/build/ax_installer-1234 stop-hook",
+            "stop-hook",
+            bin
+        ));
+        assert!(is_hook_command_of(
+            "\"/opt/my build/ax-dev\" stop-hook",
+            "stop-hook",
+            "/opt/my build/ax-dev"
+        ));
+        assert!(!is_hook_command_of(
+            "/opt/build/ax_installer-1234 stop-hook --extra",
+            "stop-hook",
+            bin
+        ));
+        assert!(!is_hook_command_of(
+            "/opt/other/ax_installer-1234 stop-hook",
+            "stop-hook",
+            bin
+        ));
+        assert!(!is_hook_command_of(
+            "~/bin/notify stop-hook",
+            "stop-hook",
+            ""
+        ));
     }
 
     fn event_commands(value: &Value, event: &str) -> Vec<String> {
