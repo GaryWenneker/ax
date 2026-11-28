@@ -40,7 +40,30 @@ pub fn relocate_agents_dir(
             "cannot rename policy directory to {to_name}: that folder already exists"
         ));
     }
-    std::fs::rename(&from, &to).map_err(|e| e.to_string())
+    rename_dir(&from, &to).map_err(|e| e.to_string())
+}
+
+/// Renames a directory. On Windows a virus scanner or the search indexer can
+/// hold a just-written file inside it for a moment, and the rename then fails
+/// with "Access is denied": retry briefly before giving up.
+fn rename_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        let mut attempt = 0;
+        loop {
+            match std::fs::rename(from, to) {
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && attempt < 20 => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                other => return other,
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::rename(from, to)
+    }
 }
 
 /// Validate, move the existing folder when needed, then save `policy.agentsDir`.

@@ -70,7 +70,7 @@ pub async fn plans_by_spec(pool: &SqlitePool) -> Result<HashMap<String, Vec<List
          FROM plans AS p
          JOIN plan_revisions AS r ON r.plan_id = p.id
           AND r.version = (SELECT MAX(version) FROM plan_revisions WHERE plan_id = p.id)
-         ORDER BY p.owner_spec_id, p.created_at, p.id",
+         ORDER BY p.owner_spec_id, p.created_at, p.rowid",
     )
     .fetch_all(pool)
     .await
@@ -316,6 +316,57 @@ mod tests {
             ]
         );
         assert!(listed(&pool, "old-plan").await.plans.is_empty());
+    }
+
+    #[tokio::test]
+    async fn plans_with_the_same_timestamp_stay_in_the_order_they_were_stored() {
+        // Windows clocks tick in ~15 ms steps, so two plans stored in a row
+        // often share created_at. The later one must still come second.
+        let (_dir, pool) = open().await;
+        create_spec_with_plan(
+            &pool,
+            NewSpecPlan {
+                project_id: "local".into(),
+                spec_id: "spec-billing".into(),
+                spec_title: "Billing".into(),
+                spec_body: "Charge the recorded amount.".into(),
+                plan_id: "plan-ledger".into(),
+                plan_title: "Ledger plan".into(),
+                plan_body: "Write the ledger first.".into(),
+                session_id: "session-1".into(),
+                turn_id: "turn-1".into(),
+                agent_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        create_alternative_plan(
+            &pool,
+            NewAlternativePlan {
+                project_id: "local".into(),
+                spec_id: "spec-billing".into(),
+                plan_id: "plan-invoices".into(),
+                plan_title: "Invoice plan".into(),
+                plan_body: "Send invoices first.".into(),
+                session_id: "session-1".into(),
+                turn_id: "turn-2".into(),
+                agent_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE plans SET created_at = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let spec = listed(&pool, "spec-billing").await;
+        assert_eq!(
+            spec.plans
+                .iter()
+                .map(|plan| plan.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["plan-ledger", "plan-invoices"]
+        );
     }
 
     #[tokio::test]
