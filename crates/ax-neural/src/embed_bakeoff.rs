@@ -276,10 +276,8 @@ pub fn run_embed_bakeoff(fixture_text: &str) -> Result<Value, String> {
                     acc,
                     median,
                 );
-                cand["modelPath"] = json!(crate::onnx_embed::model_paths().0.display().to_string());
-                if let Ok(sum) =
-                    crate::onnx_embed::model_checksum(&crate::onnx_embed::model_paths().0)
-                {
+                if let Ok((path, sum)) = crate::onnx_embed::loaded_model() {
+                    cand["modelPath"] = json!(path.display().to_string());
                     cand["checksum"] = json!(sum);
                 }
                 cand["heldOut"] = held.summary(SummaryStyle::EmbedBakeoff);

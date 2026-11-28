@@ -49,7 +49,7 @@ fn cap(status: &str, kind: &str, detail: &str) -> Value {
 fn neural_embedding_capability() -> (&'static str, &'static str, String) {
     #[cfg(feature = "neural-ort")]
     {
-        return crate::onnx_embed::capability_status();
+        crate::onnx_embed::capability_status()
     }
     #[cfg(not(feature = "neural-ort"))]
     {

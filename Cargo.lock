@@ -910,6 +910,7 @@ version = "10.1.2"
 dependencies = [
  "ax-db",
  "ax-memory",
+ "ax-utils",
  "blake3",
  "futures-util",
  "libc",
