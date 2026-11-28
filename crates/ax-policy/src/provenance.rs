@@ -34,8 +34,7 @@ pub fn record_pending_origin(path: &Path, incoming: &str, origin: &str) -> Resul
     let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(fail)?;
     temp.write_all(&raw).map_err(fail)?;
     temp.as_file().sync_all().map_err(fail)?;
-    temp.persist(path.with_extension("origin.json"))
-        .map_err(|e| fail(e.error))?;
+    ax_utils::fs_safe::persist_temp(temp, &path.with_extension("origin.json")).map_err(fail)?;
     Ok(())
 }
 
