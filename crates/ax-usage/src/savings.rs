@@ -1978,7 +1978,7 @@ async fn upsert_agent_session(
            source_mtime = excluded.source_mtime,
            started_at = COALESCE(excluded.started_at, agent_session_log.started_at),
            ended_at = COALESCE(excluded.ended_at, agent_session_log.ended_at)
-         WHERE excluded.source_mtime >= agent_session_log.source_mtime",
+         WHERE excluded.source_mtime > agent_session_log.source_mtime",
     )
     .bind(agent)
     .bind(session_id)
@@ -2175,6 +2175,44 @@ fn process_cursor_line(line: &str, acc: &mut SessionAccum) {
     }
 }
 
+/// False when the stored session was imported from a file at least as new as
+/// `mtime`, so an unchanged transcript is not read or rewritten again.
+async fn transcript_is_newer(agent: &str, session_id: &str, mtime: i64) -> Result<bool, String> {
+    let pool = open_pool().await.map_err(|e| e.to_string())?;
+    let stored: Option<i64> = sqlx::query_scalar(
+        "SELECT source_mtime FROM agent_session_log WHERE agent = ? AND session_id = ?",
+    )
+    .bind(agent)
+    .bind(session_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(stored.is_none_or(|stored| mtime > stored))
+}
+
+/// Read and parse one JSONL transcript off the async worker.
+async fn parse_transcript(
+    path: &Path,
+    process_line: fn(&str, &mut SessionAccum),
+) -> Result<SessionAccum, String> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        use std::io::BufRead;
+        let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+        let mut acc = SessionAccum::default();
+        for line in std::io::BufReader::new(file).lines() {
+            let line = line.map_err(|e| e.to_string())?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            process_line(&line, &mut acc);
+        }
+        Ok(acc)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 async fn import_claude_file(path: &Path, roots: &[String]) -> Result<bool, String> {
     let session_id = path
         .file_stem()
@@ -2182,14 +2220,10 @@ async fn import_claude_file(path: &Path, roots: &[String]) -> Result<bool, Strin
         .unwrap_or("unknown")
         .to_string();
     let mtime = file_mtime_ms(path);
-    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let mut acc = SessionAccum::default();
-    for line in content.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        process_claude_line(line, &mut acc);
+    if !transcript_is_newer("claude", &session_id, mtime).await? {
+        return Ok(false);
     }
+    let acc = parse_transcript(path, process_claude_line).await?;
     if acc.read_calls == 0
         && acc.grep_calls == 0
         && acc.ax_calls == 0
@@ -2217,14 +2251,10 @@ async fn import_cursor_file(path: &Path, roots: &[String]) -> Result<bool, Strin
         .unwrap_or("unknown")
         .to_string();
     let mtime = file_mtime_ms(path);
-    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let mut acc = SessionAccum::default();
-    for line in content.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        process_cursor_line(line, &mut acc);
+    if !transcript_is_newer("cursor", &session_id, mtime).await? {
+        return Ok(false);
     }
+    let acc = parse_transcript(path, process_cursor_line).await?;
     if acc.read_calls == 0
         && acc.grep_calls == 0
         && acc.ax_calls == 0
@@ -2253,6 +2283,8 @@ async fn persist_usage_events(
         return Ok(());
     }
     let pool = open_pool().await.map_err(|e| e.to_string())?;
+    // One transaction per session: one commit instead of one per event.
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     for event in events {
         let turn_id = event.turn_id.clone().unwrap_or_default();
         sqlx::query(
@@ -2288,10 +2320,11 @@ async fn persist_usage_events(
             crate::cost::CostConfidence::Unknown => "unknown",
         })
         .bind(event.timestamp_ms.unwrap_or(0))
-        .execute(&pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
     }
+    tx.commit().await.map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -3215,6 +3248,17 @@ mod tests {
         assert!(import_cursor_file(&cursor, &roots).await.unwrap());
         assert!(import_cursor_file(&unknown, &roots).await.unwrap());
         assert!(import_claude_file(&claude, &roots).await.unwrap());
+        // A second import of unchanged files reads and writes nothing.
+        let marker = "UPDATE agent_session_log SET read_calls = 99";
+        sqlx::query(marker).execute(&pool).await.unwrap();
+        assert!(!import_cursor_file(&cursor, &roots).await.unwrap());
+        assert!(!import_claude_file(&claude, &roots).await.unwrap());
+        let untouched: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM agent_session_log WHERE read_calls = 99")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(untouched, 3, "an unchanged transcript was re-imported");
         let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
             "SELECT agent, session_id, project FROM agent_usage_event ORDER BY agent, session_id",
         )
