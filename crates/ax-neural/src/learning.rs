@@ -31,6 +31,11 @@ pub struct FeedbackRow {
     pub output_tokens: i64,
 }
 
+/// Most ids accepted in each of the context, skill and rule lists of one feedback call.
+pub const MAX_FEEDBACK_IDS: usize = 256;
+/// Most bytes accepted in the execution id, the task category, and each single id.
+pub const MAX_FEEDBACK_FIELD_BYTES: usize = 512;
+
 pub fn validate_feedback(input: &FeedbackInput) -> Result<FeedbackRow, String> {
     if input.execution_id.trim().is_empty() {
         return Err("execution id is required".into());
@@ -47,8 +52,31 @@ pub fn validate_feedback(input: &FeedbackInput) -> Result<FeedbackRow, String> {
     if input.retry_count < 0 || input.input_tokens < 0 || input.output_tokens < 0 {
         return Err("counts must be zero or greater".into());
     }
+    for (name, list) in [
+        ("contextIds", &input.context_ids),
+        ("skillIds", &input.skill_ids),
+        ("ruleIds", &input.rule_ids),
+    ] {
+        if list.len() > MAX_FEEDBACK_IDS {
+            return Err(format!("{name} holds at most {MAX_FEEDBACK_IDS} ids"));
+        }
+        if list.iter().any(|id| id.len() > MAX_FEEDBACK_FIELD_BYTES) {
+            return Err(format!(
+                "each id in {name} is at most {MAX_FEEDBACK_FIELD_BYTES} bytes"
+            ));
+        }
+    }
+    for (name, value) in [
+        ("executionId", &input.execution_id),
+        ("taskCategory", &input.task_category),
+    ] {
+        if value.len() > MAX_FEEDBACK_FIELD_BYTES {
+            return Err(format!("{name} is at most {MAX_FEEDBACK_FIELD_BYTES} bytes"));
+        }
+    }
     let blob = format!(
-        "{} {} {} {} {}",
+        "{} {} {} {} {} {}",
+        input.execution_id,
         input.task_category,
         input.context_ids.join(" "),
         input.skill_ids.join(" "),
@@ -77,23 +105,46 @@ pub fn validate_feedback(input: &FeedbackInput) -> Result<FeedbackRow, String> {
     })
 }
 
+/// True when `text` looks like it holds a credential: a `key=value` or `key: value` pair for a
+/// password, secret, token or API key (spaces around the separator allowed), a bearer header,
+/// a private key block, or a token ax's shared redaction would mask (`sk-…`, GitHub and AWS
+/// keys, long hex or base64 runs).
 pub fn secret_shaped(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    [
+    let compact = text
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace(" =", "=")
+        .replace("= ", "=")
+        .replace(" :", ":")
+        .replace(": ", ":");
+    let pattern_hit = [
         "api_key=",
         "api_key:",
         "api-key=",
         "api-key:",
+        "apikey",
         "password=",
         "password:",
+        "passwd=",
+        "pwd=",
         "secret=",
         "secret:",
+        "aws_secret",
+        "client_secret",
+        "token=",
+        "access_token",
+        "refresh_token",
+        "auth_token",
+        "bearer ",
         "begin private key",
         "begin rsa private key",
         "begin openssh private key",
     ]
     .iter()
-    .any(|pattern| lower.contains(pattern))
+    .any(|pattern| compact.contains(pattern));
+    pattern_hit || ax_memory::redact_secrets(text) != text
 }
 
 /// Gate promotion on an explicit command and a **measured** bake-off.
@@ -353,6 +404,55 @@ mod tests {
         let mut source = sample();
         source.source_text = "fn main() {}".into();
         assert!(validate_feedback(&source).unwrap_err().contains("source"));
+    }
+
+    #[test]
+    fn a_secret_in_the_execution_id_is_rejected() {
+        let mut secret = sample();
+        secret.execution_id = "password=hunter2".into();
+        assert!(validate_feedback(&secret)
+            .unwrap_err()
+            .contains("secret-shaped"));
+    }
+
+    #[test]
+    fn wider_secret_shapes_are_rejected() {
+        for text in [
+            "password = hunter2",
+            "token=abc123",
+            "Bearer eyJhbGciOiJIUzI1NiJ9",
+            "apikey abc",
+            "aws_secret_access_key",
+            "sk-abcdefghijklmnopqrstuvwxyz",
+            "ghp_abcdefghijklmnopqrstuvwxyz12",
+        ] {
+            let mut secret = sample();
+            secret.context_ids = vec![text.into()];
+            assert!(validate_feedback(&secret).is_err(), "accepted {text:?}");
+        }
+        // Ordinary ids and categories still pass.
+        let mut plain = sample();
+        plain.context_ids = vec!["mem:token-budget".into(), "rule:no-secrets".into()];
+        plain.task_category = "parser".into();
+        assert!(validate_feedback(&plain).is_ok());
+    }
+
+    #[test]
+    fn oversized_feedback_is_rejected() {
+        let mut many = sample();
+        many.context_ids = (0..=MAX_FEEDBACK_IDS).map(|i| format!("m{i}")).collect();
+        assert!(validate_feedback(&many).unwrap_err().contains("at most"));
+        let mut long_id = sample();
+        long_id.rule_ids = vec!["r".repeat(MAX_FEEDBACK_FIELD_BYTES + 1)];
+        assert!(validate_feedback(&long_id).unwrap_err().contains("bytes"));
+        let mut long_exec = sample();
+        long_exec.execution_id = "e".repeat(MAX_FEEDBACK_FIELD_BYTES + 1);
+        assert!(validate_feedback(&long_exec).unwrap_err().contains("bytes"));
+        let mut at_limit = sample();
+        at_limit.context_ids = (0..MAX_FEEDBACK_IDS).map(|i| format!("m{i}")).collect();
+        // Not a hex digit: a long hex run is secret-shaped.
+        at_limit.task_category = "x".repeat(MAX_FEEDBACK_FIELD_BYTES);
+        assert!(validate_feedback(&at_limit).is_ok());
     }
 
     #[test]
