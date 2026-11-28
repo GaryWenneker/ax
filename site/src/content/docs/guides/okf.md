@@ -82,19 +82,13 @@ ax export okf --publish-wiki --no-push
 
 To ship OKF via the **code repo** instead of a wiki, point `okf.outDir` at a tracked folder (for example `knowledge/`) and commit/push normally.
 
-## Command Center
+## ax-admin
 
-With `ax web` open, go to **Settings → Open Knowledge Format (OKF)**:
-
-1. **Generate OKF bundle** — writes the Markdown tree to `okf.outDir` (same engine as `ax export okf`)
-2. **Validate** — checks `index.md` and relative links
-3. **Publish to wiki** — shown when `okf.azdoWiki.enabled` is true; confirm with dry-run by default
-
-APIs: `GET /api/okf/config`, `POST /api/okf/export`, `POST /api/okf/validate`, `POST /api/okf/publish`.
+OKF export, validation and wiki publish run from the CLI, as above. [ax-admin](/guides/remote-admin/) has no page for them. Run `ax export okf` on the machine that holds the project, or in CI.
 
 ## Related
 
 - [Configuration](/getting-started/configuration/) — `ax.json` overview
 - [CLI reference](/reference/cli/) — `ax export okf`
-- [Command Center](/guides/command-center/) — Settings card
+- [ax-admin](/guides/remote-admin/) — the visual interface for a remote Ax
 - [Architecture Insights](/guides/architecture-insights/) — communities and `ax report`

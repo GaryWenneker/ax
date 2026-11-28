@@ -1,0 +1,25 @@
+---
+/**
+ * The halftone dot grid behind the page, as in ax-admin. Decorative: hidden from assistive
+ * technology, still with reduced motion, paused while the tab is hidden.
+ */
+import '../styles/grid-backdrop.css';
+interface Props {
+  variant?: 'hero' | 'page';
+}
+const { variant = 'hero' } = Astro.props;
+---
+<div class="ax-grid" data-ax-grid data-ax-variant={variant} aria-hidden="true">
+  <canvas class="ax-grid-canvas"></canvas>
+  <div class="ax-grid-veil"></div>
+</div>
+<script>
+  import { mountGridBackdrop } from '../scripts/grid-backdrop.ts';
+  const root = document.querySelector<HTMLElement>('[data-ax-grid]');
+  if (root) {
+    // Starlight renders the header inside its own layout; the fixed grid belongs on <body>
+    // so it sits behind the whole page.
+    if (root.parentElement !== document.body) document.body.prepend(root);
+    mountGridBackdrop(root);
+  }
+</script>

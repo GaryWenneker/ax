@@ -9,6 +9,8 @@ Spend known only from imported sessions (for example Cursor sessions without per
 
 `ax savings` is a separate counterfactual: tokens avoided versus opening whole files, priced on the reference input rate.
 
+Everything here is a CLI command or the `ax_budget` MCP tool. In [ax-admin](/guides/remote-admin/), the **Usage** page shows cost, tool economics, budget, and advice; it appears only when the connection has the admin grant.
+
 ## Set a budget
 
 ```bash
@@ -28,7 +30,7 @@ Each setting is read on its own. A number written as a string (`"monthly": "60"`
 - `workingDays` is a whole number from 0 to 31. `hoursPerDay` is above 0 and at most 24.
 - `monthly` is 0 or more. `usdPerEur` is above 0.
 
-`ax budget set` and the Command Center context-budget setting change only their own keys. They refuse to write a config file that is not valid JSON and leave it as it is, so fix that file first. A leading byte order mark is accepted. The file is written to a temporary file and renamed into place, so a crash never leaves it half written.
+`ax budget set` changes only its own keys. It refuses to write a config file that is not valid JSON and leaves it as it is, so fix that file first. A leading byte order mark is accepted. The file is written to a temporary file and renamed into place, so a crash never leaves it half written.
 
 ## See spend
 

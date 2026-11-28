@@ -1,10 +1,8 @@
 ---
 // Docs-header right cluster: Docs + Languages text links, Starlight's default
-// social icons (the GitHub link), star-count pill, and motion pause — same
-// order as the landing nav. Done here, in the slot we already own, to avoid a
+// social icons (the GitHub link) and the star-count pill. Done here, in the slot we already own, to avoid a
 // full header rebuild that could break search/mobile.
 import Default from '@astrojs/starlight/components/SocialIcons.astro';
-import MotionControl from './MotionControl.astro';
 import { getStarsLabel } from '../lib/github';
 
 const stars = await getStarsLabel();
@@ -24,7 +22,6 @@ const repo = 'https://github.com/GaryWenneker/ax';
 >
 	<span class="cg-star-glyph" aria-hidden="true">★</span>{stars}
 </a>
-<MotionControl />
 
 <style>
 	.cg-navlink {
@@ -46,6 +43,7 @@ const repo = 'https://github.com/GaryWenneker/ax';
 		justify-content: center;
 		gap: 0.35rem;
 		border: 1px solid var(--cg-rule);
+		border-radius: 8px;
 		padding: 0.32rem 0.6rem;
 		min-height: 24px;
 		min-width: 24px;
@@ -65,8 +63,7 @@ const repo = 'https://github.com/GaryWenneker/ax';
 	.cg-star-glyph {
 		font-size: 0.85em;
 	}
-	/* Keep the compact mobile header clean — the sidebar covers navigation there.
-	   Motion pause stays visible (WCAG 2.2.2). */
+	/* Keep the compact mobile header clean — the sidebar covers navigation there. */
 	@media (max-width: 50rem) {
 		.cg-navlink,
 		.cg-star {

@@ -235,8 +235,12 @@ pub async fn pull_gitlab_api(
         if !is_pack_file && !is_memory_file {
             continue;
         }
+        // The tree listing comes from the server; a path with `..` or a link
+        // out of `pull_dir` must never decide where a file is written.
+        let dest = ax_utils::contained_join(&pull_dir, rel).map_err(|e| {
+            format!("refusing remote path '{remote_path}' outside the pull folder: {e}")
+        })?;
         let content = get_raw_file(&client, &target, token, remote_path, branch).await?;
-        let dest = pull_dir.join(rel);
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
@@ -307,6 +311,12 @@ pub async fn push_gitlab_api(
     let target = parse_target(url)?;
     let client = api_client()?;
 
+    // This push owns only the content types it exports: the pack when one was
+    // written, the memory file when one was given. Remote files of any other
+    // type are left alone, so they are neither diffed nor deleted.
+    let owns_pack = pack_dir.is_dir();
+    let owns_memory = memory_file.is_some();
+
     // Snapshot what's already on the remote so we can diff (skip unchanged
     // files, pick create/update per-file, and delete anything now missing).
     let remote_files = list_tree_recursive(&client, &target, token, sub, branch).await?;
@@ -315,7 +325,9 @@ pub async fn push_gitlab_api(
         let rel = remote_path
             .strip_prefix(&prefix)
             .unwrap_or(remote_path.as_str());
-        if rel.starts_with("policy/shared/") || rel == "memory/shared.jsonl" {
+        let owned = (owns_pack && rel.starts_with("policy/shared/"))
+            || (owns_memory && rel == "memory/shared.jsonl");
+        if owned {
             let content = get_raw_file(&client, &target, token, remote_path, branch).await?;
             remote_contents.insert(rel.to_string(), content);
         }
@@ -436,6 +448,7 @@ mod tests {
             branch: "main".to_string(),
             subpath: ".ax".to_string(),
             token: token.to_string(),
+            ..Default::default()
         }
     }
 
@@ -599,5 +612,149 @@ mod tests {
             .await
             .expect("push should succeed");
         assert_eq!(written, 0);
+    }
+
+    #[tokio::test]
+    async fn pull_refuses_tree_paths_that_escape_the_pull_dir() {
+        let server = MockServer::start().await;
+        let repo_url = format!("{}/acme/contoso-web", server.uri());
+        let config = cfg(repo_url, "test-token");
+        let project_id = "acme%2Fcontoso-web";
+
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "/api/v4/projects/{project_id}/repository/tree"
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"id": "1", "type": "blob", "path": ".ax/policy/shared/../../../escaped.txt"}
+            ])))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(wiremock::matchers::path_regex(r"/repository/files/.*/raw$"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("owned"))
+            .mount(&server)
+            .await;
+
+        let dest = tempfile::TempDir::new().unwrap();
+        let err = pull_gitlab_api(&config, dest.path())
+            .await
+            .expect_err("an escaping tree path must be refused");
+        assert!(err.contains("escaped.txt"), "error was: {err}");
+        assert!(!dest.path().join("escaped.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn pull_refuses_parent_dirs_below_the_pack_prefix() {
+        let server = MockServer::start().await;
+        let repo_url = format!("{}/acme/contoso-web", server.uri());
+        let mut config = cfg(repo_url, "test-token");
+        config.subpath = String::new();
+        let project_id = "acme%2Fcontoso-web";
+
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "/api/v4/projects/{project_id}/repository/tree"
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"id": "1", "type": "blob", "path": "policy/shared/x/../../../../abs.txt"}
+            ])))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(wiremock::matchers::path_regex(r"/repository/files/.*/raw$"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("owned"))
+            .mount(&server)
+            .await;
+
+        let dest = tempfile::TempDir::new().unwrap();
+        pull_gitlab_api(&config, dest.path())
+            .await
+            .expect_err("an escaping tree path must be refused");
+        assert!(!dest.path().join("abs.txt").exists());
+    }
+
+    /// Mounts a remote holding one pack file and the shared memory file, and
+    /// records the commit body for inspection.
+    async fn mount_remote_with_pack_and_memory(server: &MockServer) {
+        let project_id = "acme%2Fcontoso-web";
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "/api/v4/projects/{project_id}/repository/tree"
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"id": "1", "type": "blob", "path": ".ax/policy/shared/manifest.json"},
+                {"id": "2", "type": "blob", "path": ".ax/memory/shared.jsonl"}
+            ])))
+            .mount(server)
+            .await;
+        Mock::given(method("GET"))
+            .and(wiremock::matchers::path_regex(r"/repository/files/.*/raw$"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("remote"))
+            .mount(server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!(
+                "/api/v4/projects/{project_id}/repository/commits"
+            )))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"id": "c"})))
+            .mount(server)
+            .await;
+    }
+
+    async fn committed_deletes(server: &MockServer) -> Vec<String> {
+        let mut out = Vec::new();
+        for req in server.received_requests().await.unwrap_or_default() {
+            if req.method.as_str() != "POST" {
+                continue;
+            }
+            let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+            for a in body["actions"].as_array().unwrap() {
+                if a["action"] == "delete" {
+                    out.push(a["file_path"].as_str().unwrap().to_string());
+                }
+            }
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn push_without_memory_keeps_remote_shared_memory() {
+        let server = MockServer::start().await;
+        mount_remote_with_pack_and_memory(&server).await;
+        let config = cfg(format!("{}/acme/contoso-web", server.uri()), "test-token");
+
+        let pack_src = tempfile::TempDir::new().unwrap();
+        std::fs::write(pack_src.path().join("manifest.json"), "local").unwrap();
+
+        push_gitlab_api(&config, pack_src.path(), None)
+            .await
+            .expect("push should succeed");
+        let deletes = committed_deletes(&server).await;
+        assert!(
+            !deletes.iter().any(|d| d.ends_with("memory/shared.jsonl")),
+            "memory was not pushed, so it must not be deleted: {deletes:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn push_without_a_pack_keeps_the_remote_pack() {
+        let server = MockServer::start().await;
+        mount_remote_with_pack_and_memory(&server).await;
+        let config = cfg(format!("{}/acme/contoso-web", server.uri()), "test-token");
+
+        let root = tempfile::TempDir::new().unwrap();
+        let missing_pack = root.path().join("policy").join("shared");
+        let mem = root.path().join("shared.jsonl");
+        std::fs::write(&mem, "local").unwrap();
+
+        push_gitlab_api(&config, &missing_pack, Some(&mem))
+            .await
+            .expect("push should succeed");
+        let deletes = committed_deletes(&server).await;
+        assert!(
+            !deletes.iter().any(|d| d.contains("policy/shared/")),
+            "no pack was exported, so the remote pack must not be deleted: {deletes:?}"
+        );
     }
 }

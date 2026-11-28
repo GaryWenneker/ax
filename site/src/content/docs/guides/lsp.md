@@ -42,7 +42,7 @@ A shim on PATH alone is not enough — enrich would otherwise spam `missing Cont
 | pyright | `pyright-langserver --stdio` | Python |
 | gopls | `gopls` | Go |
 
-Successful definitions become edges with provenance `lsp` and confidence `exact`. CLI and Command Center both write `lsp enrich …` lines to the daily verbose log when Verbose MCP logging is on.
+Successful definitions become edges with provenance `lsp` and confidence `exact`. `ax lsp enrich` writes `lsp enrich …` lines to the daily verbose log (`<project>/.ax/mcp-verbose-YYYY-MM-DD.log`).
 
 Enrich keeps **one language-server process per server** for the whole batch and waits until `rust-analyzer` reports `quiescent` before definition queries. On large Cargo workspaces the first Enrich can take 1–3 minutes; that warmup is required — a cold server often returns empty definitions with no error.
 
@@ -53,22 +53,22 @@ Each server is looked up once per Enrich run, and a server that fails to start i
 | Action | What it does |
 |--------|----------------|
 | **Reconcile** | Prune stale rows, then name-match against symbols already in the graph. Leftover stdlib/method noise is normal. |
-| **Enrich with LSP** | Ask installed language servers for definitions and write Exact edges. |
+| **Enrich with LSP** (`ax lsp enrich`) | Ask installed language servers for definitions and write Exact edges. |
 
 If `ax lsp status` shows all servers `[ok]` but Enrich still resolves 0, wait for the longer first run (or raise `--limit` after a successful warm run) rather than reinstalling servers.
 
-## Command Center
+## Agents and ax-admin
 
-On **Unresolved**, use **Enrich with LSP** (ModalShell) — calls `POST /api/lsp/enrich`.
-**Refresh servers** re-reads `GET /api/lsp/status`. Badges:
+A local agent can call the MCP tool `ax_lsp` with `action: "status"` or `action: "enrich"` instead of the CLI. `ax_lsp` is not offered over remote MCP, so [ax-admin](/guides/remote-admin/) cannot run LSP enrichment: run `ax lsp enrich` on the machine that holds the project. The number of unresolved refs is in `ax status`.
 
-| Badge | Meaning |
+`ax lsp status` marks each server:
+
+| Mark | Meaning |
 |-------|---------|
-| `available` | Runnable binary (`rustup which`, PATH, or, with `AX_LSP_PROJECT_BINS=1`, project `node_modules/.bin`) |
-| `shim` | On PATH but not runnable (common: rustup shim without the component) |
-| `missing` | Not found |
+| `[ok]` | Runnable binary (`rustup which`, PATH, or, with `AX_LSP_PROJECT_BINS=1`, project `node_modules/.bin`) |
+| `--` | Not runnable: missing, or on PATH as a shim (common: rustup shim without the component) |
 
-Logging shows `lsp` lines; the Activity chip links to `/logging?kind=lsp`.
+The full ax, which is being phased out, also has an Unresolved page with **Enrich with LSP** in its Command Center; see [Command Center](/guides/command-center/).
 
 ## Further reading
 
