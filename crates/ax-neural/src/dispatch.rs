@@ -91,12 +91,7 @@ pub async fn handle(
 ) -> Result<Value, String> {
     let name = normalize_dispatch_tool(tool);
     if let Some(pool) = pool {
-        // Rows stored under an older spelling of this root move to the
-        // canonical key. A failure here leaves them where they are; the next
-        // call tries again.
-        let _ =
-            crate::store::adopt_project_keys(pool, &project_id(root), &legacy_project_keys(root))
-                .await;
+        adopted_project_id(pool, root).await;
     }
     match name.as_str() {
         "status" => {
@@ -554,6 +549,39 @@ pub fn project_id(root: &Path) -> String {
     } else {
         text.into_owned()
     }
+}
+
+/// [`project_id`] for a caller that reads or writes per-project rows. Rows
+/// stored under an older spelling of this root (see [`legacy_project_keys`])
+/// first move to the canonical key, so they are never missing from a read.
+/// Each database, root spelling and canonical key is adopted once per
+/// process; a failure leaves the rows where they are and the next call tries
+/// again.
+pub async fn adopted_project_id(pool: &SqlitePool, root: &Path) -> String {
+    /// Database file, canonical key and the legacy keys already adopted.
+    type Adopted = (std::path::PathBuf, String, Vec<String>);
+    static ADOPTED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<Adopted>>> =
+        std::sync::OnceLock::new();
+    let canonical = project_id(root);
+    let legacy = legacy_project_keys(root);
+    if legacy.iter().all(|key| *key == canonical) {
+        return canonical;
+    }
+    let database = pool.connect_options().get_filename().to_path_buf();
+    let key = (database, canonical.clone(), legacy);
+    let adopted = ADOPTED.get_or_init(Default::default);
+    if adopted.lock().is_ok_and(|done| done.contains(&key)) {
+        return canonical;
+    }
+    if crate::store::adopt_project_keys(pool, &canonical, &key.2)
+        .await
+        .is_ok()
+    {
+        if let Ok(mut done) = adopted.lock() {
+            done.insert(key);
+        }
+    }
+    canonical
 }
 
 /// Keys earlier versions stored for this root: the path exactly as given, and
@@ -1461,6 +1489,29 @@ mod tests {
             let sql = format!("SELECT COUNT(*) FROM {table} WHERE project_id != '{canonical}'");
             assert_eq!(count(pool, &sql).await, 0, "{table} keeps a legacy key");
         }
+    }
+
+    #[tokio::test]
+    async fn adopted_project_id_moves_legacy_rows_without_a_dispatch_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let database = open(dir.path()).await;
+        let pool = database.pool();
+        let legacy = format!("{}{}", root.to_string_lossy(), std::path::MAIN_SEPARATOR);
+        crate::store::record_rank(pool, &legacy, 1, 50, 200)
+            .await
+            .unwrap();
+        let canonical = adopted_project_id(pool, Path::new(&legacy)).await;
+        assert_eq!(canonical, project_id(&root));
+        let totals = crate::store::rank_totals(pool, &canonical).await.unwrap();
+        assert_eq!(totals.map(|totals| totals.preflights), Some(1));
+        let sql =
+            format!("SELECT COUNT(*) FROM neural_rank_total WHERE project_id != '{canonical}'");
+        assert_eq!(count(pool, &sql).await, 0);
+        // The canonical spelling has nothing to adopt and leaves the rows alone.
+        assert_eq!(adopted_project_id(pool, &root).await, canonical);
+        let totals = crate::store::rank_totals(pool, &canonical).await.unwrap();
+        assert_eq!(totals.map(|totals| totals.preflights), Some(1));
     }
 
     async fn parser_feedback(root: &Path, pool: &SqlitePool) {
