@@ -208,7 +208,7 @@ pub async fn flush(path: &Path, snapshot: &PersistedSnapshot) -> Result<(), Stri
         sqlx::query(
             "INSERT INTO agent_model_calls (id, session_id, turn_id, provider, model, input_tokens, output_tokens, cached_input_tokens, estimated_cost, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET estimated_cost = excluded.estimated_cost",
+             ON CONFLICT(id) DO UPDATE SET session_id = excluded.session_id, turn_id = excluded.turn_id, provider = excluded.provider, model = excluded.model, input_tokens = excluded.input_tokens, output_tokens = excluded.output_tokens, cached_input_tokens = excluded.cached_input_tokens, estimated_cost = excluded.estimated_cost, created_at = excluded.created_at",
         )
         .bind(&model.id)
         .bind(&model.session_id)

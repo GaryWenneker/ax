@@ -302,6 +302,53 @@ fn usd_per_eur_is_read_from_the_budget_settings() {
     assert_eq!(options.usd_per_eur, Some(1.08));
 }
 
+#[tokio::test]
+async fn a_second_run_on_the_same_database_keeps_the_first_runs_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("ax.db");
+    for input in [1000, 2000] {
+        let pi = create_pi_integration(PiOptions {
+            db_path: Some(db.clone()),
+            ..priced(OptimizationMode::Advise)
+        });
+        pi.start().unwrap();
+        for event in [
+            json!({"type": "agent_start"}),
+            json!({"type": "turn_start"}),
+            json!({"type": "tool_execution_start", "toolName": "rg", "args": {"q": "x"}}),
+            json!({
+                "type": "tool_execution_end",
+                "toolName": "rg",
+                "isError": false,
+                "outputTokens": input,
+                "durationMs": 1,
+                "args": {"q": "x"}
+            }),
+            json!({
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "content": [],
+                    "provider": "anthropic",
+                    "model": "claude",
+                    "usage": {"input": input, "output": 10, "cacheRead": 0}
+                }
+            }),
+            json!({"type": "turn_end"}),
+        ] {
+            pi.ingest(&event).unwrap();
+        }
+        pi.stop().await.unwrap();
+    }
+    let (_, json) = ax_pi::read_economics(&db, Some("abc123"), "USD", None)
+        .await
+        .unwrap();
+    assert_eq!(json["turns"], 2, "{json}");
+    assert_eq!(json["input_tokens"], 3000, "{json}");
+    assert_eq!(json["output_tokens"], 20, "{json}");
+    assert_eq!(json["tool_output_tokens"]["rg"], 3000, "{json}");
+}
+
 #[test]
 fn scenario_mandatory_rule_is_kept() {
     let pi = create_pi_integration(PiOptions {

@@ -135,6 +135,9 @@ struct State {
     pending_args: HashMap<String, Value>,
     started: bool,
     model_seq: u64,
+    /// Unique per integration instance. Generated turn, model and tool ids
+    /// carry it, so a later run on the same database never reuses an id.
+    run_id: String,
 }
 
 impl PiIntegration {
@@ -556,6 +559,7 @@ pub fn create_pi_integration(options: PiOptions) -> PiIntegration {
             pending_args: HashMap::new(),
             started: false,
             model_seq: 0,
+            run_id: uuid::Uuid::new_v4().simple().to_string(),
         }),
     }
 }
@@ -584,7 +588,7 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
             let turn_id = base
                 .turn_id
                 .clone()
-                .unwrap_or_else(|| format!("{session_id}-turn-{seq}"));
+                .unwrap_or_else(|| format!("{session_id}-{}-turn-{seq}", state.run_id));
             state
                 .active_turn
                 .insert(session_id.clone(), turn_id.clone());
@@ -655,7 +659,10 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
                 }
             }
             state.models.push(ModelRow {
-                id: format!("{}-model-{}", model.base.session_id, state.model_seq),
+                id: format!(
+                    "{}-{}-model-{}",
+                    model.base.session_id, state.run_id, state.model_seq
+                ),
                 session_id: model.base.session_id,
                 turn_id,
                 provider: model.provider,
@@ -668,19 +675,15 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
             });
         }
         AxAgentEvent::ToolStarted(start) => {
-            let call_id = start
-                .base
-                .operation_id
-                .clone()
-                .unwrap_or_else(|| format!("{}-{}", start.tool_name, state.tools.len()));
+            let call_id = start.base.operation_id.clone().unwrap_or_else(|| {
+                format!("{}-{}-{}", start.tool_name, state.run_id, state.tools.len())
+            });
             state.pending_args.insert(call_id, arguments_for_hash(raw));
         }
         AxAgentEvent::ToolEnded(end) => {
-            let call_id = end
-                .base
-                .operation_id
-                .clone()
-                .unwrap_or_else(|| format!("{}-{}", end.tool_name, state.tools.len()));
+            let call_id = end.base.operation_id.clone().unwrap_or_else(|| {
+                format!("{}-{}-{}", end.tool_name, state.run_id, state.tools.len())
+            });
             let arguments = state
                 .pending_args
                 .remove(&call_id)
