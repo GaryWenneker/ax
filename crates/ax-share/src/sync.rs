@@ -144,7 +144,7 @@ async fn push_to_remote(
     Ok(())
 }
 
-/// The share config as shown to API clients: `github.hasToken` tells whether
+/// The share config as shown to API clients: `github.tokenSet` tells whether
 /// a git API token is stored; the token itself is never included.
 pub fn share_config_for_api(project_root: &Path) -> ShareConfig {
     let mut config = load_share_config(project_root);

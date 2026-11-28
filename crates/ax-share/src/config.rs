@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::secret::ShareTokenStore;
+
 pub const CONFIG_FILENAME: &str = "ax.json";
 
 /// No default OneDrive share folder: set `share.onedrive.shareUrl` in ax.json.
@@ -121,14 +123,14 @@ pub struct GithubShareConfig {
     /// surface for automation (common on locked-down self-hosted GitLab).
     ///
     /// Accepted on input (settings API, or an older `ax.json`), but never
-    /// serialized: it is kept per repo URL in `~/.ax/auth/git-share.json`
-    /// (owner-only) and filled in when the config is loaded. An empty token
-    /// on save keeps the stored one.
+    /// serialized: it is kept in the OS credential store, keyed by project
+    /// root and `repo_url`, and filled in when the config is loaded. An empty
+    /// token on save keeps the stored one.
     #[serde(default, skip_serializing)]
     pub token: String,
     /// Output only: a token is stored for `repo_url`.
-    #[serde(default, skip_deserializing)]
-    pub has_token: bool,
+    #[serde(default, skip_deserializing, rename = "tokenSet")]
+    pub token_set: bool,
     /// Input only: remove the stored token for `repo_url` on save.
     #[serde(default, skip_serializing)]
     pub clear_token: bool,
@@ -141,7 +143,7 @@ impl Default for GithubShareConfig {
             branch: default_branch(),
             subpath: default_subpath(),
             token: String::new(),
-            has_token: false,
+            token_set: false,
             clear_token: false,
         }
     }
@@ -223,24 +225,103 @@ fn read_share_section(path: &Path) -> Option<ShareConfigPatch> {
 }
 
 /// Load share config from project `ax.json` (defaults when missing), with the
-/// git API token from the user's token store.
+/// git API token from the OS credential store.
 pub fn load_share_config(project_root: &Path) -> ShareConfig {
-    load_share_config_with(project_root, &git_token_store_path())
+    load_share_config_with(
+        project_root,
+        crate::secret::default_store(),
+        &git_token_store_path(),
+    )
 }
 
-/// [`load_share_config`] with an explicit token store file.
-pub fn load_share_config_with(project_root: &Path, token_store: &Path) -> ShareConfig {
+/// [`load_share_config`] with an explicit credential store and an explicit
+/// old token file (`~/.ax/auth/git-share.json`, read only to migrate it).
+pub fn load_share_config_with(
+    project_root: &Path,
+    secrets: &dyn ShareTokenStore,
+    token_store: &Path,
+) -> ShareConfig {
+    let config_path = project_root.join(CONFIG_FILENAME);
     let cfg = ShareConfig::default();
-    let mut cfg = match read_share_section(&project_root.join(CONFIG_FILENAME)) {
+    let mut cfg = match read_share_section(&config_path) {
         Some(local) => merge_share(cfg, local),
         None => cfg,
     };
     cfg.github.clear_token = false;
-    if cfg.github.token.trim().is_empty() {
-        cfg.github.token = read_git_token(token_store, &cfg.github.repo_url).unwrap_or_default();
-    }
-    cfg.github.has_token = !cfg.github.token.trim().is_empty();
+    cfg.github.token = load_git_token(
+        project_root,
+        &config_path,
+        &cfg.github.repo_url,
+        cfg.github.token.trim(),
+        secrets,
+        token_store,
+    );
+    cfg.github.token_set = !cfg.github.token.is_empty();
     cfg
+}
+
+/// The git API token for `repo_url`. A token still in `ax.json` (`inline`)
+/// or in the old token file moves to the credential store and is removed
+/// from where it was. Without a credential store the old locations are read
+/// as they are, and a warning is logged once.
+fn load_git_token(
+    project_root: &Path,
+    config_path: &Path,
+    repo_url: &str,
+    inline: &str,
+    secrets: &dyn ShareTokenStore,
+    token_store: &Path,
+) -> String {
+    let key = crate::secret::token_key(project_root, repo_url);
+    if !inline.is_empty() {
+        match secrets.set(&key, inline) {
+            Ok(()) => {
+                if let Err(e) = remove_token_from_project_config(config_path) {
+                    tracing::warn!("ax share: could not remove the token from ax.json: {e}");
+                }
+            }
+            Err(e) => crate::secret::warn_unavailable_once(&e),
+        }
+        return inline.to_string();
+    }
+    match secrets.get(&key) {
+        Ok(Some(token)) => token,
+        Ok(None) => {
+            let Some(token) = read_git_token(token_store, repo_url) else {
+                return String::new();
+            };
+            match secrets.set(&key, &token) {
+                Ok(()) => {
+                    if let Err(e) = write_git_token(token_store, repo_url, None) {
+                        tracing::warn!("ax share: could not remove the old token file entry: {e}");
+                    }
+                }
+                Err(e) => crate::secret::warn_unavailable_once(&e),
+            }
+            token
+        }
+        Err(e) => {
+            crate::secret::warn_unavailable_once(&e);
+            read_git_token(token_store, repo_url).unwrap_or_default()
+        }
+    }
+}
+
+/// Drops `share.github.token` from `ax.json`, written atomically.
+fn remove_token_from_project_config(path: &Path) -> Result<(), String> {
+    let current = std::fs::read(path).map_err(|e| e.to_string())?;
+    let next = edited_json_object(path, Some(current), |obj| {
+        if let Some(github) = obj
+            .get_mut("share")
+            .and_then(|s| s.get_mut("github"))
+            .and_then(|g| g.as_object_mut())
+        {
+            github.remove("token");
+        }
+        Ok(())
+    })
+    .map_err(|e| e.to_string())?;
+    ax_utils::atomic_write(path, &next).map_err(|e| e.to_string())
 }
 
 /// Path to the project share config file (`ax.json`).
@@ -248,12 +329,13 @@ pub fn project_config_path(project_root: &Path) -> PathBuf {
     project_root.join(CONFIG_FILENAME)
 }
 
-/// File holding git API tokens per repo URL, readable by the owner only.
+/// Old file that held git API tokens per repo URL (owner-only). Tokens found
+/// there move to the OS credential store when the config is loaded.
 pub fn git_token_store_path() -> PathBuf {
     crate::paths::auth_dir().join("git-share.json")
 }
 
-fn token_key(repo_url: &str) -> String {
+fn old_token_key(repo_url: &str) -> String {
     repo_url.trim().to_string()
 }
 
@@ -261,18 +343,22 @@ fn read_git_token(store: &Path, repo_url: &str) -> Option<String> {
     let text = std::fs::read_to_string(store).ok()?;
     let root: serde_json::Value = serde_json::from_str(&text).ok()?;
     root.get("tokens")?
-        .get(token_key(repo_url))?
+        .get(old_token_key(repo_url))?
         .as_str()
         .map(str::to_string)
 }
 
-/// Sets (`Some`) or removes (`None`) the token for `repo_url` in `store`.
+/// Sets (`Some`, tests only: ax no longer writes tokens to this file) or
+/// removes (`None`) the token for `repo_url` in the old token file.
 fn write_git_token(store: &Path, repo_url: &str, token: Option<&str>) -> Result<(), String> {
+    if token.is_none() && !store.exists() {
+        return Ok(());
+    }
     if let Some(dir) = store.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         restrict(dir, 0o700);
     }
-    let key = token_key(repo_url);
+    let key = old_token_key(repo_url);
     update_json_object(store, |obj| {
         let tokens = obj.entry("tokens").or_insert_with(|| serde_json::json!({}));
         if !tokens.is_object() {
@@ -302,19 +388,26 @@ fn restrict(path: &Path, mode: u32) {
 #[cfg(not(unix))]
 fn restrict(_path: &Path, _mode: u32) {}
 
-/// Save share config to project `ax.json`. A git API token goes to the
-/// user's token store instead, never into `ax.json`.
+/// Save share config to project `ax.json`. A git API token goes to the OS
+/// credential store instead, never into a plain-text file.
 pub fn write_project_share_config(
     project_root: &Path,
     config: &ShareConfig,
 ) -> Result<PathBuf, String> {
-    write_project_share_config_with(project_root, config, &git_token_store_path())
+    write_project_share_config_with(
+        project_root,
+        config,
+        crate::secret::default_store(),
+        &git_token_store_path(),
+    )
 }
 
-/// [`write_project_share_config`] with an explicit token store file.
+/// [`write_project_share_config`] with an explicit credential store and old
+/// token file.
 pub fn write_project_share_config_with(
     project_root: &Path,
     config: &ShareConfig,
+    secrets: &dyn ShareTokenStore,
     token_store: &Path,
 ) -> Result<PathBuf, String> {
     let path = project_config_path(project_root);
@@ -322,10 +415,19 @@ pub fn write_project_share_config_with(
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let github = &config.github;
+    let key = crate::secret::token_key(project_root, &github.repo_url);
     if github.clear_token {
+        // Without a credential store nothing can be stored there; the old
+        // plain-text locations are still cleared below.
+        if let Err(e) = secrets.delete(&key) {
+            crate::secret::warn_unavailable_once(&e);
+        }
         write_git_token(token_store, &github.repo_url, None)?;
     } else if !github.token.trim().is_empty() {
-        write_git_token(token_store, &github.repo_url, Some(github.token.trim()))?;
+        // No plain-text fallback: a token that cannot go to the credential
+        // store is refused.
+        secrets.set(&key, github.token.trim())?;
+        write_git_token(token_store, &github.repo_url, None)?;
     }
     write_share_at(&path, config)?;
     Ok(path)
@@ -334,7 +436,7 @@ pub fn write_project_share_config_with(
 fn write_share_at(path: &Path, config: &ShareConfig) -> Result<(), String> {
     let mut share = serde_json::to_value(config).map_err(|e| e.to_string())?;
     if let Some(github) = share.get_mut("github").and_then(|g| g.as_object_mut()) {
-        github.remove("hasToken");
+        github.remove("tokenSet");
     }
     // The project's ax.json sits in the repository root next to committed
     // files, so it is written atomically without the sibling `.lock` file
@@ -415,8 +517,30 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    use crate::secret::MemoryStore;
+
     fn load_from_project(project: &Path) -> ShareConfig {
-        load_share_config(project)
+        let home = TempDir::new().unwrap();
+        load_share_config_with(
+            project,
+            &MemoryStore::default(),
+            &home.path().join("git-share.json"),
+        )
+    }
+
+    /// A credential store that is not there (locked keychain, no secret
+    /// service on a headless Linux box).
+    struct Unavailable;
+    impl ShareTokenStore for Unavailable {
+        fn get(&self, _: &str) -> Result<Option<String>, String> {
+            Err("OS credential store unavailable".into())
+        }
+        fn set(&self, _: &str, _: &str) -> Result<(), String> {
+            Err("OS credential store unavailable".into())
+        }
+        fn delete(&self, _: &str) -> Result<(), String> {
+            Err("OS credential store unavailable".into())
+        }
     }
 
     fn write_share_json(path: &Path, share: serde_json::Value) {
@@ -453,8 +577,11 @@ mod tests {
         let home = TempDir::new().unwrap();
         let store = home.path().join("git-share.json");
         fs::write(project.path().join(CONFIG_FILENAME), "{}").unwrap();
-        write_project_share_config_with(project.path(), &ShareConfig::default(), &store).unwrap();
-        write_project_share_config_with(project.path(), &ShareConfig::default(), &store).unwrap();
+        let secrets = MemoryStore::default();
+        write_project_share_config_with(project.path(), &ShareConfig::default(), &secrets, &store)
+            .unwrap();
+        write_project_share_config_with(project.path(), &ShareConfig::default(), &secrets, &store)
+            .unwrap();
         let names: Vec<String> = fs::read_dir(project.path())
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
@@ -652,38 +779,48 @@ mod tests {
         config
     }
 
+    fn files_under(dir: &Path) -> String {
+        let mut all = String::new();
+        for entry in walkdir::WalkDir::new(dir).into_iter().flatten() {
+            if entry.file_type().is_file() {
+                all.push_str(&fs::read_to_string(entry.path()).unwrap_or_default());
+            }
+        }
+        all
+    }
+
     #[test]
-    fn the_git_token_is_never_written_to_ax_json_nor_returned_by_the_api() {
+    fn the_git_token_goes_to_the_credential_store_and_never_to_a_file_or_the_api() {
         let project = TempDir::new().unwrap();
         let home = TempDir::new().unwrap();
         let store = home.path().join("auth/git-share.json");
+        let secrets = MemoryStore::default();
         write_project_share_config_with(
             project.path(),
             &github_with_token("glpat-secret-1"),
+            &secrets,
             &store,
         )
         .unwrap();
-        let on_disk = fs::read_to_string(project.path().join(CONFIG_FILENAME)).unwrap();
-        assert!(!on_disk.contains("glpat-secret-1"), "{on_disk}");
-        assert!(!on_disk.contains("hasToken"), "{on_disk}");
-        let api = serde_json::to_value(load_share_config_with(project.path(), &store)).unwrap();
-        assert!(!api.to_string().contains("glpat-secret-1"), "{api}");
-        assert_eq!(api["github"]["hasToken"], true, "{api}");
-        // Sync still gets the token.
+        assert!(!files_under(project.path()).contains("glpat-secret-1"));
+        assert!(!files_under(home.path()).contains("glpat-secret-1"));
+        let key =
+            crate::secret::token_key(project.path(), "https://gitlab.example.com/team/policy.git");
         assert_eq!(
-            load_share_config_with(project.path(), &store).github.token,
-            "glpat-secret-1"
+            secrets.get(&key).unwrap().as_deref(),
+            Some("glpat-secret-1")
         );
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = fs::metadata(&store).unwrap().permissions().mode();
-            assert_eq!(
-                mode & 0o077,
-                0,
-                "token store is readable by others: {mode:o}"
-            );
-        }
+
+        let loaded = load_share_config_with(project.path(), &secrets, &store);
+        // Sync still gets the token.
+        assert_eq!(loaded.github.token, "glpat-secret-1");
+        let api = serde_json::to_value(&loaded).unwrap();
+        assert!(!api.to_string().contains("glpat-secret-1"), "{api}");
+        assert_eq!(api["github"]["tokenSet"], true, "{api}");
+        assert!(api["github"].get("hasToken").is_none(), "{api}");
+        assert!(!fs::read_to_string(project.path().join(CONFIG_FILENAME))
+            .unwrap()
+            .contains("tokenSet"));
     }
 
     #[test]
@@ -691,25 +828,79 @@ mod tests {
         let project = TempDir::new().unwrap();
         let home = TempDir::new().unwrap();
         let store = home.path().join("auth/git-share.json");
-        write_project_share_config_with(project.path(), &github_with_token("glpat-2"), &store)
-            .unwrap();
+        let secrets = MemoryStore::default();
+        write_project_share_config_with(
+            project.path(),
+            &github_with_token("glpat-2"),
+            &secrets,
+            &store,
+        )
+        .unwrap();
         // The UI saves other settings without a token.
-        write_project_share_config_with(project.path(), &github_with_token(""), &store).unwrap();
+        write_project_share_config_with(project.path(), &github_with_token(""), &secrets, &store)
+            .unwrap();
         assert_eq!(
-            load_share_config_with(project.path(), &store).github.token,
+            load_share_config_with(project.path(), &secrets, &store)
+                .github
+                .token,
             "glpat-2"
         );
 
         let mut clear = github_with_token("");
         clear.github.clear_token = true;
-        write_project_share_config_with(project.path(), &clear, &store).unwrap();
-        let cfg = load_share_config_with(project.path(), &store);
+        write_project_share_config_with(project.path(), &clear, &secrets, &store).unwrap();
+        let cfg = load_share_config_with(project.path(), &secrets, &store);
         assert_eq!(cfg.github.token, "");
-        assert!(!cfg.github.has_token);
+        assert!(!cfg.github.token_set);
     }
 
     #[test]
-    fn a_token_left_in_an_older_ax_json_moves_to_the_store_on_save() {
+    fn a_token_in_ax_json_moves_to_the_credential_store_on_first_load() {
+        let project = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let store = home.path().join("auth/git-share.json");
+        let secrets = MemoryStore::default();
+        write_share_json(
+            &project.path().join(CONFIG_FILENAME),
+            serde_json::json!({
+                "provider": "github",
+                "github": { "repoUrl": "https://gitlab.example.com/team/policy.git", "token": "glpat-old" }
+            }),
+        );
+        let cfg = load_share_config_with(project.path(), &secrets, &store);
+        assert_eq!(cfg.github.token, "glpat-old");
+        let on_disk = fs::read_to_string(project.path().join(CONFIG_FILENAME)).unwrap();
+        assert!(!on_disk.contains("glpat-old"), "{on_disk}");
+        assert!(on_disk.contains("gitlab.example.com"), "{on_disk}");
+        assert_eq!(
+            load_share_config_with(project.path(), &secrets, &store)
+                .github
+                .token,
+            "glpat-old"
+        );
+    }
+
+    #[test]
+    fn a_token_in_the_old_token_file_moves_to_the_credential_store() {
+        let project = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let store = home.path().join("auth/git-share.json");
+        let secrets = MemoryStore::default();
+        let repo = "https://gitlab.example.com/team/policy.git";
+        write_share_json(
+            &project.path().join(CONFIG_FILENAME),
+            serde_json::json!({ "provider": "github", "github": { "repoUrl": repo } }),
+        );
+        write_git_token(&store, repo, Some("glpat-file")).unwrap();
+        let cfg = load_share_config_with(project.path(), &secrets, &store);
+        assert_eq!(cfg.github.token, "glpat-file");
+        assert!(!files_under(home.path()).contains("glpat-file"));
+        let key = crate::secret::token_key(project.path(), repo);
+        assert_eq!(secrets.get(&key).unwrap().as_deref(), Some("glpat-file"));
+    }
+
+    #[test]
+    fn without_a_credential_store_the_old_token_is_read_and_no_new_token_is_written() {
         let project = TempDir::new().unwrap();
         let home = TempDir::new().unwrap();
         let store = home.path().join("auth/git-share.json");
@@ -720,14 +911,19 @@ mod tests {
                 "github": { "repoUrl": "https://gitlab.example.com/team/policy.git", "token": "glpat-old" }
             }),
         );
-        let cfg = load_share_config_with(project.path(), &store);
+        let cfg = load_share_config_with(project.path(), &Unavailable, &store);
         assert_eq!(cfg.github.token, "glpat-old");
-        write_project_share_config_with(project.path(), &cfg, &store).unwrap();
-        let on_disk = fs::read_to_string(project.path().join(CONFIG_FILENAME)).unwrap();
-        assert!(!on_disk.contains("glpat-old"), "{on_disk}");
-        assert_eq!(
-            load_share_config_with(project.path(), &store).github.token,
-            "glpat-old"
-        );
+        assert!(cfg.github.token_set);
+
+        let err = write_project_share_config_with(
+            project.path(),
+            &github_with_token("glpat-new"),
+            &Unavailable,
+            &store,
+        )
+        .unwrap_err();
+        assert!(err.contains("credential store"), "{err}");
+        assert!(!files_under(project.path()).contains("glpat-new"));
+        assert!(!files_under(home.path()).contains("glpat-new"));
     }
 }

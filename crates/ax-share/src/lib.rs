@@ -2,6 +2,7 @@ pub mod auth;
 pub mod config;
 pub mod paths;
 pub mod providers;
+pub mod secret;
 pub mod status;
 pub mod sync;
 

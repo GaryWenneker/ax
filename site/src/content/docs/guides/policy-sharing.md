@@ -97,19 +97,11 @@ Some managed/SSO-fronted GitLab instances (e.g. `gitlab.hosted-tools.com`) don't
 
 #### GitLab behind an SSO gate (no Bridge-style portal, no working git/SSH)
 
-If your GitLab instance forces SSH and git-HTTP through a browser SSO login (so a plain `git clone`/`push` can never authenticate headlessly) and has no separate SSH key portal like the above, add a personal or project access token instead. The token is kept on your machine in `~/.ax/auth/git-share.json`, keyed by the exact `repoUrl` from `ax.json`:
+If your GitLab instance forces SSH and git-HTTP through a browser SSO login (so a plain `git clone`/`push` can never authenticate headlessly) and has no separate SSH key portal like the above, add a personal or project access token instead. Enter it under **Settings → Policy sharing → API token** in the Command Center. ax keeps it in the OS credential store (macOS Keychain, Windows Credential Manager, or the Linux Secret Service), keyed by the project folder and the exact `repoUrl`. It is never written to `ax.json` or to any other plain-text file, and the settings API only reports `tokenSet: true` or `false`, never the token itself. Typing a new token replaces the stored one; removing it clears the credential-store entry.
 
-```json
-{
-  "tokens": {
-    "https://gitlab.example.com/group/ax-org-policy.git": "<access token>"
-  }
-}
-```
+Tokens from older versions move automatically. When ax loads the share config and finds a `token` under `share.github` in `ax.json`, or an entry in the old `~/.ax/auth/git-share.json`, it moves the token to the credential store and removes it from the file (`ax.json` is rewritten atomically). If no credential store is available (for example on a headless Linux machine without a secret service), ax keeps reading the token from where it is, logs a warning once, and refuses to save a new token instead of writing it in plain text.
 
-Create the file yourself and make it readable by you only (`chmod 600 ~/.ax/auth/git-share.json`). ax never writes the token to `ax.json`, which is usually committed. To remove the token, delete its line from the file.
-
-A `token` under `share.github` in `ax.json` still works and wins over the stored one, but it then sits in a file that is usually committed. Prefer `~/.ax/auth/git-share.json`.
+For automated runs without a credential store, `AX_SHARE_SECRET_STORE=memory` keeps tokens in memory for the life of the process only.
 
 When `token` is set (and `repoUrl` is http/https), ax uses GitLab's `/api/v4` REST API instead of raw git — no SSH key or git credential needed.
 
@@ -151,7 +143,7 @@ Edit the `share` block in `ax.json` with any editor. `ax policy share config` sh
 | `importMode` | `review` (stage pending), `merge` (apply without review), or `force` (overwrite conflicts) |
 | `autoSyncMinutes` | Sync interval hint in minutes (default `15`). The CLI does not sync on a timer: run `ax policy share sync` yourself or from a scheduler |
 | `content.rules` / `skills` / `memory` | Which remote artifacts to import |
-| `github.token` | Optional. GitLab personal/project access token, read from `~/.ax/auth/git-share.json`. When set on an http(s) `repoUrl`, sync uses that host's `/api/v4` REST API instead of raw `git` — for instances where SSH/git-HTTP is forced through SSO **and there's no separate SSH key/identity portal**. Leave it out to use normal `git` credentials. Do not set it for `gitlab.hosted-tools.com`, since that instance requires Bridge-managed SSH instead. |
+| `github.token` | Optional. GitLab personal/project access token, kept in the OS credential store (never in `ax.json`; see above). When set on an http(s) `repoUrl`, sync uses that host's `/api/v4` REST API instead of raw `git` — for instances where SSH/git-HTTP is forced through SSO **and there's no separate SSH key/identity portal**. Leave it out to use normal `git` credentials. Do not set it for `gitlab.hosted-tools.com`, since that instance requires Bridge-managed SSH instead. |
 
 Show this project's config:
 
