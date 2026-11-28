@@ -99,7 +99,7 @@ Company and private scopes are never exported by `ax policy pack export`.
 
 ### API contract federation
 
-During `ax sync` / `ax index`, OpenAPI (YAML/JSON), `.proto`, and `.graphql` / `.gql` files become `Doc` + `Route` nodes with stable ids such as `contract:openapi:GET:/users`. Matching operations across files are linked with inferred `References` edges.
+During `ax sync` / `ax index`, OpenAPI (YAML/JSON), `.proto`, and `.graphql` / `.gql` files become `Doc` + `Route` nodes. Each operation gets one node per file, with an id such as `contract:openapi:openapi.yaml:GET:/users`; its signature holds the shared key `contract:openapi:GET:/users`. Operations with the same key in different files are linked with inferred `References` edges. A YAML or JSON file counts as OpenAPI when its name says so (`openapi`, `swagger`, `api.yaml`) or its first 400 bytes contain an `openapi` or `swagger` key. The `exclude` patterns in `ax.json` apply with the same gitignore rules as the code scan.
 
 ## Shared memory sync
 

@@ -43,6 +43,16 @@ const MIN_MENTION_LEN: usize = 3;
 /// A mention that resolves to more than this many nodes is too ambiguous to link.
 const MAX_MENTION_TARGETS: i64 = 4;
 
+/// True when `rel_path` is a file the doc pass indexes (by extension).
+pub fn is_doc_path(rel_path: &str) -> bool {
+    let ext = Path::new(rel_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    MARKDOWN_EXTENSIONS.contains(&ext.as_str()) || OPAQUE_DOC_EXTENSIONS.contains(&ext.as_str())
+}
+
 pub fn doc_node_id(rel_path: &str) -> String {
     format!("doc:{rel_path}")
 }

@@ -1,5 +1,6 @@
 //! Rust web route extraction (Actix/Rocket attrs, Axum, Actix builder) — CG: frameworks/rust.ts
 
+use ax_utils::slice_bytes;
 use regex::Regex;
 use std::sync::OnceLock;
 
@@ -129,7 +130,7 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
         } else {
             safe.len().min(after + 500)
         };
-        let chain = &safe[after..end];
+        let chain = slice_bytes(&safe, after, end);
         let method_to = actix_method_to_re();
         let mut found = false;
         for m2 in method_to.captures_iter(chain) {
@@ -182,42 +183,174 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
         }
     }
 
-    let sql_re =
-        Regex::new(r#"(?i)(?:FROM|INTO|UPDATE|JOIN)\s+([a-z_][a-z0-9_]*)"#).expect("sql table");
-    for cap in sql_re.captures_iter(&safe) {
-        let table = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-        if ["select", "where", "set", "values", "on"].contains(&table) {
+    // Table names only come from string literals that are SQL statements,
+    // so prose such as "failed to read from disk" adds nothing.
+    let mut seen_tables = std::collections::HashSet::new();
+    for (lit_start, lit) in string_literals(&safe) {
+        // `\n`, `\r` and `\t` escapes separate SQL words; two spaces keep offsets.
+        let text = lit
+            .replace("\\n", "  ")
+            .replace("\\r", "  ")
+            .replace("\\t", "  ");
+        if !sql_statement_re().is_match(&text) {
             continue;
         }
-        let line = safe[..cap.get(0).unwrap().start()].matches('\n').count() as i32 + 1;
-        let qualified = format!("table:{}", table);
-        let id = stable_node_id(file_path, &qualified);
-        out.nodes.push(Node {
-            id,
-            kind: NodeKind::Table,
-            name: table.to_string(),
-            qualified_name: qualified,
-            file_path: file_path.to_string(),
-            language: Language::Rust,
-            start_line: line,
-            end_line: line,
-            start_column: 0,
-            end_column: 0,
-            docstring: None,
-            signature: None,
-            visibility: None,
-            is_exported: None,
-            is_async: None,
-            is_static: None,
-            is_abstract: None,
-            decorators: None,
-            type_parameters: None,
-            return_type: None,
-            updated_at: now,
-        });
+        for cap in sql_table_re().captures_iter(&text) {
+            let table = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+            if ["select", "where", "set", "values", "on"]
+                .contains(&table.to_ascii_lowercase().as_str())
+                || !seen_tables.insert(table.to_string())
+            {
+                continue;
+            }
+            let at = lit_start + cap.get(0).map(|m| m.start()).unwrap_or(0);
+            let line = safe[..at].matches('\n').count() as i32 + 1;
+            push_table(&mut out, file_path, table, line, now);
+        }
     }
 
     out
+}
+
+/// A string literal whose text starts like an SQL statement: the statement
+/// keyword plus the shape that must follow it, so prose such as
+/// "update the counter" or "select a file" does not count.
+///
+/// `SELECT` must be followed by `*`, `DISTINCT`/`ALL`/`CASE`, a format
+/// placeholder (`{cols}`), a qualified star (`n.*`), a function call
+/// (`MAX(`, `EXISTS(`), or one column followed by `,`, `AS`, `FROM` or an
+/// operator. `INSERT` and `UPDATE` take an optional `OR <action>` conflict
+/// clause; `WITH` takes an optional `RECURSIVE` and column list before `AS (`.
+fn sql_statement_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(concat!(
+            r"(?is)^\s*(?:",
+            r"SELECT\s+(?:\*|(?:DISTINCT|ALL|CASE)\b|\{|\w+(?:\.\w+)*\.\*|\w+\s*\(",
+            r"|[\w.]+\s*(?:,|\bAS\b|\bFROM\b|\|\||[+*/=<>]))",
+            r"|INSERT\s+(?:OR\s+\w+\s+)?INTO\s",
+            r"|UPDATE\s+(?:OR\s+\w+\s+)?\w+\s+SET\s",
+            r"|DELETE\s+FROM\s",
+            r"|WITH\s+(?:RECURSIVE\s+)?\w+\s*(?:\([^)]*\)\s*)?AS\s*\(",
+            r"|(?:REPLACE|MERGE)\s+INTO\s",
+            r")",
+        ))
+        .expect("sql statement")
+    })
+}
+
+/// The table after `FROM`, `INTO`, `JOIN` or `UPDATE`; an `UPDATE OR <action>`
+/// conflict clause is skipped so the action word is not taken as the table.
+fn sql_table_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)\b(?:FROM|INTO|UPDATE(?:\s+OR\s+[a-z]+)?|JOIN)\s+([a-z_][a-z0-9_]*)\b")
+            .expect("sql table")
+    })
+}
+
+/// The string literals of Rust source as (byte offset of the text, text).
+/// Handles escapes, raw strings (`r#"…"#`), byte strings and char literals
+/// such as `'"'`, so a quote inside a char does not open a string.
+fn string_literals(src: &str) -> Vec<(usize, &str)> {
+    let b = src.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'\'' => {
+                // Char literal ('x', '\n', '"') or a lifetime ('a): skip a
+                // char literal whole, leave a lifetime alone.
+                if b.get(i + 1) == Some(&b'\\') {
+                    let mut j = i + 2;
+                    while j < b.len() && b[j] != b'\'' && b[j] != b'\n' {
+                        j += 1;
+                    }
+                    i = j + 1;
+                } else if let Some(c) = src[i + 1..].chars().next() {
+                    let after = i + 1 + c.len_utf8();
+                    i = if b.get(after) == Some(&b'\'') {
+                        after + 1
+                    } else {
+                        i + 1
+                    };
+                } else {
+                    i += 1;
+                }
+            }
+            b'r' if starts_raw_string(b, i) && matches!(b.get(i + 1), Some(b'"') | Some(b'#')) => {
+                let mut j = i + 1;
+                let mut hashes = 0;
+                while b.get(j) == Some(&b'#') {
+                    hashes += 1;
+                    j += 1;
+                }
+                if b.get(j) != Some(&b'"') {
+                    i += 1;
+                    continue;
+                }
+                let start = j + 1;
+                let mut closing = String::from("\"");
+                closing.push_str(&"#".repeat(hashes));
+                match src[start..].find(&closing) {
+                    Some(len) => {
+                        out.push((start, &src[start..start + len]));
+                        i = start + len + closing.len();
+                    }
+                    None => break,
+                }
+            }
+            b'"' => {
+                let start = i + 1;
+                let mut j = start;
+                while j < b.len() && b[j] != b'"' {
+                    j += if b[j] == b'\\' { 2 } else { 1 };
+                }
+                let end = j.min(b.len());
+                out.push((start, &src[start..end]));
+                i = end + 1;
+            }
+            _ => i += 1,
+        }
+    }
+    out
+}
+
+fn prev_is_ident(b: &[u8], i: usize) -> bool {
+    i > 0 && (b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_')
+}
+
+/// `r` at `i` opens a raw string (`r"`, `r#"`, `br"`), not an identifier's tail.
+fn starts_raw_string(b: &[u8], i: usize) -> bool {
+    !prev_is_ident(b, i) || (b[i - 1] == b'b' && !prev_is_ident(b, i - 1))
+}
+
+fn push_table(out: &mut FrameworkExtractResult, file_path: &str, table: &str, line: i32, now: i64) {
+    let qualified = format!("table:{}", table);
+    let id = stable_node_id(file_path, &qualified);
+    out.nodes.push(Node {
+        id,
+        kind: NodeKind::Table,
+        name: table.to_string(),
+        qualified_name: qualified,
+        file_path: file_path.to_string(),
+        language: Language::Rust,
+        start_line: line,
+        end_line: line,
+        start_column: 0,
+        end_column: 0,
+        docstring: None,
+        signature: None,
+        visibility: None,
+        is_exported: None,
+        is_async: None,
+        is_static: None,
+        is_abstract: None,
+        decorators: None,
+        type_parameters: None,
+        return_type: None,
+        updated_at: now,
+    });
 }
 
 pub async fn try_resolve_target(
@@ -327,7 +460,7 @@ fn push_route(
     end_col: i32,
     now: i64,
 ) {
-    let qualified = format!("{}::route:{}", file_path, route_path);
+    let qualified = format!("{}::route:{}:{}", file_path, method, route_path);
     let route_id = stable_node_id(file_path, &qualified);
     out.nodes.push(Node {
         id: route_id,
@@ -448,4 +581,132 @@ fn actix_method_to_re() -> &'static Regex {
 fn direct_to_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r#"^\s*\.to\s*\(\s*([A-Za-z_][\w:]*)"#).expect("direct to"))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn get_and_post_on_one_path_are_two_routes() {
+        let src = "fn app() -> Router {\n    Router::new()\n        .route(\"/users\", get(list))\n        .route(\"/users\", post(create))\n}\n";
+        let out = extract_file("src/main.rs", src);
+        let ids: std::collections::HashSet<_> = out.nodes.iter().map(|n| n.id.clone()).collect();
+        assert_eq!(
+            out.nodes.len(),
+            2,
+            "{:?}",
+            out.nodes.iter().map(|n| &n.name).collect::<Vec<_>>()
+        );
+        assert_eq!(ids.len(), 2, "GET and POST /users share a node id");
+    }
+
+    use super::*;
+
+    fn tables(src: &str) -> Vec<String> {
+        extract_file("src/db.rs", src)
+            .nodes
+            .into_iter()
+            .filter(|n| n.kind == NodeKind::Table)
+            .map(|n| n.name)
+            .collect()
+    }
+
+    #[test]
+    fn plain_messages_do_not_become_tables() {
+        let src = r#"fn f() {
+    log("failed to read from disk");
+    let b = convert("convert into bytes");
+    panic!("could not join the thread");
+    let s = "update the counter";
+    let t = "select a file from the list";
+}
+"#;
+        assert_eq!(tables(src), Vec::<String>::new());
+    }
+
+    #[test]
+    fn sql_strings_give_one_table_node_per_name() {
+        let src = r##"fn f<'a>(x: &'a str, e: char) {
+    let _ = ('\u{e9}', '\'', 'é');
+    sqlx::query("SELECT id\n FROM users JOIN orders ON orders.user_id = users.id");
+    sqlx::query(r#"insert into users (id) values (1)"#);
+    let c = '"';
+    sqlx::query("UPDATE accounts SET balance = 0");
+    sqlx::query("  WITH t AS (SELECT 1) DELETE FROM audit_log");
+}
+"##;
+        let mut got = tables(src);
+        got.sort();
+        assert_eq!(got, vec!["accounts", "audit_log", "orders", "users"]);
+    }
+
+    #[test]
+    fn wider_sql_statement_forms_give_tables() {
+        let src = r##"fn f() {
+    sqlx::query("SELECT n.* FROM nodes n");
+    sqlx::query("SELECT MAX(id) FROM edges");
+    sqlx::query("SELECT COALESCE(MAX(community_id),0)+1 FROM node_communities");
+    sqlx::query("SELECT EXISTS(SELECT 1 FROM sqlite_master)");
+    let q = format!("SELECT {cols} FROM files");
+    sqlx::query("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT x FROM walk");
+    sqlx::query("INSERT OR IGNORE INTO schema_versions (v) VALUES (?1)");
+    sqlx::query("UPDATE OR REPLACE settings SET v = ?1");
+    sqlx::query("select id || name from people");
+}
+"##;
+        let mut got = tables(src);
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "c",
+                "edges",
+                "files",
+                "node_communities",
+                "nodes",
+                "people",
+                "schema_versions",
+                "settings",
+                "sqlite_master",
+                "walk"
+            ]
+        );
+    }
+
+    #[test]
+    fn prose_with_sql_words_still_gives_no_tables() {
+        let src = r#"fn f() {
+    let a = "select a file from the list";
+    let b = "with the counter from disk";
+    let c = "insert or skip the row into place";
+    let d = "update or keep the cache from memory";
+    let e = "select one or more from the menu";
+}
+"#;
+        assert_eq!(tables(src), Vec::<String>::new());
+    }
+
+    #[test]
+    fn actix_resource_window_cut_inside_a_character_does_not_panic() {
+        let head = r#"web::resource("/a")"#;
+        let mut src = format!("{head}.route(web::get().to(list)) // ");
+        // Put a two-byte character across byte 500 after the resource call.
+        while src.len() < head.len() + 499 {
+            src.push('a');
+        }
+        src.push_str("\u{e9} more text\n");
+        let r = extract_file("src/main.rs", &format!("fn f() {{ {src} }}"));
+        assert!(r.nodes.iter().any(|n| n.name.contains("/a")));
+    }
+
+    #[test]
+    fn actix_next_resource_far_away_cut_inside_a_character_does_not_panic() {
+        let head = r#"web::resource("/a")"#;
+        let mut src = format!("{head}.route(web::get().to(list)); let s = \"");
+        while src.len() < head.len() + 499 {
+            src.push('a');
+        }
+        src.push_str("\u{e9}\"; web::resource(\"/b\");\n");
+        let r = extract_file("src/main.rs", &format!("fn f() {{ {src} }}"));
+        assert!(r.nodes.iter().any(|n| n.name.contains("/a")));
+    }
 }

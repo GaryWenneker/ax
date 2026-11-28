@@ -60,7 +60,7 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
             raw_method.to_uppercase()
         };
 
-        let qualified = format!("{}::route:{}", file_path, route_path);
+        let qualified = format!("{}::route:{}:{}", file_path, method, route_path);
         let route_id = stable_node_id(file_path, &qualified);
 
         out.nodes.push(Node {
@@ -201,4 +201,18 @@ fn is_pascal_case(name: &str) -> bool {
         .map(|c| c.is_uppercase() && c.is_alphabetic())
         .unwrap_or(false)
         && chars.all(|c| c.is_alphanumeric())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_and_post_on_one_path_are_two_routes() {
+        let src = "package main\nfunc routes(r *gin.Engine) {\n\tr.GET(\"/users\", ListUsers)\n\tr.POST(\"/users\", CreateUser)\n}\n";
+        let out = extract_file("main.go", src);
+        let ids: std::collections::HashSet<_> = out.nodes.iter().map(|n| n.id.clone()).collect();
+        assert_eq!(out.nodes.len(), 2);
+        assert_eq!(ids.len(), 2, "GET and POST /users share a node id");
+    }
 }

@@ -1,10 +1,12 @@
 //! API contract federation — OpenAPI, Protobuf, GraphQL → graph nodes/edges.
 //!
-//! Creates stable `contract:…` Route nodes so producers and consumers that share
-//! the same operation id / path+method / RPC name can be linked with inferred
-//! `References` edges. Contract files themselves are `Doc` nodes.
+//! Creates one `contract:…` Route node per operation and file, such as
+//! `contract:openapi:<file>:GET:/users`. Operations in different files that
+//! share the same path+method / RPC name / GraphQL field are linked with
+//! inferred `References` edges. Contract files themselves are `Doc` nodes.
 
 use std::collections::{HashMap, HashSet};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use ax_db::queries::QueryBuilder;
@@ -33,8 +35,11 @@ const SKIP_DIRS: &[&str] = &[
 
 #[derive(Debug, Clone)]
 struct ContractOp {
-    /// Stable id: `contract:openapi:GET:/users` or `contract:proto:UserService.Get`
+    /// Node id, unique per file: `contract:openapi:<file>:GET:/users`.
     id: String,
+    /// File-independent key shared by producers and consumers of the same
+    /// operation: `contract:openapi:GET:/users` or `contract:proto:UserService.Get`.
+    key: String,
     name: String,
     kind: &'static str,
     file: String,
@@ -76,9 +81,13 @@ pub async fn index_contracts(
         file_ops.insert(file.rel.clone(), ids);
     }
 
-    // Idempotent: remove previous contract:* route nodes and their edges by rewriting
-    // only the set we own (upsert). Stale contract routes from deleted files remain
-    // until full re-index; acceptable for MVP.
+    // This pass scans every contract file, so the ops above are the whole
+    // `contract:` namespace. Drop ids it no longer writes (deleted files, or an
+    // id format an older extractor used) with their edges, then upsert the rest.
+    let keep: HashSet<String> = ops.iter().map(|op| op.id.clone()).collect();
+    queries
+        .delete_nodes_with_prefix_except("contract:", &keep)
+        .await?;
     let mut nodes: Vec<Node> = doc_nodes;
     for op in &ops {
         nodes.push(op_node(op, now));
@@ -105,18 +114,18 @@ pub async fn index_contracts(
         }
     }
 
-    // Same operation id appearing in multiple files → References (producer ↔ consumer).
-    let mut by_id: HashMap<&str, Vec<&ContractOp>> = HashMap::new();
+    // Same operation key appearing in multiple files → References (producer ↔ consumer).
+    let mut by_key: HashMap<&str, Vec<&ContractOp>> = HashMap::new();
     for op in &ops {
-        by_id.entry(op.id.as_str()).or_default().push(op);
+        by_key.entry(op.key.as_str()).or_default().push(op);
     }
-    for group in by_id.values() {
+    for group in by_key.values() {
         if group.len() < 2 {
             continue;
         }
         for i in 0..group.len() {
             for j in (i + 1)..group.len() {
-                if group[i].file == group[j].file {
+                if group[i].file == group[j].file || group[i].id == group[j].id {
                     continue;
                 }
                 edges.push(Edge {
@@ -137,17 +146,24 @@ pub async fn index_contracts(
     }
 
     // Link contract ops to existing Route nodes with matching names/paths.
+    // Contract nodes are skipped: they are linked through their shared key above.
     let mut seen_route_links = HashSet::new();
+    let mut hits_by_name: HashMap<&str, Vec<String>> = HashMap::new();
     for op in &ops {
-        let path_hint = op.name.clone();
-        let hits = queries
-            .get_node_ids_by_symbol(&path_hint, 4)
-            .await
-            .unwrap_or_default();
-        for target in hits {
-            if target == op.id || !seen_route_links.insert((op.id.clone(), target.clone())) {
+        if !hits_by_name.contains_key(op.name.as_str()) {
+            let hits = queries
+                .get_node_ids_by_symbol(&op.name, 4)
+                .await
+                .unwrap_or_default();
+            hits_by_name.insert(op.name.as_str(), hits);
+        }
+        for target in &hits_by_name[op.name.as_str()] {
+            if target.starts_with("contract:")
+                || !seen_route_links.insert((op.id.clone(), target.clone()))
+            {
                 continue;
             }
+            let target = target.clone();
             edges.push(Edge {
                 source: op.id.clone(),
                 target,
@@ -170,6 +186,20 @@ pub async fn index_contracts(
     Ok(ops.len())
 }
 
+/// True when `rel_path` has an extension the contract pass may index
+/// (`.proto`, `.graphql`, `.gql`, or a YAML/JSON file that may be OpenAPI).
+pub fn may_be_contract_path(rel_path: &str) -> bool {
+    let ext = Path::new(rel_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "proto" | "graphql" | "gql" | "yaml" | "yml" | "json"
+    )
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ContractKind {
     OpenApi,
@@ -183,16 +213,23 @@ struct ScannedContract {
     kind: ContractKind,
 }
 
-/// First 400 bytes, stopped on a char boundary so a multibyte character is not split.
-fn contract_head(text: &str) -> &str {
-    let mut end = text.len().min(400);
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
+/// Bytes read from a YAML/JSON file to look for an `openapi` / `swagger` key.
+const SNIFF_BYTES: u64 = 400;
+
+/// The first [`SNIFF_BYTES`] of `path` as text. Only the head is read, so large
+/// data files cost one small read and bytes after the head may be any encoding.
+fn contract_head(path: &Path) -> Option<String> {
+    let mut head = Vec::with_capacity(SNIFF_BYTES as usize);
+    std::fs::File::open(path)
+        .ok()?
+        .take(SNIFF_BYTES)
+        .read_to_end(&mut head)
+        .ok()?;
+    Some(String::from_utf8_lossy(&head).into_owned())
 }
 
 fn scan_contract_files(project_root: &Path, exclude: &[String]) -> Vec<ScannedContract> {
+    let exclude_matcher = crate::orchestrator::build_exclude_matcher(project_root, exclude);
     let walker = WalkBuilder::new(project_root)
         .hidden(true)
         .git_ignore(true)
@@ -214,7 +251,10 @@ fn scan_contract_files(project_root: &Path, exclude: &[String]) -> Vec<ScannedCo
             .unwrap_or(path)
             .to_string_lossy()
             .replace('\\', "/");
-        if exclude.iter().any(|p| rel.contains(p.trim_matches('*'))) {
+        if exclude_matcher
+            .as_ref()
+            .is_some_and(|m| m.matched_path_or_any_parents(&rel, false).is_ignore())
+        {
             continue;
         }
         let name = path
@@ -242,8 +282,7 @@ fn scan_contract_files(project_root: &Path, exclude: &[String]) -> Vec<ScannedCo
             Some(ContractKind::OpenApi)
         } else if matches!(ext.as_str(), "yaml" | "yml" | "json") {
             // Content sniff for openapi key — cheap peek.
-            if let Ok(head) = std::fs::read_to_string(path) {
-                let head = contract_head(&head);
+            if let Some(head) = contract_head(path) {
                 if head.contains("openapi:")
                     || head.contains("\"openapi\"")
                     || head.contains("swagger:")
@@ -301,9 +340,9 @@ fn parse_openapi(rel: &str, content: &str) -> Vec<ContractOp> {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("{m}:{path}"));
-            let id = format!("contract:openapi:{m}:{path}");
             ops.push(ContractOp {
-                id,
+                id: format!("contract:openapi:{rel}:{m}:{path}"),
+                key: format!("contract:openapi:{m}:{path}"),
                 name: op_id,
                 kind: "openapi",
                 file: rel.to_string(),
@@ -348,7 +387,8 @@ fn parse_protobuf(rel: &str, content: &str) -> Vec<ContractOp> {
             let svc = current_service.clone().unwrap_or_else(|| "Service".into());
             let qn = format!("{svc}.{rpc}");
             ops.push(ContractOp {
-                id: format!("contract:proto:{qn}"),
+                id: format!("contract:proto:{rel}:{qn}"),
+                key: format!("contract:proto:{qn}"),
                 name: qn,
                 kind: "protobuf",
                 file: rel.to_string(),
@@ -400,7 +440,8 @@ fn parse_graphql(rel: &str, content: &str) -> Vec<ContractOp> {
         }
         let qn = format!("{ty}.{field}");
         ops.push(ContractOp {
-            id: format!("contract:graphql:{qn}"),
+            id: format!("contract:graphql:{rel}:{qn}"),
+            key: format!("contract:graphql:{qn}"),
             name: qn,
             kind: "graphql",
             file: rel.to_string(),
@@ -455,7 +496,7 @@ fn op_node(op: &ContractOp, now: i64) -> Node {
         start_column: 0,
         end_column: 0,
         docstring: Some(format!("{} contract operation", op.kind)),
-        signature: Some(op.id.clone()),
+        signature: Some(op.key.clone()),
         visibility: None,
         is_exported: Some(true),
         is_async: None,
@@ -492,7 +533,10 @@ mod tests {
         }"#;
         let ops = parse_openapi("openapi.json", json);
         assert_eq!(ops.len(), 2);
-        assert!(ops.iter().any(|o| o.id == "contract:openapi:GET:/users"));
+        assert!(ops.iter().any(|o| o.key == "contract:openapi:GET:/users"));
+        assert!(ops
+            .iter()
+            .any(|o| o.id == "contract:openapi:openapi.json:GET:/users"));
         assert!(ops.iter().any(|o| o.name == "listUsers"));
     }
 
@@ -509,7 +553,8 @@ service UserService {
         assert_eq!(ops.len(), 2);
         assert!(ops
             .iter()
-            .any(|o| o.id == "contract:proto:UserService.GetUser"));
+            .any(|o| o.key == "contract:proto:UserService.GetUser"
+                && o.id == "contract:proto:user.proto:UserService.GetUser"));
     }
 
     #[test]
@@ -549,6 +594,73 @@ service UserService {
         let found = scan_contract_files(&dir, &[]);
         assert_eq!(found.len(), 1);
         assert!(matches!(found[0].kind, ContractKind::OpenApi));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn scan_dir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("ax-contract-scan-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn sniff_reads_only_the_head_so_later_non_utf8_bytes_do_not_hide_openapi() {
+        let dir = scan_dir("non-utf8");
+        let mut body = b"openapi: 3.0.0\npaths: {}\n".to_vec();
+        body.resize(600, b' ');
+        body.extend_from_slice(&[0xff, 0xfe, 0x00, 0x80]);
+        std::fs::write(dir.join("service.yaml"), &body).unwrap();
+        let found = scan_contract_files(&dir, &[]);
+        assert_eq!(found.len(), 1, "openapi head must be detected");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn exclude_patterns_use_gitignore_semantics() {
+        let dir = scan_dir("exclude");
+        for sub in ["general", "generated", "a/generated", "keep"] {
+            std::fs::create_dir_all(dir.join(sub)).unwrap();
+            std::fs::write(dir.join(sub).join("openapi.yaml"), "openapi: 3.0.0\n").unwrap();
+        }
+        let rels = |exclude: &[&str]| -> Vec<String> {
+            let exclude: Vec<String> = exclude.iter().map(|s| s.to_string()).collect();
+            let mut v: Vec<String> = scan_contract_files(&dir, &exclude)
+                .into_iter()
+                .map(|f| f.rel)
+                .collect();
+            v.sort();
+            v
+        };
+        // A plain name matches a path component, not any substring.
+        assert_eq!(
+            rels(&["gen"]),
+            vec![
+                "a/generated/openapi.yaml",
+                "general/openapi.yaml",
+                "generated/openapi.yaml",
+                "keep/openapi.yaml"
+            ]
+        );
+        // A directory pattern excludes files below it at any depth.
+        assert_eq!(
+            rels(&["generated/"]),
+            vec!["general/openapi.yaml", "keep/openapi.yaml"]
+        );
+        assert_eq!(
+            rels(&["**/generated/**"]),
+            vec!["general/openapi.yaml", "keep/openapi.yaml"]
+        );
+        // Anchored patterns only match from the project root.
+        assert_eq!(
+            rels(&["/generated"]),
+            vec![
+                "a/generated/openapi.yaml",
+                "general/openapi.yaml",
+                "keep/openapi.yaml"
+            ]
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

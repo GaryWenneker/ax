@@ -243,7 +243,10 @@ impl Ax {
                     &self.db,
                     &self.project_root,
                     &index_opts.exclude,
-                    None,
+                    FinalizeRun {
+                        scope: None,
+                        read_path: false,
+                    },
                     &mut on_progress,
                 )
                 .await
@@ -291,7 +294,10 @@ impl Ax {
                         &self.db,
                         &self.project_root,
                         &index_opts.exclude,
-                        Some(&sync.affected_files),
+                        FinalizeRun {
+                            scope: Some(&sync.affected_files),
+                            read_path: false,
+                        },
                         &mut on_progress,
                     )
                     .await
@@ -346,6 +352,7 @@ impl Ax {
             opts,
             on_progress,
             ax_utils::file_lock::DEFAULT_LOCK_WAIT,
+            false,
         )
         .await
     }
@@ -353,13 +360,15 @@ impl Ax {
     /// Re-index `paths`, assuming the caller already holds `index_mutex`.
     ///
     /// `lock_wait` bounds the on-disk lock acquisition so a read-path caller
-    /// cannot hang behind another process's long index.
+    /// cannot hang behind another process's long index. `read_path` skips the
+    /// project-wide memory passes after the re-extract and resolve.
     async fn index_files_locked(
         &mut self,
         paths: &[String],
         opts: IndexOptions,
         on_progress: &mut Option<Box<dyn FnMut(IndexProgress) + Send>>,
         lock_wait: std::time::Duration,
+        read_path: bool,
     ) -> Result<IndexResult, ax_utils::errors::AxError> {
         self.file_lock.acquire_wait(lock_wait)?;
         let index_opts = self.merge_index_opts(&opts);
@@ -375,7 +384,10 @@ impl Ax {
                     &self.db,
                     &self.project_root,
                     &index_opts.exclude,
-                    Some(paths),
+                    FinalizeRun {
+                        scope: Some(paths),
+                        read_path,
+                    },
                     on_progress,
                 )
                 .await
@@ -391,14 +403,25 @@ impl Ax {
     /// Re-index paths whose stored source drifted from the working tree, so the
     /// next graph read can serve verified-fresh snippets.
     ///
-    /// Best-effort and strictly bounded: if either lock is busy, or the re-index
-    /// fails, this returns `false` and the caller serves stale-labelled text.
-    /// Blocking here would turn a read into an unbounded wait, and reads are on
-    /// the agent's critical path.
+    /// Best-effort: if either lock is busy, or the re-index fails, this returns
+    /// `false` and the caller serves stale-labelled text. Both lock waits are
+    /// bounded, and once the locks are held the work is limited to the stale
+    /// files: re-extract, resolve, light SQLite maintenance and change capture.
+    /// Doc and contract rescans and the memory passes are left to the next
+    /// sync or watch batch.
+    ///
+    /// Doc files (Markdown, JSON and other opaque docs) and files holding `contract:` or `doc:` nodes (an
+    /// OpenAPI YAML/JSON, `.proto` or GraphQL file) are not re-extracted here:
+    /// those nodes come only from the project-wide doc and contract passes, so
+    /// a re-extract would drop them. Such files keep their stale label and their
+    /// stored hash, so the next sync or watch batch sees the change and runs
+    /// those passes. Other YAML files are re-extracted as usual.
     async fn try_resync_source(&mut self, paths: &[String]) -> bool {
+        let paths = read_path_resync_paths(&self.queries, paths).await;
         if paths.is_empty() {
             return false;
         }
+        let paths = paths.as_slice();
         let mutex = Arc::clone(&self.index_mutex);
         let guard = match tokio::time::timeout(SOURCE_RESYNC_MUTEX_WAIT, mutex.lock()).await {
             Ok(g) => g,
@@ -417,6 +440,7 @@ impl Ax {
                 },
                 &mut no_progress,
                 SOURCE_RESYNC_FILE_LOCK_WAIT,
+                true,
             )
             .await;
         drop(guard);
@@ -512,10 +536,11 @@ impl Ax {
             if ready.is_empty() {
                 continue;
             }
-            if let Some(w) = &self.watcher {
-                w.mark_indexing(&ready).await;
-            }
-            match self
+            let taken = match &self.watcher {
+                Some(w) => w.mark_indexing(&ready).await,
+                None => Vec::new(),
+            };
+            let succeeded = match self
                 .index_files(&ready, opts.clone(), &mut on_progress)
                 .await
             {
@@ -527,11 +552,16 @@ impl Ax {
                             r.duration_ms
                         );
                     }
+                    true
                 }
-                Err(e) => tracing::warn!("auto-sync failed: {}", e),
-            }
+                Err(e) => {
+                    tracing::warn!("auto-sync failed, will retry: {}", e);
+                    false
+                }
+            };
+            // Keeps failed files and files saved again during the batch pending.
             if let Some(w) = &self.watcher {
-                w.clear_pending(&ready).await;
+                w.finish_indexing(&taken, succeeded).await;
             }
         }
     }
@@ -1067,48 +1097,107 @@ fn report_optimizing(on_progress: &mut Option<Box<dyn FnMut(IndexProgress) + Sen
     }
 }
 
+/// The stale paths a read-path resync may re-extract: everything except doc
+/// files (Markdown, and opaque docs such as JSON, which get a `doc:` node) and
+/// files that hold `contract:` or `doc:` nodes (see `Ax::try_resync_source`).
+/// A YAML, `.proto` or GraphQL file without such nodes (a compose or k8s file)
+/// is re-extracted as usual. When the stored nodes cannot be read, the file is
+/// left to the next sync.
+async fn read_path_resync_paths(queries: &QueryBuilder, paths: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for p in paths {
+        if ax_extraction::markdown::is_doc_path(p) {
+            continue;
+        }
+        if ax_extraction::contracts::may_be_contract_path(p) {
+            let pass_owned = match queries.get_nodes_by_file(p).await {
+                Ok(nodes) => nodes
+                    .iter()
+                    .any(|n| n.id.starts_with("contract:") || n.id.starts_with("doc:")),
+                Err(_) => true,
+            };
+            if pass_owned {
+                continue;
+            }
+        }
+        out.push(p.clone());
+    }
+    out
+}
+
+/// What a finalize pass covers.
+#[derive(Clone, Copy)]
+struct FinalizeRun<'a> {
+    /// `None` (or empty) for a project-wide run; otherwise the touched paths.
+    scope: ax_resolution::ResolutionScope<'a>,
+    /// A read-path resync: skip the project-wide memory passes.
+    read_path: bool,
+}
+
 async fn finalize_after_extract(
     resolver: &mut ReferenceResolver,
     queries: &QueryBuilder,
     db: &Database,
     project_root: &Path,
     exclude: &[String],
-    scope: ax_resolution::ResolutionScope<'_>,
+    run: FinalizeRun<'_>,
     on_progress: &mut Option<Box<dyn FnMut(IndexProgress) + Send>>,
 ) -> Result<(), ax_utils::errors::AxError> {
+    let FinalizeRun { scope, read_path } = run;
+    let project_wide = scope.is_none_or(|paths| paths.is_empty());
     let _ = ax_resolution::prune_stale_unresolved_refs(queries).await?;
     let resolution = resolver
         .resolve_all(queries, scope, on_progress.as_mut())
         .await?;
-    queries
-        .set_metadata("resolution_total", &resolution.stats.total.to_string())
-        .await?;
-    queries
-        .set_metadata(
-            "resolution_resolved",
-            &resolution.stats.resolved.to_string(),
-        )
-        .await?;
-    queries
-        .set_metadata(
-            "resolution_unresolved",
-            &resolution.stats.unresolved.to_string(),
-        )
-        .await?;
-    report_optimizing(on_progress, "markdown docs");
-    let docs_indexed =
-        ax_extraction::markdown::index_markdown(project_root, queries, exclude).await?;
-    queries
-        .set_metadata("docs_indexed", &docs_indexed.to_string())
-        .await?;
-    report_optimizing(on_progress, "contracts");
-    let contracts_indexed =
-        ax_extraction::contracts::index_contracts(project_root, queries, exclude).await?;
-    queries
-        .set_metadata("contracts_indexed", &contracts_indexed.to_string())
-        .await?;
-    report_optimizing(on_progress, "SQLite maintenance");
-    db.run_maintenance().await?;
+    // A scoped run counts only the references of the files it touched, so
+    // only a project-wide run may replace the project-wide totals.
+    if project_wide {
+        queries
+            .set_metadata("resolution_total", &resolution.stats.total.to_string())
+            .await?;
+        queries
+            .set_metadata(
+                "resolution_resolved",
+                &resolution.stats.resolved.to_string(),
+            )
+            .await?;
+        queries
+            .set_metadata(
+                "resolution_unresolved",
+                &resolution.stats.unresolved.to_string(),
+            )
+            .await?;
+    }
+    // The doc and contract passes rescan the whole project. A scoped run
+    // needs them only when it touched such a file; links from docs into
+    // re-extracted code are carried over by the orchestrator. A read-path
+    // resync never runs them: the next sync or watch batch does.
+    let touched = |is_kind: fn(&str) -> bool| {
+        !read_path && scope.is_some_and(|paths| paths.iter().any(|p| is_kind(p)))
+    };
+    if project_wide || touched(ax_extraction::markdown::is_doc_path) {
+        report_optimizing(on_progress, "markdown docs");
+        let docs_indexed =
+            ax_extraction::markdown::index_markdown(project_root, queries, exclude).await?;
+        queries
+            .set_metadata("docs_indexed", &docs_indexed.to_string())
+            .await?;
+    }
+    if project_wide || touched(ax_extraction::contracts::may_be_contract_path) {
+        report_optimizing(on_progress, "contracts");
+        let contracts_indexed =
+            ax_extraction::contracts::index_contracts(project_root, queries, exclude).await?;
+        queries
+            .set_metadata("contracts_indexed", &contracts_indexed.to_string())
+            .await?;
+    }
+    if project_wide {
+        report_optimizing(on_progress, "SQLite maintenance");
+        db.run_maintenance().await?;
+    } else {
+        report_optimizing(on_progress, "SQLite optimize");
+        db.run_light_maintenance().await?;
+    }
     queries
         .set_metadata("extraction_version", EXTRACTION_VERSION)
         .await?;
@@ -1140,6 +1229,11 @@ async fn finalize_after_extract(
             tracing::warn!("graph version capture failed: {error}");
         }
     }
+    // A read-path resync only refreshes stale source for the current read;
+    // the project-wide memory passes run with the next sync or watch batch.
+    if read_path {
+        return Ok(());
+    }
     report_optimizing(on_progress, "graph episodes");
     if let Err(error) = ax_memory::capture_graph_episodes(db.pool()).await {
         tracing::warn!("graph episode capture failed: {error}");
@@ -1165,4 +1259,245 @@ async fn finalize_after_extract(
         tracing::warn!("memory re-embed failed: {error}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod read_path_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_read_path_resync_skips_project_wide_passes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("src/app.ts"),
+            "export function a() { return 1; }\n",
+        )
+        .unwrap();
+        let mut ax = Ax::init(root).await.unwrap();
+        let quiet = IndexOptions {
+            quiet: true,
+            ..IndexOptions::default()
+        };
+        ax.index_all(quiet.clone(), None).await.unwrap();
+        std::fs::write(
+            root.join("src/app.ts"),
+            "export function b() { return 2; }\n",
+        )
+        .unwrap();
+
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let capture = Arc::clone(&seen);
+        let mut progress: Option<Box<dyn FnMut(IndexProgress) + Send>> =
+            Some(Box::new(move |event: IndexProgress| {
+                if event.phase == ax_types::IndexPhase::Optimizing {
+                    if let Some(label) = event.file_path {
+                        capture.lock().unwrap().push(label);
+                    }
+                }
+            }));
+        let mutex = Arc::clone(&ax.index_mutex);
+        let _guard = mutex.lock().await;
+        ax.index_files_locked(
+            &["src/app.ts".to_string()],
+            quiet,
+            &mut progress,
+            SOURCE_RESYNC_FILE_LOCK_WAIT,
+            true,
+        )
+        .await
+        .unwrap();
+        let labels = seen.lock().unwrap().clone();
+        assert_eq!(
+            labels,
+            vec![
+                "SQLite optimize".to_string(),
+                "file-change capture".to_string(),
+                "graph versions".to_string(),
+            ]
+        );
+    }
+
+    const OPENAPI_V1: &str = "openapi: 3.0.0\ninfo:\n  title: a\n  version: '1'\npaths:\n  /users:\n    get:\n      operationId: listUsers\n";
+    const OPENAPI_V2: &str = "openapi: 3.0.0\ninfo:\n  title: b\n  version: '2'\npaths:\n  /users:\n    get:\n      operationId: listUsers\n    post:\n      operationId: addUser\n";
+
+    async fn node_ids(ax: &Ax, file: &str, prefix: &str) -> Vec<String> {
+        let mut ids: Vec<String> = ax
+            .queries
+            .get_nodes_by_file(file)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|n| n.id)
+            .filter(|id| id.starts_with(prefix))
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    async fn file_hash(ax: &Ax, rel: &str) -> String {
+        ax.queries
+            .get_all_files()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|f| f.path == rel)
+            .unwrap_or_else(|| panic!("{rel} is indexed"))
+            .content_hash
+    }
+
+    fn sorted(mut v: Vec<String>) -> Vec<String> {
+        v.sort();
+        v
+    }
+
+    /// Change `rel` on disk and put the new text in the source store, leaving
+    /// the `files` row on the old hash: the drift a read path detects.
+    async fn write_drift(ax: &Ax, root: &std::path::Path, rel: &str, text: &str) {
+        std::fs::write(root.join(rel), text).unwrap();
+        let h = blake3::hash(text.as_bytes()).to_hex().to_string();
+        ax.queries.upsert_file_content(rel, &h, text).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_read_path_resync_refreshes_plain_yaml_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("openapi.yaml"), OPENAPI_V1).unwrap();
+        std::fs::write(root.join("deploy.yaml"), "name: web\nreplicas: 1\n").unwrap();
+        std::fs::write(
+            root.join("compose.yml"),
+            "services:\n  web:\n    image: a\n",
+        )
+        .unwrap();
+        let mut ax = Ax::init(root).await.unwrap();
+        ax.index_all(
+            IndexOptions {
+                quiet: true,
+                ..IndexOptions::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+        write_drift(&ax, root, "deploy.yaml", "name: web\nreplicas: 3\n").await;
+        write_drift(
+            &ax,
+            root,
+            "compose.yml",
+            "services:\n  web:\n    image: b\n",
+        )
+        .await;
+        let stale = vec!["compose.yml".to_string(), "deploy.yaml".to_string()];
+        assert_eq!(
+            sorted(ax.queries.stale_source_paths(&stale).await.unwrap()),
+            stale
+        );
+
+        assert!(ax.try_resync_source(&stale).await);
+        assert!(
+            ax.queries
+                .stale_source_paths(&stale)
+                .await
+                .unwrap()
+                .is_empty(),
+            "plain YAML files are re-extracted on the read path"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_read_path_resync_leaves_doc_and_contract_files_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::write(root.join("openapi.yaml"), OPENAPI_V1).unwrap();
+        std::fs::write(
+            root.join("api.json"),
+            r#"{"openapi": "3.0.0", "info": {"title": "a", "version": "1"}, "paths": {"/items": {"get": {"operationId": "listItems"}}}}"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("README.md"), "# A\n").unwrap();
+        std::fs::write(root.join("deploy.yaml"), "name: web\nreplicas: 1\n").unwrap();
+        std::fs::write(root.join("package.json"), "{\"name\": \"a\"}\n").unwrap();
+        std::fs::write(root.join("src/app.ts"), "export function a() {}\n").unwrap();
+        let mut ax = Ax::init(root).await.unwrap();
+        ax.index_all(
+            IndexOptions {
+                quiet: true,
+                ..IndexOptions::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(!node_ids(&ax, "api.json", "contract:").await.is_empty());
+
+        let paths = [
+            "openapi.yaml",
+            "api.json",
+            "README.md",
+            "deploy.yaml",
+            "package.json",
+            "src/app.ts",
+        ]
+        .map(String::from);
+        assert_eq!(
+            read_path_resync_paths(&ax.queries, &paths).await,
+            ["deploy.yaml", "src/app.ts"].map(String::from),
+            "package.json is a doc file: the doc pass owns its doc: node"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_read_path_resync_keeps_contract_nodes_and_the_next_sync_refreshes_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("openapi.yaml"), OPENAPI_V1).unwrap();
+        std::fs::write(root.join("README.md"), "# A\n").unwrap();
+        let mut ax = Ax::init(root).await.unwrap();
+        let quiet = IndexOptions {
+            quiet: true,
+            ..IndexOptions::default()
+        };
+        ax.index_all(quiet.clone(), None).await.unwrap();
+        let before = node_ids(&ax, "openapi.yaml", "contract:").await;
+        assert!(
+            before.iter().any(|id| id.contains(":GET:/users")),
+            "fixture produced no contract nodes: {before:?}"
+        );
+        let docs_before = node_ids(&ax, "README.md", "doc:").await;
+
+        // A read path sees drift when the source store holds newer text than
+        // the `files` row: store the new text the way a read-path refresh does.
+        let old_hash = file_hash(&ax, "openapi.yaml").await;
+        write_drift(&ax, root, "openapi.yaml", OPENAPI_V2).await;
+        write_drift(&ax, root, "README.md", "# B\n").await;
+        let stale = vec!["openapi.yaml".to_string(), "README.md".to_string()];
+        assert_eq!(
+            ax.queries.stale_source_paths(&stale).await.unwrap(),
+            vec!["openapi.yaml".to_string()],
+        );
+
+        assert!(!ax.try_resync_source(&stale).await);
+        assert_eq!(node_ids(&ax, "openapi.yaml", "contract:").await, before);
+        assert_eq!(node_ids(&ax, "README.md", "doc:").await, docs_before);
+        assert_eq!(
+            file_hash(&ax, "openapi.yaml").await,
+            old_hash,
+            "the contract file keeps its old hash so the next sync revisits it"
+        );
+
+        ax.sync(quiet, None).await.unwrap();
+        let after = node_ids(&ax, "openapi.yaml", "contract:").await;
+        assert!(
+            after.iter().any(|id| id.contains(":GET:/users")),
+            "{after:?}"
+        );
+        assert!(
+            after.iter().any(|id| id.contains(":POST:/users")),
+            "{after:?}"
+        );
+    }
 }

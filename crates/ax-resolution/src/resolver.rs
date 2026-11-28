@@ -41,7 +41,8 @@ impl ReferenceResolver {
         scope: ResolutionScope<'_>,
         mut on_progress: Option<&mut Box<dyn FnMut(IndexProgress) + Send>>,
     ) -> Result<ResolutionResult, ax_utils::errors::AxError> {
-        self.frameworks
+        let gates = self
+            .frameworks
             .run_post_extract(self.import_resolver.project_root(), queries, scope)
             .await?;
 
@@ -108,6 +109,7 @@ impl ReferenceResolver {
                         self.import_resolver.project_root(),
                         &reads,
                         &ref_,
+                        gates,
                     )
                     .await
                     {
@@ -165,6 +167,13 @@ impl ReferenceResolver {
             }
         }
 
+        // A framework resolver that resolves a reference to its own source (a
+        // compiler macro such as `defineProps`, a Svelte rune, a virtual
+        // module) has handled it: its row goes, but it stands for no edge.
+        // Any other self-resolution is real recursion and keeps its edge.
+        result
+            .resolved
+            .retain(|r| !(r.resolved_by == ResolvedBy::Framework && is_self_resolution(r)));
         // One transaction for all edges instead of one commit per reference.
         // Only drop the unresolved rows once their edges are stored.
         let edges: Vec<Edge> = result.resolved.iter().map(resolved_edge).collect();
@@ -279,6 +288,11 @@ fn unresolved_from_db(r: &UnresolvedReference) -> UnresolvedRef {
         language: r.language.unwrap_or(ax_types::Language::Unknown),
         candidates: r.candidates.clone(),
     }
+}
+
+/// True when a reference resolved to the node it comes from.
+fn is_self_resolution(resolved: &ResolvedRef) -> bool {
+    resolved.target_node_id == resolved.original.from_node_id
 }
 
 /// The edge a resolution stands for. Fuzzy matches picked one of several

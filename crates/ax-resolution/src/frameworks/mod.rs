@@ -16,6 +16,7 @@ pub mod svelte;
 pub mod vue;
 
 use std::path::Path;
+use std::sync::Mutex;
 
 use ax_db::queries::QueryBuilder;
 use ax_types::{EdgeKind, Provenance};
@@ -23,13 +24,169 @@ use ax_types::{EdgeKind, Provenance};
 use crate::resolver::ResolutionScope;
 use extract::{is_js_family, FrameworkExtractResult};
 
+/// Which framework resolvers apply to this project, decided once per run.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FrameworkGates {
+    /// Flask or FastAPI was detected.
+    pub flask: bool,
+    /// Django was detected.
+    pub django: bool,
+    /// Spring was detected.
+    pub spring: bool,
+    /// Vue or Nuxt was detected.
+    pub vue: bool,
+    /// Svelte or SvelteKit was detected.
+    pub svelte: bool,
+}
+
 pub struct FrameworkRegistry {
     frameworks: Vec<&'static str>,
+    /// What the last detection found. A full pass detects over every file
+    /// and replaces it; a scoped pass (one watcher sync) only adds what its
+    /// own files show, so it never rescans the whole repository.
+    detected: Mutex<Option<Detected>>,
 }
 
 impl Default for FrameworkRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Which framework extractors apply to this project.
+#[derive(Debug, Clone, Copy, Default)]
+struct Detected {
+    express: bool,
+    react: bool,
+    nestjs: bool,
+    go: bool,
+    rust: bool,
+    laravel: bool,
+    django: bool,
+    flask: bool,
+    fastapi: bool,
+    vue: bool,
+    svelte: bool,
+    spring: bool,
+    angular: bool,
+}
+
+impl Detected {
+    /// Read the project manifests and look at `file_paths` (some detectors
+    /// open those files, so pass only the files that need checking).
+    fn detect(project_root: &Path, file_paths: &[String]) -> Self {
+        Self {
+            express: express::detect(project_root),
+            react: react::detect(project_root),
+            nestjs: nestjs::detect(project_root),
+            go: go::detect(project_root, file_paths),
+            rust: rust::detect(project_root),
+            laravel: laravel::detect(project_root),
+            django: django::detect(project_root),
+            flask: flask::flask_detect(project_root, file_paths),
+            fastapi: flask::fastapi_detect(project_root),
+            vue: vue::detect(project_root, file_paths),
+            svelte: svelte::detect(project_root, file_paths),
+            spring: spring::detect(project_root, file_paths),
+            angular: angular::detect(project_root),
+        }
+    }
+
+    fn union(self, o: Self) -> Self {
+        Self {
+            express: self.express || o.express,
+            react: self.react || o.react,
+            nestjs: self.nestjs || o.nestjs,
+            go: self.go || o.go,
+            rust: self.rust || o.rust,
+            laravel: self.laravel || o.laravel,
+            django: self.django || o.django,
+            flask: self.flask || o.flask,
+            fastapi: self.fastapi || o.fastapi,
+            vue: self.vue || o.vue,
+            svelte: self.svelte || o.svelte,
+            spring: self.spring || o.spring,
+            angular: self.angular || o.angular,
+        }
+    }
+
+    fn any(&self) -> bool {
+        self.express
+            || self.react
+            || self.nestjs
+            || self.go
+            || self.rust
+            || self.laravel
+            || self.django
+            || self.flask
+            || self.fastapi
+            || self.vue
+            || self.svelte
+            || self.spring
+            || self.angular
+    }
+
+    fn gates(&self) -> FrameworkGates {
+        FrameworkGates {
+            flask: self.flask || self.fastapi,
+            django: self.django,
+            spring: self.spring,
+            vue: self.vue,
+            svelte: self.svelte,
+        }
+    }
+
+    /// Every framework node, reference and edge one file yields.
+    fn extract(&self, path: &str, content: &str) -> FrameworkExtractResult {
+        let mut out = FrameworkExtractResult::default();
+        if self.rust && path.ends_with(".rs") {
+            merge_extract(&mut out, rust::extract_file(path, content));
+        }
+        if self.go && path.ends_with(".go") {
+            merge_extract(&mut out, go::extract_file(path, content));
+        }
+        if path.ends_with(".py") {
+            if self.django {
+                merge_extract(&mut out, django::extract_file(path, content));
+            }
+            if self.flask {
+                merge_extract(&mut out, flask::flask_extract_file(path, content));
+            }
+            if self.fastapi {
+                merge_extract(&mut out, flask::fastapi_extract_file(path, content));
+            }
+        }
+        if self.laravel && path.ends_with(".php") {
+            merge_extract(&mut out, laravel::extract_file(path, content));
+        }
+        if self.vue {
+            merge_extract(&mut out, vue::extract_file(path, content));
+        }
+        if self.svelte {
+            merge_extract(&mut out, svelte::extract_file(path, content));
+        }
+        if self.spring
+            && (path.ends_with(".java")
+                || path.ends_with(".kt")
+                || spring::is_spring_config_path(path))
+        {
+            merge_extract(&mut out, spring::extract_file(path, content));
+        }
+        if self.angular && path.ends_with(".ts") {
+            merge_extract(&mut out, angular::extract_file(path, content));
+        }
+        if is_js_family(path) {
+            if self.express {
+                merge_extract(&mut out, express::extract_file(path, content));
+            }
+            if self.react {
+                merge_extract(&mut out, react::extract_file(path, content));
+            }
+            if self.nestjs {
+                merge_extract(&mut out, nestjs::extract_file(path, content));
+            }
+        }
+        out
     }
 }
 
@@ -60,6 +217,7 @@ impl FrameworkRegistry {
                 "swift-objc",
                 "vue",
             ],
+            detected: Mutex::new(None),
         }
     }
 
@@ -72,115 +230,71 @@ impl FrameworkRegistry {
         project_root: &Path,
         queries: &QueryBuilder,
         scope: ResolutionScope<'_>,
-    ) -> Result<(), ax_utils::errors::AxError> {
-        let files = queries.get_all_files().await?;
-        let scoped: std::collections::HashSet<&str> = match scope {
-            Some(paths) => paths.iter().map(|s| s.as_str()).collect(),
-            None => std::collections::HashSet::new(),
+    ) -> Result<FrameworkGates, ax_utils::errors::AxError> {
+        // Indexed files only: the pass hangs its nodes under their file nodes.
+        let all: Vec<String> = queries
+            .get_all_files()
+            .await?
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
+        let scoped: Option<Vec<String>> = scope.filter(|s| !s.is_empty()).map(|s| {
+            let wanted: std::collections::HashSet<&str> = s.iter().map(String::as_str).collect();
+            all.iter()
+                .filter(|p| wanted.contains(p.as_str()))
+                .cloned()
+                .collect()
+        });
+        let cached = *self.detected.lock().unwrap_or_else(|e| e.into_inner());
+
+        // A full pass, or the first pass of this registry, detects over every
+        // file; a later scoped pass only looks at the files it was given.
+        let (paths, detected) = match (scoped, cached) {
+            (Some(paths), Some(prev)) => {
+                let detected = prev.union(detect_blocking(project_root, paths.clone()).await?);
+                (paths, detected)
+            }
+            (scoped, _) => {
+                let detected = detect_blocking(project_root, all.clone()).await?;
+                (scoped.unwrap_or(all), detected)
+            }
         };
-        let file_paths: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
-        let express_active = express::detect(project_root);
-        let react_active = react::detect(project_root);
-        let nestjs_active = nestjs::detect(project_root);
-        let go_active = go::detect(project_root, &file_paths);
-        let rust_active = rust::detect(project_root);
-        let laravel_active = laravel::detect(project_root);
-        let django_active = django::detect(project_root);
-        let flask_active = flask::flask_detect(project_root, &file_paths);
-        let fastapi_active = flask::fastapi_detect(project_root);
-        let vue_active = vue::detect(project_root, &file_paths);
-        let svelte_active = svelte::detect(project_root, &file_paths);
-        let spring_active = spring::detect(project_root, &file_paths);
-        let angular_active = angular::detect(project_root);
-        if !express_active
-            && !react_active
-            && !nestjs_active
-            && !go_active
-            && !rust_active
-            && !laravel_active
-            && !django_active
-            && !flask_active
-            && !fastapi_active
-            && !vue_active
-            && !svelte_active
-            && !spring_active
-            && !angular_active
-        {
-            return Ok(());
+        *self.detected.lock().unwrap_or_else(|e| e.into_inner()) = Some(detected);
+        if !detected.any() {
+            return Ok(detected.gates());
         }
 
-        for file in files {
-            if !scoped.is_empty() && !scoped.contains(file.path.as_str()) {
-                continue;
-            }
-            let full = project_root.join(&file.path);
-            let content = std::fs::read_to_string(&full).unwrap_or_default();
+        for path in paths {
+            let content = tokio::fs::read_to_string(project_root.join(&path))
+                .await
+                .unwrap_or_default();
             if content.is_empty() {
                 continue;
             }
-
-            let mut extracted = FrameworkExtractResult::default();
-            if rust_active && file.path.ends_with(".rs") {
-                merge_extract(&mut extracted, rust::extract_file(&file.path, &content));
-            }
-            if go_active && file.path.ends_with(".go") {
-                merge_extract(&mut extracted, go::extract_file(&file.path, &content));
-            }
-            if django_active && file.path.ends_with(".py") {
-                merge_extract(&mut extracted, django::extract_file(&file.path, &content));
-            }
-            if flask_active && file.path.ends_with(".py") {
-                merge_extract(
-                    &mut extracted,
-                    flask::flask_extract_file(&file.path, &content),
-                );
-            }
-            if fastapi_active && file.path.ends_with(".py") {
-                merge_extract(
-                    &mut extracted,
-                    flask::fastapi_extract_file(&file.path, &content),
-                );
-            }
-            if laravel_active && file.path.ends_with(".php") {
-                merge_extract(&mut extracted, laravel::extract_file(&file.path, &content));
-            }
-            if vue_active {
-                merge_extract(&mut extracted, vue::extract_file(&file.path, &content));
-            }
-
-            if spring_active
-                && (file.path.ends_with(".java")
-                    || file.path.ends_with(".kt")
-                    || spring::is_spring_config_path(&file.path))
-            {
-                merge_extract(&mut extracted, spring::extract_file(&file.path, &content));
-            }
-            if angular_active && file.path.ends_with(".ts") {
-                merge_extract(&mut extracted, angular::extract_file(&file.path, &content));
-            }
-            if is_js_family(&file.path) {
-                if express_active {
-                    merge_extract(&mut extracted, express::extract_file(&file.path, &content));
-                }
-                if react_active {
-                    merge_extract(&mut extracted, react::extract_file(&file.path, &content));
-                }
-                if nestjs_active {
-                    merge_extract(&mut extracted, nestjs::extract_file(&file.path, &content));
-                }
-            }
-
+            let extracted = detected.extract(&path, &content);
             if extracted.nodes.is_empty()
                 && extracted.references.is_empty()
                 && extracted.edges.is_empty()
             {
                 continue;
             }
-            apply_extract(queries, &file.path, extracted).await?;
+            apply_extract(queries, &path, extracted).await?;
         }
 
-        Ok(())
+        Ok(detected.gates())
     }
+}
+
+/// Run detection off the async worker: it reads manifests and, for some
+/// frameworks, the given source files.
+async fn detect_blocking(
+    project_root: &Path,
+    paths: Vec<String>,
+) -> Result<Detected, ax_utils::errors::AxError> {
+    let root = project_root.to_path_buf();
+    tokio::task::spawn_blocking(move || Detected::detect(&root, &paths))
+        .await
+        .map_err(|e| ax_utils::errors::AxError::Other(format!("framework detection: {e}")))
 }
 
 fn merge_extract(dst: &mut FrameworkExtractResult, src: FrameworkExtractResult) {
@@ -192,8 +306,9 @@ fn merge_extract(dst: &mut FrameworkExtractResult, src: FrameworkExtractResult) 
 async fn apply_extract(
     queries: &QueryBuilder,
     file_path: &str,
-    extracted: FrameworkExtractResult,
+    mut extracted: FrameworkExtractResult,
 ) -> Result<(), ax_utils::errors::AxError> {
+    extracted.dedup_nodes();
     if extracted.nodes.is_empty() && extracted.references.is_empty() && extracted.edges.is_empty() {
         return Ok(());
     }

@@ -19,13 +19,15 @@ ax lsp enrich --limit 50 --json
 rustup component add rust-analyzer
 ```
 
-ax also uses `rustup which rust-analyzer` (so a working toolchain binary wins over a cargo-bin proxy) and `{project}/node_modules/.bin` plus `crates/ax-web/web-ui/node_modules/.bin` for `typescript-language-server`.
+ax also uses `rustup which rust-analyzer` (so a working toolchain binary wins over a cargo-bin proxy), then PATH.
+
+ax does not run language servers from the indexed project by default: finding a server means executing it, so a repository could otherwise plant a `gopls` or `rust-analyzer` that ax runs. To use a project-local `typescript-language-server` or `pyright-langserver` from `{project}/node_modules/.bin`, set `AX_LSP_PROJECT_BINS=1` for a project you trust. That folder is searched after rustup and PATH, and never for `rust-analyzer` or `gopls`.
 
 Install the other servers (examples):
 
 ```bash
 npm install -g typescript typescript-language-server pyright
-# or: npm --prefix crates/ax-web/web-ui install -D typescript-language-server
+# or, in a trusted project with AX_LSP_PROJECT_BINS=1: npm install -D typescript-language-server
 go install golang.org/x/tools/gopls@latest
 ```
 
@@ -44,6 +46,8 @@ Successful definitions become edges with provenance `lsp` and confidence `exact`
 
 Enrich keeps **one language-server process per server** for the whole batch and waits until `rust-analyzer` reports `quiescent` before definition queries. On large Cargo workspaces the first Enrich can take 1–3 minutes; that warmup is required — a cold server often returns empty definitions with no error.
 
+Each server is looked up once per Enrich run, and a server that fails to start is not retried for the rest of that run. A version probe that does not answer within 5 seconds is killed and the server counts as unavailable. One Enrich run stops after 15 minutes; refs it did not reach stay unresolved for the next run and are counted as `skippedDeadline` in the JSON report.
+
 ### Reconcile vs Enrich
 
 | Action | What it does |
@@ -61,7 +65,7 @@ A local agent can call the MCP tool `ax_lsp` with `action: "status"` or `action:
 
 | Mark | Meaning |
 |-------|---------|
-| `[ok]` | Runnable binary (`rustup which`, PATH, or project `node_modules/.bin`) |
+| `[ok]` | Runnable binary (`rustup which`, PATH, or, with `AX_LSP_PROJECT_BINS=1`, project `node_modules/.bin`) |
 | `--` | Not runnable: missing, or on PATH as a shim (common: rustup shim without the component) |
 
 The full ax, which is being phased out, also has an Unresolved page with **Enrich with LSP** in its Command Center; see [Command Center](/guides/command-center/).
