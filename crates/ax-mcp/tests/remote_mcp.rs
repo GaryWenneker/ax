@@ -813,30 +813,87 @@ async fn remote_claude_client_gets_text_only_replies_and_keeps_its_chats_and_cac
     let call = |name: &str, arguments: Value| json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":name,"arguments":arguments}});
     let key = Some("test-ide-key");
 
-    let (_, _, first) = post(&app, "alpha", key, Some(&a), call("ax_preflight", json!({}))).await;
-    assert!(first["result"].get("structuredContent").is_none(), "{first}");
+    let (_, _, first) = post(
+        &app,
+        "alpha",
+        key,
+        Some(&a),
+        call("ax_preflight", json!({})),
+    )
+    .await;
+    assert!(
+        first["result"].get("structuredContent").is_none(),
+        "{first}"
+    );
     let text = first["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.contains("# Ax context"), "{text}");
     let chat = between(text, "<ax_chat session=", &[' ', '>']).to_owned();
     assert!(chat.starts_with("axs_"), "no chat id in the text: {text}");
 
     // The chat this connection was given stays usable by it, and only by it.
-    let (status, _, second) = post(&app, "alpha", key, Some(&a), call("ax_preflight", json!({"session":chat}))).await;
+    let (status, _, second) = post(
+        &app,
+        "alpha",
+        key,
+        Some(&a),
+        call("ax_preflight", json!({"session":chat})),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{second}");
     assert!(!second.to_string().contains("\"isError\":true"), "{second}");
-    assert!(second["result"].get("structuredContent").is_none(), "{second}");
-    let (status, _, _) = post(&app, "alpha", key, Some(&b), call("ax_preflight", json!({"session":chat}))).await;
+    assert!(
+        second["result"].get("structuredContent").is_none(),
+        "{second}"
+    );
+    let (status, _, _) = post(
+        &app,
+        "alpha",
+        key,
+        Some(&b),
+        call("ax_preflight", json!({"session":chat})),
+    )
+    .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 
-    let (_, _, stash) = post(&app, "alpha", key, Some(&a), call("ax_stash", json!({"text":"PRIVATE-REMOTE-CLAUDE"}))).await;
-    assert!(stash["result"].get("structuredContent").is_none(), "{stash}");
+    let (_, _, stash) = post(
+        &app,
+        "alpha",
+        key,
+        Some(&a),
+        call("ax_stash", json!({"text":"PRIVATE-REMOTE-CLAUDE"})),
+    )
+    .await;
+    assert!(
+        stash["result"].get("structuredContent").is_none(),
+        "{stash}"
+    );
     let text = stash["result"]["content"][0]["text"].as_str().unwrap();
     let id = format!("cc_{}", between(text, "cc_", &[' ', '.', '\n']));
     assert!(id.len() > 6, "no cache id in the text: {text}");
-    let (status, _, expanded) = post(&app, "alpha", key, Some(&a), call("ax_expand", json!({"id":id}))).await;
+    let (status, _, expanded) = post(
+        &app,
+        "alpha",
+        key,
+        Some(&a),
+        call("ax_expand", json!({"id":id})),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{expanded}");
-    assert!(expanded.to_string().contains("PRIVATE-REMOTE-CLAUDE"), "{expanded}");
-    assert!(expanded["result"].get("structuredContent").is_none(), "{expanded}");
-    let (status, _, _) = post(&app, "alpha", key, Some(&b), call("ax_expand", json!({"id":id}))).await;
+    assert!(
+        expanded.to_string().contains("PRIVATE-REMOTE-CLAUDE"),
+        "{expanded}"
+    );
+    assert!(
+        expanded["result"].get("structuredContent").is_none(),
+        "{expanded}"
+    );
+    let (status, _, _) = post(
+        &app,
+        "alpha",
+        key,
+        Some(&b),
+        call("ax_expand", json!({"id":id})),
+    )
+    .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
