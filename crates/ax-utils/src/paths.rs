@@ -57,3 +57,46 @@ pub fn resolve_global_db_path(home: Option<PathBuf>) -> Option<PathBuf> {
     }
     home.map(|h| h.join(".ax").join("global.db"))
 }
+
+/// Directory names whose contents are tests.
+const TEST_DIRS: [&str; 3] = ["test", "tests", "__tests__"];
+
+/// Whether `path` (relative or absolute, `/` or `\` separated) names a test
+/// file: anything under a `test/`, `tests/` or `__tests__/` directory, a file
+/// named `*_test.*`, `*.test.*` or `*.spec.*`, or a Python `test_*.py`.
+pub fn is_test_path(path: &str) -> bool {
+    let lower = path.replace('\\', "/").to_lowercase();
+    let mut parts: Vec<&str> = lower.split('/').filter(|p| !p.is_empty()).collect();
+    let Some(name) = parts.pop() else {
+        return false;
+    };
+    if parts.iter().any(|dir| TEST_DIRS.contains(dir)) {
+        return true;
+    }
+    name.contains("_test.")
+        || name.contains(".test.")
+        || name.contains(".spec.")
+        || (name.starts_with("test_") && name.ends_with(".py"))
+}
+
+#[cfg(test)]
+mod test_path_tests {
+    use super::is_test_path;
+
+    #[test]
+    fn recognises_test_directories_and_names() {
+        assert!(is_test_path("tests/cli.rs"));
+        assert!(is_test_path("crates/ax-db/tests/integrity.rs"));
+        assert!(is_test_path("/abs/repo/test/x.c"));
+        assert!(is_test_path("src\\__tests__\\a.tsx"));
+        assert!(is_test_path("a/b.spec.ts"));
+        assert!(is_test_path("a/b.test.js"));
+        assert!(is_test_path("a/b_test.go"));
+        assert!(is_test_path("pkg/test_x.py"));
+        assert!(!is_test_path("src/testing.rs"));
+        assert!(!is_test_path("src/test_helpers.rs"));
+        assert!(!is_test_path("src/latest/mod.rs"));
+        assert!(!is_test_path("tests"));
+        assert!(!is_test_path(""));
+    }
+}

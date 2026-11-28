@@ -2,7 +2,7 @@ use ax_types::{ExtractionResult, Language, NodeKind};
 use tree_sitter::Tree;
 
 use crate::languages::common::{extract_symbols, file_node_id, symbol_spans_from_result};
-use crate::languages::refs::{append_lang_call_refs, emit_same_file_call_edges, RefCtx};
+use crate::languages::refs::{append_lang_call_refs, RefCtx};
 use crate::LanguageExtractor;
 
 pub struct JavaExtractor;
@@ -42,7 +42,6 @@ impl LanguageExtractor for JavaExtractor {
             },
             &["method_invocation"],
         );
-        emit_same_file_call_edges(&mut result, path);
         result
     }
 }

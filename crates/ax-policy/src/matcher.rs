@@ -237,7 +237,14 @@ fn select_matched_skills(matched: Vec<(i32, MatchedSkill)>) -> Vec<MatchedSkill>
     let (mut always, mut rest): (Vec<_>, Vec<_>) =
         matched.into_iter().partition(|(_, s)| s.always_apply);
     always.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.name.cmp(&b.1.name)));
-    rest.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.name.cmp(&b.1.name)));
+    // Contextual skills compete on how well they match the prompt; priority only
+    // breaks a tie in score.
+    rest.sort_by(|a, b| {
+        b.1.score
+            .cmp(&a.1.score)
+            .then(b.0.cmp(&a.0))
+            .then(a.1.name.cmp(&b.1.name))
+    });
     let mut out: Vec<MatchedSkill> = always.into_iter().map(|(_, s)| s).collect();
     out.extend(rest.into_iter().take(2).map(|(_, s)| s));
     out
@@ -263,6 +270,7 @@ fn score_skill(skill: &crate::types::PolicySkillRow, prompt_lc: &str) -> Option<
     let desc_lc = skill.description.to_lowercase();
     let words: Vec<&str> = prompt_lc
         .split_whitespace()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
         .filter(|w| w.len() > 3)
         .collect();
     let description_matches: std::collections::HashSet<_> = words
@@ -298,23 +306,86 @@ fn build_glob_set(globs: &[String]) -> Result<GlobSet, globset::Error> {
     builder.build()
 }
 
+/// Turns open and changed file paths into cwd-relative, `/`-separated paths
+/// for glob matching. A relative path is taken relative to `cwd`, not to the
+/// process working directory, and a file that does not exist yet still
+/// matches: the nearest existing ancestor is resolved and the rest appended.
 fn collect_relative_files(cwd: &Path, open: &[PathBuf], changed: &[PathBuf]) -> Vec<String> {
+    let lexical_cwd = lexical_normalize(&absolute_from(cwd, cwd));
+    let canon_cwd = resolve_existing_prefix(&lexical_cwd);
     let mut out = Vec::new();
     for p in open.iter().chain(changed.iter()) {
-        if let Ok(rel) = normalize_rel(cwd, p) {
-            out.push(rel.replace('\\', "/"));
+        let abs = lexical_normalize(&absolute_from(cwd, p));
+        let canon = resolve_existing_prefix(&abs);
+        let rel = canon
+            .strip_prefix(&canon_cwd)
+            .or_else(|_| abs.strip_prefix(&lexical_cwd));
+        if let Ok(rel) = rel {
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            if !rel.is_empty() {
+                out.push(rel);
+            }
         }
     }
     out
 }
 
-fn normalize_rel(cwd: &Path, path: &Path) -> Result<String, ()> {
-    let canon_cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
-    let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    canon
-        .strip_prefix(&canon_cwd)
-        .map(|p| p.to_string_lossy().to_string())
-        .map_err(|_| ())
+/// `path` when absolute, otherwise `cwd` joined with it (and `cwd` itself
+/// made absolute against the process directory as a last resort).
+fn absolute_from(cwd: &Path, path: &Path) -> PathBuf {
+    let joined = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    };
+    if joined.is_absolute() {
+        joined
+    } else {
+        std::env::current_dir()
+            .map(|d| d.join(&joined))
+            .unwrap_or(joined)
+    }
+}
+
+/// Removes `.` and folds `..` without touching the file system.
+fn lexical_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Canonicalizes the deepest existing ancestor of `path` and appends the
+/// components below it that do not exist yet.
+fn resolve_existing_prefix(path: &Path) -> PathBuf {
+    let mut probe = path.to_path_buf();
+    let mut rest: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        if let Ok(real) = probe.canonicalize() {
+            let mut out = real;
+            for part in rest.iter().rev() {
+                out.push(part);
+            }
+            return out;
+        }
+        match probe.file_name() {
+            Some(name) => {
+                rest.push(name.to_os_string());
+                if !probe.pop() {
+                    return path.to_path_buf();
+                }
+            }
+            None => return path.to_path_buf(),
+        }
+    }
 }
 
 fn level_ord(level: &str) -> i32 {
@@ -389,12 +460,67 @@ mod tests {
     }
 
     #[test]
+    fn a_relative_file_resolves_against_the_input_cwd() {
+        let dir = tempfile::tempdir().unwrap();
+        // The file does not exist and the process runs in another directory.
+        let rel = collect_relative_files(dir.path(), &[PathBuf::from("src/App.tsx")], &[]);
+        assert_eq!(rel, vec!["src/App.tsx".to_string()]);
+        let dotted = collect_relative_files(dir.path(), &[PathBuf::from("./src/../lib/a.rs")], &[]);
+        assert_eq!(dotted, vec!["lib/a.rs".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_new_file_under_a_linked_cwd_keeps_its_relative_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir_all(real.join("src")).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        // cwd given through the link, file not yet created.
+        let new_file = link.join("src/new.rs");
+        assert_eq!(
+            collect_relative_files(&link, &[new_file], &[]),
+            vec!["src/new.rs".to_string()]
+        );
+        // cwd given canonically, file path through the link.
+        let via_link = link.join("src/other.rs");
+        assert_eq!(
+            collect_relative_files(&real, &[via_link], &[]),
+            vec!["src/other.rs".to_string()]
+        );
+        // A file outside the cwd is still dropped.
+        assert!(collect_relative_files(&real, &[dir.path().join("x.rs")], &[]).is_empty());
+    }
+
+    #[test]
     fn a_generic_feature_word_cannot_select_an_unrelated_email_skill() {
         let mut skill = skill_row("feature-information", false, &[], 50);
         skill.description =
             "Send feature announcement emails to Hoornaarpreventie members via Brevo".into();
         assert!(score_skill(&skill, "implement the ax feature").is_none());
         assert!(score_skill(&skill, "send announcement emails").is_some());
+    }
+
+    #[test]
+    fn skill_trigger_needs_a_whole_word() {
+        let skill = skill_row("pr", false, &["pr"], 50);
+        assert!(score_skill(&skill, "improve the prompt parser").is_none());
+        assert!(score_skill(&skill, "express route").is_none());
+        assert!(score_skill(&skill, "open a pr for this").is_some());
+        let c = skill_row("c-review", false, &["c"], 50);
+        assert!(score_skill(&c, "edit crates/ax-db/src/queries.rs").is_none());
+        assert!(score_skill(&c, "review the c code").is_some());
+    }
+
+    #[test]
+    fn skill_description_ignores_punctuation_around_prompt_words() {
+        let skill = skill_row("old-coder", false, &[], 50);
+        let hit = score_skill(&skill, "start the implementation, evidence-first!");
+        assert!(
+            hit.is_some_and(|m| m.reason.contains("description:multiple-terms")),
+            "punctuation must not hide description words"
+        );
     }
 
     #[test]
@@ -563,6 +689,28 @@ mod tests {
         let names: Vec<&str> = out.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, vec!["b", "a", "c", "d"]);
         assert!(out.iter().filter(|s| s.always_apply).count() == 2);
+    }
+
+    #[test]
+    fn contextual_skills_rank_by_match_score_before_priority() {
+        let skill = |name: &str, score: i32| MatchedSkill {
+            name: name.into(),
+            score,
+            reason: String::new(),
+            description: String::new(),
+            body: String::new(),
+            always_apply: false,
+            properties: Default::default(),
+        };
+        // a and b match on two description words; c matches two triggers.
+        let matched = vec![
+            (80, skill("a", 10)),
+            (80, skill("b", 10)),
+            (50, skill("c", 50)),
+        ];
+        let out = select_matched_skills(matched);
+        let names: Vec<&str> = out.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["c", "a"]);
     }
 
     #[test]

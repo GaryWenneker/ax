@@ -9,6 +9,11 @@ pub struct CatalogSettings {
     pub report_installs: bool,
     #[serde(default)]
     pub publish_remote: String,
+    /// Host names the CLI may download skills from although they resolve to a
+    /// private, shared (CGNAT) or loopback address, such as an intranet skill
+    /// index. Empty by default; the Command Center never reads it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow_private_hosts: Vec<String>,
 }
 
 pub fn settings_path(project_root: &Path) -> std::path::PathBuf {
@@ -42,5 +47,21 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let settings = load_settings(dir.path()).unwrap();
         assert!(!settings.report_installs);
+        assert!(settings.allow_private_hosts.is_empty());
+    }
+
+    #[test]
+    fn allow_private_hosts_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".ax")).unwrap();
+        std::fs::write(
+            settings_path(dir.path()),
+            r#"{"allowPrivateHosts":["skills.corp.example"]}"#,
+        )
+        .unwrap();
+        let settings = load_settings(dir.path()).unwrap();
+        assert_eq!(settings.allow_private_hosts, ["skills.corp.example"]);
+        save_settings(dir.path(), &settings).unwrap();
+        assert_eq!(load_settings(dir.path()).unwrap(), settings);
     }
 }

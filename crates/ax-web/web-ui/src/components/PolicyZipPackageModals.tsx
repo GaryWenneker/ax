@@ -406,6 +406,10 @@ function RestoreModal({ onClose, onRestored }: { onClose: () => void; onRestored
   const [diffCompare, setDiffCompare] = useState('');
   const [diffNewer, setDiffNewer] = useState<string | null>(null);
   const [diffHunks, setDiffHunks] = useState<PolicyPackageDiffHunk[]>([]);
+  /** Item whose diff is in the diff state above; null while the active item's diff loads. */
+  const [diffKey, setDiffKey] = useState<string | null>(null);
+  /** Item the latest diff request was sent for; an older reply is dropped. */
+  const diffRequestRef = useRef<string | null>(null);
   const [activeHunk, setActiveHunk] = useState(0);
   const [dragOver, setDragOver] = useState(false);
   const [copyToGlobal, setCopyToGlobal] = useState(false);
@@ -427,6 +431,8 @@ function RestoreModal({ onClose, onRestored }: { onClose: () => void; onRestored
     setDecisions({});
     setError('');
     setActiveKey(null);
+    diffRequestRef.current = null;
+    setDiffKey(null);
     setDiffUnified('');
     setDiffCompare('');
     setDiffNewer(null);
@@ -440,7 +446,7 @@ function RestoreModal({ onClose, onRestored }: { onClose: () => void; onRestored
       setItems(preview.items);
       const next: Record<string, RestoreDecisionValue> = {};
       for (const item of preview.items) {
-        const action = defaultRestoreAction(item.status, item.newer);
+        const action = defaultRestoreAction(item.status);
         if (action) next[`${item.kind}:${item.id}`] = action;
       }
       setDecisions(next);
@@ -472,15 +478,26 @@ function RestoreModal({ onClose, onRestored }: { onClose: () => void; onRestored
     if (!file) return;
     const key = `${item.kind}:${item.id}`;
     setActiveKey(key);
+    diffRequestRef.current = key;
+    setDiffKey(null);
+    setDiffUnified('');
+    setDiffCompare(item.compare ?? item.status);
+    setDiffNewer(item.newer ?? null);
+    setDiffHunks([]);
+    setActiveHunk(0);
     setError('');
     try {
       const diff = await diffPolicyPackageItem(file, item.kind, item.id);
+      if (diffRequestRef.current !== key) return;
+      setDiffKey(key);
       setDiffCompare(diff.compare);
       setDiffNewer(item.newer ?? null);
       setDiffUnified(diff.unified);
       setDiffHunks(diff.hunks ?? []);
       setActiveHunk(0);
     } catch (e) {
+      if (diffRequestRef.current !== key) return;
+      setDiffKey(key);
       setDiffUnified('');
       setDiffCompare(item.compare ?? item.status);
       setDiffNewer(item.newer ?? null);
@@ -669,23 +686,27 @@ function RestoreModal({ onClose, onRestored }: { onClose: () => void; onRestored
                     </>
                   ) : null}
                 </h3>
-                <HunkDiffView
-                  hunks={diffHunks}
-                  unified={diffUnified}
-                  compare={diffCompare}
-                  takes={hunkTakesForDecision(decisions[activeKey] ?? 'skip', diffHunks.length)}
-                  activeIndex={activeHunk}
-                  onActiveIndex={setActiveHunk}
-                  onSetTake={(index, take) => {
-                    const next = setHunkTake(
-                      decisions[activeKey] ?? 'skip',
-                      index,
-                      diffHunks.length,
-                      take,
-                    );
-                    setDecisions({ ...decisions, [activeKey]: next });
-                  }}
-                />
+                {diffKey !== activeKey ? (
+                  <p className="muted">Loading diff…</p>
+                ) : (
+                  <HunkDiffView
+                    hunks={diffHunks}
+                    unified={diffUnified}
+                    compare={diffCompare}
+                    takes={hunkTakesForDecision(decisions[activeKey] ?? 'skip', diffHunks.length)}
+                    activeIndex={activeHunk}
+                    onActiveIndex={setActiveHunk}
+                    onSetTake={(index, take) => {
+                        const next = setHunkTake(
+                        decisions[activeKey] ?? 'skip',
+                        index,
+                        diffHunks.length,
+                        take,
+                      );
+                      setDecisions({ ...decisions, [activeKey]: next });
+                    }}
+                  />
+                )}
               </aside>
             ) : (
               <p className="muted">Click a row to compare local files with the package. Accept or reject each change.</p>

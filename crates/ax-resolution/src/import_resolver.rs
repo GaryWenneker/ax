@@ -1,22 +1,53 @@
 //! Import resolution - path aliases, workspace packages, relative modules.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+/// One `compilerOptions.paths` entry. A pattern holds at most one `*`;
+/// without one it matches only the exact import string.
+struct PathAlias {
+    prefix: String,
+    /// `None` for an exact pattern, else the text after the `*`.
+    suffix: Option<String>,
+    /// Targets in config order, already joined to `baseUrl`.
+    targets: Vec<String>,
+}
+
+impl PathAlias {
+    /// The text the `*` stands for, or `""` for an exact match.
+    fn capture<'a>(&self, import_path: &'a str) -> Option<&'a str> {
+        match &self.suffix {
+            None => (import_path == self.prefix).then_some(""),
+            Some(suffix) => {
+                let rest = import_path.strip_prefix(self.prefix.as_str())?;
+                rest.strip_suffix(suffix.as_str())
+            }
+        }
+    }
+}
 
 pub struct ImportResolver {
     project_root: PathBuf,
-    path_aliases: HashMap<String, String>,
+    /// Exact patterns first, then wildcard patterns by longest prefix, the
+    /// order TypeScript uses, so the result never depends on hash order.
+    path_aliases: Vec<PathAlias>,
+    /// `compilerOptions.baseUrl`, relative to the project root, when set.
+    base_url: Option<String>,
 }
 
 impl ImportResolver {
     pub fn new(project_root: &Path) -> Self {
         let mut resolver = Self {
             project_root: project_root.to_path_buf(),
-            path_aliases: HashMap::new(),
+            path_aliases: Vec::new(),
+            base_url: None,
         };
         resolver.load_tsconfig(project_root);
         resolver.load_jsconfig(project_root);
-        resolver.load_cargo_workspace(project_root);
+        // Stable: equal prefixes keep tsconfig before jsconfig order.
+        resolver.path_aliases.sort_by_key(|a| match a.suffix {
+            None => (0, 0),
+            Some(_) => (1, usize::MAX - a.prefix.len()),
+        });
         resolver
     }
 
@@ -38,31 +69,49 @@ impl ImportResolver {
     }
 
     fn load_paths_config(&mut self, path: &Path) {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            let stripped = strip_json_comments(&content);
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stripped) {
-                if let Some(paths) = json.get("compilerOptions").and_then(|c| c.get("paths")) {
-                    if let Some(map) = paths.as_object() {
-                        for (k, v) in map {
-                            if let Some(arr) = v.as_array() {
-                                if let Some(first) = arr.first().and_then(|x| x.as_str()) {
-                                    let alias = k.replace("/*", "");
-                                    let target = first.replace("/*", "");
-                                    self.path_aliases.insert(alias, target);
-                                }
-                            }
-                        }
-                    }
-                }
+        let Ok(content) = std::fs::read_to_string(path) else {
+            return;
+        };
+        let stripped = strip_json_comments(&content);
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&stripped) else {
+            return;
+        };
+        let Some(options) = json.get("compilerOptions") else {
+            return;
+        };
+        let base_url = options.get("baseUrl").and_then(|b| b.as_str());
+        if let Some(b) = base_url {
+            if self.base_url.is_none() {
+                self.base_url = Some(normalize_rel(b));
             }
         }
-    }
-
-    fn load_cargo_workspace(&mut self, root: &Path) {
-        let cargo = root.join("Cargo.toml");
-        if cargo.exists() {
-            self.path_aliases
-                .insert("@crate".to_string(), ".".to_string());
+        // Without baseUrl, targets are relative to the config file's folder.
+        let base = normalize_rel(base_url.unwrap_or("."));
+        let Some(map) = options.get("paths").and_then(|p| p.as_object()) else {
+            return;
+        };
+        for (pattern, value) in map {
+            let targets: Vec<String> = value
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|t| t.as_str())
+                        .map(|t| join_rel(&base, t))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if targets.is_empty() {
+                continue;
+            }
+            let (prefix, suffix) = match pattern.split_once('*') {
+                Some((p, s)) => (p.to_string(), Some(s.to_string())),
+                None => (pattern.clone(), None),
+            };
+            self.path_aliases.push(PathAlias {
+                prefix,
+                suffix,
+                targets,
+            });
         }
     }
 
@@ -73,37 +122,46 @@ impl ImportResolver {
             return None;
         }
 
-        let logical = self.resolve_import(&import_path, from_file)?;
-        let candidates = self.file_candidates(&logical);
-        for cand in candidates {
-            let full = self.project_root.join(&cand);
-            if full.is_file() {
-                return Some(self.to_indexed_rel_path(&full));
+        for logical in self.resolve_candidates(&import_path, from_file) {
+            for cand in self.file_candidates(&logical) {
+                let full = self.project_root.join(&cand);
+                if full.is_file() {
+                    return Some(self.to_indexed_rel_path(&full));
+                }
             }
         }
         None
     }
 
+    /// The first logical path an import maps to (see [`Self::resolve_candidates`]).
     pub fn resolve_import(&self, import_path: &str, from_file: &str) -> Option<String> {
-        for (alias, target) in &self.path_aliases {
-            if import_path.starts_with(alias) {
-                let rest = import_path
-                    .strip_prefix(alias)
-                    .unwrap_or("")
-                    .trim_start_matches('/');
-                if rest.is_empty() {
-                    return Some(target.clone());
-                }
-                let base = target.trim_end_matches('/');
-                return Some(format!("{}/{}", base, rest));
+        self.resolve_candidates(import_path, from_file)
+            .into_iter()
+            .next()
+    }
+
+    /// Every logical path an import may map to, in the order to try them:
+    /// the targets of the best matching `paths` pattern, else the relative
+    /// path, else the path under `baseUrl`.
+    pub fn resolve_candidates(&self, import_path: &str, from_file: &str) -> Vec<String> {
+        for alias in &self.path_aliases {
+            if let Some(star) = alias.capture(import_path) {
+                return alias
+                    .targets
+                    .iter()
+                    .map(|t| t.replacen('*', star, 1))
+                    .collect();
             }
         }
         if import_path.starts_with('.') {
             let from_dir = Path::new(from_file).parent().unwrap_or(Path::new(""));
             let joined = from_dir.join(import_path);
-            return Some(joined.to_string_lossy().replace('\\', "/"));
+            return vec![joined.to_string_lossy().replace('\\', "/")];
         }
-        None
+        match &self.base_url {
+            Some(base) => vec![join_rel(base, import_path)],
+            None => Vec::new(),
+        }
     }
 
     fn file_candidates(&self, logical: &str) -> Vec<String> {
@@ -132,6 +190,34 @@ impl ImportResolver {
             .replace('\\', "/")
             .trim_start_matches("./")
             .to_string()
+    }
+}
+
+/// A config-relative path without `./` segments (`./web/` becomes `web`).
+fn normalize_rel(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    let mut parts: Vec<&str> = Vec::new();
+    for seg in path.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." if parts.last().is_some_and(|p| *p != "..") => {
+                parts.pop();
+            }
+            _ => parts.push(seg),
+        }
+    }
+    if parts.is_empty() {
+        ".".to_string()
+    } else {
+        parts.join("/")
+    }
+}
+
+fn join_rel(base: &str, path: &str) -> String {
+    if base == "." {
+        normalize_rel(path)
+    } else {
+        normalize_rel(&format!("{base}/{path}"))
     }
 }
 
@@ -210,5 +296,107 @@ mod tests {
         let resolver = ImportResolver::new(dir.path());
         let resolved = resolver.resolve_to_indexed_file("src/main.ts", "@app/foo");
         assert_eq!(resolved, Some("src/foo.ts".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod alias_tests {
+    use super::*;
+    use std::fs;
+
+    fn project(tsconfig: &str, files: &[&str]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("tsconfig.json"), tsconfig).expect("write");
+        for f in files {
+            let full = dir.path().join(f);
+            fs::create_dir_all(full.parent().unwrap()).expect("mkdir");
+            fs::write(full, "export const x = 1").expect("write");
+        }
+        dir
+    }
+
+    #[test]
+    fn longest_alias_wins_every_time() {
+        let dir = project(
+            r#"{"compilerOptions":{"paths":{"@/*":["src/*"],"@app/*":["app/*"]}}}"#,
+            &["src/app/foo.ts", "app/foo.ts", "src/util.ts"],
+        );
+        // Each resolver has its own hash seed, so a hash-order bug shows up.
+        for _ in 0..32 {
+            let r = ImportResolver::new(dir.path());
+            assert_eq!(
+                r.resolve_to_indexed_file("src/main.ts", "@app/foo"),
+                Some("app/foo.ts".to_string())
+            );
+            assert_eq!(
+                r.resolve_to_indexed_file("src/main.ts", "@/util"),
+                Some("src/util.ts".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn alias_matches_only_on_a_segment_boundary() {
+        let dir = project(
+            r#"{"compilerOptions":{"paths":{"@/*":["src/*"],"@lib/*":["lib/*"]}}}"#,
+            &["src/nestjs/common.ts", "src/libx/a.ts"],
+        );
+        let r = ImportResolver::new(dir.path());
+        assert_eq!(r.resolve_import("@nestjs/common", "src/main.ts"), None);
+        assert_eq!(r.resolve_import("@libx/a", "src/main.ts"), None);
+    }
+
+    #[test]
+    fn exact_alias_matches_only_itself() {
+        let dir = project(
+            r#"{"compilerOptions":{"paths":{"config":["src/config/index.ts"]}}}"#,
+            &["src/config/index.ts"],
+        );
+        let r = ImportResolver::new(dir.path());
+        assert_eq!(
+            r.resolve_to_indexed_file("src/main.ts", "config"),
+            Some("src/config/index.ts".to_string())
+        );
+        assert_eq!(r.resolve_import("config/other", "src/main.ts"), None);
+    }
+
+    #[test]
+    fn every_target_is_tried_in_order() {
+        let dir = project(
+            r#"{"compilerOptions":{"paths":{"@lib/*":["missing/*","lib/*"]}}}"#,
+            &["lib/x.ts"],
+        );
+        let r = ImportResolver::new(dir.path());
+        assert_eq!(
+            r.resolve_to_indexed_file("src/main.ts", "@lib/x"),
+            Some("lib/x.ts".to_string())
+        );
+    }
+
+    #[test]
+    fn targets_are_relative_to_base_url() {
+        let dir = project(
+            r#"{"compilerOptions":{"baseUrl":"./web","paths":{"~/*":["src/*"]}}}"#,
+            &["web/src/a.ts"],
+        );
+        let r = ImportResolver::new(dir.path());
+        assert_eq!(
+            r.resolve_to_indexed_file("web/src/main.ts", "~/a"),
+            Some("web/src/a.ts".to_string())
+        );
+        // A bare import is looked up under baseUrl too.
+        assert_eq!(
+            r.resolve_to_indexed_file("web/src/main.ts", "src/a"),
+            Some("web/src/a.ts".to_string())
+        );
+    }
+
+    #[test]
+    fn cargo_projects_get_no_made_up_alias() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"a\"\n").expect("write");
+        fs::write(dir.path().join("foo.ts"), "export const x = 1").expect("write");
+        let r = ImportResolver::new(dir.path());
+        assert_eq!(r.resolve_to_indexed_file("src/main.ts", "@crate/foo"), None);
     }
 }

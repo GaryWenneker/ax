@@ -7,32 +7,29 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const file = (relative: string) => readFileSync(path.join(root, relative), 'utf8');
 
-test('docs use the landing graphite/lime theme, the deck backdrop and deck building blocks', () => {
+test('docs use the calm theme: system type, thin lines, one accent, no backdrop', () => {
   const theme = file('site/src/styles/theme.css');
   const header = file('site/src/components/Header.astro');
+  const head = file('site/src/components/Head.astro');
+  const social = file('site/src/components/SocialIcons.astro');
   const title = file('site/src/components/SiteTitle.astro');
   const astro = file('site/astro.config.mjs');
-  assert.match(theme, /--ax-lime:#b9ff6a/);
-  assert.match(theme, /--sl-color-accent: #b9ff6a/);
-  assert.match(header, /<DeckBackdrop variant="page" \/>/);
-  assert.match(header, /axParkDocBackdrop/);
-  assert.doesNotMatch(header + theme, /ax-doc-moire|ax-halftone/);
-  // Deck building blocks, dark theme only.
-  assert.match(theme, /:root:not\(\[data-theme='light'\]\) \.expressive-code \.frame\{[^}]*border-radius:\.7em/);
-  assert.match(theme, /:root:not\(\[data-theme='light'\]\) \.sl-markdown-content :not\(pre\) > code\{color:var\(--ax-lime\);background:var\(--ax-lime-soft\)/);
-  assert.match(theme, /:root:not\(\[data-theme='light'\]\) \.sl-markdown-content table\{[^}]*border-radius:\.7em/);
-  assert.match(theme, /ul:not\(\[role\]\):not\(\.contains-task-list\):not\(\.sl-steps\) > li::before\{[^}]*transform:rotate\(45deg\)/);
-  assert.match(theme, /content-panel::before\{[^}]*linear-gradient\(90deg,rgba\(8,10,9,\.94\)/);
-  assert.match(theme, /\.right-sidebar-panel::before\{[^}]*background:rgba\(18,22,20,\.45\)[^}]*mask-composite:intersect/);
-  assert.match(theme, /\.right-sidebar\{z-index:4;background:transparent;pointer-events:none\}/);
-  assert.match(theme, /data-theme='light'.*content-panel::before\{background:linear-gradient\(90deg,rgba\(255,255,255,\.96\)/);
+  assert.match(theme, /--ax-accent: #88c0d0;/);
+  assert.match(theme, /--ax-accent-fill: #88c0d0;/);
+  assert.match(theme, /--sl-color-accent: #88c0d0;/);
+  assert.match(theme, /--sl-font:\s*-apple-system, BlinkMacSystemFont, "Segoe UI"/);
+  assert.match(theme, /--cg-paper: #0a0a0a;/);
+  assert.doesNotMatch(header + head + social, /DeckBackdrop|ScrollReveal|MotionControl/);
+  assert.doesNotMatch(theme, /animation|@keyframes|transition|backdrop-filter|box-shadow:(?! none)|gradient|ax-reveal/);
+  assert.doesNotMatch(theme + astro + title, /fontsource|Oxanium|Archivo|IBM Plex/);
+  // White text on the accent fill keeps 4.5:1.
+  assert.match(theme, /\.sl-banner,\s*\.sl-banner a \{\s*color: var\(--ax-on-accent\);/);
   assert.match(title, /cg-site-title__wordmark"><AxMark \/>/);
-  assert.match(astro, /@fontsource-variable\/oxanium\/wght\.css/);
 });
 
 test('Command Center uses the Ax logo mark instead of old image assets', () => {
   const app = file('crates/ax-web/web-ui/src/App.tsx');
-  const css = file('crates/ax-web/web-ui/src/index.css');
+  const css = file('crates/ax-web/web-ui/src/styles/23-brand.css');
   assert.match(app, /className="ax-app-wordmark" aria-label="Ax home"><AxMark \/>/);
   assert.match(app, /className="ax-app-wordmark ax-app-wordmark--sidebar"/);
   assert.doesNotMatch(app, /src="\/ax-mark\.png"|src="\/ax-logo\.png"/);
@@ -40,4 +37,5 @@ test('Command Center uses the Ax logo mark instead of old image assets', () => {
   assert.match(css, /font-family:"Archivo Variable"/);
   assert.match(css, /letter-spacing:-\.085em/);
   assert.match(css, /\.ax-app-wordmark > span\{\s*color:#b9ff6a/);
+  assert.match(css, /\.ax-app-wordmark \.ax-mark\{display:block;height:\.76em;width:auto\}/);
 });

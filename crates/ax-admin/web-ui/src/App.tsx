@@ -125,7 +125,7 @@ export default function App() {
     );
   }
 
-  const access = hasAdminAccess(names) ? 'admin access' : names.includes('ax_remember') ? 'write access' : 'read access';
+  const access = hasAdminAccess(tools) ? 'admin access' : names.includes('ax_remember') ? 'write access' : 'read access';
   return (
     <div className="app">
       <header className="titlebar">

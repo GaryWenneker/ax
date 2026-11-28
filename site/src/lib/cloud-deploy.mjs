@@ -29,14 +29,14 @@ export const cloudDeploys = [
 		label: 'Azure',
 		kind: 'MCP server',
 		url: azure('azure-slim-server.json'),
-		badge: 'https://aka.ms/deploytoazurebutton',
+		provider: 'azure',
 	},
 	{
 		id: 'render',
 		label: 'Render',
 		kind: 'MCP server',
 		url: `https://render.com/deploy?repo=${REPO}`,
-		badge: 'https://render.com/images/deploy-to-render-button.svg',
+		provider: 'render',
 	},
 	{
 		id: 'koyeb',
@@ -45,13 +45,13 @@ export const cloudDeploys = [
 		url: `https://app.koyeb.com/deploy?${koyebParams
 			.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
 			.join('&')}`,
-		badge: 'https://www.koyeb.com/static/images/deploy/button.svg',
+		provider: 'koyeb',
 	},
 	{
 		id: 'azure-job',
 		label: 'Azure job',
 		kind: 'index once',
 		url: azure('azure-slim.json'),
-		badge: 'https://aka.ms/deploytoazurebutton',
+		provider: 'azure',
 	},
 ];

@@ -1,0 +1,630 @@
+/* ---- App shell: centered stage (nav + content + chrome) ---- */
+.app {
+  display: grid;
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
+  grid-template-columns: minmax(0, 1fr) var(--sidebar-w) 4px minmax(0, var(--layout-max)) minmax(0, 1fr);
+  grid-template-rows: calc(var(--titlebar-h) + var(--titlebar-wave-h)) minmax(0, 1fr) var(--statusbar-h);
+  grid-template-areas:
+    "titlebar titlebar titlebar titlebar titlebar"
+    ". sidebar sizer workspace ."
+    "statusbar statusbar statusbar statusbar statusbar";
+}
+
+.app > .titlebar { grid-area: titlebar; }
+.app > .sidebar { grid-area: sidebar; }
+.app > .sidebar-resize-handle { grid-area: sizer; align-self: stretch; }
+.app > .workspace { grid-area: workspace; }
+.app > .statusbar,
+.app > .status-bar { grid-area: statusbar; }
+
+/* Legacy alias */
+.layout {
+  display: grid;
+  width: 100%;
+  max-width: none;
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
+}
+
+/* Workspace — only place for .container (never wrap sidebar) */
+.workspace {
+  position: relative;
+  isolation: isolate;
+  /* Above titlebar so mint ribbon cannot paint over scrolled settings copy */
+  z-index: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.workspace > .container {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+  align-self: stretch;
+  padding: var(--content-pad-y) var(--content-pad-x);
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg);
+}
+
+/* Graph / logging: fill the workspace */
+.workspace > .container--full {
+  max-width: none;
+  margin-inline: 0;
+  align-self: stretch;
+}
+
+.workspace > .container--full:has(.logging-page) {
+  overflow: hidden;
+}
+
+.workspace > .container--full:has(.specs-page) {
+  overflow: hidden;
+}
+
+/* Tablet: sidebar hidden — stage is full viewport */
+@media (max-width: 899px) {
+  .app {
+    width: 100%;
+    max-width: none;
+    margin-inline: 0;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: calc(var(--titlebar-h) + var(--titlebar-wave-h)) minmax(0, 1fr) var(--statusbar-h);
+    grid-template-areas:
+      "titlebar"
+      "workspace"
+      "statusbar";
+  }
+
+  .app > .sidebar,
+  .app > .sidebar-resize-handle {
+    grid-area: unset;
+  }
+
+  .workspace > .container:not(.container--full) {
+    padding-inline: 8px;
+  }
+}
+
+/* ---- Title bar ---- */
+.titlebar {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  height: calc(var(--titlebar-h) + var(--titlebar-wave-h));
+  min-height: calc(var(--titlebar-h) + var(--titlebar-wave-h));
+  padding: 0;
+  /* Let mint waves show through — solid --bg-side was covering them.
+     Soft mint wash so the band never reads as a solid black slab. */
+  background: rgba(62, 228, 178, 0.06);
+  border-bottom: none;
+  flex-shrink: 0;
+  user-select: none;
+  /* Below workspace so any subpixel/SVG overflow cannot strike through page text */
+  z-index: 0;
+  /* Wave fills this chrome box only — never over page text */
+  overflow: hidden;
+  pointer-events: none;
+}
+
+@supports (color: color-mix(in srgb, red, blue)) {
+  .titlebar {
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
+  }
+}
+
+.titlebar-inner {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: min(100%, var(--stage-w));
+  max-width: var(--stage-w);
+  margin-inline: auto;
+  height: var(--titlebar-h);
+  min-height: var(--titlebar-h);
+  padding: 0 8px;
+  gap: 8px;
+  flex-shrink: 0;
+  /* Fully clear — mint waves paint behind; brand uses text-shadow for contrast */
+  background: transparent;
+  pointer-events: auto;
+}
+
+.titlebar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: calc(var(--fs-sm) * var(--ui-scale));
+  font-weight: 650;
+  color: var(--text-hi);
+  letter-spacing: 0;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.72);
+}
+
+.titlebar-logo {
+  width: 30px;
+  height: 30px;
+  display: block;
+  flex-shrink: 0;
+}
+
+.titlebar-brand-ax {
+  text-decoration: none;
+  cursor: help;
+  border-bottom: none;
+  font-weight: inherit;
+  color: var(--accent-text);
+}
+
+.titlebar-brand span {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.titlebar-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.profile-menu { position: relative; }
+.profile-menu-button {
+  width: 28px; height: 28px; padding: 0; border-radius: 50%;
+  border: 1px solid var(--border-hi); background: var(--bg-input); color: var(--text-hi);
+  display: inline-flex; align-items: center; justify-content: center; overflow: hidden; cursor: pointer;
+  font: 600 11px var(--font-ui);
+}
+.profile-menu-button img { width: 100%; height: 100%; object-fit: cover; }
+.profile-menu-panel {
+  position: fixed; z-index: 4000; min-width: 200px;
+  display: flex; flex-direction: column; gap: 2px; padding: 8px;
+  background: var(--bg-panel); border: 1px solid var(--border); box-shadow: 0 8px 24px #0006;
+}
+.profile-menu-id { display: flex; flex-direction: column; gap: 2px; padding: 4px 6px 8px; }
+.profile-menu-id strong { font-size: 13px; }
+.profile-menu-id span, .profile-menu-note { color: var(--text-dim); font-size: 11px; }
+.profile-menu-panel > button {
+  text-align: left; background: transparent; border: 0; color: var(--text); cursor: pointer;
+  padding: 6px; font: inherit;
+}
+.profile-menu-panel > button:hover { background: var(--bg-hover, #ffffff14); }
+.profile-menu-logout { color: var(--danger, #e07070) !important; }
+.profile-menu-note { margin: 6px 6px 2px; }
+
+.font-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 0;
+  flex-shrink: 0;
+}
+
+.logging-proj-switch--header .logging-proj-switch-btn {
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
+  border-color: color-mix(in srgb, var(--text) 18%, transparent);
+  color: var(--text-hi);
+  max-width: min(220px, 34vw);
+}
+
+.font-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: calc(var(--fs-sm) * var(--ui-scale));
+  line-height: 1;
+  min-height: 24px;
+  min-width: 24px;
+}
+
+.font-btn:hover {
+  color: var(--text-hi);
+  background: var(--bg-hover);
+}
+
+.font-size-lbl {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  min-width: 28px;
+  text-align: center;
+  font-family: var(--font-mono);
+}
+
+/* ---- Status bar (solid accent; fg from --statusbar-fg via accent luminance) ---- */
+.statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--statusbar-h);
+  min-height: var(--statusbar-h);
+  background: var(--accent) !important;
+  background-color: var(--accent) !important;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 72%, #000);
+  color: var(--statusbar-fg);
+  font-size: var(--fs-sm);
+  flex-shrink: 0;
+  overflow: visible;
+  position: relative;
+  z-index: 50;
+}
+
+.statusbar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: min(100%, var(--stage-w));
+  max-width: var(--stage-w);
+  margin-inline: auto;
+  min-width: 0;
+  height: 100%;
+}
+
+.statusbar .status-lbl,
+.statusbar .status-val,
+.statusbar .statusbar-center {
+  color: var(--statusbar-fg-muted);
+}
+
+.statusbar .status-val {
+  font-weight: 700;
+  color: var(--statusbar-fg);
+}
+
+.statusbar .status-icon,
+.statusbar .codicon {
+  color: var(--statusbar-fg);
+  opacity: 0.9;
+}
+
+.statusbar .status-item:hover,
+.statusbar .status-item--clickable:hover,
+.statusbar .statusbar-center--clickable:hover {
+  background: var(--statusbar-hover-bg);
+}
+
+.statusbar .statusbar-center--clickable:hover {
+  color: var(--statusbar-fg);
+}
+
+.statusbar .status-sep {
+  color: var(--statusbar-fg-sep);
+}
+
+.statusbar .status-warn,
+.statusbar .status-warn .status-val,
+.statusbar .status-warn .status-lbl {
+  color: color-mix(in srgb, #fff4c2 70%, #ffffff);
+}
+
+/* Above Logging maximize overlay so chips / project switch stay usable */
+.statusbar.statusbar--logging {
+  z-index: 100;
+  overflow: visible;
+}
+
+/* Offline: muted danger wash over theme accent — thematic, not blood-red */
+.statusbar.statusbar--logging.statusbar--offline {
+  background: color-mix(
+    in srgb,
+    var(--danger) 42%,
+    color-mix(in srgb, var(--accent) 40%, #3a1818)
+  ) !important;
+  background-color: color-mix(
+    in srgb,
+    var(--danger) 42%,
+    color-mix(in srgb, var(--accent) 40%, #3a1818)
+  ) !important;
+  border-top-color: color-mix(in srgb, var(--danger) 42%, var(--accent));
+  color: #f5ecec;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--danger) 22%, transparent);
+}
+
+.statusbar.statusbar--logging.statusbar--offline .status-lbl,
+.statusbar.statusbar--logging.statusbar--offline .statusbar-center {
+  color: color-mix(in srgb, #ffe8e8 75%, transparent);
+}
+
+.statusbar.statusbar--logging.statusbar--offline .status-logging .status-logging-info {
+  color: #ffe0e0;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+.statusbar.statusbar--logging.statusbar--offline .status-item.status-logging {
+  background: color-mix(in srgb, var(--danger) 22%, transparent);
+}
+
+.statusbar-left,
+.statusbar-right {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 100%;
+}
+
+.statusbar-center {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  padding: 0 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Kill UA button chrome — grey bgcolor was covering the theme status bar */
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: transparent;
+  background-color: transparent;
+  color: inherit;
+  font: inherit;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  box-shadow: none;
+}
+
+.statusbar button.statusbar-center,
+.statusbar button.status-item,
+.statusbar .status-item--clickable {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: transparent;
+  background-color: transparent;
+  box-shadow: none;
+}
+
+.statusbar-right {
+  margin-left: auto;
+}
+
+.status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  height: 100%;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.status-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.status-item--clickable {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.status-item--clickable:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.status-item--active {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.statusbar-center--clickable {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  width: 100%;
+}
+
+.statusbar-center--clickable:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.status-chip-wrap {
+  position: relative;
+  display: inline-flex;
+  height: 100%;
+}
+
+.status-panel {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - 16px));
+  max-height: min(360px, calc(100dvh - 16px));
+  overflow: auto;
+  padding: 10px 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  z-index: 200;
+  text-align: left;
+}
+
+.statusbar-right .status-panel {
+  left: auto;
+  right: 0;
+}
+
+.status-panel-title {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.status-panel-text {
+  font-size: var(--fs-sm);
+  color: var(--text);
+  line-height: 1.45;
+  margin: 0 0 8px;
+}
+
+.status-panel-muted {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  margin: 4px 0 8px;
+}
+
+.status-panel-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  font-size: var(--fs-sm);
+}
+
+.status-panel-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.status-panel-list li:last-child {
+  border-bottom: none;
+}
+
+.status-panel-list-val {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.status-panel-list-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.status-panel-list-btn:hover {
+  color: var(--accent-text);
+}
+
+.status-panel-link {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 4px 0 0;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--accent-text);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.status-panel-link:hover {
+  text-decoration: underline;
+}
+
+.status-val {
+  font-weight: 600;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.status-lbl {
+  opacity: 0.85;
+  font-size: var(--fs-sm);
+}
+
+.status-icon {
+  flex-shrink: 0;
+  opacity: 0.85;
+  width: 1em;
+  height: 1em;
+  font-size: 14px;
+  display: block;
+}
+
+.statusbar .codicon,
+.statusbar .status-project-icon {
+  font-size: 14px;
+  width: 14px;
+  height: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.status-sep {
+  color: rgba(255, 255, 255, 0.2);
+  font-size: var(--fs-xs);
+  padding: 0 2px;
+}
+
+.status-warn {
+  color: var(--warn);
+}
+
+.status-readonly {
+  color: var(--warn);
+  border-left: 1px solid var(--border);
+}
+
+.status-project {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  border-left: 1px solid var(--border);
+}
+
+.status-project:hover {
+  color: var(--ax-project-accent);
+  background: var(--ax-project-bg);
+}
+
+.status-project-icon {
+  color: var(--ax-project-accent);
+  opacity: 0.85;
+}

@@ -21,6 +21,19 @@ export function selectionPulse(timeMs: number): { grow: number; alpha: number } 
   return { grow, alpha: 0.9 * (1 - t) };
 }
 
+/** Full pulses the selection ring plays before it holds still. */
+export const SELECTION_PULSE_CYCLES = 3;
+
+/** True once the selection ring has finished pulsing `elapsedMs` after the selection. */
+export function selectionPulseDone(elapsedMs: number): boolean {
+  return elapsedMs >= PULSE_MS * SELECTION_PULSE_CYCLES;
+}
+
+/** The selection ring `elapsedMs` after the selection: a few pulses, then a steady ring. */
+export function selectionRing(elapsedMs: number): { grow: number; alpha: number } {
+  return selectionPulseDone(elapsedMs) ? { grow: 0, alpha: 0.9 } : selectionPulse(elapsedMs);
+}
+
 export function buildNeighbors(nodeCount: number, edges: FilterEdge[]): NeighborIndex {
   const index: NeighborIndex = Array.from({ length: nodeCount }, () => []);
   edges.forEach((e, i) => {

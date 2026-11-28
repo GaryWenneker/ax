@@ -33,6 +33,36 @@ describe('policy body view', () => {
   });
 });
 
+describe('policy body view when storage is blocked', () => {
+  const blocked = {
+    getItem: (): string | null => { throw new Error('SecurityError: storage blocked'); },
+    setItem: (): void => { throw new Error('QuotaExceededError'); },
+  };
+
+  it('opens in preview instead of throwing', () => {
+    assert.equal(loadBodyView(blocked), 'preview');
+  });
+
+  it('drops the choice instead of throwing', () => {
+    assert.doesNotThrow(() => saveBodyView('markdown', blocked));
+  });
+
+  it('uses the guarded shared storage when no storage is passed', () => {
+    const had = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      get() { throw new Error('SecurityError: storage blocked'); },
+    });
+    try {
+      assert.equal(loadBodyView(), 'preview');
+      assert.doesNotThrow(() => saveBodyView('split'));
+    } finally {
+      if (had) Object.defineProperty(globalThis, 'localStorage', had);
+      else delete (globalThis as { localStorage?: unknown }).localStorage;
+    }
+  });
+});
+
 describe('policy list width', () => {
   it('raises narrow widths to the minimum', () => {
     assert.equal(clampPolicyListWidth(200), 240);

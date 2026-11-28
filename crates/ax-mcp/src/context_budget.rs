@@ -6,7 +6,15 @@ pub fn projection_tokens(value: &Value) -> usize {
     projection_tokens_with_mode(value, crate::server::render_full())
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many whole replies were tokenized on this thread.
+    static PROJECTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn projection_tokens_with_mode(value: &Value, full: bool) -> usize {
+    #[cfg(test)]
+    PROJECTIONS.with(|n| n.set(n.get() + 1));
     let text = value.get("inject").and_then(Value::as_str).unwrap_or("");
     let metadata = if full {
         value.clone()
@@ -15,6 +23,8 @@ fn projection_tokens_with_mode(value: &Value, full: bool) -> usize {
     };
     count_tokens(text) + count_tokens(&metadata.to_string())
 }
+
+const OMITTED_NOTE: &str = "\n\nOptional blocks omitted. Retrieve with ax_status, ax_rules, ax_skill, ax_recall, ax_history or ax_expand; graph queries accept fresh: true.";
 
 fn render(
     base: &Value,
@@ -62,7 +72,7 @@ fn render_with_iterations(
         .collect::<Vec<_>>()
         .join("\n\n");
     if !omitted.is_empty() {
-        text.push_str("\n\nOptional blocks omitted. Retrieve with ax_status, ax_rules, ax_skill, ax_recall, ax_history or ax_expand; graph queries accept fresh: true.");
+        text.push_str(OMITTED_NOTE);
     }
     if overflow {
         text.push_str(
@@ -164,7 +174,7 @@ fn finish_with_iterations(
             minimum,
             limit.is_some_and(|b| minimum > b as usize),
         )?;
-        let measured = projection_tokens(&candidate);
+        let measured = rendered_tokens(&candidate);
         if measured == minimum {
             converged = true;
             break;
@@ -182,22 +192,53 @@ fn finish_with_iterations(
             ids.push(memory.id.clone());
         }
     }
+    let Some(budget) = limit.map(|b| b as usize) else {
+        // Without a limit every block is kept: one render.
+        for block in optional_in_order(blocks) {
+            if !ids.iter().any(|id| id == &block.id) {
+                ids.push(block.id.clone());
+            }
+        }
+        return render(&base, blocks, &ids, limit, minimum, overflow);
+    };
     let mut out = render(&base, blocks, &ids, limit, minimum, overflow)?;
-    for class in [ContextClass::HighValue, ContextClass::Optional] {
-        for block in blocks.iter().filter(|b| b.class == class) {
-            if ids.iter().any(|id| id == &block.id) {
-                continue;
-            }
-            let mut candidate_ids = ids.clone();
-            candidate_ids.push(block.id.clone());
-            let candidate = render(&base, blocks, &candidate_ids, limit, minimum, overflow)?;
-            if limit.is_none_or(|b| projection_tokens(&candidate) <= b as usize) {
-                ids = candidate_ids;
-                out = candidate;
-            }
+    let mut tokens = rendered_tokens(&out);
+    // Adding a block adds at least its own text to the reply. The texts meet
+    // at a separator, and the note on omitted blocks goes away with the last
+    // one, so the reply can grow by a few tokens less than that. A block whose
+    // own size is over the budget even then cannot fit, and is not rendered.
+    let slack = count_tokens(OMITTED_NOTE) + 16;
+    for block in optional_in_order(blocks) {
+        if ids.iter().any(|id| id == &block.id) {
+            continue;
+        }
+        if tokens + count_tokens(&block.text) > budget + slack {
+            continue;
+        }
+        let mut candidate_ids = ids.clone();
+        candidate_ids.push(block.id.clone());
+        let candidate = render(&base, blocks, &candidate_ids, limit, minimum, overflow)?;
+        let candidate_tokens = rendered_tokens(&candidate);
+        if candidate_tokens <= budget {
+            ids = candidate_ids;
+            out = candidate;
+            tokens = candidate_tokens;
         }
     }
     Ok(out)
+}
+
+/// High-value blocks first, then optional ones, each in their given order.
+fn optional_in_order(blocks: &[ContextBlock]) -> impl Iterator<Item = &ContextBlock> {
+    [ContextClass::HighValue, ContextClass::Optional]
+        .into_iter()
+        .flat_map(move |class| blocks.iter().filter(move |b| b.class == class))
+}
+
+/// The reply's own measured size: `render` only returns once this equals
+/// `projection_tokens` of the reply.
+fn rendered_tokens(out: &Value) -> usize {
+    out["contextBudget"]["tokens"].as_u64().unwrap_or(u64::MAX) as usize
 }
 
 #[cfg(test)]
@@ -281,6 +322,127 @@ mod tests {
         assert!(
             budget["tokens"].as_u64().unwrap() > plain["contextBudget"]["tokens"].as_u64().unwrap()
         );
+    }
+
+    fn optional_blocks(n: usize, words: usize) -> Vec<ContextBlock> {
+        (0..n)
+            .map(|i| ContextBlock {
+                id: format!("skill:block-{i}"),
+                class: if i % 2 == 0 {
+                    ContextClass::HighValue
+                } else {
+                    ContextClass::Optional
+                },
+                text: format!("block {i} ") + &"guidance word ".repeat(words + i * 7),
+            })
+            .collect()
+    }
+
+    fn projections<T>(work: impl FnOnce() -> T) -> (T, usize) {
+        PROJECTIONS.with(|n| n.set(0));
+        let out = work();
+        (out, PROJECTIONS.with(|n| n.get()))
+    }
+
+    /// Required context alone is over the budget, so no optional block can
+    /// fit. Each of them is ruled out by its own size, without tokenizing
+    /// the whole reply again for every one.
+    #[test]
+    fn blocks_that_cannot_fit_are_not_rendered_one_by_one() {
+        let mut blocks = vec![ContextBlock {
+            id: "required".into(),
+            class: ContextClass::HardRequired,
+            text: "rule ".repeat(2000),
+        }];
+        blocks.extend(optional_blocks(20, 40));
+        let base = json!({"project":{"path":"a"}});
+        let (out, count) = projections(|| finish(base, &blocks, Some(500)).unwrap());
+        assert_eq!(out["contextBudget"]["overBudget"], true);
+        assert_eq!(out["contextBudget"]["included"], json!(["required"]));
+        assert!(
+            count <= 12,
+            "{count} whole-reply tokenizations for 20 blocks"
+        );
+    }
+
+    /// The selection as it was before blocks were ruled out by their size:
+    /// every candidate rendered and measured.
+    fn select_by_rendering_each(
+        base: Value,
+        blocks: &[ContextBlock],
+        limit: Option<u32>,
+        reserve: u32,
+    ) -> Value {
+        let required: Vec<String> = blocks
+            .iter()
+            .filter(|b| b.class == ContextClass::HardRequired)
+            .map(|b| b.id.clone())
+            .collect();
+        let minimum = rendered_tokens(&render(&base, blocks, &required, limit, 0, false).unwrap());
+        let mut minimum_converged = minimum;
+        loop {
+            let over = limit.is_some_and(|b| minimum_converged > b as usize);
+            let measured = projection_tokens(
+                &render(&base, blocks, &required, limit, minimum_converged, over).unwrap(),
+            );
+            if measured == minimum_converged {
+                break;
+            }
+            minimum_converged = measured;
+        }
+        let minimum = minimum_converged;
+        let overflow = limit.is_some_and(|b| minimum > b as usize);
+        let mut ids = required;
+        if let Some(memory) = blocks.iter().find(|block| block.id == "memories") {
+            if count_tokens(&memory.text) <= reserve as usize {
+                ids.push(memory.id.clone());
+            }
+        }
+        let mut out = render(&base, blocks, &ids, limit, minimum, overflow).unwrap();
+        for block in optional_in_order(blocks) {
+            if ids.iter().any(|id| id == &block.id) {
+                continue;
+            }
+            let mut candidate_ids = ids.clone();
+            candidate_ids.push(block.id.clone());
+            let candidate =
+                render(&base, blocks, &candidate_ids, limit, minimum, overflow).unwrap();
+            if limit.is_none_or(|b| projection_tokens(&candidate) <= b as usize) {
+                ids = candidate_ids;
+                out = candidate;
+            }
+        }
+        out
+    }
+
+    /// Ruling blocks out by their size picks exactly what rendering every
+    /// candidate picks, for budgets from far too small to unlimited.
+    #[test]
+    fn size_checks_select_the_same_blocks_as_rendering_each() {
+        let mut blocks = vec![ContextBlock {
+            id: "required".into(),
+            class: ContextClass::HardRequired,
+            text: "rule ".repeat(120),
+        }];
+        blocks.extend(optional_blocks(12, 15));
+        blocks.push(ContextBlock {
+            id: "memories".into(),
+            class: ContextClass::HighValue,
+            text: "remembered fact ".repeat(10),
+        });
+        let base = json!({"project":{"path":"a"},"policySources":[
+            {"kind":"skill","id":"block-1","sourcePath":"/p/skills/block-1/SKILL.md"},
+            {"kind":"skill","id":"block-2","sourcePath":"/p/skills/block-2/SKILL.md"}]});
+        let mut limits: Vec<Option<u32>> = (0..=30).map(|i| Some(i * 100 + 30)).collect();
+        limits.extend([Some(1), Some(10_000), None]);
+        for limit in limits {
+            for reserve in [0, 300] {
+                let fast =
+                    finish_with_memory_reserve(base.clone(), &blocks, limit, reserve).unwrap();
+                let reference = select_by_rendering_each(base.clone(), &blocks, limit, reserve);
+                assert_eq!(fast, reference, "limit {limit:?}, reserve {reserve}");
+            }
+        }
     }
 
     #[test]

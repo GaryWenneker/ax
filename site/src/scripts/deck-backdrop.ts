@@ -2,7 +2,7 @@
  * Site backdrop, ported from the Ax presentation deck. Two independent layers, both fixed to the
  * viewport on every page:
  *
- * - Halftone grid: lime dots that breathe with slow interference waves. It is the page background:
+ * - Halftone grid: blue dots that breathe with slow interference waves. It is the page background:
  *   anchored to the viewport, the same on every page, and it does not follow the ring.
  * - Silk ring: each layer is a bundle of fine closed curves around one ring. The radius is
  *   modulated by two travelling waves; a per-line phase shift makes the lines cross like woven
@@ -25,7 +25,7 @@
  */
 
 const TAU = Math.PI * 2;
-const LIME = '#b9ff6a';
+const ACCENT = '#8fbfff';
 const STATE_KEY = 'ax-backdrop-state';
 const STATE_MAX_AGE_MS = 15_000;
 
@@ -289,7 +289,7 @@ export function mountDeckBackdrop(root: HTMLElement): () => void {
   // --- halftone grid: fixed to the viewport, breathing in place ---
   const drawGrid = (t: number): void => {
     gctx.clearRect(0, 0, w, h);
-    gctx.fillStyle = LIME;
+    gctx.fillStyle = ACCENT;
     gctx.globalAlpha = 0.26;
     gctx.beginPath();
     const nx = cols.length;

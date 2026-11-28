@@ -353,6 +353,7 @@ mod tests {
 
     #[tokio::test]
     async fn deletion_between_catalog_and_fetch_cannot_select_an_unhydrated_fallback() {
+        let _env = crate::test_env::shared().await;
         let dir = tempfile::tempdir().unwrap();
         let ax = ax_core::Ax::init(dir.path()).await.unwrap();
         let first = ax_memory::remember(

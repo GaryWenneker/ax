@@ -1,9 +1,10 @@
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import {
   continuityPrompt,
   copyIdentifier,
+  mergeContinuityDraft,
   testMode,
   type ContinuityDraft,
   type SessionIdentity,
@@ -29,8 +30,18 @@ export default function ContinuityPanel({ values, onOpenChange }: Props) {
     setToolbar(document.getElementById('continuity-toolbar-slot'));
   }, []);
 
+  // Derived values are rebuilt on every live log event; keep what the user typed.
+  const edited = useRef<Set<keyof ContinuityDraft>>(new Set());
+  const lastValues = useRef(values);
   useEffect(() => {
-    setDraft(values);
+    if (lastValues.current === values) return;
+    const previous = lastValues.current;
+    lastValues.current = values;
+    setDraft((current) => {
+      const merged = mergeContinuityDraft(current, values, previous, edited.current);
+      edited.current = merged.edited;
+      return merged.draft;
+    });
   }, [values]);
 
   useEffect(() => {
@@ -100,6 +111,7 @@ export default function ContinuityPanel({ values, onOpenChange }: Props) {
   }, [generated, promptEdited]);
 
   function setField<K extends keyof ContinuityDraft>(key: K, next: ContinuityDraft[K]) {
+    edited.current.add(key);
     setDraft((current) => ({ ...current, [key]: typeof next === 'string' ? keep(String(current[key]), next) : next }));
   }
 

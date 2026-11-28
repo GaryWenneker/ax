@@ -17,18 +17,26 @@ function linesOf(text: string): string[] {
   return lines;
 }
 
-function editScript(before: string[], after: string[]): DiffLine[] {
+/** Above this many LCS cells the changed middle is shown as one remove-then-add block. */
+const MAX_TABLE_CELLS = 4_000_000;
+
+function lcsScript(before: string[], after: string[], script: DiffLine[]): void {
   const rows = before.length;
   const cols = after.length;
-  const score: number[][] = Array.from({ length: rows + 1 }, () => Array(cols + 1).fill(0));
+  if (rows === 0 || cols === 0 || (rows + 1) * (cols + 1) > MAX_TABLE_CELLS) {
+    for (const text of before) script.push({ kind: 'remove', text });
+    for (const text of after) script.push({ kind: 'add', text });
+    return;
+  }
+  const width = cols + 1;
+  const score = new Uint32Array((rows + 1) * width);
   for (let row = rows - 1; row >= 0; row -= 1) {
     for (let col = cols - 1; col >= 0; col -= 1) {
-      score[row][col] = before[row] === after[col]
-        ? score[row + 1][col + 1] + 1
-        : Math.max(score[row + 1][col], score[row][col + 1]);
+      score[row * width + col] = before[row] === after[col]
+        ? score[(row + 1) * width + col + 1] + 1
+        : Math.max(score[(row + 1) * width + col], score[row * width + col + 1]);
     }
   }
-  const script: DiffLine[] = [];
   let row = 0;
   let col = 0;
   while (row < rows && col < cols) {
@@ -36,7 +44,7 @@ function editScript(before: string[], after: string[]): DiffLine[] {
       script.push({ kind: 'context', text: before[row] });
       row += 1;
       col += 1;
-    } else if (score[row + 1][col] >= score[row][col + 1]) {
+    } else if (score[(row + 1) * width + col] >= score[row * width + col + 1]) {
       script.push({ kind: 'remove', text: before[row] });
       row += 1;
     } else {
@@ -52,6 +60,22 @@ function editScript(before: string[], after: string[]): DiffLine[] {
     script.push({ kind: 'add', text: after[col] });
     col += 1;
   }
+}
+
+function editScript(before: string[], after: string[]): DiffLine[] {
+  // Most revisions change a few lines: diff only the part between the shared head and tail.
+  let head = 0;
+  while (head < before.length && head < after.length && before[head] === after[head]) head += 1;
+  let tail = 0;
+  while (
+    tail < before.length - head &&
+    tail < after.length - head &&
+    before[before.length - 1 - tail] === after[after.length - 1 - tail]
+  ) tail += 1;
+  const script: DiffLine[] = [];
+  for (let index = 0; index < head; index += 1) script.push({ kind: 'context', text: before[index] });
+  lcsScript(before.slice(head, before.length - tail), after.slice(head, after.length - tail), script);
+  for (let index = before.length - tail; index < before.length; index += 1) script.push({ kind: 'context', text: before[index] });
   return script;
 }
 
@@ -70,18 +94,20 @@ function hunkRanges(script: DiffLine[]): Array<[number, number]> {
 
 export function unifiedDiff(before: string, after: string): DiffHunk[] {
   const script = editScript(linesOf(before), linesOf(after));
+  // One running pass over the script gives every hunk's start lines.
+  let scanned = 0;
+  let oldLine = 1;
+  let newLine = 1;
   return hunkRanges(script).map(([start, end]) => {
-    let oldStart = 1;
-    let newStart = 1;
-    for (let index = 0; index < start; index += 1) {
-      if (script[index].kind !== 'add') oldStart += 1;
-      if (script[index].kind !== 'remove') newStart += 1;
+    for (; scanned < start; scanned += 1) {
+      if (script[scanned].kind !== 'add') oldLine += 1;
+      if (script[scanned].kind !== 'remove') newLine += 1;
     }
     const lines = script.slice(start, end + 1);
     return {
-      oldStart,
+      oldStart: oldLine,
       oldCount: lines.filter((line) => line.kind !== 'add').length,
-      newStart,
+      newStart: newLine,
       newCount: lines.filter((line) => line.kind !== 'remove').length,
       lines,
     };

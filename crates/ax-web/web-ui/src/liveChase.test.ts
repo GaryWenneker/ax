@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { readGlobalStyles } from '../test-support/globalStyles.ts';
 import { liveNewRuleIsTextChase } from './liveChase.ts';
 
 const oldGlow = `
@@ -18,7 +19,7 @@ test('the checker rejects a background glow', () => {
 });
 
 test('removing the text clip makes a chase block fail', () => {
-  const css = readFileSync(new URL('./index.css', import.meta.url), 'utf8');
+  const css = readGlobalStyles();
   const result = liveNewRuleIsTextChase(css);
   assert.equal(result.ok, true, result.reason);
   const start = css.indexOf('/* live-new-chase */');

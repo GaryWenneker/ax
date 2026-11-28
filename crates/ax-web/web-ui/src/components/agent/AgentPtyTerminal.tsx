@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { THEME_CHANGED } from '../../lib/themes';
 import { AX_LOG_ICON } from '../../lib/mcpTrace';
+import { ptyClosed, ptyLink, ptyOpened, ptyServerError, PTY_MAX_RETRIES } from './ptyReconnect';
 import '@xterm/xterm/css/xterm.css';
 
 interface Props {
@@ -26,7 +27,6 @@ export default function AgentPtyTerminal({ agent, profileId }: Props) {
 
     const terminalTheme = () => {
       const root = document.documentElement;
-      if (root.dataset.axLayout !== 'portal') return { background: '#0d1117', foreground: '#e6edf3', cursor: '#58a6ff' };
       const css = getComputedStyle(root);
       return { background: css.getPropertyValue('--bg-panel').trim(), foreground: css.getPropertyValue('--text').trim(),
         cursor: css.getPropertyValue('--accent').trim(), blue: css.getPropertyValue('--accent-text').trim(),
@@ -49,14 +49,13 @@ export default function AgentPtyTerminal({ agent, profileId }: Props) {
     let ws: WebSocket | null = null;
     let disposed = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
-    let retries = 0;
-    const MAX_RETRIES = 5;
+    let link = ptyLink();
 
     function connect() {
       if (disposed) return;
       ws = new WebSocket(wsUrl(agent, profileId));
       ws.onopen = () => {
-        retries = 0;
+        link = ptyOpened(link, Date.now());
         term.writeln(`\x1b[36m[ax] ${AX_LOG_ICON} Connected — ${agent} interactive CLI\x1b[0m`);
         sendResize();
       };
@@ -64,6 +63,7 @@ export default function AgentPtyTerminal({ agent, profileId }: Props) {
         try {
           const msg = JSON.parse(String(ev.data)) as { t: string; d?: string; m?: string };
           if (msg.t === 'o' && msg.d) term.write(msg.d);
+          if (msg.t === 'e') link = ptyServerError(link);
           if (msg.t === 'e' && msg.m) {
             const line = msg.m.startsWith('[ax]') ? msg.m : `[ax] ${AX_LOG_ICON} ${msg.m}`;
             term.writeln(`\r\n\x1b[31m${line}\x1b[0m`);
@@ -74,13 +74,16 @@ export default function AgentPtyTerminal({ agent, profileId }: Props) {
       };
       ws.onclose = () => {
         if (disposed) return;
-        if (retries < MAX_RETRIES) {
-          retries += 1;
-          const delay = Math.min(1000 * 2 ** (retries - 1), 10_000);
+        const closed = ptyClosed(link, Date.now());
+        link = closed.link;
+        const next = closed.next;
+        if (next.kind === 'retry') {
           term.writeln(
-            `\r\n\x1b[33m[ax] ${AX_LOG_ICON} Disconnected — reconnecting in ${Math.round(delay / 1000)}s (${retries}/${MAX_RETRIES})\x1b[0m`,
+            `\r\n\x1b[33m[ax] ${AX_LOG_ICON} Disconnected — reconnecting in ${Math.round(next.delay / 1000)}s (${next.attempt}/${PTY_MAX_RETRIES})\x1b[0m`,
           );
-          retryTimer = setTimeout(connect, delay);
+          retryTimer = setTimeout(connect, next.delay);
+        } else if (next.reason === 'server-error') {
+          term.writeln(`\r\n\x1b[31m[ax] ${AX_LOG_ICON} The agent CLI could not start — fix the error above, then reload the page\x1b[0m`);
         } else {
           term.writeln(`\r\n\x1b[31m[ax] ${AX_LOG_ICON} Disconnected — reload the page to reconnect\x1b[0m`);
         }

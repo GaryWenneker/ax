@@ -1,25 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 
 import AxMark from './components/AxMark';
-import StatsPage from './pages/Stats';
-import NodesPage from './pages/Nodes';
-import GraphPage from './pages/Graph';
-import FilesPage from './pages/Files';
-import SearchPage from './pages/Search';
-import PolicyRulesPage from './pages/PolicyRules';
-import PolicyRuleEditor from './pages/PolicyRuleEditor';
-import PolicySkillsPage from './pages/PolicySkills';
-import PolicySkillEditor from './pages/PolicySkillEditor';
-import PolicyMatchPage from './pages/PolicyMatch';
-import PolicyReviewPage from './pages/PolicyReview';
-import PolicySyncPage from './pages/PolicySync';
-import UnresolvedPage from './pages/Unresolved';
-import SettingsPage from './pages/Settings';
-import LoggingPage from './pages/Logging';
-import SpecsPage from './pages/Specs';
-import SavingsPage from './pages/Savings';
-import PricesPage from './pages/Prices';
-import MemoryPage from './pages/Memory';
 import StatusBar from './components/StatusBar';
 import { McpQualityHost } from './components/McpQualitySlideout';
 import LoggingProjectSwitch from './components/LoggingProjectSwitch';
@@ -30,14 +11,16 @@ import SidebarResizeHandle, { initSidebarWidth } from './components/SidebarResiz
 import { initBladeWidth } from './components/BladeResize';
 import { NavIcon, adjustUiScale, initUiScale, loadUiScale } from './components/NavIcons';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { PageLoading } from './components/ui/PageLayout';
 import { UiProvider } from './context/UiContext';
 import AuthGate from './components/AuthGate';
 import ProfileMenu from './components/ProfileMenu';
-import { initTheme, loadThemeId, themeById, THEME_CHANGED } from './lib/themes';
+import { initTheme } from './lib/themes';
 import { saveString } from './lib/uiStorage';
 import { AX_FULL_NAME } from './lib/brand';
 import {
   FULL_BLEED_PAGES,
+  legacyEditRedirect,
   migrateLegacyHash,
   navigateRoute,
   parseLocation,
@@ -45,8 +28,30 @@ import {
   type RouteState,
 } from './lib/routes';
 import { navItemActive, visibleNav } from './lib/nav';
+import { reloadMcpDaemon as reloadMcpDaemonRequest } from './lib/mcpReload';
 import { fetchShipConfig } from './shipApi';
 import { WORKSPACE_SWITCHED } from './workspaceEvents';
+
+// Each page is its own chunk, fetched when the page is first opened.
+const StatsPage = lazy(() => import('./pages/Stats'));
+const NodesPage = lazy(() => import('./pages/Nodes'));
+const GraphPage = lazy(() => import('./pages/Graph'));
+const FilesPage = lazy(() => import('./pages/Files'));
+const SearchPage = lazy(() => import('./pages/Search'));
+const PolicyRulesPage = lazy(() => import('./pages/PolicyRules'));
+const PolicyRuleEditor = lazy(() => import('./pages/PolicyRuleEditor'));
+const PolicySkillsPage = lazy(() => import('./pages/PolicySkills'));
+const PolicySkillEditor = lazy(() => import('./pages/PolicySkillEditor'));
+const PolicyMatchPage = lazy(() => import('./pages/PolicyMatch'));
+const PolicyReviewPage = lazy(() => import('./pages/PolicyReview'));
+const PolicySyncPage = lazy(() => import('./pages/PolicySync'));
+const UnresolvedPage = lazy(() => import('./pages/Unresolved'));
+const SettingsPage = lazy(() => import('./pages/Settings'));
+const LoggingPage = lazy(() => import('./pages/Logging'));
+const SpecsPage = lazy(() => import('./pages/Specs'));
+const SavingsPage = lazy(() => import('./pages/Savings'));
+const PricesPage = lazy(() => import('./pages/Prices'));
+const MemoryPage = lazy(() => import('./pages/Memory'));
 
 const SCALE_STEP = 0.05;
 
@@ -74,11 +79,9 @@ function AppShell() {
   const [showSavings, setShowSavings] = useState(true);
   const [workspaceKey, setWorkspaceKey] = useState(0);
   const [embedMode] = useState(detectEmbedMode);
-  const [themeId, setThemeId] = useState(loadThemeId);
   const [searchRequest, setSearchRequest] = useState(0);
   const [portalQuery, setPortalQuery] = useState('');
   const [accountSignedIn, setAccountSignedIn] = useState(false);
-  const portalLayout = themeById(themeId).layout === 'portal';
   const [mcpReloadBusy, setMcpReloadBusy] = useState(false);
   const [mcpToast, setMcpToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
@@ -126,12 +129,6 @@ function AppShell() {
 
     refreshNavConfig();
   }, [embedMode]);
-
-  useEffect(() => {
-    const onTheme = () => setThemeId(loadThemeId());
-    window.addEventListener(THEME_CHANGED, onTheme);
-    return () => window.removeEventListener(THEME_CHANGED, onTheme);
-  }, []);
 
   useEffect(() => {
     function onWorkspaceSwitched() {
@@ -233,35 +230,9 @@ function AppShell() {
 
   // Old bookmarks: /policy/rules/edit?id=x → slideout view at /policy/rules?id=x
   useEffect(() => {
-    if (page === 'policy-rule-edit' && editRuleId && !ruleEditMode) {
-      applyRoute(
-        {
-          page: 'policy-rules',
-          ruleId: editRuleId,
-          skillName: editSkillName,
-          kind: route.kind,
-          sonarTab: route.sonarTab,
-          ruleEditMode: false,
-          skillEditMode: false,
-        },
-        true,
-      );
-    }
-    if (page === 'policy-skill-edit' && editSkillName && !skillEditMode) {
-      applyRoute(
-        {
-          page: 'policy-skills',
-          ruleId: editRuleId,
-          skillName: editSkillName,
-          kind: route.kind,
-          sonarTab: route.sonarTab,
-          ruleEditMode: false,
-          skillEditMode: false,
-        },
-        true,
-      );
-    }
-  }, [page, editRuleId, editSkillName, ruleEditMode, skillEditMode, route.kind, route.sonarTab]);
+    const target = legacyEditRedirect(route);
+    if (target) applyRoute(target, true);
+  }, [route]);
 
   function adjFont(delta: number) {
     setFontScale(adjustUiScale(delta));
@@ -272,31 +243,7 @@ function AppShell() {
     setMcpReloadBusy(true);
     setMcpToast(null);
     try {
-      const res = await fetch('/api/ops/mcp-reload', { method: 'POST' });
-      const body = (await res.json()) as {
-        ok?: boolean;
-        error?: string;
-        startedPid?: number;
-        connected?: boolean;
-        hint?: string;
-      };
-      if (!res.ok || body.ok === false) {
-        setMcpToast({
-          kind: 'err',
-          text: body.error || body.hint || 'MCP reload failed',
-        });
-      } else {
-        const pid = body.startedPid ? ` pid ${body.startedPid}` : '';
-        setMcpToast({
-          kind: 'ok',
-          text: `MCP daemon reloaded${pid}. ${body.hint || 'If the IDE is still DEGRADED, restart MCP servers there.'}`,
-        });
-      }
-    } catch (e) {
-      setMcpToast({
-        kind: 'err',
-        text: e instanceof Error ? e.message : 'MCP reload request failed',
-      });
+      setMcpToast(await reloadMcpDaemonRequest());
     } finally {
       setMcpReloadBusy(false);
       setSidebarOpen(false);
@@ -337,32 +284,30 @@ function AppShell() {
               </button>
               <span className="titlebar-brand" title={AX_FULL_NAME}>
                 <a href="/" className="ax-app-wordmark" aria-label="Ax home"><AxMark /></a>
-                <span>{portalLayout ? '| Command Center' : '/ graph + policy'}</span>
+                <span>| Command Center</span>
               </span>
             </div>
-            {portalLayout && (
-              <form className={`portal-search${portalQuery ? ' portal-search--open' : ''}`} role="search" onSubmit={(event) => {
-                event.preventDefault();
-                const query = portalQuery.trim();
-                const item = navSections.flatMap((section) => section.items)
-                  .find((item) => item.label.toLowerCase() === query.toLowerCase());
-                if (item) navigate(item.id as Page);
-                else { saveString('search-q', query); setSearchRequest((n) => n + 1); navigate('search'); }
-                setPortalQuery('');
-              }}>
-                <i className="codicon codicon-search" aria-hidden="true" />
-                <input aria-label="Search code or open a page" placeholder="Search code or open a page" list="portal-pages"
-                  value={portalQuery} onChange={(event) => setPortalQuery(event.target.value)} />
-                <datalist id="portal-pages">{navSections.flatMap((section) => section.items).map((item) =>
-                  <option key={item.id} value={item.label} />)}</datalist>
-                <button type="submit" aria-label="Search"><i className="codicon codicon-arrow-right" aria-hidden="true" /></button>
-              </form>
-            )}
+            <form className={`portal-search${portalQuery ? ' portal-search--open' : ''}`} role="search" onSubmit={(event) => {
+              event.preventDefault();
+              const query = portalQuery.trim();
+              const item = navSections.flatMap((section) => section.items)
+                .find((item) => item.label.toLowerCase() === query.toLowerCase());
+              if (item) navigate(item.id as Page);
+              else { saveString('search-q', query); setSearchRequest((n) => n + 1); navigate('search'); }
+              setPortalQuery('');
+            }}>
+              <i className="codicon codicon-search" aria-hidden="true" />
+              <input aria-label="Search code or open a page" placeholder="Search code or open a page" list="portal-pages"
+                value={portalQuery} onChange={(event) => setPortalQuery(event.target.value)} />
+              <datalist id="portal-pages">{navSections.flatMap((section) => section.items).map((item) =>
+                <option key={item.id} value={item.label} />)}</datalist>
+              <button type="submit" aria-label="Search"><i className="codicon codicon-arrow-right" aria-hidden="true" /></button>
+            </form>
             <div className="titlebar-tools">
-              {portalLayout && <button type="button" className="portal-settings-button portal-mobile-search" aria-label="Search code" onClick={() => navigate('search')}><i className="codicon codicon-search" aria-hidden="true" /></button>}
+              <button type="button" className="portal-settings-button portal-mobile-search" aria-label="Search code" onClick={() => navigate('search')}><i className="codicon codicon-search" aria-hidden="true" /></button>
               <LoggingProjectSwitch variant="header" />
               <ProfileMenu onSettings={() => navigate('settings')} onSignedIn={setAccountSignedIn} />
-              {portalLayout && !accountSignedIn && <button type="button" className="portal-settings-button" aria-label="Open settings"
+              {!accountSignedIn && <button type="button" className="portal-settings-button" aria-label="Open settings"
                 onClick={() => navigate('settings')}><i className="codicon codicon-settings-gear" aria-hidden="true" /></button>}
               <div className="font-ctrl">
                 <button type="button" className="font-btn" onClick={() => adjFont(-SCALE_STEP)} title="Smaller text" aria-label="Smaller text">
@@ -428,12 +373,12 @@ function AppShell() {
         <SidebarResizeHandle />
 
         <div className="workspace">
-          {portalLayout && <nav className="portal-breadcrumbs" aria-label="Breadcrumb">
+          <nav className="portal-breadcrumbs" aria-label="Breadcrumb">
             <button type="button" onClick={() => navigate('stats')}>Home</button>
             <span aria-hidden="true">›</span>
             {activeSection && <><span>{activeSection.label}</span><span aria-hidden="true">›</span></>}
             <span aria-current="page">{activeLabel}</span>
-          </nav>}
+          </nav>
           {mcpToast && (
             <div
               className={`settings-toast settings-toast--${mcpToast.kind} mcp-reload-toast`}
@@ -452,6 +397,7 @@ function AppShell() {
           )}
           <main className={containerClass} id="main-content">
             <ErrorBoundary key={page} fallbackTitle="This view failed to render">
+            <Suspense fallback={<PageLoading />}>
             {page === 'stats' && <StatsPage key={workspaceKey} />}
             {page === 'nodes' && <NodesPage key={workspaceKey} />}
             {page === 'graph' && <GraphPage key={workspaceKey} />}
@@ -513,6 +459,7 @@ function AppShell() {
               <PolicySyncPage key={workspaceKey} onOpenReview={() => navigate('policy-review')} />
             )}
             {page === 'policy-review' && <PolicyReviewPage key={workspaceKey} />}
+            </Suspense>
             </ErrorBoundary>
           </main>
         </div>

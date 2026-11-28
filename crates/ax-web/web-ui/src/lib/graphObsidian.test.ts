@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   DEFAULT_GRAPH_SETTINGS,
+  flushGraphSettings,
   loadGraphSettings,
   saveGraphSettings,
   type StorageLike,
@@ -69,6 +70,63 @@ describe('graphSettings', () => {
     const next = { ...loaded, arrows: true, groups: [{ query: 'web', color: '#ff0000' }] };
     saveGraphSettings(next, s);
     assert.deepEqual(loadGraphSettings(s), next);
+  });
+
+  it('replaces fields of the wrong type with their defaults, field by field', () => {
+    const s = memStorage({
+      'ax.graph.settings': JSON.stringify({
+        groups: null,
+        repelForce: '3',
+        labels: 'yes',
+        search: 5,
+        linkDistance: 300,
+        arrows: true,
+      }),
+    });
+    const loaded = loadGraphSettings(s);
+    assert.deepEqual(loaded.groups, []);
+    assert.equal(loaded.repelForce, DEFAULT_GRAPH_SETTINGS.repelForce);
+    assert.equal(loaded.labels, DEFAULT_GRAPH_SETTINGS.labels);
+    assert.equal(loaded.search, DEFAULT_GRAPH_SETTINGS.search);
+    assert.equal(loaded.linkDistance, 300);
+    assert.equal(loaded.arrows, true);
+    assert.doesNotThrow(() => groupColor(nodes[0], loaded.groups));
+  });
+
+  it('drops malformed groups, clamps numbers to the slider range and ignores unknown keys', () => {
+    const s = memStorage({
+      'ax.graph.settings': JSON.stringify({
+        groups: [{ query: 'web', color: '#ff0000' }, null, { query: 1, color: '#000' }, 'x'],
+        nodeSize: 99,
+        centerForce: -4,
+        linkDistance: Number.MAX_VALUE,
+        extra: 'junk',
+      }),
+    });
+    const loaded = loadGraphSettings(s);
+    assert.deepEqual(loaded.groups, [{ query: 'web', color: '#ff0000' }]);
+    assert.equal(loaded.nodeSize, 5);
+    assert.equal(loaded.centerForce, 0);
+    assert.equal(loaded.linkDistance, 500);
+    assert.equal('extra' in loaded, false);
+  });
+
+  it('a JSON array or other non-object falls back to defaults', () => {
+    assert.deepEqual(loadGraphSettings(memStorage({ 'ax.graph.settings': '[1,2]' })), DEFAULT_GRAPH_SETTINGS);
+  });
+
+  it('blocked storage never throws on load, save or flush', () => {
+    const blocked: StorageLike = {
+      getItem: () => {
+        throw new Error('SecurityError');
+      },
+      setItem: () => {
+        throw new Error('QuotaExceededError');
+      },
+    };
+    assert.deepEqual(loadGraphSettings(blocked), DEFAULT_GRAPH_SETTINGS);
+    saveGraphSettings({ ...DEFAULT_GRAPH_SETTINGS, arrows: true }, blocked);
+    assert.doesNotThrow(() => flushGraphSettings(blocked));
   });
 });
 

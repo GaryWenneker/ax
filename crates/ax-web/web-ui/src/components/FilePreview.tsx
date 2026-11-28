@@ -40,23 +40,38 @@ export default function FilePreview({ file, onClose, onNodeSelect, selectedNodeI
     setNodes([]);
     setSource(null);
     setSourceError(null);
+    // Ignore a response that arrives after another file was picked.
+    let cancelled = false;
     fetchNodes({ file: file.path, limit: 2000, offset: 0 })
       .then((page) => {
+        if (cancelled) return;
         setNodes(page.nodes);
         setTotal(page.total);
         setLoading(false);
       })
       .catch((e: Error) => {
+        if (cancelled) return;
         setError(e.message);
         setLoading(false);
       });
+    return () => {
+      cancelled = true;
+    };
   }, [file.path]);
 
   useEffect(() => {
     if (tab !== 'source' || source || sourceError) return;
+    let cancelled = false;
     fetchSource({ path: file.path, start: 1, end: 500, context: 0 })
-      .then(setSource)
-      .catch((e: Error) => setSourceError(e.message));
+      .then((slice) => {
+        if (!cancelled) setSource(slice);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setSourceError(e.message);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [tab, file.path, source, sourceError]);
 
   const fileName = file.path.split('/').pop() ?? file.path;

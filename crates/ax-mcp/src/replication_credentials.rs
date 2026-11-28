@@ -37,12 +37,23 @@ pub fn replace(
     node_id: &str,
     credentials: &Credentials,
 ) -> Result<Option<Credentials>, String> {
-    let entry = entry(root, node_id)?;
+    replace_entry(&entry(root, node_id)?, credentials)
+}
+
+fn replace_entry(
+    entry: &keyring::Entry,
+    credentials: &Credentials,
+) -> Result<Option<Credentials>, String> {
     let previous = match entry.get_password() {
-        Ok(text) => Some(
-            serde_json::from_str(&text)
-                .map_err(|_| "Stored replication credentials are invalid")?,
-        ),
+        // A value that does not parse (older format, truncated) cannot be
+        // restored on rollback, so it is simply overwritten.
+        Ok(text) => match serde_json::from_str(&text) {
+            Ok(previous) => Some(previous),
+            Err(_) => {
+                tracing::warn!("discarding unreadable stored replication credentials");
+                None
+            }
+        },
         Err(keyring::Error::NoEntry) => None,
         Err(_) => {
             return Err(
@@ -50,7 +61,7 @@ pub fn replace(
             )
         }
     };
-    write(&entry, credentials)?;
+    write(entry, credentials)?;
     Ok(previous)
 }
 
@@ -89,5 +100,25 @@ mod tests {
         assert_eq!(saved.token, credentials.token);
         entry.delete_credential().unwrap();
         assert!(matches!(entry.get_password(), Err(keyring::Error::NoEntry)));
+    }
+
+    #[test]
+    fn replace_overwrites_a_stored_value_that_does_not_parse() {
+        let entry =
+            keyring::Entry::new_with_credential(Box::new(keyring::mock::MockCredential::default()));
+        entry.set_password("{\"token\":\"trunc").unwrap();
+        let credentials = Credentials {
+            token: "replication-secret".into(),
+            control: "local-control-secret".into(),
+        };
+        let previous = replace_entry(&entry, &credentials).unwrap();
+        assert!(
+            previous.is_none(),
+            "an unreadable value has nothing to roll back to"
+        );
+        let saved: Credentials = serde_json::from_str(&entry.get_password().unwrap()).unwrap();
+        assert_eq!(saved.token, credentials.token);
+        let again = replace_entry(&entry, &credentials).unwrap().unwrap();
+        assert_eq!(again.control, credentials.control);
     }
 }

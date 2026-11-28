@@ -23,4 +23,5 @@ tracing = { workspace = true }
 dirs = { workspace = true }
 
 [dev-dependencies]
+blake3 = { workspace = true }
 tempfile = "3"

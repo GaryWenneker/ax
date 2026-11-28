@@ -60,32 +60,26 @@ impl GraphQueryManager {
         })
     }
 
-    /// Unreferenced non-exported symbols (CG: graph/queries.ts findDeadCode).
+    /// Unreferenced non-exported functions, methods and classes: no edge
+    /// other than `contains` points at them. One anti-join query per page of
+    /// `DEAD_CODE_PAGE` rows, read until the last page, so nothing is cut off.
     pub async fn find_dead_code(&self) -> Result<Vec<ax_types::Node>, ax_utils::errors::AxError> {
-        use ax_types::{NodeKind, SearchOptions};
+        use ax_types::NodeKind;
 
+        const DEAD_CODE_PAGE: u32 = 5_000;
         let kinds = [NodeKind::Function, NodeKind::Method, NodeKind::Class];
         let mut dead = Vec::new();
-        for kind in kinds {
-            let opts = SearchOptions {
-                kinds: Some(vec![kind]),
-                limit: Some(10_000),
-                ..SearchOptions::default()
-            };
-            let results = self.queries.search_nodes("", &opts).await?;
-            for sr in results {
-                let node = sr.node;
-                if node.is_exported == Some(true) {
-                    continue;
-                }
-                let incoming = self.queries.get_incoming_edges(&node.id).await?;
-                let has_refs = incoming.iter().any(|e| e.kind != EdgeKind::Contains);
-                if !has_refs {
-                    dead.push(node);
-                }
+        loop {
+            let page = self
+                .queries
+                .get_unreferenced_nodes(&kinds, DEAD_CODE_PAGE, dead.len() as u64)
+                .await?;
+            let last = page.len() < DEAD_CODE_PAGE as usize;
+            dead.extend(page);
+            if last {
+                return Ok(dead);
             }
         }
-        Ok(dead)
     }
 
     pub async fn get_affected_tests(

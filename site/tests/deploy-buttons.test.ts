@@ -55,13 +55,25 @@ test('linked images look like buttons, not zoomable screenshots', () => {
   assert.match(rule, /display:\s*inline-block/);
 });
 
-test('deploy buttons are not squeezed into table cells', () => {
+test('deploy buttons are one uniform button with the provider logo, outside table cells', () => {
   for (const [name, text] of [['headless-linux', guide], ['installation', installation]] as const) {
-    const buttons = text.split('\n').filter(line => /\[!\[Deploy to [A-Za-z]+\]\(/.test(line));
+    const buttons = text.split('\n').filter(line => line.includes('class="ax-deploy"'));
     assert.ok(buttons.length > 0, `${name} has deploy buttons`);
-    for (const line of buttons) assert.doesNotMatch(line, /^\s*\|/, `${name}: ${line.slice(0, 60)}`);
+    for (const line of buttons) {
+      assert.match(line, /^<a class="ax-deploy" data-provider="(azure|render|koyeb)" href="https:\/\/[^"]+" target="_blank" rel="noopener noreferrer">Deploy to (Azure|Render|Koyeb)<\/a>$/, `${name}: ${line.slice(0, 60)}`);
+    }
+    // No third-party badge images: they came in three different sizes.
+    assert.doesNotMatch(text, /deploytoazurebutton|deploy-to-render-button|koyeb\.com\/static\/images/);
   }
   for (const platform of ['Azure Container Apps', 'Render', 'Koyeb']) {
     assert.match(guide, new RegExp(`^### ${platform}$`, 'm'), `guide heading for ${platform}`);
   }
+  // Same size everywhere, logo from a local file.
+  assert.match(css, /\.sl-markdown-content \.ax-deploy \{[^}]*width: 13rem;[^}]*height: 44px;/);
+  for (const provider of ['azure', 'render', 'koyeb']) {
+    assert.match(css, new RegExp(`\\.ax-deploy\\[data-provider="${provider}"\\] \\{ --ax-deploy-logo: url\\("/logos/${provider}\\.svg"\\); \\}`));
+    assert.ok(read('public', 'logos', `${provider}.svg`).startsWith('<svg'), `${provider} logo`);
+  }
+  const home = read('src/components/CloudDeploy.astro');
+  assert.match(home, /class="ax-deploy"[^>]*data-provider=\{d\.provider\}/);
 });

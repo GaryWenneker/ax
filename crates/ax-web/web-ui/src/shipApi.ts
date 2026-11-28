@@ -1,3 +1,6 @@
+import { apiFetch } from './api.ts';
+import { postSse } from './lib/sse.ts';
+
 const SHIP = '/api/ship';
 
 export interface GateStep {
@@ -125,16 +128,8 @@ export interface SonarBootstrapResult {
   message: string;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${SHIP}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
-    ...init,
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  return body as T;
+function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return apiFetch<T>(`${SHIP}${path}`, init);
 }
 
 export function fetchShipStatus(): Promise<{
@@ -158,6 +153,18 @@ export function fetchShipConfig(): Promise<{
 
 export function saveShipConfig(config: ShipConfig): Promise<{ ok: boolean }> {
   return request('/config', { method: 'PUT', body: JSON.stringify(config) });
+}
+
+/**
+ * Save one change to the stored ship.toml: read the config the server has, apply
+ * `change`, and write the result. Unsaved edits elsewhere on the page are not sent.
+ * Nothing is written when the stored config cannot be read.
+ */
+export async function updateShipConfig(change: (stored: ShipConfig) => ShipConfig): Promise<ShipConfig> {
+  const { config } = await fetchShipConfig();
+  const next = change(config);
+  await saveShipConfig(next);
+  return next;
 }
 
 export interface ReviewLanguageChoice {
@@ -264,116 +271,33 @@ export type SonarStreamEvent =
       logs?: string[];
     };
 
-async function consumeSse(
-  body: ReadableStream<Uint8Array>,
-  onEvent: (ev: SonarStreamEvent) => void,
-): Promise<void> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const chunks = buffer.split('\n\n');
-    buffer = chunks.pop() ?? '';
-    for (const chunk of chunks) {
-      for (const line of chunk.split('\n')) {
-        if (!line.startsWith('data: ')) continue;
-        try {
-          onEvent(JSON.parse(line.slice(6)) as SonarStreamEvent);
-        } catch {
-          /* ignore malformed */
-        }
-      }
-    }
-  }
-}
-
-export async function streamSonarInstall(
+export function streamSonarInstall(
   onEvent: (ev: SonarStreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const res = await fetch(`${SHIP}/sonar/install/stream`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: '{}',
-    signal,
-  });
-  if (!res.ok || !res.body) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  await consumeSse(res.body, onEvent);
+  return postSse(`${SHIP}/sonar/install/stream`, {}, onEvent, signal);
 }
 
-export async function streamSonarStart(
+export function streamSonarStart(
   onEvent: (ev: SonarStreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const res = await fetch(`${SHIP}/sonar/start/stream`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: '{}',
-    signal,
-  });
-  if (!res.ok || !res.body) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  await consumeSse(res.body, onEvent);
+  return postSse(`${SHIP}/sonar/start/stream`, {}, onEvent, signal);
 }
 
-export async function streamSonarStop(
+export function streamSonarStop(
   onEvent: (ev: SonarStreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const res = await fetch(`${SHIP}/sonar/stop/stream`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: '{}',
-    signal,
-  });
-  if (!res.ok || !res.body) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  await consumeSse(res.body, onEvent);
+  return postSse(`${SHIP}/sonar/stop/stream`, {}, onEvent, signal);
 }
 
-export async function streamSonarScanAll(
-  onEvent: (ev: SonarStreamEvent) => void,
-  signal?: AbortSignal,
-): Promise<void> {
-  return streamSonarScan(onEvent, signal);
-}
-
-export async function streamSonarScanProject(
+export function streamSonarScanProject(
   projectKey: string,
   onEvent: (ev: SonarStreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  return streamSonarScan(onEvent, signal, projectKey);
-}
-
-async function streamSonarScan(
-  onEvent: (ev: SonarStreamEvent) => void,
-  signal?: AbortSignal,
-  projectKey?: string,
-): Promise<void> {
-  const body = projectKey ? JSON.stringify({ project_key: projectKey }) : '{}';
-  const res = await fetch(`${SHIP}/sonar/scan/stream`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body,
-    signal,
-  });
-  if (!res.ok || !res.body) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  await consumeSse(res.body, onEvent);
+  return postSse(`${SHIP}/sonar/scan/stream`, { project_key: projectKey }, onEvent, signal);
 }
 
 export function toggleSonarExclude(

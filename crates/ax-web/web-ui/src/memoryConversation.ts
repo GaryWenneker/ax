@@ -1,3 +1,5 @@
+import { splitMemoryBody } from './memoryDetail.ts';
+
 export interface ConversationLink {
   key: string;
   hue: number;
@@ -7,10 +9,9 @@ export interface ConversationLink {
   joinNext: boolean;
 }
 
-const KEY_LINE = /^Conversation: ([0-9a-f]{12})$/m;
-
+/** Conversation id of a turn body, read by the same parser as the detail view, in lower case. */
 export function conversationKey(body: string): string | null {
-  return KEY_LINE.exec(body)?.[1] ?? null;
+  return splitMemoryBody(body).conversation?.toLowerCase() ?? null;
 }
 
 /** Rows are newest first; conversations with one shown turn get `null`. */

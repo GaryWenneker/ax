@@ -81,6 +81,9 @@ pub struct SonarBootstrapConfig {
     pub admin_password: String,
     pub token_name: String,
     pub token_env: String,
+    /// `[sonar] migrate_legacy_keys` in `.ax/ship.toml`: adopt existing
+    /// `<folder>-<repo>` projects as ax-created so they can be renamed.
+    pub migrate_legacy_keys: bool,
 }
 
 impl SonarBootstrapConfig {
@@ -102,6 +105,7 @@ impl SonarBootstrapConfig {
             admin_password: DEFAULT_ADMIN_PASSWORD.into(),
             token_name: DEFAULT_TOKEN_NAME.into(),
             token_env: token_env.to_string(),
+            migrate_legacy_keys: false,
         }
     }
 
@@ -116,6 +120,7 @@ impl SonarBootstrapConfig {
             admin_password: sonar.admin_password.clone(),
             token_name: DEFAULT_TOKEN_NAME.into(),
             token_env: sonar.token_env.clone(),
+            migrate_legacy_keys: sonar.migrate_legacy_keys,
         }
     }
 }
@@ -288,7 +293,7 @@ pub async fn inspect_setup(
     } else {
         repo_projects.iter().map(|p| p.key.clone()).collect()
     };
-    let (lookup_summary, exists_by_key) = lookup_projects(
+    let (lookup_summary, exists_by_key) = lookup_projects_reachable(
         &config.host,
         &keys,
         token.as_deref(),
@@ -357,7 +362,7 @@ pub async fn bootstrap_sonar(
         crate::container::ensure_sonar_stack_online(sonar, &log).await?;
     }
 
-    if !validate_sonar_login(&config.host, &config.admin_user, &config.admin_password).await? {
+    if !check_login(&config.host, &config.admin_user, &config.admin_password).await? {
         return Err(format!(
             "SonarQube login failed for user '{}'. Ensure the local container is running and reset the stack if credentials were changed outside ax.",
             config.admin_user
@@ -367,7 +372,7 @@ pub async fn bootstrap_sonar(
     ensure_sonar_dark_theme(&config.host, &config.admin_user, &config.admin_password).await;
 
     let (projects_created, repo_projects, _) =
-        ensure_sonar_projects(config, project_root, repo_names).await?;
+        ensure_projects_reachable(config, project_root, repo_names).await?;
 
     let token = generate_token(
         &config.host,
@@ -377,14 +382,7 @@ pub async fn bootstrap_sonar(
     )
     .await?;
 
-    let token_path = sonar_token_path(project_root);
-    if let Some(parent) = token_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&token_path, format!("{token}\n")).map_err(|e| e.to_string())?;
-
-    std::env::set_var(&config.token_env, &token);
-    let token_env_set = set_user_env_var(&config.token_env, &token);
+    let (token_path, token_env_set) = persist_token(project_root, &config.token_env, &token)?;
 
     let message = if projects_created > 0 {
         format!("Created {projects_created} SonarQube project(s) and saved scanner token.")
@@ -421,14 +419,21 @@ pub async fn ensure_sonar_projects(
             config.host
         ));
     }
+    ensure_projects_reachable(config, project_root, repo_names).await
+}
 
+/// [`ensure_sonar_projects`] for a caller that has just seen SonarQube up.
+async fn ensure_projects_reachable(
+    config: &SonarBootstrapConfig,
+    project_root: &Path,
+    repo_names: &[String],
+) -> Result<(usize, Vec<RepoProjectStatus>, Vec<String>), String> {
     let token = read_sonar_token(project_root, &config.token_env);
     let token_ok = match token.as_deref() {
         Some(t) => validate_sonar_token(&config.host, t).await,
         None => false,
     };
-    let admin_ok =
-        validate_sonar_login(&config.host, &config.admin_user, &config.admin_password).await?;
+    let admin_ok = check_login(&config.host, &config.admin_user, &config.admin_password).await?;
 
     if !admin_ok && !token_ok {
         return Err(format!(
@@ -458,15 +463,15 @@ pub async fn ensure_sonar_projects(
     }
 
     if repo_projects.is_empty() {
-        if lookup_project(
+        if lookup_projects_reachable(
             &config.host,
-            &workspace_key,
+            std::slice::from_ref(&workspace_key),
             token.as_deref(),
             &config.admin_user,
             &config.admin_password,
         )
         .await
-            != ProjectLookup::Found
+        .0 != ProjectLookup::Found
         {
             if !admin_ok {
                 return Err(
@@ -484,12 +489,13 @@ pub async fn ensure_sonar_projects(
             )
             .await?;
             projects_created = 1;
+            note_created_project(project_root, &workspace_key);
         }
         return Ok((projects_created, vec![], newly_created_repos));
     }
 
     let keys: Vec<String> = repo_projects.iter().map(|p| p.key.clone()).collect();
-    let (lookup_summary, exists_by_key) = lookup_projects(
+    let (lookup_summary, exists_by_key) = lookup_projects_reachable(
         &config.host,
         &keys,
         token.as_deref(),
@@ -525,6 +531,7 @@ pub async fn ensure_sonar_projects(
         )
         .await?;
         project.exists = true;
+        note_created_project(project_root, &project.key);
         projects_created += 1;
         newly_created_repos.push(project.name.clone());
     }
@@ -537,13 +544,24 @@ pub async fn ensure_sonar_token(
     config: &SonarBootstrapConfig,
     project_root: &Path,
 ) -> Result<(), String> {
+    if !sonar_reachable(&config.host).await {
+        return Err("SonarQube is not reachable".into());
+    }
+    ensure_token_reachable(config, project_root).await
+}
+
+/// [`ensure_sonar_token`] for a caller that has just seen SonarQube up.
+async fn ensure_token_reachable(
+    config: &SonarBootstrapConfig,
+    project_root: &Path,
+) -> Result<(), String> {
     if let Some(token) = read_sonar_token(project_root, &config.token_env) {
         if validate_sonar_token(&config.host, &token).await {
             return Ok(());
         }
     }
 
-    if !validate_sonar_login(&config.host, &config.admin_user, &config.admin_password).await? {
+    if !check_login(&config.host, &config.admin_user, &config.admin_password).await? {
         return Err(format!(
             "SonarQube login failed for user '{}'. Reset the local stack if credentials were changed outside ax.",
             config.admin_user
@@ -558,13 +576,7 @@ pub async fn ensure_sonar_token(
     )
     .await?;
 
-    let token_path = sonar_token_path(project_root);
-    if let Some(parent) = token_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&token_path, format!("{token}\n")).map_err(|e| e.to_string())?;
-    std::env::set_var(&config.token_env, &token);
-    let _ = set_user_env_var(&config.token_env, &token);
+    persist_token(project_root, &config.token_env, &token)?;
     Ok(())
 }
 
@@ -577,14 +589,15 @@ pub async fn auto_provision_sonar_from_discovery(
     if !sonar.enabled || repo_names.is_empty() {
         return Ok(());
     }
-    if !sonar_reachable(&sonar.host).await {
+    let config = SonarBootstrapConfig::resolve_for_project(sonar, project_root);
+    if !sonar_reachable(&config.host).await {
         return Ok(());
     }
     tracing::info!(
         repos = repo_names.len(),
         "Auto-provisioning SonarQube projects from discovered git repos"
     );
-    ensure_sonar_ready_for_scan(sonar, project_root, repo_names).await
+    ready_for_scan_reachable(&config, project_root, repo_names).await
 }
 
 /// Prepare SonarQube before a quality-gate scan: projects per git repo + scanner token.
@@ -603,9 +616,18 @@ pub async fn ensure_sonar_ready_for_scan(
             config.host
         ));
     }
+    ready_for_scan_reachable(&config, project_root, repo_names).await
+}
+
+/// One reachability check per entry point: the steps below assume SonarQube is up.
+async fn ready_for_scan_reachable(
+    config: &SonarBootstrapConfig,
+    project_root: &Path,
+    repo_names: &[String],
+) -> Result<(), String> {
     ensure_sonar_dark_theme(&config.host, &config.admin_user, &config.admin_password).await;
-    ensure_sonar_projects(&config, project_root, repo_names).await?;
-    ensure_sonar_token(&config, project_root).await?;
+    ensure_projects_reachable(config, project_root, repo_names).await?;
+    ensure_token_reachable(config, project_root).await?;
     Ok(())
 }
 
@@ -621,7 +643,7 @@ pub async fn regenerate_sonar_token(
         ));
     }
 
-    if !validate_sonar_login(&config.host, &config.admin_user, &config.admin_password).await? {
+    if !check_login(&config.host, &config.admin_user, &config.admin_password).await? {
         return Err(format!(
             "SonarQube login failed for user '{}'. Ensure the local container is running.",
             config.admin_user
@@ -636,14 +658,7 @@ pub async fn regenerate_sonar_token(
     )
     .await?;
 
-    let token_path = sonar_token_path(project_root);
-    if let Some(parent) = token_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&token_path, format!("{token}\n")).map_err(|e| e.to_string())?;
-
-    std::env::set_var(&config.token_env, &token);
-    let token_env_set = set_user_env_var(&config.token_env, &token);
+    let (token_path, token_env_set) = persist_token(project_root, &config.token_env, &token)?;
 
     Ok(SonarBootstrapResult {
         project_created: false,
@@ -689,22 +704,21 @@ pub async fn ensure_sonar_dark_theme(host: &str, user: &str, password: &str) {
     );
 }
 
-/// Whether the SonarQube HTTP API responds at `host`.
+/// Whether SonarQube at `host` is `UP` and can serve API calls (a server
+/// that is still `STARTING` does not count).
 pub async fn sonar_reachable(host: &str) -> bool {
-    let url = format!("{}/api/system/status", host.trim_end_matches('/'));
-    http_client()
-        .get(&url)
-        .send()
-        .await
-        .map(|r| r.status().is_success())
-        .unwrap_or(false)
+    crate::container::sonar_status_up(http_client(), host).await
 }
 
-fn http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
+/// One client for every SonarQube call, so requests share its connection pool.
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    })
 }
 
 /// Check SonarQube web UI credentials against `/api/authentication/validate`.
@@ -713,6 +727,12 @@ pub async fn validate_sonar_login(host: &str, user: &str, password: &str) -> Res
     if !sonar_reachable(host).await {
         return Err("SonarQube is not reachable".into());
     }
+    check_login(host, user, password).await
+}
+
+/// [`validate_sonar_login`] for a caller that has just seen SonarQube up.
+async fn check_login(host: &str, user: &str, password: &str) -> Result<bool, String> {
+    let host = host.trim_end_matches('/');
     let url = format!("{host}/api/authentication/validate");
     let resp = authed_get(&url, user, password).await?;
     if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
@@ -736,14 +756,27 @@ pub async fn lookup_projects(
     user: &str,
     password: &str,
 ) -> (ProjectLookup, HashMap<String, bool>) {
+    if project_keys.is_empty() {
+        return (ProjectLookup::Missing, HashMap::new());
+    }
+    if !sonar_reachable(host).await {
+        return (ProjectLookup::Unreachable, HashMap::new());
+    }
+    lookup_projects_reachable(host, project_keys, token, user, password).await
+}
+
+/// [`lookup_projects`] for a caller that has just seen SonarQube up.
+async fn lookup_projects_reachable(
+    host: &str,
+    project_keys: &[String],
+    token: Option<&str>,
+    user: &str,
+    password: &str,
+) -> (ProjectLookup, HashMap<String, bool>) {
     let mut exists = HashMap::new();
     if project_keys.is_empty() {
         return (ProjectLookup::Missing, exists);
     }
-    if !sonar_reachable(host).await {
-        return (ProjectLookup::Unreachable, exists);
-    }
-
     if let Some(t) = token.filter(|s| !s.trim().is_empty()) {
         match search_projects_batch(host, project_keys, Auth::Bearer(t)).await {
             Ok(found) => {
@@ -888,6 +921,72 @@ async fn search_projects_batch(
     Ok(body.components.into_iter().map(|c| c.key).collect())
 }
 
+/// Where ax records the SonarQube project keys it created itself.
+fn created_projects_path(project_root: &Path) -> PathBuf {
+    project_root.join(".ax").join("sonar-projects.json")
+}
+
+#[derive(Default, serde::Serialize, Deserialize)]
+struct CreatedProjects {
+    #[serde(default)]
+    created: Vec<String>,
+}
+
+/// The SonarQube project keys ax created for this workspace.
+fn created_projects(project_root: &Path) -> HashSet<String> {
+    ax_utils::read_bounded(&created_projects_path(project_root), 1024 * 1024)
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<CreatedProjects>(&raw).ok())
+        .map(|r| r.created.into_iter().collect())
+        .unwrap_or_default()
+}
+
+/// Adds `add` to and removes `remove` from the record of projects ax created.
+fn update_created_projects(
+    project_root: &Path,
+    add: &[String],
+    remove: &[String],
+) -> std::io::Result<()> {
+    ax_utils::update_locked(&created_projects_path(project_root), |current| {
+        let mut record: CreatedProjects = current
+            .and_then(|raw| serde_json::from_slice(&raw).ok())
+            .unwrap_or_default();
+        record.created.retain(|k| !remove.contains(k));
+        for key in add {
+            if !record.created.contains(key) {
+                record.created.push(key.clone());
+            }
+        }
+        record.created.sort();
+        let mut out = serde_json::to_vec_pretty(&record)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        out.push(b'\n');
+        Ok(Some(out))
+    })
+    .map(|_| ())
+}
+
+fn record_created_projects(project_root: &Path, keys: &[String]) -> std::io::Result<()> {
+    update_created_projects(project_root, keys, &[])
+}
+
+/// Notes a project ax just created; a failure only costs the later
+/// migration of that key, so it is logged and not returned.
+fn note_created_project(project_root: &Path, key: &str) {
+    if let Err(e) = record_created_projects(project_root, &[key.to_string()]) {
+        tracing::warn!(project = key, error = %e, "could not record the SonarQube project ax created");
+    }
+}
+
+/// Moves projects from an older workspace key (`<folder>-<repo>`) to the
+/// current one (`<project_key>-<repo>`). Only projects that ax recorded as
+/// created in `.ax/sonar-projects.json` are touched, and nothing is ever
+/// deleted: a recorded legacy project whose canonical key already exists is
+/// left in place and reported, for the user to remove in SonarQube.
+///
+/// Older ax versions did not keep that record. With `migrate_legacy_keys`
+/// set, every existing legacy key for this workspace's repos is recorded as
+/// ax-created first, and then renamed the same way.
 async fn migrate_legacy_sonar_projects(
     config: &SonarBootstrapConfig,
     project_root: &Path,
@@ -902,6 +1001,10 @@ async fn migrate_legacy_sonar_projects(
     let workspace_key = workspace_sonar_key(&config.project_key, project_root);
     let legacy_prefixes = legacy_workspace_prefixes(&workspace_key, project_root);
     if legacy_prefixes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut ours = created_projects(project_root);
+    if ours.is_empty() && !config.migrate_legacy_keys {
         return Ok(Vec::new());
     }
 
@@ -927,23 +1030,41 @@ async fn migrate_legacy_sonar_projects(
     .await;
 
     let mut actions = Vec::new();
+    if config.migrate_legacy_keys {
+        let mut adopted: Vec<String> = Vec::new();
+        for repo in repo_names {
+            for legacy_prefix in &legacy_prefixes {
+                let legacy = format!("{legacy_prefix}-{}", sonar_key_from_name(repo));
+                if exists.get(&legacy).copied().unwrap_or(false) && !ours.contains(&legacy) {
+                    adopted.push(legacy);
+                }
+            }
+        }
+        adopted.sort();
+        adopted.dedup();
+        if !adopted.is_empty() {
+            record_created_projects(project_root, &adopted).map_err(|e| {
+                format!("could not record the legacy SonarQube projects to migrate: {e}")
+            })?;
+            for key in &adopted {
+                actions.push(format!(
+                    "Adopted legacy SonarQube project '{key}' for migration (migrate_legacy_keys)"
+                ));
+            }
+            ours.extend(adopted);
+        }
+    }
     for repo in repo_names {
         let canonical = canonical_repo_project_key(&workspace_key, repo, multi_repo);
         for legacy_prefix in &legacy_prefixes {
             let legacy = format!("{legacy_prefix}-{}", sonar_key_from_name(repo));
-            if !exists.get(&legacy).copied().unwrap_or(false) {
+            if !ours.contains(&legacy) || !exists.get(&legacy).copied().unwrap_or(false) {
                 continue;
             }
             if exists.get(&canonical).copied().unwrap_or(false) {
-                delete_project(
-                    &config.host,
-                    &legacy,
-                    token,
-                    &config.admin_user,
-                    &config.admin_password,
-                )
-                .await?;
-                actions.push(format!("Removed duplicate SonarQube project '{legacy}'"));
+                actions.push(format!(
+                    "SonarQube project '{legacy}' duplicates '{canonical}' and was left in place; delete it in SonarQube if it is no longer needed"
+                ));
             } else {
                 update_project_key(
                     &config.host,
@@ -954,6 +1075,13 @@ async fn migrate_legacy_sonar_projects(
                     &config.admin_password,
                 )
                 .await?;
+                if let Err(e) = update_created_projects(
+                    project_root,
+                    std::slice::from_ref(&canonical),
+                    std::slice::from_ref(&legacy),
+                ) {
+                    tracing::warn!(error = %e, "could not update the record of SonarQube projects ax created");
+                }
                 actions.push(format!(
                     "Renamed SonarQube project '{legacy}' → '{canonical}'"
                 ));
@@ -962,29 +1090,6 @@ async fn migrate_legacy_sonar_projects(
     }
 
     Ok(actions)
-}
-
-async fn delete_project(
-    host: &str,
-    project_key: &str,
-    token: Option<&str>,
-    user: &str,
-    password: &str,
-) -> Result<(), String> {
-    let url = format!(
-        "{}/api/projects/delete?project={}",
-        host.trim_end_matches('/'),
-        encode_query(project_key)
-    );
-    let resp = authed_post_with_token(&url, token, user, password).await?;
-    if resp.status().is_success() {
-        return Ok(());
-    }
-    let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
-    Err(format!(
-        "Failed to delete SonarQube project '{project_key}': HTTP {status} {body}"
-    ))
 }
 
 async fn update_project_key(
@@ -1080,15 +1185,26 @@ async fn provision_sonar_project(
     Ok(())
 }
 
+/// Percent-encodes a query value per UTF-8 byte, leaving only RFC 3986
+/// unreserved characters as they are.
 fn encode_query(value: &str) -> String {
-    value
-        .chars()
-        .map(|c| match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
-            ' ' => "%20".into(),
-            _ => format!("%{:02X}", c as u32),
-        })
-        .collect()
+    let mut out = String::with_capacity(value.len());
+    for b in value.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+fn token_url(host: &str, action: &str, name: &str) -> String {
+    format!(
+        "{host}/api/user_tokens/{action}?name={}",
+        encode_query(name)
+    )
 }
 
 async fn generate_token(
@@ -1117,7 +1233,7 @@ async fn try_generate_token(
     user: &str,
     password: &str,
 ) -> Result<String, String> {
-    let url = format!("{host}/api/user_tokens/generate?name={name}");
+    let url = token_url(host, "generate", name);
     let resp = authed_post(&url, user, password).await?;
     if !resp.status().is_success() {
         let status = resp.status();
@@ -1131,7 +1247,7 @@ async fn try_generate_token(
 }
 
 async fn revoke_token(host: &str, name: &str, user: &str, password: &str) -> Result<(), String> {
-    let url = format!("{host}/api/user_tokens/revoke?name={name}");
+    let url = token_url(host, "revoke", name);
     let resp = authed_post(&url, user, password).await?;
     if resp.status().is_success() {
         return Ok(());
@@ -1227,21 +1343,66 @@ fn basic_auth(user: &str, password: &str) -> String {
     format!("Basic {}", STANDARD.encode(format!("{user}:{password}")))
 }
 
+/// Saves the scanner token to `.ax/sonar.token` (owner read/write only on
+/// Unix, replaced atomically) and, on Windows, to the user environment.
+/// The running process environment is never changed: callers read the
+/// token back with [`read_sonar_token`], which prefers the file. Returns the
+/// token path and whether the user environment variable was set.
+fn persist_token(
+    project_root: &Path,
+    token_env: &str,
+    token: &str,
+) -> Result<(PathBuf, bool), String> {
+    let token_path = sonar_token_path(project_root);
+    ax_utils::atomic_write_private(&token_path, format!("{token}\n").as_bytes())
+        .map_err(|e| format!("could not save {}: {e}", token_path.display()))?;
+    Ok((token_path, set_user_env_var(token_env, token)))
+}
+
+const USER_ENV_NAME_VAR: &str = "AX_USER_ENV_NAME";
+const USER_ENV_VALUE_VAR: &str = "AX_USER_ENV_VALUE";
+
+/// Whether `name` is a plain environment variable name
+/// (`[A-Za-z_][A-Za-z0-9_]*`).
+fn is_env_var_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// The PowerShell command that stores `name=value` in the Windows user
+/// environment. The name and value reach the script through the child's
+/// environment, never through the command line, so neither can change the
+/// script and the token does not show up in process listings. Returns
+/// `None` when `name` is not a plain variable name.
+fn user_env_command(name: &str, value: &str) -> Option<std::process::Command> {
+    if !is_env_var_name(name) {
+        return None;
+    }
+    let script = format!(
+        "[Environment]::SetEnvironmentVariable($env:{USER_ENV_NAME_VAR}, $env:{USER_ENV_VALUE_VAR}, 'User')"
+    );
+    let mut cmd = std::process::Command::new("powershell");
+    cmd.args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .env(USER_ENV_NAME_VAR, name)
+        .env(USER_ENV_VALUE_VAR, value);
+    Some(cmd)
+}
+
 fn set_user_env_var(name: &str, value: &str) -> bool {
-    #[cfg(windows)]
-    {
-        let script = format!("[Environment]::SetEnvironmentVariable('{name}', '{value}', 'User')");
-        return std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+    if !cfg!(windows) {
+        return false;
     }
-    #[cfg(not(windows))]
-    {
-        let _ = (name, value);
-        false
-    }
+    let Some(mut cmd) = user_env_command(name, value) else {
+        tracing::warn!(
+            token_env = name,
+            "sonar.token_env is not a plain variable name; not storing the token in the user environment"
+        );
+        return false;
+    };
+    cmd.status().map(|s| s.success()).unwrap_or(false)
 }
 
 /// Host URL reachable from a scanner container (Podman/Docker on Windows/macOS).
@@ -1260,6 +1421,381 @@ pub fn scanner_host_url(host: &str) -> String {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    /// A minimal HTTP server standing in for SonarQube. `respond` maps
+    /// `(method, path_and_query)` to `(status, body)`; every request line is
+    /// recorded.
+    pub(crate) mod mock_sonar {
+        use std::sync::{Arc, Mutex};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        pub struct MockSonar {
+            pub host: String,
+            pub requests: Arc<Mutex<Vec<String>>>,
+        }
+
+        impl MockSonar {
+            pub fn requests(&self) -> Vec<String> {
+                self.requests.lock().unwrap().clone()
+            }
+        }
+
+        pub async fn start<F>(respond: F) -> MockSonar
+        where
+            F: Fn(&str, &str) -> (u16, String) + Send + Sync + 'static,
+        {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let host = format!("http://{}", listener.local_addr().unwrap());
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let log = requests.clone();
+            let respond = Arc::new(respond);
+            tokio::spawn(async move {
+                loop {
+                    let Ok((mut sock, _)) = listener.accept().await else {
+                        return;
+                    };
+                    let log = log.clone();
+                    let respond = respond.clone();
+                    tokio::spawn(async move {
+                        let mut buf = Vec::new();
+                        let mut chunk = [0u8; 4096];
+                        while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                            match sock.read(&mut chunk).await {
+                                Ok(0) | Err(_) => return,
+                                Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                            }
+                        }
+                        let head = String::from_utf8_lossy(&buf).into_owned();
+                        let mut parts = head.lines().next().unwrap_or("").split(' ');
+                        let method = parts.next().unwrap_or("").to_string();
+                        let path = parts.next().unwrap_or("").to_string();
+                        log.lock().unwrap().push(format!("{method} {path}"));
+                        let (status, body) = respond(&method, &path);
+                        let reply = format!(
+                            "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = sock.write_all(reply.as_bytes()).await;
+                        let _ = sock.shutdown().await;
+                    });
+                }
+            });
+            MockSonar { host, requests }
+        }
+    }
+
+    /// Workspace folder `Contoso` with ship.toml key `ax` and repos Web and
+    /// Api: the legacy keys are `Contoso-Web` / `Contoso-Api`, the canonical
+    /// ones `ax-Web` / `ax-Api`.
+    fn contoso_workspace() -> (tempfile::TempDir, PathBuf, Vec<String>) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("Contoso");
+        std::fs::create_dir_all(&root).unwrap();
+        (dir, root, vec!["Web".to_string(), "Api".to_string()])
+    }
+
+    async fn sonar_with_projects(existing: &'static [&'static str]) -> mock_sonar::MockSonar {
+        mock_sonar::start(move |_method, path| {
+            if path.starts_with("/api/system/status") {
+                return (200, r#"{"status":"UP"}"#.into());
+            }
+            if path.starts_with("/api/projects/search") {
+                let comps: Vec<String> = existing
+                    .iter()
+                    .map(|k| format!(r#"{{"key":"{k}"}}"#))
+                    .collect();
+                return (200, format!(r#"{{"components":[{}]}}"#, comps.join(",")));
+            }
+            (200, "{}".into())
+        })
+        .await
+    }
+
+    fn mutating(requests: &[String]) -> Vec<String> {
+        requests
+            .iter()
+            .filter(|r| {
+                r.contains("/api/projects/delete") || r.contains("/api/projects/update_key")
+            })
+            .cloned()
+            .collect()
+    }
+
+    async fn sonar_with_status(status: &'static str) -> mock_sonar::MockSonar {
+        mock_sonar::start(move |_m, path| {
+            if path.starts_with("/api/system/status") {
+                (200, format!(r#"{{"status":"{status}"}}"#))
+            } else {
+                (200, "{}".into())
+            }
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn sonar_is_ready_only_when_status_is_up() {
+        for status in ["STARTING", "DB_MIGRATION_NEEDED", "DOWN"] {
+            let sonar = sonar_with_status(status).await;
+            assert!(!sonar_reachable(&sonar.host).await, "{status}");
+            assert!(
+                crate::container::wait_for_sonar(&sonar.host, 1)
+                    .await
+                    .is_err(),
+                "{status}"
+            );
+        }
+        let sonar = sonar_with_status("UP").await;
+        assert!(sonar_reachable(&sonar.host).await);
+        crate::container::wait_for_sonar(&sonar.host, 5)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn wait_for_sonar_gives_up_at_the_deadline_when_a_request_hangs() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((sock, _)) = listener.accept().await {
+                held.push(sock); // never answer
+            }
+        });
+        let started = std::time::Instant::now();
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(30),
+            crate::container::wait_for_sonar(&host, 2),
+        )
+        .await;
+        assert!(
+            matches!(outcome, Ok(Err(_))),
+            "wait_for_sonar must fail on its own deadline"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    /// A SonarQube that is UP, accepts the admin login and any token, and has
+    /// the canonical `ax-Web` / `ax-Api` projects.
+    async fn ready_sonar() -> mock_sonar::MockSonar {
+        mock_sonar::start(|_method, path| {
+            if path.starts_with("/api/system/status") {
+                return (200, r#"{"status":"UP"}"#.into());
+            }
+            if path.starts_with("/api/authentication/validate") {
+                return (200, r#"{"valid":true}"#.into());
+            }
+            if path.starts_with("/api/projects/search") {
+                return (
+                    200,
+                    r#"{"components":[{"key":"ax-Web"},{"key":"ax-Api"}]}"#.into(),
+                );
+            }
+            (200, "{}".into())
+        })
+        .await
+    }
+
+    fn status_pings(requests: &[String]) -> usize {
+        requests
+            .iter()
+            .filter(|r| r.contains("/api/system/status"))
+            .count()
+    }
+
+    #[tokio::test]
+    async fn ensure_sonar_projects_checks_reachability_once() {
+        let (_dir, root, repos) = contoso_workspace();
+        let sonar = ready_sonar().await;
+        let config = SonarBootstrapConfig::from_sonar(&sonar.host, "ax", "SONAR_TOKEN");
+        ensure_sonar_projects(&config, &root, &repos).await.unwrap();
+        assert_eq!(status_pings(&sonar.requests()), 1, "{:?}", sonar.requests());
+    }
+
+    #[tokio::test]
+    async fn ensure_sonar_ready_for_scan_checks_reachability_once() {
+        let (_dir, root, repos) = contoso_workspace();
+        std::fs::create_dir_all(root.join(".ax")).unwrap();
+        std::fs::write(root.join(".ax/sonar.token"), "squ_valid\n").unwrap();
+        let sonar = ready_sonar().await;
+        let cfg = crate::sonar::SonarConfig {
+            enabled: true,
+            host: sonar.host.clone(),
+            project_key: "ax".into(),
+            token_env: "AX_QUALITY_TEST_UNSET_TOKEN_ENV".into(),
+            ..Default::default()
+        };
+        ensure_sonar_ready_for_scan(&cfg, &root, &repos)
+            .await
+            .unwrap();
+        assert_eq!(status_pings(&sonar.requests()), 1, "{:?}", sonar.requests());
+    }
+
+    #[test]
+    fn the_http_client_is_shared() {
+        assert!(std::ptr::eq(http_client(), http_client()));
+    }
+
+    #[tokio::test]
+    async fn migration_leaves_projects_ax_did_not_create_alone() {
+        let (_dir, root, repos) = contoso_workspace();
+        let sonar = sonar_with_projects(&["Contoso-Web", "ax-Web", "Contoso-Api"]).await;
+        let config = SonarBootstrapConfig::from_sonar(&sonar.host, "ax", "SONAR_TOKEN");
+        migrate_legacy_sonar_projects(&config, &root, &repos, None, true)
+            .await
+            .unwrap();
+        assert_eq!(mutating(&sonar.requests()), Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn migration_renames_only_a_project_ax_recorded_and_never_deletes() {
+        let (_dir, root, repos) = contoso_workspace();
+        record_created_projects(&root, &["Contoso-Web".into(), "Contoso-Api".into()]).unwrap();
+        // Contoso-Web has a canonical twin, Contoso-Api does not.
+        let sonar = sonar_with_projects(&["Contoso-Web", "ax-Web", "Contoso-Api"]).await;
+        let config = SonarBootstrapConfig::from_sonar(&sonar.host, "ax", "SONAR_TOKEN");
+        let log = migrate_legacy_sonar_projects(&config, &root, &repos, None, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            mutating(&sonar.requests()),
+            vec!["POST /api/projects/update_key?from=Contoso-Api&to=ax-Api".to_string()]
+        );
+        assert!(
+            log.iter()
+                .any(|l| l.contains("Contoso-Web") && l.contains("left in place")),
+            "{log:?}"
+        );
+        let created = created_projects(&root);
+        assert!(created.contains("ax-Api") && !created.contains("Contoso-Api"));
+        assert!(created.contains("Contoso-Web"));
+    }
+
+    #[tokio::test]
+    async fn migrate_legacy_keys_adopts_and_renames_legacy_projects_without_a_record() {
+        let (_dir, root, repos) = contoso_workspace();
+        assert!(!created_projects_path(&root).exists());
+        let sonar = sonar_with_projects(&["Contoso-Web", "ax-Web", "Contoso-Api"]).await;
+        let mut config = SonarBootstrapConfig::from_sonar(&sonar.host, "ax", "SONAR_TOKEN");
+        config.migrate_legacy_keys = true;
+        let log = migrate_legacy_sonar_projects(&config, &root, &repos, None, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            mutating(&sonar.requests()),
+            vec!["POST /api/projects/update_key?from=Contoso-Api&to=ax-Api".to_string()]
+        );
+        assert!(
+            log.iter()
+                .any(|l| l.contains("Contoso-Web") && l.contains("left in place")),
+            "{log:?}"
+        );
+        let created = created_projects(&root);
+        assert!(created.contains("ax-Api") && !created.contains("Contoso-Api"));
+        assert!(created.contains("Contoso-Web"), "{created:?}");
+    }
+
+    #[test]
+    fn migrate_legacy_keys_is_off_unless_the_config_sets_it() {
+        let base = serde_json::json!({
+            "enabled": true,
+            "host": "http://localhost:9000",
+            "project_key": "ax",
+            "token_env": "SONAR_TOKEN",
+            "scanner_path": "sonar-scanner",
+            "podman_container": null
+        });
+        let cfg: crate::sonar::SonarConfig = serde_json::from_value(base.clone()).unwrap();
+        assert!(!cfg.migrate_legacy_keys);
+        let root = Path::new("/tmp/x");
+        assert!(!SonarBootstrapConfig::resolve_for_project(&cfg, root).migrate_legacy_keys);
+        let mut on = base;
+        on["migrate_legacy_keys"] = true.into();
+        let cfg: crate::sonar::SonarConfig = serde_json::from_value(on).unwrap();
+        assert!(SonarBootstrapConfig::resolve_for_project(&cfg, root).migrate_legacy_keys);
+    }
+
+    #[test]
+    fn persist_token_writes_the_file_and_leaves_the_process_environment_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let name = "AX_QUALITY_TEST_PERSIST_TOKEN_ENV";
+        let (path, _) = persist_token(dir.path(), name, "squ_secret").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "squ_secret\n");
+        assert_eq!(
+            read_sonar_token(dir.path(), name).as_deref(),
+            Some("squ_secret")
+        );
+        assert!(
+            std::env::var_os(name).is_none(),
+            "the token must not be exported into this process"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persist_token_file_is_readable_by_the_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = sonar_token_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // An older token file with wide permissions is tightened too.
+        std::fs::write(&path, "old\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        persist_token(dir.path(), "AX_QUALITY_TEST_PERSIST_MODE", "squ_new").unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "squ_new\n");
+    }
+
+    #[test]
+    fn user_env_command_refuses_names_that_are_not_plain_identifiers() {
+        for bad in [
+            "X','1','User'); Start-Process calc; #",
+            "",
+            "1ABC",
+            "A B",
+            "A-B",
+            "A$B",
+        ] {
+            assert!(user_env_command(bad, "v").is_none(), "{bad:?}");
+        }
+        assert!(user_env_command("SONAR_TOKEN", "v").is_some());
+        assert!(user_env_command("_sonar1", "v").is_some());
+    }
+
+    #[test]
+    fn user_env_command_keeps_name_and_value_off_the_command_line() {
+        let cmd = user_env_command("SONAR_TOKEN", "squ_it's'secret").unwrap();
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            args.iter()
+                .all(|a| !a.contains("squ_") && !a.contains("SONAR_TOKEN")),
+            "{args:?}"
+        );
+        let envs: HashMap<String, String> = cmd
+            .get_envs()
+            .filter_map(|(k, v)| {
+                Some((
+                    k.to_string_lossy().into_owned(),
+                    v?.to_string_lossy().into_owned(),
+                ))
+            })
+            .collect();
+        assert_eq!(
+            envs.get(USER_ENV_NAME_VAR).map(String::as_str),
+            Some("SONAR_TOKEN")
+        );
+        assert_eq!(
+            envs.get(USER_ENV_VALUE_VAR).map(String::as_str),
+            Some("squ_it's'secret")
+        );
+    }
 
     #[cfg(windows)]
     #[test]
@@ -1331,5 +1867,23 @@ mod tests {
         assert!(token_already_exists(
             "Failed to generate SonarQube token: HTTP 400 {\"errors\":[{\"msg\":\"already exists\"}]}"
         ));
+    }
+
+    #[test]
+    fn encode_query_percent_encodes_utf8_bytes() {
+        assert_eq!(encode_query("Caf\u{e9}-Portal"), "Caf%C3%A9-Portal");
+        assert_eq!(encode_query("\u{20ac} a&b"), "%E2%82%AC%20a%26b");
+    }
+
+    #[test]
+    fn token_urls_encode_the_token_name() {
+        assert_eq!(
+            token_url("http://h", "generate", "ax scan&x"),
+            "http://h/api/user_tokens/generate?name=ax%20scan%26x"
+        );
+        assert_eq!(
+            token_url("http://h", "revoke", "\u{e9}"),
+            "http://h/api/user_tokens/revoke?name=%C3%A9"
+        );
     }
 }

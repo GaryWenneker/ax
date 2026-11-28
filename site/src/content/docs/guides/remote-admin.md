@@ -1,13 +1,17 @@
 ---
-title: Remote admin (ax-admin)
-description: A standalone application with the Command Center look that manages any Ax, including the headless build, through its remote MCP endpoint.
+title: ax-admin
+description: The visual interface of Ax. A separate application that looks after any Ax, including the headless build, through its remote MCP endpoint.
 ---
 
-`ax-admin` is a separate application for looking after an Ax that runs somewhere else: in a container, in a sandbox or on another computer. It has the look of the Command Center, but it is not part of `ax` and does not need `ax` installed.
+`ax-admin` is the interface of Ax. `ax` itself is headless: the CLI and the MCP server. `ax-admin` is the application you open to look at an Ax and to look after it: status, search, symbols, insights, rules, skills, memory, sessions, usage and the MCP call log.
 
-The headless Linux build has no `ax web`. `ax-admin` is the interface for it, and it works the same against a full Ax.
+It is a separate application. It runs on your own computer and connects to an Ax through that Ax's [remote MCP](/guides/remote-mcp/) address, wherever it runs: in a container, in a sandbox, on a server or on another computer. It is not part of `ax` and does not need `ax` installed. One `ax-admin` can hold connections to several environments.
 
-![The Operations page of ax-admin connected to a headless Ax](/screenshots/ax-admin-operations.png)
+:::note[Direction]
+`ax-admin` becomes the only visual interface of Ax. The Command Center (`ax web`) and the desktop client are being phased out together with the full ax. `ax-admin` works the same against the [headless build](/guides/headless-linux/) and against a full ax. See [Headless ax and ax-admin](/guides/phase-out/) for what moves where.
+:::
+
+![ax-admin connected to a headless Ax, with sync and rebuild index](/screenshots/ax-admin-operations.png)
 
 ## How it connects
 
@@ -97,11 +101,11 @@ Paste a key whose SHA-256 hash is listed under `api_keys` in the server's remote
 
 ### Browser sign-in
 
-Choose **Browser sign-in**, enter the public client ID of the environment and select **Sign in with browser**. Finish the sign-in in the tab that opens; `ax-admin` continues when access is granted, and saves the connection only then. **Paste connection details** accepts the text that **Copy connection details** produces in a Command Center and fills in the address and client ID.
+Choose **Browser sign-in**, enter the public client ID of the environment and select **Sign in with browser**. Finish the sign-in in the tab that opens; `ax-admin` continues when access is granted, and saves the connection only then. **Paste connection details** fills in the address and client ID from connection details that the owner of the environment sent you. That text is produced by **Copy connection details** in the Command Center of a full ax; with a headless Ax, type the address and client ID yourself.
 
 Tick **Also ask for admin access** when your account has the admin grant and you want the management pages; it asks for write access as well. An environment whose authorization server does not issue the admin scope refuses such a sign-in, so leave it off there.
 
-Browser sign-in needs an `https://` address. It uses the same sign-in as `ax mcp remote login` and shares its stored tokens for that address: removing the connection in `ax-admin` also signs out `ax mcp remote` for that address on this computer. Closing or cancelling the sign-in before it finishes stores nothing.
+Browser sign-in needs an `https://` address. It uses the same sign-in as `ax mcp remote login` and shares its stored tokens for that address. Removing the connection in `ax-admin`, or a sign-in whose check fails, removes and revokes those tokens only when nothing else uses them: when `ax mcp remote login` or the Command Center also signed in to that address (or the tokens were stored by a version that did not record who uses them), they stay and `ax mcp remote` keeps working. `ax mcp remote logout` still signs the address out for everyone. Closing or cancelling the sign-in before it finishes stores nothing.
 
 ## Several environments
 
@@ -111,7 +115,7 @@ The **Connections** button in the title bar is always visible. It lists the save
 - **Switch to this**: make another environment the one you are looking at. The pages reload from that server.
 - **Test**: check a saved connection without retyping its key.
 - **Edit**: change the name, the address or the key. A changed key is checked before it replaces the saved one. A saved key is only ever sent to the address it was saved for, so another address needs its key entered again.
-- **Remove**: delete the connection and its stored credential from this computer. The environment itself is not changed.
+- **Remove**: delete the connection and its stored credential from this computer. A browser sign-in that `ax mcp remote` also uses stays for it. The environment itself is not changed.
 
 ![The Connections panel with saved environments](/screenshots/ax-admin-connections.png)
 
@@ -134,6 +138,8 @@ ax-admin connections
 | Names, addresses, which one is active | `~/.ax-admin/connections.json` (readable by you only). Set `AX_ADMIN_HOME` to use another folder |
 | API keys | The operating system's credential store: macOS Keychain, Windows Credential Manager or the Linux Secret Service |
 | Browser sign-in tokens | The same credential store, shared with `ax mcp remote login` |
+
+Several ax-admin processes may share one folder (for example two `--port` values): each change is made to `connections.json` as it is on disk at that moment, under a lock, so one process never drops a connection another one saved.
 
 A key is never written to a file, a log or the browser, and the interface never shows a saved key. There is no plaintext fallback: when the credential store is unavailable, saving a connection fails with a message.
 
@@ -181,9 +187,9 @@ For an external OAuth provider, list the subject under `admin_subjects` of the p
 ## Limits
 
 - `ax-admin` cannot change server settings, edit rules or skills in an editor, edit specifications, show the graph canvas, or run ship, LSP or a shell command on the server. The remote MCP server offers no tools for those.
-- The built-in authorization server of a host set up from a Command Center issues context and write access only. Use an API key, or an external OAuth provider, for admin access.
+- The built-in authorization server of Ax issues context and write access only, and its sign-in requests are approved in the Command Center of a full ax. Use an API key, or an external OAuth provider, for admin access. On a headless Ax these two are also the only ways to sign in.
 - `ax mcp remote serve` listens on `127.0.0.1` unless it is started with `--bind`. Making it reachable over HTTPS stays part of deploying the environment: a tunnel or ingress in front of it, or one of the [hosted deployments](/guides/headless-linux/#deploy-to-the-cloud), whose address and `AX_API_KEY` are what you enter in `ax-admin`. A static host such as Netlify cannot run Ax.
-- Management calls wait up to ten minutes for the server; other calls just over two minutes. An index run that takes longer keeps running on the server: `ax-admin` then says the server is still working on it, and Status and Logging show when it is done.
+- Management calls wait up to ten minutes for the server; other calls just over two minutes. A management tool is one the server lists with the `ax:admin` scope; the same mark decides when the title bar says **admin access**. An index run that takes longer keeps running on the server: `ax-admin` then says the server is still working on it, and Status and Logging show when it is done.
 - While an index operation runs, other calls to the same project are told that the project is being re-indexed and to try again; they do not queue. One index operation runs at a time per project, and a server accepts a few of them at once across all projects.
 - A browser sign-in that finishes while no page is waiting for it (the page was closed or reloaded) is dropped after a minute, together with its tokens. Start the sign-in again from the form.
 - Reload policy re-imports the project's own policy files. Restoring removed rules and the policy history are not available remotely.

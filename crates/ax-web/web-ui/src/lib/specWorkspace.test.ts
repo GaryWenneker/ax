@@ -124,6 +124,20 @@ test('search on a spec keeps all its plans', () => {
   assert.deepEqual(found.specs[0].plans.map((plan) => plan.id), ['a', 'b']);
 });
 
+test('search on a spec still applies the status filter to its plans', () => {
+  const base = workspaceFromHierarchy([{ specId: 'billing', plans: [{ planId: 'a', latestVersion: 1 }, { planId: 'b', latestVersion: 1 }] }]);
+  const status: Record<string, string> = { billing: 'approved', a: 'approved', b: 'draft' };
+  const withStatus = <T extends { id: string }>(doc: T) => ({ ...doc, status: status[doc.id] });
+  const ws = {
+    specs: base.specs.map((spec) => ({ doc: withStatus(spec.doc), plans: spec.plans.map(withStatus) })),
+    needsReview: [],
+    all: base.all.map(withStatus),
+  };
+  const found = filterWorkspace(ws, 'billing', 'approved');
+  assert.deepEqual(found.specs.map((spec) => spec.doc.id), ['billing']);
+  assert.deepEqual(found.specs[0].plans.map((plan) => plan.id), ['a']);
+});
+
 test('search matches the path and filters Needs review and all documents', () => {
   const ws = workspaceFromLegacy([legacy('alpha', 'plan', { path: 'docs/specs/vault-folders/SPEC.md' }), legacy('beta', 'plan')]);
   const found = filterWorkspace(ws, 'vault-folders', 'all');

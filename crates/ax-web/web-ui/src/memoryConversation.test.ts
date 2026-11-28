@@ -53,3 +53,9 @@ test('hue is a stable integer in 0..359 derived from the key', () => {
   assert.ok(Number.isInteger(l.hue) && l.hue >= 0 && l.hue < 360, String(l.hue));
   assert.equal(conversationLinks([turn('ffffffffffff'), turn('ffffffffffff')])[0]?.hue, l.hue);
 });
+
+test('the list reads the conversation id with the same rules as the detail view', () => {
+  assert.equal(conversationKey('Fix\n\nConversation: A42E06CA4A33'), 'a42e06ca4a33');
+  assert.equal(conversationKey('Fix\r\n\r\nConversation:  0a1b2c3d4e5f\r\n'), '0a1b2c3d4e5f');
+  assert.equal(conversationKey('Fix\n\nOutcome: quoted\nConversation: 0a1b2c3d4e5f'), null);
+});

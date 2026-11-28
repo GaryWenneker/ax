@@ -17,13 +17,14 @@ pub mod policy_session;
 pub mod ppid_watchdog;
 pub mod proxy;
 pub mod proxy_pump;
-pub mod query_pool;
 pub mod remote;
 pub mod replication_credentials;
 pub mod request_context;
 pub mod server;
 pub mod smart_output;
 pub mod staleness;
+#[cfg(test)]
+pub(crate) mod test_env;
 pub mod tool_filter;
 pub mod tools;
 pub mod transport;

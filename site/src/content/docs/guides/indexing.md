@@ -22,15 +22,17 @@ ax sync            # incremental — only changed files
 
 `sync` is fast because it only reparses what changed — it's what the file watcher runs for you on every edit (see [Stay fresh automatically](#stay-fresh-automatically)). Reference resolution is scoped the same way: only unresolved references from changed files are processed, not the entire project backlog. A full `ax index` still resolves everything. You rarely need to run `ax sync` by hand.
 
+The project-wide passes are scoped too. An incremental sync rescans Markdown and other docs only when a changed file is a doc, and API contracts only when a changed file is a `.proto`, `.graphql`/`.gql`, YAML or JSON file. Links from docs to code in a re-parsed file are kept. A new symbol that an unchanged doc already mentions is linked when that doc changes or on the next full `ax index`. An incremental sync runs SQLite `PRAGMA optimize` instead of a full `ANALYZE`, and the resolution totals in `ax status` come from the last full index.
+
 ## Stay fresh automatically
 
 **You don't need to run `ax sync` by hand during an agent session.** When your agent (Claude Code, Cursor, Codex, opencode, Hermes, Gemini, Antigravity, Kiro) launches `ax serve --mcp`, three layers cooperate to keep the index in step with your code — and to never give the agent a quiet wrong answer in the small window between an edit and the next sync.
 
 ### 1. File watcher with debounced auto-sync (always on)
 
-`serve --mcp`, writable `ax web`, Remote MCP, and standalone Primary/Replica servers start the same Ax Sync file watcher automatically. Web watches the active workspace and stops its old watcher when you switch projects. Standalone and Remote MCP servers watch only their explicitly registered projects. Read-only/shared web sessions do not start a source-sync writer.
+`ax serve --mcp` and Remote MCP (`ax mcp remote serve`) start the same Ax Sync file watcher automatically. A Remote MCP server watches only its explicitly registered projects.
 
-The native watcher (FSEvents on macOS, inotify on Linux, ReadDirectoryChangesW on Windows) captures source-file create / modify / delete events. A debounce timer collapses bursts of edits into a single sync. Startup also reconciles edits made while the service was stopped. A configured detached Primary or Replica keeps its own watcher running after web closes or MCP refreshes; no separate `ax sync` command is required.
+The native watcher (FSEvents on macOS, inotify on Linux, ReadDirectoryChangesW on Windows) captures source-file create / modify / delete events. A debounce timer collapses bursts of edits into a single sync. Startup also reconciles edits made while the service was stopped; no separate `ax sync` command is required.
 
 ```
 agent writes src/Widget.ts
@@ -41,6 +43,8 @@ agent writes src/Widget.ts
 ```
 
 **Tunable**: `AX_WATCH_DEBOUNCE_MS` overrides the default 2000ms, clamped to `[100ms, 60s]`. Useful when a build step or formatter writes many files in a tight burst — bump it to `5000` or `10000` so the watcher coalesces them into one sync.
+
+If an auto-sync fails, for example because another process holds the index lock, its files stay pending and are retried after one more debounce window. A file saved again while its sync is running stays pending and is synced again.
 
 ### 2. Per-file staleness banner — covers the debounce window
 
@@ -63,7 +67,9 @@ Pending files **not** referenced by the response surface as a small footer inste
 
 ### 3. Connect-time catch-up — covers gaps when the MCP server wasn't running
 
-When your editor / agent (re)connects to the MCP server, ax runs a fast filesystem-based reconciliation (a `(size, mtime)` stat pre-filter, then a content hash on the rest) before answering the first query. So files changed while no MCP server was running — a `git pull` from the terminal, an edit from another editor, an agent that finished and exited — are caught up automatically on the next session's first tool call.
+When your editor / agent (re)connects to the MCP server, the first tool call starts a fast filesystem-based reconciliation (a `(size, mtime)` stat pre-filter, then a content hash on the rest) in the background, and fills an empty memory vault from git history. The first call is answered right away and does not wait for it. So files changed while no MCP server was running — a `git pull` from the terminal, an edit from another editor, an agent that finished and exited — are caught up automatically at the start of the next session.
+
+While that catch-up runs, `ax_status` ends with `### Catch-up sync: in progress` and its JSON has `"catchUp": "running"`. It runs once per project in a server process, however many sessions connect. An `ax_sync` or `ax_index` call made while it runs waits for it to finish first. Remote MCP sessions start no catch-up of their own: the remote server syncs each registered project once when it starts and then keeps it current with its file watcher.
 
 ### Verify what the watcher sees
 
@@ -96,7 +102,7 @@ ax status
 
 Reports node/edge/file counts, the active SQLite backend, and the journal mode. In an agent session, the MCP-side `ax_status` additionally surfaces the `### Pending sync:` block described above.
 
-![Graph Stats — index metrics, language distribution, and database size](/screenshots/cc-stats-dark.png)
+In [ax-admin](/guides/remote-admin/), the **Status** page shows the index statistics, freshness and cache counts of the connected environment. With the admin grant, its **Operations** page runs a sync or a full index rebuild there.
 
 ## Documentation files
 
@@ -109,10 +115,10 @@ In addition to source code, ax indexes documentation files as `Doc` nodes:
 | PDF | `.pdf` | Opaque — presence only |
 | Other opaque | `.csv`, `.tsv`, `.rtf`, `.txt`, `.tex`, `.epub`, `.json`, `.xml`, `.html`, `.htm` | Opaque — presence only |
 
-Doc counts by extension appear automatically in every `ax_preflight` response (`<ax_index>` block) and in `ax status` / `ax_status` output (`stats.docsByExtension` in JSON). The Command Center **Stats** and **Graph** pages surface doc nodes alongside code (doc nodes render as squares on the Graph).
+Doc counts by extension appear automatically in every `ax_preflight` response (`<ax_index>` block) and in `ax status` / `ax_status` output (`stats.docsByExtension` in JSON). The HTML file from `ax export graph-html` draws doc nodes as squares next to the code.
 
 ## What gets indexed (source code)
 
-![Files — indexed source folder and language/path filters](/screenshots/cc-files-dark.png)
-
 Every file whose extension maps to a [supported language](/reference/languages/), minus dependency/build directories excluded by default (`node_modules`, `vendor`, `dist`, …), anything your `.gitignore` excludes, and files over 1 MB. See [Configuration](/getting-started/configuration/).
+
+`ax files` lists the indexed files. In [ax-admin](/guides/remote-admin/), the **Files** page shows them for the connected environment; it needs the admin grant. The [headless build](/guides/headless-linux/#languages) links only the core grammars by default: files in the other languages are listed but get no symbols.

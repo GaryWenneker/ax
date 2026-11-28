@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useEffect } from 'react';
+import { useMouseDragResize } from '../hooks/useMouseDragResize';
 import {
   POLICY_LIST_DEFAULT,
   POLICY_LIST_MAX,
@@ -74,42 +75,13 @@ function ResizeGrip() {
 
 /** Drag handle between rules/skills ID list and the detail workspace. */
 export function PolicyListResizeHandle() {
-  const dragging = useRef(false);
-  const startX = useRef(0);
-  const startW = useRef(POLICY_LIST_DEFAULT);
-
   useEffect(() => {
     initPolicyListWidth();
   }, []);
 
-  const onMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    dragging.current = true;
-    startX.current = e.clientX;
-    startW.current = loadPolicyListWidth();
-    document.body.classList.add('policy-list-resizing');
-  }, []);
-
-  useEffect(() => {
-    function onMove(e: MouseEvent) {
-      if (!dragging.current) return;
-      applyPolicyListWidth(startW.current + (e.clientX - startX.current));
-    }
-
-    function onUp() {
-      if (!dragging.current) return;
-      dragging.current = false;
-      document.body.classList.remove('policy-list-resizing');
-    }
-
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      document.body.classList.remove('policy-list-resizing');
-    };
-  }, []);
+  const onMouseDown = useMouseDragResize('policy-list-resizing', loadPolicyListWidth, (startW, dx) => {
+    applyPolicyListWidth(startW + dx);
+  });
 
   return (
     <div
@@ -131,42 +103,13 @@ export function PolicyListResizeHandle() {
 
 /** Drag handle between metadata column and markdown panel. */
 export default function PolicyMetaResizeHandle() {
-  const dragging = useRef(false);
-  const startX = useRef(0);
-  const startW = useRef(POLICY_META_DEFAULT);
-
   useEffect(() => {
     initPolicyMetaWidth();
   }, []);
 
-  const onMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    dragging.current = true;
-    startX.current = e.clientX;
-    startW.current = loadPolicyMetaWidth();
-    document.body.classList.add('policy-meta-resizing');
-  }, []);
-
-  useEffect(() => {
-    function onMove(e: MouseEvent) {
-      if (!dragging.current) return;
-      applyPolicyMetaWidth(startW.current + (e.clientX - startX.current));
-    }
-
-    function onUp() {
-      if (!dragging.current) return;
-      dragging.current = false;
-      document.body.classList.remove('policy-meta-resizing');
-    }
-
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      document.body.classList.remove('policy-meta-resizing');
-    };
-  }, []);
+  const onMouseDown = useMouseDragResize('policy-meta-resizing', loadPolicyMetaWidth, (startW, dx) => {
+    applyPolicyMetaWidth(startW + dx);
+  });
 
   return (
     <div
@@ -188,50 +131,18 @@ export default function PolicyMetaResizeHandle() {
 
 /** Vertical drag handle between markdown source and live preview. */
 export function MdPreviewResizeHandle({ containerRef }: { containerRef: React.RefObject<HTMLElement | null> }) {
-  const dragging = useRef(false);
-  const startX = useRef(0);
-  const startPct = useRef(MD_EDIT_PCT_DEFAULT);
-
   useEffect(() => {
     applyMdEditPct(loadMdEditPct(), containerRef.current);
   }, [containerRef]);
 
-  const onMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      dragging.current = true;
-      startX.current = e.clientX;
-      startPct.current = loadMdEditPct();
-      document.body.classList.add('md-split-resizing');
-    },
-    [],
-  );
-
-  useEffect(() => {
-    function onMove(e: MouseEvent) {
-      if (!dragging.current) return;
-      const el = containerRef.current;
-      if (!el) return;
-      const width = el.getBoundingClientRect().width;
-      if (width <= 0) return;
-      const deltaPct = ((e.clientX - startX.current) / width) * 100;
-      applyMdEditPct(startPct.current + deltaPct, el);
-    }
-
-    function onUp() {
-      if (!dragging.current) return;
-      dragging.current = false;
-      document.body.classList.remove('md-split-resizing');
-    }
-
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      document.body.classList.remove('md-split-resizing');
-    };
-  }, [containerRef]);
+  const onMouseDown = useMouseDragResize('md-split-resizing', loadMdEditPct, (startPct, dx) => {
+    const el = containerRef.current;
+    if (!el) return;
+    const width = el.getBoundingClientRect().width;
+    if (width <= 0) return;
+    const deltaPct = (dx / width) * 100;
+    applyMdEditPct(startPct + deltaPct, el);
+  });
 
   return (
     <div

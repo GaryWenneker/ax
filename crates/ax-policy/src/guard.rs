@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use sqlx::SqlitePool;
 
@@ -35,14 +35,28 @@ pub async fn guard_operation_with_extra_skills(
         ))
     };
     let mut violations = Vec::new();
+    let mut warnings = Vec::new();
 
-    let rel = path
-        .strip_prefix(project_root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/");
+    let rel = match project_relative(project_root, path) {
+        Some(rel) => rel,
+        None => {
+            return Ok(GuardResult {
+                allowed: false,
+                violations: vec![GuardViolation {
+                    rule_id: OUTSIDE_PROJECT_RULE.into(),
+                    message: format!(
+                        "{} is outside the project {}; ax_guard only allows paths inside it",
+                        path.display(),
+                        project_root.display()
+                    ),
+                }],
+                warnings: Vec::new(),
+            });
+        }
+    };
     let rel_lc = rel.to_lowercase();
-    let require_skill_exempt = is_require_skill_exempt(&rel);
+    let require_skill_exempt =
+        is_require_skill_exempt(&rel, &crate::config::agents_dir_name(project_root));
 
     for rule in rules.iter() {
         if PolicyLevel::parse(&rule.level) != Some(PolicyLevel::Critical) {
@@ -51,8 +65,18 @@ pub async fn guard_operation_with_extra_skills(
         let id_lc = rule.id.to_lowercase();
         let tags: Vec<String> = rule.tags.iter().map(|t| t.to_lowercase()).collect();
 
-        if id_lc.contains("utf8") || id_lc.contains("encoding") || tags.iter().any(|t| t == "utf8")
-        {
+        // Built-in checks run for a rule that asks for them by tag (or names
+        // them in its id), never because a word merely appears inside the id.
+        let id_words: Vec<&str> = id_lc
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .collect();
+        let encoding_rule =
+            id_words.contains(&"utf8") || tags.iter().any(|t| t == "utf8" || t == "encoding");
+        let secrets_rule = id_words.iter().any(|w| *w == "secret" || *w == "secrets")
+            || tags.iter().any(|t| t == "secret" || t == "secrets");
+
+        if encoding_rule {
             if let Some(bytes) = content {
                 if has_utf8_bom(bytes) {
                     violations.push(GuardViolation {
@@ -68,7 +92,7 @@ pub async fn guard_operation_with_extra_skills(
             }
         }
 
-        if (id_lc.contains("secret") || tags.iter().any(|t| t == "secrets"))
+        if secrets_rule
             && is_sensitive_path(&rel_lc)
             && matches!(op, GuardOp::Write | GuardOp::Delete)
         {
@@ -90,7 +114,38 @@ pub async fn guard_operation_with_extra_skills(
         //                                             the rule's `globs` if it has any)
         //   guard: require-content: "requireAuth("    (scoped by the rule's `globs`)
         //   guard: require-skill: "old-coder"         (skill must exist, be approved, alwaysApply)
-        for directive in parse_guard_directives(&rule.body) {
+        //
+        // A directive or rule glob that does not parse blocks the write
+        // (outside policy files, which stay writable so the rule can be fixed):
+        // a CRITICAL rule must never be skipped without anyone noticing.
+        let (directives, mut problems) = parse_guard_directives(&rule.body);
+        if directives.iter().any(|d| {
+            matches!(
+                d,
+                GuardDirective::ForbidContent(_) | GuardDirective::RequireContent(_)
+            )
+        }) {
+            problems.extend(rule.globs.iter().filter_map(|g| {
+                build_glob(g)
+                    .err()
+                    .map(|e| format!("rule glob '{g}' is invalid: {e}"))
+            }));
+        }
+        for problem in problems {
+            let message = format!("CRITICAL rule {} has an invalid guard: {problem}", rule.id);
+            if require_skill_exempt {
+                warnings.push(message);
+            } else {
+                violations.push(GuardViolation {
+                    rule_id: rule.id.clone(),
+                    message: format!("{message}; fix the rule before writing"),
+                });
+            }
+        }
+        // Content that is not valid UTF-8 is still checked, with invalid
+        // bytes replaced, so one stray byte cannot hide a forbidden pattern.
+        let text = content.map(String::from_utf8_lossy);
+        for directive in directives {
             match directive {
                 GuardDirective::ForbidPath(glob) => {
                     if path_matches_glob(&glob, &rel) {
@@ -112,8 +167,8 @@ pub async fn guard_operation_with_extra_skills(
                     if op == GuardOp::Write
                         && (rule.globs.is_empty() || any_glob_matches(&rule.globs, &rel))
                     {
-                        if let Some(text) = content.and_then(|b| std::str::from_utf8(b).ok()) {
-                            if matcher.is_match(text) {
+                        match text.as_deref() {
+                            Some(text) if matcher.is_match(text) => {
                                 violations.push(GuardViolation {
                                     rule_id: rule.id.clone(),
                                     message: format!(
@@ -122,6 +177,8 @@ pub async fn guard_operation_with_extra_skills(
                                     ),
                                 });
                             }
+                            Some(_) => {}
+                            None => warnings.push(content_not_checked(&rule.id)),
                         }
                     }
                 }
@@ -130,8 +187,8 @@ pub async fn guard_operation_with_extra_skills(
                         && !rule.globs.is_empty()
                         && any_glob_matches(&rule.globs, &rel)
                     {
-                        if let Some(text) = content.and_then(|b| std::str::from_utf8(b).ok()) {
-                            if !matcher.is_match(text) {
+                        match text.as_deref() {
+                            Some(text) if !matcher.is_match(text) => {
                                 violations.push(GuardViolation {
                                     rule_id: rule.id.clone(),
                                     message: format!(
@@ -140,6 +197,8 @@ pub async fn guard_operation_with_extra_skills(
                                     ),
                                 });
                             }
+                            Some(_) => {}
+                            None => warnings.push(content_not_checked(&rule.id)),
                         }
                     }
                 }
@@ -164,6 +223,7 @@ pub async fn guard_operation_with_extra_skills(
     Ok(GuardResult {
         allowed: violations.is_empty(),
         violations,
+        warnings,
     })
 }
 
@@ -187,16 +247,17 @@ enum GuardMatcher {
 }
 
 impl GuardMatcher {
-    fn parse(raw: &str) -> Option<Self> {
+    /// `Ok(None)` for an empty value; `Err` for a `/regex/` that does not compile.
+    fn parse(raw: &str) -> Result<Option<Self>, String> {
         let raw = raw.trim();
         if raw.len() >= 2 && raw.starts_with('/') && raw.ends_with('/') {
             regex::Regex::new(&raw[1..raw.len() - 1])
-                .ok()
-                .map(GuardMatcher::Regex)
+                .map(|re| Some(GuardMatcher::Regex(re)))
+                .map_err(|e| format!("regex {raw} is invalid: {e}"))
         } else if !raw.is_empty() {
-            Some(GuardMatcher::Substring(raw.to_string()))
+            Ok(Some(GuardMatcher::Substring(raw.to_string())))
         } else {
-            None
+            Ok(None)
         }
     }
 
@@ -226,8 +287,11 @@ const REQUIRE_SKILL_PREFIX: &str = "require-skill:";
 /// Scan a rule body for `guard: <keyword>: "<value>"` lines. Matching is
 /// intentionally narrow (exact `guard:` prefix + a known keyword) so ordinary
 /// prose mentioning the word "guard" cannot accidentally opt a rule in.
-fn parse_guard_directives(body: &str) -> Vec<GuardDirective> {
+/// Returns the directives that parse and a message for each one that does not
+/// (an invalid regex or glob).
+fn parse_guard_directives(body: &str) -> (Vec<GuardDirective>, Vec<String>) {
     let mut out = Vec::new();
+    let mut problems = Vec::new();
     for raw_line in body.lines() {
         let line = raw_line
             .trim()
@@ -242,39 +306,43 @@ fn parse_guard_directives(body: &str) -> Vec<GuardDirective> {
         let value_offset = line.len() - after_guard.len();
         let rest = &line[value_offset..];
 
-        let (prefix_len, build): (usize, fn(String) -> Option<GuardDirective>) =
-            if after_guard.starts_with(FORBID_PATH_PREFIX) {
-                (FORBID_PATH_PREFIX.len(), |v| {
-                    Some(GuardDirective::ForbidPath(v))
-                })
-            } else if after_guard.starts_with(FORBID_CONTENT_PREFIX) {
-                (FORBID_CONTENT_PREFIX.len(), |v| {
-                    GuardMatcher::parse(&v).map(GuardDirective::ForbidContent)
-                })
-            } else if after_guard.starts_with(REQUIRE_CONTENT_PREFIX) {
-                (REQUIRE_CONTENT_PREFIX.len(), |v| {
-                    GuardMatcher::parse(&v).map(GuardDirective::RequireContent)
-                })
-            } else if after_guard.starts_with(REQUIRE_SKILL_PREFIX) {
-                (REQUIRE_SKILL_PREFIX.len(), |v| {
-                    let name = v.trim();
-                    if name.is_empty() {
-                        None
-                    } else {
-                        Some(GuardDirective::RequireSkill(name.to_string()))
-                    }
-                })
-            } else {
-                continue;
-            };
+        type Build = fn(String) -> Result<Option<GuardDirective>, String>;
+        let (prefix_len, build): (usize, Build) = if after_guard.starts_with(FORBID_PATH_PREFIX) {
+            (FORBID_PATH_PREFIX.len(), |v| {
+                build_glob(&v)
+                    .map(|_| Some(GuardDirective::ForbidPath(v.clone())))
+                    .map_err(|e| format!("forbid-path glob '{v}' is invalid: {e}"))
+            })
+        } else if after_guard.starts_with(FORBID_CONTENT_PREFIX) {
+            (FORBID_CONTENT_PREFIX.len(), |v| {
+                GuardMatcher::parse(&v).map(|m| m.map(GuardDirective::ForbidContent))
+            })
+        } else if after_guard.starts_with(REQUIRE_CONTENT_PREFIX) {
+            (REQUIRE_CONTENT_PREFIX.len(), |v| {
+                GuardMatcher::parse(&v).map(|m| m.map(GuardDirective::RequireContent))
+            })
+        } else if after_guard.starts_with(REQUIRE_SKILL_PREFIX) {
+            (REQUIRE_SKILL_PREFIX.len(), |v| {
+                let name = v.trim();
+                Ok((!name.is_empty()).then(|| GuardDirective::RequireSkill(name.to_string())))
+            })
+        } else {
+            continue;
+        };
 
         if let Some(value) = extract_quoted(&rest[prefix_len..]) {
-            if let Some(directive) = build(value) {
-                out.push(directive);
+            match build(value) {
+                Ok(Some(directive)) => out.push(directive),
+                Ok(None) => {}
+                Err(problem) => problems.push(problem),
             }
         }
     }
-    out
+    (out, problems)
+}
+
+fn content_not_checked(rule_id: &str) -> String {
+    format!("content not checked for rule {rule_id}: the write came without content")
 }
 
 /// Pull the contents out of a `"…"` or `'…'` wrapped value.
@@ -290,8 +358,90 @@ fn extract_quoted(s: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
+/// `rule_id` of the violation for a path that resolves outside the project.
+const OUTSIDE_PROJECT_RULE: &str = "outside-project";
+
+/// Glob matching follows the file system: case-insensitive on macOS and
+/// Windows, where `SRC/api` and `src/api` name the same folder.
+const CASE_INSENSITIVE_FS: bool = cfg!(any(target_os = "macos", windows));
+
+/// Removes `.` and resolves `..` without touching the file system.
+fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push(component);
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Resolves symbolic links in the deepest part of `path` that exists and
+/// keeps the rest as written, so a file that does not exist yet still gets
+/// the real location of its folder.
+fn resolve_existing_prefix(path: &Path) -> PathBuf {
+    let mut existing = path.to_path_buf();
+    let mut rest = Vec::new();
+    loop {
+        if let Ok(real) = existing.canonicalize() {
+            let mut out = real;
+            for part in rest.iter().rev() {
+                out.push(part);
+            }
+            return out;
+        }
+        match (
+            existing.file_name().map(|n| n.to_os_string()),
+            existing.parent(),
+        ) {
+            (Some(name), Some(parent)) => {
+                rest.push(name);
+                existing = parent.to_path_buf();
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
+}
+
+/// The project-relative spelling of `path` with `/` separators, after `.`,
+/// `..` and symbolic links are resolved. A relative `path` is taken relative
+/// to the project root. `None` when the path ends up outside the project.
+fn project_relative(project_root: &Path, path: &Path) -> Option<String> {
+    let absolute_root = std::path::absolute(project_root).unwrap_or(project_root.to_path_buf());
+    let root = lexical_normalize(&absolute_root);
+    let joined = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    };
+    let lexical = lexical_normalize(&joined);
+    let rel = match (root.canonicalize(), lexical.starts_with(&root)) {
+        (Ok(real_root), _) => resolve_existing_prefix(&lexical)
+            .strip_prefix(&real_root)
+            .ok()?
+            .to_path_buf(),
+        (Err(_), true) => lexical.strip_prefix(&root).ok()?.to_path_buf(),
+        (Err(_), false) => return None,
+    };
+    Some(rel.to_string_lossy().replace('\\', "/"))
+}
+
+fn build_glob(pattern: &str) -> Result<globset::Glob, globset::Error> {
+    globset::GlobBuilder::new(pattern)
+        .case_insensitive(CASE_INSENSITIVE_FS)
+        .build()
+}
+
+/// An invalid pattern never matches here; [`guard_operation_with_extra_skills`]
+/// reports it as a broken guard before matching.
 fn path_matches_glob(pattern: &str, rel_path: &str) -> bool {
-    globset::Glob::new(pattern)
+    build_glob(pattern)
         .map(|g| g.compile_matcher().is_match(rel_path))
         .unwrap_or(false)
 }
@@ -300,14 +450,16 @@ fn any_glob_matches(patterns: &[String], rel_path: &str) -> bool {
     patterns.iter().any(|p| path_matches_glob(p, rel_path))
 }
 
-/// Policy and template paths stay writable so seed/index can repair a missing skill.
-fn is_require_skill_exempt(rel: &str) -> bool {
+/// Policy folders (the configured agents folder and the legacy `.ax/policy`)
+/// stay writable so seed/index can repair a missing skill.
+fn is_require_skill_exempt(rel: &str, agents_name: &str) -> bool {
     let r = rel.replace('\\', "/");
+    let agents_prefix = format!("{agents_name}/");
+    let nested_agents = format!("/{agents_name}/");
     r.starts_with(".ax/policy/")
         || r.contains("/.ax/policy/")
-        || r.starts_with(".agents/")
-        || r.contains("/.agents/")
-        || r.starts_with("crates/ax-policy/templates/")
+        || r.starts_with(&agents_prefix)
+        || r.contains(&nested_agents)
 }
 
 fn skill_satisfies_require(skills: &[crate::types::PolicySkillRow], name: &str) -> bool {
@@ -319,11 +471,58 @@ fn skill_satisfies_require(skills: &[crate::types::PolicySkillRow], name: &str) 
     })
 }
 
+/// Paths that usually hold secrets. Takes the lower-cased
+/// project-relative path:
+/// - `.env`, `.env.*` and names ending in `.env`;
+/// - private SSH keys and key or certificate stores;
+/// - names with `secrets` or `credentials` as a whole word (split on `-`,
+///   `_` and `.`), such as `secrets.json`, `aws-credentials.json` or
+///   `.aws/credentials`, and any file inside a folder named exactly
+///   `secrets` or `credentials` (`config/credentials/prod.json`), unless the
+///   name ends in a source-code or documentation extension
+///   (`credentials_form.tsx`, `src/credentials/form.tsx`,
+///   `secrets-handling.md`).
+///
+/// Committed templates are not secrets: any of these names with an
+/// `example`, `sample`, `template` or `dist` part (`.env.example`,
+/// `example.env`, `aws-credentials.example.json`) stays writable.
 fn is_sensitive_path(rel_lc: &str) -> bool {
-    rel_lc.ends_with(".env")
-        || rel_lc.contains("credentials")
-        || rel_lc.ends_with(".pem")
-        || rel_lc.ends_with(".key")
+    const KEY_FILES: &[&str] = &["id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"];
+    const KEY_EXTENSIONS: &[&str] = &[".pem", ".key", ".p12", ".pfx", ".jks", ".keystore"];
+    const TEMPLATE_PARTS: &[&str] = &["example", "sample", "template", "dist"];
+    const SECRET_WORDS: &[&str] = &["secrets", "credentials"];
+    // Extensions of files that talk about secrets rather than hold them.
+    const CODE_OR_DOC_EXTENSIONS: &[&str] = &[
+        "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "go", "java", "kt", "rb", "php", "cs",
+        "c", "h", "cpp", "hpp", "swift", "scala", "vue", "svelte", "astro", "html", "css", "scss",
+        "md", "mdx", "rst", "adoc",
+    ];
+
+    let name = rel_lc.rsplit('/').next().unwrap_or(rel_lc);
+    if KEY_FILES.contains(&name) || KEY_EXTENSIONS.iter().any(|ext| name.ends_with(ext)) {
+        return true;
+    }
+    let parts: Vec<&str> = name.split('.').filter(|p| !p.is_empty()).collect();
+    if parts.iter().any(|p| TEMPLATE_PARTS.contains(p)) {
+        return false;
+    }
+    if name == ".env" || name.starts_with(".env.") || name.ends_with(".env") {
+        return true;
+    }
+    let extension = if parts.len() > 1 {
+        parts.last().copied()
+    } else {
+        None
+    };
+    if extension.is_some_and(|ext| CODE_OR_DOC_EXTENSIONS.contains(&ext)) {
+        return false;
+    }
+    let mut folders = rel_lc.split('/').rev().skip(1);
+    if folders.any(|folder| SECRET_WORDS.contains(&folder)) {
+        return true;
+    }
+    name.split(['-', '_', '.'])
+        .any(|word| SECRET_WORDS.contains(&word))
 }
 
 fn has_utf8_bom(bytes: &[u8]) -> bool {
@@ -351,48 +550,15 @@ fn has_null_padded_ascii(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::sqlite::SqlitePoolOptions;
     use tempfile::TempDir;
 
+    /// A database with the real migrations, so the tests see the real schema.
     async fn pool_with_utf8_rule() -> (TempDir, SqlitePool) {
         let dir = TempDir::new().unwrap();
-        let db_path = dir.path().join("test.db");
-        let pool = SqlitePoolOptions::new()
-            .connect_with(
-                sqlx::sqlite::SqliteConnectOptions::new()
-                    .filename(&db_path)
-                    .create_if_missing(true),
-            )
+        let db = ax_db::Database::open(&dir.path().join("test.db"))
             .await
             .unwrap();
-        sqlx::query(
-            "CREATE TABLE policy_rules (
-                id TEXT PRIMARY KEY, level TEXT, always_apply INTEGER, globs TEXT, triggers TEXT,
-                tags TEXT, priority INTEGER, body TEXT, source_path TEXT, content_hash TEXT, updated_at INTEGER,
-                enabled INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'approved',
-                scope TEXT NOT NULL DEFAULT 'project',
-                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT, skill_group TEXT,
-                properties TEXT NOT NULL DEFAULT '{}'
-            )",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "CREATE TABLE policy_skills (
-                name TEXT PRIMARY KEY, description TEXT, always_apply INTEGER NOT NULL DEFAULT 0,
-                triggers TEXT, tags TEXT,
-                priority INTEGER, context_task TEXT, body TEXT, source_path TEXT,
-                content_hash TEXT, updated_at INTEGER,
-                enabled INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'approved',
-                scope TEXT NOT NULL DEFAULT 'project',
-                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT, skill_group TEXT,
-                properties TEXT NOT NULL DEFAULT '{}'
-            )",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        let pool = db.pool().clone();
         sqlx::query(
             "INSERT INTO policy_rules (id, level, always_apply, globs, triggers, tags, priority, body, source_path, content_hash, updated_at, enabled, status, scope)
              VALUES ('utf8-no-bom','CRITICAL',1,'[]','[]','[\"utf8\"]',100,'','','',0,1,'approved','project')",
@@ -779,5 +945,328 @@ mod tests {
         .await
         .unwrap();
         assert!(result.allowed, "{:?}", result.violations);
+    }
+
+    #[tokio::test]
+    async fn require_skill_exempts_the_configured_agents_dir_only() {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        insert_rule(
+            &pool,
+            "old-coder-mandatory",
+            "[]",
+            "guard: require-skill: \"old-coder\"\n",
+        )
+        .await;
+        let root = dir.path();
+        std::fs::write(
+            root.join("ax.json"),
+            r#"{"policy":{"agentsDir":"team-policy"}}"#,
+        )
+        .unwrap();
+        let skill = root.join("team-policy/skills/old-coder/SKILL.md");
+        let result = guard_operation(&pool, root, &skill, GuardOp::Write, Some(b"---\n---\n"))
+            .await
+            .unwrap();
+        assert!(
+            result.allowed,
+            "the configured agents folder must stay writable: {:?}",
+            result.violations
+        );
+        // A repository-specific template folder is an ordinary project path.
+        let template = root.join("crates/ax-policy/templates/rules/x.mdc");
+        let result = guard_operation(&pool, root, &template, GuardOp::Write, Some(b"x"))
+            .await
+            .unwrap();
+        assert!(!result.allowed, "templates/ is not a policy folder");
+    }
+
+    async fn pool_with_auth_rule() -> (TempDir, SqlitePool) {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        insert_rule(
+            &pool,
+            "routes-need-auth",
+            "[\"src/api/**\"]",
+            "guard: require-content: \"requireAuth(\"",
+        )
+        .await;
+        std::fs::create_dir_all(dir.path().join("src/api")).unwrap();
+        std::fs::create_dir_all(dir.path().join("docs")).unwrap();
+        (dir, pool)
+    }
+
+    #[tokio::test]
+    async fn dot_dot_segments_do_not_escape_rule_globs() {
+        let (dir, pool) = pool_with_auth_rule().await;
+        let root = dir.path();
+        for spelled in [
+            root.join("docs/../src/api/users.ts"),
+            root.join("./src/./api/users.ts"),
+            std::path::PathBuf::from("src/api/users.ts"),
+        ] {
+            let result = guard_operation(
+                &pool,
+                root,
+                &spelled,
+                GuardOp::Write,
+                Some(b"export function handler() {}"),
+            )
+            .await
+            .unwrap();
+            assert!(!result.allowed, "{} must be guarded", spelled.display());
+        }
+    }
+
+    #[tokio::test]
+    async fn paths_outside_the_project_are_refused() {
+        let (dir, pool) = pool_with_auth_rule().await;
+        let root = dir.path().join("src");
+        let outside = root.join("../docs/../../elsewhere.ts");
+        let result = guard_operation(&pool, &root, &outside, GuardOp::Write, Some(b"x"))
+            .await
+            .unwrap();
+        assert!(!result.allowed);
+        assert!(
+            result.violations[0].message.contains("outside the project"),
+            "{:?}",
+            result.violations
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_link_out_of_the_project_is_refused() {
+        let (dir, pool) = pool_with_auth_rule().await;
+        let outside = TempDir::new().unwrap();
+        let project = dir.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        std::os::unix::fs::symlink(outside.path(), project.join("link")).unwrap();
+        let result = guard_operation(
+            &pool,
+            &project,
+            &project.join("link/x.ts"),
+            GuardOp::Write,
+            Some(b"x"),
+        )
+        .await
+        .unwrap();
+        assert!(!result.allowed, "{:?}", result.violations);
+    }
+
+    #[cfg(any(target_os = "macos", windows))]
+    #[tokio::test]
+    async fn globs_ignore_case_on_case_insensitive_platforms() {
+        let (dir, pool) = pool_with_auth_rule().await;
+        let root = dir.path();
+        let result = guard_operation(
+            &pool,
+            root,
+            &root.join("SRC/API/users.ts"),
+            GuardOp::Write,
+            Some(b"export function handler() {}"),
+        )
+        .await
+        .unwrap();
+        assert!(!result.allowed);
+    }
+
+    #[tokio::test]
+    async fn a_broken_regex_directive_blocks_instead_of_vanishing() {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        insert_rule(
+            &pool,
+            "no-secret-key",
+            "[]",
+            "guard: forbid-content: \"/sk-[A-Z{10,}/\"",
+        )
+        .await;
+        let root = dir.path();
+        let result = guard_operation(
+            &pool,
+            root,
+            &root.join("config.ts"),
+            GuardOp::Write,
+            Some(b"const key = 'sk-ABCDEFGHIJKL';"),
+        )
+        .await
+        .unwrap();
+        assert!(!result.allowed);
+        assert!(
+            result.violations[0].message.contains("invalid"),
+            "{:?}",
+            result.violations
+        );
+        // The rule file itself stays writable so the rule can be repaired.
+        let repair = guard_operation(
+            &pool,
+            root,
+            &root.join(".agents/rules/no-secret-key.mdc"),
+            GuardOp::Write,
+            Some(b"---\nid: no-secret-key\n---\n"),
+        )
+        .await
+        .unwrap();
+        assert!(repair.allowed, "{:?}", repair.violations);
+        assert!(!repair.warnings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_broken_glob_blocks_instead_of_never_matching() {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        insert_rule(&pool, "no-keys", "[]", "guard: forbid-path: \"keys/[abc\"").await;
+        insert_rule(
+            &pool,
+            "scoped",
+            "[\"src/[api\"]",
+            "guard: require-content: \"requireAuth(\"",
+        )
+        .await;
+        let root = dir.path();
+        let result = guard_operation(&pool, root, &root.join("a.rs"), GuardOp::Write, Some(b"x"))
+            .await
+            .unwrap();
+        let ids: Vec<&str> = result
+            .violations
+            .iter()
+            .map(|v| v.rule_id.as_str())
+            .collect();
+        assert!(ids.contains(&"no-keys"), "{ids:?}");
+        assert!(ids.contains(&"scoped"), "{ids:?}");
+    }
+
+    #[tokio::test]
+    async fn forbid_content_checks_content_that_is_not_utf8() {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        insert_rule(&pool, "no-eval", "[]", "guard: forbid-content: \"eval(\"").await;
+        let root = dir.path();
+        let result = guard_operation(
+            &pool,
+            root,
+            &root.join("app.js"),
+            GuardOp::Write,
+            Some(b"\xff eval(userInput)"),
+        )
+        .await
+        .unwrap();
+        assert!(!result.allowed);
+    }
+
+    #[tokio::test]
+    async fn a_write_without_content_reports_unchecked_content_rules() {
+        let (dir, pool) = pool_with_auth_rule().await;
+        let root = dir.path();
+        let result = guard_operation(
+            &pool,
+            root,
+            &root.join("src/api/users.ts"),
+            GuardOp::Write,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            result.warnings.iter().any(|w| w.contains("not checked")),
+            "{:?}",
+            result.warnings
+        );
+    }
+
+    async fn insert_tagged_rule(pool: &SqlitePool, id: &str, tags: &str) {
+        sqlx::query(
+            "INSERT INTO policy_rules (id, level, always_apply, globs, triggers, tags, priority, body, source_path, content_hash, updated_at, enabled, status, scope)
+             VALUES (?, 'CRITICAL', 1, '[]', '[]', ?, 100, '', '', '', 0, 1, 'approved', 'project')",
+        )
+        .bind(id)
+        .bind(tags)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn secrets_rule_covers_common_secret_file_names() {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        insert_tagged_rule(&pool, "keep-keys-out", "[\"secrets\"]").await;
+        let root = dir.path();
+        for blocked in [
+            ".env",
+            ".env.local",
+            "app/.env.production",
+            ".ssh/id_rsa",
+            "id_ed25519",
+            "secrets.json",
+            "config/secrets.yaml",
+            "certs/client.p12",
+            "certs/client.pfx",
+            "tls/server.pem",
+            "tls/server.key",
+            ".aws/credentials",
+            "credentials.json",
+            "prod.env",
+            "production.env",
+            "docker/app.env",
+            "aws-credentials.json",
+            "gcp_credentials.json",
+            "credentials-prod.yaml",
+            "config/app.secrets.toml",
+            "deploy/db_secrets",
+            "config/credentials/prod.json",
+            "credentials/service-account.json",
+            "deploy/secrets/db.yaml",
+        ] {
+            let result = guard_operation(&pool, root, &root.join(blocked), GuardOp::Delete, None)
+                .await
+                .unwrap();
+            assert!(!result.allowed, "{blocked} must be protected");
+        }
+        for allowed in [
+            "src/credentials_form.tsx",
+            ".env.example",
+            "docs/secrets-handling.md",
+            ".ssh/id_rsa.pub",
+            "src/keyboard.rs",
+            "example.env",
+            "app.sample.env",
+            "aws-credentials.example.json",
+            "src/secrets_view.ts",
+            "src/environment.rs",
+            "docs/credentialsmanager.json",
+            "src/credentials/form.tsx",
+            "docs/secrets/rotation.md",
+            "credentials/service-account.example.json",
+            "my-credentials-app/config.json",
+        ] {
+            let result = guard_operation(&pool, root, &root.join(allowed), GuardOp::Delete, None)
+                .await
+                .unwrap();
+            assert!(result.allowed, "{allowed}: {:?}", result.violations);
+        }
+    }
+
+    #[tokio::test]
+    async fn builtin_checks_need_a_tag_or_a_whole_word_in_the_rule_id() {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        sqlx::query("DELETE FROM policy_rules")
+            .execute(&pool)
+            .await
+            .unwrap();
+        insert_tagged_rule(&pool, "url-encoding-policy", "[]").await;
+        insert_tagged_rule(&pool, "secretary-notes", "[]").await;
+        let root = dir.path();
+        let bom = [0xEF, 0xBB, 0xBF, b'x'];
+        let result = guard_operation(&pool, root, &root.join("a.rs"), GuardOp::Write, Some(&bom))
+            .await
+            .unwrap();
+        assert!(result.allowed, "{:?}", result.violations);
+        let result = guard_operation(&pool, root, &root.join(".env"), GuardOp::Delete, None)
+            .await
+            .unwrap();
+        assert!(result.allowed, "{:?}", result.violations);
+
+        // A rule named after secrets keeps working without a tag.
+        insert_tagged_rule(&pool, "no-secrets", "[]").await;
+        let result = guard_operation(&pool, root, &root.join(".env"), GuardOp::Delete, None)
+            .await
+            .unwrap();
+        assert!(!result.allowed);
     }
 }

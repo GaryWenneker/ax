@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
+import { readGlobalStyles } from '../../test-support/globalStyles.ts';
 import {
   POLICY_BLADE_DISMISS_MS,
   pointerKeepsPolicyBlade,
@@ -55,9 +53,9 @@ describe('policy blade dismiss motion', () => {
     assert.equal(pointerKeepsPolicyBlade(inside, { contains: (node) => node === inside }), true);
   });
 
-  it('B1 CSS defines slide-out matching slide-in duration', () => {
+  it('B1 stylesheet lint: the slide-out keyframes match the dismiss delay', () => {
     assert.equal(POLICY_BLADE_DISMISS_MS, 320);
-    const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../index.css'), 'utf8');
+    const css = readGlobalStyles();
     assert.match(css, /@keyframes policy-blade-slide-out/);
     assert.match(css, /policy-inline-host--closing[\s\S]{0,400}policy-blade-slide-out 0\.32s/);
   });
