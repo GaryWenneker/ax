@@ -191,6 +191,8 @@ These routes work on folders anywhere on this computer; there is no list of allo
 
 Purging the database of the project that is open closes it first: its background tasks stop and every connection to `.ax/ax.db` closes, and the reply has `"disconnected": true`. Until another project is opened with `switch`, project routes under `/api` and `/dav` answer 409 with "No project open"; the workspace, access, sign-in and action routes keep working.
 
+Reading `current` leaves the recent-project list alone; opening and switching a project, and a successful `init`, update it. Only one `init/stream` runs per folder at a time; a second one for the same folder gets `"ok": false`. The `ax init` it starts stops when the browser closes the stream, or after one hour, and the final `done` event then carries an `error`. Purging the `globalIndex` group removes the project from the global database that `AX_GLOBAL_DB` names, or `~/.ax/global.db` when it is not set.
+
 ## IDEs and agents
 
 | Method | Path | Purpose |

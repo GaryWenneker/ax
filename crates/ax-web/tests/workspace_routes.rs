@@ -185,3 +185,126 @@ async fn read_only_mode_does_not_change_the_recent_list() {
     assert!(text.contains("Read-only mode"), "{text}");
     assert!(!recent_list(&fx.dir).contains("elsewhere"));
 }
+
+async fn post_json(fx: &Fixture, uri: &str, body: serde_json::Value) -> String {
+    send(&fx.app, "POST", uri, LOOPBACK, &[], &body.to_string())
+        .await
+        .1
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // process-global env; the guard must cover the awaits
+async fn reading_the_current_project_does_not_write_the_recent_list() {
+    let _lock = env_lock();
+    let fx = fixture(false).await;
+    let (status, text) = send(&fx.app, "GET", "/api/workspace/current", LOOPBACK, &[], "").await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert!(
+        !recent_list(&fx.dir).contains("proj"),
+        "GET /current wrote the recent list: {}",
+        recent_list(&fx.dir)
+    );
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // process-global env; the guard must cover the awaits
+async fn mkdir_takes_one_plain_folder_name() {
+    let _lock = env_lock();
+    let fx = fixture(false).await;
+    let parent = fx.dir.to_string_lossy().to_string();
+    for name in ["..", ".", "a/b", "a\\b", "", "x..y"] {
+        let text = post_json(
+            &fx,
+            "/api/workspace/mkdir",
+            serde_json::json!({"parent": parent, "name": name}),
+        )
+        .await;
+        assert!(text.contains("Invalid directory name"), "{name}: {text}");
+    }
+    let text = post_json(
+        &fx,
+        "/api/workspace/mkdir",
+        serde_json::json!({"parent": parent, "name": "fresh"}),
+    )
+    .await;
+    assert!(text.contains("\"created\":true"), "{text}");
+    assert!(fx.dir.join("fresh").is_dir());
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // process-global env; the guard must cover the awaits
+async fn read_only_mode_refuses_every_folder_change() {
+    let _lock = env_lock();
+    let fx = fixture(true).await;
+    let path = fx.dir.join("proj").to_string_lossy().to_string();
+    let parent = fx.dir.to_string_lossy().to_string();
+    for (uri, body) in [
+        ("/api/workspace/switch", serde_json::json!({"path": path})),
+        (
+            "/api/workspace/mkdir",
+            serde_json::json!({"parent": parent, "name": "made"}),
+        ),
+        (
+            "/api/workspace/init/stream",
+            serde_json::json!({"path": parent}),
+        ),
+        (
+            "/api/workspace/purge",
+            serde_json::json!({"path": path, "groups": ["database"]}),
+        ),
+    ] {
+        let text = post_json(&fx, uri, body).await;
+        assert!(text.contains("Read-only mode"), "{uri}: {text}");
+    }
+    assert!(!fx.dir.join("made").exists());
+    assert!(fx.dir.join("proj/.ax/ax.db").is_file());
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // process-global env; the guard must cover the awaits
+async fn purging_a_missing_folder_removes_nothing_on_disk() {
+    let _lock = env_lock();
+    let fx = fixture(false).await;
+    let gone = fx.dir.join("gone").to_string_lossy().to_string();
+    let text = post_json(
+        &fx,
+        "/api/workspace/purge",
+        serde_json::json!({"path": gone, "groups": ["database", "recent"]}),
+    )
+    .await;
+    let reply: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(reply["ok"], true, "{text}");
+    assert_eq!(reply["removed"], serde_json::json!([]), "{text}");
+    assert!(fx.dir.join("proj/.ax/ax.db").is_file());
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // process-global env; the guard must cover the awaits
+async fn purge_forgets_the_project_in_the_configured_global_database() {
+    let _lock = env_lock();
+    let fx = fixture(false).await;
+    // AX_GLOBAL_DB (set by the fixture) is not HOME/.ax/global.db.
+    let global_path = fx.dir.join("global.db");
+    let other = fx.dir.join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    let global = ax_global_db::open_and_init(&global_path).await.unwrap();
+    ax_global_db::policy::ensure_project(&global, &other)
+        .await
+        .unwrap();
+    let count = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects")
+            .fetch_one(&global)
+            .await
+            .unwrap()
+    };
+    assert_eq!(count().await, 1);
+    let text = post_json(
+        &fx,
+        "/api/workspace/purge",
+        serde_json::json!({"path": other.to_string_lossy(), "groups": ["globalIndex"]}),
+    )
+    .await;
+    assert!(text.contains("\"ok\":true"), "{text}");
+    assert_eq!(count().await, 0, "the project row is still in AX_GLOBAL_DB");
+    global.close().await;
+}
