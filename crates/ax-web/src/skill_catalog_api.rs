@@ -399,14 +399,7 @@ fn install_blocking(
             &skill_name,
             &dest,
             replace,
-            |file| {
-                let url = if file.starts_with("http://") || file.starts_with("https://") {
-                    file.to_string()
-                } else {
-                    format!("{base}/{skill_name}/{file}")
-                };
-                ax_skill_catalog::http_bytes(&url)
-            },
+            |file| fetch_well_known_file(&base, &skill_name, file),
         )?]
     } else {
         let tree = match &source {
@@ -497,12 +490,7 @@ fn audit_source(
         let dest = temp.path().join("skills");
         let base = fetched.file_base.clone();
         ax_skill_catalog::materialize_well_known(&index, name, &dest, true, |file| {
-            let url = if file.starts_with("http://") || file.starts_with("https://") {
-                file.to_string()
-            } else {
-                format!("{base}/{name}/{file}")
-            };
-            ax_skill_catalog::http_bytes(&url)
+            fetch_well_known_file(&base, name, file)
         })?;
         let mut report = ax_skill_catalog::audit_directory(&dest.join(name))?;
         report.candidate = true;
@@ -553,4 +541,30 @@ fn publish_blocking(root: &std::path::Path, name: &str) -> Result<String, String
     settings.publish_remote = remote.clone();
     ax_skill_catalog::save_settings(root, &settings)?;
     Ok(format!("published {name} to {remote}"))
+}
+
+/// One file listed in a well-known skill index (install and audit). Same rule
+/// as the CLI: a relative entry resolves under the index, and an absolute one
+/// must be on the index's own origin.
+fn fetch_well_known_file(base: &str, name: &str, file: &str) -> Result<Vec<u8>, String> {
+    let url = ax_skill_catalog::well_known_file_url(base, name, file)?;
+    ax_skill_catalog::http_bytes_same_origin(&url)
+}
+
+#[cfg(test)]
+mod well_known_origin_tests {
+    use super::fetch_well_known_file;
+
+    #[test]
+    fn a_well_known_file_on_another_origin_is_refused() {
+        let base = "https://skills.example.org/.well-known/agent-skills";
+        for file in [
+            "https://evil.example.net/x/SKILL.md",
+            "http://skills.example.org/x/SKILL.md",
+            "https://skills.example.org:8443/x/SKILL.md",
+        ] {
+            let err = fetch_well_known_file(base, "x", file).unwrap_err();
+            assert!(err.contains("index origin"), "{file}: {err}");
+        }
+    }
 }

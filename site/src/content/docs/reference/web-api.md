@@ -80,6 +80,8 @@ List routes take `limit` and `offset`. `limit` is kept between 1 and the route's
 | POST | `/api/policy/skills/{name}/publish` | Publish one skill to the publish repository |
 
 Read-only mode (`ax share`, `AX_WEB_READONLY=1`) refuses every catalog route that writes: install, settings, audits and publish. The publish repository must be an `https://` or `ssh://` URL, an scp-style `user@host:path`, or a folder inside the project (relative folders are relative to the project, optionally prefixed with `well-known:`); other values get `400`.
+
+Install and audit from a well-known URL follow the same rule as `ax skill install`: every file the index lists must be relative to the index or on the index's own origin (scheme, host and port). A file on another server, a switch from `https` to `http`, and a redirect that leaves that origin are refused.
 | GET, PUT | `/api/policy/settings` | Policy settings (folder, storage mode) |
 
 ### Remote policy share

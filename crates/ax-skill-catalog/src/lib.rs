@@ -22,8 +22,8 @@ pub use install::{install_tree, InstallReceipt, COPY_MAX_BYTES, COPY_MAX_FILES};
 pub use lockfile::{catalog_id, LockEntry, LockFile};
 pub use publish::stage_one_skill;
 pub use remote::{
-    attach_catalog_cards, fetch_source, git_clone, git_publish, http_bytes, http_text, search_body,
-    Fetched,
+    attach_catalog_cards, fetch_source, git_clone, git_publish, http_bytes, http_bytes_same_origin,
+    http_text, search_body, well_known_file_url, Fetched,
 };
 pub use search::{parse_search_body, SearchHit};
 pub use settings::{load_settings, save_settings, CatalogSettings};

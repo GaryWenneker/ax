@@ -207,14 +207,57 @@ pub fn http_text(url: &str) -> Result<String, String> {
 }
 
 pub fn http_bytes(url: &str) -> Result<Vec<u8>, String> {
+    fetch_vetted(url, false)
+}
+
+/// The URL of one file listed in a well-known skill index. A relative entry
+/// resolves under the index; an absolute entry must share the index's origin
+/// (scheme, host and port), so an index cannot point the download at another
+/// server or downgrade it from https to http.
+pub fn well_known_file_url(base: &str, name: &str, file: &str) -> Result<String, String> {
+    if !(file.starts_with("http://") || file.starts_with("https://")) {
+        return Ok(format!("{base}/{name}/{file}"));
+    }
+    let index = reqwest::Url::parse(base).map_err(|e| format!("bad index URL {base}: {e}"))?;
+    let target = reqwest::Url::parse(file).map_err(|e| format!("bad file URL {file}: {e}"))?;
+    if index.origin() != target.origin() {
+        return Err(format!(
+            "skill file {file} is not on the index origin {}",
+            index.origin().ascii_serialization()
+        ));
+    }
+    Ok(file.to_string())
+}
+
+/// GET a file listed in a well-known skill index. Like [`http_bytes`], and
+/// redirects are followed only while they stay on the origin of the request.
+pub fn http_bytes_same_origin(url: &str) -> Result<Vec<u8>, String> {
+    fetch_vetted(url, true)
+}
+
+fn fetch_vetted(url: &str, same_origin: bool) -> Result<Vec<u8>, String> {
     let target = vetted_download(url)?;
     let client = reqwest::blocking::Client::builder()
-        .redirect(reqwest::redirect::Policy::custom(
-            |attempt| match vetted_download(attempt.url().as_str()) {
+        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+            if same_origin
+                && attempt
+                    .previous()
+                    .first()
+                    .is_some_and(|first| first.origin() != attempt.url().origin())
+            {
+                let to = attempt.url().origin().ascii_serialization();
+                return attempt.error(std::io::Error::other(format!(
+                    "redirect to {to} leaves the index origin"
+                )));
+            }
+            if attempt.previous().len() >= 10 {
+                return attempt.error(std::io::Error::other("too many redirects"));
+            }
+            match vetted_download(attempt.url().as_str()) {
                 Ok(_) => attempt.follow(),
                 Err(error) => attempt.error(std::io::Error::other(error)),
-            },
-        ))
+            }
+        }))
         .build()
         .map_err(|e| e.to_string())?;
     let response = client.get(target).send().map_err(|e| e.to_string())?;
@@ -301,7 +344,28 @@ pub fn encode(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::vetted_download;
+    use super::{vetted_download, well_known_file_url};
+
+    #[test]
+    fn well_known_file_urls_stay_on_the_index_origin() {
+        let base = "https://skills.example.org/.well-known/agent-skills";
+        assert_eq!(
+            well_known_file_url(base, "x", "SKILL.md").unwrap(),
+            "https://skills.example.org/.well-known/agent-skills/x/SKILL.md"
+        );
+        assert_eq!(
+            well_known_file_url(base, "x", "https://skills.example.org/cdn/x/SKILL.md").unwrap(),
+            "https://skills.example.org/cdn/x/SKILL.md"
+        );
+        for other in [
+            "https://evil.example.net/SKILL.md",
+            "http://skills.example.org/x/SKILL.md",
+            "https://skills.example.org:8443/x/SKILL.md",
+        ] {
+            let err = well_known_file_url(base, "x", other).unwrap_err();
+            assert!(err.contains("index origin"), "{other}: {err}");
+        }
+    }
 
     #[test]
     fn skill_downloads_reject_private_and_non_http_targets() {
