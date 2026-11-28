@@ -11,6 +11,7 @@ wasm = ["wasmtime"]
 [dependencies]
 ax-types = { workspace = true }
 ax-utils = { workspace = true }
+blake3 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = "0.9"

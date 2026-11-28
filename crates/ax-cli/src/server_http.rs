@@ -916,31 +916,40 @@ mod tests {
             );
         }
         assert_eq!(audit_rows().await, 1);
-        // A revoked grant is registered again, which writes a new audit row.
+        // A revoked project grant stays revoked: the project token does not
+        // restore it and writes no audit row; only an administrator can.
         sqlx::query(
             "UPDATE node_project_access SET revoked_at=CURRENT_TIMESTAMP WHERE node_id='replica_1'",
         )
         .execute(&db)
         .await
         .unwrap();
-        authorize_project(&state, "project", &headers)
+        for _ in 0..2 {
+            assert_eq!(
+                authorize_project(&state, "project", &headers).await,
+                Err(StatusCode::FORBIDDEN)
+            );
+        }
+        assert_eq!(audit_rows().await, 1);
+        ax_global_db::access::grant_node_project(&db, "replica_1", "project")
             .await
             .unwrap();
-        authorize_project(&state, "project", &headers)
-            .await
-            .unwrap();
-        assert_eq!(audit_rows().await, 2);
+        assert_eq!(
+            authorize_project(&state, "project", &headers).await,
+            Ok("replica_1".to_string())
+        );
         // UDP heartbeats carry the sender socket: same socket is a read, a new one re-registers.
+        let registered = audit_rows().await;
         for _ in 0..3 {
             ensure_trusted_replica(&db, "replica_1", Some("192.168.1.9:4000"), "project")
                 .await
                 .unwrap();
         }
-        assert_eq!(audit_rows().await, 3);
+        assert_eq!(audit_rows().await, registered + 1);
         ensure_trusted_replica(&db, "replica_1", Some("192.168.1.9:4001"), "project")
             .await
             .unwrap();
-        assert_eq!(audit_rows().await, 4);
+        assert_eq!(audit_rows().await, registered + 2);
         // A revoked node stays blocked.
         ax_global_db::access::revoke_node(&db, "replica_1")
             .await

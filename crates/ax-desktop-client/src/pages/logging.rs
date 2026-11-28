@@ -5,8 +5,8 @@ use std::sync::mpsc::Receiver;
 
 use egui::Ui;
 
-use crate::api::client::SharedClient;
-use crate::api::TraceEntry;
+use crate::api::client::{spawn_fetch, SharedClient};
+use crate::api::{McpTracePath, TraceEntry};
 use crate::pages::{err_label, heading, PageCtx};
 use crate::theme;
 
@@ -21,36 +21,71 @@ pub struct LoggingPage {
     query: String,
     selected: Option<usize>,
     rx: Option<Receiver<Result<(String, String), String>>>,
+    path_rx: Option<Receiver<Result<McpTracePath, String>>>,
     next_id: u64,
 }
 
+impl Default for LoggingPage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LoggingPage {
-    pub fn new(client: SharedClient) -> Self {
-        let rx = Some(client.stream_mcp_trace());
-        let mut path = String::new();
-        let mut project_label = String::new();
-        if let Ok(p) = client.mcp_trace_path() {
-            path = p.path;
-            project_label = p.project_label;
-        }
+    /// Builds the page without touching the network. The trace stream and the
+    /// trace path lookup start the first time the page is shown.
+    pub fn new() -> Self {
         Self {
             entries: Vec::new(),
-            live: true,
+            live: false,
             err: None,
-            path,
-            project_label,
+            path: String::new(),
+            project_label: String::new(),
             kind_filter: HashSet::new(),
             tool_filter: String::new(),
             query: String::new(),
             selected: None,
-            rx,
+            rx: None,
+            path_rx: None,
             next_id: 0,
         }
     }
 
-    pub fn ui(&mut self, ui: &mut Ui, _ctx: &mut PageCtx<'_>) {
+    fn start(&mut self, client: &SharedClient) {
+        if self.rx.is_some() {
+            return;
+        }
+        self.live = true;
+        self.rx = Some(client.stream_mcp_trace());
+        let c = client.clone();
+        self.path_rx = Some(spawn_fetch(move || c.mcp_trace_path()));
+    }
+
+    fn poll_path(&mut self) {
+        let Some(rx) = &self.path_rx else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(p)) => {
+                // A path from the stream wins over the initial lookup.
+                if self.path.is_empty() {
+                    self.path = p.path;
+                }
+                if self.project_label.is_empty() {
+                    self.project_label = p.project_label;
+                }
+                self.path_rx = None;
+            }
+            Ok(Err(_)) | Err(std::sync::mpsc::TryRecvError::Disconnected) => self.path_rx = None,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+    }
+
+    pub fn ui(&mut self, ui: &mut Ui, ctx: &mut PageCtx<'_>) {
         heading(ui, "Logging", "Live MCP verbose trace (newest at top).");
 
+        self.start(&ctx.client);
+        self.poll_path();
         self.poll();
 
         ui.horizontal(|ui| {
