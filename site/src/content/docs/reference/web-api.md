@@ -249,7 +249,9 @@ Interactive human sessions use an opaque, HttpOnly, SameSite cookie. Passkeys ar
 
 `GET /api/access/team` returns both `role` (strongest-role compatibility value) and `roles` (authoritative role set). The `POST /api/access/team` and `PATCH /api/access/team/{id}` bodies accept `roles: ["admin", "member"]` and remain compatible with the legacy `role` input. An active member cannot have zero roles; only an Owner may grant or remove ownership, and the final active Owner cannot be demoted or disabled.
 
-Authentication may be disabled for trusted local installations; remote Command Center data access stays protected. Configure `AX_WEB_AUTH_ORIGIN` to the exact stable HTTPS origin used for passkeys; localhost development is supported. Browser clients must not send credentials to a different host.
+Authentication may be disabled for trusted local installations; remote Command Center data access stays protected. Configure `AX_WEB_AUTH_ORIGIN` to the exact stable HTTPS origin used for passkeys; localhost development is supported. Browser clients must not send credentials to a different host. A plain-HTTP `AX_WEB_AUTH_ORIGIN` on `localhost`, `127.0.0.1` or `[::1]` still counts as this computer, so the local owner can turn sign-in on with any of them.
+
+Password and recovery sign-in take a member id, an email or a display name. An exact id wins over an email, and an email over a display name. A display name that more than one active member uses signs in nobody; use the id or email instead. A session's last-seen time is written at most once a minute.
 
 With sign-in on, every `/api` request needs a session, and the gate applies the member's role:
 
