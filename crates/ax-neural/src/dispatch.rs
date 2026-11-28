@@ -490,8 +490,20 @@ fn graph_reply(
     value
 }
 
+/// The key every per-project neural table uses. The same folder reached
+/// through a symlink, a trailing slash, `.`/`..` parts, or another letter
+/// case on a case-insensitive volume gets the same id. A path that cannot be
+/// resolved keeps its own spelling without trailing separators.
 pub fn project_id(root: &Path) -> String {
-    root.to_string_lossy().to_string()
+    let path = std::fs::canonicalize(root)
+        .unwrap_or_else(|_| root.components().collect::<std::path::PathBuf>());
+    let text = path.to_string_lossy();
+    if cfg!(windows) {
+        let text = text.strip_prefix(r"\\?\").unwrap_or(&text);
+        text.replace('\\', "/")
+    } else {
+        text.into_owned()
+    }
 }
 
 fn required_str(args: &Value, key: &str) -> Result<String, String> {
@@ -982,7 +994,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(status["metrics"]["feedbackCount"]["value"], 0);
-        assert_eq!(project_id(first.path()), first.path().to_string_lossy());
+        let canonical = std::fs::canonicalize(first.path()).unwrap();
+        assert_eq!(project_id(first.path()), canonical.to_string_lossy());
+        assert_ne!(project_id(first.path()), project_id(second.path()));
     }
 
     #[tokio::test]
@@ -1217,6 +1231,31 @@ mod tests {
         let passed = handle(dir.path(), "learn", &rows, None).await.unwrap();
         assert_eq!(passed["applied"], true, "{passed}");
         assert_eq!(passed["rowCount"], 4);
+    }
+
+    #[test]
+    fn project_id_is_the_same_for_every_spelling_of_one_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("Project");
+        std::fs::create_dir(&root).unwrap();
+        let id = project_id(&root);
+        let with_slash = format!("{}/", root.display());
+        assert_eq!(project_id(Path::new(&with_slash)), id);
+        let dotted = root.join(".").join("..").join("Project");
+        assert_eq!(project_id(&dotted), id);
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("link");
+            std::os::unix::fs::symlink(&root, &link).unwrap();
+            assert_eq!(project_id(&link), id);
+        }
+        let other_case = dir.path().join("project");
+        if other_case.exists() {
+            assert_eq!(project_id(&other_case), id, "case-insensitive volume");
+        }
+        let missing = dir.path().join("missing");
+        let missing_slash = format!("{}/", missing.display());
+        assert_eq!(project_id(Path::new(&missing_slash)), project_id(&missing));
     }
 
     async fn parser_feedback(root: &Path, pool: &SqlitePool) {
