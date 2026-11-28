@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { chooseSelect } from './chooseSelect';
+import { baseReply, shipConfigStub, statsStub } from './fixtures';
 import { SETTINGS_GROUPS } from '../src/lib/settingsNavigation';
 
 function localExport(client: string) {
@@ -19,10 +20,9 @@ test('shared dropdowns and paragraph action gaps work in both themes', async ({ 
       : path === '/api/access/session' ? {csrf:'csrf'}
       : path === '/api/access/nodes' ? {nodes:[],local:null}
       : path === '/api/access/nodes/local' ? {settings:{config:{node_id:'primary',role:'primary',cluster_id:'office',projects:[{id:'project'}]},port:9070,advertise:'http://192.168.1.20:9070'},running:true,active_project:true,active_replicas:0,sync:null}
-      : path === '/api/stats' ? {readonly:false,project_name:'Demo',node_count:0,edge_count:0,file_count:0,languages:[]}
-      : path === '/api/share/status' ? {readonly:false}
-      : path === '/api/ship/config' ? {config:{ship:{target_branch:'main',web_port:7070},quality_gate:{steps:[],tests:{runner:'cargo test'}},remote:{provider:'github'},ui:{}},sonar:{}}
-      : null;
+      : path === '/api/stats' ? statsStub({project_name:'Demo'})
+      : path === '/api/ship/config' ? shipConfigStub()
+      : baseReply(path);
     await route.fulfill({status:data?200:404,json:data??{error:'Fixture endpoint not provided'}});
   });
   for (const theme of ['azure-light','azure-dark']) {
@@ -89,8 +89,7 @@ test('revoked OAuth and replica records can be removed after confirmation', asyn
       :path==='/api/access/session'?{csrf:'csrf'}
       :path==='/api/access/nodes'?{nodes:nodeRemoved?[]:[{id:'revoked',display_name:'Old replica',role:'replica',trust_state:'revoked',endpoint:null,last_seen_at:null,last_sync_at:null}],local:null}
       :path==='/api/access/nodes/local'?{settings:null,running:false,active_project:false}
-      :path==='/api/share/status'?{readonly:false}
-      :path==='/api/stats'?{readonly:false,project_name:'Demo',node_count:0,edge_count:0,file_count:0,languages:[]}:null;
+      :path==='/api/stats'?statsStub({project_name:'Demo'}):baseReply(path);
     await route.fulfill({status:data?200:404,json:data??{error:'Fixture endpoint not provided'}});
   });
   await page.goto('/settings');

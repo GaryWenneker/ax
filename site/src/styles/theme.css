@@ -22,19 +22,19 @@
   --cg-ink-2: #b4b4b4;
   --cg-ink-3: #8f8f8f;
 
-  /* The one accent: #1372da for fills with white text, #8fbfff for text and lines */
-  --ax-accent: #8fbfff;
-  --ax-accent-fill: #1372da;
-  --ax-on-accent: #fff;
-  --ax-accent-soft: rgba(143, 191, 255, 0.1);
+  /* The one accent: #88c0d0 (Cursor frost) for fills with dark text and for accent text and lines */
+  --ax-accent: #88c0d0;
+  --ax-accent-fill: #88c0d0;
+  --ax-on-accent: #06141a;
+  --ax-accent-soft: rgba(136, 192, 208, 0.1);
   --ax-bg: #0a0a0a;
-  --cg-accent: #8fbfff;
-  --cg-steel: #8fbfff;
-  --cg-sage: #8fbfff;
+  --cg-accent: #88c0d0;
+  --cg-steel: #88c0d0;
+  --cg-sage: #88c0d0;
 
-  --sl-color-accent-low: #0d2647;
-  --sl-color-accent: #1372da;
-  --sl-color-accent-high: #c9e0ff;
+  --sl-color-accent-low: #10262c;
+  --sl-color-accent: #88c0d0;
+  --sl-color-accent-high: #cfe6ec;
   --sl-color-white: #ededed;
   --sl-color-gray-1: #e0e0e0;
   --sl-color-gray-2: #c8c8c8;
@@ -48,9 +48,9 @@
   --sl-color-bg-nav: #0a0a0a;
   --sl-color-bg-sidebar: #0a0a0a;
   --sl-color-bg-inline-code: #1a1a1a;
-  --sl-color-bg-accent: #1372da;
+  --sl-color-bg-accent: #88c0d0;
   --sl-color-text: #ededed;
-  --sl-color-text-accent: #8fbfff;
+  --sl-color-text-accent: #88c0d0;
   --sl-color-text-invert: #0a0a0a;
   --sl-color-hairline: #262626;
   --sl-color-hairline-light: #1f1f1f;
@@ -74,15 +74,15 @@
   --cg-ink: #161616;
   --cg-ink-2: #404040;
   --cg-ink-3: #5f5f5f;
-  --ax-accent: #0f5fb8;
-  --ax-accent-soft: rgba(19, 114, 218, 0.08);
+  --ax-accent: #2b6878;
+  --ax-accent-soft: rgba(43, 104, 120, 0.08);
   --ax-bg: #ffffff;
-  --cg-accent: #0f5fb8;
-  --cg-steel: #0f5fb8;
-  --cg-sage: #0f5fb8;
-  --sl-color-accent-low: #dde9f8;
-  --sl-color-accent: #1372da;
-  --sl-color-accent-high: #0a4587;
+  --cg-accent: #2b6878;
+  --cg-steel: #2b6878;
+  --cg-sage: #2b6878;
+  --sl-color-accent-low: #dfeef2;
+  --sl-color-accent: #2b6878;
+  --sl-color-accent-high: #1d4a56;
   --sl-color-white: #161616;
   --sl-color-gray-1: #262626;
   --sl-color-gray-2: #404040;
@@ -97,7 +97,7 @@
   --sl-color-bg-sidebar: #ffffff;
   --sl-color-bg-inline-code: #f1f1f1;
   --sl-color-text: #161616;
-  --sl-color-text-accent: #0f5fb8;
+  --sl-color-text-accent: #2b6878;
   --sl-color-text-invert: #ffffff;
   --sl-color-hairline: #e2e2e2;
   --sl-color-hairline-light: #ebebeb;
@@ -269,10 +269,10 @@ starlight-menu-button button {
   font-weight: 500;
 }
 
-/* The banner sits on the accent fill: white text keeps 4.5:1 on #1372da. */
+/* The banner sits on the accent fill: dark text keeps 4.5:1 on #88c0d0. */
 .sl-banner,
 .sl-banner a {
-  color: #fff;
+  color: var(--ax-on-accent);
 }
 
 /* ---------- Content blocks ---------- */

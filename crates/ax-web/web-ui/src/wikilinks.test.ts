@@ -7,6 +7,7 @@ import {
   wikiLinksToMarkdown,
   type OutgoingLink,
 } from './wikilinks.ts';
+import { parseLocation } from './lib/routes.ts';
 
 function link(text: string, target: string, resolved: OutgoingLink['resolved'], label: string | null = null): OutgoingLink {
   return { text, target, heading: null, label, resolved };
@@ -46,11 +47,25 @@ describe('linkHref', () => {
   it('opens rules, skills and memories in the Command Center', () => {
     assert.equal(linkHref({ kind: 'rule', id: 'english-only', origin: 'project' }), '/policy/rules?id=english-only');
     assert.equal(linkHref({ kind: 'skill', id: 'pr', origin: 'project' }), '/policy/skills?name=pr');
-    assert.equal(linkHref({ kind: 'memory', id: 'a b', origin: 'project' }), '/memory?id=a+b');
+    assert.equal(linkHref({ kind: 'memory', id: 'a b', origin: 'project' }), '/memory?memory=a+b');
     assert.equal(
       linkHref({ kind: 'skill', id: 'review-loop', origin: 'global', projectId: 7 }),
       '/policy/skills?name=review-loop&origin=global&projectId=7',
     );
+  });
+
+  it('builds URLs the router reads back to the same item', () => {
+    const at = (href: string) => {
+      const u = new URL(href, 'http://localhost');
+      return parseLocation({ pathname: u.pathname, search: u.search } as Location);
+    };
+    const mem = at(linkHref({ kind: 'memory', id: 'abc', origin: 'project' }));
+    assert.equal(mem.page, 'memory');
+    assert.equal(mem.memoryId, 'abc');
+    const rule = at(linkHref({ kind: 'rule', id: 'english-only', origin: 'project' }));
+    assert.equal(rule.ruleId, 'english-only');
+    const skill = at(linkHref({ kind: 'skill', id: 'pr', origin: 'project' }));
+    assert.equal(skill.skillName, 'pr');
   });
 });
 

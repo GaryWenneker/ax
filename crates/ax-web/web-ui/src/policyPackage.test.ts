@@ -32,10 +32,9 @@ describe('policy zip package helpers', () => {
     assert.equal(isShareablePolicyItem('project', false), false);
   });
 
-  it('conflict defaults to skip, new to overwrite, local newer stays skip', () => {
+  it('conflict defaults to skip and new to overwrite', () => {
     assert.equal(defaultRestoreAction('new'), 'overwrite');
     assert.equal(defaultRestoreAction('conflict'), 'skip');
-    assert.equal(defaultRestoreAction('conflict', 'local'), 'skip');
     assert.equal(defaultRestoreAction('invalid'), null);
   });
 

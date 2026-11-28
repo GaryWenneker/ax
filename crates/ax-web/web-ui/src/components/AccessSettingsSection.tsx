@@ -1,4 +1,5 @@
 import { accessJson } from '../lib/accessApi';
+import { issuedTokenAfter, type IssuedToken } from '../lib/accessToken';
 import { memoryRowAge } from '../memoryHeadline';
 import { useNow } from '../lib/useNow';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
@@ -13,7 +14,6 @@ type Client = { id: string; member_id: string; display_name: string; client_type
 type Credential = { id: string; client_id: string; token_prefix: string; created_at: string; last_used_at?: string | null; revoked_at?: string | null };
 type Node = { id: string; display_name: string; role: string; endpoint?: string | null; trust_state: string; last_seen_at?: string | null; last_sync_at?: string | null };
 type LocalNode = { node_id: string; role: string; primary_url?: string; last_sync_at?: string; sync_state: string };
-type IssuedToken = { value: string; clientName: string };
 type Confirmation = { title: string; description: string; label: string; action: () => Promise<void> };
 
 const ROLES: { id: Role; label: string; description: string }[] = [
@@ -147,12 +147,11 @@ export default function AccessSettingsSection({ section }: { section: string }) 
     setBusy(true);
     setError(null);
     setMessage(null);
-    setIssuedToken(null);
-    setCopied(false);
     try {
       const data = await accessJson<{ credential?: { token: string } }>(url, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
       if (target === currentSection.current) {
-        if (data.credential && tokenClient) setIssuedToken({ value: data.credential.token, clientName: tokenClient });
+        if (data.credential && tokenClient) setCopied(false);
+        setIssuedToken(current => issuedTokenAfter(current, data, tokenClient));
         if (success) setMessage(success);
         await refresh(target);
       }
@@ -359,6 +358,7 @@ export default function AccessSettingsSection({ section }: { section: string }) 
 
     {passwordFor && <ModalShell title={`Set password for ${passwordFor.display_name}`} onClose={() => !busy && setPasswordFor(null)}>
       <form className="access-form" onSubmit={setMemberPassword}>
+        {error && <p role="alert" className="settings-toast settings-toast--err">{error}</p>}
         <p className="access-note">Setting a password revokes this member’s existing web sessions. Share the initial password securely and ask the member to enroll a passkey.</p>
         <label>New password<input className="settings-input" type="password" autoComplete="new-password" required minLength={12}
           value={newMemberPassword} onChange={event => setNewMemberPassword(event.target.value)} disabled={busy} /></label>

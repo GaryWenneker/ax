@@ -1,5 +1,6 @@
 //! React Router route extraction from JSX.
 
+use ax_utils::slice_bytes;
 use regex::Regex;
 
 use ax_db::queries::QueryBuilder;
@@ -60,7 +61,7 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
 
     if is_jsx {
         for m in tag_re.find_iter(content) {
-            let window = &content[m.start()..content.len().min(m.start() + 400)];
+            let window = slice_bytes(content, m.start(), m.start() + 400);
             let path_match = path_re.captures(window);
             if path_match.is_none() {
                 continue;
@@ -122,7 +123,7 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
         for cap in obj_path_re.captures_iter(content) {
             let route_path = cap.get(1).map(|m| m.as_str()).unwrap_or("/");
             let win_start = cap.get(0).map(|m| m.start()).unwrap_or(0);
-            let win = &content[win_start..content.len().min(win_start + 300)];
+            let win = slice_bytes(content, win_start, win_start + 300);
             let comp_name = data_element_re
                 .captures(win)
                 .and_then(|c| c.get(1).map(|m| m.as_str()))
@@ -478,5 +479,41 @@ export const router = createBrowserRouter([
 ]);"#;
         let r = extract_file("router.tsx", content);
         assert!(r.nodes.iter().any(|n| n.name == "/settings"));
+    }
+
+    /// Pads `head` with ASCII so a two-byte character starts at byte
+    /// `cut - 1` from the start of `head`, then appends `tail`.
+    fn with_char_across(head: &str, cut: usize, tail: &str) -> String {
+        let mut s = head.to_string();
+        while s.len() < cut - 1 {
+            s.push('a');
+        }
+        s.push('\u{e9}');
+        s.push_str(tail);
+        s
+    }
+
+    #[test]
+    fn route_tag_window_cut_inside_a_character_does_not_panic() {
+        let src = with_char_across(
+            r#"<Route path="/" element={<Home title=""#,
+            400,
+            "\" />} />\n",
+        );
+        let r = extract_file("app.tsx", &src);
+        assert!(r.nodes.iter().any(|n| n.name == "ROUTE /"));
+        assert!(r.references.iter().any(|x| x.reference_name == "Home"));
+    }
+
+    #[test]
+    fn data_router_window_cut_inside_a_character_does_not_panic() {
+        // The window starts at `path:`, so the `{ ` before it is not counted.
+        let head = "createBrowserRouter([\n{ ";
+        let src = format!(
+            "{head}{}",
+            with_char_across(r#"path: "/s", element: <Settings />, x: ""#, 300, "\" }]);")
+        );
+        let r = extract_file("router.tsx", &src);
+        assert!(r.nodes.iter().any(|n| n.name == "/s"));
     }
 }

@@ -1,8 +1,12 @@
 //! Known language servers ax can spawn for enrichment.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use ax_types::Language;
 
@@ -62,10 +66,11 @@ pub fn discover_servers() -> Vec<ServerStatus> {
 }
 
 pub fn discover_servers_in(project_root: Option<&Path>) -> Vec<ServerStatus> {
-    let extra = extra_bin_dirs(project_root);
+    let trusted = project_bins_trusted();
     SERVERS
         .iter()
         .map(|s| {
+            let extra = project_bin_dirs(s.command, project_root, trusted);
             let (display, working) = resolve_command(s.command, &extra);
             ServerStatus {
                 id: s.id.into(),
@@ -78,34 +83,175 @@ pub fn discover_servers_in(project_root: Option<&Path>) -> Vec<ServerStatus> {
         .collect()
 }
 
-pub(crate) fn extra_bin_dirs(project_root: Option<&Path>) -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Some(root) = project_root {
-        dirs.push(root.join("node_modules/.bin"));
-        dirs.push(root.join("crates/ax-web/web-ui/node_modules/.bin"));
+/// Environment switch that lets ax run language servers from the indexed
+/// project's `node_modules/.bin`. Off by default: discovery executes every
+/// candidate, so a repository could otherwise plant a binary that ax runs.
+pub const PROJECT_BINS_ENV: &str = "AX_LSP_PROJECT_BINS";
+
+/// Node-based servers that a project may install locally.
+const NODE_SERVER_COMMANDS: &[&str] = &["typescript-language-server", "pyright-langserver"];
+
+fn project_bins_trusted() -> bool {
+    matches!(
+        std::env::var(PROJECT_BINS_ENV).as_deref().map(str::trim),
+        Ok("1") | Ok("true") | Ok("yes") | Ok("on")
+    )
+}
+
+/// Project-local directories searched for `command`, after rustup and PATH.
+///
+/// Only the Node-based servers are ever looked up there, and only when the
+/// owner trusts the project's binaries ([`PROJECT_BINS_ENV`]).
+pub(crate) fn project_bin_dirs(
+    command: &str,
+    project_root: Option<&Path>,
+    trusted: bool,
+) -> Vec<PathBuf> {
+    match project_root {
+        Some(root) if trusted && NODE_SERVER_COMMANDS.contains(&command) => {
+            vec![root.join("node_modules/.bin")]
+        }
+        _ => Vec::new(),
     }
-    if let Ok(cwd) = std::env::current_dir() {
-        dirs.push(cwd.join("node_modules/.bin"));
-        dirs.push(cwd.join("crates/ax-web/web-ui/node_modules/.bin"));
-    }
-    dirs
 }
 
 /// Absolute path of a runnable server, if any.
 pub fn working_binary(command: &str, project_root: Option<&Path>) -> Option<PathBuf> {
-    resolve_command(command, &extra_bin_dirs(project_root)).1
+    let extra = project_bin_dirs(command, project_root, project_bins_trusted());
+    resolve_command(command, &extra).1
+}
+
+/// Resolves each server once and remembers the answer for the rest of a run.
+///
+/// Resolving runs `rustup which` and version probes, so an enrich batch must not
+/// repeat it per file.
+pub(crate) struct ServerResolver {
+    project_root: Option<PathBuf>,
+    trusted: bool,
+    /// Test-only directories searched for every command.
+    extra: Vec<PathBuf>,
+    /// Also search `rustup which` and PATH (off only in tests).
+    system: bool,
+    cache: HashMap<&'static str, Option<PathBuf>>,
+}
+
+impl ServerResolver {
+    pub(crate) fn for_project(project_root: Option<&Path>) -> Self {
+        Self {
+            project_root: project_root.map(Path::to_path_buf),
+            trusted: project_bins_trusted(),
+            extra: Vec::new(),
+            system: true,
+            cache: HashMap::new(),
+        }
+    }
+
+    /// Search only `dirs`: no rustup, no PATH.
+    #[cfg(test)]
+    pub(crate) fn only_dirs(dirs: Vec<PathBuf>) -> Self {
+        Self {
+            project_root: None,
+            trusted: false,
+            extra: dirs,
+            system: false,
+            cache: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn binary(&mut self, spec: &'static ServerSpec) -> Option<PathBuf> {
+        let mut extra = self.extra.clone();
+        extra.extend(project_bin_dirs(
+            spec.command,
+            self.project_root.as_deref(),
+            self.trusted,
+        ));
+        let system = self.system;
+        self.cache
+            .entry(spec.id)
+            .or_insert_with(|| resolve_in(spec.command, &extra, system).1)
+            .clone()
+    }
+}
+
+/// Longest time one version probe (or `rustup which`) may run before it is killed.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+
+enum Probe {
+    Exited(Output),
+    NotRun,
+    TimedOut,
+}
+
+/// Run `cmd` with a null stdin and kill it after [`PROBE_TIMEOUT`].
+fn run_bounded(mut cmd: Command) -> Probe {
+    let mut child = match cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return Probe::NotRun,
+    };
+    let collect = |pipe: Option<Box<dyn Read + Send>>| {
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut buf);
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+    let out_rx = collect(
+        child
+            .stdout
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    let err_rx = collect(
+        child
+            .stderr
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    let deadline = Instant::now() + PROBE_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                // A grandchild may still hold the pipes open; do not wait on it forever.
+                let grace = Duration::from_millis(500);
+                return Probe::Exited(Output {
+                    status,
+                    stdout: out_rx.recv_timeout(grace).unwrap_or_default(),
+                    stderr: err_rx.recv_timeout(grace).unwrap_or_default(),
+                });
+            }
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Probe::TimedOut;
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Probe::NotRun;
+            }
+        }
+    }
 }
 
 fn rustup_which(command: &str) -> Option<PathBuf> {
     if command != "rust-analyzer" {
         return None;
     }
-    let output = Command::new("rustup")
-        .args(["which", command])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
-        .ok()?;
+    let mut cmd = Command::new("rustup");
+    cmd.args(["which", command]);
+    let Probe::Exited(output) = run_bounded(cmd) else {
+        return None;
+    };
     if !output.status.success() {
         return None;
     }
@@ -135,7 +281,7 @@ fn join_command(dir: &Path, command: &str) -> Vec<PathBuf> {
     out
 }
 
-fn collect_candidates(command: &str, extra: &[PathBuf]) -> Vec<PathBuf> {
+fn collect_candidates(command: &str, extra: &[PathBuf], system: bool) -> Vec<PathBuf> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     let mut push = |p: PathBuf| {
@@ -143,16 +289,18 @@ fn collect_candidates(command: &str, extra: &[PathBuf]) -> Vec<PathBuf> {
             out.push(p);
         }
     };
-    if let Some(p) = rustup_which(command) {
-        push(p);
+    if system {
+        if let Some(p) = rustup_which(command) {
+            push(p);
+        }
+        if let Ok(iter) = which::which_all(command) {
+            for p in iter {
+                push(p);
+            }
+        }
     }
     for dir in extra {
         for p in join_command(dir, command) {
-            push(p);
-        }
-    }
-    if let Ok(iter) = which::which_all(command) {
-        for p in iter {
             push(p);
         }
     }
@@ -161,7 +309,15 @@ fn collect_candidates(command: &str, extra: &[PathBuf]) -> Vec<PathBuf> {
 
 /// First PATH/display candidate, and first candidate that actually runs.
 fn resolve_command(command: &str, extra: &[PathBuf]) -> (Option<PathBuf>, Option<PathBuf>) {
-    let candidates = collect_candidates(command, extra);
+    resolve_in(command, extra, true)
+}
+
+fn resolve_in(
+    command: &str,
+    extra: &[PathBuf],
+    system: bool,
+) -> (Option<PathBuf>, Option<PathBuf>) {
+    let candidates = collect_candidates(command, extra, system);
     if candidates.is_empty() {
         return (None, None);
     }
@@ -170,13 +326,10 @@ fn resolve_command(command: &str, extra: &[PathBuf]) -> (Option<PathBuf>, Option
     (display, working)
 }
 
-fn probe_args(path: &Path, args: &[&str]) -> Option<std::process::Output> {
-    Command::new(path)
-        .args(args)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
-        .ok()
+fn probe_args(path: &Path, args: &[&str]) -> Probe {
+    let mut cmd = Command::new(path);
+    cmd.args(args);
+    run_bounded(cmd)
 }
 
 pub fn looks_like_missing_shim(output: &std::process::Output) -> bool {
@@ -196,34 +349,31 @@ pub fn looks_like_missing_shim(output: &std::process::Output) -> bool {
 /// still being a real install — those count as available unless the process looks
 /// like a rustup shim without the component.
 pub fn server_binary_works(path: &Path) -> bool {
-    // `--version` (rust-analyzer, typescript-language-server, …)
-    if let Some(output) = probe_args(path, &["--version"]) {
-        if output.status.success() {
-            return true;
-        }
-        if looks_like_missing_shim(&output) {
-            return false;
-        }
-        // Binary started but rejected `--version` (pyright-langserver, gopls, …)
-        // Try `version` subcommand before accepting.
-        if let Some(ver) = probe_args(path, &["version"]) {
-            if ver.status.success() {
+    match probe_args(path, &["--version"]) {
+        // `--version` (rust-analyzer, typescript-language-server, …)
+        Probe::Exited(output) => {
+            if output.status.success() {
                 return true;
             }
-            if looks_like_missing_shim(&ver) {
+            if looks_like_missing_shim(&output) {
                 return false;
             }
+            // Binary started but rejected `--version` (pyright-langserver, gopls, …)
+            // Try `version` subcommand before accepting.
+            match probe_args(path, &["version"]) {
+                Probe::Exited(ver) => ver.status.success() || !looks_like_missing_shim(&ver),
+                Probe::TimedOut => false,
+                Probe::NotRun => true,
+            }
         }
-        return true;
+        // A probe that never answers is not a server ax can use.
+        Probe::TimedOut => false,
+        // Spawn failed for `--version` — last chance: `version` (unlikely)
+        Probe::NotRun => match probe_args(path, &["version"]) {
+            Probe::Exited(ver) => ver.status.success() || !looks_like_missing_shim(&ver),
+            _ => false,
+        },
     }
-    // Spawn failed for `--version` — last chance: `version` (unlikely)
-    if let Some(ver) = probe_args(path, &["version"]) {
-        if ver.status.success() {
-            return true;
-        }
-        return !looks_like_missing_shim(&ver);
-    }
-    false
 }
 
 /// True when this server's command is on PATH and actually runnable.
@@ -275,15 +425,17 @@ mod tests {
             "#!/bin/sh\necho \"error: unknown binary 'pyright-langserver'\" >&2\nexit 1\n",
         );
         let extra = vec![dir.path().to_path_buf()];
-        let (_d, w) = resolve_command("pyright-langserver", &extra);
+        // Search only the temp dir so a real pyright on this machine's PATH
+        // cannot make the shim case pass.
+        let (_d, w) = resolve_in("pyright-langserver", &extra, false);
         assert!(w.is_none());
         write_exec(&named_shim, "#!/bin/sh\necho pyright-langserver\nexit 0\n");
-        let (_d, w) = resolve_command("pyright-langserver", &extra);
+        let (_d, w) = resolve_in("pyright-langserver", &extra, false);
         assert!(w.is_some());
     }
 
     #[test]
-    fn l3_node_modules_bin_is_searched() {
+    fn l3_trusted_node_modules_bin_is_searched_for_node_servers() {
         let root = tempfile::tempdir().unwrap();
         let bin = root.path().join("node_modules/.bin");
         fs::create_dir_all(&bin).unwrap();
@@ -292,9 +444,15 @@ mod tests {
             &tls,
             "#!/bin/sh\necho typescript-language-server 4.0.0\nexit 0\n",
         );
-        let extra = extra_bin_dirs(Some(root.path()));
-        let (_, working) = resolve_command("typescript-language-server", &extra);
+        let extra = project_bin_dirs("typescript-language-server", Some(root.path()), true);
+        let (_, working) = resolve_in("typescript-language-server", &extra, false);
         assert_eq!(working.as_ref(), Some(&tls));
+        // Never for servers that are not Node packages, trusted or not.
+        assert!(project_bin_dirs("gopls", Some(root.path()), true).is_empty());
+        assert!(project_bin_dirs("rust-analyzer", Some(root.path()), true).is_empty());
+        assert!(
+            project_bin_dirs("typescript-language-server", Some(root.path()), false).is_empty()
+        );
     }
 
     #[test]
@@ -307,5 +465,59 @@ mod tests {
             .output()
             .unwrap();
         assert!(looks_like_missing_shim(&output));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod probe_timeout_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn a_hanging_probe_is_killed_and_counts_as_not_working() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("gopls");
+        std::fs::write(&bin, "#!/bin/sh\nexec sleep 30\n").unwrap();
+        let mut p = std::fs::metadata(&bin).unwrap().permissions();
+        p.set_mode(0o755);
+        std::fs::set_permissions(&bin, p).unwrap();
+        let started = std::time::Instant::now();
+        let works = server_binary_works(&bin);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(15),
+            "probe took {elapsed:?}"
+        );
+        assert!(!works, "a probe that never answers is not a working server");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod project_bin_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn plant(root: &Path, command: &str) -> PathBuf {
+        let bin = root.join("node_modules/.bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let path = bin.join(command);
+        std::fs::write(&path, "#!/bin/sh\necho planted\nexit 0\n").unwrap();
+        let mut p = std::fs::metadata(&path).unwrap().permissions();
+        p.set_mode(0o755);
+        std::fs::set_permissions(&path, p).unwrap();
+        path
+    }
+
+    #[test]
+    fn project_local_binaries_are_not_run_by_default() {
+        let root = tempfile::tempdir().unwrap();
+        for command in ["gopls", "rust-analyzer", "typescript-language-server"] {
+            let planted = plant(root.path(), command);
+            assert_ne!(
+                working_binary(command, Some(root.path())),
+                Some(planted),
+                "{command} from the indexed project must not be run"
+            );
+        }
     }
 }

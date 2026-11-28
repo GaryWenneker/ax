@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use ax_types::{Language, NodeKind, ReferenceKind, UnresolvedReference};
 use tree_sitter::{Node as TsNode, Tree};
 
-use super::common::SymbolSpan;
+use super::common::{for_each_node, SymbolSpan};
 
 /// Per-file inputs shared by the call and function-reference walkers.
 pub struct RefCtx<'a> {
@@ -17,9 +17,14 @@ pub struct RefCtx<'a> {
 }
 
 /// Append unresolved call/import references for JS/TS family grammars.
+///
+/// Calls whose target is a function of this file also get a Calls edge, unless
+/// the call goes through another object (`JSON.parse()`, `v.len()`).
 pub fn append_ts_js_refs(result: &mut ax_types::ExtractionResult, tree: &Tree, ctx: &RefCtx) {
     let root = tree.root_node();
-    walk_for_calls(root, ctx, result);
+    let mut local = Vec::new();
+    walk_for_calls(root, ctx, result, &mut local);
+    link_local_calls(result, ctx.file_path, &local);
     walk_for_imports(
         root,
         ctx.source,
@@ -33,6 +38,9 @@ pub fn append_ts_js_refs(result: &mut ax_types::ExtractionResult, tree: &Tree, c
 }
 
 /// Append call references for Rust / Python / Go / Java tree-sitter grammars.
+///
+/// Calls whose target is a function of this file also get a Calls edge, unless
+/// the call goes through another object.
 pub fn append_lang_call_refs(
     result: &mut ax_types::ExtractionResult,
     tree: &Tree,
@@ -40,9 +48,11 @@ pub fn append_lang_call_refs(
     call_kinds: &[&str],
 ) {
     let root = tree.root_node();
+    let mut local = Vec::new();
     for kind in call_kinds {
-        walk_call_nodes(root, ctx, kind, result);
+        walk_call_nodes(root, ctx, kind, result, &mut local);
     }
+    link_local_calls(result, ctx.file_path, &local);
 }
 
 /// Calls written inside Rust macro arguments, such as `println!("{}", total(items))`.
@@ -50,65 +60,94 @@ pub fn append_lang_call_refs(
 /// tree-sitter leaves macro arguments unparsed: a `token_tree` of raw tokens with no
 /// `call_expression` in it. An identifier directly followed by a parenthesized token
 /// tree is a call. Macros are not expanded, so calls a macro generates are not found.
+/// A call through another object (`v.len()`) gets no same-file edge, as elsewhere.
 pub fn append_rust_macro_call_refs(
     result: &mut ax_types::ExtractionResult,
     tree: &Tree,
     ctx: &RefCtx,
 ) {
-    walk_macro_invocations(tree.root_node(), ctx, result);
-}
-
-fn walk_macro_invocations(node: TsNode, ctx: &RefCtx, result: &mut ax_types::ExtractionResult) {
-    let in_macro = node.kind() == "macro_invocation";
-    for i in 0..node.child_count() {
-        let Some(child) = node.child(i) else { continue };
-        if in_macro && child.kind() == "token_tree" {
-            walk_token_tree(child, ctx, result);
-        } else {
-            walk_macro_invocations(child, ctx, result);
+    let mut local = Vec::new();
+    for_each_node(tree.root_node(), |node| {
+        if node.kind() != "macro_invocation" {
+            return;
         }
-    }
+        for i in 0..node.child_count() {
+            let Some(args) = node.child(i).filter(|c| c.kind() == "token_tree") else {
+                continue;
+            };
+            for_each_node(args, |tokens| {
+                if tokens.kind() == "token_tree" {
+                    push_token_tree_calls(tokens, ctx, result, &mut local);
+                }
+            });
+        }
+    });
+    link_local_calls(result, ctx.file_path, &local);
 }
 
-fn walk_token_tree(tree: TsNode, ctx: &RefCtx, result: &mut ax_types::ExtractionResult) {
-    for i in 0..tree.child_count() {
-        let Some(child) = tree.child(i) else { continue };
-        if child.kind() != "token_tree" {
+/// The calls among the direct children of one token tree.
+fn push_token_tree_calls(
+    tokens: TsNode,
+    ctx: &RefCtx,
+    result: &mut ax_types::ExtractionResult,
+    local: &mut LocalCalls,
+) {
+    let token = |at: usize| tokens.child(at);
+    for i in 1..tokens.child_count() {
+        let Some(args) = token(i).filter(|n| n.kind() == "token_tree") else {
+            continue;
+        };
+        let Some(callee) = token(i - 1).filter(|n| n.kind() == "identifier") else {
+            continue;
+        };
+        if ctx.source.get(args.start_byte()) != Some(&b'(') {
             continue;
         }
-        let callee = i.checked_sub(1).and_then(|at| tree.child(at));
+        let before = |back: usize| i.checked_sub(back).and_then(token);
         // `fn name(...)` is an item defined inside the macro, not a call.
-        let defines = i >= 2 && tree.child(i - 2).is_some_and(|n| n.kind() == "fn");
-        if let Some(callee) = callee.filter(|n| n.kind() == "identifier") {
-            let parenthesized = ctx.source.get(child.start_byte()) == Some(&b'(');
-            if parenthesized && !defines {
-                push_call_ref(callee, ctx, &node_text(callee, ctx.source), result);
-            }
+        if before(2).is_some_and(|n| n.kind() == "fn") {
+            continue;
         }
-        walk_token_tree(child, ctx, result);
+        let via_receiver = before(2).is_some_and(|n| n.kind() == ".")
+            && !before(3).is_some_and(|n| node_text(n, ctx.source) == "self");
+        let name = node_text(callee, ctx.source);
+        push_call_ref(callee, ctx, &name, via_receiver, result, local);
     }
 }
 
-fn walk_for_calls(node: TsNode, ctx: &RefCtx, result: &mut ax_types::ExtractionResult) {
-    if node.kind() == "call_expression" {
+/// Indices into `unresolved_references` of calls made without a foreign
+/// receiver: only these may name a function of the same file.
+type LocalCalls = Vec<usize>;
+
+fn walk_for_calls(
+    root: TsNode,
+    ctx: &RefCtx,
+    result: &mut ax_types::ExtractionResult,
+    local: &mut LocalCalls,
+) {
+    for_each_node(root, |node| {
+        if node.kind() != "call_expression" {
+            return;
+        }
         if let Some(callee) = extract_ts_js_callee(node, ctx.source) {
-            push_call_ref(node, ctx, &callee, result);
+            // extract_ts_js_callee keeps `receiver.` unless the receiver is this/self.
+            let via_receiver = callee.contains('.');
+            push_call_ref(node, ctx, &callee, via_receiver, result, local);
         }
-    }
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            walk_for_calls(child, ctx, result);
-        }
-    }
+    });
 }
 
 fn walk_call_nodes(
-    node: TsNode,
+    root: TsNode,
     ctx: &RefCtx,
     call_kind: &str,
     result: &mut ax_types::ExtractionResult,
+    local: &mut LocalCalls,
 ) {
-    if node.kind() == call_kind {
+    for_each_node(root, |node| {
+        if node.kind() != call_kind {
+            return;
+        }
         let callee = if call_kind == "method_invocation" {
             field_text(node, ctx.source, "name")
         } else {
@@ -116,14 +155,43 @@ fn walk_call_nodes(
         };
         if let Some(callee) = callee {
             if !callee.is_empty() {
-                push_call_ref(node, ctx, &callee, result);
+                let via_receiver = call_has_foreign_receiver(node, ctx.source);
+                push_call_ref(node, ctx, &callee, via_receiver, result, local);
             }
         }
-    }
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            walk_call_nodes(child, ctx, call_kind, result);
-        }
+    });
+}
+
+/// Whether a call goes through an object other than this/self
+/// (`JSON.parse()`, `v.len()`, `Registry.lookup()`).
+fn call_has_foreign_receiver(call: TsNode, source: &[u8]) -> bool {
+    let receiver = if let Some(func) = call.child_by_field_name("function") {
+        receiver_of(func)
+    } else if let Some(obj) = call
+        .child_by_field_name("object")
+        .or_else(|| call.child_by_field_name("receiver"))
+    {
+        Some(obj)
+    } else if call.kind() == "call_expression" {
+        call.named_child(0).and_then(receiver_of)
+    } else {
+        None
+    };
+    receiver.is_some_and(|r| {
+        let text = node_text(r, source);
+        !text.is_empty() && !is_skip_receiver(&text)
+    })
+}
+
+/// The object part of a member access expression, for the grammars ax parses.
+fn receiver_of(func: TsNode) -> Option<TsNode> {
+    match func.kind() {
+        "member_access_expression" => func.child_by_field_name("expression"),
+        "field_expression" => func.child_by_field_name("value"),
+        "selector_expression" => func.child_by_field_name("operand"),
+        "member_expression" | "attribute" => func.child_by_field_name("object"),
+        "navigation_expression" if func.named_child_count() > 1 => func.named_child(0),
+        _ => None,
     }
 }
 
@@ -131,7 +199,9 @@ fn push_call_ref(
     node: TsNode,
     ctx: &RefCtx,
     callee: &str,
+    via_receiver: bool,
     result: &mut ax_types::ExtractionResult,
+    local: &mut LocalCalls,
 ) {
     if is_noise_callee(callee) || is_external_callee(callee) {
         return;
@@ -139,6 +209,9 @@ fn push_call_ref(
     let callee = normalize_callee_name(callee);
     if callee.is_empty() || is_external_callee(&callee) {
         return;
+    }
+    if !via_receiver {
+        local.push(result.unresolved_references.len());
     }
     let line = node.start_position().row as i32 + 1;
     let column = node.start_position().column as i32;
@@ -156,14 +229,14 @@ fn push_call_ref(
 }
 
 fn walk_for_imports(
-    node: TsNode,
+    root: TsNode,
     source: &[u8],
     file_path: &str,
     file_id: &str,
     language: Language,
     result: &mut ax_types::ExtractionResult,
 ) {
-    match node.kind() {
+    for_each_node(root, |node| match node.kind() {
         "import_statement" | "import_declaration" => {
             emit_ts_js_import_refs(node, source, file_path, file_id, language, result);
         }
@@ -171,12 +244,7 @@ fn walk_for_imports(
             emit_ts_js_reexport_refs(node, source, file_path, file_id, result);
         }
         _ => {}
-    }
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            walk_for_imports(child, source, file_path, file_id, language, result);
-        }
-    }
+    });
 }
 
 fn emit_ts_js_import_refs(
@@ -357,7 +425,19 @@ fn push_import_name(
     });
 }
 
+/// How far callee and function-ref lookups descend through chained calls and
+/// parentheses. Real code stays far below this; generated code can nest
+/// arbitrarily deep, and every call node in a chain repeats the descent.
+const MAX_EXPR_DEPTH: usize = 32;
+
 fn extract_ts_js_callee(node: TsNode, source: &[u8]) -> Option<String> {
+    ts_js_callee(node, source, 0)
+}
+
+fn ts_js_callee(node: TsNode, source: &[u8], depth: usize) -> Option<String> {
+    if depth > MAX_EXPR_DEPTH {
+        return None;
+    }
     let func = node.child_by_field_name("function")?;
     match func.kind() {
         "identifier" => Some(node_text(func, source)),
@@ -381,25 +461,25 @@ fn extract_ts_js_callee(node: TsNode, source: &[u8]) -> Option<String> {
         }
         "call_expression" => {
             // Chained call: inner().method() — use inner callee + ().method if member follows
-            extract_ts_js_callee(func, source)
+            ts_js_callee(func, source, depth + 1)
         }
         "parenthesized_expression" | "await_expression" => {
             for i in 0..func.named_child_count() {
                 let child = func.named_child(i).unwrap();
-                if let Some(c) = extract_ts_js_callee_from_expr(child, source) {
+                if let Some(c) = ts_js_callee_from_expr(child, source, depth + 1) {
                     return Some(c);
                 }
             }
             None
         }
-        _ => extract_ts_js_callee_from_expr(func, source),
+        _ => ts_js_callee_from_expr(func, source, depth + 1),
     }
     .filter(|s| !s.is_empty())
 }
 
-fn extract_ts_js_callee_from_expr(node: TsNode, source: &[u8]) -> Option<String> {
+fn ts_js_callee_from_expr(node: TsNode, source: &[u8], depth: usize) -> Option<String> {
     if node.kind() == "call_expression" {
-        return extract_ts_js_callee(node, source);
+        return ts_js_callee(node, source, depth);
     }
     if node.kind() == "identifier" {
         let t = node_text(node, source);
@@ -422,6 +502,15 @@ fn extract_generic_callee(node: TsNode, source: &[u8]) -> Option<String> {
     if let Some(name) = node.child_by_field_name("name") {
         return Some(normalize_callee_name(&node_text(name, source)));
     }
+    // Kotlin's call_expression has no fields: the callee is its first child.
+    if node.kind() == "call_expression" {
+        if let Some(name) = node
+            .named_child(0)
+            .and_then(|f| callee_from_expression(f, source))
+        {
+            return Some(normalize_callee_name(&name));
+        }
+    }
     None
 }
 
@@ -441,6 +530,11 @@ fn callee_from_expression(node: TsNode, source: &[u8]) -> Option<String> {
             None
         }
         "member_access_expression" => field_text(node, source, "name"),
+        // Kotlin `a.b`: the last identifier is the member.
+        "navigation_expression" => node
+            .named_child(node.named_child_count().saturating_sub(1))
+            .filter(|n| n.kind() == "identifier")
+            .map(|n| node_text(n, source)),
         "field_expression" | "selector_expression" => node
             .child_by_field_name("field")
             .map(|f| node_text(f, source)),
@@ -570,12 +664,12 @@ fn build_fn_ref_gate(result: &ax_types::ExtractionResult, spans: &[SymbolSpan]) 
 }
 
 fn walk_fn_ref_nodes(
-    node: TsNode,
+    root: TsNode,
     ctx: &RefCtx,
     gate: &HashSet<String>,
     result: &mut ax_types::ExtractionResult,
 ) {
-    match node.kind() {
+    for_each_node(root, |node| match node.kind() {
         "call_expression" => {
             if let Some(args) = node.child_by_field_name("arguments") {
                 collect_fn_ref_from_args(args, ctx, gate, result);
@@ -587,12 +681,7 @@ fn walk_fn_ref_nodes(
             }
         }
         _ => {}
-    }
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            walk_fn_ref_nodes(child, ctx, gate, result);
-        }
-    }
+    });
 }
 
 fn collect_fn_ref_from_args(
@@ -638,6 +727,13 @@ fn maybe_emit_fn_ref(
 }
 
 fn extract_fn_ref_name(node: TsNode, source: &[u8]) -> Option<String> {
+    fn_ref_name(node, source, 0)
+}
+
+fn fn_ref_name(node: TsNode, source: &[u8], depth: usize) -> Option<String> {
+    if depth > MAX_EXPR_DEPTH {
+        return None;
+    }
     match node.kind() {
         "identifier" => {
             let t = node_text(node, source);
@@ -650,7 +746,7 @@ fn extract_fn_ref_name(node: TsNode, source: &[u8]) -> Option<String> {
         "parenthesized_expression" | "await_expression" => {
             for i in 0..node.named_child_count() {
                 let child = node.named_child(i).unwrap();
-                if let Some(n) = extract_fn_ref_name(child, source) {
+                if let Some(n) = fn_ref_name(child, source, depth + 1) {
                     return Some(n);
                 }
             }
@@ -660,33 +756,33 @@ fn extract_fn_ref_name(node: TsNode, source: &[u8]) -> Option<String> {
     }
 }
 
-/// Same-file call edges for refs that match a local symbol by name.
-pub fn emit_same_file_call_edges(result: &mut ax_types::ExtractionResult, file_path: &str) {
-    let local_names: std::collections::HashMap<String, String> = result
+/// Same-file Calls edges for the `local` call refs that name a function or
+/// method of this file. The refs stay unresolved for cross-file resolution.
+fn link_local_calls(result: &mut ax_types::ExtractionResult, file_path: &str, local: &[usize]) {
+    if local.is_empty() {
+        return;
+    }
+    let local_names: std::collections::HashMap<&str, &str> = result
         .nodes
         .iter()
         .filter(|n| {
             n.file_path == file_path
-                && (matches!(
+                && matches!(
                     n.kind,
                     ax_types::NodeKind::Function | ax_types::NodeKind::Method
-                ))
+                )
         })
-        .map(|n| (n.name.clone(), n.id.clone()))
+        .map(|n| (n.name.as_str(), n.id.as_str()))
         .collect();
-
-    let mut resolved_indices = Vec::new();
-    for (idx, ref_) in result.unresolved_references.iter().enumerate() {
-        if ref_.reference_kind != ReferenceKind::Calls {
+    let mut edges = Vec::new();
+    for &idx in local {
+        let Some(ref_) = result.unresolved_references.get(idx) else {
             continue;
-        }
-        if ref_.reference_name.contains('.') {
-            continue;
-        }
-        if let Some(target_id) = local_names.get(&ref_.reference_name) {
-            result.edges.push(ax_types::Edge {
+        };
+        if let Some(target_id) = local_names.get(ref_.reference_name.as_str()) {
+            edges.push(ax_types::Edge {
                 source: ref_.from_node_id.clone(),
-                target: target_id.clone(),
+                target: target_id.to_string(),
                 kind: ax_types::EdgeKind::Calls,
                 metadata: None,
                 line: Some(ref_.line),
@@ -694,10 +790,9 @@ pub fn emit_same_file_call_edges(result: &mut ax_types::ExtractionResult, file_p
                 provenance: Some(ax_types::Provenance::TreeSitter),
                 confidence: Some(ax_types::EdgeConfidence::Extracted),
             });
-            resolved_indices.push(idx);
         }
     }
-    // Keep unresolved for cross-file; same-file still in DB for resolution stats
+    result.edges.extend(edges);
 }
 #[cfg(test)]
 mod tests {
@@ -772,5 +867,63 @@ export function setup() {
             .filter(|r| r.reference_kind == ReferenceKind::FunctionRef)
             .count();
         assert!(fn_refs >= 1, "expected function-ref candidate for handler");
+    }
+
+    fn ts_extract(path: &str, source: &str) -> ax_types::ExtractionResult {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
+            .expect("grammar");
+        let tree = parser.parse(source, None).expect("parse");
+        TypescriptExtractor.extract(source.as_bytes(), &tree, path)
+    }
+
+    fn call_edges_into(result: &ax_types::ExtractionResult, name: &str) -> Vec<i32> {
+        let id = &result.nodes.iter().find(|n| n.name == name).unwrap().id;
+        result
+            .edges
+            .iter()
+            .filter(|e| e.kind == ax_types::EdgeKind::Calls && &e.target == id)
+            .filter_map(|e| e.line)
+            .collect()
+    }
+
+    #[test]
+    fn member_call_on_another_object_is_not_a_same_file_edge() {
+        let source = "function parse(t: string) { return t; }\n\
+                      function load(t: string) { return JSON.parse(t); }\n\
+                      function run(t: string) { return parse(t); }\n";
+        let result = ts_extract("load.ts", source);
+        assert_eq!(
+            call_edges_into(&result, "parse"),
+            vec![3],
+            "only the bare parse() on line 3 calls the local function"
+        );
+    }
+
+    #[test]
+    fn this_call_still_links_to_the_local_method() {
+        let source = "class A {\n  helper() { return 1; }\n  run() { return this.helper(); }\n}\n";
+        let result = ts_extract("a.ts", source);
+        assert_eq!(call_edges_into(&result, "helper"), vec![3]);
+    }
+
+    #[test]
+    fn rust_receiver_call_is_not_a_same_file_edge() {
+        let source = "fn len() -> usize { 0 }\nfn f(v: Vec<u8>) -> usize { v.len() + len() }\n";
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .expect("grammar");
+        let tree = parser.parse(source, None).expect("parse");
+        let result =
+            crate::languages::rust::RustExtractor.extract(source.as_bytes(), &tree, "f.rs");
+        let len_id = &result.nodes.iter().find(|n| n.name == "len").unwrap().id;
+        let edges = result
+            .edges
+            .iter()
+            .filter(|e| e.kind == ax_types::EdgeKind::Calls && &e.target == len_id)
+            .count();
+        assert_eq!(edges, 1, "v.len() must not link to the local fn len");
     }
 }

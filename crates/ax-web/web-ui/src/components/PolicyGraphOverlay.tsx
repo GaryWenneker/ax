@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ForceGraphCanvas, { type CanvasNode } from './ForceGraphCanvas';
 import { ResizableBlade } from './BladeResize';
@@ -36,6 +36,15 @@ async function fetchPolicyGraph(): Promise<PolicyGraphPayload> {
   return res.json() as Promise<PolicyGraphPayload>;
 }
 
+const DISCARD_PROMPT = 'Discard unsaved changes to this item?';
+
+/** Escape typed into a field belongs to that field, not to the overlay. */
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  return target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]') !== null;
+}
+
 function openItem(node: PolicyGraphNode) {
   window.history.pushState(null, '', linkHref(node));
   window.dispatchEvent(new PopStateEvent('popstate'));
@@ -53,6 +62,30 @@ export default function PolicyGraphOverlay({ currentKey, onClose }: Props) {
   const [selected, setSelected] = useState<string | null>(currentKey);
 
   const [reloadTick, setReloadTick] = useState(0);
+  /** True while the open rule or skill editor has unsaved changes. */
+  const dirtyRef = useRef(false);
+  const onDirtyChange = useCallback((dirty: boolean) => {
+    dirtyRef.current = dirty;
+  }, []);
+  /** Ask before an action would drop unsaved edits; true when it may go ahead. */
+  const confirmDiscard = useCallback(() => {
+    if (!dirtyRef.current) return true;
+    if (!window.confirm(DISCARD_PROMPT)) return false;
+    dirtyRef.current = false;
+    return true;
+  }, []);
+  const select = useCallback(
+    (key: string | null) => {
+      if (key === selected) return;
+      if (!confirmDiscard()) return;
+      setSelected(key);
+    },
+    [selected, confirmDiscard],
+  );
+  const close = useCallback(() => {
+    if (!confirmDiscard()) return;
+    onClose();
+  }, [confirmDiscard, onClose]);
 
   useEffect(() => {
     let alive = true;
@@ -67,12 +100,13 @@ export default function PolicyGraphOverlay({ currentKey, onClose }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (selected) setSelected(null);
-      else onClose();
+      if (isEditableTarget(e.target)) return;
+      if (selected) select(null);
+      else close();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, selected]);
+  }, [close, select, selected]);
 
   const canvasNodes = useMemo<CanvasNode[]>(
     () =>
@@ -91,6 +125,7 @@ export default function PolicyGraphOverlay({ currentKey, onClose }: Props) {
   const selectedKey = node ? node.key : null;
 
   const go = (n: PolicyGraphNode) => {
+    if (!confirmDiscard()) return;
     onClose();
     openItem(n);
   };
@@ -118,7 +153,7 @@ export default function PolicyGraphOverlay({ currentKey, onClose }: Props) {
       </div>
       <div className="edge-list">
         {items.map((l) => (
-          <button key={l.key} type="button" className="edge-item" onClick={() => setSelected(l.key)}>
+          <button key={l.key} type="button" className="edge-item" onClick={() => select(l.key)}>
             <span className="edge-name">{l.label}</span>
             <span className="edge-kind">{l.kind}</span>
           </button>
@@ -131,7 +166,7 @@ export default function PolicyGraphOverlay({ currentKey, onClose }: Props) {
     <div className="policy-graph-overlay" role="dialog" aria-modal="true" aria-label="Policy graph">
       <div className="policy-graph-header">
         <span className="policy-graph-title">Graph · rules, skills and memories</span>
-        <button type="button" className="detail-close" onClick={onClose} aria-label="Close graph">
+        <button type="button" className="detail-close" onClick={close} aria-label="Close graph">
           ×
         </button>
       </div>
@@ -148,7 +183,7 @@ export default function PolicyGraphOverlay({ currentKey, onClose }: Props) {
             nodes={canvasNodes}
             edges={model.edges}
             selectedKey={selectedKey}
-            onSelect={setSelected}
+            onSelect={select}
             settingsKey={POLICY_GRAPH_SETTINGS_KEY}
             legend={legend}
           />
@@ -162,8 +197,9 @@ export default function PolicyGraphOverlay({ currentKey, onClose }: Props) {
                   ruleId={node.id}
                   origin={node.origin}
                   projectId={node.projectId}
-                  onClose={() => setSelected(null)}
+                  onClose={() => select(null)}
                   onSaved={() => setReloadTick((t) => t + 1)}
+                  onDirtyChange={onDirtyChange}
                 />
               ) : (
                 <PolicySkillInlineWorkspace
@@ -171,8 +207,9 @@ export default function PolicyGraphOverlay({ currentKey, onClose }: Props) {
                   skillName={node.id}
                   origin={node.origin}
                   projectId={node.projectId}
-                  onClose={() => setSelected(null)}
+                  onClose={() => select(null)}
                   onSaved={() => setReloadTick((t) => t + 1)}
+                  onDirtyChange={onDirtyChange}
                 />
               )}
             </aside>
@@ -183,7 +220,7 @@ export default function PolicyGraphOverlay({ currentKey, onClose }: Props) {
             <aside className="detail-panel detail-panel--blade" aria-label="Policy item">
               <div className="detail-header">
                 <span className="detail-title">{node.label}</span>
-                <button type="button" className="detail-close" onClick={() => setSelected(null)} aria-label="Close">
+                <button type="button" className="detail-close" onClick={() => select(null)} aria-label="Close">
                   ×
                 </button>
               </div>

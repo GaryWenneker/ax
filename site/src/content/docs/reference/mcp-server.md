@@ -246,7 +246,7 @@ To watch what each tool receives, how preflight enrichment builds the inject blo
 3. Read today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` for the project the agent is connected to. A new file starts each day and earlier days stay on disk. Lines are marked **Inbound** (what a tool received), **Outbound** (what ax sent back) or **Internal**.
 4. For a remote Ax, the **Logging** page of [ax-admin](/guides/remote-admin/) lists the MCP calls that environment handled: time, tool, result, duration and size. It needs the admin grant.
 
-![ax-admin — the Logging page with MCP calls](/screenshots/ax-admin-logging.png)
+![ax-admin — the MCP call log of an environment](/screenshots/ax-admin-logging.png)
 
 5. Score the session with `ax mcp audit`: correlation, enrichment, tool mix and findings, saved to `.ax/audit/latest.json`. Install `ax savings hook install` for `session=` tags.
 6. In Cursor, optionally also use **View → Output → ax / MCP Logs**.

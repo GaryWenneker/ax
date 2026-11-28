@@ -190,6 +190,71 @@ async fn sync_reindexes_everything_on_extractor_version_change() {
 }
 
 #[tokio::test]
+async fn sync_after_extractor_upgrade_drops_old_format_contract_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "api/openapi.yaml",
+        "openapi: 3.0.0\npaths:\n  /users:\n    get:\n      operationId: listUsers\n",
+    );
+    let mut ax = init_project(dir.path()).await;
+
+    // What the previous extractor left: a stamp of the old version and a
+    // contract id without the file in it.
+    let old_id = "contract:openapi:GET:/users";
+    ax.queries()
+        .upsert_nodes(&[ax_types::Node {
+            id: old_id.into(),
+            kind: ax_types::NodeKind::Route,
+            name: "GET /users".into(),
+            qualified_name: old_id.into(),
+            file_path: "api/openapi.yaml".into(),
+            language: ax_types::Language::Unknown,
+            start_line: 1,
+            end_line: 1,
+            start_column: 0,
+            end_column: 0,
+            docstring: None,
+            signature: None,
+            visibility: None,
+            is_exported: Some(true),
+            is_async: None,
+            is_static: None,
+            is_abstract: None,
+            decorators: None,
+            type_parameters: None,
+            return_type: None,
+            updated_at: 0,
+        }])
+        .await
+        .unwrap();
+    ax.queries()
+        .set_metadata("extraction_version", "7")
+        .await
+        .unwrap();
+    assert_ne!(ax_extraction::EXTRACTION_VERSION, "7");
+
+    let result = ax.sync(quiet_opts(), None).await.unwrap();
+    assert!(
+        result.files_indexed >= 2,
+        "an older extraction version forces a full reindex, got {}",
+        result.files_indexed
+    );
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM nodes WHERE substr(id, 1, 9) = 'contract:'")
+            .fetch_all(ax.db_pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        ids,
+        vec!["contract:openapi:api/openapi.yaml:GET:/users".to_string()],
+        "only the current per-file contract id remains"
+    );
+
+    ax.destroy().await.unwrap();
+}
+
+#[tokio::test]
 async fn sync_resolves_only_affected_files() {
     let dir = tempfile::tempdir().unwrap();
     write(
@@ -295,6 +360,157 @@ async fn index_names_each_maintenance_step() {
             "memory re-embed".to_string(),
         ]
     );
+    ax.destroy().await.unwrap();
+}
+
+#[tokio::test]
+async fn incremental_index_keeps_project_wide_resolution_stats() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "src/app.ts",
+        "export function greet() { console.log(\"hi\"); missingHelper(); }\n",
+    );
+    write(dir.path(), "src/util.ts", "export const ZERO = 0;\n");
+    let mut ax = Ax::init(dir.path()).await.unwrap();
+    ax.index_all(quiet_opts(), None).await.unwrap();
+    let before = ax.get_stats().await.unwrap();
+    assert!(
+        before.resolution_total.unwrap_or(0) > 0,
+        "full index records project-wide totals: {before:?}"
+    );
+
+    // A file with no references at all.
+    write(dir.path(), "src/util.ts", "export const ONE = 1;\n");
+    ax.index_files(&["src/util.ts".into()], quiet_opts(), &mut None)
+        .await
+        .unwrap();
+    let after = ax.get_stats().await.unwrap();
+    assert_eq!(after.resolution_total, before.resolution_total);
+    assert_eq!(after.resolution_resolved, before.resolution_resolved);
+    assert_eq!(after.resolution_unresolved, before.resolution_unresolved);
+
+    ax.destroy().await.unwrap();
+}
+
+type Labels = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+type Progress = Option<Box<dyn FnMut(ax_types::IndexProgress) + Send>>;
+
+fn optimizing_labels() -> (Labels, Progress) {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let capture = std::sync::Arc::clone(&seen);
+    let progress = Box::new(move |event: ax_types::IndexProgress| {
+        if event.phase == ax_types::IndexPhase::Optimizing {
+            if let Some(label) = event.file_path {
+                capture.lock().expect("progress").push(label);
+            }
+        }
+    }) as Box<dyn FnMut(ax_types::IndexProgress) + Send>;
+    (seen, Some(progress))
+}
+
+async fn doc_links_to(ax: &Ax, symbol: &str) -> Vec<String> {
+    let hits = ax
+        .search_nodes(symbol, &ax_types::SearchOptions::default())
+        .await
+        .unwrap();
+    let mut sources = Vec::new();
+    for hit in hits.iter().filter(|h| h.node.name == symbol) {
+        for edge in ax.queries().get_incoming_edges(&hit.node.id).await.unwrap() {
+            if edge.source.starts_with("doc:") {
+                sources.push(edge.source);
+            }
+        }
+    }
+    sources
+}
+
+async fn docs_project(root: &Path) -> Ax {
+    write(
+        root,
+        "src/app.ts",
+        "export function greetUser(name: string) { return name; }\n",
+    );
+    write(
+        root,
+        "src/util.ts",
+        "export function addNumbers(a: number, b: number) { return a + b; }\n",
+    );
+    write(root, "README.md", "# Demo\n\nCall `greetUser` to say hi.\n");
+    let mut ax = Ax::init(root).await.unwrap();
+    ax.index_all(quiet_opts(), None).await.unwrap();
+    ax
+}
+
+#[tokio::test]
+async fn scoped_index_of_a_code_file_skips_project_wide_passes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ax = docs_project(dir.path()).await;
+    write(
+        dir.path(),
+        "src/util.ts",
+        "export function addNumbers(a: number, b: number) { return b + a; }\n",
+    );
+    let (seen, mut progress) = optimizing_labels();
+    ax.index_files(&["src/util.ts".into()], quiet_opts(), &mut progress)
+        .await
+        .unwrap();
+    let labels = seen.lock().expect("progress").clone();
+    assert!(
+        !labels
+            .iter()
+            .any(|l| l == "markdown docs" || l == "contracts"),
+        "a code-only change must not rescan every doc and contract: {labels:?}"
+    );
+    assert!(
+        labels.iter().any(|l| l == "SQLite optimize"),
+        "a scoped run uses the light maintenance step: {labels:?}"
+    );
+    ax.destroy().await.unwrap();
+}
+
+#[tokio::test]
+async fn doc_links_survive_a_scoped_reindex_of_the_code_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ax = docs_project(dir.path()).await;
+    assert_eq!(doc_links_to(&ax, "greetUser").await, vec!["doc:README.md"]);
+
+    write(
+        dir.path(),
+        "src/app.ts",
+        "export function greetUser(name: string) { return `hi ${name}`; }\n",
+    );
+    ax.index_files(&["src/app.ts".into()], quiet_opts(), &mut None)
+        .await
+        .unwrap();
+    assert_eq!(
+        doc_links_to(&ax, "greetUser").await,
+        vec!["doc:README.md"],
+        "re-extracting the code file must keep the doc's link to it"
+    );
+    ax.destroy().await.unwrap();
+}
+
+#[tokio::test]
+async fn scoped_index_of_a_doc_file_relinks_docs() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ax = docs_project(dir.path()).await;
+    write(
+        dir.path(),
+        "README.md",
+        "# Demo\n\nCall `addNumbers` to add.\n",
+    );
+    let (seen, mut progress) = optimizing_labels();
+    ax.index_files(&["README.md".into()], quiet_opts(), &mut progress)
+        .await
+        .unwrap();
+    assert!(seen
+        .lock()
+        .expect("progress")
+        .iter()
+        .any(|l| l == "markdown docs"));
+    assert_eq!(doc_links_to(&ax, "addNumbers").await, vec!["doc:README.md"]);
+    assert!(doc_links_to(&ax, "greetUser").await.is_empty());
     ax.destroy().await.unwrap();
 }
 

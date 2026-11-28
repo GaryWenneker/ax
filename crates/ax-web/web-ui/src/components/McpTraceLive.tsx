@@ -48,6 +48,10 @@ import {
   rankMotionActive,
   rankStarActive,
   traceEntriesFromLines,
+  traceKindBadge,
+  appendTraceEntries,
+  prependTraceEntries,
+  MCP_TRACE_MAX_ENTRIES,
   type RankMotion,
   type TextPayload,
   type TraceEntry,
@@ -62,6 +66,7 @@ import {
 } from '../lib/mcpQuality';
 import { detectStructuredLang, highlightStructured } from '../lib/mcpSyntax';
 import { navigateRoute } from '../lib/routes';
+import { neighborId, neighborNav, type NeighborNav } from '../lib/rowNeighbors';
 import { subscribeSharedEventSource } from '../lib/sharedEventSource';
 import { fetchShipConfig } from '../shipApi';
 import SettingsSelect from './ui/SettingsSelect';
@@ -362,6 +367,10 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
   const [oldestLoadedDay, setOldestLoadedDay] = useState('');
   const [historyExhausted, setHistoryExhausted] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  /** Set when an older-day chunk failed; automatic loading stops until the user retries. */
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  /** True once the buffer cap dropped older rows; older days are then not loaded. */
+  const [historyTrimmed, setHistoryTrimmed] = useState(false);
   const [projectLabel, setProjectLabel] = useState('…');
   const [projectRoot, setProjectRoot] = useState('');
   const [fallbackLabel, setFallbackLabel] = useState('');
@@ -424,6 +433,7 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
       setLogDay(d.logDay);
       setOldestLoadedDay(d.logDay);
       setHistoryExhausted(false);
+      setHistoryError(null);
     }
     if (d.projectRoot) setProjectRoot(d.projectRoot);
     if (d.projectLabel) setProjectLabel(d.projectLabel);
@@ -525,6 +535,12 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
     [entries, selectedId],
   );
   const selected = selectedIndex >= 0 ? entries[selectedIndex] : null;
+  /** Previous / Next in the inspector follow the rendered rows, the same order selectNeighbor uses. */
+  const [nav, setNav] = useState<NeighborNav>({ prev: false, next: false });
+  useLayoutEffect(() => {
+    const next = neighborNav(visibleRowIds(), selectedId);
+    setNav((cur) => (cur.prev === next.prev && cur.next === next.next ? cur : next));
+  });
   const cluster = useMemo(
     () => (selectedIndex >= 0 ? findCallCluster(entries, selectedIndex) : null),
     [entries, selectedIndex],
@@ -694,14 +710,31 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
   useEffect(() => {
     let disposed = false;
 
-    function ingestLines(lines: string[], live = false) {
-      const batch = traceEntriesFromLines(lines);
-      if (batch.length === 0) return;
-      setEntries((prev) => [...prev, ...batch]);
-      if (live) markFresh(batch.map((e) => e.id));
-      if (live) {
+    // Lines are queued and applied together: live lines at most once per
+    // frame, a snapshot batch at once (caughtUp follows it directly).
+    type Queued = { batch: TraceEntry[]; live: boolean; last: string | undefined };
+    let queue: Queued[] = [];
+    let flushTimer: number | null = null;
+
+    function flush() {
+      if (flushTimer != null) {
+        window.clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      if (disposed || queue.length === 0) return;
+      const chunks = queue;
+      queue = [];
+      const all = chunks.flatMap((c) => c.batch);
+      const liveBatch = chunks.filter((c) => c.live).flatMap((c) => c.batch);
+      setEntries((prev) => {
+        const next = appendTraceEntries(prev, all);
+        if (next.trimmed) setHistoryTrimmed(true);
+        return next.entries;
+      });
+      if (liveBatch.length > 0) {
+        markFresh(liveBatch.map((e) => e.id));
         const now = Date.now();
-        const next = nextRankMotion(rankMotionRef.current, batch, true, now);
+        const next = nextRankMotion(rankMotionRef.current, liveBatch, true, now);
         rankMotionRef.current = next;
         setRankMotion(next);
         setRankNow(now);
@@ -715,11 +748,21 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
               }, delay)
             : null;
       }
-      setPendingNew((pending) => nextPending(followRef.current, live, batch.length, pending));
-      const last = lines[lines.length - 1];
+      setPendingNew((pending) =>
+        chunks.reduce((p, c) => nextPending(followRef.current, c.live, c.batch.length, p), pending),
+      );
+      const last = chunks[chunks.length - 1].last;
       if (last) {
         publishMcpTraceActivity({ summary: summarizeTraceLine(last) });
       }
+    }
+
+    function ingestLines(lines: string[], live = false) {
+      const batch = traceEntriesFromLines(lines);
+      if (batch.length === 0) return;
+      queue.push({ batch, live, last: lines[lines.length - 1] });
+      if (!live) flush();
+      else if (flushTimer == null) flushTimer = window.setTimeout(flush, 16);
     }
 
     setLive(true);
@@ -755,10 +798,13 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
           }
         },
         reset: () => {
+          queue = [];
           setEntries([]);
+          setHistoryTrimmed(false);
           setSelectedId(null);
           setCursorId(null);
           setHistoryExhausted(false);
+          setHistoryError(null);
           setOldestLoadedDay('');
           setCaughtUp(false);
         },
@@ -782,10 +828,13 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
           setErr(null);
         }
       },
+      // The table starts from the server's `batch` snapshot of today's log.
+      replaySnapshot: true,
     });
 
     return () => {
       disposed = true;
+      if (flushTimer != null) window.clearTimeout(flushTimer);
       unsub();
       setLive(false);
       if (rankTimer.current != null) {
@@ -834,16 +883,22 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
     if (logDay && !oldestLoadedDay) setOldestLoadedDay(logDay);
   }, [logDay, oldestLoadedDay]);
 
-  const loadOlderDayRef = useRef<() => void>(() => {});
-  loadOlderDayRef.current = () => {
-    if (loadingHistory || historyExhausted || !oldestLoadedDay) return;
+  /** `retry` is true only for an explicit user action after a failed chunk. */
+  const loadOlderDayRef = useRef<(retry?: boolean) => void>(() => {});
+  loadOlderDayRef.current = (retry = false) => {
+    if (loadingHistory || historyExhausted || historyTrimmed || !oldestLoadedDay) return;
+    if (historyError && !retry) return;
     setLoadingHistory(true);
+    setHistoryError(null);
     // Server walks back past gaps (a day with no verbose activity, or a
     // history-mangling bug) to find the nearest real dated file before
     // `oldestLoadedDay` — it may jump back several calendar days at once.
     void fetchMcpTraceChunk(oldestLoadedDay)
       .then((res) => {
-        if (!res.ok) return;
+        if (!res.ok) {
+          setHistoryError(res.error || 'the server did not return it');
+          return;
+        }
         if (!res.day) {
           setHistoryExhausted(true);
           return;
@@ -852,12 +907,16 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
         if (older.length > 0) {
           // Older rows append at the visual bottom (newest-first). Viewport
           // stays put; keep follow so first paint / live top remain pinned.
-          setEntries((e) => [...older, ...e]);
+          setEntries((e) => {
+            const next = prependTraceEntries(older, e);
+            if (next.trimmed) setHistoryTrimmed(true);
+            return next.entries;
+          });
         }
         setOldestLoadedDay(res.day);
         if (!res.hasOlder) setHistoryExhausted(true);
       })
-      .catch(() => {})
+      .catch(() => setHistoryError('the server did not answer'))
       .finally(() => setLoadingHistory(false));
   };
 
@@ -867,9 +926,9 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
   useEffect(() => {
     if (!live || !caughtUp) return;
     if (entries.length > 0) return;
-    if (loadingHistory || historyExhausted || !oldestLoadedDay) return;
+    if (loadingHistory || historyExhausted || historyError || !oldestLoadedDay) return;
     loadOlderDayRef.current();
-  }, [live, caughtUp, entries.length, loadingHistory, historyExhausted, oldestLoadedDay]);
+  }, [live, caughtUp, entries.length, loadingHistory, historyExhausted, historyError, oldestLoadedDay]);
 
   useEffect(() => {
     const root = scrollerRef.current;
@@ -892,155 +951,156 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
     el.scrollTop = 0;
   }, [entries, maximized]);
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName;
+  // Handlers read the latest render through this ref, so the window listeners
+  // are added once instead of again for every incoming log line.
+  function onKey(e: KeyboardEvent) {
+    const target = e.target as HTMLElement | null;
+    const tag = target?.tagName;
+    if (
+      tag === 'INPUT' ||
+      tag === 'TEXTAREA' ||
+      tag === 'SELECT' ||
+      target?.isContentEditable
+    ) {
+      return;
+    }
+
+    // Inspector open: navigate events / close
+    if (selectedId) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSelectedId(null);
+        return;
+      }
       if (
-        tag === 'INPUT' ||
-        tag === 'TEXTAREA' ||
-        tag === 'SELECT' ||
-        target?.isContentEditable
+        e.key === 'ArrowLeft' ||
+        e.key === 'ArrowUp' ||
+        e.key === 'k' ||
+        e.key === 'K'
       ) {
-        return;
-      }
-
-      // Inspector open: navigate events / close
-      if (selectedId) {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          setSelectedId(null);
-          return;
-        }
-        if (
-          e.key === 'ArrowLeft' ||
-          e.key === 'ArrowUp' ||
-          e.key === 'k' ||
-          e.key === 'K'
-        ) {
-          e.preventDefault();
-          selectNeighbor(-1);
-          return;
-        }
-        if (
-          e.key === 'ArrowRight' ||
-          e.key === 'ArrowDown' ||
-          e.key === 'j' ||
-          e.key === 'J'
-        ) {
-          e.preventDefault();
-          selectNeighbor(1);
-          return;
-        }
-        if (e.key === 'Home') {
-          e.preventDefault();
-          const first = visibleRowIds()[0];
-          if (first) {
-            const id = first;
-            setSelectedId(id);
-            setCursorId(id);
-          }
-          return;
-        }
-        if (e.key === 'End') {
-          e.preventDefault();
-          const ids = visibleRowIds();
-          if (ids.length) {
-            const id = ids[ids.length - 1];
-            setSelectedId(id);
-            setCursorId(id);
-          }
-          return;
-        }
-        return;
-      }
-
-      // Table browsing (display order: newest at top)
-      if (e.key === 'ArrowDown' || e.key === 'j' || e.key === 'J') {
         e.preventDefault();
-        moveCursor(1);
+        selectNeighbor(-1);
         return;
       }
-      if (e.key === 'ArrowUp' || e.key === 'k' || e.key === 'K') {
+      if (
+        e.key === 'ArrowRight' ||
+        e.key === 'ArrowDown' ||
+        e.key === 'j' ||
+        e.key === 'J'
+      ) {
         e.preventDefault();
-        moveCursor(-1);
-        return;
-      }
-      if (e.key === 'PageDown') {
-        e.preventDefault();
-        moveCursor(10);
-        return;
-      }
-      if (e.key === 'PageUp') {
-        e.preventDefault();
-        moveCursor(-10);
+        selectNeighbor(1);
         return;
       }
       if (e.key === 'Home') {
         e.preventDefault();
         const first = visibleRowIds()[0];
-        if (first) setCursorId(first);
+        if (first) {
+          const id = first;
+          setSelectedId(id);
+          setCursorId(id);
+        }
         return;
       }
       if (e.key === 'End') {
         e.preventDefault();
         const ids = visibleRowIds();
-        if (ids.length) setCursorId(ids[ids.length - 1]);
-        return;
-      }
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        const ids = visibleRowIds();
-        const id = cursorId && ids.includes(cursorId) ? cursorId : ids[0];
-        if (id) openEntry(id);
-        return;
-      }
-      if (e.key === 'Escape') {
-        if (document.fullscreenElement) {
-          e.preventDefault();
-          void exitBrowserFullscreen();
-          return;
-        }
-        if (maximized && !isPage) {
-          e.preventDefault();
-          setMaximized(false);
+        if (ids.length) {
+          const id = ids[ids.length - 1];
+          setSelectedId(id);
+          setCursorId(id);
         }
         return;
       }
-      if (isPage && (e.key === 'b' || e.key === 'B') && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        e.preventDefault();
-        void backToApp();
-      }
+      return;
     }
 
-    window.addEventListener('keydown', onKey);
-    function onOutsideBlade(event: MouseEvent) {
-      if (!selectedId) return;
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      if (target.closest('.mcp-blade, .mcp-trace-row')) return;
-      setSelectedId(null);
+    // Table browsing (display order: newest at top)
+    if (e.key === 'ArrowDown' || e.key === 'j' || e.key === 'J') {
+      e.preventDefault();
+      moveCursor(1);
+      return;
     }
-    document.addEventListener('mousedown', onOutsideBlade);
+    if (e.key === 'ArrowUp' || e.key === 'k' || e.key === 'K') {
+      e.preventDefault();
+      moveCursor(-1);
+      return;
+    }
+    if (e.key === 'PageDown') {
+      e.preventDefault();
+      moveCursor(10);
+      return;
+    }
+    if (e.key === 'PageUp') {
+      e.preventDefault();
+      moveCursor(-10);
+      return;
+    }
+    if (e.key === 'Home') {
+      e.preventDefault();
+      const first = visibleRowIds()[0];
+      if (first) setCursorId(first);
+      return;
+    }
+    if (e.key === 'End') {
+      e.preventDefault();
+      const ids = visibleRowIds();
+      if (ids.length) setCursorId(ids[ids.length - 1]);
+      return;
+    }
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      const ids = visibleRowIds();
+      const id = cursorId && ids.includes(cursorId) ? cursorId : ids[0];
+      if (id) openEntry(id);
+      return;
+    }
+    if (e.key === 'Escape') {
+      if (document.fullscreenElement) {
+        e.preventDefault();
+        void exitBrowserFullscreen();
+        return;
+      }
+      if (maximized && !isPage) {
+        e.preventDefault();
+        setMaximized(false);
+      }
+      return;
+    }
+    if (isPage && (e.key === 'b' || e.key === 'B') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      void backToApp();
+    }
+  }
+
+  function onOutsideBlade(event: MouseEvent) {
+    if (!selectedId) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest('.mcp-blade, .mcp-trace-row')) return;
+    setSelectedId(null);
+  }
+  const windowHandlersRef = useRef({ onKey, onOutsideBlade });
+  windowHandlersRef.current = { onKey, onOutsideBlade };
+
+  useEffect(() => {
+    const keyListener = (e: KeyboardEvent) => windowHandlersRef.current.onKey(e);
+    const mouseListener = (e: MouseEvent) => windowHandlersRef.current.onOutsideBlade(e);
+    window.addEventListener('keydown', keyListener);
+    document.addEventListener('mousedown', mouseListener);
+    return () => {
+      window.removeEventListener('keydown', keyListener);
+      document.removeEventListener('mousedown', mouseListener);
+    };
+  }, []);
+
+  useEffect(() => {
     const lockScroll = maximized || Boolean(selectedId);
     if (lockScroll) document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = '';
-      window.removeEventListener('keydown', onKey);
-      document.removeEventListener('mousedown', onOutsideBlade);
     };
-  }, [
-    maximized,
-    selectedId,
-    cursorId,
-    rowOpensBlade,
-    onContinuityRow,
-    projectRoot,
-    isPage,
-    entries,
-    visibleEntries,
-    displayEntries,
-  ]);
+  }, [maximized, selectedId]);
 
   function onScroll() {
     const el = scrollerRef.current;
@@ -1086,12 +1146,10 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
   }
 
   function selectNeighbor(delta: number) {
-    const ids = visibleRowIds();
-    const current = ids.indexOf(selectedId ?? '');
-    const next = current + delta;
-    if (current < 0 || next < 0 || next >= ids.length) return;
-    setSelectedId(ids[next]);
-    setCursorId(ids[next]);
+    const next = neighborId(visibleRowIds(), selectedId, delta);
+    if (!next) return;
+    setSelectedId(next);
+    setCursorId(next);
   }
 
   function fillContinuity(id: string) {
@@ -1266,39 +1324,7 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
                 onClick={() => toggleKind(kind)}
               >
                 <span className={`mcp-trace-badge mcp-trace-badge--${kind}`}>
-                  {kind === 'inbound'
-                    ? 'IN'
-                    : kind === 'outbound'
-                      ? 'OUT'
-                      : kind === 'preview'
-                        ? 'PREV'
-                        : kind === 'error'
-                          ? 'ERR'
-                          : kind === 'enrich'
-                            ? 'ENR'
-                            : kind === 'internal'
-                              ? 'INT'
-                              : kind === 'plugin'
-                                ? 'PLG'
-                                : kind === 'lsp'
-                                  ? 'LSP'
-                                  : kind === 'ship'
-                                    ? 'SHIP'
-                                    : kind === 'share'
-                                      ? 'SHR'
-                                      : kind === 'workspace'
-                                        ? 'WS'
-                                        : kind === 'embed'
-                                          ? 'EMB'
-                                          : kind === 'action'
-                                            ? 'ACT'
-                                            : kind === 'memory'
-                                              ? 'MEM'
-                                              : kind === 'policy'
-                                                ? 'POL'
-                                                : kind === 'cli'
-                                                  ? 'CLI'
-                                                  : 'LOG'}
+                  {traceKindBadge(kind)}
                 </span>
                 <span className="mcp-trace-filter-chip-label">{KIND_LABELS[kind]}</span>
                 <span className="mcp-trace-filter-chip-count">{count}</span>
@@ -1399,6 +1425,13 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
           <div className="mcp-trace-empty">
             {loadingHistory ? (
               'Loading earlier history…'
+            ) : historyError ? (
+              <>
+                Could not load earlier history: {historyError}.{' '}
+                <button type="button" className="linkish" onClick={() => loadOlderDayRef.current(true)}>
+                  Retry
+                </button>
+              </>
             ) : historyExhausted ? (
               verboseFromApi === false && !logExists && !fallbackLabel ? (
                 `No MCP log in ${projectLabel || 'this project'} yet. Reconnect ax MCP with this folder as --path.`
@@ -1593,7 +1626,19 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
         {loadingHistory && entries.length > 0 ? (
           <div className="mcp-trace-history-status">Loading earlier history…</div>
         ) : null}
-        {historyExhausted && entries.length > 0 ? (
+        {historyError && !loadingHistory && entries.length > 0 ? (
+          <div className="mcp-trace-history-status">
+            Could not load earlier history: {historyError}.{' '}
+            <button type="button" className="linkish" onClick={() => loadOlderDayRef.current(true)}>
+              Retry
+            </button>
+          </div>
+        ) : null}
+        {historyTrimmed && entries.length > 0 ? (
+          <div className="mcp-trace-history-status mcp-trace-history-status--end">
+            Older rows were dropped to keep this view fast; the newest {MCP_TRACE_MAX_ENTRIES.toLocaleString()} are kept.
+          </div>
+        ) : historyExhausted && entries.length > 0 ? (
           <div className="mcp-trace-history-status mcp-trace-history-status--end">
             End of available history
           </div>
@@ -1633,7 +1678,7 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
                   type="button"
                   className="detail-close"
                   aria-label="Previous event"
-                  disabled={selectedIndex <= 0}
+                  disabled={!nav.prev}
                   onClick={() => selectNeighbor(-1)}
                 >
                   <Codicon name="chevron-left" />
@@ -1642,7 +1687,7 @@ export default function McpTraceLive({ variant = 'embedded', rowOpensBlade = tru
                   type="button"
                   className="detail-close"
                   aria-label="Next event"
-                  disabled={selectedIndex >= entries.length - 1}
+                  disabled={!nav.next}
                   onClick={() => selectNeighbor(1)}
                 >
                   <Codicon name="chevron-right" />

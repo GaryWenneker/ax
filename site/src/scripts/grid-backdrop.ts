@@ -88,7 +88,7 @@ export function mountGridBackdrop(root: HTMLElement): () => void {
   const el = root.querySelector('canvas');
   const ctx = el?.getContext('2d');
   if (!el || !ctx) return () => {};
-  const readColor = () => getComputedStyle(el).color || '#8fbfff';
+  const readColor = () => getComputedStyle(el).color || '#88c0d0';
   let color = readColor();
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
   let grid = buildGrid(1, 1);

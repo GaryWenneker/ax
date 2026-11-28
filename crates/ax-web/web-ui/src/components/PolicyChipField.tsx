@@ -1,6 +1,11 @@
 import { useMemo, useState } from 'react';
+import { addPolicyEntries, insideBraces, pasteIntoDraft, splitPolicyList } from '../lib/policyList';
 
-/** Small removable tokens with prefix suggestions. */
+/**
+ * Small removable tokens with prefix suggestions. Enter adds the typed value; a comma adds it
+ * too, except inside `{...}` so brace globs such as `*.{ts,tsx}` can be typed as one value.
+ * Typed or pasted text with commas becomes one token per entry, split the same way.
+ */
 export default function PolicyChipField({
   label,
   values,
@@ -22,13 +27,16 @@ export default function PolicyChipField({
     [suggestions, query, values],
   );
 
-  function add(raw: string) {
-    const next = raw.trim();
-    if (!next || values.some((item) => item.toLowerCase() === next.toLowerCase())) {
-      setDraft('');
-      return;
-    }
-    onChange([...values, next]);
+  /** Add the draft, one token per comma-separated entry. */
+  function addDraft(text: string) {
+    const next = addPolicyEntries(values, text);
+    if (next.length > values.length) onChange(next);
+    setDraft('');
+  }
+
+  /** Add one suggested value as it is. */
+  function addSuggestion(item: string) {
+    if (!values.some((value) => value.toLowerCase() === item.toLowerCase())) onChange([...values, item]);
     setDraft('');
   }
 
@@ -57,10 +65,19 @@ export default function PolicyChipField({
         aria-label={label}
         placeholder={`Add ${label.toLowerCase()}`}
         onChange={(e) => setDraft(e.target.value)}
+        onPaste={(e) => {
+          // A pasted list skips the comma key, so split it here into one token per entry.
+          const text = e.clipboardData.getData('text');
+          if (splitPolicyList(text).length < 2) return;
+          e.preventDefault();
+          // Put the paste where the browser would: at the caret, over any selection.
+          const el = e.currentTarget;
+          addDraft(pasteIntoDraft(draft, text, el.selectionStart, el.selectionEnd));
+        }}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ',') {
+          if (e.key === 'Enter' || (e.key === ',' && !insideBraces(draft))) {
             e.preventDefault();
-            add(draft);
+            addDraft(draft);
           } else if (e.key === 'Backspace' && !draft && values.length > 0) {
             onChange(values.slice(0, -1));
           }
@@ -70,7 +87,7 @@ export default function PolicyChipField({
         <ul className="policy-chip-suggest" role="listbox">
           {matches.map((item) => (
             <li key={item}>
-              <button type="button" onClick={() => add(item)}>
+              <button type="button" onClick={() => addSuggestion(item)}>
                 {item}
               </button>
             </li>

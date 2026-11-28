@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useLive, useNewKeys } from '../lib/useLive';
 import { fetchFileRoots, fetchFiles, fetchStats } from '../api';
+import { fetchBrowseTree } from '../lib/fileTree';
 
 import FileTree from '../components/FileTree';
 
@@ -125,9 +126,8 @@ export default function FilesPage() {
 
       .catch(() => {});
 
-    loadRoots().catch(() => {});
-
-  }, [filterActive, loadRoots]);
+    // The roots load with the tree in the debounced effect below.
+  }, [filterActive]);
 
 
 
@@ -237,23 +237,32 @@ export default function FilesPage() {
 
 
 
+  const browseFetchers = useMemo(
+    () => ({
+      fetchRoots: fetchFileRoots,
+      fetchPrefix: (prefix: string) => fetchFiles({ prefix, limit: TREE_LIMIT, offset: 0 }),
+    }),
+    [],
+  );
+
   const refreshTree = useCallback(async () => {
     setError(null);
-    const prefixes = [...loadedPrefixesRef.current].filter((p) => p !== '');
     try {
       if (filterActive) {
-        await loadRoots();
         loadFiltered(q, lang);
         return;
       }
-      await loadRoots();
-      for (const prefix of prefixes) {
-        await loadPrefix(prefix);
-      }
+      // Fetch the roots and every expanded folder, then replace the tree in one update.
+      const tree = await fetchBrowseTree(loadedPrefixesRef.current, browseFetchers);
+      setTreeScope((n) => n + 1);
+      setRoots(tree.roots);
+      setFiles(tree.files);
+      setLoadedPrefixes(tree.loaded);
+      setTotal(tree.total);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Refresh failed');
     }
-  }, [filterActive, q, lang, loadRoots, loadPrefix]);
+  }, [filterActive, q, lang, browseFetchers]);
 
   const liveRefreshTree = useCallback(async () => {
     try {
@@ -263,18 +272,15 @@ export default function FilesPage() {
         setTotal(page.total);
         return;
       }
-      const rootPage = await fetchFileRoots();
-      const prefixes = [...loadedPrefixesRef.current].filter((p) => p !== '');
-      const pages = await Promise.all(prefixes.map((prefix) => fetchFiles({ prefix, limit: TREE_LIMIT, offset: 0 })));
-      const rootFiles = Array.isArray(rootPage.files) ? rootPage.files : [];
-      const byPath = new Map([...rootFiles, ...pages.flatMap((p) => p.files)].map((f) => [f.path, f]));
-      setRoots(rootPage.roots);
-      setFiles([...byPath.values()].sort((a, b) => a.path.localeCompare(b.path)));
-      setTotal(rootPage.roots.reduce((sum, r) => sum + r.count, 0) + rootFiles.length);
+      const tree = await fetchBrowseTree(loadedPrefixesRef.current, browseFetchers);
+      setRoots(tree.roots);
+      setFiles(tree.files);
+      setLoadedPrefixes(tree.loaded);
+      setTotal(tree.total);
     } catch {
       /* the next change event retries */
     }
-  }, [filterActive, q, lang]);
+  }, [filterActive, q, lang, browseFetchers]);
 
   useLive('graph', () => void liveRefreshTree());
   const fresh = useNewKeys(loading ? null : files.map((f) => f.path), String(treeScope));

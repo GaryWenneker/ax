@@ -138,7 +138,8 @@ export function filterWorkspace(ws: Workspace, query: string, status: WorkspaceS
   const specs: WorkspaceSpec[] = [];
   for (const spec of ws.specs) {
     if (matches(spec.doc, needle, status)) {
-      specs.push(needle ? spec : { doc: spec.doc, plans: spec.plans.filter((plan) => matches(plan, '', status)) });
+      // A matching spec keeps every plan that passes the status filter.
+      specs.push({ doc: spec.doc, plans: spec.plans.filter((plan) => matches(plan, '', status)) });
       continue;
     }
     const plans = spec.plans.filter((plan) => matches(plan, needle, status));

@@ -11,7 +11,7 @@ It is a separate application. It runs on your own computer and connects to an Ax
 `ax-admin` becomes the only visual interface of Ax. The Command Center (`ax web`) and the desktop client are being phased out together with the full ax. `ax-admin` works the same against the [headless build](/guides/headless-linux/) and against a full ax. See [Headless ax and ax-admin](/guides/phase-out/) for what moves where.
 :::
 
-![The Operations page of ax-admin connected to a headless Ax](/screenshots/ax-admin-operations.png)
+![ax-admin connected to a headless Ax, with sync and rebuild index](/screenshots/ax-admin-operations.png)
 
 ## How it connects
 

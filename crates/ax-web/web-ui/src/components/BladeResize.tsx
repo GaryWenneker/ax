@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
+import { useMouseDragResize } from '../hooks/useMouseDragResize';
 
 const BLADE_KEY = 'ax-web-blade-w';
 export const BLADE_MIN = 280;
@@ -25,40 +26,10 @@ export function initBladeWidth() {
 }
 
 function BladeResizeHandle() {
-  const dragging = useRef(false);
-  const startX = useRef(0);
-  const startW = useRef(BLADE_DEFAULT);
-
-  const onMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    dragging.current = true;
-    startX.current = e.clientX;
-    startW.current = loadBladeWidth();
-    document.body.classList.add('blade-resizing');
-  }, []);
-
-  useEffect(() => {
-    function onMove(e: MouseEvent) {
-      if (!dragging.current) return;
-      // Dragging the left edge left → wider blade.
-      const delta = startX.current - e.clientX;
-      applyBladeWidth(startW.current + delta);
-    }
-
-    function onUp() {
-      if (!dragging.current) return;
-      dragging.current = false;
-      document.body.classList.remove('blade-resizing');
-    }
-
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      document.body.classList.remove('blade-resizing');
-    };
-  }, []);
+  const onMouseDown = useMouseDragResize('blade-resizing', loadBladeWidth, (startW, dx) => {
+    // Dragging the left edge left → wider blade.
+    applyBladeWidth(startW - dx);
+  });
 
   return (
     <div

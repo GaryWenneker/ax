@@ -35,6 +35,7 @@ static EXTENSION_MAP: &[(&str, Language)] = &[
     (".rb", Language::Ruby),
     (".swift", Language::Swift),
     (".kt", Language::Kotlin),
+    (".kts", Language::Kotlin),
     (".dart", Language::Dart),
     (".svelte", Language::Svelte),
     (".vue", Language::Vue),

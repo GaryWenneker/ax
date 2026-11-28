@@ -1,4 +1,5 @@
 import { useLayoutEffect, type RefObject } from 'react';
+import { coalesceToFrame } from './frameCoalesce.ts';
 
 /** Keep a fixed popover inside the viewport. Opens on the side that has room. */
 
@@ -58,6 +59,29 @@ export function pinPopover(
   element.style.zIndex = '5500';
 }
 
+type ListenerTarget = Pick<Window, 'addEventListener' | 'removeEventListener'>;
+
+/**
+ * Run `place` again after scroll (of any element) or resize, at most once per
+ * animation frame. The scroll listener is passive and capturing. Returns the cleanup.
+ */
+export function followViewport(
+  place: () => void,
+  target: ListenerTarget = window,
+  schedule?: (cb: () => void) => number,
+  cancelFrame?: (id: number) => void,
+): () => void {
+  const frame = coalesceToFrame(place, schedule, cancelFrame);
+  const scrollOptions = { passive: true, capture: true };
+  target.addEventListener('resize', frame.request);
+  target.addEventListener('scroll', frame.request, scrollOptions);
+  return () => {
+    target.removeEventListener('resize', frame.request);
+    target.removeEventListener('scroll', frame.request, scrollOptions);
+    frame.cancel();
+  };
+}
+
 /** Re-pin while `open`. Scroll and resize keep the popover inside the viewport. */
 export function usePinnedPopover(
   open: boolean,
@@ -77,11 +101,6 @@ export function usePinnedPopover(
       pinPopover(rect, el, { prefer, align });
     };
     place();
-    window.addEventListener('resize', place);
-    window.addEventListener('scroll', place, true);
-    return () => {
-      window.removeEventListener('resize', place);
-      window.removeEventListener('scroll', place, true);
-    };
+    return followViewport(place);
   }, [open, anchor, panel, prefer, align, watch]);
 }

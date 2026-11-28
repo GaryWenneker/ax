@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { chooseSelect } from './chooseSelect';
+import { baseReply, shipConfigStub, statsStub } from './fixtures';
 import { readFileSync } from 'node:fs';
 
 if (process.env.AX_CHROME_EXECUTABLE) test.use({ launchOptions: { executablePath: process.env.AX_CHROME_EXECUTABLE } });
@@ -46,10 +47,11 @@ async function fixture(page: Page, options: { empty?: boolean; multiple?: boolea
     else if (path.startsWith('/api/remote-mcp/publications/') && method === 'DELETE') { publications = []; value = { workspaceId, removed: true }; }
     else if (path === '/api/remote-mcp/') value = { csrf: 'fixture-csrf', connections: [] };
     else if (path === '/api/share/status') value = { readonly: false, sharing: false, port: 7070 };
-    else if (path === '/api/stats') value = { readonly: false, project_name: 'Demo project', node_count: 0, edge_count: 0, file_count: 0, db_size_bytes: 0, languages: [] };
-    else if (path === '/api/ship/config') value = { config: { ship: { target_branch: 'main', web_port: 7070 }, remote: { provider: 'github' }, quality_gate: { steps: [], tests: {} }, sonar: {}, ui: {} } };
+    else if (path === '/api/stats') value = statsStub({ project_name: 'Demo project' });
+    else if (path === '/api/ship/config') value = shipConfigStub();
     else if (path === '/api/ship/review-language') value = { code: 'en', languages: [] };
     else if (path === '/api/workspace/current') value = { ok: true, workspace: { path: '/demo', label: 'Demo project', initialized: true }, recent: [] };
+    else value = baseReply(path);
     await route.fulfill({ status: value === undefined ? 404 : 200, json: value ?? { error: 'Fixture endpoint not provided' } }).catch(() => {});
   });
   await page.addInitScript(({ denied }) => {

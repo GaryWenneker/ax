@@ -22,6 +22,8 @@ ax sync            # incremental — only changed files
 
 `sync` is fast because it only reparses what changed — it's what the file watcher runs for you on every edit (see [Stay fresh automatically](#stay-fresh-automatically)). Reference resolution is scoped the same way: only unresolved references from changed files are processed, not the entire project backlog. A full `ax index` still resolves everything. You rarely need to run `ax sync` by hand.
 
+The project-wide passes are scoped too. An incremental sync rescans Markdown and other docs only when a changed file is a doc, and API contracts only when a changed file is a `.proto`, `.graphql`/`.gql`, YAML or JSON file. Links from docs to code in a re-parsed file are kept. A new symbol that an unchanged doc already mentions is linked when that doc changes or on the next full `ax index`. An incremental sync runs SQLite `PRAGMA optimize` instead of a full `ANALYZE`, and the resolution totals in `ax status` come from the last full index.
+
 ## Stay fresh automatically
 
 **You don't need to run `ax sync` by hand during an agent session.** When your agent (Claude Code, Cursor, Codex, opencode, Hermes, Gemini, Antigravity, Kiro) launches `ax serve --mcp`, three layers cooperate to keep the index in step with your code — and to never give the agent a quiet wrong answer in the small window between an edit and the next sync.
@@ -41,6 +43,8 @@ agent writes src/Widget.ts
 ```
 
 **Tunable**: `AX_WATCH_DEBOUNCE_MS` overrides the default 2000ms, clamped to `[100ms, 60s]`. Useful when a build step or formatter writes many files in a tight burst — bump it to `5000` or `10000` so the watcher coalesces them into one sync.
+
+If an auto-sync fails, for example because another process holds the index lock, its files stay pending and are retried after one more debounce window. A file saved again while its sync is running stays pending and is synced again.
 
 ### 2. Per-file staleness banner — covers the debounce window
 

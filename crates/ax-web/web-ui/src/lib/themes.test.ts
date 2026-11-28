@@ -7,10 +7,50 @@ import {
   contrastRatioHex,
   ensureTextContrast,
   ensureWhiteOnFill,
+  initTheme,
+  loadThemeId,
   statusbarInk,
   themeAccentFill,
   themeById,
 } from './themes.ts';
+
+function fakeBrowser(initial: Record<string, string>) {
+  const store = new Map(Object.entries(initial));
+  const writes: Array<[string, string]> = [];
+  const props = new Map<string, string>();
+  const g = globalThis as Record<string, unknown>;
+  const saved = { localStorage: g.localStorage, document: g.document, window: g.window, CustomEvent: g.CustomEvent };
+  g.localStorage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => { writes.push([key, value]); store.set(key, value); },
+  };
+  g.document = { documentElement: { dataset: {}, style: { setProperty: (name: string, value: string) => props.set(name, value) } } };
+  g.window = { dispatchEvent: () => true };
+  g.CustomEvent = class { type: string; constructor(type: string) { this.type = type; } };
+  const restore = () => { for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete g[key]; else g[key] = value; } };
+  return { store, writes, props, restore };
+}
+
+describe('stored theme id', () => {
+  it('reading the theme id does not write storage', () => {
+    const env = fakeBrowser({ 'ax-theme': 'light' });
+    try {
+      assert.equal(loadThemeId(), 'azure-light');
+      assert.equal(loadThemeId(), 'azure-light');
+      assert.deepEqual(env.writes, []);
+    } finally { env.restore(); }
+  });
+  it('startup stores the migrated id once', () => {
+    const env = fakeBrowser({ 'ax-theme': 'macos' });
+    try {
+      assert.equal(initTheme(), 'azure-dark');
+      assert.deepEqual(env.writes, [['ax-theme', 'azure-dark']]);
+      env.writes.length = 0;
+      initTheme();
+      assert.deepEqual(env.writes, []);
+    } finally { env.restore(); }
+  });
+});
 
 describe('available themes', () => {
   it('keeps only Light and Dark', () => { assert.deepEqual(THEMES.map(t => [t.id,t.label]), [['azure-light','Light'],['azure-dark','Dark']]); });
@@ -57,11 +97,16 @@ describe('WCAG AA contrast', () => {
   });
 
   it('uses dark status ink on a light fill', () => { const ink=statusbarInk('#64d2ff');assert.equal(ink.onLight,true);assert.ok(contrastRatioHex(ink.fg,'#64d2ff')>=4.5); });
-  it('keeps the status bar surface neutral when accent changes', async () => {
-    const { readFile } = await import('node:fs/promises');
-    const src = await readFile(new URL('./themes.ts', import.meta.url), 'utf8');
-    assert.match(src, /statusbarInk\(theme.bgSide\)/);
-    assert.equal(src.includes('statusbarInk(theme.statusbarBg'), false);
+  it('keeps the status bar surface neutral when accent changes', () => {
+    const env = fakeBrowser({ 'ax-theme': 'azure-light' });
+    try {
+      for (const accent of ACCENT_COLORS) {
+        env.store.set('ax-accent', accent.id);
+        initTheme();
+        assert.equal(env.props.get('--statusbar-bg'), THEMES[0].bgSide);
+        assert.equal(env.props.get('--statusbar-fg'), statusbarInk(THEMES[0].bgSide).fg);
+      }
+    } finally { env.restore(); }
   });
   it('offers distinct readable Light and Dark shades for every accent', () => {
     assert.equal(accentForTheme(THEMES[1],'lime'),'#b9ff6a');

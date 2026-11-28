@@ -70,7 +70,6 @@ export function noteTool(snapshot: ActivitySnapshot, name: string): ActivitySnap
     ...snapshot,
     tools: snapshot.tools + 1,
     searches: snapshot.searches + (isSearchTool(name) ? 1 : 0),
-    phase: snapshot.phase === 'completed' ? 'completed' : snapshot.phase,
   };
 }
 
